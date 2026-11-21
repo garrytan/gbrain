@@ -19,7 +19,7 @@ export const ORIGIN_INDEX = {
 export async function originTwinCounts(engine: Pick<BrainEngine, 'executeRaw'>, limit = 50): Promise<Array<{ source_id: string; groups: number; twins: number }>> {
   const rows = await engine.executeRaw<{ source_id: string; groups: number; twins: number }>(`SELECT source_id, count(*)::int AS groups, (sum(n) - count(*))::int AS twins
     FROM (SELECT source_id, count(*) AS n FROM pages WHERE deleted_at IS NULL AND source_path IS NOT NULL GROUP BY source_id, source_path HAVING count(*) > 1) g
-    GROUP BY source_id ORDER BY source_id LIMIT ${Math.max(1, Math.floor(limit))}`);
+    GROUP BY source_id ORDER BY source_id COLLATE "C" LIMIT ${Math.max(1, Math.floor(limit))}`);
   return rows.map(row => ({ source_id: row.source_id, groups: Number(row.groups), twins: Number(row.twins) }));
 }
 

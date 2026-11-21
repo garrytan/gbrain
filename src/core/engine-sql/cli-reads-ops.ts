@@ -177,7 +177,7 @@ export async function listExtractionPendingPages(raw: EngineRawRead, opts: { sou
        WHERE ${trustedSql(unverifiedExtractionFragment('p'))}
          ${trustedSql(buildVisibilityClause('p', 's'))}
          ${srcClause}
-       ORDER BY p.created_at DESC
+       ORDER BY p.created_at DESC, p.id DESC
        LIMIT ${opts.limit} OFFSET ${opts.offset}`);
   return raw<ExtractionPendingRow>(text, params);
 }
@@ -254,7 +254,7 @@ export async function listWantedPages(raw: EngineRawRead, opts: { sourceId?: str
     ), grouped AS (
       SELECT target_source_id, target_ref, min(ref_kind) AS ref_kind,
         count(DISTINCT (origin_source_id, origin_slug))::int AS referenced_by,
-        jsonb_agg(jsonb_build_object('slug', origin_slug, 'source_id', origin_source_id) ORDER BY origin_slug) AS origins,
+        jsonb_agg(jsonb_build_object('slug', origin_slug, 'source_id', origin_source_id) ORDER BY origin_slug COLLATE "C") AS origins,
         coalesce(jsonb_agg(DISTINCT link_type) FILTER (WHERE link_type <> ''), '[]'::jsonb) AS link_types,
         min(first_seen_at) AS first_seen, max(checked_at) AS last_checked
       FROM wanted GROUP BY target_source_id, target_ref
@@ -265,8 +265,8 @@ export async function listWantedPages(raw: EngineRawRead, opts: { sourceId?: str
     SELECT g.*, (SELECT jsonb_agg(jsonb_build_object('slug', m.slug, 'source_id', m.source_id))
         FROM (SELECT m.slug, m.source_id FROM pages m WHERE g.ref_kind = 'name' AND m.source_id = g.target_source_id
           AND regexp_replace(m.slug, '^.*/', '') = g.target_ref AND m.deleted_at IS NULL${matchPrivacy}
-          ORDER BY m.slug LIMIT 3) m) AS matches
-    FROM grouped g ORDER BY g.referenced_by DESC, g.target_source_id, g.target_ref
+          ORDER BY m.slug COLLATE "C" LIMIT 3) m) AS matches
+    FROM grouped g ORDER BY g.referenced_by DESC, g.target_source_id COLLATE "C", g.target_ref COLLATE "C"
     LIMIT ${opts.limit} OFFSET ${opts.offset}`);
   const rows = await raw<WantedPageRawRow>(page.text, page.params);
   const iso = (value: Date | string) => (value instanceof Date ? value : new Date(value)).toISOString();

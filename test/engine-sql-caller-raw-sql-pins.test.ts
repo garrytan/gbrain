@@ -126,16 +126,16 @@ const PINS: Pin[] = [
     texts: ['SELECT local_path,last_commit,config FROM sources WHERE id=$1 AND NOT archived'],
   },
   {
-    from: 'src/core/verbs/entity-card-identity.ts:141 readSiblingIdentity',
+    from: 'src/core/verbs/entity-card-identity.ts:141 readSiblingIdentity (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readEntityAliasRows', variant: 'siblings', run: e => e.readEntityAliasRows('default', ['people/alice-example', 'people/alice-twin']) },
-    texts: ['SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm'],
+    texts: ['SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm COLLATE "C"'],
   },
   {
     // readAka ran `SELECT alias_norm FROM page_aliases WHERE source_id = $1 AND slug = $2 ORDER BY alias_norm`. It now
     // sends the sibling statement with a one-slug array: the same rows in the same order (one slug, so no tie).
-    from: 'src/core/verbs/entity-card.ts:783 readAka (one slug)',
+    from: 'src/core/verbs/entity-card.ts:783 readAka (one slug; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readEntityAliasRows', variant: 'aka', run: e => e.readEntityAliasRows('default', ['people/alice-example']) },
-    texts: ['SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm'],
+    texts: ['SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm COLLATE "C"'],
   },
   // The caller bound the source once as $2 and named it three times (four for a remote read). The member binds it at
   // each use (engine-sql numbers every value once: check-engine-sql-dynamic), so the source is $2, $3 and $4: the same
@@ -213,7 +213,7 @@ const PINS: Pin[] = [
     ['entity', { entityId: 'alice' }],
     ['seed+grant+private', { entityId: 'alice', slug: 'people/alice-example', slugSourceId: 'default', allowedSources: ['default', 'team'], excludePrivate: true }],
   ] as const).map(([variant, filter]): Pin => ({
-    from: 'src/core/entity-identity.ts:220 listEntityIdentities',
+    from: 'src/core/entity-identity.ts:220 listEntityIdentities (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listEntityIdentityRows', variant, run: e => e.listEntityIdentityRows(filter) },
     texts: () => {
       const f = filter as { entityId?: string; slug?: string; excludePrivate?: boolean };
@@ -233,7 +233,7 @@ const PINS: Pin[] = [
        FROM entity_identities ei
        JOIN pages p ON p.id = ei.page_id AND p.source_id = ei.source_id AND p.deleted_at IS NULL
        ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
-       ORDER BY ei.entity_id, ei.canonical DESC, ei.source_id, p.slug`];
+       ORDER BY ei.entity_id COLLATE "C", ei.canonical DESC, ei.source_id COLLATE "C", p.slug COLLATE "C"`];
     },
   })),
   {
@@ -1263,26 +1263,26 @@ const PINS: Pin[] = [
     ['floor', () => `AND ${remoteReadFloorSql('p')}`],
   ] as const).flatMap(([privacy, predicate]): Pin[] => [
     {
-      from: `src/core/entities/resolve.ts:519 resolveStrictEntityReference same name (privacy ${privacy})`,
+      from: `src/core/entities/resolve.ts:519 resolveStrictEntityReference same name (privacy ${privacy}; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)`,
       case: { method: 'readTrigramCandidates', variant: `same_name_${privacy}`, run: e => e.readTrigramCandidates('default', { arm: 'same_name', titleLc: 'alice example', slugFragment: 'alice-example', privacy }) },
       texts: () => [`SELECT p.slug, p.title, p.type FROM pages p
           WHERE p.source_id = $1 AND p.deleted_at IS NULL ${predicate()} AND NOT ${retiredPageSql('p')}
             AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
-          ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
+          ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug COLLATE "C" ASC
           LIMIT 5`],
     },
     {
-      from: `src/core/entities/resolve.ts:567 entityReferenceCandidates near (privacy ${privacy})`,
+      from: `src/core/entities/resolve.ts:567 entityReferenceCandidates near (privacy ${privacy}; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)`,
       case: { method: 'readTrigramCandidates', variant: `near_${privacy}`, run: e => e.readTrigramCandidates('default', { arm: 'near', titleLc: 'alice example', slugFragment: 'alice-example', privacy }) },
       texts: () => [`SELECT p.slug, p.title, p.type FROM pages p
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} ${predicate()}
         AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
-      ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
+      ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug COLLATE "C" ASC
       LIMIT 20`],
     },
   ]),
   {
-    from: 'src/core/entities/resolve.ts:857 tryFuzzyMatch',
+    from: 'src/core/entities/resolve.ts:857 tryFuzzyMatch (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readTrigramCandidates', variant: 'fuzzy', run: e => e.readTrigramCandidates('default', { arm: 'fuzzy', titleLc: 'alice example', slugFragment: 'alice-example' }) },
     texts: () => [`SELECT slug, title, type,
          GREATEST(
@@ -1297,11 +1297,11 @@ const PINS: Pin[] = [
            lower(title) % $2
            OR slug ILIKE '%' || $3 || '%'
          )
-       ORDER BY score DESC, slug ASC
+       ORDER BY score DESC, slug COLLATE "C" ASC
        LIMIT 5`],
   },
   {
-    from: 'src/core/entities/resolve.ts:686 findPrefixCandidates',
+    from: 'src/core/entities/resolve.ts:686 findPrefixCandidates (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readPrefixCandidates', variant: 'patterns', run: e => e.readPrefixCandidates('default', { patterns: ['people/alice', 'people/alice-%'] }) },
     texts: () => [`SELECT p.slug,
               ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
@@ -1313,11 +1313,11 @@ const PINS: Pin[] = [
          AND p.deleted_at IS NULL
          AND NOT ${retiredPageSql('p')}
          AND p.slug LIKE ANY($2::text[])
-       ORDER BY connection_count DESC, p.slug ASC
+       ORDER BY connection_count DESC, p.slug COLLATE "C" ASC
        LIMIT 10`],
   },
   {
-    from: 'src/core/entities/resolve.ts:769 tryPrefixExpansion',
+    from: 'src/core/entities/resolve.ts:769 tryPrefixExpansion (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'readPrefixCandidates', variant: 'pattern', run: e => e.readPrefixCandidates('default', { pattern: 'people/alice-%' }) },
     texts: () => [`SELECT p.slug,
                 ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
@@ -1329,7 +1329,7 @@ const PINS: Pin[] = [
            AND p.deleted_at IS NULL
            AND NOT ${retiredPageSql('p')}
            AND p.slug LIKE $2
-         ORDER BY connection_count DESC, p.slug ASC
+         ORDER BY connection_count DESC, p.slug COLLATE "C" ASC
          LIMIT 5`],
   },
   {
@@ -1352,22 +1352,22 @@ const PINS: Pin[] = [
     ['caller', () => `AND ${privatePagesFilterForCaller('p')}`],
     ['floor', () => `AND ${remoteReadFloorSql('p')}`],
   ] as const).map(([privacy, predicate]): Pin => ({
-    from: `src/core/entities/resolve.ts:552 entityReferenceCandidates named (privacy ${privacy})`,
+    from: `src/core/entities/resolve.ts:552 entityReferenceCandidates named (privacy ${privacy}; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)`,
     case: { method: 'readNamedEntitySlugs', variant: privacy, run: e => e.readNamedEntitySlugs('default', ['companies/acme', 'orgs/acme'], privacy) },
     texts: () => [`SELECT p.slug FROM pages p
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} AND p.slug = ANY($2::text[]) ${predicate()}
-      ORDER BY p.slug LIMIT 5`],
+      ORDER BY p.slug COLLATE "C" LIMIT 5`],
   })),
   ...([
     ['all', {}],
     ['sources-run', { sourceIds: ['default'], runId: 'run-1' }],
   ] as const).map(([variant, opts]): Pin => ({
-    from: `src/core/persistence/sync-holds.ts:575 readGitSourceHolds (${variant}, at f549f444af)`,
+    from: `src/core/persistence/sync-holds.ts:575 readGitSourceHolds (${variant}, at f549f444af; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)`,
     case: { method: 'readGitHoldRecords', variant, run: e => e.readGitHoldRecords(opts) },
     texts: () => [`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
     JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
     WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
-    ORDER BY s.id COLLATE "C",h.fingerprint`],
+    ORDER BY s.id COLLATE "C",h.fingerprint COLLATE "C"`],
   })),
   {
     from: 'src/core/sync-dispatch-read.ts:51 syncDispatchRow',
@@ -1691,9 +1691,9 @@ const PINS: Pin[] = [
              OR ($3::text IS NOT NULL AND s.last_commit = $3::text))`],
   },
   {
-    from: 'src/core/notifier/status.ts:130 readNotifierBlock (the markers; at f24fef9a03)',
+    from: 'src/core/notifier/status.ts:130 readNotifierBlock (the markers; at f24fef9a03; the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listSourceWantedMarkers', variant: 'default', run: e => e.listSourceWantedMarkers('source-a') },
-    texts: ['SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent'],
+    texts: ['SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent COLLATE "C"'],
   },
   {
     from: 'src/core/notifier/nudge.ts:17 sourceSyncShape (at 87bd59b208)',

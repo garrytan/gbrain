@@ -130,7 +130,7 @@ async function deleteFailure(engine: BrainEngine, key: string, failure: ManagedS
 async function sourceFailureRows(engine: BrainEngine, sourceId: string): Promise<Array<{ key: string; failure: ManagedSyncFailure; unfinished: boolean }>> {
   const rows = await engine.executeRaw<{ key: string; failure: ManagedSyncFailure; unfinished: boolean }>(`SELECT f.fingerprint AS key,f.completed_keys->0 AS failure,
       EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint AND COALESCE(c.completed_keys->0->>'done','false')<>'true') AS unfinished
-    FROM op_checkpoints f WHERE f.op='managed-sync-failure' AND f.completed_keys->0->>'source_id'=$1 ORDER BY f.fingerprint`, [sourceId]);
+    FROM op_checkpoints f WHERE f.op='managed-sync-failure' AND f.completed_keys->0->>'source_id'=$1 ORDER BY f.fingerprint COLLATE "C"`, [sourceId]);
   return rows;
 }
 

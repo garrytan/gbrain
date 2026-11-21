@@ -200,7 +200,7 @@ export async function countUncomparableFacts(raw: EngineRawRead, transaction: En
   const rows = await customPlan<{ source_id: string; n: number | string }>(transaction,
     sqlFragment`WITH u AS MATERIALIZED (${uncomparable})
      SELECT f.source_id, count(*) AS n FROM facts f WHERE f.id IN (SELECT id FROM u) AND ${poolWhere(q.scope, q.filters)}
-     GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id`);
+     GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id COLLATE "C"`);
   return rows.map(r => ({ source_id: r.source_id, n: Number(r.n) }));
 }
 

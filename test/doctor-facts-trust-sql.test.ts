@@ -46,7 +46,7 @@ describe('doctor facts, fence and trust SQL text', () => {
                AND j.data->>'slug' = l.source_ref AND COALESCE(j.data->>'sourceId', 'default') = l.source_id)
         GROUP BY l.source_id
        HAVING COUNT(*) > 10 OR MIN(l.created_at) < now() - INTERVAL '1 hour'
-        ORDER BY l.source_id`, params: ['write_deferred_unadmitted'] }]);
+        ORDER BY l.source_id COLLATE "C"`, params: ['write_deferred_unadmitted'] }]);
   });
 
   test('row trust tiers: the per-table tier count readTrustTierCounts ran', async () => {

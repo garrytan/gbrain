@@ -142,6 +142,7 @@ export async function readProjectionReadiness(raw: EngineRawRead, scope: Project
   // them cost ~66 of ~67 ms at 20k pages while the probe itself reads one index row.
   const cls = trustedSql(projectionClassSql('p', 's'));
   const filters = scopeFilter(scope);
+  // The page order never reaches output: only whether the LIMIT 1 subquery returns a row is tested (IS NOT NULL), so no order changes the boolean.
   const unsealed = (cond: SqlFragment) => sqlFragment`(SELECT true FROM pages p JOIN sources s ON s.id = p.source_id
         WHERE p.deleted_at IS NULL
           AND ${trustedSql(waitingTextProjectionFilter('p'))}

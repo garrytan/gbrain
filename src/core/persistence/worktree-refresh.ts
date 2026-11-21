@@ -511,7 +511,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
     `gbrain sources writer status ${sourceId}, let the owner finish recovery, then gbrain sources refresh ${sourceId}`);
   if (active) throw inProgress(`Refresh ${active.id} of this worktree is ${active.state}, held by ${describeHolder(holderOf(active))}; only one refresh per worktree runs at a time.`,
     sourceId, active.id);
-  const members = (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id',
+  const members = (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id COLLATE "C"',
     [binding.worktree_id])).map(row => row.source_id);
   await assertNoUnfinishedSync(engine, members);
   if (classifyGitCheckout(root) === 'not_git') throw refusal('refresh_no_upstream',
@@ -536,7 +536,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
   const remote = (await read(['config', '--get', `branch.${branch}.remote`], 1)).stdout.trim();
   const merge = (await read(['config', '--get', `branch.${branch}.merge`], 1)).stdout.trim();
   const before = publishDiverged ? await upstreamBeforeFetch(read, (await engine.executeRaw<{ target_head: string }>(
-    `SELECT target_head FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid AND upstream_ref=$2 AND state='completed' ORDER BY created_at DESC LIMIT 100`,
+    `SELECT target_head FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid AND upstream_ref=$2 AND state='completed' ORDER BY created_at DESC, id LIMIT 100`,
     [binding.worktree_id, upstreamRef])).map(r => r.target_head)) : null;
   if (remote && remote !== '.') {
     const fetched = await git(['-C', root, '-c', 'core.logAllRefUpdates=true', 'fetch', '--no-tags', '--quiet', remote, merge || branch], fetchTimeoutMs);
@@ -665,7 +665,7 @@ async function assertNoUnfinishedSync(engine: BrainEngine, members: string[]): P
   const [cursor] = await engine.executeRaw<{ source_id: string; header: Record<string, unknown> }>(`SELECT c.completed_keys->0->>'sourceId' AS source_id,
     c.completed_keys->0 AS header
     FROM op_checkpoints c WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
-    AND c.completed_keys->0->>'sourceId'=ANY($1::text[]) ORDER BY c.updated_at LIMIT 1`, [members]);
+    AND c.completed_keys->0->>'sourceId'=ANY($1::text[]) ORDER BY c.updated_at, c.fingerprint COLLATE "C" LIMIT 1`, [members]);
   if (!cursor) return;
   const header = cursor.header as { processingOptions?: Record<string, boolean>; syncOptions?: Parameters<typeof checkpointRetryCommand>[0]['syncOptions'] };
   const resume = checkpointRetryCommand({ sourceId: cursor.source_id, processingOptions: header.processingOptions, syncOptions: header.syncOptions ?? null });
@@ -845,7 +845,7 @@ async function syncAfterUnfinishedRefresh(engine: BrainEngine, sourceId: string,
   if (!binding || binding.owner_host_id !== hostId || !binding.local_path) return NO_OWED_SYNC;
   const root = binding.local_path;
   const [newest] = await engine.executeRaw<Pick<WorktreeRefreshRow, 'state' | 'source_ids'>>(
-    'SELECT state,source_ids FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid ORDER BY created_at DESC LIMIT 1', [binding.worktree_id]);
+    'SELECT state,source_ids FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid ORDER BY created_at DESC, id LIMIT 1', [binding.worktree_id]);
   if (newest?.state !== 'aborted') return NO_OWED_SYNC;
   const head = await withGit(git => headOf(git, root));
   if (!head) return NO_OWED_SYNC;
@@ -1057,7 +1057,7 @@ async function lockTimeoutRefusal(engine: BrainEngine, sourceId: string, refresh
         AND EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.granted AND l.mode <> 'AccessShareLock'
           AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
           AND l.relation IN ('persistence_brain'::regclass, 'persistence_worktrees'::regclass, 'sources'::regclass, 'persistence_worktree_refreshes'::regclass))
-      ORDER BY a.xact_start LIMIT 5`));
+      ORDER BY a.xact_start, a.pid LIMIT 5`));
   const error = refusal('refresh_lock_timeout', `The refresh fence of source ${sourceId} waited past its 5 s lock timeout for a brain, worktree, source or refresh row another database transaction holds; nothing moved.`,
     `Retry gbrain sources refresh ${sourceId}. If it repeats, a transaction holding one of those rows is stuck: why lists the oldest candidates, which may not include it, so confirm the blocker on the brain host before ending any transaction.`, refreshId);
   error.why = holders === null ? 'The lookup of open transactions holding those rows failed or took longer than 3 s.'

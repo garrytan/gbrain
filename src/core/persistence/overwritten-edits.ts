@@ -94,6 +94,7 @@ export async function scanOverwrittenEdits(engine: Pick<BrainEngine, 'executeRaw
   const pageIds = [...new Set(rows.map(row => Number(row.page_id)))];
   const later = await engine.executeRaw<VersionRow>(`SELECT v.id, v.page_id, v.write_request_id::text AS write_request_id, ${CONTENT_COLUMNS('v')}, v.tags
     FROM page_versions v WHERE v.page_id = ANY($1::int[]) AND v.id > $2 ORDER BY v.id`, [pageIds, Math.min(...rows.map(row => Number(row.version_id)))]);
+  // The tag order never reaches output: overwriteContent sorts and de-duplicates the tags in JS before they are compared or shown.
   const live = await engine.executeRaw<LiveRow>(`SELECT p.id AS page_id, p.knowledge_revision::text AS revision, p.revision_write_request_id::text AS revision_write_request_id,
       ${CONTENT_COLUMNS('p')}, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
     FROM pages p WHERE p.id = ANY($1::int[])`, [pageIds]);

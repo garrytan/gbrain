@@ -82,7 +82,7 @@ describe('doctor source reads SQL text', () => {
 
   test('the roster members keep their text', async () => {
     expect(await recorded((raw) => listGuestSourceRows(raw))).toEqual([squash(
-      `SELECT s.id, s.local_path, s.config, g.writers, g.trust_ceiling AS ceiling FROM sources s LEFT JOIN guest_sources g ON g.source_id = s.id WHERE ${guestSourceSql('s.config', 's.id')} ORDER BY s.id`)]);
+      `SELECT s.id, s.local_path, s.config, g.writers, g.trust_ceiling AS ceiling FROM sources s LEFT JOIN guest_sources g ON g.source_id = s.id WHERE ${guestSourceSql('s.config', 's.id')} ORDER BY s.id COLLATE "C"`)]);
     expect(await recorded((raw) => listCheckoutRoots(raw, null))).toEqual([squash(
       `SELECT DISTINCT local_path AS root,id AS source_id FROM sources WHERE local_path IS NOT NULL AND NOT COALESCE(archived,false)
        UNION SELECT DISTINCT h.local_path,NULL FROM persistence_host_bindings h WHERE h.host_id=$1::uuid`)]);

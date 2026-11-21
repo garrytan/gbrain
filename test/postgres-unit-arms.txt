@@ -141,6 +141,14 @@ test/engine-parity/cli-capabilities.test.ts
 test/engine-parity/cli-reads-import.test.ts
 test/engine-parity/cli-reads-ops.test.ts
 test/engine-parity/code-eval-salience.test.ts
+test/engine-parity/collate-doctor-access.test.ts
+test/engine-parity/collate-doctor-persistence.test.ts
+test/engine-parity/collate-doctor.test.ts
+test/engine-parity/collate-engine-sql.test.ts
+test/engine-parity/collate-outputs.test.ts
+test/engine-parity/collate-persistence-a.test.ts
+test/engine-parity/collate-persistence-b.test.ts
+test/engine-parity/collate-ties.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/core-page-member-reads.test.ts
@@ -220,9 +228,9 @@ test/engine-parity/open-pages.test.ts
 test/engine-parity/owner-only-reads.test.ts
 test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/page-embedding-budget.test.ts
+test/engine-parity/page-purges.test.ts
 test/engine-parity/page-read-options.test.ts
 test/engine-parity/page-snapshot-alias.test.ts
-test/engine-parity/page-purges.test.ts
 test/engine-parity/page-visibility.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts
@@ -400,6 +408,7 @@ test/lane-apply-pipelining.test.ts
 test/large-pages/append-concurrency.test.ts
 test/large-pages/append-cost.test.ts
 test/large-pages/append-mention-links.test.ts
+test/large-pages/byte-order-slug-indexes.test.ts
 test/large-pages/chunk-retirement-plan.test.ts
 test/large-pages/chunk-visibility.test.ts
 test/large-pages/contextual-reembed-segmented.test.ts

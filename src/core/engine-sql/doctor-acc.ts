@@ -16,7 +16,7 @@ export type Row = Record<string, unknown>;
 
 /** Every source that holds folder access state, by id. */
 export async function listPolicySourceIds(raw: EngineRawRead): Promise<string[]> {
-  return (await raw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id')).map(r => r.source_id);
+  return (await raw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id COLLATE "C"')).map(r => r.source_id);
 }
 
 /** Whether the database role cannot read the folder access tables (row-level security hides them). */
@@ -61,12 +61,13 @@ export interface AttestCredentialRow { kind: 'token' | 'client'; id: string; nam
 /** Active tokens and live OAuth clients that carry an attest actor, as JSON rows (a client's secret hash left out). */
 export function listAttestCredentialRows(raw: EngineRawRead): Promise<AttestCredentialRow[]> {
   return raw<AttestCredentialRow>(
-    `SELECT 'token' AS kind, t.id::text AS id, t.name, to_jsonb(t) AS row FROM access_tokens t
+    `SELECT * FROM (
+       SELECT 'token' AS kind, t.id::text AS id, t.name, to_jsonb(t) AS row FROM access_tokens t
         WHERE t.revoked_at IS NULL AND to_jsonb(t)->>'attest_actor' IS NOT NULL
        UNION ALL
        SELECT 'client' AS kind, c.client_id AS id, COALESCE(c.client_name, c.client_id) AS name, to_jsonb(c) - 'client_secret_hash' AS row FROM oauth_clients c
         WHERE (to_jsonb(c)->>'deleted_at') IS NULL AND to_jsonb(c)->>'attest_actor' IS NOT NULL
-       ORDER BY 1, 3`);
+       ) u ORDER BY kind COLLATE "C", name COLLATE "C"`);
 }
 
 /** Active (not revoked) API tokens, oldest first. */
@@ -76,7 +77,7 @@ export function listActiveAccessTokenRows(raw: EngineRawRead): Promise<Row[]> {
 
 /** OAuth clients not deleted, by id. */
 export function listActiveOauthClientRows(raw: EngineRawRead): Promise<Row[]> {
-  return raw<Row>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id');
+  return raw<Row>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id COLLATE "C"');
 }
 
 export interface OauthClientAuthShape { client_id: string; method: string | null; hash: string | null }
@@ -100,7 +101,7 @@ export function listDanglingFederatedReads(raw: EngineRawRead): Promise<Dangling
          CROSS JOIN LATERAL unnest(c.federated_read) AS g(grant_id)
          LEFT JOIN sources s ON s.id = g.grant_id
         WHERE s.id IS NULL AND c.deleted_at IS NULL
-        ORDER BY c.client_id, g.grant_id`);
+        ORDER BY c.client_id COLLATE "C", g.grant_id COLLATE "C"`);
 }
 
 const ORPHAN_WORKSPACE_FACTS_SQL = `SELECT s.id
@@ -162,7 +163,7 @@ export async function listPrivilegedDcrClients(raw: EngineRawRead, scopeRegex: s
               SELECT 1 FROM oauth_grant_audit a
                WHERE a.client_id = c.client_id AND a.action = 'register'
             )
-          ORDER BY c.client_id`,
+          ORDER BY c.client_id COLLATE "C"`,
       [scopeRegex]);
   } catch (error) {
     if (!(isMissingSchemaObject(error, 'table', 'oauth_grant_audit') || isMissingSchemaObject(error, 'column', 'grant_revision'))) throw error;
@@ -490,12 +491,12 @@ const VOLUNTEER_SCOPED_SQL = `SELECT channel, count(*)::int AS n, max(volunteere
             WHERE source_id = ANY($1::text[])
               AND volunteered_at > now() - interval '7 days'
             GROUP BY channel
-            ORDER BY channel`;
+            ORDER BY channel COLLATE "C"`;
 const VOLUNTEER_ALL_SQL = `SELECT channel, count(*)::int AS n, max(volunteered_at) AS last_fired
              FROM context_volunteer_events
             WHERE volunteered_at > now() - interval '7 days'
             GROUP BY channel
-            ORDER BY channel`;
+            ORDER BY channel COLLATE "C"`;
 
 /** Context-volunteer events of the last 7 days per channel; `sourceIds` null reads the whole brain. */
 export function listVolunteerChannels(raw: EngineRawRead, sourceIds: readonly string[] | null): Promise<VolunteerChannelRow[]> {

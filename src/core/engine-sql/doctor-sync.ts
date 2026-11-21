@@ -116,7 +116,7 @@ const ORPHAN_CURSORS_SQL = `
       AND r.principal_kind=c.completed_keys->0->'authority'->'writer'->'principal'->>'kind'
     WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
       AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint`;
+    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint COLLATE "C"`;
 
 const ORPHAN_FAILURES_SQL = `
     SELECT f.fingerprint AS cursor_key,s.id AS source_id,s.incarnation::text AS source_incarnation,f.completed_keys->0->>'run_id' AS run_id,
@@ -125,7 +125,7 @@ const ORPHAN_FAILURES_SQL = `
     JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text=f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
     WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op IN ('managed-sync','managed-sync-pass') AND c.fingerprint=f.fingerprint)
-    ORDER BY s.id COLLATE "C",f.fingerprint`;
+    ORDER BY s.id COLLATE "C",f.fingerprint COLLATE "C"`;
 
 const ORPHAN_PASSES_SQL = `
     SELECT p.fingerprint AS cursor_key,s.id AS source_id,s.incarnation::text AS source_incarnation,p.completed_keys->0->'telemetry'->>'pass_id' AS run_id,
@@ -155,7 +155,7 @@ const ORPHAN_RETIRED_CURSORS_SQL = `
     LEFT JOIN persistence_requests r ON r.source_id=s.id AND r.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
     WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
       AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint`;
+    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint COLLATE "C"`;
 
 const ORPHAN_RETIRED_FAILURES_SQL = `
     SELECT f.fingerprint AS cursor_key,s.id AS source_id,f.completed_keys->0->>'source_incarnation' AS source_incarnation,f.completed_keys->0->>'run_id' AS run_id,
@@ -164,7 +164,7 @@ const ORPHAN_RETIRED_FAILURES_SQL = `
     JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text<>f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
     WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint AND COALESCE(c.completed_keys->0->>'done','false')<>'true')
-    ORDER BY s.id COLLATE "C",f.fingerprint`;
+    ORDER BY s.id COLLATE "C",f.fingerprint COLLATE "C"`;
 
 /** The unfinished managed-sync cursors of live source incarnations (`sourceIds` narrows; null reads every source). */
 export async function listManagedSyncCursorFailureRows(raw: EngineRawRead, sourceIds: readonly string[] | null): Promise<ManagedSyncCursorFailureRow[]> {

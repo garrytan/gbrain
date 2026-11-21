@@ -24,7 +24,7 @@ describe('doctor brain SQL text', () => {
   test('orphanConnectorCheckpoints: the statement its reader composed', () => {
     expect(STATEMENTS.orphanConnectorCheckpoints).toBe(`SELECT c.op, c.fingerprint, c.updated_at::text AS updated_at FROM op_checkpoints c
     WHERE c.op IN ('managed-connector','managed-connector-retry') AND ${orphanPredicate(2)}
-    ORDER BY c.op, c.fingerprint LIMIT $1`);
+    ORDER BY c.op COLLATE "C", c.fingerprint COLLATE "C" LIMIT $1`);
   });
 
   test('every member is listed once and the Rust member list knows it', () => {

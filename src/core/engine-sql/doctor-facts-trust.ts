@@ -45,7 +45,7 @@ const LIST_PERSISTENT_WRITER_CONTENTION_SQL = `SELECT l.source_id, COUNT(*)::int
                AND j.data->>'slug' = l.source_ref AND COALESCE(j.data->>'sourceId', 'default') = l.source_id)
         GROUP BY l.source_id
        HAVING COUNT(*) > 10 OR MIN(l.created_at) < now() - INTERVAL '1 hour'
-        ORDER BY l.source_id`;
+        ORDER BY l.source_id COLLATE "C"`;
 
 /**
  * Per source, the facts writes deferred before admission (`reason`) in the last 24 hours that no facts-absorb job for the same

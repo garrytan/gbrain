@@ -209,6 +209,12 @@ fn read_member(read: &dyn KvRead, id: &str) -> Result<Option<MemberRecord>> {
     get_json(read, &member_key(id))
 }
 
+/// `EXISTS (SELECT 1 FROM access_members WHERE id = $1 AND tombstoned_at IS NULL)`: a member
+/// with exactly this id that is not removed (a disabled member counts).
+pub(crate) fn member_not_removed(read: &dyn KvRead, id: &str) -> Result<bool> {
+    Ok(read_member(read, id)?.is_some_and(|m| m.tombstoned_at_us.is_none()))
+}
+
 /// The member that declares `email`, other than `except`.
 fn email_owner(read: &dyn KvRead, email: &str, except: &str) -> Result<Option<String>> {
     Ok(all_members(read)?

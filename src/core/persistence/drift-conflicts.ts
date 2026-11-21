@@ -328,17 +328,20 @@ export async function auditDriftConflicts(engine: BrainEngine, sourceId: string,
   report.totals.slugs = Number(totals?.slugs ?? 0);
   report.totals.receipts = Number(totals?.receipts ?? 0);
   params.push(cursor?.after ?? '', limit + 1, FILE_DRIFT_MESSAGE);
+  // Groups by the "C" expression so persistence_requests_source_slug_c (v333) feeds the grouping in byte order. The groups
+  // are the same as by the default collation: a deterministic collation calls two strings equal only when they are byte-equal.
   const rows = await engine.executeRaw<{ slug: string; receipts: number; drift_receipts: number; first_seen: string; last_seen: string; producers: string[]; last_request_id: string }>(
-    `SELECT r.slug, count(*)::int AS receipts, count(*) FILTER (WHERE r.error_message=$${params.length})::int AS drift_receipts,
+    `SELECT r.slug COLLATE "C" AS slug, count(*)::int AS receipts, count(*) FILTER (WHERE r.error_message=$${params.length})::int AS drift_receipts,
         to_char(min(r.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS first_seen,
         to_char(max(r.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen,
-        array_agg(DISTINCT r.operation || COALESCE(':' || (r.intent->>'kind'), '') ORDER BY r.operation || COALESCE(':' || (r.intent->>'kind'), '')) AS producers,
+        array_agg(DISTINCT (r.operation || COALESCE(':' || (r.intent->>'kind'), '')) COLLATE "C" ORDER BY (r.operation || COALESCE(':' || (r.intent->>'kind'), '')) COLLATE "C") AS producers,
         (array_agg(r.request_id::text ORDER BY r.sequence DESC))[1] AS last_request_id
-      FROM persistence_requests r WHERE ${filtered} AND r.slug > $${params.length - 2}
-      GROUP BY r.slug ORDER BY r.slug LIMIT $${params.length - 1}`, params);
+      FROM persistence_requests r WHERE ${filtered} AND r.slug COLLATE "C" > $${params.length - 2}
+      GROUP BY r.slug COLLATE "C" ORDER BY r.slug COLLATE "C" LIMIT $${params.length - 1}`, params);
   const page = rows.slice(0, limit);
   const slugs = page.map(row => row.slug);
   // The newest committed receipt per slug, read through the slug intent index (receipts within retention).
+  // The slug order never reaches output: DISTINCT ON keeps the highest sequence per slug and the rows are looked up by slug, which collation does not change.
   const committed = slugs.length ? await engine.executeRaw<{ slug: string; request_id: string; completed_at: string }>(
     `SELECT DISTINCT ON (r.slug) r.slug, r.request_id::text, to_char(r.completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS completed_at
        FROM persistence_requests r WHERE r.source_id=$1 AND r.slug=ANY($2::text[]) AND r.intent IS NOT NULL AND NOT r.compacted AND r.state='committed'

@@ -52,7 +52,7 @@ describe('doctor pages SQL text', () => {
 
   test('raw provenance: the count and the five-slug sample share the check predicate', () => {
     expect(DOCTOR_PAGES_SQL.rawProvenanceCount).toBe(`SELECT COUNT(*)::int AS n FROM pages p WHERE ${RAW_PROVENANCE_WHERE}`);
-    expect(DOCTOR_PAGES_SQL.rawProvenanceSample).toBe(`SELECT p.slug FROM pages p WHERE ${RAW_PROVENANCE_WHERE} ORDER BY p.slug LIMIT 5`);
+    expect(DOCTOR_PAGES_SQL.rawProvenanceSample).toBe(`SELECT p.slug FROM pages p WHERE ${RAW_PROVENANCE_WHERE} ORDER BY p.slug COLLATE "C" LIMIT 5`);
   });
 
   test('unverified extractions: the fragment and the day cutoff, with and without a source', () => {
@@ -63,7 +63,7 @@ describe('doctor pages SQL text', () => {
   test('transcript pages and facts bodies use the shared predicate and prefix builders', () => {
     expect(DOCTOR_PAGES_SQL.transcriptImportPages).toBe(`SELECT count(*) AS n FROM pages WHERE ${TRANSCRIPT_PAGE_PREDICATE}`);
     expect<string>(DOCTOR_PAGES_SQL.factsPageBodies).toBe(`SELECT p.slug, p.source_id, p.body_storage = 'segmented' AS segmented, ${boundedBodyPrefixSql('p')} AS body
-         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id, p.slug`);
+         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`);
   });
 
   test('slug-path candidates: the scan limit plus one, with and without a source scope', () => {
@@ -97,7 +97,7 @@ describe('doctor pages SQL text', () => {
     expect(DOCTOR_PAGES_SQL.oversizedCorePages).toBe(`SELECT COUNT(*)::int AS n FROM pages p
     WHERE p.deleted_at IS NULL AND p.frontmatter @> '{"always_load": true}'::jsonb AND p.body_storage = 'segmented' AND p.body_bytes > $1`);
     expect(DOCTOR_PAGES_SQL.contentHashDuplicates).toBe(`SELECT source_id, content_hash,
-              string_agg(slug, '|' ORDER BY length(slug), slug) AS slugs
+              string_agg(slug, '|' ORDER BY length(slug), slug COLLATE "C") AS slugs
          FROM pages
         WHERE deleted_at IS NULL AND content_hash IS NOT NULL AND content_hash <> ''
         GROUP BY source_id, content_hash

@@ -5907,7 +5907,7 @@
       "searchTakesVector": {
         "default": [
           {
-            "paramCount": 5,
+            "paramCount": 6,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -5918,7 +5918,7 @@
         ],
         "sourceId": [
           {
-            "paramCount": 6,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -5929,7 +5929,7 @@
         ],
         "sourceIds+excludePrivate": [
           {
-            "paramCount": 6,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

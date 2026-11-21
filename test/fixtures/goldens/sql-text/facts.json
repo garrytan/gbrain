@@ -134,8 +134,8 @@
               "array<string>",
               "number"
             ],
-            "sql": "SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND embedding IS NOT NULL AND embedding_model=$3 AND embedded_text_hash=md5(fact) AND vector_dims(embedding)=$4 AND source != ALL($5::text[]) ORDER BY embedding <=> '[0.10000000149011612,0.20000000298023224,0.30000001192092896]'::vector LIMIT $6",
-            "textSha256": "71fc68c3afb198e4398f9b82ed2fef9ae7aec1d80e22224ff71df9962731ceda"
+            "sql": "SELECT * FROM ( SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND embedding IS NOT NULL AND embedding_model=$3 AND embedded_text_hash=md5(fact) AND vector_dims(embedding)=$4 AND source != ALL($5::text[]) ORDER BY embedding <=> '[0.10000000149011612,0.20000000298023224,0.30000001192092896]'::vector LIMIT $6 ) q ORDER BY q.embedding <=> '[0.10000000149011612,0.20000000298023224,0.30000001192092896]'::vector, q.id",
+            "textSha256": "b8a3b22bee942284c3934a413385df9901b5a0b7357af04c79643c499b7cdc53"
           }
         ]
       },
@@ -220,8 +220,8 @@
             "params": [
               "string"
             ],
-            "sql": "SELECT entity_slug, COUNT(*) AS count FROM facts WHERE source_id = $1 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND entity_slug IS NOT NULL GROUP BY entity_slug ORDER BY count DESC, entity_slug ASC LIMIT 5",
-            "textSha256": "56ace3adda95f31651b31273eada0bfb579bc1f3e21bfbf5488f69e3cac9d6e6"
+            "sql": "SELECT entity_slug, COUNT(*) AS count FROM facts WHERE source_id = $1 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND entity_slug IS NOT NULL GROUP BY entity_slug ORDER BY count DESC, entity_slug COLLATE \"C\" ASC LIMIT 5",
+            "textSha256": "3a1c97bbf09704a8ef7a35086bbeb58e6f8a95f426ed41768e994817b369b1f8"
           }
         ]
       },

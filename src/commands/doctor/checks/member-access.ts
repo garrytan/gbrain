@@ -36,7 +36,7 @@ async function malformed(engine: BrainEngine): Promise<Check> {
   const rows = await engine.executeRaw<PageRef & { total: number }>(
     `SELECT source_id, slug, count(*) OVER ()::int AS total FROM pages
       WHERE deleted_at IS NULL AND frontmatter->'readable_by' IS NOT NULL AND gbrain_access_readers(frontmatter) = ARRAY['!nobody']::text[]
-      ORDER BY source_id, slug LIMIT ${SAMPLE}`);
+      ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT ${SAMPLE}`);
   const total = rows[0]?.total ?? 0;
   if (!total) return { name, status: 'ok', message: 'Every page that names readers names them validly.', details: { count: 0 } };
   return { name, status: 'warn', details: { count: total, samples: rows.map(ref), truncated: total > rows.length },
@@ -58,8 +58,8 @@ async function unknownReaders(engine: BrainEngine): Promise<Check> {
          ELSE (SELECT CASE WHEN g.id IS NULL THEN 'unknown' WHEN NOT EXISTS (SELECT 1 FROM access_group_members gm WHERE gm.group_id = g.id) THEN 'empty_group' END
            FROM (SELECT 1) one LEFT JOIN access_groups g ON g.id = substr(n.reader, 7)) END AS kind
        FROM named n)
-     SELECT reader, kind, count(*)::int AS pages, jsonb_build_object('source_id', min(source_id), 'slug', min(slug)) AS sample
-       FROM classified WHERE kind IS NOT NULL GROUP BY reader, kind ORDER BY kind, reader LIMIT ${SAMPLE}`);
+     SELECT reader, kind, count(*)::int AS pages, (array_agg(jsonb_build_object('source_id', source_id, 'slug', slug) ORDER BY source_id COLLATE "C", slug COLLATE "C"))[1] AS sample
+       FROM classified WHERE kind IS NOT NULL GROUP BY reader, kind ORDER BY kind COLLATE "C", reader COLLATE "C" LIMIT ${SAMPLE}`);
   const unknown = rows.filter(r => r.kind !== 'empty_group');
   const empty = rows.filter(r => r.kind === 'empty_group');
   const details = { unknown: unknown.map(r => ({ reader: r.reader, kind: r.kind, pages: r.pages, sample: ref(r.sample) })),
@@ -87,7 +87,7 @@ async function recentNarrowings(engine: BrainEngine): Promise<Check> {
        JOIN LATERAL (SELECT v.frontmatter FROM page_versions v WHERE v.page_id = p.id ORDER BY v.snapshot_at DESC, v.id DESC LIMIT 1) prev ON true
       WHERE p.deleted_at IS NULL AND p.frontmatter->'readable_by' IS NOT NULL AND prev.frontmatter->'readable_by' IS NULL
         AND p.updated_at > now() - make_interval(days => ${NARROWING_DAYS})
-      ORDER BY p.updated_at DESC LIMIT ${SAMPLE}`);
+      ORDER BY p.updated_at DESC, p.id LIMIT ${SAMPLE}`);
   const total = rows[0]?.total ?? 0;
   const details = { count: total, window_days: NARROWING_DAYS, narrowings: rows.map(r => ({ page: ref(r), readers: r.readers, writer: r.writer ?? 'unrecorded', at: r.updated_at })), truncated: total > rows.length };
   if (!total) return { name, status: 'ok', details, message: `No page gained readers in the last ${NARROWING_DAYS} days.` };

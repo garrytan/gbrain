@@ -103,7 +103,9 @@ const READ_TERMINAL_FAILURE_GROUPS_SQL = `WITH base AS (
       (array_agg(slug ORDER BY sequence) FILTER (WHERE has_recovery))[1:20] AS recovery_slugs
     FROM tagged
     GROUP BY GROUPING SETS ((source_id, state, error_code, origin, reason, cause, operation, intent_kind, has_recovery, blocked_reason, compacted, knock_on, routed_message, build, resolved), (source_id))
-    ORDER BY source_id`;
+    -- Every group key, text by byte: a source's blockers, defects and tied categories list the same way on every engine and locale.
+    ORDER BY source_id COLLATE "C", 1, state COLLATE "C", error_code COLLATE "C", origin COLLATE "C", reason COLLATE "C", cause COLLATE "C", operation COLLATE "C",
+      intent_kind COLLATE "C", has_recovery, blocked_reason COLLATE "C", compacted, knock_on, routed_message COLLATE "C", build COLLATE "C", resolved`;
 
 const LIST_TERMINAL_FAILURE_BATCH_SQL = `SELECT r.request_id::text AS request_id, r.sequence::text AS sequence, r.source_id, r.slug, r.operation, r.intent_kind, r.state, r.error_code, r.error_detail,
           r.error_detail->>'origin' AS origin, r.error_detail->>'reason' AS reason, r.error_detail->>'cause' AS cause,

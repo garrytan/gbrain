@@ -535,6 +535,7 @@ export async function readSegmentDerivations(exec: LegacyUnscopedRead, pageId: n
   if (opts.occurrenceIds !== undefined && opts.occurrenceIds.length === 0) return [];
   const kind = opts.kind !== undefined ? sqlFragment`AND d.pipeline = ${opts.kind}` : sqlFragment``;
   const occurrences = opts.occurrenceIds !== undefined ? sqlFragment`AND d.occurrence_id = ANY(${[...opts.occurrenceIds]}::bigint[])` : sqlFragment``;
+  // The row order never reaches output: every caller filters to one derivation kind and reads the rows as a keyed lookup, so occurrence_id alone orders them.
   const { rows } = await exec.run<Record<string, unknown>>(sqlFragment`
     SELECT d.page_id, d.pipeline, d.occurrence_id, d.pipeline_version, d.segment_sha256, d.context_hash, d.state, d.output, d.receipt,
            to_char(d.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,

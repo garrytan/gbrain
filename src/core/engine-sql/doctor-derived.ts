@@ -60,7 +60,7 @@ const PRIVACY_LABEL_SQL = `WITH hits AS (SELECT p.frontmatter FROM pages p
        FROM hits p CROSS JOIN LATERAL (VALUES ('access', p.frontmatter->>'access', jsonb_typeof(p.frontmatter->'access') = 'string'), ('confidentiality', p.frontmatter->>'confidentiality', jsonb_typeof(p.frontmatter->'confidentiality') = 'string')) AS l(key, raw, is_string)
        WHERE NULLIF(btrim(l.raw, (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)), '') IS NOT NULL
        GROUP BY l.key, l.raw, l.is_string
-       ORDER BY pages DESC, l.key, l.raw
+       ORDER BY pages DESC, l.key COLLATE "C", l.raw COLLATE "C", l.is_string
        LIMIT 50`;
 const PRIVACY_LABEL_SCOPED_SQL = `WITH hits AS (SELECT p.frontmatter FROM pages p
           WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[])
@@ -75,7 +75,7 @@ const PRIVACY_LABEL_SCOPED_SQL = `WITH hits AS (SELECT p.frontmatter FROM pages 
        FROM hits p CROSS JOIN LATERAL (VALUES ('access', p.frontmatter->>'access', jsonb_typeof(p.frontmatter->'access') = 'string'), ('confidentiality', p.frontmatter->>'confidentiality', jsonb_typeof(p.frontmatter->'confidentiality') = 'string')) AS l(key, raw, is_string)
        WHERE NULLIF(btrim(l.raw, (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)), '') IS NOT NULL
        GROUP BY l.key, l.raw, l.is_string
-       ORDER BY pages DESC, l.key, l.raw
+       ORDER BY pages DESC, l.key COLLATE "C", l.raw COLLATE "C", l.is_string
        LIMIT 50`;
 
 /** The ignored-privacy-label values of live pages by key (at most 50), scanning at most 100001 pages; `sourceIds` narrows it. */
@@ -138,12 +138,12 @@ const PAGE_TYPE_OWNER_SQL = `SELECT COALESCE(p.source_id, 'default') AS src, p.t
          FROM pages p
         WHERE p.deleted_at IS NULL
         GROUP BY p.source_id, p.type, own
-        ORDER BY p.source_id`;
+        ORDER BY p.source_id COLLATE "C"`;
 const PAGE_TYPE_OWNER_SCOPED_SQL = `SELECT COALESCE(p.source_id, 'default') AS src, p.type, ((p.type = 'code' AND p.page_kind = 'code') OR (p.type = 'extract_receipt' AND p.slug LIKE 'extracts/%' AND p.frontmatter->>'dream_generated' = 'true')) AS own, COUNT(*)::text AS n
          FROM pages p
         WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[])
         GROUP BY p.source_id, p.type, own
-        ORDER BY p.source_id`;
+        ORDER BY p.source_id COLLATE "C"`;
 
 /** Live pages per source and stored type, split by whether gbrain's own writers wrote them (`n` is text). */
 export function countPagesByTypeAndOwner(raw: EngineRawRead, sourceIds?: string[]): Promise<PageTypeOwnerRow[]> {
@@ -169,7 +169,7 @@ const RECORDED_TOMBSTONES_SQL = `SELECT p.id, p.source_id, p.slug,
          AND (true)
     ), latest AS (
       SELECT DISTINCT ON (source_id, okey) source_id, okey, hash FROM retired WHERE okey IS NOT NULL
-       ORDER BY source_id, okey, retired_at DESC NULLS LAST, id DESC
+       ORDER BY source_id, okey, retired_at COLLATE "C" DESC NULLS LAST, id DESC
     ), live AS (
       SELECT p.source_id, CASE WHEN NULLIF(p.frontmatter->>'source_slug','') IS NOT NULL THEN 'slug:'||(p.frontmatter->>'source_slug')
       WHEN NULLIF(p.frontmatter->>'source_path','') IS NOT NULL THEN 'path:'||(p.frontmatter->>'source_path') END AS okey, array_agg(DISTINCT regexp_replace(COALESCE(p.frontmatter->>'source_hash',''),'^pending:','')) AS hashes
@@ -192,7 +192,7 @@ const RECORDED_TOMBSTONES_SQL = `SELECT p.id, p.source_id, p.slug,
     AND p.deleted_at > now() - interval '1 day' * (SELECT COALESCE(MAX(CASE WHEN c.value ~ '^[0-9]{1,3}$' THEN CASE WHEN c.value::int BETWEEN 3 AND 365
   THEN c.value::int END END), 30) FROM config c WHERE c.key = 'generations.restore_days')) AND (NOT EXISTS (SELECT 1 FROM op_checkpoints dop WHERE dop.op = 'derived-origin-park' AND dop.fingerprint = p.id::text) OR p.id = ANY($2::int[]))
       AND EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = p.source_id AND e.subject_kind = 'coverage')
-    ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`;
+    ORDER BY p.deleted_at ASC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC`;
 
 /** Expired tombstones of a source the belief ledger records, in scan order (`hours` is the retention text, `released` the origins to purge anyway). */
 export function listRecordedTombstones(raw: EngineRawRead, hours: string, released: readonly number[]): Promise<RecordedTombstoneRow[]> {
@@ -390,7 +390,7 @@ export interface ExtractionReceiptRow { pipeline: string; kind: string; pages: n
 const AMBIGUOUS_EXTRACTION_SQL = `SELECT p.source_id || ':' || p.slug AS page, s.input_truncated->'grammars' AS grammars, count(*) OVER ()::int AS total
          FROM page_extraction_state s JOIN pages p ON p.id = s.page_id AND p.deleted_at IS NULL
         WHERE s.pipeline = 'conversation_facts' AND s.input_truncated->>'kind' = 'detection_ambiguous'
-        ORDER BY s.updated_at DESC LIMIT 20`;
+        ORDER BY s.updated_at DESC, s.page_id LIMIT 20`;
 
 /** The conversation pages held for an undetected format (at most 20, newest first), with the total. */
 export function listAmbiguousExtractionInputs(raw: EngineRawRead): Promise<AmbiguousExtractionRow[]> {
@@ -411,7 +411,7 @@ const EXTRACTION_RECEIPTS_SQL = `WITH receipts AS (
        SELECT r.pipeline, r.kind, count(DISTINCT r.page_id)::int AS pages,
               (array_agg(p.source_id || ':' || p.slug || COALESCE(r.detail, '') ORDER BY r.updated_at DESC))[1:3] AS samples
          FROM receipts r JOIN pages p ON p.id = r.page_id AND p.deleted_at IS NULL
-        GROUP BY 1, 2 ORDER BY 1, 2`;
+        GROUP BY 1, 2 ORDER BY r.pipeline COLLATE "C", r.kind COLLATE "C"`;
 
 /** The page extraction receipts that read only part of their input, by pipeline and kind. */
 export function listExtractionInputReceipts(raw: EngineRawRead): Promise<ExtractionReceiptRow[]> {
@@ -420,11 +420,11 @@ export function listExtractionInputReceipts(raw: EngineRawRead): Promise<Extract
 
 export interface UnpricedModelRow { model: string; pipelines: string[]; pages: number; samples: string[] }
 
-const UNPRICED_MODELS_SQL = `SELECT d.receipt->>'model' AS model, array_agg(DISTINCT d.pipeline ORDER BY d.pipeline) AS pipelines, count(DISTINCT d.page_id)::int AS pages,
-              (array_agg(DISTINCT p.source_id || ':' || p.slug))[1:3] AS samples
+const UNPRICED_MODELS_SQL = `SELECT d.receipt->>'model' AS model, array_agg(DISTINCT d.pipeline COLLATE "C" ORDER BY d.pipeline COLLATE "C") AS pipelines, count(DISTINCT d.page_id)::int AS pages,
+              (array_agg(DISTINCT (p.source_id || ':' || p.slug) COLLATE "C" ORDER BY (p.source_id || ':' || p.slug) COLLATE "C"))[1:3] AS samples
          FROM page_segment_derivations d JOIN pages p ON p.id = d.page_id AND p.deleted_at IS NULL
         WHERE (d.receipt->>'kind' = 'unpriced_model' OR d.receipt->>'reason' = 'unpriced_model') AND d.receipt->>'model' IS NOT NULL
-        GROUP BY 1 ORDER BY 3 DESC, 1`;
+        GROUP BY 1 ORDER BY 3 DESC, (d.receipt->>'model') COLLATE "C"`;
 
 /** The models whose derivation receipts say they had no price, with their pipelines and pages. */
 export function listUnpricedDerivationModels(raw: EngineRawRead): Promise<UnpricedModelRow[]> {
@@ -449,7 +449,7 @@ const ATOM_RETIREMENTS_SQL = `
          AND (p.source_id=ANY($1::text[]))
     ), latest AS (
       SELECT DISTINCT ON (source_id, okey) source_id, okey, hash FROM retired WHERE okey IS NOT NULL
-       ORDER BY source_id, okey, retired_at DESC NULLS LAST, id DESC
+       ORDER BY source_id, okey, retired_at COLLATE "C" DESC NULLS LAST, id DESC
     ), live AS (
       SELECT p.source_id, CASE WHEN NULLIF(p.frontmatter->>'source_slug','') IS NOT NULL THEN 'slug:'||(p.frontmatter->>'source_slug')
       WHEN NULLIF(p.frontmatter->>'source_path','') IS NOT NULL THEN 'path:'||(p.frontmatter->>'source_path') END AS okey, array_agg(DISTINCT regexp_replace(COALESCE(p.frontmatter->>'source_hash',''),'^pending:','')) AS hashes
@@ -469,7 +469,7 @@ const ATOM_RETIREMENTS_SQL = `
       LEFT JOIN pages o ON o.source_id=r.source_id AND o.slug=r.origin_slug AND o.deleted_at IS NULL
       LEFT JOIN live lv ON lv.source_id=r.source_id AND lv.okey=r.okey
       LEFT JOIN latest l ON l.source_id=r.source_id AND l.okey=r.okey) c JOIN pages p ON p.id=c.id
-       WHERE c.restorable AND c.ledger_generation IS NULL GROUP BY p.source_id ORDER BY p.source_id`;
+       WHERE c.restorable AND c.ledger_generation IS NULL GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`;
 const ATOM_RETIREMENTS_COVERED_SQL = `SELECT count(*)::int AS count FROM (WITH retired AS (
       SELECT p.id, p.source_id, p.slug, CASE WHEN NULLIF(p.frontmatter->>'source_slug','') IS NOT NULL THEN 'slug:'||(p.frontmatter->>'source_slug')
       WHEN NULLIF(p.frontmatter->>'source_path','') IS NOT NULL THEN 'path:'||(p.frontmatter->>'source_path') END AS okey, NULLIF(p.frontmatter->>'source_slug','') AS origin_slug,
@@ -480,7 +480,7 @@ const ATOM_RETIREMENTS_COVERED_SQL = `SELECT count(*)::int AS count FROM (WITH r
          AND (p.source_id=ANY($1::text[]))
     ), latest AS (
       SELECT DISTINCT ON (source_id, okey) source_id, okey, hash FROM retired WHERE okey IS NOT NULL
-       ORDER BY source_id, okey, retired_at DESC NULLS LAST, id DESC
+       ORDER BY source_id, okey, retired_at COLLATE "C" DESC NULLS LAST, id DESC
     ), live AS (
       SELECT p.source_id, CASE WHEN NULLIF(p.frontmatter->>'source_slug','') IS NOT NULL THEN 'slug:'||(p.frontmatter->>'source_slug')
       WHEN NULLIF(p.frontmatter->>'source_path','') IS NOT NULL THEN 'path:'||(p.frontmatter->>'source_path') END AS okey, array_agg(DISTINCT regexp_replace(COALESCE(p.frontmatter->>'source_hash',''),'^pending:','')) AS hashes
@@ -522,11 +522,11 @@ const GENERATION_RETIREMENTS_SQL = `
       SELECT g.source_id, g.kind, count(DISTINCT g.id)::int AS keys, count(*)::int AS items, min(g.created_at)::text AS oldest
         FROM derived_generations g JOIN derived_generation_items i ON i.generation_id=g.id AND i.action='retired'
        WHERE g.source_id=ANY($1::text[]) AND g.state='live' AND g.created_at >= now() - interval '1 day' * $2
-       GROUP BY g.source_id, g.kind ORDER BY g.source_id, g.kind`;
+       GROUP BY g.source_id, g.kind ORDER BY g.source_id COLLATE "C", g.kind COLLATE "C"`;
 const HELD_GENERATIONS_SQL = `
       SELECT source_id, kind, held_reason, count(*)::int AS count, min(created_at)::text AS oldest
         FROM derived_generations WHERE source_id=ANY($1::text[]) AND state='held'
-       GROUP BY source_id, kind, held_reason ORDER BY source_id, kind, held_reason`;
+       GROUP BY source_id, kind, held_reason ORDER BY source_id COLLATE "C", kind COLLATE "C", held_reason COLLATE "C"`;
 const ORPHAN_GENERATION_CANDIDATES_SQL = `SELECT a.source_id, a.kind, a.owner_key, a.id AS activation_id, m->>'slug' AS slug, a.created_at::text AS created_at
        FROM derived_generation_activations a CROSS JOIN LATERAL jsonb_array_elements(a.members) m
       WHERE a.state='pending' AND a.source_id=ANY($1::text[]) AND ($2::text IS NULL OR a.kind=$2) AND m->>'action'='create'
@@ -674,7 +674,7 @@ const EXTRACT_ROLLUP_SQL = `SELECT
        FROM extract_rollup_7d
        WHERE day >= CURRENT_DATE - 7
        GROUP BY kind
-       ORDER BY kind`;
+       ORDER BY kind COLLATE "C"`;
 const EXTRACT_ROLLUP_NO_EXPECTED_SQL = `SELECT
          kind,
          SUM(cost_usd) AS cost_7d_usd,
@@ -689,7 +689,7 @@ const EXTRACT_ROLLUP_NO_EXPECTED_SQL = `SELECT
        FROM extract_rollup_7d
        WHERE day >= CURRENT_DATE - 7
        GROUP BY kind
-       ORDER BY kind`;
+       ORDER BY kind COLLATE "C"`;
 
 /** The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text for a brain without `expected_limit_count`. */
 export function readExtractRollup7d(raw: EngineRawRead, withExpected: boolean): Promise<ExtractRollupRow[]> {

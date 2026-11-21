@@ -37,7 +37,9 @@ export function composeTerminalGroupsSql(): string {
       (array_agg(slug ORDER BY sequence) FILTER (WHERE has_recovery))[1:20] AS recovery_slugs
     FROM tagged
     GROUP BY GROUPING SETS ((source_id, state, error_code, origin, reason, cause, operation, intent_kind, has_recovery, blocked_reason, compacted, knock_on, routed_message, build, resolved), (source_id))
-    ORDER BY source_id`;
+    -- Every group key, text by byte: a source's blockers, defects and tied categories list the same way on every engine and locale.
+    ORDER BY source_id COLLATE "C", 1, state COLLATE "C", error_code COLLATE "C", origin COLLATE "C", reason COLLATE "C", cause COLLATE "C", operation COLLATE "C",
+      intent_kind COLLATE "C", has_recovery, blocked_reason COLLATE "C", compacted, knock_on, routed_message COLLATE "C", build COLLATE "C", resolved`;
 }
 
 /** One batch of a source's receipts (`$1` the source, `$2` the window in days, `$3` the cursor, `$4` the batch size). */

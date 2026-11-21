@@ -83,7 +83,7 @@ export async function listFenceCandidateRecords(raw: EngineRawRead, op: string, 
   return rows.map(row => row.record);
 }
 
-export const LIST_DERIVED_ORIGIN_PARKS_SQL = `SELECT o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL) ORDER BY o.updated_at, o.fingerprint`;
+export const LIST_DERIVED_ORIGIN_PARKS_SQL = `SELECT o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL) ORDER BY o.updated_at, o.fingerprint COLLATE "C"`;
 
 /** Every derived-origin park whose page is still a tombstone, oldest first. */
 export async function listDerivedOriginParks(raw: EngineRawRead, op: string): Promise<DerivedOriginPark[]> {
@@ -92,7 +92,7 @@ export async function listDerivedOriginParks(raw: EngineRawRead, op: string): Pr
 }
 
 export const LIST_PURGE_PARKS_SQL = `SELECT o.fingerprint, o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id=o.completed_keys->0->>'source_id' AND p.slug=o.completed_keys->0->>'slug'
-  AND p.deleted_at IS NOT NULL AND floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text=o.completed_keys->0->>'deleted_us') ORDER BY o.fingerprint`;
+  AND p.deleted_at IS NOT NULL AND floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text=o.completed_keys->0->>'deleted_us') ORDER BY o.fingerprint COLLATE "C"`;
 
 /** Every purge-failure record whose tombstone still exists as recorded, by fingerprint. */
 export async function listPurgeParks(raw: EngineRawRead, op: string): Promise<PurgeParkRow[]> {
@@ -241,7 +241,7 @@ const LIST_FACTS_ABSORB_FAILURE_GROUPS_SQL = `SELECT
        WHERE source_type = 'facts:absorb'
          AND created_at >= now() - INTERVAL '24 hours'
        GROUP BY source_id, split_part(summary, ':', 1)
-       ORDER BY source_id, COUNT(*) DESC`;
+       ORDER BY source_id COLLATE "C", COUNT(*) DESC`;
 
 /** The `facts:absorb` ingest rows of the last 24 hours grouped by source and reason (the first `:` field of the summary), by source then count. */
 export async function listFactsAbsorbFailureGroups(raw: EngineRawRead): Promise<FactsAbsorbFailureGroup[]> {

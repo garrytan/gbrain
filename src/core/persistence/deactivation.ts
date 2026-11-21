@@ -115,7 +115,7 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
           : `gbrain sync --source ${r.source_id} --no-pull` });
   }
   const topology = await engine.executeRaw<{ id: string; operation: string; source_id: string; request_id: string; admission: boolean; automatic: boolean }>(
-    "SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state='recovering' AND recovery IS NULL) AS admission, COALESCE(outcome->>'expired_only','false')='true' AS automatic FROM persistence_topology_changes WHERE state='recovering' OR recovery IS NOT NULL ORDER BY created_at LIMIT 20");
+    "SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state='recovering' AND recovery IS NULL) AS admission, COALESCE(outcome->>'expired_only','false')='true' AS automatic FROM persistence_topology_changes WHERE state='recovering' OR recovery IS NOT NULL ORDER BY created_at, id LIMIT 20");
   for (const t of topology) blockers.push({ kind: 'topology_recovery', id: t.id, source_id: t.source_id,
     detail: !t.admission ? `${t.operation} for ${t.source_id} is recovering`
       : `${t.automatic ? 'automatic expired-archive purge' : t.operation} of ${t.source_id} (request ${t.request_id}) stopped before it finished`,
@@ -148,7 +148,7 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
         : carry.state_file ? `move ${carry.state_file} aside, then rerun deactivate; or ${resolve}` : resolve });
   }
   const leases = await engine.executeRaw<{ id: string; holder_host: string; holder_pid: number }>(
-    `SELECT id, holder_host, holder_pid FROM gbrain_cycle_locks WHERE ttl_expires_at > now() AND ${NOT_PAGE_EMBEDDING_LEASE} ORDER BY id`);
+    `SELECT id, holder_host, holder_pid FROM gbrain_cycle_locks WHERE ttl_expires_at > now() AND ${NOT_PAGE_EMBEDDING_LEASE} ORDER BY id COLLATE "C"`);
   for (const l of leases) blockers.push({ kind: 'lease', id: l.id, detail: `held by host ${l.holder_host}, pid ${l.holder_pid}`,
     exit: 'wait for that connector sync or maintenance run to finish (gbrain doctor shows live locks), then rerun deactivate' });
   return blockers;
@@ -189,7 +189,7 @@ export async function failedEffectHistory(engine: BrainEngine): Promise<FailedEf
 export async function physicalRootBlockers(engine: BrainEngine, mode: 'managed' | 'classic'): Promise<DeactivationBlocker[]> {
   const hostId = existingHostIdFor(engine);
   const sources = mode === 'managed'
-    ? await engine.executeRaw<{ id: string }>('SELECT source_id AS id FROM persistence_source_bindings ORDER BY source_id')
+    ? await engine.executeRaw<{ id: string }>('SELECT source_id AS id FROM persistence_source_bindings ORDER BY source_id COLLATE "C"')
     : (await preActivationClaims(engine)).map(claim => ({ id: claim.source_id }));
   const blockers: DeactivationBlocker[] = [];
   const seen = new Set<string>();
@@ -222,7 +222,7 @@ function blockedError(blockers: DeactivationBlocker[]): OperationError {
 
 async function retiredTopology(engine: BrainEngine): Promise<{ worktrees: Array<{ id: string; roots: string[] }>; bindings: number }> {
   const rows = await engine.executeRaw<{ id: string; root: string | null }>(`SELECT w.id::text AS id, h.local_path AS root FROM persistence_worktrees w
-      LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id WHERE w.state<>'retired' ORDER BY w.id, h.local_path`);
+      LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id WHERE w.state<>'retired' ORDER BY w.id, h.local_path COLLATE "C"`);
   const worktrees = new Map<string, string[]>();
   for (const row of rows) {
     const roots = worktrees.get(row.id) ?? [];
@@ -272,6 +272,7 @@ export async function deactivatePersistence(engine: BrainEngine, opts: { dryRun?
   let report: DeactivationReport;
   try {
     // Native worktree locks precede the transaction, as in activation.
+    // The source order never reaches output: it only sets the order bindings are read in, and the locks below are taken in worktree_id order after a JS sort.
     const sources = await engine.executeRaw<{ id: string }>('SELECT source_id AS id FROM persistence_source_bindings ORDER BY source_id');
     const local = new Map<string, Awaited<ReturnType<typeof getWorktreeBinding>>>();
     for (const { id } of sources) {

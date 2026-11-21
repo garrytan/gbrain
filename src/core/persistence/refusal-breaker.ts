@@ -39,7 +39,7 @@ async function priorRefusals(engine: BrainEngine, input: { principal: Principal;
     FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent IS NOT NULL AND NOT compacted AND digest=$3
       AND principal_kind=$4 AND principal_id=$5 AND state IN ('failed','conflict') AND error_code IS NOT NULL
       AND completed_at > now()-($6::double precision*interval '1 hour')
-    GROUP BY error_code ORDER BY count(*) DESC LIMIT 1`, [input.sourceId, input.slug, input.digest, input.principal.kind, input.principal.id, REFUSAL_BREAKER_WINDOW_HOURS]);
+    GROUP BY error_code ORDER BY count(*) DESC, error_code COLLATE "C" LIMIT 1`, [input.sourceId, input.slug, input.digest, input.principal.kind, input.principal.id, REFUSAL_BREAKER_WINDOW_HOURS]);
   return row ? { count: Number(row.count), error_code: row.error_code, request_id: row.request_id, detail_origin: row.detail_origin } : null;
 }
 

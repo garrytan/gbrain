@@ -36,8 +36,8 @@ export async function readPageOrigin(exec: LegacyUnscopedRead, target: PageOrigi
  * pages of `sourceId`, other than page `excludePageId`, whose origin is one of `spellings`, in slug order. On Windows
  * a stored origin is compared with `\` read as `/` and case folded, as the caller folds `spellings`.
  */
-const ORIGIN_CLAIMS_SQL = 'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path=ANY($2::text[]) AND id<>$3 ORDER BY slug';
-const ORIGIN_CLAIMS_WIN32_SQL = "SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND lower(replace(source_path,chr(92),'/'))=ANY($2::text[]) AND id<>$3 ORDER BY slug";
+const ORIGIN_CLAIMS_SQL = 'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path=ANY($2::text[]) AND id<>$3 ORDER BY slug COLLATE "C"';
+const ORIGIN_CLAIMS_WIN32_SQL = "SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND lower(replace(source_path,chr(92),'/'))=ANY($2::text[]) AND id<>$3 ORDER BY slug COLLATE \"C\"";
 
 export async function listOriginClaims(exec: SqlExecutor, sourceId: string, spellings: readonly string[],
   opts: { lockKeys: readonly string[]; excludePageId?: number | null }): Promise<OriginClaimRow[]> {

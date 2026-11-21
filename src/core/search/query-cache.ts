@@ -245,18 +245,23 @@ export class SemanticQueryCache {
         distance: number;
         age_seconds: number;
       }>(
-        `SELECT qc.id, qc.query_text,
-                qc.embedding <=> $1::vector AS distance,
-                EXTRACT(EPOCH FROM (now() - qc.created_at))::int AS age_seconds
-         FROM query_cache qc
-         WHERE qc.source_id = $2
-           AND qc.knobs_hash = $4
-           AND qc.embedding IS NOT NULL
-           AND qc.embedding <=> $1::vector < $3
-           AND qc.created_at + (qc.ttl_seconds || ' seconds')::interval > now()
-           AND ${CACHE_GATE_WHERE_CLAUSE}
-         ORDER BY qc.embedding <=> $1::vector
-         LIMIT 5`,
+        // The inner query orders by distance alone so the HNSW index serves it; the outer query breaks
+        // distance ties by id (byte order) inside the 5 rows, so every engine picks the same winner.
+        `SELECT * FROM (
+           SELECT qc.id, qc.query_text,
+                  qc.embedding <=> $1::vector AS distance,
+                  EXTRACT(EPOCH FROM (now() - qc.created_at))::int AS age_seconds
+           FROM query_cache qc
+           WHERE qc.source_id = $2
+             AND qc.knobs_hash = $4
+             AND qc.embedding IS NOT NULL
+             AND qc.embedding <=> $1::vector < $3
+             AND qc.created_at + (qc.ttl_seconds || ' seconds')::interval > now()
+             AND ${CACHE_GATE_WHERE_CLAUSE}
+           ORDER BY qc.embedding <=> $1::vector
+           LIMIT 5
+         ) q
+         ORDER BY q.distance, q.id COLLATE "C"`,
         [vec, sourceId, distanceThreshold, knobsHash],
       );
 

@@ -166,7 +166,7 @@ export async function getRecentSalience(exec: LegacyUnscopedRead, opts: Salience
          ${excludeBriefings}
          ${sourceCondition} ${readCondition}
        GROUP BY p.id
-       ORDER BY score DESC, p.source_id ASC, p.slug ASC
+       ORDER BY score DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC
        LIMIT ${limit}
     `)).rows;
     return rows.map((r: Record<string, unknown>) => ({
@@ -334,7 +334,7 @@ export async function findAnomalies(exec: LegacyUnscopedRead, opts: AnomaliesOpt
     const tagToday = (await exec.run(sqlFragment`
       SELECT t.tag AS cohort_value,
              COUNT(DISTINCT p.id)::int AS count,
-             array_agg(DISTINCT p.slug) AS slugs
+             array_agg(DISTINCT p.slug COLLATE "C" ORDER BY p.slug COLLATE "C") AS slugs
         FROM tags t JOIN pages p ON p.id = t.page_id
        WHERE p.updated_at >= ${sinceIso}::timestamptz
          AND p.updated_at <  ${sinceEnd.toISOString()}::timestamptz
@@ -344,7 +344,7 @@ export async function findAnomalies(exec: LegacyUnscopedRead, opts: AnomaliesOpt
     const typeToday = (await exec.run(sqlFragment`
       SELECT p.type AS cohort_value,
              COUNT(DISTINCT p.id)::int AS count,
-             array_agg(DISTINCT p.slug) AS slugs
+             array_agg(DISTINCT p.slug COLLATE "C" ORDER BY p.slug COLLATE "C") AS slugs
         FROM pages p
        WHERE p.updated_at >= ${sinceIso}::timestamptz
          AND p.updated_at <  ${sinceEnd.toISOString()}::timestamptz

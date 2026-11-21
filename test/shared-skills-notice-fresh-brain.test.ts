@@ -18,12 +18,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sharedContentMigration } from '../src/commands/migrations/shared-content.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-shared-notice-'));
 
 beforeAll(() => {
   const init = Bun.spawnSync(['bun', 'run', join(import.meta.dir, '..', 'src', 'cli.ts'), 'init', '--pglite', '--no-embedding', '--non-interactive'], {
-    env: { ...process.env, GBRAIN_HOME: home, GBRAIN_NO_AUTOPILOT_INSTALL: '1', DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
+    env: { ...envWithoutDatabaseUrl(), GBRAIN_HOME: home, GBRAIN_NO_AUTOPILOT_INSTALL: '1' }, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
   });
   if (init.exitCode !== 0) throw new Error(`gbrain init failed: ${init.stderr.toString()}`);
 }, 180_000);

@@ -106,7 +106,9 @@ export const CREDENTIAL_SQL = {
       SELECT client_id, $30, 'register', $31, NULL, $32::text::jsonb FROM created
   `,
   clamped_clients: `SELECT DISTINCT client_id FROM oauth_grant_audit WHERE actor = 'migration' AND action IN ('clamp_token_ttl', 'shorten_access_tokens')`,
+  // The order never reaches output: it fixes the lock order, plain id like lockAllSourceRows, so every locker of these rows takes them the same way.
   scope_sources_update: 'SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb)) ORDER BY id FOR UPDATE',
+  // The order never reaches output: it fixes the lock order (plain id, as in scope_sources_update), not a listing.
   scope_sources_share: 'SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb)) ORDER BY id FOR SHARE',
   scope_sources: 'SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text($1::text::jsonb))',
 } as const;

@@ -45,6 +45,7 @@ export async function activateSharedSkillPersistence(engine: BrainEngine,
   if (isRustBrain(engine)) return activateOnRust(engine, options, quiescence);
   const hostId = options.dryRun || options.expectedState !== undefined ? existingHostIdFor(engine) : hostIdFor(engine);
   const loadBindings = async (tx: BrainEngine): Promise<WorktreeBinding[]> => {
+    // The binding order never reaches output: it only picks the first row per worktree to lock, and the identity check compares two reads in this same order.
     const roots = await tx.executeRaw<{ source_id: string }>(`SELECT b.source_id FROM persistence_source_bindings b
       JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE NOT s.archived ORDER BY b.worktree_id,b.source_id`);
     const bindings: WorktreeBinding[] = [];

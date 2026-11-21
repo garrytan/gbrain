@@ -44,7 +44,7 @@ const LIST_INTERIM_STORED_OBJECT_COUNTS_SQL = `
       SELECT p.source_id, count(*)::int AS n FROM pages p
       WHERE p.type = $1 AND p.source_id <> $2 AND left(p.slug, length($3)) = $3 AND p.slug <> $3 || 'index' AND p.deleted_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM tags t WHERE t.page_id = p.id AND t.tag = $4)
-      GROUP BY p.source_id ORDER BY p.source_id`;
+      GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`;
 
 const READ_OLDEST_SOURCE_CREATED_AT_SQL = 'SELECT min(created_at) AS created_at FROM sources';
 
@@ -52,7 +52,7 @@ const LIST_VISIBILITY_CANDIDATE_PAGES_SQL = `SELECT p.source_id, p.slug, p.front
     FROM pages p JOIN sources s ON s.id=p.source_id
     WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND ($1::text[] IS NULL OR p.source_id=ANY($1::text[])) AND jsonb_typeof(p.frontmatter)='object'
       AND EXISTS (SELECT 1 FROM jsonb_object_keys(p.frontmatter) k WHERE lower(k)='visibility') AND p.frontmatter->>'visibility' IS DISTINCT FROM 'private'
-    ORDER BY p.source_id, p.slug`;
+    ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`;
 
 const COUNT_VISIBILITY_NONCANONICAL_HOLDS_SQL = `SELECT count(*)::int AS n FROM op_checkpoints x
       JOIN sources s ON x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
@@ -62,7 +62,7 @@ const LIST_CONTENT_BLOCKED_RECEIPTS_SQL = `SELECT c.completed_keys->0->>'sourceI
       r.error_code, r.error_message, r.error_detail FROM op_checkpoints c JOIN persistence_requests r ON r.request_id::text = c.completed_keys->0->'pending'->>'requestId'
       AND r.source_id = c.completed_keys->0->>'sourceId'
     WHERE c.op = 'managed-sync' AND COALESCE(c.completed_keys->0->>'done','false') <> 'true' AND r.state IN ('failed','conflict','cancelled')
-    ORDER BY 1`;
+    ORDER BY (c.completed_keys->0->>'sourceId') COLLATE "C"`;
 
 const LIST_PASS_ADMITTED_RECEIPTS_SQL = `SELECT source_id,
         error_code, error_message, error_detail FROM persistence_requests WHERE source_id=$1 AND intent->>'passId'=$2 AND state IN ('failed','conflict','cancelled')`;
@@ -83,7 +83,7 @@ const LIST_ORPHAN_CONNECTOR_CHECKPOINTS_SQL = `SELECT c.op, c.fingerprint, c.upd
           OR r.request_id::text = c.completed_keys->0->>'requestId'))
       AND ($3::text IS NULL OR c.updated_at <= $3::text::timestamptz)
       AND ($4::integer IS NULL OR c.updated_at < now() - make_interval(days => $4::integer)))
-    ORDER BY c.op, c.fingerprint LIMIT $1`;
+    ORDER BY c.op COLLATE "C", c.fingerprint COLLATE "C" LIMIT $1`;
 
 /** Interim `stored-object` pages outside the shelf that carry no adoption tag, per source. */
 export async function listInterimStoredObjectCounts(raw: EngineRawRead, type: string, shelfSourceId: string, prefix: string, adoptedTag: string): Promise<InterimStoredObjectCount[]> {

@@ -189,7 +189,7 @@ export interface GuestSourceRow { id: string; local_path: string | null; config:
 export async function listGuestSourceRows(raw: EngineRawRead): Promise<GuestSourceRow[]> {
   return raw<GuestSourceRow>(
     'SELECT s.id, s.local_path, s.config, g.writers, g.trust_ceiling AS ceiling FROM sources s LEFT JOIN guest_sources g ON g.source_id = s.id '
-    + "WHERE (COALESCE(s.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = s.id)) ORDER BY s.id");
+    + "WHERE (COALESCE(s.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = s.id)) ORDER BY s.id COLLATE \"C\"");
 }
 
 /** A source of the sync roster: its last synced commit, whether a worktree binding manages it, and the root this host reads it at. */

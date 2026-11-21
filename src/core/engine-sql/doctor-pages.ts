@@ -92,7 +92,7 @@ const RAW_PROVENANCE_SAMPLE_SQL = `SELECT p.slug FROM pages p WHERE
       AND COALESCE(p.frontmatter->>'extracted_by', '') LIKE 'extract\\_atoms%'
       AND COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['source_slug', 'source_path'])
     AND NOT EXISTS (SELECT 1 FROM raw_data rd WHERE rd.page_id = p.id)
-    AND NOT EXISTS (SELECT 1 FROM synthesis_evidence se WHERE se.synthesis_page_id = p.id) ORDER BY p.slug LIMIT 5`;
+    AND NOT EXISTS (SELECT 1 FROM synthesis_evidence se WHERE se.synthesis_page_id = p.id) ORDER BY p.slug COLLATE "C" LIMIT 5`;
 
 const UNVERIFIED_EXTRACTIONS_SQL = `SELECT COUNT(*)::int AS n FROM pages p
        WHERE p.deleted_at IS NULL
@@ -107,7 +107,7 @@ const UNVERIFIED_EXTRACTIONS_IN_SOURCE_SQL = `SELECT COUNT(*)::int AS n FROM pag
          AND p.source_id = $2`;
 
 const CONTENT_HASH_DUPLICATES_SQL = `SELECT source_id, content_hash,
-              string_agg(slug, '|' ORDER BY length(slug), slug) AS slugs
+              string_agg(slug, '|' ORDER BY length(slug), slug COLLATE "C") AS slugs
          FROM pages
         WHERE deleted_at IS NULL AND content_hash IS NOT NULL AND content_hash <> ''
         GROUP BY source_id, content_hash
@@ -145,7 +145,7 @@ const IMAGE_PAGE_COVERAGE_SQL = `SELECT count(*)::int AS image_pages,
        FROM pages p WHERE p.page_kind = 'image' AND p.deleted_at IS NULL`;
 
 const FACTS_PAGE_BODIES_SQL = `SELECT p.slug, p.source_id, p.body_storage = 'segmented' AS segmented, left(coalesce(p.compiled_truth, p.truth_lead), 65536) AS body
-         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id, p.slug`;
+         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`;
 
 const BRACKET_PATH_PAGES_SQL = `SELECT slug, source_id, source_path FROM pages
           WHERE source_path IS NOT NULL AND deleted_at IS NULL

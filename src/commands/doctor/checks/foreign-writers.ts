@@ -134,7 +134,7 @@ async function repositories(engine: BrainEngine): Promise<{ repos: Repo[]; skipp
     if (hostId) {
       for (const row of await engine.executeRaw<{ local_path: string; source_id: string | null }>(
         `SELECT h.local_path, s.source_id FROM persistence_host_bindings h LEFT JOIN persistence_source_bindings s ON s.worktree_id=h.worktree_id
-          WHERE h.host_id=$1::uuid AND h.local_path IS NOT NULL ORDER BY h.local_path`, [hostId])) {
+          WHERE h.host_id=$1::uuid AND h.local_path IS NOT NULL ORDER BY h.local_path COLLATE "C"`, [hostId])) {
         const ids = roots.get(row.local_path) ?? [];
         if (row.source_id && !ids.includes(row.source_id)) ids.push(row.source_id);
         roots.set(row.local_path, ids);

@@ -62,7 +62,7 @@ describe('doctor sync SQL text', () => {
       AND r.principal_kind=c.completed_keys->0->'authority'->'writer'->'principal'->>'kind'
     WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
       AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint`);
+    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint COLLATE "C"`);
   });
 
   test('orphanFailures: the statement its reader composed', () => {
@@ -73,7 +73,7 @@ describe('doctor sync SQL text', () => {
     JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text=f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
     WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op IN ('managed-sync','managed-sync-pass') AND c.fingerprint=f.fingerprint)
-    ORDER BY s.id COLLATE "C",f.fingerprint`);
+    ORDER BY s.id COLLATE "C",f.fingerprint COLLATE "C"`);
   });
 
   test('orphanPasses: the statement its reader composed', () => {
@@ -99,7 +99,7 @@ describe('doctor sync SQL text', () => {
     LEFT JOIN persistence_requests r ON r.source_id=s.id AND r.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
     WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
       AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint`);
+    ORDER BY s.id COLLATE "C",c.updated_at,c.fingerprint COLLATE "C"`);
   });
 
   test('orphanRetiredFailures: the statement its reader composed', () => {
@@ -110,7 +110,7 @@ describe('doctor sync SQL text', () => {
     JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text<>f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
     WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint AND COALESCE(c.completed_keys->0->>'done','false')<>'true')
-    ORDER BY s.id COLLATE "C",f.fingerprint`);
+    ORDER BY s.id COLLATE "C",f.fingerprint COLLATE "C"`);
   });
 
   test('every listed member is a classified engine member, once', () => {

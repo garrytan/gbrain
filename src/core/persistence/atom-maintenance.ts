@@ -623,6 +623,7 @@ export async function publishManagedAtoms(engine: BrainEngine, session: ManagedA
   const originKey = origin.kind === 'page' ? 'source_slug' : 'source_path';
   // #6503: a partial extraction read only the head, so it retires nothing an earlier extraction produced.
   // #7013: retirement needs a replacement generation; a zero-yield extraction (or its retry) retires nothing.
+  // The slug order never reaches output: it only sets the order the retirement writes are admitted in, and each request id comes from its slug.
   const retirements = failure || origin.partialInputChars || !atoms.length ? [] : reviewedRetirements ?? await engine.executeRaw<ManagedAtomRetirement>(
     `SELECT slug,id AS "pageId",knowledge_revision::text AS revision FROM pages
       WHERE source_id=$1 AND type='atom' AND deleted_at IS NULL
@@ -900,6 +901,7 @@ export interface HeldManagedAtom {
  * changed since is back in the backlog and not listed.
  */
 export async function listHeldManagedAtoms(engine: BrainEngine, sourceIds?: string[]): Promise<HeldManagedAtom[]> {
+  // The SQL order never reaches output: DISTINCT ON keeps one row per requestId, which no collation can change, and the rows are re-sorted in JS below.
   const rows = await engine.listHeldManagedAtomRows(sourceIds, STORAGE_ROLE);
   return rows.map(row => ({ ...row, attempts: Number(row.attempts), held_at: new Date(row.held_at).toISOString() }))
     .sort((a, b) => a.source_id.localeCompare(b.source_id) || a.locator.localeCompare(b.locator));

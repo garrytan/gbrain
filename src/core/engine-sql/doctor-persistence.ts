@@ -40,7 +40,7 @@ export type RequestPrincipal = readonly [kind: string, id: string];
 
 export interface CapacityCounterRow { key: string; outstanding_count: string; intent_bytes: string; lifetime_ids: string; terminal_bytes: string; recovery_bytes: string }
 const CAPACITY_COUNTERS_SQL = `SELECT key,outstanding_count::text,intent_bytes::text,lifetime_ids::text,
-      terminal_bytes::text,recovery_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key`;
+      terminal_bytes::text,recovery_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key COLLATE "C"`;
 /** Every counter row of the brain and of each principal, in key order. */
 export async function listCapacityCounters(raw: EngineRawRead): Promise<CapacityCounterRow[]> {
   return raw<CapacityCounterRow>(CAPACITY_COUNTERS_SQL);
@@ -49,10 +49,10 @@ export async function listCapacityCounters(raw: EngineRawRead): Promise<Capacity
 export interface OutstandingHolderRow { source_id: string; n: number | string; stalled: number | string }
 const OUTSTANDING_HOLDERS_SQL = `SELECT source_id,count(*) AS n,count(*) FILTER (WHERE created_at <= now()-interval '600 seconds') AS stalled
         FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering')
-        GROUP BY source_id ORDER BY count(*) FILTER (WHERE created_at <= now()-interval '600 seconds') DESC,count(*) DESC,source_id LIMIT 3`;
+        GROUP BY source_id ORDER BY count(*) FILTER (WHERE created_at <= now()-interval '600 seconds') DESC,count(*) DESC,source_id COLLATE "C" LIMIT 3`;
 const OUTSTANDING_HOLDERS_PRINCIPAL_SQL = `SELECT source_id,count(*) AS n,count(*) FILTER (WHERE created_at <= now()-interval '600 seconds') AS stalled
         FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') AND principal_kind=$1 AND principal_id=$2
-        GROUP BY source_id ORDER BY count(*) FILTER (WHERE created_at <= now()-interval '600 seconds') DESC,count(*) DESC,source_id LIMIT 3`;
+        GROUP BY source_id ORDER BY count(*) FILTER (WHERE created_at <= now()-interval '600 seconds') DESC,count(*) DESC,source_id COLLATE "C" LIMIT 3`;
 /** The three sources holding the most outstanding slots (of one principal when given), most stalled (ten minutes or older) first. */
 export async function listOutstandingHolders(raw: EngineRawRead, principal: RequestPrincipal | null): Promise<OutstandingHolderRow[]> {
   return raw<OutstandingHolderRow>(principal ? OUTSTANDING_HOLDERS_PRINCIPAL_SQL : OUTSTANDING_HOLDERS_SQL, principal ? [principal[0], principal[1]] : []);
@@ -67,7 +67,7 @@ export async function countPersistenceRequestRows(raw: EngineRawRead, estimate: 
 }
 
 export interface LifetimeCounterRow { key: string; lifetime_ids: string }
-const LIFETIME_COUNTERS_SQL = `SELECT key,lifetime_ids::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key`;
+const LIFETIME_COUNTERS_SQL = `SELECT key,lifetime_ids::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key COLLATE "C"`;
 /** The lifetime request ids of the brain and of each principal, in key order. */
 export async function listLifetimeCounters(raw: EngineRawRead): Promise<LifetimeCounterRow[]> {
   return raw<LifetimeCounterRow>(LIFETIME_COUNTERS_SQL);
@@ -124,7 +124,7 @@ const COUNTER_DRIFT_SQL = `WITH u AS (
       every AS (SELECT * FROM s UNION ALL SELECT 'brain',COALESCE(SUM(req_rows),0),COALESCE(SUM(req_bytes),0),COALESCE(SUM(topo_rows),0),COALESCE(SUM(topo_bytes),0) FROM s)
       SELECT c.key,c.terminal_bytes::text AS counter,COALESCE(e.req_rows,0)::text AS req_rows,COALESCE(e.req_bytes,0)::text AS req_bytes,
         COALESCE(e.topo_rows,0)::text AS topo_rows,COALESCE(e.topo_bytes,0)::text AS topo_bytes,(SELECT value FROM config WHERE key=$1) AS clamped
-      FROM persistence_counters c LEFT JOIN every e ON e.key=c.key WHERE c.key='brain' OR c.key LIKE 'principal:%' ORDER BY c.key`;
+      FROM persistence_counters c LEFT JOIN every e ON e.key=c.key WHERE c.key='brain' OR c.key LIKE 'principal:%' ORDER BY c.key COLLATE "C"`;
 /** Each terminal-bytes counter beside the receipts and topology changes it should equal, and the true-up clamp setting. */
 export async function readCounterDrift(raw: EngineRawRead, clampedKey: string): Promise<CounterDriftRow[]> {
   return raw<CounterDriftRow>(COUNTER_DRIFT_SQL, [clampedKey]);
@@ -144,7 +144,7 @@ const REFUSAL_BREAKER_SQL = `SELECT slug,error_code,
       count(*)::text AS refusals,(array_agg(request_id::text ORDER BY sequence DESC))[1] AS last_request_id,(array_agg(error_detail->>'origin' ORDER BY sequence DESC))[1] AS cause
     FROM persistence_requests WHERE source_id=$1 AND intent IS NOT NULL AND NOT compacted AND operation='submit_job' AND state IN ('failed','conflict')
       AND error_code IS NOT NULL AND completed_at > now()-($2::double precision*interval '1 hour')
-    GROUP BY slug,digest,error_code HAVING count(*) >= $3 ORDER BY slug LIMIT $4`;
+    GROUP BY slug,digest,error_code HAVING count(*) >= $3 ORDER BY slug COLLATE "C", digest COLLATE "C", error_code COLLATE "C" LIMIT $4`;
 /** Maintenance submit_job slugs refused `threshold` times or more with the same write and code inside `windowHours`. */
 export async function listRefusalBreakerRows(raw: EngineRawRead, sourceId: string, windowHours: number, threshold: number, limit: number): Promise<RefusalBreakerRow[]> {
   return raw<RefusalBreakerRow>(REFUSAL_BREAKER_SQL, [sourceId, windowHours, threshold, limit]);
@@ -152,14 +152,14 @@ export async function listRefusalBreakerRows(raw: EngineRawRead, sourceId: strin
 
 const RECENT_DRIFT_SLUGS_SQL = `SELECT slug, count(*) OVER ()::int AS total FROM (
         SELECT DISTINCT r.slug FROM persistence_requests r WHERE r.sequence > $2::bigint AND r.source_id=$1 AND r.state='conflict' AND r.error_code='source_changed' AND r.error_message=$3) d
-        ORDER BY slug LIMIT 100`;
+        ORDER BY slug COLLATE "C" LIMIT 100`;
 /** Slugs with a source_changed receipt after sequence `floor` (up to 100), with the total of them. */
 export async function listRecentDriftReceiptSlugs(raw: EngineRawRead, sourceId: string, floor: string, message: string): Promise<Array<{ slug: string; total: number }>> {
   return raw<{ slug: string; total: number }>(RECENT_DRIFT_SLUGS_SQL, [sourceId, floor, message]);
 }
 
-const OLDER_DRIFT_SLUGS_SQL = `SELECT DISTINCT r.slug FROM persistence_requests r WHERE r.sequence <= $2::bigint AND r.source_id=$1 AND r.state='conflict' AND r.error_code='source_changed' AND r.error_message=$3
-            ORDER BY r.slug LIMIT 101`;
+const OLDER_DRIFT_SLUGS_SQL = `SELECT DISTINCT r.slug COLLATE "C" AS slug FROM persistence_requests r WHERE r.sequence <= $2::bigint AND r.source_id=$1 AND r.state='conflict' AND r.error_code='source_changed' AND r.error_message=$3
+            ORDER BY r.slug COLLATE "C" LIMIT 101`;
 /** Slugs with a source_changed receipt at or below sequence `floor` (up to 101), under a `timeoutMs` bound. */
 export async function listOlderDriftReceiptSlugs(raw: EngineRawRead, sourceId: string, floor: string, message: string, timeoutMs: number): Promise<Array<{ slug: string }>> {
   return raw<{ slug: string }>(OLDER_DRIFT_SLUGS_SQL, [sourceId, floor, message], { timeoutMs });
@@ -206,12 +206,12 @@ const GIT_PUSH_HOLDS_SQL = `WITH held AS (
          FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
         WHERE e.kind='git' AND e.state IN ('queued','running','failed') AND e.recovery IS NULL AND NOT (e.data ? 'settled')
           AND ($2::text[] IS NULL OR e.source_id=ANY($2::text[])))
-     SELECT h.source_id, (SELECT b.local_path FROM persistence_host_bindings b WHERE b.worktree_id=h.worktree_id ORDER BY b.local_path LIMIT 1) AS root,
+     SELECT h.source_id, (SELECT b.local_path FROM persistence_host_bindings b WHERE b.worktree_id=h.worktree_id ORDER BY b.local_path COLLATE "C" LIMIT 1) AS root,
             NOT EXISTS (SELECT 1 FROM persistence_source_bindings s WHERE s.source_id=h.source_id AND s.worktree_id=h.worktree_id) AS former_worktree,
             count(*) FILTER (WHERE h.state<>'failed')::int AS retrying, count(*) FILTER (WHERE h.state='failed')::int AS parked,
-            array_agg(DISTINCT h.code ORDER BY h.code) AS codes, min(h.created_at) AS oldest_at
+            array_agg(DISTINCT h.code COLLATE "C" ORDER BY h.code COLLATE "C") AS codes, min(h.created_at) AS oldest_at
        FROM held h WHERE h.code=ANY($1::text[])
-      GROUP BY h.source_id, h.worktree_id ORDER BY h.source_id`;
+      GROUP BY h.source_id, h.worktree_id ORDER BY h.source_id COLLATE "C"`;
 /** Held Git effects per source and worktree: retrying and parked counts, the codes of `codes` that hold them and the oldest request. */
 export async function listGitPushHoldRows(raw: EngineRawRead, codes: string[], sourceIds: string[] | null): Promise<GitPushHoldRow[]> {
   return raw<GitPushHoldRow>(GIT_PUSH_HOLDS_SQL, [codes, sourceIds]);
@@ -223,7 +223,7 @@ const STALLED_CATCHUPS_SQL = `SELECT e.source_id,
             count(*)::int AS busy, min((e.data->>'busy_since')::timestamptz) AS since, COALESCE(max((e.data->>'busy_retries')::int), 0)::int AS retries
        FROM persistence_effects e
       WHERE e.state='queued' AND e.error_code='writer_busy' AND e.data ? 'busy_since' AND ($1::text[] IS NULL OR e.source_id=ANY($1::text[]))
-      GROUP BY e.source_id ORDER BY e.source_id`;
+      GROUP BY e.source_id ORDER BY e.source_id COLLATE "C"`;
 /** Queued writer_busy effects per source: how many waited longer than `stallMs`, how many are busy, since when, and the most retries. */
 export async function listStalledCatchupRows(raw: EngineRawRead, sourceIds: string[] | null, stallMs: number): Promise<StalledCatchupRow[]> {
   return raw<StalledCatchupRow>(STALLED_CATCHUPS_SQL, [sourceIds, stallMs]);
@@ -245,7 +245,7 @@ const PARKED_GROUPS_SQL = `WITH parked AS (
      SELECT source_id, code, former, count(DISTINCT id)::int AS effects, count(*)::int AS targets, min(rule) AS rule,
             array_agg(DISTINCT worktree_id::text) AS worktree_ids, (array_agg(DISTINCT request_id::text))[1:5] AS requests,
             (SELECT sb.worktree_id::text FROM persistence_source_bindings sb WHERE sb.source_id=parked.source_id) AS current_worktree_id
-       FROM parked GROUP BY source_id, code, former ORDER BY source_id, code, former NULLS FIRST`;
+       FROM parked GROUP BY source_id, code, former ORDER BY source_id COLLATE "C", code COLLATE "C", former COLLATE "C" NULLS FIRST`;
 /** Parked Git targets per source, error code and former binding. */
 export async function listParkedGroupRows(raw: EngineRawRead, sourceIds: string[] | null): Promise<ParkedGroupRow[]> {
   return raw<ParkedGroupRow>(PARKED_GROUPS_SQL, [sourceIds]);
@@ -292,7 +292,7 @@ const ORPHAN_BINDINGS_SQL = `SELECT b.source_id, b.source_incarnation::text AS s
         AND r.state IN ('queued','deferred','running','recovering')) AS pending_requests
   FROM persistence_source_bindings b
   LEFT JOIN sources s ON s.id = b.source_id
-  WHERE s.id IS NULL OR s.incarnation <> b.source_incarnation ORDER BY b.source_id`;
+  WHERE s.id IS NULL OR s.incarnation <> b.source_incarnation ORDER BY b.source_id COLLATE "C"`;
 /** Source bindings whose source is gone or was re-created, by source id, up to `limit` when given. */
 export async function listOrphanBindingRows(raw: EngineRawRead, limit: number | null): Promise<OrphanBindingRow[]> {
   if (limit) {
@@ -332,7 +332,7 @@ const UNBOUND_SOURCE_PAGES_SQL = `SELECT p.source_id,COUNT(*)::int AS pages,
         COALESCE((SELECT s.local_path FROM sources s WHERE s.id=p.source_id),
           CASE WHEN p.source_id='default' THEN (SELECT c.value FROM config c WHERE c.key='sync.repo_path') END) AS local_path
        FROM pages p WHERE p.database_only_reason IS NOT DISTINCT FROM 'unbound_source' AND COALESCE(btrim(p.source_path, (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)), '')='' AND COALESCE(btrim(p.source_uri, (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)), '')='' AND p.deleted_at IS NULL
-       GROUP BY p.source_id ORDER BY p.source_id`;
+       GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`;
 /** Sources with live database-only pages: the page count, whether the source has a binding, and its local path. */
 export async function listUnboundSourcePages(raw: EngineRawRead): Promise<UnboundSourcePageRow[]> {
   return raw<UnboundSourcePageRow>(UNBOUND_SOURCE_PAGES_SQL);
@@ -379,7 +379,7 @@ export async function listStuckWorktreeRefreshes(raw: EngineRawRead, minutes: nu
 export interface MovementBindingRow { source_id: string; worktree_id: string; source_incarnation: string; owner_host_id: string | null }
 const SOURCE_BINDINGS_MOVEMENT_SQL = `SELECT b.source_id, b.worktree_id::text AS worktree_id, b.source_incarnation::text AS source_incarnation, w.owner_host_id::text AS owner_host_id
     FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
-    JOIN persistence_worktrees w ON w.id=b.worktree_id WHERE ($1::text[] IS NULL OR b.source_id=ANY($1::text[])) ORDER BY b.source_id`;
+    JOIN persistence_worktrees w ON w.id=b.worktree_id WHERE ($1::text[] IS NULL OR b.source_id=ANY($1::text[])) ORDER BY b.source_id COLLATE "C"`;
 /** Every active source's binding with its worktree owner (of `sourceIds` when given). */
 export async function listSourceBindingsForMovement(raw: EngineRawRead, sourceIds: string[] | null): Promise<MovementBindingRow[]> {
   return raw<MovementBindingRow>(SOURCE_BINDINGS_MOVEMENT_SQL, [sourceIds]);
@@ -397,7 +397,7 @@ export async function listRunningClaimOwners(raw: EngineRawRead, hostId: string)
 
 export interface OwnerBindingRow { worktree_id: string; owner_host_id: string; local_path: string; created_at: string; source_ids: string[] | null }
 const OWNER_BINDINGS_SQL = `SELECT w.id::text AS worktree_id,w.owner_host_id::text AS owner_host_id,h.local_path,w.created_at::text AS created_at,
-      (SELECT array_agg(b.source_id ORDER BY b.source_id) FROM persistence_source_bindings b WHERE b.worktree_id=w.id) AS source_ids
+      (SELECT array_agg(b.source_id ORDER BY b.source_id COLLATE "C") FROM persistence_source_bindings b WHERE b.worktree_id=w.id) AS source_ids
     FROM persistence_worktrees w JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=w.owner_host_id
     WHERE w.owner_host_id IS NOT NULL AND w.owner_host_id<>$1::uuid AND w.state<>'recovering' ORDER BY w.created_at`;
 /** Worktree bindings owned by a host other than `hostId`. */
@@ -464,9 +464,9 @@ export async function countCompactedCallerRefusals(raw: EngineRawRead, sourceIds
 }
 
 export interface LocalEditAdoptionRow { source_id: string; adoptions: number | string; paths: string[] }
-const LOCAL_EDIT_ADOPTIONS_SQL = `SELECT source_id, count(*)::int AS adoptions, array_agg(DISTINCT outcome->'adopted_local_edit'->>'path' ORDER BY outcome->'adopted_local_edit'->>'path') AS paths
+const LOCAL_EDIT_ADOPTIONS_SQL = `SELECT source_id, count(*)::int AS adoptions, array_agg(DISTINCT (outcome->'adopted_local_edit'->>'path') COLLATE "C" ORDER BY (outcome->'adopted_local_edit'->>'path') COLLATE "C") AS paths
        FROM persistence_requests WHERE state='committed' AND operation='put_page' AND outcome ? 'adopted_local_edit'
-         AND completed_at > now() - interval '24 hours' GROUP BY source_id ORDER BY source_id`;
+         AND completed_at > now() - interval '24 hours' GROUP BY source_id ORDER BY source_id COLLATE "C"`;
 /** Per source, the put_page writes committed in the last 24 hours that adopted a local edit, and the paths. */
 export async function listLocalEditAdoptions(raw: EngineRawRead): Promise<LocalEditAdoptionRow[]> {
   return raw<LocalEditAdoptionRow>(LOCAL_EDIT_ADOPTIONS_SQL);

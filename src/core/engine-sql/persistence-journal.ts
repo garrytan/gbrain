@@ -137,7 +137,7 @@ export const HELD_PAGES_SQL = `SELECT h.completed_keys->0 AS record, p.knowledge
       JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
       LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
       WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[])
-      ORDER BY h.fingerprint`;
+      ORDER BY h.fingerprint COLLATE "C"`;
 
 /** The current-incarnation hold rows naming these page ids, each with its page's revision, in fingerprint order. */
 export function readHeldPageRows<R>(exec: LegacyUnscopedRead, pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>> {

@@ -143,6 +143,7 @@ export async function readTerminalFailureSummary(engine: BrainEngine, opts: { so
   const schemaBehind = await readSchemaBehind(engine);
   const span = Math.max(t.windowDays, 8);
   const sourceFilter = opts.sourceIds ?? null;
+  // The order is not output: the sources are sorted in JS below, and rows of one source tie, so the SQL order never reaches the result.
   const rows = await bounded(opts => engine.readTerminalFailureGroups({ spanDays: span, windowDays: t.windowDays, sourceIds: sourceFilter }, opts));
   if (rows === 'unknown') return { status: 'unknown', window_days: t.windowDays, reason: `the aggregate did not finish within ${TERMINAL_STATEMENT_MS} ms (or no connection within ${TERMINAL_ACQUIRE_MS} ms)` };
   const bySource = new Map<string, TerminalSourceSummary>();

@@ -86,8 +86,10 @@ async function guard(tx:BrainEngine,row:TopologyChange,record:TopologyCloneRecov
   if(!owner||owner.owner_host_id!==record.ownerHostId||String(owner.owner_epoch)!==record.ownerEpoch||owner.state!=='recovering'||host?.local_path!==record.target)
     throw retainedClone('Ownership changed while the clone needed recovery.',record,
       `Worktree ${record.worktreeId} no longer has owner epoch ${record.ownerEpoch} on this host in the recovering state.`);
+  // The member order never reaches output: the members are re-sorted in JS on the next line and only name the source rows to lock.
   const members=await tx.executeRaw<{source_id:string}>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id',[record.worktreeId]);
   const sources=[...new Set([record.sourceId,...members.map(value=>value.source_id)])].sort();
+  // Plain ORDER BY id on purpose, not COLLATE "C": this only sets the lock order, the same as lockAllSourceRows (engine-sql/sources.ts), so no deadlock.
   await tx.executeRaw('SELECT id FROM sources WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE',[sources]);
   return sources;
 }

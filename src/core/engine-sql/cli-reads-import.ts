@@ -139,7 +139,7 @@ export async function readDatabaseClock(exec: LegacyUnscopedRead): Promise<strin
 /** Every live page (of one source when given) with its aliases and knowledge revision, by source then slug. */
 export async function listLinkPageMetadata(exec: LegacyUnscopedRead, sourceId?: string): Promise<LinkPageMetadataRow[]> {
   return exec.executeRaw<LinkPageMetadataRow>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision FROM pages
-    WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id, slug`, sourceId ? [sourceId] : []);
+    WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id COLLATE "C", slug COLLATE "C"`, sourceId ? [sourceId] : []);
 }
 
 /** Every stored non-event timeline row of one page, the date as `YYYY-MM-DD`, in no particular order. */

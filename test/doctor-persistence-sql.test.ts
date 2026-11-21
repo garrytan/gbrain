@@ -61,8 +61,8 @@ describe('doctor persistence SQL text', () => {
   });
 
   test('the orphan binding read is the statement the check ran, ordered and limited when asked', async () => {
-    expect(await statements(raw => sql.listOrphanBindingRows(raw, null))).toEqual([`${ORPHANS} ORDER BY b.source_id`]);
-    expect(await statements(raw => sql.listOrphanBindingRows(raw, 1001.9))).toEqual([`${ORPHANS} ORDER BY b.source_id LIMIT 1001`]);
+    expect(await statements(raw => sql.listOrphanBindingRows(raw, null))).toEqual([`${ORPHANS} ORDER BY b.source_id COLLATE "C"`]);
+    expect(await statements(raw => sql.listOrphanBindingRows(raw, 1001.9))).toEqual([`${ORPHANS} ORDER BY b.source_id COLLATE "C" LIMIT 1001`]);
   });
 
   test('the overwrite candidate read carries the managed-import and content-column fragments', async () => {

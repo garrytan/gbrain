@@ -270,7 +270,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
     `SELECT p.id, p.source_id, p.slug, (now() - ($1 || ' hours')::interval)::text AS cutoff,
       floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p JOIN sources s ON s.id = p.source_id
       WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${purgeHoldsSql('p', 's', '$2::int[]')} AND p.id <> ALL($3::int[])
-      ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [String(hours), release, hold]);
+      ORDER BY p.deleted_at ASC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC`, [String(hours), release, hold]);
   const states = new Map<string, { state: string; physical_error?: string }>();
   if (rows.length) for (const source of (await writerOnboardingPreflight(engine)).sources) states.set(source.source_id, source);
   const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();

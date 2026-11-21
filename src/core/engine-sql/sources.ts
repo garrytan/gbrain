@@ -158,6 +158,7 @@ export async function listSourceIds(exec: LegacyUnscopedRead): Promise<string[]>
 
 /** The only source's id, or null when the brain has none or more than one (corpus-source.ts, sweep, doctor memory_writeback). Unscoped on master. */
 export async function readSoleSourceId(exec: LegacyUnscopedRead): Promise<string | null> {
+  // The order never reaches output: an id is returned only when exactly one row exists, so no order changes the result.
   const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
   return rows.length === 1 ? rows[0]!.id : null;
 }

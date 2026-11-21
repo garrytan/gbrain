@@ -77,7 +77,7 @@ END $harden$;`;
 export async function legacySearchPathFunctions(engine: BrainEngine): Promise<string[]> {
   return (await engine.executeRaw<{ sig: string }>(
     `SELECT p.oid::regprocedure::text AS sig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-      WHERE n.nspname = 'public' AND p.prokind = 'f' AND p.proconfig && $1::text[] AND p.proname = ANY($2::text[]) ORDER BY 1`,
+      WHERE n.nspname = 'public' AND p.prokind = 'f' AND p.proconfig && $1::text[] AND p.proname = ANY($2::text[]) ORDER BY p.oid::regprocedure::text COLLATE "C"`,
     [[...LEGACY_SEARCH_PATH_SETTINGS], [...PINNED_FUNCTION_NAMES]])).map(r => r.sig);
 }
 

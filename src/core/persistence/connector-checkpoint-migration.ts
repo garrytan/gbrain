@@ -105,6 +105,7 @@ export async function deleteOrphanConnectorCheckpoints(engine: Pick<BrainEngine,
   if (!rows.length) return removed;
   // Connector source rows stay share-locked while loadability is recomputed and rows are deleted, so a config change cannot make a deleted key current.
   await engine.transaction(async tx => {
+    // The id order never reaches output: it is the row-lock order on sources, shared with the other source lockers, so it stays plain ORDER BY id.
     await tx.executeRaw(`SELECT id FROM sources WHERE config->>'kind' IN (${CONNECTOR_KINDS_SQL}) ORDER BY id FOR SHARE`);
     const loadable = [...(await loadableConnectorKeys(tx)).keys()];
     for (const row of rows) {
@@ -131,6 +132,7 @@ export async function migrateConnectorCheckpoints(engine: Sql, log: (line: strin
   // One statement, bounded by its own timeout; no long transaction around the scan.
   const receipts = await engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('statement_timeout','120s',true)");
+    // The source order never reaches output: the newest receipt per source and incarnation goes into a map, and collation only reorders the groups, never the winner.
     return tx.executeRaw<{ source_id: string; source_incarnation: string; kind: string | null; checkpoint_key: string | null; compacted: boolean; committed_at: string }>(`
       SELECT DISTINCT ON (source_id, source_incarnation) source_id, source_incarnation::text, intent->>'kind' AS kind, intent->>'checkpointKey' AS checkpoint_key,
              COALESCE(compacted,false) AS compacted, COALESCE(completed_at,updated_at)::text AS committed_at

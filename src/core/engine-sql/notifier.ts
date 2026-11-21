@@ -243,6 +243,7 @@ export async function listNotifierHostSourceRows(exec: LegacyUnscopedRead): Prom
 
 /** The `sync_notifier_sources` rows of `sourceIds` (every row when null), in source id order. */
 export async function readNotifierSources(exec: RawExec, sourceIds: string[] | null): Promise<NotifierSourceRow[]> {
+  // The source order never reaches output: the resident only looks each row up by source id (restoreStates).
   const rows = await exec.executeRaw<Record<string, unknown>>(
     'SELECT * FROM sync_notifier_sources WHERE ($1::text[] IS NULL OR source_id = ANY($1::text[])) ORDER BY source_id', [sourceIds]);
   return rows.map(toNotifierSourceRow);
@@ -335,6 +336,7 @@ export async function attachWantedMarkerJob(exec: RawExec, sourceId: string, int
 
 /** The markers of `sourceIds` (every marker when null), oldest first_due_at first, at most 1000. */
 export async function readWantedMarkers(exec: RawExec, sourceIds: string[] | null): Promise<WantedMarker[]> {
+  // The marker order never reaches output: nothing in src reads these rows to print them, and first_due_at sets the order before source_id breaks a tie.
   const rows = await exec.executeRaw<Record<string, unknown>>(
     'SELECT * FROM sync_wanted_markers WHERE ($1::text[] IS NULL OR source_id = ANY($1::text[])) ORDER BY first_due_at, source_id, intent LIMIT 1000', [sourceIds]);
   return rows.map(toWantedMarker);
@@ -345,6 +347,7 @@ export async function readWantedMarkers(exec: RawExec, sourceIds: string[] | nul
  * differs from the source's last_commit. Oldest first_due_at first, at most 1000.
  */
 export async function readDueWantedMarkers(exec: RawExec, sourceIds: string[] | null): Promise<WantedMarker[]> {
+  // The marker order never reaches output: the handoff drains these markers in turn, first_due_at sets the order, and source_id breaks a tie only on an equal timestamp.
   const rows = await exec.executeRaw<Record<string, unknown>>(
     `SELECT m.* FROM sync_wanted_markers m JOIN sources s ON s.id = m.source_id
       WHERE ($1::text[] IS NULL OR m.source_id = ANY($1::text[]))
@@ -381,7 +384,7 @@ export async function settleFreshnessMarker(exec: RawExec, sourceId: string, gen
 /** The source's markers as the sync status notifier block lists them, oldest first_due_at first. */
 export async function listSourceWantedMarkers(exec: RawExec, sourceId: string): Promise<PendingWantedMarker[]> {
   const rows = await exec.executeRaw<Record<string, unknown>>(
-    'SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent', [sourceId]);
+    'SELECT intent, wanted_head, first_due_at, requested_by FROM sync_wanted_markers WHERE source_id = $1 ORDER BY first_due_at, intent COLLATE "C"', [sourceId]);
   return rows.map(toPendingWantedMarker);
 }
 

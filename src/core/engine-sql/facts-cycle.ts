@@ -37,6 +37,7 @@ export interface ExtractionOutcomeRow { slug: string; source: string; source_ses
  * slug, the rows of `preferredSource` first within a page.
  */
 export async function listFreshExtractionOutcomes(raw: EngineRawRead, sourceId: string, slugs: string[], sources: string[], preferredSource: string): Promise<ExtractionOutcomeRow[]> {
+  // The slug order never reaches output: the caller keeps the first row per slug in a Map, and the CASE alone ranks the rows of one slug.
   return raw<ExtractionOutcomeRow>(
     `SELECT source_markdown_slug AS slug, source, source_session
        FROM facts
@@ -227,12 +228,12 @@ export async function findBulkFactDays(raw: EngineRawRead, sourceIds: string[] |
       HAVING count(*) >= ${rule.min_facts}::int AND count(*) >= t.n * ${rule.min_share}::float8 AND count(DISTINCT a.entity_slug) >= ${rule.min_entities}::int
     )
     SELECT b.source_id, to_char(b.day, 'YYYY-MM-DD') AS day, b.n::int AS facts, b.entities::int AS entities, b.source_facts::int AS source_facts,
-           (SELECT json_agg(json_build_object('source', s.source, 'facts', s.n) ORDER BY s.n DESC, s.source)
+           (SELECT json_agg(json_build_object('source', s.source, 'facts', s.n) ORDER BY s.n DESC, s.source COLLATE "C")
               FROM (SELECT a.source, count(*)::int AS n FROM active a WHERE a.source_id = b.source_id AND a.day = b.day
-                     GROUP BY a.source ORDER BY count(*) DESC, a.source LIMIT ${TOP_SOURCES}) s) AS top_sources,
+                     GROUP BY a.source ORDER BY count(*) DESC, a.source COLLATE "C" LIMIT ${TOP_SOURCES}) s) AS top_sources,
            (SELECT count(*)::int FROM active a WHERE a.source_id = b.source_id AND a.day = b.day AND ${trustedSql(claimDateSql('a.fact', 'b.day'))}) AS dated_claims
       FROM bulk b
-     ORDER BY b.source_id, b.day`);
+     ORDER BY b.source_id COLLATE "C", b.day`);
   return raw<BulkDayRow>(text, params);
 }
 

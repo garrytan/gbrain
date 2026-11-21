@@ -75,14 +75,14 @@ export async function listJunkEntityHubs(exec: LegacyUnscopedRead, opts: { edgeT
               WHERE t.slug = p.slug AND t.source_id <> p.source_id AND t.deleted_at IS NULL
                 AND (t.frontmatter ->> 'google_contact_id') IS NULL
                 AND COALESCE(ts.config ->> 'kind', '') <> ALL(${[...CONNECTOR_SOURCE_KINDS]}::text[])
-              ORDER BY (t.source_id = 'default') DESC, t.source_id LIMIT 1) AS canonical_twin_source
+              ORDER BY (t.source_id = 'default') DESC, t.source_id COLLATE "C" LIMIT 1) AS canonical_twin_source
      FROM edge_counts ec
      JOIN pages p ON p.id = ec.page_id AND p.deleted_at IS NULL
      LEFT JOIN sources s ON s.id = p.source_id
      LEFT JOIN chunk_counts cc ON cc.page_id = ec.page_id
      WHERE COALESCE(cc.chunks, 0) <= ${opts.maxChunks}
        AND COALESCE(p.frontmatter ->> 'junk_hub_exempt', 'false') <> 'true'
-     ORDER BY ec.edges DESC
+     ORDER BY ec.edges DESC, ec.page_id
      LIMIT ${opts.limit}`);
 }
 
@@ -298,7 +298,7 @@ export async function listPagesTitledIn(exec: LegacyUnscopedRead, queryLower: st
   return rows<TitledPage>(exec, sqlFragment`WITH titled AS MATERIALIZED (SELECT id FROM pages WHERE title IS NOT NULL AND length(title) >= 3 AND strpos(${queryLower}, lower(title)) > 0)
      SELECT p.id, p.slug, p.title, p.type, p.source_id FROM pages p
      WHERE p.id IN (SELECT id FROM titled) AND ${readFilter('p', scope, true)}
-     ORDER BY p.source_id, p.slug LIMIT 50`);
+     ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C" LIMIT 50`);
 }
 
 /** Each word to its lexemes under the brain's full-text config, sorted as the tsvector holds them (fact relevance). */

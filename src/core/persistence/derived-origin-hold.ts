@@ -79,6 +79,7 @@ export async function releaseStaleHolds(engine: SqlEngine): Promise<void> {
 
 /** Read-only: every owed purge whose tombstone still exists as recorded. */
 export async function readOwedPurges(engine: SqlEngine): Promise<OwedPurge[]> {
+  // The fingerprint order never reaches output: the owed purges become a Set of page ids, which has no order to show.
   const rows = await engine.executeRaw<{ owed: OwedPurge | string }>(`SELECT o.completed_keys->0 AS owed FROM op_checkpoints o WHERE o.op=$1 AND ${OWED_TOMBSTONE}
     ORDER BY o.fingerprint`, [OWED_PURGE_OP]);
   return rows.map(row => typeof row.owed === 'string' ? JSON.parse(row.owed) as OwedPurge : row.owed).map(owed => ({ ...owed, page_id: Number(owed.page_id) }));

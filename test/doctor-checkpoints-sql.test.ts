@@ -26,12 +26,12 @@ import {
 describe('doctor checkpoint SQL text', () => {
   test('derived-origin parks: the statement readDerivedOriginParks composed', () => {
     expect(LIST_DERIVED_ORIGIN_PARKS_SQL).toBe(
-      `SELECT o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND ${TOMBSTONE} ORDER BY o.updated_at, o.fingerprint`);
+      `SELECT o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND ${TOMBSTONE} ORDER BY o.updated_at, o.fingerprint COLLATE "C"`);
   });
 
   test('purge parks: the statement readPurgeParks composed', () => {
     expect(LIST_PURGE_PARKS_SQL).toBe(
-      `SELECT o.fingerprint, o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND ${LIVE_TOMBSTONE} ORDER BY o.fingerprint`);
+      `SELECT o.fingerprint, o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND ${LIVE_TOMBSTONE} ORDER BY o.fingerprint COLLATE "C"`);
   });
 
   test('identity downgrades: the statement listIdentityDowngrades composed', () => {
