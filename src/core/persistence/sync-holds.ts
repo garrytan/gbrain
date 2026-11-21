@@ -754,10 +754,8 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
     + `then run ${unblock.join(' ')}, which re-screens every held file that is now committed, and the same sync`;
   const fileWins = route.mirror ? `the source is a read-only mirror, which gbrain never writes: gbrain repair file-drift --source ${sourceId} --held --side unknown --prefer file --whole-class previews every page whose file is newer for one approval and imports each into its page database-only`
     : `a page whose file was committed after it changed is the user's call with --prefer file (gbrain repair file-drift --source ${sourceId} --held --side unknown --prefer file --whole-class previews them all for one approval). ${FILE_DRIFT_APPLY_STEP}`;
-  const driftText = `the ${route.drift ?? 0} file-drift hold(s) are pages that differ from their file where sync could not prove which side moved (a database edit, or no import record), so it kept each page: `
-    + `preview them all with gbrain repair file-drift --source ${sourceId} --held (writes nothing; --cursor pages through the rest) and relay what it lists. `
-    + `A page that equals an earlier committed version of its file needs no repair: gbrain sources retry-held ${sourceId} and the next sync import the file; ${fileWins}. `
-    + `A page that changed after its file, a file with uncommitted bytes (commit or restore it first) and a file that is gone stay held until the user decides. Then run gbrain sync --source ${sourceId} --no-pull`;
+  const driftText = `the ${route.drift ?? 0} file-drift hold(s) are pages that differ from their file where sync could not prove which side moved (a database edit, or no import record), so it kept each page: preview them all with gbrain repair file-drift --source ${sourceId} --held (writes nothing; --cursor pages through the rest) and relay what it lists. `
+    + `A page that equals an earlier committed version of its file needs no repair: gbrain sources retry-held ${sourceId} and the next sync import the file; ${fileWins}. A page that changed after its file, a file with uncommitted bytes (commit or restore it first) and a file that is gone stay held until the user decides. Then run gbrain sync --source ${sourceId} --no-pull`;
   if (route.stalled && !route.others && !content && !route.concurrent && !route.dirty && !route.drift) {
     return { argv: stalled.status, commands: [stalled.status.join(' '), stalled.retry.join(' '), stalled.sync.join(' ')], text: stalledText };
   }
