@@ -133,6 +133,7 @@ test/engine-parity/access-sort-order.test.ts
 test/engine-parity/access-tokens.test.ts
 test/engine-parity/admin-counts.test.ts
 test/engine-parity/admin-http.test.ts
+test/engine-parity/admin-unowned-http.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/backup-readiness-callers.test.ts

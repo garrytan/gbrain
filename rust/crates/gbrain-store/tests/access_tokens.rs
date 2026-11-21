@@ -151,6 +151,39 @@ fn the_list_is_newest_first_with_the_columns_not_kept_at_their_defaults_and_no_h
 }
 
 #[test]
+fn the_whole_row_list_keeps_revoked_tokens_newest_first_with_a_tie_by_id_and_no_hash() {
+    let b = brain("tokens-whole-rows");
+    let older = insert(&b, token("older", "hash-older", json!({}))).unwrap();
+    b.clock.advance(1_000_000);
+    let tie_a = insert(&b, token("tie-a", "hash-tie-a", json!({}))).unwrap();
+    let tie_b = insert(&b, token("tie-b", "hash-tie-b", json!({}))).unwrap();
+    b.revoke_access_token(&older).unwrap();
+    let rows = b.list_access_token_rows().unwrap();
+    let rows = rows.as_array().unwrap();
+    let mut tied = [tie_a.clone(), tie_b.clone()];
+    tied.sort();
+    let want: Vec<&str> = tied
+        .iter()
+        .map(String::as_str)
+        .chain([older.as_str()])
+        .collect();
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        want,
+        "newest first, the same instant ordered by id, the revoked token kept"
+    );
+    assert_ne!(rows[2]["revoked_at"], Value::Null);
+    assert_eq!(rows[0]["revoked_at"], Value::Null);
+    assert_eq!(rows[2]["created_at"], "2027-01-15T08:00:00.000000Z");
+    assert!(
+        rows.iter().all(|r| r.get("token_hash").is_none()),
+        "no row carries the hash"
+    );
+}
+
+#[test]
 fn a_revoke_by_name_stamps_every_active_token_of_that_name_once_and_ends_its_liveness() {
     let b = brain("tokens-revoke-name");
     let a = insert(&b, token("shared", "hash-a", json!({}))).unwrap();

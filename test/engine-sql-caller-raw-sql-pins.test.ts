@@ -2036,6 +2036,79 @@ const PINS: Pin[] = [
      WHERE k.page_id = $1 AND (k.row_num = ANY($2::integer[]) OR (n.row_num IS NOT NULL AND (k.claim, k.kind, k.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder)))
      ORDER BY k.row_num`],
   },
+  // The unowned admin and serve routes (Rust engine lane admin-unowned-rust), each text copied from its caller at 1bc04e66a8.
+  {
+    from: 'src/commands/serve-http-api-keys.ts:131 the admin key list (at 1bc04e66a8)',
+    case: { method: 'listAccessTokenRows', variant: 'default', run: e => e.listAccessTokenRows() },
+    texts: ['SELECT * FROM access_tokens ORDER BY created_at DESC, id'],
+  },
+  {
+    // serve-http-registration.ts:199 sent this text; mcp-provision.ts:36 sent the same statement through the SqlQuery tag.
+    from: 'src/commands/serve-http-registration.ts:199 the same-name registration lock (at 1bc04e66a8)',
+    case: { method: 'lockOauthClientName', variant: 'default', run: e => e.lockOauthClientName('agent-register:pin-client') },
+    texts: ['SELECT pg_advisory_xact_lock(hashtext($1)::bigint)'],
+  },
+  {
+    from: 'src/core/access/actor.ts:315 linkRow (at 1bc04e66a8)',
+    case: { method: 'readAccessMemberLink', variant: 'default', run: e => e.readAccessMemberLink('slack', 'U123') },
+    texts: ['SELECT system, external_id, member_id, created_at FROM access_member_links WHERE system = $1 AND external_id = $2'],
+  },
+  {
+    from: 'src/core/access/actor.ts:329 linkMember (at 1bc04e66a8)',
+    case: { method: 'insertAccessMemberLink', variant: 'default', run: e => e.insertAccessMemberLink('slack', 'U123', 'alice-example') },
+    texts: ['INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)'],
+  },
+  {
+    from: 'src/core/access/actor.ts:343 unlinkMember (at 1bc04e66a8)',
+    case: { method: 'deleteAccessMemberLink', variant: 'default', run: e => e.deleteAccessMemberLink('slack', 'U123') },
+    texts: ['DELETE FROM access_member_links WHERE system = $1 AND external_id = $2'],
+  },
+  {
+    from: 'src/core/access/actor.ts:349 listMemberLinks, every member (at 1bc04e66a8; merge 64 adds the byte order)',
+    case: { method: 'listAccessMemberLinks', variant: 'all', run: e => e.listAccessMemberLinks(null) },
+    texts: ['SELECT system, external_id, member_id, created_at FROM access_member_links ORDER BY member_id COLLATE "C", system COLLATE "C", external_id COLLATE "C"'],
+  },
+  {
+    from: 'src/core/access/actor.ts:349 listMemberLinks, one member (at 1bc04e66a8; merge 64 adds the byte order)',
+    case: { method: 'listAccessMemberLinks', variant: 'member', run: e => e.listAccessMemberLinks('alice-example') },
+    texts: ['SELECT system, external_id, member_id, created_at FROM access_member_links WHERE member_id = $1 ORDER BY member_id COLLATE "C", system COLLATE "C", external_id COLLATE "C"'],
+  },
+  {
+    from: 'src/core/persistence/page-visibility.ts:298 defaultSourceMemberWriter, a legacy token (at 1bc04e66a8)',
+    case: { method: 'readCredentialMemberId', variant: 'token', run: e => e.readCredentialMemberId({ kind: 'token', id: '00000000-0000-4000-8000-0000000000b1' }) },
+    texts: ['SELECT member_id FROM access_tokens WHERE id::text = $1'],
+  },
+  {
+    from: 'src/core/persistence/page-visibility.ts:299 defaultSourceMemberWriter, an OAuth client (at 1bc04e66a8)',
+    case: { method: 'readCredentialMemberId', variant: 'client', run: e => e.readCredentialMemberId({ kind: 'client', id: 'client-example' }) },
+    texts: ['SELECT member_id FROM oauth_clients WHERE client_id = $1'],
+  },
+  {
+    // serve-http-metrics.ts:263 sent this text; doctor/checks/db-connection.ts:317 sent the equivalent 'SELECT 1 AS ok'.
+    from: 'src/commands/serve-http-metrics.ts:263 the health probe (at 1bc04e66a8)',
+    case: { method: 'pingStore', variant: 'default', run: e => e.pingStore() },
+    texts: ['SELECT 1'],
+  },
+  {
+    from: 'src/commands/serve-http-webhooks.ts:303 legacyIngestJob (at 1bc04e66a8)',
+    case: { method: 'readJobDataByIdempotencyKey', variant: 'default', run: e => e.readJobDataByIdempotencyKey('ingest:pin') },
+    texts: ['SELECT data FROM minion_jobs WHERE idempotency_key = $1'],
+  },
+  {
+    from: 'src/commands/jobs-watch.ts:163 the budget owners (at 1bc04e66a8)',
+    case: { method: 'listBudgetOwners', variant: 'default', run: e => e.listBudgetOwners() },
+    texts: [`SELECT
+         mj.id AS owner_id,
+         mj.budget_remaining_cents AS remaining_cents,
+         COALESCE((SELECT SUM(ABS(cents_delta)) FROM minion_budget_log
+                    WHERE owner_id = mj.id AND event_type = 'reserved'), 0) AS total_spent_cents
+       FROM minion_jobs mj
+       WHERE mj.budget_remaining_cents IS NOT NULL
+         AND mj.budget_owner_job_id = mj.id
+         AND mj.status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+       ORDER BY mj.id DESC
+       LIMIT 5`],
+  },
 ];
 
 /** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */

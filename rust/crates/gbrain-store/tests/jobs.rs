@@ -123,8 +123,22 @@ fn an_idempotency_key_coalesces_and_a_dead_holder_releases_it() {
     b.fail_job(first, "w:1", "boom", "dead", None, None)
         .unwrap()
         .unwrap();
-    let second = add(&b, "work", json!({"idempotency_key": "k1"}));
+    assert_eq!(
+        b.job_data_by_idempotency_key("k1").unwrap(),
+        Some(json!({"data": {}})),
+        "a dead row still holds its key until a new admission releases it"
+    );
+    let second = add(
+        &b,
+        "work",
+        json!({"idempotency_key": "k1", "data": {"slug": "a/b"}}),
+    );
     assert_ne!(second, first);
+    assert_eq!(
+        b.job_data_by_idempotency_key("k1").unwrap(),
+        Some(json!({"data": {"slug": "a/b"}}))
+    );
+    assert_eq!(b.job_data_by_idempotency_key("k2").unwrap(), None);
     let freed = job(&b, first);
     assert_eq!(freed["idempotency_key"], Value::Null);
     assert_eq!(freed["data"]["__released_idempotency_key"], "k1");

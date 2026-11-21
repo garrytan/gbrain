@@ -21,6 +21,8 @@ export const CLIENT_GRANT_SQL = {
   client_for_update: 'SELECT * FROM oauth_clients WHERE client_id = $1 FOR UPDATE',
   live_clients: `SELECT * FROM oauth_clients WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`,
   live_tokens: 'SELECT * FROM access_tokens WHERE revoked_at IS NULL',
+  tokens_newest_first: 'SELECT * FROM access_tokens ORDER BY created_at DESC, id',
+  client_name_lock: 'SELECT pg_advisory_xact_lock(hashtext($1)::bigint)',
   holds_authorization: `SELECT EXISTS (SELECT 1 FROM oauth_tokens WHERE client_id = $1)
     OR EXISTS (SELECT 1 FROM oauth_codes WHERE client_id = $2) AS held`,
   source_archived_for_share: 'SELECT archived FROM sources WHERE id = $1 FOR SHARE',
@@ -88,6 +90,16 @@ export async function readLiveOauthClients(tx: Raw): Promise<OauthClientRow[]> {
 /** Every access token not revoked, whole rows without a hash on the Rust store (the grant checks read them all). */
 export function readLiveAccessTokenRows(tx: Raw): Promise<Record<string, unknown>[]> {
   return tx.executeRaw<Record<string, unknown>>(CLIENT_GRANT_SQL.live_tokens);
+}
+
+/** Every access token, revoked ones too, whole rows newest first (a tie by id): the admin key list. */
+export function listAccessTokenRows(tx: Raw): Promise<Record<string, unknown>[]> {
+  return tx.executeRaw<Record<string, unknown>>(CLIENT_GRANT_SQL.tokens_newest_first);
+}
+
+/** Takes the transaction-scoped lock on a client name key (agent-register.ts `registerClientNameLockKey`), so two same-name registrations serialize. */
+export async function lockOauthClientName(tx: Raw, lockKey: string): Promise<void> {
+  await tx.executeRaw(CLIENT_GRANT_SQL.client_name_lock, [lockKey]);
 }
 
 /** Whether the client holds an OAuth token or an authorization code. The Rust store keeps neither, so none holds one there. */

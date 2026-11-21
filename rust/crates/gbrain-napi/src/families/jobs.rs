@@ -122,6 +122,16 @@ impl Brain {
         self.run(env, move |s| s.get_job(job_id(id, "getJob")?))
     }
 
+    /// `readJobDataByIdempotencyKey(key)`: `{ data }` of the row holding the key, or null.
+    #[napi]
+    pub fn read_job_data_by_idempotency_key<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.job_data_by_idempotency_key(&key))
+    }
+
     /// `listJobs(filter?)`: newest first.
     #[napi]
     pub fn list_jobs<'env>(

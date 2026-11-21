@@ -295,12 +295,14 @@ function ingestTargetSlug(callerSlug: string): string {
  * removes it, which nothing runs on a schedule, so such a row can answer a retry for as long as the brain keeps it. A
  * retry that missed it queued a second job, and that job wrote the old body over any edit made since. The row answers
  * only for the target slug it was queued with: the old key collapsed one body sent to two slugs, which is the dropped
- * write #8769 fixed. A dead or cancelled row frees its key and answers nothing, as under the current key.
+ * write #8769 fixed. A dead or cancelled row frees its key and answers nothing, as under the current key. The coalesce
+ * step still sends SQL, which the Rust engine refuses (raw_sql): on that engine a matching old row fails the retry
+ * closed instead of queuing a second job, and every other capture reads null here and goes on.
  */
 async function legacyIngestJob(engine: BrainEngine, clientId: string, writeSourceId: string, contentHash: string, targetSlug: string): Promise<MinionJob | null> {
   const key = `ingest:webhook:${clientId}:${writeSourceId}:${contentHash}`;
   return engine.transaction(async (tx) => {
-    const [row] = await tx.executeRaw<{ data: unknown }>('SELECT data FROM minion_jobs WHERE idempotency_key = $1', [key]);
+    const row = await tx.readJobDataByIdempotencyKey(key);
     if (!row) return null;
     const data = (typeof row.data === 'string' ? JSON.parse(row.data) : row.data) as { slug?: unknown } | null;
     let rowSlug = '';

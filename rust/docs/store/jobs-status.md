@@ -19,6 +19,7 @@ The cases are in `test/engine-parity/jobs-status.test.ts` and `tests/jobs_status
 | `readWaitingScopeState({ name, queue, jobId })` | `{ waiting, live_id, age_min }`, always one answer (see below) |
 | `countRecentCompletedJobs(name, secs)` | the `completed` rows of a name with `finished_at` inside the window |
 | `listRecentFailedJobErrors(secs)` | `{ id, last_error }` of `dead` and `failed` rows with `updated_at` inside the window, by id |
+| `listBudgetOwnerJobs()` | `{ owner_id, remaining_cents }` of the newest five rows (by id) that own their budget and are not `completed`, `failed`, `dead` or `cancelled`. The `listBudgetOwners` member answers `[]` when none come back and otherwise refuses: the spend total reads the budget log, which this store does not keep. `admitJob` stores every budget column as null, so none come back today |
 | `readQueuedPageChars({ name, queue, maxChars })` | the average of `LEAST(length(compiled_truth), maxChars)` over the `waiting` and `delayed` rows of a name and queue, joined to their pages; null when none join |
 | `readSourceJobCounts(secs)` | per `data.sourceId` over `sync` and `embed-backfill` rows: `failed_24h`, `queue_depth`, `backfill_active`, `backfill_queued`; by source |
 | `readEmbedBackfillBySource(ids)` | per requested source: `queued`, `active`, `last_completed_at`; by source |

@@ -73,6 +73,12 @@ impl Brain {
         self.run(env, move |s| s.read_live_access_token_rows())
     }
 
+    /// `listAccessTokenRows()`: every token, revoked ones too, whole rows newest first.
+    #[napi]
+    pub fn list_access_token_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_access_token_rows())
+    }
+
     /// `readSourceGrantState(id)`: `{ archived, config }` of the source, or null.
     #[napi]
     pub fn read_source_grant_state<'env>(

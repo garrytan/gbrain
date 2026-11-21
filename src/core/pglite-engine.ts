@@ -2108,6 +2108,8 @@ export class PGLiteEngine implements BrainEngine {
   readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock) { return accessCredentials.readScopeSourceConfigs(this, ids, lock); }
   readOauthClientForUpdate(clientId: string) { return clientGrants.readOauthClientForUpdate(this, clientId); }
   readLiveOauthClients() { return clientGrants.readLiveOauthClients(this); }
+  listAccessTokenRows() { return clientGrants.listAccessTokenRows(this); }
+  lockOauthClientName(lockKey: string) { return clientGrants.lockOauthClientName(this, lockKey); }
   readLiveAccessTokenRows() { return clientGrants.readLiveAccessTokenRows(this); }
   oauthClientHoldsAuthorization(clientId: string) { return clientGrants.oauthClientHoldsAuthorization(this, clientId); }
   readSourceArchivedForShare(id: string) { return clientGrants.readSourceArchivedForShare(this, id); }
@@ -2338,7 +2340,12 @@ export class PGLiteEngine implements BrainEngine {
   addAccessGroupMembers(groupId: string, memberIds: readonly string[]) { return accessMembersImpl.addAccessGroupMembers(this.engineSql, groupId, memberIds); }
   removeAccessGroupMembers(groupId: string, memberIds: readonly string[]) { return accessMembersImpl.removeAccessGroupMembers(this.engineSql, groupId, memberIds); }
   deleteAccessGroup(id: string) { return accessMembersImpl.deleteAccessGroup(this.engineSql, id); }
+  readAccessMemberLink(system: string, externalId: string) { return accessMembersImpl.readAccessMemberLink(this.engineSql, system, externalId); }
+  insertAccessMemberLink(system: string, externalId: string, memberId: string) { return accessMembersImpl.insertAccessMemberLink(this.engineSql, system, externalId, memberId); }
+  deleteAccessMemberLink(system: string, externalId: string) { return accessMembersImpl.deleteAccessMemberLink(this.engineSql, system, externalId); }
+  listAccessMemberLinks(memberId: string | null) { return accessMembersImpl.listAccessMemberLinks(this.engineSql, memberId); }
   readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }) { return accessMembersImpl.readCredentialBindingForUpdate(this.engineSql, target, opts); }
+  readCredentialMemberId(target: AccessMembersSql.CredentialTarget) { return accessMembersImpl.readCredentialMemberId(this.engineSql, target); }
   writeCredentialBinding(target: AccessMembersSql.CredentialTarget, binding: AccessMembersSql.CredentialBinding) { return accessMembersImpl.writeCredentialBinding(this.engineSql, target, binding); }
   writeCredentialReadsUnscoped(target: AccessMembersSql.CredentialTarget, readsUnscoped: boolean) { return accessMembersImpl.writeCredentialReadsUnscoped(this.engineSql, target, readsUnscoped); }
   expireMemoryProposals(reason: string) { return writeMiscImpl.expireMemoryProposals(this.engineSql, reason); }
@@ -3873,6 +3880,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Stats + health
+  pingStore(opts?: { signal?: AbortSignal }) { return healthImpl.pingStore(this, opts); }
   async getStats(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainStats> {
     // #4592: optional source scope — parity with postgres-engine.getStats.
     // Bound as $1 (NEVER interpolated: remote callers influence the value).
@@ -4186,6 +4194,7 @@ export class PGLiteEngine implements BrainEngine {
   async admitJob(spec: AdmitJobSpec, policy: AdmitJobPolicy) { return this.transaction(tx => jobsImpl.admitJob(tx, spec, policy)); }
   async getJob(id: number) { return jobsImpl.getJob(this, id); }
   async readLiveJobIds(ids: number[]) { return jobsImpl.readLiveJobIds(this, ids); }
+  async readJobDataByIdempotencyKey(key: string) { return jobsImpl.readJobDataByIdempotencyKey(this, key); }
   async listJobs(filter?: ListJobsFilter) { return jobsImpl.listJobs(this, filter); }
   async claimNextJob(spec: ClaimJobSpec) { return jobsImpl.claimNextJob(this, spec); }
   async renewJobLease(id: number, lockToken: string, lockDurationMs: number, opts?: { signal?: AbortSignal }) { return jobsImpl.renewJobLease(this, id, lockToken, lockDurationMs, opts); }
@@ -4258,6 +4267,7 @@ export class PGLiteEngine implements BrainEngine {
   async readWaitingScopeState(spec: { name: string; queue: string; jobId: number }) { return jobsStatus.readWaitingScopeState(this, spec); }
   async countRecentCompletedJobs(name: string, withinSeconds: number) { return jobsStatus.countRecentCompletedJobs(this, name, withinSeconds); }
   async listRecentFailedJobErrors(withinSeconds: number) { return jobsStatus.listRecentFailedJobErrors(this, withinSeconds); }
+  async listBudgetOwners() { return jobsStatus.listBudgetOwners(this); }
   async readQueuedPageChars(spec: { name: string; queue: string; maxChars: number }) { return jobsStatus.readQueuedPageChars(this, spec); }
   async readSourceJobCounts(failedWithinSeconds: number) { return jobsStatus.readSourceJobCounts(this, failedWithinSeconds); }
   async readEmbedBackfillBySource(sourceIds: readonly string[]) { return jobsStatus.readEmbedBackfillBySource(this, sourceIds); }

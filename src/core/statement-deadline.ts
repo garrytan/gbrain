@@ -113,9 +113,9 @@ const DOCTOR_PATH_TYPED_READS: readonly string[] = [
   'entityFeatureCoverage', 'countDerivedRowTaint', 'listPendingGenerationMembers', 'listGenerationOrphanCandidates',
   'readBrainMaturity', 'readOpCheckpointKeys', 'readGitHoldRecords', 'readLiveSyncPassRows',
 ];
-/** Those reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
+/** Those reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`), the liveness round trip (engine-sql/health.ts `pingStore`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
 const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([
-  ...JOURNAL_TYPED_READS, 'getWorktreeBinding', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS,
+  ...JOURNAL_TYPED_READS, 'getWorktreeBinding', 'pingStore', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS,
   ...DOCTOR_CHECKPOINT_MEMBERS, ...DOCTOR_TERMINAL_MEMBERS, ...DOCTOR_BRAIN_MEMBERS, ...DOCTOR_SYNC_MEMBERS, ...DOCTOR_SRC_MEMBERS, ...DOCTOR_FACTS_TRUST_MEMBERS, ...FENCE_CENSUS_MEMBERS,
   ...DOCTOR_PATH_TYPED_READS,
 ]);

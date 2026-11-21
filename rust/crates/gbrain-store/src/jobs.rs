@@ -1017,6 +1017,18 @@ impl Store {
         Ok(load(&*self.read()?, id)?.map(|r| r.to_json()))
     }
 
+    /// `readJobDataByIdempotencyKey(key)`: `{ data }` of the row holding `key` (any status), or None. Mirrors
+    /// `SELECT data FROM minion_jobs WHERE idempotency_key = $1`; the key index names at most one row.
+    pub fn job_data_by_idempotency_key(&self, key: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        let Some(id) = get_json::<i64>(&*read, &idem_key(key))? else {
+            return Ok(None);
+        };
+        Ok(load(&*read, id)?
+            .filter(|r| r.idempotency_key.as_deref() == Some(key))
+            .map(|r| json!({ "data": r.data })))
+    }
+
     /// `listJobs`: every given (non-empty) filter, newest first (ties by id, newest first), 50 from 0
     /// by default.
     pub fn list_jobs(&self, filter: &ListFilter) -> Result<Vec<Value>> {

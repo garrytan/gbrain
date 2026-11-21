@@ -186,6 +186,26 @@ export async function listRecentFailedJobErrors(tx: Raw, withinSeconds: number):
   return rows.map(r => ({ id: Number(r.id), last_error: r.last_error }));
 }
 
+/** A live budget-owning job: its remaining cents and the cents its budget log reserved. */
+export interface BudgetOwnerRow { owner_id: number; remaining_cents: number | null; total_spent_cents: number | null }
+
+/** The newest five jobs that own a budget and are not finished, with their reserved spend, newest id first. */
+export async function listBudgetOwners(tx: Raw): Promise<BudgetOwnerRow[]> {
+  return tx.executeRaw<BudgetOwnerRow>(
+    `SELECT
+         mj.id AS owner_id,
+         mj.budget_remaining_cents AS remaining_cents,
+         COALESCE((SELECT SUM(ABS(cents_delta)) FROM minion_budget_log
+                    WHERE owner_id = mj.id AND event_type = 'reserved'), 0) AS total_spent_cents
+       FROM minion_jobs mj
+       WHERE mj.budget_remaining_cents IS NOT NULL
+         AND mj.budget_owner_job_id = mj.id
+         AND mj.status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+       ORDER BY mj.id DESC
+       LIMIT 5`,
+  );
+}
+
 /**
  * The average text length of the pages the queued jobs `name` on `queue` (waiting or delayed) point at, each page
  * capped at `maxChars`: the drain's cost estimate. A job names its page by `data.slug` and `data.sourceId` (default

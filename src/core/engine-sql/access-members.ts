@@ -95,6 +95,32 @@ export async function deleteAccessGroup(exec: SqlExecutor, id: string): Promise<
   await exec.executeRaw('DELETE FROM access_groups WHERE id = $1', [id]);
 }
 
+/** One `access_member_links` row (v286): a trusted system's person id, linked to one access member. */
+export interface AccessMemberLinkRow { system: string; external_id: string; member_id: string; created_at: Date }
+
+/** The link of (system, externalId), matched exactly, or null. */
+export async function readAccessMemberLink(exec: SqlExecutor, system: string, externalId: string): Promise<AccessMemberLinkRow | null> {
+  const [row] = await exec.executeRaw<AccessMemberLinkRow>('SELECT system, external_id, member_id, created_at FROM access_member_links WHERE system = $1 AND external_id = $2', [system, externalId]);
+  return row ?? null;
+}
+
+/** Links (system, externalId) to the member; the table's key, checks and member reference refuse a bad row. */
+export async function insertAccessMemberLink(exec: SqlExecutor, system: string, externalId: string, memberId: string): Promise<void> {
+  await exec.executeRaw('INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)', [system, externalId, memberId]);
+}
+
+/** Removes the link of (system, externalId); nothing for no such link. */
+export async function deleteAccessMemberLink(exec: SqlExecutor, system: string, externalId: string): Promise<void> {
+  await exec.executeRaw('DELETE FROM access_member_links WHERE system = $1 AND external_id = $2', [system, externalId]);
+}
+
+/** Every link, or one member's links, by member, system and external id, each in byte order (COLLATE "C"), as PGLite and the Rust store sort them. */
+export async function listAccessMemberLinks(exec: SqlExecutor, memberId: string | null): Promise<AccessMemberLinkRow[]> {
+  return memberId === null
+    ? exec.executeRaw<AccessMemberLinkRow>('SELECT system, external_id, member_id, created_at FROM access_member_links ORDER BY member_id COLLATE "C", system COLLATE "C", external_id COLLATE "C"')
+    : exec.executeRaw<AccessMemberLinkRow>('SELECT system, external_id, member_id, created_at FROM access_member_links WHERE member_id = $1 ORDER BY member_id COLLATE "C", system COLLATE "C", external_id COLLATE "C"', [memberId]);
+}
+
 // Each credential statement is spelled once per table (access_tokens keyed by id::text, oauth_clients by client_id):
 // the check-engine-sql-dynamic guard accepts only whole literal statements here, so nothing is spliced.
 
@@ -112,6 +138,17 @@ export async function readCredentialBindingForUpdate(exec: SqlExecutor, target: 
       : 'SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read, grant_types, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients WHERE client_id = $1 FOR UPDATE');
   const [row] = await exec.executeRaw<CredentialBindingRow>(sql, [target.id]);
   return row;
+}
+
+/**
+ * The member a credential is bound to, or null when it is unbound or absent. A revoked token or deleted client is read
+ * too, and nothing is locked: page-visibility.ts defaultSourceMemberWriter decides a remote write's reader with it.
+ */
+export async function readCredentialMemberId(exec: Pick<SqlExecutor, 'executeRaw'>, target: CredentialTarget): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ member_id: string | null }>(target.kind === 'token'
+    ? 'SELECT member_id FROM access_tokens WHERE id::text = $1'
+    : 'SELECT member_id FROM oauth_clients WHERE client_id = $1', [target.id]);
+  return row?.member_id ?? null;
 }
 
 /** Writes a credential's member, may_act_for and attest columns. */

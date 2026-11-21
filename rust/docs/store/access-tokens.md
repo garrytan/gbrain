@@ -33,6 +33,7 @@ below; rotate is still raw SQL and stops on a Rust brain.
 | `brain.writeAccessTokenPrivateGrant(id, axis, value)` | null. Sets `private_pages` or `private_facts` (`axis`) of the token with this id to `value` (`none` or `granted_sources`); an id no token has changes nothing. Another axis is `invalid_argument` |
 | `brain.lockLegacyAccessTokens()` | the whole rows, without `token_hash`, of the tokens not revoked and with no `source_grant`, oldest first (a tie by id). It serves `lockLegacyAccessTokens()`, the read `gbrain auth rescope --migrate-legacy` runs before it converts each token (`SELECT * ... FOR UPDATE`); the TypeScript member makes the times Dates |
 | `brain.readLiveAccessTokenRows()` | the same row shape (`last_used_at` and the binding columns as stored) for every token not revoked, by id, without `token_hash` (the grant checks that read every credential's source grant use no hash) |
+| `brain.listAccessTokenRows()` | the same row shape for every token, revoked ones too, newest first (`ORDER BY created_at DESC, id`): the admin key list (`GET /admin/api/api-keys`) |
 
 ## Callers
 

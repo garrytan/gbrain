@@ -34,7 +34,6 @@ src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	1
 src/commands/doctor/checks/content-quality.ts	execute_raw	3
 src/commands/doctor/checks/core-health.ts	execute_raw	3
 src/commands/doctor/checks/database-encoding.ts	execute_raw	1
-src/commands/doctor/checks/db-connection.ts	execute_raw	1
 src/commands/doctor/checks/default-source-path.ts	execute_raw	1
 src/commands/doctor/checks/embed-backfill-stalled.ts	execute_raw	1
 src/commands/doctor/checks/embedding-health.ts	execute_raw	2
@@ -102,11 +101,9 @@ src/commands/import.ts	execute_raw	5
 src/commands/init-prefer-postgres.ts	execute_raw	5
 src/commands/init.ts	sql_template	2
 src/commands/integrity.ts	execute_raw	1
-src/commands/jobs-watch.ts	execute_raw	2
 src/commands/jobs/smoke.ts	execute_raw	2
 src/commands/jobs/work.ts	execute_raw	1
 src/commands/loops.ts	execute_raw	1
-src/commands/mcp-provision.ts	sql_template	4
 src/commands/migrate-embeddings.ts	execute_raw	6
 src/commands/migrate-engine.ts	execute_raw	26
 src/commands/migrations/v0_14_0.ts	execute_raw	2
@@ -130,12 +127,9 @@ src/commands/reindex.ts	execute_raw	4
 src/commands/repair-jsonb.ts	driver_call	4
 src/commands/repair-propose.ts	execute_raw	1
 src/commands/serve-health.ts	execute_raw	1
-src/commands/serve-http-api-keys.ts	execute_raw	2
 src/commands/serve-http-clients.ts	execute_raw	1
-src/commands/serve-http-metrics.ts	execute_raw	2
-src/commands/serve-http-registration.ts	execute_raw	2
-src/commands/serve-http-registration.ts	sql_template	3
-src/commands/serve-http-webhooks.ts	execute_raw	4
+src/commands/serve-http-metrics.ts	execute_raw	1
+src/commands/serve-http-webhooks.ts	execute_raw	3
 src/commands/serve-http.ts	sql_template	1
 src/commands/sources-add-next.ts	execute_raw	2
 src/commands/sources-canonical.ts	execute_raw	1
@@ -166,7 +160,7 @@ src/commands/sync/run.ts	execute_raw	3
 src/commands/takes.ts	execute_raw	2
 src/commands/trust.ts	execute_raw	1
 src/commands/upgrade.ts	execute_raw	1
-src/core/access/actor.ts	execute_raw	7
+src/core/access/actor.ts	execute_raw	3
 src/core/access/attest-sources.ts	sql_template	7
 src/core/access/federation-exposure.ts	execute_raw	1
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
@@ -407,7 +401,6 @@ src/core/guests/owner-credentials.ts	execute_raw	1
 src/core/guests/promote.ts	execute_raw	4
 src/core/guests/sources.ts	execute_raw	7	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/guests/stamp-readable.ts	execute_raw	1
-src/core/harness/client-setup.ts	sql_template	1
 src/core/heal-audit.ts	execute_raw	3
 src/core/imessage/imessage-source.ts	execute_raw	3	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
 src/core/import-chunk-reuse.ts	execute_raw	1
@@ -616,7 +609,7 @@ src/core/persistence/page-mutations.ts	execute_raw	5
 src/core/persistence/page-prepare.ts	execute_raw	10
 src/core/persistence/page-purge.ts	execute_raw	30
 src/core/persistence/page-upload.ts	execute_raw	16
-src/core/persistence/page-visibility.ts	execute_raw	10
+src/core/persistence/page-visibility.ts	execute_raw	7
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	15
 src/core/persistence/pre-activation-release.ts	execute_raw	6
@@ -647,7 +640,7 @@ src/core/persistence/resolve-paths.ts	execute_raw	5
 src/core/persistence/rows-behind.ts	execute_raw	4
 src/core/persistence/searchable.ts	execute_raw	2
 src/core/persistence/segmented-apply.ts	execute_raw	9
-src/core/persistence/semantic-pages.ts	execute_raw	2
+src/core/persistence/semantic-pages.ts	execute_raw	1
 src/core/persistence/skill-activation.ts	execute_raw	11
 src/core/persistence/soak-counters.ts	execute_raw	3
 src/core/persistence/source-lifecycle.ts	execute_raw	33

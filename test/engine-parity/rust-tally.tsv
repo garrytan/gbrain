@@ -8,6 +8,7 @@ test/engine-parity/access-sort-order.test.ts	5	1
 test/engine-parity/access-tokens.test.ts	24	0
 test/engine-parity/admin-counts.test.ts	3	0
 test/engine-parity/admin-http.test.ts	2	1
+test/engine-parity/admin-unowned-http.test.ts	7	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0

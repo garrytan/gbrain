@@ -14,6 +14,7 @@ Keys (tag `x`, `keys::ACCESS_MEMBERS`):
 | `x 0x01 <member id>` | member record: `id`, `display_name`, `email`, `kind`, `labelled_only`, `disabled_at`, `tombstoned_at`, `created_at`, `updated_at` | `access_members` |
 | `x 0x02 <group id>` | group record: `id`, `created_at` | `access_groups` |
 | `x 0x03 <group id> 0x00 <member id>` | empty | `access_group_members`, primary key `(group_id, member_id)` |
+| `x 0x04 <system> 0x00 <external id>` | link record: `member_id`, `created_at` | `access_member_links` (v286), primary key `(system, external_id)`; `access_member_links.rs` |
 
 Ids never hold NUL (the id check), so the members of one group are one prefix. A brain holds few members, so the email
 uniqueness check, the groups of one member and the enabled-member count scan the member and group-member prefixes;
@@ -34,6 +35,10 @@ there is no reverse index.
 | `readAccessMembers({ id } \| { email } \| { includeRemoved })` | `AccessMemberRow[]` by id, each with its group ids sorted; by email, every member that declares exactly it, removed or not, by id (the caller refuses an email several members declare) | `engine-sql/access-control.ts` `ACCESS_MEMBER_SQL` |
 | `readAccessGroupIds(ids)` | the ids that name an existing group, each once, in byte order | `engine-sql/access-control.ts` `AUDIENCE_GROUPS_SQL` (`SELECT id FROM access_groups WHERE id = ANY($1)`) |
 | `listActiveAccessMembers()` | the member ids neither disabled nor removed, by id | `engine-sql/write-misc.ts` |
+| `readAccessMemberLink(system, externalId)` | `{ system, external_id, member_id, created_at }`, matched exactly, or null | `SELECT ... FROM access_member_links WHERE system = $1 AND external_id = $2` (`gbrain access member link\|unlink`) |
+| `insertAccessMemberLink(system, externalId, memberId)` | null | `INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)` |
+| `deleteAccessMemberLink(system, externalId)` | null; nothing for no such link | `DELETE FROM access_member_links WHERE system = $1 AND external_id = $2` |
+| `listAccessMemberLinks(memberId \| null)` | every link, or the links of exactly that member, by member id, system and external id, each in byte order | `SELECT ... ORDER BY member_id COLLATE "C", system COLLATE "C", external_id COLLATE "C"` (`gbrain access member links`) |
 
 Each write is one `Store::write`, so a refused statement leaves nothing of the call behind, as the Postgres transaction
 does.
@@ -63,6 +68,10 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
 | `access_members_pkey` | a member id that exists, removed or not |
 | `access_members_email_key` | an email another member declares |
 | `access_group_members_member_id_fkey` | a group member for a member id that does not exist |
+| `access_member_links_pkey` | a link for a `(system, external_id)` that is linked |
+| `access_member_links_system_check` | a system that does not match `^[a-z][a-z0-9_-]{0,31}$` |
+| `access_member_links_external_id_check` | an external id that is not 1-256 visible ASCII characters (`^[!-~]+$`) |
+| `access_member_links_member_id_fkey` | a link to a member id that does not exist |
 
 ## What the store does not do
 
@@ -71,6 +80,10 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
   members (`readCredentialBindingForUpdate`, `writeCredentialBinding`, `writeCredentialReadsUnscoped`, so
   `bindCredential` and `gbrain auth rescope --member`) and `readLiveMember` through a token or client are served there
   ([access-tokens.md](access-tokens.md) "Member binding", [oauth-clients.md](oauth-clients.md)).
+- Link cascade: members are never deleted (a removal is a tombstone), so the `ON DELETE CASCADE` of
+  `access_member_links.member_id` has nothing to do; a removed member keeps its links, as on Postgres. The attested
+  read of a link (`linkedMember` in `src/core/access/actor.ts`, a join with the member and its groups) is not a store
+  member yet: it still sends SQL, which this engine refuses.
 - Order: ids sort in byte order. The SQL sorts member ids, group ids and each member's groups with `COLLATE "C"`,
   so an `en_US` Postgres gives the same order (`test/engine-parity/access-sort-order.test.ts`).
 
@@ -79,4 +92,6 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
 - `crates/gbrain-store/tests/access_members.rs`: the flag and groups of an insert, every refusal with nothing left
   behind, the serves keys over two members and a disable, email and kind writes on a removed member, the tombstone,
   and group add, remove and cascade.
+- `crates/gbrain-store/tests/access_member_links.rs`: a link read exactly, listed by member and removed once; every link
+  refusal with nothing written; a removed member keeps its links.
 - `test/engine-parity/access-members.test.ts`: the same writes on every arm, read through the engine.

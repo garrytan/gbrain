@@ -100,6 +100,9 @@ export const admitJob = async function admitJob(this: RustEngine, brain: StoreBr
 export const getJob: StoreMember<[id: number], JobRow | null> = async (brain, id) =>
   jobRow(await storeCall({ member: 'getJob' }, () => brain.getJob(id)));
 
+export const readJobDataByIdempotencyKey: StoreMember<[key: string], { data: unknown } | null> = async (brain, key) =>
+  await storeCall({ member: 'readJobDataByIdempotencyKey' }, () => brain.readJobDataByIdempotencyKey(key)) as { data: unknown } | null;
+
 export const listJobs: StoreMember<[filter?: ListJobsFilter], JobRow[]> = async (brain, filter) => {
   const rows: JobRow[] = await storeCall({ member: 'listJobs' }, () => brain.listJobs(filter ?? null));
   return rows.map(r => jobRow(r)!);

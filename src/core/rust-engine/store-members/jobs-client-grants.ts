@@ -23,6 +23,18 @@ export const readLiveAccessTokenRows: StoreMember<[], Record<string, unknown>[]>
   return raw.map(r => ({ ...r, created_at: new Date(String(r.created_at)) }));
 };
 
+const asDate = (v: unknown): Date | null => v == null ? null : new Date(String(v));
+
+/** Every token, revoked ones too, newest first (a tie by id); the times are `Date`s, as `SELECT *` returns them. */
+export const listAccessTokenRows: StoreMember<[], Record<string, unknown>[]> = async brain => {
+  const raw = await storeCall({ member: 'listAccessTokenRows' }, () => brain.listAccessTokenRows()) as Record<string, unknown>[];
+  return raw.map(r => ({ ...r, created_at: new Date(String(r.created_at)), last_used_at: asDate(r.last_used_at),
+    revoked_at: asDate(r.revoked_at), reads_unscoped: asDate(r.reads_unscoped) }));
+};
+
+/** The store has one writer at a time, so a same-name registration already serializes (see the module comment). */
+export const lockOauthClientName: StoreMember<[lockKey: string], void> = async () => {};
+
 /** Whether the client holds an OAuth token or an authorization code (expired ones count), as the SQL engines' EXISTS pair. */
 export const oauthClientHoldsAuthorization: StoreMember<[clientId: string], boolean> = async (brain, clientId) =>
   (await storeCall({ member: 'oauthClientHoldsAuthorization' }, () => brain.oauthClientHoldsAuthorization(clientId))) === true;

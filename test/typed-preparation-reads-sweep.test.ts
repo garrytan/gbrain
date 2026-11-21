@@ -32,6 +32,8 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['listCorePageRows', 'FROM pages p WHERE p.deleted_at IS NULL AND p.frontmatter @>', e => e.listCorePageRows({ limit: 10 })],
   ['lockRegisteredSourceIds', 'FROM sources WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE', e => e.lockRegisteredSourceIds(['default'])],
   ['getConfig', 'SELECT value FROM config WHERE key = $1', e => e.getConfig('a.key')],
+  ['readCredentialMemberId', 'SELECT member_id FROM access_tokens WHERE id::text = $1', e => e.readCredentialMemberId({ kind: 'token', id: 'token-1' })],
+  ['readCredentialMemberId', 'SELECT member_id FROM oauth_clients WHERE client_id = $1', e => e.readCredentialMemberId({ kind: 'client', id: 'client-1' })],
   ['getAllConfig', 'SELECT key, value FROM config', e => e.getAllConfig()],
   ['listConfigKeys', 'SELECT key FROM config WHERE key LIKE', e => e.listConfigKeys('a.')],
   ['readPageSnapshot', 'WITH chosen AS (', e => e.readPageSnapshot('a', { sourceId: 'default' })],

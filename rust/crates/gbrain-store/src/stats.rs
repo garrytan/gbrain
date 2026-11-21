@@ -288,6 +288,13 @@ impl Store {
             .len())
     }
 
+    /// `pingStore`: the liveness round trip. Opens a read snapshot and drops it; an error means
+    /// the store cannot serve a read.
+    pub fn ping_store(&self) -> Result<()> {
+        let _read = self.read()?;
+        Ok(())
+    }
+
     /// `getStats`: page, chunk, embedding, link, tag and timeline counts, and live pages per
     /// type. Returns `BrainStats`.
     pub fn get_stats(&self, input: &ScopeInput) -> Result<Value> {

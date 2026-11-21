@@ -698,3 +698,20 @@ impl Store {
         ))
     }
 }
+
+impl Store {
+    /// `listAccessTokenRows()`: the whole row (`SELECT *`, no hash) of every token, revoked ones too, newest first
+    /// (`ORDER BY created_at DESC, id`), shaped as `read_live_access_token_rows` shapes it.
+    pub fn list_access_token_rows(&self) -> Result<Value> {
+        let read = self.read()?;
+        let mut tokens = all_tokens(&*read)?;
+        tokens.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(Value::Array(
+            tokens.iter().map(TokenRecord::whole_row).collect(),
+        ))
+    }
+}

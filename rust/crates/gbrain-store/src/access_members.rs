@@ -11,6 +11,8 @@
 //! - `x 0x02 <group id>` -> `GroupRecord` (JSON).
 //! - `x 0x03 <group id> 0x00 <member id>` -> empty. Ids never hold NUL (the id check), so a
 //!   group's members are the prefix `x 0x03 <group id> 0x00`.
+//! - `x 0x04 <system> 0x00 <external id>` -> a member link (`access_member_links`, v286); the
+//!   module `access_member_links` reads and writes these.
 //!
 //! A brain holds few members, so the email uniqueness check, the group list of a member and the
 //! enabled-member count scan these prefixes.
@@ -47,7 +49,7 @@ const SERVES_KEY: &str = "access.serves";
 const SERVES_DERIVED_KEY: &str = "access.serves_derived";
 const SERVES_SINCE_KEY: &str = "access.serves_since";
 
-fn member_key(id: &str) -> Vec<u8> {
+pub(crate) fn member_key(id: &str) -> Vec<u8> {
     let mut key = vec![keys::ACCESS_MEMBERS, MEMBER];
     key.extend_from_slice(id.as_bytes());
     key
@@ -136,7 +138,7 @@ fn valid_id(id: &str) -> bool {
         })
 }
 
-fn refused(constraint: &str, message: String) -> StoreError {
+pub(crate) fn refused(constraint: &str, message: String) -> StoreError {
     StoreError::new(
         CONSTRAINT_VIOLATION,
         format!("{message} (constraint {constraint})"),
@@ -164,7 +166,7 @@ fn check_kind(kind: &str) -> Result<()> {
 }
 
 /// `now()` of the write transaction.
-fn now(store: &Store) -> i64 {
+pub(crate) fn now(store: &Store) -> i64 {
     transaction_clock::transaction_now().unwrap_or_else(|| store.env.now_micros())
 }
 

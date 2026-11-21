@@ -288,6 +288,28 @@ for (const kind of testBackends()) {
     const activeMarked = async (marker: string) => (await engine.executeRaw<{ n: number }>(
       "SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND state <> 'idle' AND query LIKE '%' || $1 || '%'", [marker]))[0]!.n;
 
+    test('Postgres: under a deadline the connection probe (pingStore) runs on the deadline-bounded read, not the plain pool', async () => {
+      // pingStore replaced the connection check's executeRaw('SELECT 1 AS ok'), which the bound wrapper ended at the deadline.
+      // Under a deadline the typed probe must take the engine's bounded read (statement_timeout = time left); without one it
+      // keeps master's executeRaw path.
+      const raw = engine as unknown as { executeRaw: (...a: unknown[]) => Promise<unknown[]> };
+      const plain = raw.executeRaw;
+      let plainCalls = 0;
+      raw.executeRaw = (...a: unknown[]) => { plainCalls++; return plain.apply(engine, a); };
+      try {
+        const bound = deadlineBoundEngine(engine);
+        const scope = { startedAt: Date.now(), deadlineAt: Date.now() + 5_000, expired: false };
+        await withStatementDeadline(scope, () => bound.pingStore());
+        expect(plainCalls).toBe(0);
+        await engine.pingStore();
+        expect(plainCalls).toBe(1);
+        expect(scope.expired).toBe(false);
+      } finally {
+        delete (raw as Partial<typeof raw>).executeRaw;
+        if (raw.executeRaw !== plain) raw.executeRaw = plain;
+      }
+    });
+
     test('Postgres: a two-statement entry over its 300 ms budget leaves no backend running and its second statement is refused', async () => {
       const seen: { caught?: unknown; second?: unknown; done?: boolean } = {};
       const entry: DoctorEntry = {

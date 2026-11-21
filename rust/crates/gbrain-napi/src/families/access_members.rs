@@ -160,4 +160,56 @@ impl Brain {
     pub fn list_active_access_members<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_active_access_members())
     }
+
+    /// `readAccessMemberLink(system, externalId)`: `{ system, external_id, member_id, created_at }` or null.
+    #[napi]
+    pub fn read_access_member_link<'env>(
+        &self,
+        env: &'env Env,
+        system: String,
+        external_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_access_member_link(&system, &external_id)
+        })
+    }
+
+    /// `insertAccessMemberLink(system, externalId, memberId)`: resolves null.
+    #[napi]
+    pub fn insert_access_member_link<'env>(
+        &self,
+        env: &'env Env,
+        system: String,
+        external_id: String,
+        member_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_access_member_link(&system, &external_id, &member_id)
+        })
+    }
+
+    /// `deleteAccessMemberLink(system, externalId)`: resolves null.
+    #[napi]
+    pub fn delete_access_member_link<'env>(
+        &self,
+        env: &'env Env,
+        system: String,
+        external_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_access_member_link(&system, &external_id)
+        })
+    }
+
+    /// `listAccessMemberLinks(memberId | null)`: every link, or one member's, by member, system and id.
+    #[napi]
+    pub fn list_access_member_links<'env>(
+        &self,
+        env: &'env Env,
+        member_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_access_member_links(member_id.as_deref())
+        })
+    }
 }
