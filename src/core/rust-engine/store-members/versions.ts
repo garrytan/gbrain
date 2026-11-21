@@ -1,7 +1,7 @@
 /**
  * Page version members (BrainEngine createVersion, getVersions, the change-reason pair readLatestVersionId and
  * stampVersionChangeReason, readLatestVersionIdAtTier, the purged-change-reasons pair listVersionsByChangeReason and
- * replaceVersionChangeReasons, engine-sql/version-reasons.ts, and the holding-page cap pruneHoldingPageVersions,
+ * replaceVersionChangeReasons and the redacted-facts body read listRetainedVersionBodies, engine-sql/version-reasons.ts, and the holding-page cap pruneHoldingPageVersions,
  * engine-sql/version-prune.ts). A segmented page's snapshot references its body
  * generation and keeps content_hash, as insertSegmentedVersion does. A version keeps the reason a write stamped on it:
  * getVersions reads it as `replaced_because` (the trusted read; `excludePrivate` is refused). `revertToVersion` is not
@@ -89,3 +89,12 @@ export const replaceVersionChangeReasons: StoreMember<[sourceId: string, rows: R
     const ids: number[] = await storeCall({ member }, () => brain.replaceVersionChangeReasons({ sourceId, rows: rows.map(row => ({ id: row.id, reason: row.reason })), replacement }));
     return ids.map(Number);
   };
+
+/** The page's retained inline bodies, newest first, at most `limit` (repair_versions.rs). */
+export const listRetainedVersionBodies: StoreMember<[pageId: number, limit: number], Array<{ id: number; compiled_truth: string }>> = async (brain, pageId, limit) => {
+  const member = 'listRetainedVersionBodies';
+  requireInteger(member, 'page id', pageId);
+  requireInteger(member, 'limit', limit);
+  const rows: Array<{ id: number; compiled_truth: string }> = await storeCall({ member }, () => brain.listRetainedVersionBodies({ pageId, limit }));
+  return rows.map(row => ({ id: Number(row.id), compiled_truth: row.compiled_truth }));
+};

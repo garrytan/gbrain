@@ -47,8 +47,6 @@ import type { LabelFactCandidateRow } from '../engine-sql/label-repair-reads.ts'
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { opError, OperationError } from '../ops/contract.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { digest } from '../persistence/digest.ts';
 import { isTerminal } from '../persistence/model.ts';
@@ -205,8 +203,7 @@ async function finishedBatches(engine: BrainEngine, items: BatchItem[]): Promise
   if (!items.length) return new Set();
   const committed = new Set((await engine.listWriteRequestsByRequestIds(items.map(item => item.request_id)))
     .filter(row => row.state === 'committed' && row.operation === 'submit_job').map(row => row.request_id));
-  const active = new Set((await engine.executeRaw<{ id: number | string }>('SELECT id FROM facts WHERE id=ANY($1::bigint[]) AND expired_at IS NULL',
-    [items.flatMap(item => item.pages.flatMap(p => p.facts.map(f => f.id)))])).map(row => Number(row.id)));
+  const active = new Set(await engine.listUnexpiredFactIds(items.flatMap(item => item.pages.flatMap(p => p.facts.map(f => f.id)))));
   return new Set(items.filter(item => committed.has(item.request_id) || item.pages.every(p => p.facts.every(f => !active.has(f.id)))).map(item => item.request_id));
 }
 
@@ -230,9 +227,6 @@ export const conversationLabelsRepair: RepairHandler = {
         throw previewChangedError(opts.expect, command);
       }
       const all = batchItems(approved.items, opts.expect);
-      // The retirement expires facts and inserts the outcome rows in one transaction (retireBatch); no typed engine
-      // member serves those writes, so an engine without raw SQL stops here, before the first write.
-      if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', 'repair conversation-labels fact retirement');
       const done = await finishedBatches(engine, all);
       const items = all.filter(item => afterCursor(item.cursor, after) && !done.has(item.request_id));
       if (!items.length) await clearApprovedSet(engine, { command: 'conversation-labels', hash: opts.expect });
@@ -351,7 +345,7 @@ async function retireManaged(engine: BrainEngine, config: Parameters<typeof wait
  */
 async function retirePageFacts(tx: BrainEngine, page: LabelPage, hash: string): Promise<RetireResult> {
   const ids = page.facts.map(f => f.id);
-  await tx.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) FOR UPDATE', [page.source_id, ids]);
+  await tx.lockFactRows(page.source_id, ids);
   const live = new Map((await classifyLabelFacts(tx, [page.source_id], { slug: page.slug })).map(f => [f.id, f]));
   const current = await tx.getPage(page.slug, { sourceId: page.source_id });
   const result: RetireResult = { retired: [], changed: [], outcome: page.outcome };
@@ -359,22 +353,19 @@ async function retirePageFacts(tx: BrainEngine, page: LabelPage, hash: string): 
   for (const approved of page.facts) {
     const now = live.get(approved.id);
     const same = !!current && current.id === page.page_id && !!now && now.class === approved.class && now.fact_hash === approved.fact_hash;
-    const updated = same ? await tx.executeRaw(`UPDATE facts SET expired_at=now(), context=concat_ws(' | ', NULLIF(context, ''), $3::text)
-      WHERE source_id=$1 AND id=$2 AND expired_at IS NULL RETURNING id`, [page.source_id, approved.id, marker]) : [];
-    if (updated.length) result.retired.push(approved.id); else result.changed.push(approved.id);
+    const updated = same && await tx.expireFactWithNote(page.source_id, approved.id, marker);
+    if (updated) result.retired.push(approved.id); else result.changed.push(approved.id);
   }
   if (!result.retired.length || !current) return result;
-  await tx.executeRaw(`UPDATE facts SET expired_at=now() WHERE source_id=$1 AND source_markdown_slug=$2 AND source IN ($3,$4) AND expired_at IS NULL`,
-    [page.source_id, page.slug, TERMINAL_AUDIT_SOURCE, LEGACY_TERMINAL_AUDIT_SOURCE]);
+  await tx.expirePageFactsBySource(page.source_id, page.slug, [TERMINAL_AUDIT_SOURCE, LEGACY_TERMINAL_AUDIT_SOURCE]);
   if (page.outcome !== 'non_extractable') return result;
   const decided = await currentOutcome(tx, current);
   if (!decided.reason || decided.versionToken !== page.version_token) return { ...result, outcome: 'awaiting_reextraction' };
-  await tx.executeRaw(`UPDATE facts SET expired_at=now() WHERE source_id=$1 AND source_markdown_slug=$2 AND source=$3 AND expired_at IS NULL`,
-    [page.source_id, page.slug, NON_EXTRACTABLE_AUDIT_SOURCE]);
-  const [top] = await tx.executeRaw<{ n: number | string | null }>('SELECT max(row_num) AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [page.source_id, page.slug]);
+  await tx.expirePageFactsBySource(page.source_id, page.slug, [NON_EXTRACTABLE_AUDIT_SOURCE]);
+  const top = await tx.readMaxFactRowNum(page.source_id, page.slug);
   const outcome: NewFact & { row_num: number; source_markdown_slug: string } = { fact: 'EXTRACTION_NOT_APPLICABLE', kind: 'fact', entity_slug: null,
     source: NON_EXTRACTABLE_AUDIT_SOURCE, source_session: `${NON_EXTRACTABLE_AUDIT_SOURCE}:${page.slug}:${decided.versionToken}`, confidence: 1.0, notability: 'low',
-    context: stampExtractorVersion(`scanned, not extractable: ${decided.reason}`), row_num: top?.n == null ? 0 : Number(top.n) + 1, source_markdown_slug: page.slug };
+    context: stampExtractorVersion(`scanned, not extractable: ${decided.reason}`), row_num: top === null ? 0 : top + 1, source_markdown_slug: page.slug };
   const { inserted } = await tx.insertFacts([outcome], { source_id: page.source_id }); // gbrain-allow-direct-insert: the durable not-extractable outcome a label repair writes under the page lock (inside its receipted publication on a managed brain)
   if (inserted !== 1) throw opError('storage_error', 'The not-extractable outcome was not written; nothing on the page changed.',
     `The repair of ${page.slug} in source ${page.source_id} could not insert its not-extractable outcome, so the transaction rolled back. Preview the repair again.`,

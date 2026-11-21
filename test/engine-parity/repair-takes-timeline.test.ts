@@ -8,8 +8,8 @@
  *    put_page on the SQL arms, and the Rust engine refuses that page write by name ("repair take-supersession page write",
  *    lane 7's writer) before it writes. timeline, timeline-comments, timeline-order and connector-fences list the same
  *    pages on every arm, and their apply rewrites the page on the SQL arms while the Rust engine refuses the page write
- *    by name ("repair <kind> page write"). conversation-labels lists the same label-line facts on every arm and the Rust
- *    engine refuses the fact retirement by name ("repair conversation-labels fact retirement"). agent-session-facts
+ *    by name ("repair <kind> page write"). conversation-labels lists the same label-line facts and retires them the same
+ *    way on every arm (the retirement's fact writes are typed: engine-sql/fact-text-repair.ts). agent-session-facts
  *    previews on the SQL arms; on the Rust engine it refuses at listAgentSessionTakeCandidates, a facts member lane 4
  *    has not served yet.
  *  - Regression: these previews read pages, versions, timeline rows, take pointers, receipts and fact evidence through
@@ -222,12 +222,13 @@ describe('engine parity: repair take and timeline kinds (batch 5)', () => {
     return previewThenApply(engine, backend, 'connector-fences', 'repair connector-fences page write');
   });
 
-  parityTest('conversation-labels previews label facts the same way, and the Rust engine refuses the fact retirement by name', {
-    methods: ['putPage', 'insertFacts', 'listLabelFactCandidates', 'listSegmentedLabelPages', 'hasActiveAuditMarker', 'listActiveFactIdsOfPage'],
-    requires: 'raw_sql', timeout: 60_000,
+  parityTest('conversation-labels previews label facts and retires them the same way on every arm', {
+    methods: ['putPage', 'insertFacts', 'listLabelFactCandidates', 'listSegmentedLabelPages', 'hasActiveAuditMarker', 'listActiveFactIdsOfPage',
+      'listUnexpiredFactIds', 'lockFactRows', 'expireFactWithNote', 'expirePageFactsBySource', 'readMaxFactRowNum'],
+    timeout: 60_000,
   }, async (engine, backend) => {
     await seedLabelPages(engine);
-    const out = await previewThenApply(engine, backend, 'conversation-labels', 'repair conversation-labels fact retirement', { includeAmbiguous: true });
+    const out = await previewThenApply(engine, backend, 'conversation-labels', 'repair conversation-labels', { includeAmbiguous: true });
     const active = {} as Record<string, number>;
     for (const slug of ['meetings/prose-notes', 'meetings/dated-sync', 'meetings/fixed-notes']) active[slug] = (await engine.listActiveFactIdsOfPage('default', slug)).length;
     return { out, active };

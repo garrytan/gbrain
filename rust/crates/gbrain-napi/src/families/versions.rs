@@ -124,4 +124,19 @@ impl Brain {
             s.replace_version_change_reasons(&q)
         })
     }
+
+    /// `listRetainedVersionBodies({ pageId, limit })`: resolves the page's retained inline bodies, newest first
+    /// (`gbrain repair redacted-facts`).
+    #[napi]
+    pub fn list_retained_version_bodies<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::repair_versions::RetainedBodiesQuery =
+                required(query, "listRetainedVersionBodies query")?;
+            s.list_retained_version_bodies(&q)
+        })
+    }
 }

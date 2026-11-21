@@ -29,6 +29,7 @@ import type * as FactsCycleSql from './engine-sql/facts-cycle.ts';
 import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as LabelRepairSql from './engine-sql/label-repair-reads.ts';
+import type * as FactTextRepairSql from './engine-sql/fact-text-repair.ts';
 import type * as FilesOpsSql from './engine-sql/files-ops.ts';
 import type * as ContradictionsCycleSql from './engine-sql/contradictions-cycle.ts';
 import type * as OntologyRepairSql from './engine-sql/ontology-repair.ts';
@@ -3514,6 +3515,8 @@ export interface BrainEngine {
   stampVersionChangeReason(spec: { pageId: number; afterVersionId: number; reason: string }): Promise<number>;
   /** The versions of the source's pages whose change reason is one of `reasons`, by id (repair purged-change-reasons). */
   listVersionsByChangeReason(sourceId: string, reasons: readonly string[]): Promise<import('./engine-sql/version-reasons.ts').VersionReasonRow[]>;
+  /** The page's retained inline version bodies, newest first, at most `limit` (repair redacted-facts). */
+  listRetainedVersionBodies(pageId: number, limit: number): Promise<Array<{ id: number; compiled_truth: string }>>;
   /** Sets `replacement` on each named version still holding its named reason; answers the ids set, by id. */
   replaceVersionChangeReasons(sourceId: string, rows: ReadonlyArray<{ id: number; reason: string }>, replacement: string): Promise<number[]>;
   /**
@@ -4266,6 +4269,22 @@ export interface BrainEngine {
   listSegmentedLabelPages(sourceIds: string[], args: Omit<LabelRepairSql.LabelFactArgs, 'labelLine'>): Promise<LabelRepairSql.SegmentedLabelPage[]>;
   /** Whether page (`sourceId`, `slug`) holds an active fact of one of `sources`. */
   hasActiveAuditMarker(sourceId: string, slug: string, sources: readonly string[]): Promise<boolean>;
+  /** repair redacted-facts: the active facts whose text holds `[redacted`, by (source, id) (engine-sql/fact-text-repair.ts). */
+  listRedactedFactCandidates(sourceIds: readonly string[], ids: readonly number[] | null): Promise<FactTextRepairSql.RedactedFactRow[]>;
+  /** Rewrites each row still exactly as previewed and appends `marker` to its context; the ids rewritten, by id. */
+  restoreRedactedFactTexts(sourceId: string, restores: readonly FactTextRepairSql.FactTextRestore[], marker: string): Promise<number[]>;
+  /** The page's active fact row numbers among `rowNums` whose text is among `texts`, ascending. */
+  listProjectedFenceRows(sourceId: string, slug: string, rowNums: readonly number[], texts: readonly string[]): Promise<number[]>;
+  /** repair conversation-labels: the named facts that are not expired, ascending. */
+  listUnexpiredFactIds(ids: readonly number[]): Promise<number[]>;
+  /** Locks the named facts of the source for the rest of the transaction. */
+  lockFactRows(sourceId: string, ids: readonly number[]): Promise<void>;
+  /** Expires one unexpired fact of the source, appending `note` to its context; true when it did. */
+  expireFactWithNote(sourceId: string, id: number, note: string): Promise<boolean>;
+  /** Expires the page's unexpired facts whose source is one of `sources`; answers how many. */
+  expirePageFactsBySource(sourceId: string, slug: string, sources: readonly string[]): Promise<number>;
+  /** The largest fact `row_num` the page holds (expired or not), or null. */
+  readMaxFactRowNum(sourceId: string, slug: string): Promise<number | null>;
   /** Expired fenceless extractor facts of these sources (or of one page `slug`) with the page, withdrawal, duplicate, fence and receipt evidence, in (source, page, id) order. Reads persistence_requests and fact_withdrawals. */
   listExtractorFactsForClassification(sourceIds: string[], slug: string | null): Promise<FactsRepairSql.ExtractorFactRow[]>;
   /** Active typed facts consolidation closed at their own instant, with the facts of their take that state the same claim then, in (source, id) order. Backs `gbrain repair consolidate-ties`' preview. */

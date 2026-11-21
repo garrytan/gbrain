@@ -13,6 +13,8 @@
  *   source's versions that still hold a purged reason text, and its apply replaces each approved one only while it
  *   holds the text the apply found (rust/crates/gbrain-store/src/repair_versions.rs).
  *
+ * - `listRetainedVersionBodies`: `gbrain repair redacted-facts` reads a page's newest retained inline bodies.
+ *
  * The purge's own bulk rewrite of stored reasons (facts/purge.ts) stays raw SQL: it matches a needle across a whole
  * source, not an approved id list. A Rust brain refuses that rewrite, so a purge there stops on the typed refusal
  * rather than leave a reason unredacted.
@@ -64,4 +66,11 @@ export async function replaceVersionChangeReasons(tx: Raw, sourceId: string, row
       WHERE p.id = v.page_id AND p.source_id = $2 AND v.id = t.id AND v.change_reason = t.reason RETURNING v.id`,
     [replacement, sourceId, rows.map(row => row.id), rows.map(row => row.reason)]);
   return set.map(row => Number(row.id)).sort((a, b) => a - b);
+}
+
+/** The page's versions whose body is stored inline (a segmented snapshot keeps no copy), newest first, at most `limit`. */
+export async function listRetainedVersionBodies(tx: Raw, pageId: number, limit: number): Promise<Array<{ id: number; compiled_truth: string }>> {
+  const rows = await tx.executeRaw<{ id: number | string; compiled_truth: string }>(`SELECT id, compiled_truth FROM page_versions
+    WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT $2`, [pageId, limit]);
+  return rows.map(row => ({ id: Number(row.id), compiled_truth: row.compiled_truth }));
 }

@@ -34,6 +34,7 @@ import * as linkQueries from './link-queries.ts';
 import * as timelineQueries from './timeline-queries.ts';
 import * as timelineRepairReads from './timeline-repair-reads.ts';
 import * as labelRepairReads from './label-repair-reads.ts';
+import * as factTextRepair from './fact-text-repair.ts';
 import * as keyword from './keyword.ts';
 import * as chunkQueries from './chunk-queries.ts';
 import * as vectors from './vectors.ts';
@@ -143,7 +144,7 @@ export const STORE_MEMBERS = {
   ...cliReadsExport,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...factsRepair, ...labelRepairReads, ...factsTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...factsTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...factRelinkWrites,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,

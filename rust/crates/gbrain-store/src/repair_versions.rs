@@ -3,6 +3,8 @@
 //! - `listVersionsByChangeReason` / `replaceVersionChangeReasons`: `gbrain repair purged-change-reasons` lists the
 //!   versions of a source's pages whose stored change reason is one of the purged texts, and its apply replaces each
 //!   approved reason only while the version still holds the text the apply found.
+//! - `listRetainedVersionBodies`: `gbrain repair redacted-facts` reads the newest retained inline bodies of a page
+//!   (a segmented snapshot keeps no body copy and is skipped), newest first, at most `limit`.
 //!
 //! A source's versions are the versions of every page row of the source, live or soft-deleted, as the SQL's join
 //! on `pages` reads them.
@@ -50,6 +52,21 @@ pub struct VersionReasonReplace {
     pub source_id: String,
     pub rows: Vec<VersionReasonExpect>,
     pub replacement: String,
+}
+
+/// `listRetainedVersionBodies({ pageId, limit })`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetainedBodiesQuery {
+    pub page_id: i64,
+    pub limit: i64,
+}
+
+/// One retained inline body.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RetainedBody {
+    pub id: u64,
+    pub compiled_truth: String,
 }
 
 /// The page rows of `source_id`, live or soft-deleted.
@@ -123,7 +140,9 @@ impl Store {
             for page in source_pages(&*tx, &q.source_id)? {
                 for mut v in versions_of(&*tx, page.id)? {
                     let holds = v.change_reason.as_deref().is_some_and(|reason| {
-                        expected.get(&v.id).is_some_and(|texts| texts.contains(reason))
+                        expected
+                            .get(&v.id)
+                            .is_some_and(|texts| texts.contains(reason))
                     });
                     if holds {
                         v.change_reason = Some(q.replacement.clone());
@@ -135,5 +154,28 @@ impl Store {
             set.sort_unstable();
             Ok(set)
         })
+    }
+
+    /// The page's versions whose body is stored inline, newest first, at most `limit`.
+    pub fn list_retained_version_bodies(
+        &self,
+        q: &RetainedBodiesQuery,
+    ) -> Result<Vec<RetainedBody>> {
+        let (Ok(page_id), Ok(limit)) = (u64::try_from(q.page_id), usize::try_from(q.limit)) else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        let mut out: Vec<RetainedBody> = versions_of(&*read, page_id)?
+            .into_iter()
+            .filter_map(|v| {
+                v.compiled_truth.as_deref().map(|body| RetainedBody {
+                    id: v.id,
+                    compiled_truth: body.to_string(),
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| b.id.cmp(&a.id));
+        out.truncate(limit);
+        Ok(out)
     }
 }

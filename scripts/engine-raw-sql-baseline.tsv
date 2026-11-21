@@ -753,7 +753,6 @@ src/core/repair/accepted-takes.ts	execute_raw	4
 src/core/repair/atoms-restore.ts	execute_raw	3
 src/core/repair/attribution-backfill.ts	execute_raw	5
 src/core/repair/consolidate-ties.ts	execute_raw	1
-src/core/repair/conversation-labels.ts	execute_raw	6
 src/core/repair/duplicate-facts.ts	execute_raw	3
 src/core/repair/extractor-facts.ts	execute_raw	5
 src/core/repair/fact-claim-dates.ts	execute_raw	1
@@ -772,10 +771,8 @@ src/core/repair/origin-twins.ts	execute_raw	2
 src/core/repair/overwritten-edits.ts	execute_raw	2
 src/core/repair/private-labels.ts	execute_raw	5
 src/core/repair/provenance.ts	execute_raw	1
-src/core/repair/purged-change-reasons.ts	execute_raw	2
 src/core/repair/purged-page-facts.ts	execute_raw	2
 src/core/repair/readers.ts	execute_raw	3
-src/core/repair/redacted-facts.ts	execute_raw	4
 src/core/repair/rename-identity.ts	execute_raw	6
 src/core/repair/rotation.ts	execute_raw	2
 src/core/repair/secret-spans.ts	execute_raw	24	secret-spans --apply also redacts retained page_versions (selects and updates compiled_truth/frontmatter per version); no typed engine method for version redaction exists yet

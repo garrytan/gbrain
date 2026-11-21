@@ -68,6 +68,7 @@ pub mod repair;
 pub mod repair_home;
 pub mod repair_previews;
 pub mod saved_match;
+pub mod text_repair;
 pub mod trust;
 pub mod trust_owner;
 pub mod trust_reads;

@@ -63,6 +63,7 @@ mod facts_labels;
 mod facts_loops;
 mod facts_purge;
 mod facts_repair;
+mod facts_text_repair;
 mod facts_trust;
 mod facts_trust_owner;
 mod facts_trust_reads;
