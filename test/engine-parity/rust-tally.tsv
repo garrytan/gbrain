@@ -137,7 +137,7 @@ test/engine-parity/traversal-cache.test.ts	5	2
 test/engine-parity/trust-fence.test.ts	7	0
 test/engine-parity/trust-proposals.test.ts	5	0
 test/engine-parity/trust-reads.test.ts	13	0
-test/engine-parity/trust-tier-reads.test.ts	18	2
+test/engine-parity/trust-tier-reads.test.ts	19	2
 test/engine-parity/trust-withdrawals.test.ts	7	0
 test/engine-parity/trust-write-gate.test.ts	5	1
 test/engine-parity/typed-config-reads.test.ts	2	0
@@ -146,7 +146,7 @@ test/engine-parity/unrestricted-fact-list-reads.test.ts	2	0
 test/engine-parity/unrestricted-member-page-reads.test.ts	1	0
 test/engine-parity/valid-time-member-reads.test.ts	3	0
 test/engine-parity/vector-options.test.ts	4	0
-test/engine-parity/versions-raw.test.ts	15	0
+test/engine-parity/versions-raw.test.ts	16	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/withdrawal-discovery-reads.test.ts	5	0
 test/engine-parity/withdrawal-fence.test.ts	2	0
