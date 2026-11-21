@@ -1,5 +1,5 @@
 /**
- * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact,
+ * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact, expireFactUntil,
  * listFactsByEntity, listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions, countUnconsolidatedFacts,
  * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical, listUnattributedFacts,
  * pageCollapseFacts, listFenceRetireCandidates).
@@ -172,6 +172,9 @@ export const expireFact: Member<'expireFact'> = (brain, id, opts) => {
     id, supersededBy: o.supersededBy, at: iso(o.at ?? new Date()), successorFrom: iso(o.successorFrom),
   }));
 };
+
+export const expireFactUntil: Member<'expireFactUntil'> = (brain, id, until) =>
+  storeCall({ member: 'expireFactUntil' }, () => brain.expireFactUntil({ id, until: iso(until) }));
 
 export const listFactsByEntity: Member<'listFactsByEntity'> = async (brain, sourceId, entitySlug, opts) => {
   const q = listQuery('listFactsByEntity', sourceId, opts, false);

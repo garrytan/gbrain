@@ -110,6 +110,17 @@ export const DIVERGENCE_NORMALIZERS: Record<string, (value: unknown) => unknown>
     }
     return value;
   },
+  // Known gap until rust-engine/segment-embed (commit 2573915b55) reaches main: Rust getPage has no withdrawal overlay,
+  // so a withdrawal's strike of its fence row keeps its own reason. The one cell that differs is a fence row's stored
+  // context: PGLite "forgotten: memory withdrawn", Rust "forgotten: forgotten". Only that exact Rust text is mapped.
+  'withdrawal-overlay-context': (value) => {
+    if (Array.isArray(value)) return value.map((item) => DIVERGENCE_NORMALIZERS['withdrawal-overlay-context']!(item));
+    if (value !== null && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
+        key === 'context' && item === 'forgotten: forgotten' ? 'forgotten: memory withdrawn' : DIVERGENCE_NORMALIZERS['withdrawal-overlay-context']!(item)]));
+    }
+    return value;
+  },
 };
 
 const DIVERGENCE_DIR = join(import.meta.dir, '..', 'rust-expected-divergence');

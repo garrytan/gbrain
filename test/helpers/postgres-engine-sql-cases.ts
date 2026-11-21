@@ -249,6 +249,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'rawTransaction': OOS.lifecycle,
   'readFactForOwnerAction': OOS.factsTrust,
   'readFactSubject': OOS.factsCycle,
+  'readFactForForget': OOS.factsCycle,
   'cliReads': OOS.helper,
   'listAccessPolicySourceIds': OOS.cliReadsExport,
   'listExportPageKeys': OOS.cliReadsExport,
@@ -416,6 +417,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'installChunkEmbeddings': OOS.embeddingInstall,
   'readInlinePageRegions': OOS.writeGuards,
   'readStoredPageTier': OOS.writeGuards,
+  'readStoredPageBody': OOS.writeGuards,
   'readPageHiddenFromCaller': OOS.pageVisibility,
   'readCallerPageAccess': OOS.pageVisibility,
   'readWriteVisibilityProbe': OOS.pageVisibility,
@@ -676,7 +678,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readSegmentDerivations': OOS.pageBody, 'upsertSegmentDerivations': OOS.pageBody, 'retireSegmentDerivations': OOS.pageBody,
   'getEmbeddingsByChunkIds': 'chunks', 'getChunksWithEmbeddings': 'chunks',
   // facts (incl. the ontology rows of the facts table)
-  'insertFact': 'facts', 'expireFact': 'facts', 'insertFacts': 'facts', 'deleteFactsForPage': 'facts',
+  'insertFact': 'facts', 'expireFact': 'facts', 'expireFactUntil': 'facts', 'insertFacts': 'facts', 'deleteFactsForPage': 'facts',
   'listFactsByEntity': 'facts', 'listFactsSince': 'facts', 'listFactsKeyset': 'facts', 'listFactsBySession': 'facts', 'listSupersessions': 'facts',
   'countUnconsolidatedFacts': 'facts', 'findCandidateDuplicates': 'facts', 'consolidateFact': 'facts',
   'findTrajectory': 'facts', 'getFactsHealth': 'facts', 'migrateFactsToCanonical': 'facts',
@@ -1298,6 +1300,10 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('expireFact', [
     ['default', (e) => e.expireFact(7)],
     ['supersededBy', (e) => e.expireFact(7, { supersededBy: 8, at: EPOCH })],
+  ]),
+  ...variants('expireFactUntil', [
+    ['ownEnd', (e) => e.expireFactUntil(7, null)],
+    ['until', (e) => e.expireFactUntil(7, EPOCH)],
   ]),
   ...variants('insertFacts', [
     ['default', (e) => e.insertFacts([{ fact: 'f1', source: 'cli:test', entity_slug: SLUG, row_num: 1, source_markdown_slug: SLUG }], { source_id: SRC }), [[/INSERT INTO facts/, [{ id: 7 }]]]],

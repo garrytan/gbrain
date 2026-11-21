@@ -410,8 +410,7 @@ src/core/facts/embedding-identity.ts	execute_raw	1
 src/core/facts/facts-home.ts	execute_raw	4
 src/core/facts/fence-fact-append.ts	execute_raw	1
 src/core/facts/fence-write.ts	execute_raw	2
-src/core/facts/file-body-guard.ts	execute_raw	2
-src/core/facts/forget.ts	execute_raw	4
+src/core/facts/file-body-guard.ts	execute_raw	1
 src/core/facts/fts-index.ts	execute_raw	3
 src/core/facts/gone-page-facts.ts	execute_raw	4
 src/core/facts/held-fact-move.ts	execute_raw	12

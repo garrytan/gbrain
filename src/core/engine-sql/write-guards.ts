@@ -125,6 +125,21 @@ export async function readInlinePageRegions(exec: LegacyUnscopedRead, pageId: nu
   return row ?? null;
 }
 
+/** The inline body columns of a live page, read raw (no withdrawal overlay): NULL on a segmented page. */
+export interface StoredPageBodyRow { compiled_truth: string | null; timeline: string | null }
+
+/**
+ * The stored body columns of live page `slug` of the source (facts/file-body-guard.ts readStoredBody), or null when it
+ * is not live. `lock` takes the row lock, inside the caller's transaction.
+ */
+export async function readStoredPageBody(exec: LegacyUnscopedRead, sourceId: string, slug: string, lock = false): Promise<StoredPageBodyRow | null> {
+  const [row] = await exec.executeRaw<StoredPageBodyRow>(lock
+    ? 'SELECT compiled_truth, timeline FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR UPDATE'
+    : 'SELECT compiled_truth, timeline FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL',
+  [sourceId, slug]);
+  return row ?? null;
+}
+
 /** The stored `trust_tier` of the page `slug` names in the source, live or a tombstone (trust/page-write.ts storedPageTier), or null without one. */
 export async function readStoredPageTier(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<string | null> {
   const [row] = await exec.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);

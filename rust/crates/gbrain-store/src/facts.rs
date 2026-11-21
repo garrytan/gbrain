@@ -1040,6 +1040,14 @@ pub struct ExpireFactArgs {
     pub successor_from: Option<String>,
 }
 
+/// `expireFactUntil(id, until)`: `until` is ISO text, or null for the row's own end.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExpireFactUntilArgs {
+    pub id: f64,
+    pub until: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct PageDeleteArgs {
@@ -1567,6 +1575,32 @@ impl Store {
             if let Some(successor) = successor {
                 new.valid_until_us = Some(closed_until(&old, successor, now));
             }
+            write_fact(tx, trust, Some(&old), &new)?;
+            Ok(true)
+        })
+    }
+
+    /// `expireFactUntil(id, until)`: expire an unexpired row now and end it at `until`, or, without
+    /// one, at its own earlier end or now, never before it began (`COALESCE($2, GREATEST(valid_from,
+    /// LEAST(COALESCE(valid_until, now()), now())))`). True when a row changed.
+    pub fn expire_fact_until(&self, args: &ExpireFactUntilArgs) -> Result<bool> {
+        const OP: &str = "expireFactUntil";
+        let now = self.env.now_micros();
+        let until = opt_time(OP, "until", &args.until)?;
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let Some(old) = fact_by_number(tx, OP, "id", args.id)? else {
+                return Ok(false);
+            };
+            if old.expired_at_us.is_some() {
+                return Ok(false);
+            }
+            let mut new = old.clone();
+            new.expired_at_us = Some(now);
+            new.valid_until_us = Some(until.unwrap_or_else(|| {
+                old.valid_from_us
+                    .max(old.valid_until_us.unwrap_or(now).min(now))
+            }));
             write_fact(tx, trust, Some(&old), &new)?;
             Ok(true)
         })

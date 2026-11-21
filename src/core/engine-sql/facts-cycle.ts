@@ -76,6 +76,24 @@ export async function readFactSubject(raw: EngineRawRead, id: number): Promise<F
   return row ?? null;
 }
 
+/** The columns `forgetFactInFence` (facts/forget.ts) decides its path from. */
+export interface ForgetFactRow {
+  id: number | string;
+  source_id: string;
+  entity_slug: string | null;
+  row_num: number | null;
+  source_markdown_slug: string | null;
+  expired_at: Date | string | null;
+  visibility: string;
+}
+
+/** forget's target: fact `id`'s source, entity, fence coordinate, expiry and visibility, or null when no such row. */
+export async function readFactForForget(raw: EngineRawRead, id: number): Promise<ForgetFactRow | null> {
+  const [row] = await raw<ForgetFactRow>(
+    'SELECT id, source_id, entity_slug, row_num, source_markdown_slug, expired_at, visibility FROM facts WHERE id = $1', [id]);
+  return row ?? null;
+}
+
 /** One fence-owned fact row of a page as extract_facts reconciles it. */
 export interface PageFactRow {
   id: number | string;

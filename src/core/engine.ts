@@ -64,7 +64,7 @@ import type { PageBodySizes } from './engine-sql/large-page.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
-import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget } from './engine-sql/write-guards.ts';
+import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget, StoredPageBodyRow } from './engine-sql/write-guards.ts';
 import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingReserveInput } from './engine-sql/page-embedding-budget.ts';
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
@@ -2871,6 +2871,9 @@ export interface BrainEngine {
    */
   expireFact(id: number, opts?: { supersededBy?: number; at?: Date; successorFrom?: Date }): Promise<boolean>;
 
+  /** Expire fact `id` now and end it at `until`, else at its own earlier end or now (never before it began); true iff an unexpired row changed. forgetFactInFence's expiry. */
+  expireFactUntil(id: number, until: Date | null): Promise<boolean>;
+
   /** List active facts about an entity within a source, newest first. */
   listFactsByEntity(
     source_id: string,
@@ -3219,6 +3222,8 @@ export interface BrainEngine {
   readInlinePageRegions(pageId: number): Promise<InlinePageRegionsRow | null>;
   /** The raw stored `trust_tier` of a page by (source, slug), live or a tombstone (the page write gate), or null (engine-sql/write-guards.ts). */
   readStoredPageTier(sourceId: string, slug: string): Promise<string | null>;
+  /** The inline body columns of live page `slug`, or null when it is not live; `lock` takes the row lock inside a transaction. */
+  readStoredPageBody(sourceId: string, slug: string, lock?: boolean): Promise<StoredPageBodyRow | null>;
   // Page visibility guards (engine-sql/page-visibility.ts): the current caller's page policy, rendered in its access record.
   /** Whether a row of the page (live or soft-deleted) fails the current caller's policy: `read` (access, then privacy) or `access` alone. */
   readPageHiddenFromCaller(sourceId: string, slug: string, opts: { policy: PagePolicyPart }): Promise<boolean>;
@@ -3501,6 +3506,8 @@ export interface BrainEngine {
   listFenceRowGroups(): Promise<FactsCycleSql.FenceRowGroupRow[]>;
   /** The source and page slug (the row's page, else its entity) of fact `id`, or null for no such row. */
   readFactSubject(id: number): Promise<FactsCycleSql.FactSubjectRow | null>;
+  /** forget's target: fact `id`'s id, source, entity, fence coordinate, `expired_at` (a date) and visibility, or null for no such row. */
+  readFactForForget(id: number): Promise<FactsCycleSql.ForgetFactRow | null>;
   /** The fence-owned rows of a page coordinate, by row number then id; `valid_from`, `valid_until` and `expired_at` are dates. */
   listFactsForPage(sourceId: string, slug: string): Promise<FactsCycleSql.PageFactRow[]>;
   /** Per entity page of the source, its unexpired unfenced rows (a live page in a source with a checkout). No set order. */

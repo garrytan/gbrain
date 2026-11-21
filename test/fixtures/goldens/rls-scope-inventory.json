@@ -636,6 +636,28 @@
         ],
         "flagOnScopes": []
       },
+      "expireFactUntil#ownEnd": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "expireFactUntil#until": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "expireStaleWriteClaims#default": {
         "flagOffLanes": [
           "pool"
@@ -5845,6 +5867,7 @@
         "executeRaw": "none",
         "executeRawDirect": "none",
         "expireFact": "none",
+        "expireFactUntil": "none",
         "expireFactsByWithdrawal": "none",
         "expireMemoryProposals": "none",
         "expireSpendReservations": "none",
@@ -6322,6 +6345,7 @@
         "readExtractionLagCounts": "none",
         "readFactCacheWatermark": "none",
         "readFactEntitySlug": "none",
+        "readFactForForget": "none",
         "readFactForOwnerAction": "none",
         "readFactSubject": "none",
         "readFactWithdrawalClaim": "none",
@@ -6432,6 +6456,7 @@
         "readSourceState": "none",
         "readSourceWriteRow": "none",
         "readStoredBodyBytes": "none",
+        "readStoredPageBody": "none",
         "readStoredPageTier": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",

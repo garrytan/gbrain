@@ -51,6 +51,7 @@ test/engine-parity/field-usage.test.ts	3	0
 test/engine-parity/forget-commit.test.ts	3	0
 test/engine-parity/forget-reach-reads.test.ts	4	1
 test/engine-parity/forget-remember.test.ts	2	0
+test/engine-parity/forget-whole.test.ts	1	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
 test/engine-parity/import-members.test.ts	9	0
@@ -136,7 +137,7 @@ test/engine-parity/withdrawal-discovery-reads.test.ts	5	0
 test/engine-parity/withdrawal-fence.test.ts	2	0
 test/engine-parity/withdrawal-forget.test.ts	2	0
 test/engine-parity/write-attribution.test.ts	5	2
-test/engine-parity/write-guards.test.ts	10	0
+test/engine-parity/write-guards.test.ts	11	0
 test/engine-parity/write-misc.test.ts	33	16
 test/engine-parity/write-outcome-order.test.ts	1	0
 test/engine-parity/write-request-cancel.test.ts	2	0

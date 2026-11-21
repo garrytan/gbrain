@@ -73,6 +73,8 @@
     "discoverOntologyDimensions#sourceIds": {},
     "expireFact#default": {},
     "expireFact#supersededBy": {},
+    "expireFactUntil#ownEnd": {},
+    "expireFactUntil#until": {},
     "findAnomalies#default": {},
     "findAnomalies#sourceId": {},
     "findAnomalies#sourceIds": {},

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 903/903
+# covered: 906/906
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -25,7 +25,7 @@
 # takes: 28/28
 # dream: 3/3
 # contradictions: 5/5
-# facts: 15/15
+# facts: 16/16
 # segmented_body: 16/16
 # versions: 7/7
 # stats_ingest: 5/5
@@ -45,7 +45,7 @@
 # embedding_catalog: 5/5
 # fact_relink_attempts: 3/3
 # fact_relink_writes: 3/3
-# facts_cycle: 12/12
+# facts_cycle: 13/13
 # facts_purge: 18/18
 # facts_repair: 10/10
 # facts_trust: 10/10
@@ -69,7 +69,7 @@
 # telemetry: 10/10
 # field_usage: 1/1
 # alias_fanout_reads: 5/5
-# write_guards: 10/10
+# write_guards: 11/11
 # page_visibility: 4/4
 # large_page: 2/2
 # trust_fence: 4/4
@@ -85,21 +85,21 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	116	no	yes	yes	serves
+transaction	lifecycle	yes	117	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	126	yes	yes	yes	serves
+getPage	pages	yes	128	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	541	yes	yes	yes	serves
+putPage	pages	yes	542	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	152	yes	yes	yes	serves
+softDeletePage	pages	yes	153	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -339,6 +339,7 @@ insertFact	facts	yes	62	yes	yes	yes	serves
 insertFacts	facts	yes	95	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	36	no	yes	yes	serves
+expireFactUntil	facts	yes	1	no	yes	yes	serves
 listFactsByEntity	facts	yes	29	yes	yes	yes	serves
 listFactsSince	facts	yes	22	yes	yes	yes	serves
 listFactsKeyset	facts	yes	10	no	yes	yes	serves
@@ -684,7 +685,8 @@ listActiveFactsForEntity	facts_cycle	yes	1	no	yes	yes	serves
 listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
 listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
 readFactSubject	facts_cycle	yes	1	no	yes	yes	serves
-listFactsForPage	facts_cycle	yes	8	no	yes	yes	serves
+readFactForForget	facts_cycle	yes	2	no	yes	yes	serves
+listFactsForPage	facts_cycle	yes	10	no	yes	yes	serves
 countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
 countUnconsolidatedFactsBySource	facts_cycle	yes	1	no	yes	yes	serves
 findBulkFactDays	facts_cycle	yes	1	no	yes	yes	serves
@@ -906,6 +908,7 @@ readLivePageBody	write_guards	yes	1	no	yes	yes	serves
 readPageIndexingState	write_guards	yes	1	no	yes	yes	serves
 readInlinePageRegions	write_guards	yes	1	no	yes	yes	serves
 readStoredPageTier	write_guards	yes	1	no	yes	yes	serves
+readStoredPageBody	write_guards	yes	1	no	yes	yes	serves
 readPageHiddenFromCaller	page_visibility	yes	3	no	yes	yes	serves
 readCallerPageAccess	page_visibility	yes	3	no	yes	yes	serves
 readWriteVisibilityProbe	page_visibility	yes	3	no	yes	yes	serves
