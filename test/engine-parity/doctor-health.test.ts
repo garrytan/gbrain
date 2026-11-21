@@ -15,10 +15,10 @@
  *  - Seam: typed members, seeded through typed writers; the drift fixtures of the (b) cases are DDL behind the backend
  *    switch, restored before the case ends.
  *
- * Named differences (the Rust arm does not equal PGLite, by design):
- *  - persistence_request_indexes: PGLite and Postgres read the request-table indexes as valid; the Rust store has none
- *    (it finds a request by a full scan of its request keys), so `readRequestIndexStates` refuses by name and the check
- *    reports "Health is unknown". The case ends on that refusal, so the Rust tally counts it as refused.
+ * Request indexes: the Rust store has no request-table index (it finds a request by a full scan of its request keys), so
+ * none can be missing or INVALID and `readRequestIndexStates` answers each named index valid. Doctor and
+ * `repair request-indexes` print what a healthy PGLite brain prints; the scan's speed loss is row 20 of "Open before
+ * `rust` can be selected" in docs/designs/RUST_ENGINE.md, not a doctor finding.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -33,6 +33,10 @@ import { checkTimelineDedupIndex } from '../../src/core/timeline-dedup-repair.ts
 import { readCapacityView } from '../../src/core/persistence/capacity-view.ts';
 import { cachedOpsSnapshot } from '../../src/commands/doctor/ops-snapshot.ts';
 import { PERSISTENCE_REQUEST_ID_INDEX, PERSISTENCE_REQUEST_ONLINE_INDEXES } from '../../src/core/persistence/schema.ts';
+import type { OperationContext } from '../../src/core/ops/contract.ts';
+import { resolveRepairScope, runRepair } from '../../src/core/repair/core.ts';
+import { requestIndexesRepair } from '../../src/core/repair/request-indexes.ts';
+import { renderRepairResult } from '../../src/commands/repair.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -268,31 +272,26 @@ describe('doctor catalog checks', () => {
   );
 
   parityTest(
-    'persistence_request_indexes (a): valid on the SQL engines; health unknown on Rust, which has no request indexes',
+    'persistence_request_indexes (a): every request index reads valid, so doctor prints the same ok on every engine',
     { methods: ['readRequestIndexStates'] },
-    async (engine, backend) => {
+    async (engine) => {
+      // Rust has no request-table index to leave missing or INVALID (it finds a request by a full scan of keys::REQUEST,
+      // persistence.rs all_requests), so it answers each named index valid; the scan's speed loss is RUST_ENGINE.md row 20.
       const check = await requestIndexesCheck(engine);
-      if (backend === 'rust') {
-        // Named difference: Rust finds a request by a full scan of its request keys (persistence.rs all_requests).
-        expect({ status: check.status, health: (check.details as { health?: string }).health }).toEqual({ status: 'warn', health: 'unknown' });
-        expect(check.message).toContain('readRequestIndexStates');
-        expect(check.message).toContain('Health is unknown.');
-        // End on the refusal itself: the check caught it to report health unknown.
-        await engine.readRequestIndexStates([PERSISTENCE_REQUEST_ID_INDEX.name]);
-      }
       expect(check.status).toBe('ok');
-      return { check, states: await engine.readRequestIndexStates([...PERSISTENCE_REQUEST_ONLINE_INDEXES.map(i => i.name), 'idx_never_built']) };
+      return { check, states: await engine.readRequestIndexStates(PERSISTENCE_REQUEST_ONLINE_INDEXES.map(i => i.name)) };
     },
   );
 
   parityTest(
-    'persistence_request_indexes (b): a dropped request index warns on the SQL engines; Rust stays unknown',
+    'persistence_request_indexes (b): a dropped request index warns on the SQL engines; Rust has none to drop and stays ok',
     { methods: ['readRequestIndexStates'] },
     async (engine, backend) => {
       if (backend === 'rust') {
-        const check = await requestIndexesCheck(engine);
-        expect({ status: check.status, health: (check.details as { health?: string }).health }).toEqual({ status: 'warn', health: 'unknown' });
-        await engine.readRequestIndexStates([PERSISTENCE_REQUEST_ID_INDEX.name]);
+        expect((await requestIndexesCheck(engine)).status).toBe('ok');
+        expect(await engine.readRequestIndexStates([PERSISTENCE_REQUEST_ID_INDEX.name]))
+          .toEqual([{ name: PERSISTENCE_REQUEST_ID_INDEX.name, valid: true, phase: null, blocks_done: null, blocks_total: null }]);
+        return 'pinned';
       }
       const [row] = await engine.executeRaw<{ indexdef: string }>(`SELECT indexdef FROM pg_indexes WHERE indexname = $1`, [PERSISTENCE_REQUEST_ID_INDEX.name]);
       await withDrift(engine, [`DROP INDEX ${PERSISTENCE_REQUEST_ID_INDEX.name}`], [row!.indexdef], async () => {
@@ -301,6 +300,33 @@ describe('doctor catalog checks', () => {
         expect(check.message).toContain(`${PERSISTENCE_REQUEST_ID_INDEX.name} is missing`);
       });
       return 'pinned';
+    },
+  );
+
+  parityTest(
+    'repair request-indexes plans nothing to build on a healthy brain, the same on every engine',
+    { methods: ['readRequestIndexStates'] },
+    async (engine) => {
+      // Every engine serves the index states, so a typed refusal here is a failure, not a Rust "refused" outcome.
+      const plan = await requestIndexesRepair.plan(engine, { brain_id: 'host', source_ids: ['default'] }, null)
+        .catch((error: unknown) => { throw new Error(`the request-indexes plan did not read the index states: ${(error as Error).message}`); });
+      expect(plan.items).toEqual([]);
+      return plan;
+    },
+  );
+
+  parityTest(
+    'repair request-indexes previews and applies nothing on a healthy brain, with the same output on every engine',
+    { methods: ['readRequestIndexStates'] },
+    async (engine) => {
+      // On Rust this stops on the repair core's own raw SQL (its cursor in op_checkpoints and the journal counters), not
+      // on the index states; rust-engine/repair-rust types that core, and then this case compares the printed output.
+      const ctx = { engine, config: {}, remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+      const scope = await resolveRepairScope(engine);
+      const preview = await runRepair(ctx, requestIndexesRepair, scope, { apply: false });
+      const applied = await runRepair(ctx, requestIndexesRepair, scope, { apply: true });
+      expect({ affected: applied.affected, applied: applied.applied, failed: applied.failed, complete: applied.complete }).toEqual({ affected: 0, applied: 0, failed: [], complete: true });
+      return { preview: renderRepairResult(preview), applied: renderRepairResult(applied) };
     },
   );
 

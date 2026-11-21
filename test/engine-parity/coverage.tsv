@@ -731,7 +731,7 @@ countOrphanedEventProjections	doctor_health	yes	1	no	yes	yes	serves
 readTimelineDedupIndex	doctor_health	yes	2	no	yes	yes	serves
 readPagesUpsertArbiter	doctor_health	yes	2	no	yes	yes	serves
 readRetrievalTrackingColumn	doctor_health	yes	2	no	yes	yes	serves
-readRequestIndexStates	doctor_health	yes	2	no	yes	yes	serves
+readRequestIndexStates	doctor_health	yes	4	no	yes	yes	serves
 listCapacityCounters	doctor_persistence	yes	4	no	yes	yes	serves
 listOutstandingHolders	doctor_persistence	yes	2	no	yes	yes	serves
 countPersistenceRequestRows	doctor_persistence	yes	2	no	yes	yes	serves

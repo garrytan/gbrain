@@ -9,7 +9,7 @@ These are the statements that the calibration checks (`contextual_retrieval_cove
 `src/core/rust-engine/store-members/doctor-health.ts`; the store side is `crates/gbrain-store/src/cli_reads/doctor_health.rs`,
 which has no keys of its own. `test/engine-parity/doctor-health.test.ts` compares the engines.
 
-A member answers one of four ways on the Rust engine:
+A member answers one of three ways on the Rust engine:
 
 1. Served from the store's records (the table below).
 2. Answered from the store's key layout, because the SQL statement reads the catalog and the key layout holds what it checks for:
@@ -20,10 +20,10 @@ A member answers one of four ways on the Rust engine:
    - `readTimelineDedupIndex`: present, with the definition the SQL engines print for the v138 index
      (`page_id, date, md5(summary), source`), the columns of the store's `timeline_dedup` key.
    - `readRetrievalTrackingColumn`: true. The store records page retrievals (`page_ops/retrievals.rs`, `bumpPageRetrievals`).
+   - `readRequestIndexStates`: every named index valid, built and not building. See "Request lookups" below.
 3. `countAppliedGradeVerdicts` answers 0 with no store call: the store keeps no `take_grade_cache`, and its only writer
    (`src/core/cycle/grade-takes.ts`) runs raw SQL, which the engine refuses. If a Rust writer for it lands, the member must move to
    the first kind in the same change.
-4. `readRequestIndexStates` refuses by name (`persistence_journal`). See "Request lookups" below.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -51,5 +51,11 @@ A member answers one of four ways on the Rust engine:
 The SQL engines keep online-built indexes on `persistence_requests` (the checkpoint pair, the slug intent, the request id, the
 foreground-committed, replay id and slug-sequence indexes), and doctor `persistence_request_indexes`, the checkpoint timeout hint,
 the page purge and the failed-writes preview read their state. The store has no request indexes: it finds a request by a full scan
-of `keys::REQUEST` (`persistence.rs` `all_requests`). That is a speed loss against an indexed table on a brain with a large request
-journal, and no index state is true for it, so `readRequestIndexStates` refuses and doctor reports the check's health as unknown.
+of `keys::REQUEST` (`persistence.rs` `all_requests`). An index the store does not have cannot be missing or left INVALID by an
+interrupted build, and the statement timeout (57014) that a broken index causes on a large request table cannot happen: the store
+runs no SQL statement. So `readRequestIndexStates` answers every named index valid, doctor `persistence_request_indexes` prints
+what a healthy PGLite brain prints, and `gbrain repair request-indexes` plans and applies nothing.
+
+The full scan is still a speed loss against an indexed table on a brain with a large request journal. Doctor's "valid" does not
+record it: row 20 of "Open before `rust` can be selected" in `docs/designs/RUST_ENGINE.md` does, until a request index in the
+store fixes it.
