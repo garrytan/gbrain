@@ -382,7 +382,9 @@ request leaves (`insertWithdrawalEffects`, the statement `recordFactWithdrawal` 
 one `withdrawal-mirror`, `git` and `embedding` row, in that order, each `queued` with `data`, a null
 revision, the source's incarnation and the worktree of the source's binding when the binding names that
 incarnation, else a null worktree. It resolves the
-kinds it inserted. An unknown source inserts nothing, as the statement's `FROM sources` yields no row; a
+kinds it inserted. The request id is stored in canonical lowercase, as Postgres stores a uuid, so the
+mirror gate (`readMirrorGateRows`) and the claim order find the rows whatever case the caller sent. An unknown
+source inserts nothing, as the statement's `FROM sources` yields no row; a
 kind already stored for the request is kept. A request id that is not a uuid refuses with the uuid syntax
 message, and a request with no row refuses `constraint_violation` (the foreign key). Inside `transaction`
 it is one more write of the withdrawal's store write, so the effects commit with the withdrawal.

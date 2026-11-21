@@ -1900,7 +1900,7 @@ impl Store {
     }
 
     /// `getVersions(slug, opts)`, newest first; under `excludePrivate`, only the versions the page
-    /// and version policies keep, each reason withheld when its successor is hidden or pruned.
+    /// and version policies keep, each with its reason only when its successor does not withhold it.
     pub fn get_versions(&self, slug: &str, options: &VersionsOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
@@ -1928,26 +1928,29 @@ impl Store {
                     },
                 )?;
                 versions.sort_by_key(|v| v.id);
-                // `replacedBecauseSql`: a reader held to world-visible pages sees a reason only when
-                // the next version (over every version, never only the visible ones) is visible too
-                // and was not pruned; the last version's successor is the page, which the page
-                // check above already let through. `pickValidTimeEdition` judges it the same way.
-                let reasons: Vec<Option<String>> = (0..versions.len())
-                    .map(|i| {
-                        let v = &versions[i];
-                        v.change_reason.clone().filter(|_| {
-                            policy.is_none_or(|policy| {
-                                !v.successor_pruned
-                                    && versions.get(i + 1).is_none_or(|n| {
-                                        !crate::facts::version_hidden(
-                                            &page,
-                                            &n.page_type,
-                                            &n.frontmatter,
-                                            policy,
-                                        )
-                                    })
-                            })
-                        })
+                // A policy reader sees a version's reason only when its successor (the next
+                // version over every version of the page, never only the visible ones; the live
+                // page, which the page check above covers, for the newest) does not withhold it,
+                // and no prune deleted that successor (`replacedBecauseSql`).
+                let reasons: Vec<Option<String>> = versions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, row)| {
+                        let withheld = policy.is_some_and(|policy| {
+                            row.successor_pruned
+                                || versions.get(i + 1).is_some_and(|next| {
+                                    crate::facts::successor_withholds_reason(
+                                        &next.page_type,
+                                        &next.frontmatter,
+                                        policy,
+                                    )
+                                })
+                        });
+                        if withheld {
+                            None
+                        } else {
+                            row.change_reason.clone()
+                        }
                     })
                     .collect();
                 for (row, reason) in versions.into_iter().zip(reasons) {
@@ -1972,6 +1975,8 @@ impl Store {
             .iter()
             .map(|(r, reason)| {
                 let mut v = r.to_json(include_body);
+                // `replacedBecauseSql`: the stored reason for a trusted read, the successor-checked
+                // one for a policy reader.
                 v["replaced_because"] = json!(reason);
                 v
             })

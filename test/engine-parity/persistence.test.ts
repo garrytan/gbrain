@@ -653,6 +653,23 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('a withdrawal queued under an uppercase request id is stored and found by the mirror gate as Postgres reads a uuid', {
+    methods: ['insertWithdrawalEffects', 'transaction', 'readRequestEffects', 'readMirrorGateRows', 'readSourceMembership', 'lockPersistenceCounters',
+      'insertWriteRequest'],
+  }, async (engine) => {
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b6');
+    const upper = id.toUpperCase();
+    const targets = [{ slug: 'people/a', page_id: 1, revision: 'e0000000-0000-4000-8000-0000000000e1' }];
+    await engine.transaction(tx => tx.insertWithdrawalEffects({ requestId: upper, sourceId: 'default', targets }));
+    await engine.transaction(tx => tx.insertWithdrawalEffects({ requestId: id, sourceId: 'default', targets }));
+    // The id itself differs per arm, so each row says whether it carries the stored lowercase id.
+    const gate = async (requestId: string) => (await engine.readMirrorGateRows([requestId])).map(row => ({ lowercase_id: row.request_id === id, state: row.state }));
+    const answers = { lowercase: id === id.toLowerCase(), effects: (await engine.readRequestEffects(id)).map(e => e.kind), lower: await gate(id), upper: await gate(upper) };
+    expect(answers).toEqual({ lowercase: true, effects: ['embedding', 'git', 'withdrawal-mirror'], lower: [{ lowercase_id: true, state: 'queued' }],
+      upper: [{ lowercase_id: true, state: 'queued' }] });
+    return answers;
+  });
+
   parityTest('readRequestEffects reads a request\'s queued effects in kind order, or only its Git effect, and refuses a non-uuid id', {
     methods: ['readRequestEffects', 'insertPublicationEffects', 'transactionDirect', 'declarePersistence', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
   }, async (engine) => {

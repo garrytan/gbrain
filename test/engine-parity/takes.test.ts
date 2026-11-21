@@ -643,6 +643,37 @@ describe('engine parity: takes', () => {
       return { before, after };
     },
   );
+
+  parityTest(
+    'inside a transaction a take vector read answers, and a rolled-back nested transaction takes its vectors out of the search',
+    { methods: ['putPage', 'addTakesBatch', 'listTakes', 'updateTakeEmbeddings', 'searchTakesVector', 'hasStoredVectors', 'transaction'] },
+    async (engine) => {
+      const a = await page(engine, 'people/alice-example');
+      await engine.addTakesBatch([take(a.id, 1, 'one take', { holder: 'garry', weight: 0.5 })]);
+      const id = (await takeIds(engine, a.id)).get('one take')!;
+      const embed = (on: BrainEngine, axis: number) =>
+        on.updateTakeEmbeddings([{ take_id: id, embedding: basisEmbedding(axis), claim: 'one take', model: 'embed-m1' }]);
+      const best = async (on: BrainEngine, axis: number) => round((await on.searchTakesVector(basisEmbedding(axis)))[0]?.score);
+      await embed(engine, 2);
+      const result = await engine.transaction(async (tx) => {
+        // A read that scans the take vectors and reads each take, with one take vector stored.
+        const stored = await tx.hasStoredVectors('takes');
+        // A nested transaction (a savepoint) writes another vector, searches it, then rolls back.
+        let seenInside = null as number | null | undefined;
+        try {
+          await tx.transaction(async (sp) => {
+            await embed(sp, 0);
+            seenInside = await best(sp, 0);
+            throw new Error('roll the savepoint back');
+          });
+        } catch { /* the savepoint rolled back */ }
+        await embed(tx, 1);
+        return { stored, seenInside, afterRollback: await best(tx, 1), rolledBack: await best(tx, 0) };
+      });
+      expect(result).toEqual({ stored: true, seenInside: 1, afterRollback: 1, rolledBack: 0 });
+      return result;
+    },
+  );
 });
 
 describe('engine parity: contradiction probe runs and judge cache', () => {

@@ -25,6 +25,7 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, LinkBatchInput } from '../../src/core/engine.ts';
 import { createSource, parityArms } from './harness.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { VALID_TIME_CURRENT_ORD } from '../../src/core/engine-sql/trust-tier-reads.ts';
 import { applyTemporalEvidence, relationshipKeysForOrigin } from '../../src/core/link-temporal-apply.ts';
@@ -562,6 +563,35 @@ describe('engine parity: typed trust tier reads', () => {
       expect(july).toMatchObject({ ord: 'current', introduced: null, gap: true });
       expect(pinned).toMatchObject({ ord: 'large2', successor_pruned: false, introduced: null });
       return { kept, trusted, remote, july, pinned };
+    },
+  );
+
+  parityTest(
+    'the pick withholds the reason a private successor gave, even from a caller whose grant opens that successor',
+    { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const write = (body: string, frontmatter: Record<string, unknown>) =>
+        engine.putPage('vt/grant', { type: 'note', title: 'VT', compiled_truth: body, timeline: '', frontmatter });
+      await write('One.', { valid_from: '2026-01-01' });
+      await engine.createVersion('vt/grant', { sourceId: 'default', reason: 'r1' });
+      await write('Two.', { valid_from: '2026-02-01', visibility: 'private' });
+      await engine.createVersion('vt/grant', { sourceId: 'default', reason: 'r2' });
+      await write('Three.', { valid_from: '2026-03-01' });
+      const pageId = (await engine.getPage('vt/grant', { sourceId: 'default' }))!.id;
+      const reason = (access: Parameters<typeof withCallerAccess>[0] | null) => {
+        const run = async () => {
+          const r = await engine.pickValidTimeEdition({ pageId, asOf: '2026-01-15', excludePrivate: access !== null, pinOrd: null, inlineMaxBytes: 1_000_000 });
+          return (r as Record<string, unknown> | null)?.reason ?? null;
+        };
+        return access ? withCallerAccess(access, run) : run();
+      };
+      const result = {
+        trusted: await reason(null),
+        member: await reason({ identity: ['member:alice-example'], hidePrivate: true }),
+        granted: await reason({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true }),
+      };
+      expect(result).toEqual({ trusted: 'r1', member: null, granted: null });
+      return result;
     },
   );
 

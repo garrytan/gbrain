@@ -1,5 +1,13 @@
 # TODOS
 
+## Entity identity follow-ups (filed 2026-11-21)
+
+- [ ] **P3 — entity-identity-non-finite-confidence (owner: the maintainer, product decision; not lane 11): refuse non-finite entity identity confidence on all engines (invalid_argument).** **What:** `linkEntityIdentityRow` accepts a `confidence` of NaN, Infinity or -Infinity on PGLite and Postgres (the column is DOUBLE PRECISION) and lists it back; the Rust store now keeps the same values exactly (rust-engine/ra1-identity-confidence). A non-finite confidence has no meaning and sorts and compares wrongly. **Decision needed:** whether every engine should refuse it on write with `invalid_argument` (a behavior change for PGLite and Postgres users). **Fix if yes:** check in the shared member (`src/core/engine-sql/entity-identities.ts`) and the Rust store, with a 3-arm case. **Effort:** S. **Priority:** P3.
+
+## Page spend follow-ups (filed 2026-11-21)
+
+- [ ] **P3 — Refuse non-finite page-spend bookings on all engines (invalid_params) (product call for the maintainer).** **What:** `settlePageEmbeddingReservation` (and the derivation ledger's settle, `settleLedgerReservation` in `src/core/page-spend.ts`) books Infinity and NaN as they are: `spent_usd` is DOUBLE PRECISION and Infinity passes its `>= 0` check. The Rust ledger now stores the same values bit-exact, so every engine agrees. **Why it matters:** on PGLite and Postgres an infinite booking quietly caps the page forever (spent can never fall back under any cap), and a NaN booking makes every later cap comparison false. **Proposed:** refuse a non-finite `bookedUsd` or `reservedUsd` with `invalid_params` on every engine, with one 3-arm parity case; it changes what PGLite and Postgres accept today, so it needs the maintainer's call.
+
 ## Rust engine parity harness follow-ups (filed 2026-11-21)
 
 - [ ] **P3 — parity-harness-pg-deadlock-repro (owner: Rust trunk owner): the Postgres reset deadlock is fixed against its cause, not against its original repro.** **What:** the harness now stops the write-queue consumer after every parity case (`test/engine-parity/harness.ts`), and `test/engine-parity/harness-consumer-stop.test.ts` went red (6 of 12 consumer-open checks) before the fix and green on all 3 arms after it. The 1-in-10 Postgres deadlock on `DELETE FROM sources` from PR #9944 did not reproduce in 10 runs before or after the fix. **Next:** if a lane sees a reset deadlock again, capture `pg_stat_activity` at reset time and attach it here.
