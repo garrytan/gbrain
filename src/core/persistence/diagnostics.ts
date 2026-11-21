@@ -173,7 +173,7 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     `SELECT request_id,worktree_id,source_id,state,blocked_reason,error_code,created_at,claim_phase,execution_token,claim_expires_at<now() AS claim_lapsed,publication_started,
       operation,intent->>'kind' AS intent_kind,preparation_attempts,id::text AS id,
       ($1::timestamptz IS NOT NULL AND state='running' AND recovery IS NULL AND updated_at<$1::timestamptz) AS abandoned
-    FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') OR blocked_reason IS NOT NULL ORDER BY sequence LIMIT 100`, [abandonedClaimCutoff(engine)?.toISOString() ?? null]);
+    FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') OR blocked_reason IS NOT NULL OR recovery IS NOT NULL ORDER BY sequence LIMIT 100`, [abandonedClaimCutoff(engine)?.toISOString() ?? null]);
   const queue = await engine.executeRaw(`SELECT state,COUNT(*)::integer AS count,COALESCE(SUM(intent_bytes),0)::text AS intent_bytes,
     MIN(created_at) AS oldest_request_at,
     MAX(EXTRACT(EPOCH FROM (now()-created_at))*1000)::bigint::text AS oldest_age_ms
