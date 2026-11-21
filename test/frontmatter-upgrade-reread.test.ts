@@ -28,6 +28,8 @@ import { contentHash } from '../src/core/utils.ts';
 import { discoverExtractablePages } from '../src/core/cycle/extract-atoms.ts';
 import { CHRONICLE_EXTRACTOR_VERSION } from '../src/core/chronicle/contract.ts';
 import { campaignSpentUsd } from '../src/core/chronicle/campaign.ts';
+import { claimChronicleRow } from '../src/core/chronicle/execute.ts';
+import { readChronicleRow } from '../src/core/chronicle/ledger.ts';
 import { listHeldManagedAtoms } from '../src/core/persistence/atom-maintenance.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -226,6 +228,35 @@ describe('pages-03: the one-time re-read after the upgrade', () => {
       for (const slug of MEETINGS) expect((await pageRow(engine, slug)).content_hash).not.toBe(oldHash.get(slug));
       expect(await discoverExtractablePages(engine, 'default', MEETINGS)).toEqual([]);
       expect(await held()).toEqual(['meetings/edited']);
+    });
+  }, { setup: meetingSetup }), 240_000);
+
+  test('a re-read leaves a chronicle row whose lease a judge holds, so the judge\'s outcome and spend land on it', () => managedBrain(async ({ engine, root }) => {
+    await withStubEmbeddings(async () => {
+      const opts = { sourceId: 'default', noPull: true };
+      expect((await performManagedSync(engine, opts)).status).toBe('first_sync');
+      await drainEffects(engine);
+      const oldHash = await storedByOlderGbrain(engine);
+      const { id } = await pageRow(engine, 'meetings/kept');
+      await engine.executeRaw('DELETE FROM chronicle_page_state WHERE page_id=$1', [id]);
+      await engine.executeRaw(`INSERT INTO chronicle_page_state (source_id, page_id, content_hash, extractor_version, slug, state, trigger, cost_usd, campaign_id)
+        VALUES ('default', $1, $2, $3, 'meetings/kept', 'pending', 'backfill', 0.25, 'campaign-a')`, [id, oldHash.get('meetings/kept'), CHRONICLE_EXTRACTOR_VERSION]);
+      // A judge claims the row (its lease) and is still calling the model when the new binary's first sync re-reads the page.
+      const key = { sourceId: 'default', pageId: id, contentHash: oldHash.get('meetings/kept')! };
+      const claimed = await claimChronicleRow(engine, (await readChronicleRow(engine, key))!);
+      expect(claimed).not.toBeNull();
+
+      rewriteHistory(root);
+      expect(await performManagedSync(engine, opts)).toMatchObject({ status: 'synced' });
+      expect((await pageRow(engine, 'meetings/kept')).content_hash).not.toBe(oldHash.get('meetings/kept'));
+      // The judge's finish updates the row by the key it claimed (execute.ts `finish`): the row is still there, so its
+      // outcome and the spend of the call it made apply.
+      expect(await readChronicleRow(engine, key)).toMatchObject({ state: 'pending', attempts: claimed!.attempts });
+      const updated = await engine.executeRaw<{ id: number }>(`UPDATE chronicle_page_state SET cost_usd=COALESCE(cost_usd, 0) + 0.5, cost_attempts=array_append(cost_attempts, $5::int)
+        WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND NOT ($5::int = ANY(cost_attempts)) RETURNING page_id AS id`,
+        [key.sourceId, key.pageId, key.contentHash, CHRONICLE_EXTRACTOR_VERSION, claimed!.attempts]);
+      expect(updated).toHaveLength(1);
+      expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.75);
     });
   }, { setup: meetingSetup }), 240_000);
 });

@@ -142,7 +142,8 @@ export function legacyHashToCarry(existing: { content_hash?: string | null; dele
  * again. A page whose atoms carry the old hash (scanned before the scan-state table) gets a finished scan at the new
  * hash. The scan state and the managed atom checkpoints (a partial or held page's disposition lives only there) are
  * copied; the chronicle ledger row moves (it holds recorded spend and failed attempts, which campaign and ledger totals
- * sum). None replaces a record the new hash already has. Runs inside the page write.
+ * sum), except while a judge holds its lease or it waits out a retry delay: that judge's outcome and spend are keyed to
+ * the old hash, so the row stays there. None replaces a record the new hash already has. Runs inside the page write.
  */
 export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string, pageId: number, fromHash: string, toHash: string): Promise<void> {
   await tx.executeRaw(
@@ -166,6 +167,7 @@ export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string,
   // The chronicle ledger row moves: it carries recorded spend and failed attempts, which a copy would count twice.
   await tx.executeRaw(
     `UPDATE chronicle_page_state c SET content_hash=$3 WHERE c.source_id=$4 AND c.page_id=$1 AND c.content_hash=$2
+       AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= now())
        AND NOT EXISTS (SELECT 1 FROM chronicle_page_state n WHERE n.source_id=c.source_id AND n.page_id=c.page_id
          AND n.content_hash=$3 AND n.extractor_version=c.extractor_version)`,
     [pageId, fromHash, toHash, sourceId]);
