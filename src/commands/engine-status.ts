@@ -216,13 +216,17 @@ async function runProbe(
   const started = Date.now();
   const engine = await createEngine(engineConfig);
   // Opening a Rust store creates it, like PGLite: a path holding no store (no records.redb) is reported after the
-  // addon check, never made; an empty records.redb (a first open that stopped early) is incomplete, and opening it
-  // would set it up as a new brain.
+  // addon check, never made. A store with no FORMAT file is incomplete: a first open writes FORMAT last, after the
+  // record file and the brain's records, so a first open that stopped early leaves a record file (empty, or holding
+  // an empty table that passes any size check) and no FORMAT. Opening it would set it up as a new brain, so the probe
+  // reports it and opens nothing. A real brain whose FORMAT was lost reports the same; any ordinary command that
+  // opens the brain writes FORMAT again.
   if (engineKind === 'rust' && dataDir) {
     const records = join(dataDir, 'records.redb');
     if (!existsSync(records)) return { ok: false, note: 'data_dir_missing' };
     const stat = statSync(records);
     if (!stat.isFile() || stat.size === 0) return { ok: false, note: 'store_incomplete' };
+    if (!existsSync(join(dataDir, 'FORMAT'))) return { ok: false, note: 'store_incomplete' };
   }
   try {
     // SINGLE attempt, ONE connection — the driver's connect_timeout bounds

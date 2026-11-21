@@ -1151,7 +1151,8 @@ remediation), not a raw error.
 On a Rust brain the report names `rust` as the engine and the probe is typed. It checks the addon first and reports
 `rust_engine_addon_missing`, `rust_engine_addon_mismatch` or `engine_capability_missing` as a `refusal` (code, reason,
 message), not as a database diagnosis. A `database_path` with no `records.redb` (a missing path or an empty directory)
-probes as `data_dir_missing`, and an empty `records.redb` (a first open that stopped early) as `store_incomplete`;
+probes as `data_dir_missing`, and a `records.redb` that is empty or has no `FORMAT` file beside it (a first open
+that stopped early, or a lost `FORMAT`) as `store_incomplete`;
 the probe creates nothing in either case. Otherwise it opens the store and reads one config key, since the Rust
 engine serves no `SELECT 1`.
 

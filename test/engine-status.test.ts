@@ -16,7 +16,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
@@ -225,6 +225,23 @@ describe('gbrain engine status', () => {
     expect(parseReport(stdout).probe).toEqual({ ok: false, note: 'store_incomplete' });
     expect(statSync(join(dir, 'records.redb')).size).toBe(0);
     expect(existsSync(join(dir, 'FORMAT'))).toBe(false);
+  }, 60_000);
+
+  withAddon('--probe with the built addon and a nonempty records.redb but no FORMAT: store_incomplete, nothing written', () => {
+    // A first open writes FORMAT last, so a record file without FORMAT may hold no brain metadata yet; opening it
+    // would make a new brain. The probe reports it and leaves the record file byte for byte, with no FORMAT made.
+    const store = join(home, 'brain.rust');
+    writeConfig({ engine: 'rust', database_path: store });
+    const init = run(['stats', '--json'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(init.status).toBe(0);
+    rmSync(join(store, 'FORMAT'));
+    const before = readFileSync(join(store, 'records.redb'));
+    expect(before.length).toBeGreaterThan(0);
+    const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
+    expect(status).toBe(1);
+    expect(parseReport(stdout).probe).toEqual({ ok: false, note: 'store_incomplete' });
+    expect(readFileSync(join(store, 'records.redb')).equals(before)).toBe(true);
+    expect(existsSync(join(store, 'FORMAT'))).toBe(false);
   }, 60_000);
 
   withAddon('--probe with the built addon and an existing rust store: ok, through a typed read (no raw SQL refusal)', () => {
