@@ -524,7 +524,7 @@ src/core/fence-repair/import-step.ts	execute_raw	2
 src/core/fence-repair/repair-io.ts	execute_raw	1
 src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
-src/core/frontmatter-legacy.ts	execute_raw	2	pages-03: the one-time re-read after the frontmatter fix copies extract_atoms_page_state and chronicle_page_state rows from a page's old content_hash to its new one inside the import's page write; no typed engine method exists yet, and the Rust engine does not run it (raw_sql capability check)
+src/core/frontmatter-legacy.ts	execute_raw	2	pages-03: the one-time re-read after the frontmatter fix copies extract_atoms_page_state rows and moves chronicle_page_state rows from a page's old content_hash to its new one inside the import's page write; no typed engine method exists yet, and the Rust engine does not run it (raw_sql capability check)
 src/core/function-search-path.ts	execute_raw	3
 src/core/generations/adapters/atoms.ts	execute_raw	3
 src/core/generations/adapters/chronicle-events.ts	execute_raw	13

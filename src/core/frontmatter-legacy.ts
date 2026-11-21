@@ -107,7 +107,8 @@ export function legacyHashToCarry(existing: { content_hash?: string | null; dele
  * Carries the content_hash-keyed records of the paid page phases (extract_atoms' scan state, chronicle's ledger) from
  * a page's old hash to its new one, so a re-read that changes only how values are kept does not scan or judge the page
  * again. A page whose atoms carry the old hash (scanned before the scan-state table) gets a finished scan at the new
- * hash. Inserts only where the new hash has no record. Runs inside the import's page write.
+ * hash. The scan state is copied; the chronicle ledger row moves (it holds recorded spend and failed attempts, which
+ * campaign and ledger totals sum). Neither replaces a record the new hash already has. Runs inside the page write.
  */
 export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string, pageId: number, fromHash: string, toHash: string): Promise<void> {
   await tx.executeRaw(
@@ -119,12 +120,10 @@ export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string,
         AND atom.deleted_at IS NULL))
      ON CONFLICT DO NOTHING`,
     [pageId, fromHash, toHash, sourceId]);
-  const columns = `extractor_version, slug, state, reason, trigger, principal_kind, principal_id, request_id, no_extract, attempts,
-    next_attempt_at, cost_usd, unpriced, event_slugs, event_hashes, decided_at, updated_at, campaign_id, attempt_cap_usd, max_attempts,
-    pricing_policy, campaign_max_usd, cost_attempts, judge_input_hash, judge_window_chars, judge_window_hash, judge_input_failures`;
+  // The chronicle ledger row moves: it carries recorded spend and failed attempts, which a copy would count twice.
   await tx.executeRaw(
-    `INSERT INTO chronicle_page_state (source_id, page_id, content_hash, ${columns})
-     SELECT source_id, page_id, $3, ${columns} FROM chronicle_page_state WHERE source_id=$4 AND page_id=$1 AND content_hash=$2
-     ON CONFLICT DO NOTHING`,
+    `UPDATE chronicle_page_state c SET content_hash=$3 WHERE c.source_id=$4 AND c.page_id=$1 AND c.content_hash=$2
+       AND NOT EXISTS (SELECT 1 FROM chronicle_page_state n WHERE n.source_id=c.source_id AND n.page_id=c.page_id
+         AND n.content_hash=$3 AND n.extractor_version=c.extractor_version)`,
     [pageId, fromHash, toHash, sourceId]);
 }

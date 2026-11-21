@@ -27,6 +27,7 @@ import { legacyTypedFrontmatter } from '../src/core/frontmatter-legacy.ts';
 import { contentHash } from '../src/core/utils.ts';
 import { discoverExtractablePages } from '../src/core/cycle/extract-atoms.ts';
 import { CHRONICLE_EXTRACTOR_VERSION } from '../src/core/chronicle/contract.ts';
+import { campaignSpentUsd } from '../src/core/chronicle/campaign.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
@@ -155,8 +156,9 @@ describe('pages-03: the one-time re-read after the upgrade', () => {
           await engine.executeRaw('DELETE FROM extract_atoms_page_state WHERE page_id=$1', [id]);
           await engine.executeRaw(`INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned)
             SELECT incarnation, $1, $2, 0, true FROM sources WHERE id='default'`, [id, oldHash.get(slug)]);
-          await engine.executeRaw(`INSERT INTO chronicle_page_state (source_id, page_id, content_hash, extractor_version, slug, state, trigger, event_hashes)
-            VALUES ('default', $1, $2, $3, $4, 'extracted', 'auto', ARRAY['event-hash-1'])`, [id, oldHash.get(slug), CHRONICLE_EXTRACTOR_VERSION, slug]);
+          await engine.executeRaw(`INSERT INTO chronicle_page_state (source_id, page_id, content_hash, extractor_version, slug, state, trigger, event_hashes,
+              cost_usd, campaign_id, judge_input_failures)
+            VALUES ('default', $1, $2, $3, $4, 'extracted', 'auto', ARRAY['event-hash-1'], 0.25, 'campaign-a', 3)`, [id, oldHash.get(slug), CHRONICLE_EXTRACTOR_VERSION, slug]);
         }
         expect(await discoverExtractablePages(engine, 'default', MEETINGS)).toEqual([]);
 
@@ -178,6 +180,11 @@ describe('pages-03: the one-time re-read after the upgrade', () => {
           JOIN pages p ON p.id=c.page_id AND p.content_hash=c.content_hash WHERE c.extractor_version=$1 ORDER BY c.slug`, [CHRONICLE_EXTRACTOR_VERSION]);
         expect(ledger).toEqual([{ slug: 'meetings/edited', state: 'skipped', event_hashes: [] },
           { slug: 'meetings/kept', state: 'extracted', event_hashes: ['event-hash-1'] }]);
+        // The record moved, it was not copied: recorded spend and failed judge attempts count once.
+        expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.5);
+        const keptRows = await engine.executeRaw<{ n: number; failures: number }>(
+          'SELECT count(*)::int AS n, sum(judge_input_failures)::int AS failures FROM chronicle_page_state WHERE page_id=$1', [kept.id]);
+        expect(keptRows).toEqual([{ n: 1, failures: 3 }]);
       } finally { __setEmbedTransportForTests(null); resetGateway(); }
     });
   }, { setup: meetingSetup }), 240_000);
