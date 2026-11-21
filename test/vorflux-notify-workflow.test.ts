@@ -405,10 +405,17 @@ describe.skipIf(!canRunScripts)('digest script (fake gh and curl)', () => {
     [R + 'actions/runs?head_sha=' + A + '&status=completed&per_page=100']: {
       workflow_runs: [
         { id: 1, name: 'Test', event: 'workflow_dispatch', conclusion: 'success', updated_at: IN, head_sha: A },
-        { id: 2, name: 'Test', event: 'workflow_dispatch', conclusion: 'failure', updated_at: IN, head_sha: A },
+        { id: 2, name: 'Test', event: 'workflow_dispatch', conclusion: 'failure', updated_at: IN, head_sha: A, check_suite_id: 202 },
         { id: 3, name: 'Test', event: 'pull_request', conclusion: 'failure', updated_at: IN, head_sha: A },
         { id: 4, name: 'E2E Tests', event: 'workflow_dispatch', conclusion: 'success', updated_at: LATE, head_sha: A },
         { id: 5, name: 'Semgrep', event: 'pull_request', conclusion: 'success', updated_at: IN, head_sha: A },
+        { id: 7, name: 'Test', event: 'workflow_dispatch', conclusion: 'failure', updated_at: IN, head_sha: A, check_suite_id: 207 },
+      ],
+    },
+    [R + 'commits/' + A + '/check-runs?filter=latest&check_name=full-suite']: {
+      check_runs: [
+        { check_suite: { id: 202 }, conclusion: 'failure', completed_at: IN },
+        { check_suite: { id: 207 }, conclusion: 'skipped', completed_at: IN },
       ],
     },
     [R + 'actions/runs?head_sha=' + B + '&status=completed&per_page=100']: {
@@ -462,7 +469,7 @@ describe.skipIf(!canRunScripts)('digest script (fake gh and curl)', () => {
       window_start: '2026-11-21T17:30:00Z',
       window_end: '2026-11-21T18:00:00Z',
       delivery_id: 'digest:2026-11-21T17:30:00Z:2026-11-21T18:00:00Z',
-      count: 8,
+      count: 9,
       truncated: 0,
       items: [
         { pr: 10, kind: 'comment', comment_id: 51, author: 'bob-example' },
@@ -472,6 +479,7 @@ describe.skipIf(!canRunScripts)('digest script (fake gh and curl)', () => {
         { pr: 10, kind: 'review_comment', comment_id: 61, author: 'bob-example' },
         { pr: 10, kind: 'run', run_id: 1, workflow: 'Test', run_event: 'workflow_dispatch', conclusion: 'success', head_sha: A },
         { pr: 10, kind: 'run', run_id: 3, workflow: 'Test', run_event: 'pull_request', conclusion: 'failure', head_sha: A },
+        { pr: 10, kind: 'run', run_id: 7, workflow: 'Test', run_event: 'workflow_dispatch', conclusion: 'failure', head_sha: A },
         { pr: 11, kind: 'run', run_id: 6, workflow: 'E2E Tests', run_event: 'workflow_dispatch', conclusion: 'cancelled', head_sha: B },
       ],
     });
@@ -504,6 +512,14 @@ describe.skipIf(!canRunScripts)('digest script (fake gh and curl)', () => {
     expect(r.status).toBe(0);
     expect(r.body).toBeNull();
     expect(r.out).toContain('Nothing sent: an earlier scheduled run already read up to 2026-11-21T18:00:00Z');
+  });
+
+  test('a failed pull request listing fails the run instead of reading an empty window', () => {
+    const all = fixtures('2026-11-21T18:07:31Z');
+    delete (all as Record<string, unknown>)[R + 'issues?labels=rust-engine&state=open&per_page=100'];
+    const r = runScript(DIGEST_RUN, env, all);
+    expect(r.status).not.toBe(0);
+    expect(r.body).toBeNull();
   });
 
   test('an empty window posts nothing', () => {

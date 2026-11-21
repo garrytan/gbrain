@@ -229,9 +229,9 @@ jobs:
           fi
           echo "Window $START to $END"
           items="$RUNNER_TEMP/vorflux-digest-items.jsonl"
-          prs=$({ gh api --paginate "repos/$REPO/issues?labels=rust-engine&state=open&per_page=100"
-                  gh api --paginate "repos/$REPO/issues?labels=rust-engine&state=closed&since=$START&per_page=100"; } |
-            jq -c '.[] | select(.pull_request) | {number, updated_at}' | jq -sc 'unique_by(.number)')
+          open=$(gh api --paginate "repos/$REPO/issues?labels=rust-engine&state=open&per_page=100")
+          closed=$(gh api --paginate "repos/$REPO/issues?labels=rust-engine&state=closed&since=$START&per_page=100")
+          prs=$(jq -c '.[] | select(.pull_request) | {number, updated_at}' <<<"$open$closed" | jq -sc 'unique_by(.number)')
           ember='[]'
           {
           while IFS= read -r issue <&3; do
@@ -241,18 +241,33 @@ jobs:
             ember=$(jq -c --argjson n "$n" '. + [$n]' <<<"$ember")
             sha=$(jq -r '.head.sha' <<<"$pr")
             if [ "$(jq -r '.state' <<<"$pr")" = open ]; then
-              gh api "repos/$REPO/actions/runs?head_sha=$sha&status=completed&per_page=100" |
+              gh api --paginate "repos/$REPO/actions/runs?head_sha=$sha&status=completed&per_page=100" |
                 jq -c --argjson n "$n" --arg s "$START" --arg e "$END" '.workflow_runs[]
                   | select(.updated_at >= $s and .updated_at < $e)
                   | select(.name == "Test" or .name == "E2E Tests" or .name == "macOS 26 validation")
-                  | select((.conclusion == "failure" or .conclusion == "timed_out") and
-                      ((.event == "workflow_dispatch" and (.name == "Test" or .name == "E2E Tests")) or
-                       (.name == "macOS 26 validation" and (.event == "workflow_dispatch" or .event == "pull_request"))) | not)
-                  | {pr: $n, kind: "run", run_id: .id, workflow: .name, run_event: .event, conclusion, head_sha}'
+                  | {pr: $n, kind: "run", run_id: .id, workflow: .name, run_event: .event, conclusion, head_sha,
+                     suite: .check_suite_id,
+                     maybe_rang: ((.conclusion == "failure" or .conclusion == "timed_out") and
+                       ((.event == "workflow_dispatch" and (.name == "Test" or .name == "E2E Tests")) or
+                        (.name == "macOS 26 validation" and (.event == "workflow_dispatch" or .event == "pull_request"))))}' |
+                while IFS= read -r item; do
+                  if [ "$(jq -r '.maybe_rang' <<<"$item")" = true ]; then
+                    case "$(jq -r '.workflow' <<<"$item")" in
+                      Test) check=full-suite ;;
+                      "E2E Tests") check=e2e-full-suite ;;
+                      *) check="macOS 26 validation" ;;
+                    esac
+                    rang=$(gh api "repos/$REPO/commits/$sha/check-runs?filter=latest&check_name=$(jq -rn --arg c "$check" '$c | @uri')" </dev/null |
+                      jq --argjson suite "$(jq '.suite' <<<"$item")" \
+                        '[.check_runs[] | select(.check_suite.id == $suite)] | sort_by(.completed_at) | last | (.conclusion == "failure" or .conclusion == "timed_out")')
+                    [ "$rang" = true ] && continue
+                  fi
+                  jq -c 'del(.suite, .maybe_rang)' <<<"$item"
+                done
             fi
             [[ "$(jq -r '.updated_at' <<<"$issue")" < "$START" ]] && continue
             ref=$(jq -r '.head.ref | @uri' <<<"$pr")
-            gh api "repos/$REPO/activity?ref=refs%2Fheads%2F$ref&time_period=day&per_page=100" |
+            gh api --paginate "repos/$REPO/activity?ref=refs%2Fheads%2F$ref&time_period=day&per_page=100" |
               jq -c --argjson n "$n" --arg s "$START" --arg e "$END" '.[]
                 | select(.timestamp >= $s and .timestamp < $e)
                 | select(.activity_type == "push" or .activity_type == "force_push")
