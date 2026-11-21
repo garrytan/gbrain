@@ -132,6 +132,7 @@ export const RUST_ENGINE_MEMBERS = {
   listTakeRowNums: 'takes',
   readLiveFactRowTier: 'facts',
   readTakeRowTierByClaim: 'takes',
+  listStaleAtoms: 'pages',
   // schema detect --fields (engine-sql/field-usage.ts; rust/docs/store/field-usage.md).
   readFieldUsageSamples: 'pages',
   getPageTimestamps: 'pages',

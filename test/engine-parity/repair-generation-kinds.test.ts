@@ -7,9 +7,16 @@
  *    retired while the page lost its whole facts fence, restored from the page version that held it; the restore is a
  *    page write on the SQL arms, and the Rust engine refuses it by name ("repair lost-fence-rows page write", lane 7's
  *    writer). The lost-fence-rows members answer the same rows on every arm.
+ *    stale-atoms lists an atom whose origin is gone and an atom whose origin moved past it with a completed unmanaged
+ *    extraction of its new content the same way on every arm. Its apply retires both atoms and keeps the new one on the
+ *    SQL arms; the retirement publishes an atom generation (lane 7's writer), and the Rust engine refuses it by name
+ *    ("repair stale-atoms retirement").
+ *    generations previews a restore of an atom key's live generation to its predecessor (each item refused, as its ledger
+ *    record holds no preimage) and the release of that key's held result the same way on every arm.
  *  - Regression: the kind read the generation ledger, page versions, facts and takes through executeRaw, so a Rust brain
  *    failed on a generic executeRaw refusal that named no step.
- *  - Why existing coverage misses it: test/repair-lost-fence-rows.test.ts runs on PGLite and Postgres only.
+ *  - Why existing coverage misses it: test/repair-lost-fence-rows.test.ts and test/repair-stale-atoms*.test.ts run on
+ *    PGLite and Postgres only; test/rust-generation-repair.test.ts calls the generations members directly, not the kind.
  *  - Seam: the ledger row is written through the typed activateGenerationRows (lane 7), pages and versions through
  *    putPage and createVersion, facts and takes through insertFacts and addTakesBatch.
  */
@@ -24,6 +31,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { resolveRepairScope, type RepairKind, type RepairResult } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
 import { renderFactsTable } from '../../src/core/facts-fence.ts';
+import { atomOwnerKey } from '../../src/core/generations/adapters/atoms.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -38,7 +46,7 @@ function shape(result: RepairResult) {
     // is a generation's creation time.
     .replace(/"page_id":\d+/g, '"page_id":"<id>"').replace(/"version_id":\d+/g, '"version_id":"<id>"').replace(/page version \d+/g, 'page version <id>')
     .replace(/"id":\d+/g, '"id":"<id>"').replace(/retired \d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?\+00/g, 'retired <time>')
-    .replace(/"retired_at":"[^"]*"/g, '"retired_at":"<time>"');
+    .replace(/"retired_at":"[^"]*"/g, '"retired_at":"<time>"').replace(/unmanaged:\d+/g, 'unmanaged:<id>');
   return JSON.parse(text);
 }
 
@@ -79,6 +87,50 @@ async function seedLostFact(engine: BrainEngine) {
       activationId: null, locator: null },
     [{ item_key: 'row:2', identity_hash: 'identity-2', action: 'retired',
       preimage: { id: 987_654, fact: LOST, visibility: 'world', row_num: 2, entity_slug: SLUG, expired_at: null }, preimage_bytes: null, pending: false }]);
+}
+
+
+// ---- stale-atoms ----
+
+/**
+ * atoms/gone names a gone origin. notes/origin's content hash moved past atoms/changed (its hash is `oldhash`), and the
+ * unmanaged atoms/new already holds the origin's new hash (the completed re-extraction).
+ */
+async function seedStaleAtoms(engine: BrainEngine) {
+  const put = (slug: string, type: string, frontmatter: Record<string, unknown>) =>
+    engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `${slug} body.`, timeline: '', frontmatter }, { sourceId: 'default' });
+  const origin = await put('notes/origin', 'note', {});
+  const hash = String((origin as { content_hash?: string }).content_hash ?? (await engine.getPage('notes/origin', { sourceId: 'default' }))!.content_hash);
+  await put('atoms/gone', 'atom', { source_slug: 'notes/gone', source_hash: 'h-gone' });
+  await put('atoms/changed', 'atom', { source_slug: 'notes/origin', source_hash: 'oldhash' });
+  await put('atoms/new', 'atom', { source_slug: 'notes/origin', source_hash: hash.slice(0, 16) });
+}
+
+// ---- generations ----
+
+const GEN_OWNER = atomOwnerKey({ kind: 'page', slug: 'notes/origin' });
+
+/**
+ * notes/origin's atom key has two generations: the first published atoms/a and atoms/b, the live second kept atoms/a
+ * and retired atoms/b, with no preimages, so a restore revives nothing and refuses both items. The key also has a held
+ * result of two items.
+ */
+async function seedGenerations(engine: BrainEngine) {
+  await engine.putPage('notes/origin', { type: 'note' as never, title: 'origin', compiled_truth: 'Origin body.', timeline: '' }, { sourceId: 'default' });
+  for (const slug of ['atoms/a', 'atoms/b']) {
+    await engine.putPage(slug, { type: 'atom' as never, title: slug, compiled_truth: `${slug} body.`, timeline: '', frontmatter: { source_slug: 'notes/origin' } },
+      { sourceId: 'default' });
+  }
+  const key = { sourceId: 'default', kind: 'atom', ownerKey: GEN_OWNER };
+  const activation = (generation: number) => ({ generation, runId: 'run-a', operationId: `op-gen-${generation}`, inputPin: `pin-${generation}`, inputSize: 1,
+    completeness: JSON.stringify({ complete: true }), setHash: `set-${generation}`, restoreOf: null, activationId: null, locator: null });
+  const ledger = (item_key: string, action: string) => ({ item_key, identity_hash: `id-${item_key}`, action, preimage: null, preimage_bytes: null, pending: false });
+  await engine.transaction(async tx => {
+    const prev = await tx.activateGenerationRows(key, null, activation(1), [ledger('atoms/a', 'published'), ledger('atoms/b', 'published')]);
+    await tx.activateGenerationRows(key, prev, activation(2), [ledger('atoms/a', 'kept'), ledger('atoms/b', 'retired')]);
+  });
+  await engine.transaction(tx => tx.recordHeldGenerationRow(key, { holdId: 'hold-a', runId: 'run-a', inputPin: 'held-pin', inputSize: 2, setHash: 'held-set',
+    reason: 'shrunk', context: JSON.stringify({ owner: GEN_OWNER }), proposal: JSON.stringify([{ slug: 'atoms/p1' }, { slug: 'atoms/p2' }]), proposalBytes: 40 }));
 }
 
 describe('engine parity: the generation repair kinds of batch 7', () => {
@@ -134,4 +186,50 @@ describe('engine parity: the generation repair kinds of batch 7', () => {
       noLiveTake: await engine.readTakeRowTierByClaim(pageId, 4, 'Other claim'),
     };
   });
+  parityTest('stale-atoms previews a gone-origin and a moved-origin atom the same way on every arm', {
+    methods: ['putPage', 'listStaleAtoms'],
+    timeout: 60_000,
+  }, async (engine) => withHome(async () => {
+    await seedStaleAtoms(engine);
+    const listed = (await engine.listStaleAtoms(['default'], null)).map(({ id, origin_page_id, incarnation, revision, origin_hash, evidence, ...rest }) => {
+      void id; void incarnation; void revision;
+      return { ...rest, has_origin: origin_page_id !== null, has_hash: origin_hash !== null, evidence: evidence?.replace(/\d+$/, '<id>') ?? null };
+    });
+    expect(listed.map(row => [row.slug, row.class])).toEqual([['atoms/gone', 'origin_gone'], ['atoms/changed', 'origin_changed']]);
+    const previewed = await runKind(engine, 'stale-atoms', false);
+    expect(previewed.affected).toBe(2);
+    return { listed, preview: shape(previewed) };
+  }));
+
+  parityTest('stale-atoms retires the approved atoms the same way, and the Rust engine refuses the retirement by name', {
+    methods: ['putPage', 'listStaleAtoms'],
+    requires: 'raw_sql', timeout: 60_000,
+  }, async (engine, backend) => withHome(async () => {
+    await seedStaleAtoms(engine);
+    const previewed = await runKind(engine, 'stale-atoms', false);
+    expect(previewed.affected).toBe(2);
+    try {
+      const applied = await runKind(engine, 'stale-atoms', true, { expect: previewed.preview_hash });
+      const gone = await engine.getPage('atoms/gone', { sourceId: 'default' });
+      const changed = await engine.getPage('atoms/changed', { sourceId: 'default' });
+      const kept = await engine.getPage('atoms/new', { sourceId: 'default' });
+      expect([applied.applied, gone, changed, kept?.slug]).toEqual([2, null, null, 'atoms/new']);
+      return { applied: shape(applied), gone: gone === null, changed: changed === null, kept: kept?.slug ?? null };
+    } catch (err) {
+      if (backend === 'rust') expect(refusalText(err)).toContain('repair stale-atoms retirement');
+      throw err;
+    }
+  }));
+
+  parityTest('generations previews a restore and a held release of an atom key the same way on every arm', {
+    methods: ['putPage', 'activateGenerationRows', 'recordHeldGenerationRow', 'listRestorableGenerationRows', 'listHeldGenerationRows',
+      'readGenerationItemsByIds', 'listSourceIncarnations'],
+    timeout: 60_000,
+  }, async (engine) => withHome(async () => {
+    await seedGenerations(engine);
+    const restore = await runKind(engine, 'generations', false, { generations: { kind: 'atom', mode: 'restore', key: GEN_OWNER } });
+    const release = await runKind(engine, 'generations', false, { generations: { kind: 'atom', mode: 'release-held', held: true } });
+    expect([restore.affected, release.affected]).toEqual([1, 1]);
+    return { restore: shape(restore), release: shape(release) };
+  }));
 });

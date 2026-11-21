@@ -40,11 +40,12 @@ import { opError, OperationError, type OperationContext } from '../ops/contract.
 import { readFix } from '../ops/op-fix.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
-import { bumpAtomGeneration, managedAtomCompletedSql, managedAtomSession, publishManagedAtomGeneration, type AtomOrigin } from '../persistence/atom-maintenance.ts';
+import { bumpAtomGeneration, managedAtomSession, publishManagedAtomGeneration, type AtomOrigin } from '../persistence/atom-maintenance.ts';
 import { atomGenerationAdapter, atomOwnerKey, readAtomInput } from '../generations/adapters/atoms.ts';
-import { atomOriginSlugSql } from '../persistence/atom-origin.ts';
 import { stampDerivedRetirement } from '../persistence/derived-retirement-hold.ts';
 import { publishGeneration } from '../generations/publish.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
 
@@ -77,48 +78,7 @@ interface ApprovedStaleAtom extends StaleAtom { selection: string[] }
 
 /** Live stale atoms of these sources, in (class, id) order; `atomId` narrows to one atom for the apply recheck. */
 async function staleAtoms(db: BrainEngine, sourceIds: string[], atomId?: number): Promise<Array<StaleAtom & { chars: number }>> {
-  const rows = await db.executeRaw<StaleAtom & { chars: number }>(`
-    WITH atom AS (
-      SELECT a.id, a.source_id, (SELECT s.incarnation::text FROM sources s WHERE s.id=a.source_id) AS incarnation,
-             a.slug, a.knowledge_revision::text AS revision,
-             a.frontmatter->>'source_slug' AS origin_slug,
-             COALESCE(a.frontmatter->>'managed_extraction','')='true' AS managed,
-             regexp_replace(COALESCE(a.frontmatter->>'source_hash',''),'^pending:','') AS atom_hash,
-             length(COALESCE(a.compiled_truth,'')) AS chars,
-             o.id AS origin_page_id, o.slug AS origin_live_slug, o.source_id AS origin_source_id,
-             o.content_hash AS origin_hash, o.deleted_at IS NOT NULL AS origin_deleted
-        FROM pages a
-        LEFT JOIN pages o ON o.source_id=a.source_id AND o.slug=${atomOriginSlugSql('a')}
-       WHERE a.source_id=ANY($1::text[]) AND a.type='atom' AND a.deleted_at IS NULL
-         AND NULLIF(a.frontmatter->>'source_slug','') IS NOT NULL
-         AND NULLIF(a.frontmatter->>'imported_from','') IS NULL
-         AND ($2::int IS NULL OR a.id=$2::int)
-    ), classified AS (
-      SELECT atom.*, CASE
-          WHEN origin_page_id IS NULL OR origin_deleted THEN 'origin_gone'
-          WHEN origin_hash IS NOT NULL AND atom_hash<>substring(origin_hash from 1 for 16) THEN 'origin_changed'
-        END AS class,
-        CASE WHEN managed THEN (SELECT ac.fingerprint FROM op_checkpoints ac WHERE ${managedAtomCompletedSql({ sourceId: 'atom.origin_source_id',
-            pageId: 'atom.origin_page_id', contentHash: 'atom.origin_hash' })}
-            AND EXISTS (SELECT 1 FROM pages r WHERE r.source_id=atom.source_id AND r.type='atom' AND r.deleted_at IS NULL
-              AND r.frontmatter->>'source_slug' IN (atom.origin_slug, atom.origin_live_slug)
-              AND regexp_replace(COALESCE(r.frontmatter->>'source_hash',''),'^pending:','')=substring(atom.origin_hash from 1 for 16))
-            ORDER BY ac.fingerprint LIMIT 1)
-          ELSE (SELECT 'unmanaged:'||e.id FROM pages e WHERE e.source_id=atom.source_id AND e.type='atom' AND e.deleted_at IS NULL
-            AND COALESCE(e.frontmatter->>'managed_extraction','')<>'true' AND e.frontmatter->>'source_slug' IN (atom.origin_slug, atom.origin_live_slug)
-            AND e.frontmatter->>'source_hash'=substring(atom.origin_hash from 1 for 16) ORDER BY e.id LIMIT 1)
-        END AS completion
-        FROM atom
-    )
-    SELECT id, source_id, incarnation, slug, revision, class, managed, origin_slug,
-           origin_page_id,
-           CASE WHEN class='origin_gone' THEN NULL ELSE origin_hash END AS origin_hash,
-           CASE WHEN class='origin_gone' THEN NULL ELSE completion END AS evidence, chars
-      FROM classified
-     WHERE class='origin_gone' OR (class='origin_changed' AND completion IS NOT NULL)
-     ORDER BY CASE class WHEN 'origin_gone' THEN 1 ELSE 2 END, id`, [sourceIds, atomId ?? null]);
-  return rows.map(row => ({ ...row, id: Number(row.id), managed: row.managed === true,
-    origin_page_id: row.origin_page_id === null ? null : Number(row.origin_page_id), chars: Number(row.chars) }));
+  return db.listStaleAtoms(sourceIds, atomId ?? null);
 }
 
 function sameAtom(live: StaleAtom | undefined, approved: StaleAtom): boolean {
@@ -185,6 +145,9 @@ async function retireStaleAtom(ctx: OperationContext, atom: StaleAtom): Promise<
   const row = (await atomGenerationAdapter.readItems(engine, key, [atom.slug])).get(atom.slug);
   if (!row?.live) return changed('the atom was removed');
   const approved = { retire: [atom.slug], retiredBy: STALE_ATOMS_RETIRED_BY, expect: { [atom.slug]: row.identityHash } } as const;
+  // The retirement publishes an atom generation and bumps the origin's atom ledger (lane 7's writer): an engine without
+  // raw SQL stops here, before it.
+  if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', 'repair stale-atoms retirement');
   try {
     const session = await managedAtomSession(engine, atom.source_id);
     if (session) {

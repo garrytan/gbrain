@@ -126,6 +126,7 @@ test/engine-parity/repair-facts-previews-3.test.ts	2	8
 test/engine-parity/repair-facts-previews-4.test.ts	1	8
 test/engine-parity/repair-facts-previews.test.ts	5	0
 test/engine-parity/repair-fence-scans.test.ts	2	1
+test/engine-parity/repair-generation-kinds.test.ts	3	2
 test/engine-parity/repair-history-kinds.test.ts	7	5
 test/engine-parity/repair-owner-kinds.test.ts	4	1
 test/engine-parity/repair-page-reads.test.ts	3	0

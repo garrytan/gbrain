@@ -5,7 +5,7 @@
  * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample, bumpPageRetrievals,
  * the atoms-restore reads listRestorableAtoms and countKeptAtomRetirements (page_ops/atom_restore.rs), the moved-pages reads
  * listLivePagesBySourcePaths, listLivePagesByFileName, listLivePagesSharingFrontmatterId, hasSegmentedHistory and
- * readLivePagesByIds (moved_page_reads.rs),
+ * readLivePagesByIds (moved_page_reads.rs), the stale-atoms read listStaleAtoms (page_ops/stale_atoms.rs),
  * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, readAdmittedPageRefs,
  * readPageSynopses, readSeedTitleSlugs, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
@@ -26,6 +26,7 @@ import { segmentedRevertRefusal } from '../../page-state/versions.ts';
 import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadPolicy, PageReadScope } from '../../types.ts';
 import type { RestorableAtomRow } from '../../engine-sql/atom-restore-reads.ts';
 import type { MovedPageRow } from '../../engine-sql/moved-page-reads.ts';
+import type { StaleAtomRow } from '../../engine-sql/stale-atom-reads.ts';
 import type { PageRefRow, RelationalPageRow } from '../../engine-sql/relational-reads.ts';
 import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
@@ -389,4 +390,11 @@ export const readLivePagesByIds: StoreMember<[sourceId: string, ids: readonly nu
   for (const id of ids) wholeNumber('readLivePagesByIds', 'a page id', id);
   const rows: MovedPageRow[] = await storeCall({ member: 'readLivePagesByIds', sourceId }, () => brain.readLivePagesByIds(sourceId, [...ids]));
   return rows.map(movedRow);
+};
+
+/** The stale atoms of the sources (or atom `atomId`), origin-gone first, then by id (page_ops/stale_atoms.rs). */
+export const listStaleAtoms: StoreMember<[sourceIds: readonly string[], atomId: number | null], StaleAtomRow[]> = async (brain, sourceIds, atomId) => {
+  if (atomId !== null) wholeNumber('listStaleAtoms', 'an atom id', atomId);
+  const rows: StaleAtomRow[] = await storeCall({ member: 'listStaleAtoms' }, () => brain.listStaleAtoms([...sourceIds], atomId));
+  return rows.map(row => ({ ...row, id: Number(row.id), origin_page_id: row.origin_page_id == null ? null : Number(row.origin_page_id), chars: Number(row.chars) }));
 };

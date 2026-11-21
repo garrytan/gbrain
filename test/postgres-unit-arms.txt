@@ -271,6 +271,7 @@ test/engine-parity/repair-facts-previews-3.test.ts
 test/engine-parity/repair-facts-previews-4.test.ts
 test/engine-parity/repair-facts-previews.test.ts
 test/engine-parity/repair-fence-scans.test.ts
+test/engine-parity/repair-generation-kinds.test.ts
 test/engine-parity/repair-history-kinds.test.ts
 test/engine-parity/repair-owner-kinds.test.ts
 test/engine-parity/repair-page-reads.test.ts

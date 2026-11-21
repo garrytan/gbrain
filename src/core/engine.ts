@@ -1890,6 +1890,8 @@ export interface BrainEngine {
   readLiveFactRowTier(sourceId: string, slug: string, rowNum: number, fact: string): Promise<{ id: number; trust_tier: string | null } | null>;
   /** The id and tier of the take at a row number of the page with this claim, or null. */
   readTakeRowTierByClaim(pageId: number, rowNum: number, claim: string): Promise<{ id: number; trust_tier: string | null } | null>;
+  /** repair stale-atoms: the live atoms whose origin is gone or moved past them with a completed extraction, by (class, id) (engine-sql/stale-atom-reads.ts). */
+  listStaleAtoms(sourceIds: readonly string[], atomId: number | null): Promise<import('./engine-sql/stale-atom-reads.ts').StaleAtomRow[]>;
 
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
