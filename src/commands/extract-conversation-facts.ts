@@ -1033,7 +1033,7 @@ async function processPage(
   // previously missed the terminal row and re-extracted on every run.
   const fullyProcessed = segmentsThisPage === segments.length;
   const inScope = (list: typeof segments) => list.reduce((n, seg) => n + seg.messages.length, 0);
-  const scope: ConversationScope = !fullyProcessed ? 'partial' : inScope(segments) < inScope(allSegments) ? 'window' : 'full';
+  const scope: ConversationScope = inScope(segments) < inScope(allSegments) ? 'window' : fullyProcessed ? 'full' : 'partial';
   if (
     fullyProcessed &&
     newestEnd !== null &&

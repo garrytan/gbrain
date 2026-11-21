@@ -14,7 +14,8 @@
  * fact, nothing held or rejected by the write gate) retires the prior batch.
  * Otherwise the prior facts stay, the page's outcome still advances (the same
  * empty content is not paid for again), a `--since` window adds its facts
- * beside the prior ones, and a partial run publishes no facts over them. The
+ * beside the prior ones (also when `--segment-limit` cuts it short), and a
+ * run cut short from the page's first segment publishes no facts over them. The
  * control: a complete non-empty replacement still retires the prior batch.
  * Managed and unmanaged brains agree.
  * Seams: the gateway's chat and embedding transports (no paid calls). PGLite
@@ -154,6 +155,17 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
           answer = yields('new');
           expect(await extract(brain.engine, { sinceIso: '2024-03-17T00:00:00Z' })).toMatchObject({ pages_processed: 1, segments_processed: 1, facts_inserted: 1 });
           expect(await active(brain.engine)).toEqual([...OLD, 'Owner Example sends the new plan (MARK-THREE)', 'EXTRACTION_COMPLETE']);
+        });
+      }, 180_000);
+
+      test('a --since window cut short by --segment-limit still adds the segments it finished beside the prior facts', async () => {
+        await withBrain(mode, databaseUrl, async brain => {
+          await seed(brain);
+          await brain.put(conversation(3));
+          answer = yields('new');
+          // Two segments follow the --since start; the limit stops after the first (MARK-TWO), the head of that window.
+          expect(await extract(brain.engine, { sinceIso: '2024-03-16T00:00:00Z', segmentLimit: 1 })).toMatchObject({ pages_processed: 1, segments_processed: 1, facts_inserted: 1, pages_failed: 0 });
+          expect(await active(brain.engine)).toEqual([...OLD, 'EXTRACTION_COMPLETE', 'Owner Example sends the new plan (MARK-TWO)']);
         });
       }, 180_000);
 
