@@ -428,27 +428,44 @@ describe('engine parity: facts write-path and recall statements that left execut
     return out;
   });
 
-  // The store applies the remote floor only as the no-caller rendering. An owner read renders other floor text, so the
-  // Rust member stops on its typed refusal there; PGLite reads through the owner's floor, which still hides this row.
-  parityTest('readReplacementTarget under an owner read, whose remote floor is not the plain floor', {
-    methods: ['readReplacementTarget', 'insertFacts', 'putPage'],
+  // A remote caller reads inside a caller record: the floor then has no live pending-coverage test, an owner read drops
+  // the owner-only test and `restricted: false` renders the short member-access form. The store models each of these, so
+  // the Rust members answer them; PGLite and Postgres read through the same floor text.
+  parityTest('readReplacementTarget and readClaimWithdrawal answer the remote floor inside a caller record: a member, the owner and a brain with no member-access restrictions', {
+    methods: ['readReplacementTarget', 'readClaimWithdrawal', 'insertFacts', 'putPage', 'insertFactWithdrawal', 'expireFactsByWithdrawal'],
   }, async (engine) => {
     await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
     const ids = await fenced(engine, [
       { fact: 'open row', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
       { fact: 'hidden row', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
+      { fact: 'open claim', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'hidden claim', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
     ]);
-    const plain = await engine.readReplacementTarget({ targetId: ids.get('hidden row')!, sourceId: SRC, excludePrivate: true, ownPage: null });
-    expect(plain).toBeNull();
-    const out = await withCallerAccess({ owner: true }, async () => {
-      const read: Record<string, unknown> = {};
-      for (const name of ['open row', 'hidden row']) {
+    for (const [visibility, fact] of [['world', 'open claim'], ['private', 'hidden claim']] as const) {
+      expect(await engine.insertFactWithdrawal(SRC, visibility, fact, '*', '2026-06-01T00:00:00Z')).toBe(true);
+      await engine.expireFactsByWithdrawal(SRC, visibility, fact, '*');
+    }
+    const read = async () => {
+      const target = async (name: string) => {
         const row = await engine.readReplacementTarget({ targetId: ids.get(name)!, sourceId: SRC, excludePrivate: true, ownPage: null });
-        read[name] = row === null ? null : { fact: row.fact, visibility: row.visibility };
-      }
-      return read;
-    });
-    expect(out).toEqual({ 'open row': { fact: 'open row', visibility: 'world' }, 'hidden row': null });
+        return row === null ? null : { fact: row.fact, visibility: row.visibility };
+      };
+      const claim = async (visibility: string, fact: string) => {
+        const got = await engine.readClaimWithdrawal({ sourceId: SRC, visibility, fact, entitySlug: 'people/a', ownPage: null, excludePrivate: true });
+        return { hidden: got.hidden, subject: got.row?.subject ?? null };
+      };
+      return { openRow: await target('open row'), hiddenRow: await target('hidden row'), openClaim: await claim('world', 'open claim'), hiddenClaim: await claim('private', 'hidden claim') };
+    };
+    const records = {
+      member: { identity: ['member:alice-example'] },
+      owner: { owner: true, identity: ['member:alice-example'] },
+      open: { restricted: false, identity: ['member:alice-example'] },
+      ownerOpen: { owner: true, restricted: false, identity: ['member:alice-example'] },
+    } as const;
+    const out: Record<string, unknown> = { none: await read() };
+    for (const [name, record] of Object.entries(records)) out[name] = await withCallerAccess({ ...record, identity: [...record.identity] }, read);
+    const floor = { openRow: { fact: 'open row', visibility: 'world' }, hiddenRow: null, openClaim: { hidden: false, subject: '*' }, hiddenClaim: { hidden: true, subject: null } };
+    expect(out).toEqual({ none: floor, member: floor, owner: floor, open: floor, ownerOpen: floor });
     return out;
   });
 

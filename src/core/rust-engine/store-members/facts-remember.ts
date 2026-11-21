@@ -9,8 +9,9 @@
  * An id that is not a whole number refuses rather than guess at PGLite's `bigint` error, and so does a time that is not
  * an ISO instant: the callers pass ids from rows and `toISOString()` text, so the refusal is a guard, never a path they
  * take. `readReplacementTarget` and `readClaimWithdrawal` under `excludePrivate` serve the remote provenance floor
- * (`storeFloorPolicy`), and `readMemberPageWithdrawal` the page policy of a page's member, or the owner read rule for the
- * brain owner (`storeMemberReadPolicy`); any other caller refuses.
+ * (`storeFloorPolicy`: no caller record, or a member, owner or unrestricted record), and `readMemberPageWithdrawal` the
+ * page policy of a page's member, or the owner read rule for the brain owner (`storeMemberReadPolicy`); any other
+ * caller refuses.
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { ReplacementTargetRow, SupersessionReplacementRow } from '../../engine-sql/facts-trust.ts';

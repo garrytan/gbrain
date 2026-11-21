@@ -169,14 +169,21 @@ export function storePrivacyPolicy(
 /**
  * The store policy for the remote provenance floor, remoteProvenanceFloorSql('facts'): the provenance page judged by
  * the plain page fragment (alias pp, world flag on), which reads no caller identity, plus the owner-only conjunct. The
- * store serves it when the text equals the no-caller rendering; a labelled-only caller (its own conjunct) or an owner
- * read refuses.
+ * store serves the no-caller rendering, and the rendering for a fresh record of the caller's `restricted` and `owner`
+ * settings and remote policy: a caller record has no live pending-coverage test, an owner read drops the owner-only
+ * test, and `restricted: false` renders the short member-access form (the store's `open`). A labelled-only caller, folder
+ * coverage or a relaxed privacy setting renders other text and refuses.
  */
 export function storeFloorPolicy(member: string): StorePrivacyPolicy {
   const text = normalizeConceptInputs(remoteProvenanceFloorSql('facts'));
-  const baseline = withoutCallerAccess(() => remoteProvenanceFloorSql('facts'));
-  if (text === normalizeConceptInputs(baseline)) return { ...factPolicyFlags(baseline), entityPrivacy: false, provenanceOnly: true };
-  refuseMember(member, 'the remote provenance floor for a caller whose labelled-only grant or owner read changes it');
+  const floor = (sql: string, open: boolean): StorePrivacyPolicy =>
+    ({ ...factPolicyFlags(sql), entityPrivacy: false, provenanceOnly: true, ...(open ? { open: true } : {}) });
+  const unscoped = withoutCallerAccess(() => remoteProvenanceFloorSql('facts'));
+  if (text === normalizeConceptInputs(unscoped)) return floor(unscoped, false);
+  const { restricted, owner } = currentCallerAccess();
+  const fresh = renderForStoreCaller({ restricted, owner }, () => remoteProvenanceFloorSql('facts'));
+  if (text === normalizeConceptInputs(fresh)) return floor(fresh, !restricted);
+  refuseMember(member, 'the remote provenance floor for a caller whose labelled-only grant, folder coverage or relaxed privacy changes it');
 }
 
 /**

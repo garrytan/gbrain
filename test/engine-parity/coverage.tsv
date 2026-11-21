@@ -839,12 +839,12 @@ selectFactsReconcileDrain	facts_purge	yes	1	no	yes	yes	serves
 listRelinkCandidateRows	facts_purge	yes	1	no	yes	yes	serves
 countRelinkCandidates	facts_purge	yes	1	no	yes	yes	serves
 listSimilarActiveFacts	facts_purge	yes	3	no	yes	yes	serves
-findActiveSingleFact	facts_purge	yes	5	no	yes	yes	serves
+findActiveSingleFact	facts_purge	yes	6	no	yes	yes	serves
 listSingleFactMetadata	facts_purge	yes	2	no	yes	yes	serves
 listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	4	no	yes	yes	serves
-expireFactsByWithdrawal	facts_purge	yes	5	no	yes	yes	serves
+expireFactsByWithdrawal	facts_purge	yes	6	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	8	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	serves
 readPurgeSourceLocalPath	facts_purge	yes	1	no	yes	yes	serves
@@ -974,7 +974,7 @@ deactivateDerivedTakes	facts_trust	yes	1	no	yes	yes	refuses:facts
 softDeleteDerivedPages	facts_trust	yes	1	no	yes	yes	refuses:facts
 markNeedsRederive	facts_trust	yes	1	no	yes	yes	refuses:facts
 readMemberPageWithdrawal	facts_trust	yes	3	no	yes	yes	serves
-readClaimWithdrawal	facts_trust	yes	2	no	yes	yes	serves
+readClaimWithdrawal	facts_trust	yes	3	no	yes	yes	serves
 readFactVisibility	facts_trust	yes	4	no	yes	yes	serves
 readReplacementTarget	facts_trust	yes	6	no	yes	yes	serves
 readPairFactRow	facts_trust	yes	9	no	yes	yes	serves
@@ -1091,7 +1091,7 @@ getRecentSalience	salience_enrich	yes	8	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	4	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	33	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	34	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	4	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
