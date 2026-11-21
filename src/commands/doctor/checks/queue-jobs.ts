@@ -10,6 +10,7 @@ import { autopilotOperatorPauseMarkerPath, autopilotPaused, autopilotPauseReason
 import { resolveEnvNumber } from '../../../core/env-number.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify } from '../check-fix.ts';
+import { isMissingSchemaObject } from '../../../core/utils.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
 import { queueWorkerAlive, runWaitingJobsFix } from '../../../core/minions/no-worker.ts';
 
@@ -812,7 +813,10 @@ export async function computeAutopilotFanoutConcurrencyCheck(engine: BrainEngine
       message: `fan-out ${fanoutMax}/tick within worker concurrency ${concurrency}`,
     };
   } catch (e) {
-    return { name: 'autopilot_fanout_concurrency', status: 'ok', message: `Skipped (${e instanceof Error ? e.message : String(e)})` };
+    // Only a missing config table is a clean skip; any other failure (#9924) is not a clean result.
+    return isMissingSchemaObject(e, 'table', 'config')
+      ? { name: 'autopilot_fanout_concurrency', status: 'ok', message: 'Skipped (config table unavailable)' }
+      : checkError('autopilot_fanout_concurrency', 'check autopilot fan-out against worker concurrency', e);
   }
 }
 
