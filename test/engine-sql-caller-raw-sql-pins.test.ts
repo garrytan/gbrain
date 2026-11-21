@@ -33,6 +33,7 @@ import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../
 import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
 import { FACT_PREIMAGE_SQL } from '../src/core/engine-sql/facts.ts';
 import { TAKE_PREIMAGE_SQL } from '../src/core/engine-sql/takes-reads.ts';
+import { EFFECT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 
 /** caller.ts MEMBER_SQL at 7470c703ed: MEMBERS_WHERE_SQL(`m.id = (${member})`), copied verbatim. */
@@ -1626,6 +1627,22 @@ const PINS: Pin[] = [
       LEFT JOIN jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, claim text, kind text, holder text) ON n.row_num = k.row_num
      WHERE k.page_id = $1 AND (k.row_num = ANY($2::integer[]) OR (n.row_num IS NOT NULL AND (k.claim, k.kind, k.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder)))
      ORDER BY k.row_num`],
+  },
+  {
+    from: 'src/core/persistence/intent-redaction.ts:248 cancelRequestsHoldingStagings (at b220b0df91)',
+    case: { method: 'lockWriteRequestsById', variant: 'default', run: e => e.lockWriteRequestsById(['b0000000-0000-4000-8000-0000000000d1']) },
+    texts: ['SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE'],
+  },
+  {
+    from: 'src/core/persistence/journal.ts:1068 finishTerminal (at b220b0df91)',
+    case: { method: 'compactTerminalIntent', variant: 'default', run: e => e.compactTerminalIntent({ id: 'b0000000-0000-4000-8000-0000000000d1', left: 512, reservation: 4096, counterKeys: ['brain'] }) },
+    texts: [`WITH effects AS (SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0) AS bytes,
+        COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
+      r AS (UPDATE persistence_requests SET intent=NULL,compacted=true,terminal_reservation=CASE WHEN (SELECT unfinished FROM effects) THEN terminal_reservation
+        ELSE LEAST(terminal_reservation,$2::bigint+(SELECT bytes FROM effects)) END WHERE id=$1::uuid RETURNING *),
+      released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST($3::bigint-r.terminal_reservation,c.terminal_bytes)
+        FROM r WHERE c.key=ANY($4::text[]))
+      SELECT * FROM r`],
   },
 ];
 

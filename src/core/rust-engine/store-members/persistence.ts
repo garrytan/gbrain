@@ -18,7 +18,7 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress, HeldCoverageRow, TerminalIntentCompaction } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
@@ -221,6 +221,24 @@ export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: n
 /** The completion; this engine keeps no persistence effects, so the queued effect size is 0. */
 export const completeWriteRow: StoreMember<[completion: WriteCompletion], CompletedWriteRow | null> = async (brain, completion) =>
   requestRow<CompletedWriteRow>(await storeCall({ member: 'completeWriteRow' }, () => brain.completeWriteRow(completion)));
+
+/**
+ * The requests with these ids in id order (uuid order is the order of their lowercase text), each once; an unknown id reads
+ * nothing. FOR UPDATE changes nothing in one store write (see the header).
+ */
+export const lockWriteRequestsById: StoreMember<[ids: readonly string[]], WriteRequest[]> = async (brain, ids) => {
+  const ordered = [...new Set(ids.map(id => id.toLowerCase()))].sort();
+  const rows: WriteRequest[] = [];
+  for (const id of ordered) {
+    const row = requestRow<WriteRequest>(await storeCall({ member: 'lockWriteRequestsById' }, () => brain.readWriteRequestById(id)));
+    if (row) rows.push(row);
+  }
+  return rows;
+};
+
+/** The compaction of a terminal request whose intent carried purged content, in one store write; null for an unknown id. */
+export const compactTerminalIntent: StoreMember<[compaction: TerminalIntentCompaction], WriteRequest | null> = async (brain, compaction) =>
+  requestRow<WriteRequest>(await storeCall({ member: 'compactTerminalIntent' }, () => brain.compactTerminalIntent({ ...compaction, counterKeys: [...compaction.counterKeys] })));
 
 /**
  * Synchronous commit for the current transaction: nothing to set. A store commit makes every write durable before it

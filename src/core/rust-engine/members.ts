@@ -1244,6 +1244,8 @@ export const RUST_ENGINE_MEMBERS = {
   stampWriteClaim: 'persistence_journal',
   lockWriteRequest: 'persistence_journal',
   completeWriteRow: 'persistence_journal',
+  lockWriteRequestsById: 'persistence_journal',
+  compactTerminalIntent: 'persistence_journal',
   insertPublicationEffects: 'persistence_journal',
   insertWithdrawalEffects: 'persistence_journal',
   cancelWriteRow: 'persistence_journal',

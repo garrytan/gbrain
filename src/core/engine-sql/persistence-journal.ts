@@ -411,6 +411,36 @@ export async function lockWriteRequest(exec: SqlExecutor, id: string): Promise<W
   return row ?? null;
 }
 
+/** The requests with these ids, locked FOR UPDATE until the transaction ends, in id order (an unknown id reads nothing). */
+export async function lockWriteRequestsById(exec: SqlExecutor, ids: readonly string[]): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+}
+
+/**
+ * A terminal request's compaction once its stored intent carried purged content (journal.ts finishTerminal). `left` is
+ * what the receipt keeps without its intent, `reservation` the terminal reservation the completion left, `counterKeys`
+ * the counters it charged.
+ */
+export interface TerminalIntentCompaction { id: string; left: number; reservation: number; counterKeys: readonly string[] }
+
+/** journal.ts finishTerminal's compaction at b220b0df91, with EFFECT_BYTES_SQL written out (see the module header). */
+export const COMPACT_TERMINAL_INTENT_SQL = `WITH effects AS (SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0) AS bytes,
+        COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
+      r AS (UPDATE persistence_requests SET intent=NULL,compacted=true,terminal_reservation=CASE WHEN (SELECT unfinished FROM effects) THEN terminal_reservation
+        ELSE LEAST(terminal_reservation,$2::bigint+(SELECT bytes FROM effects)) END WHERE id=$1::uuid RETURNING *),
+      released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST($3::bigint-r.terminal_reservation,c.terminal_bytes)
+        FROM r WHERE c.key=ANY($4::text[]))
+      SELECT * FROM r`;
+
+/**
+ * Drops the request's intent and marks it compacted. Its terminal reservation shrinks to `left` plus its effect bytes
+ * once no effect is unfinished, and the counters release what it gave up. The compacted row, or null for an unknown id.
+ */
+export async function compactTerminalIntent(exec: SqlExecutor, c: TerminalIntentCompaction): Promise<WriteRequest | null> {
+  const [redacted] = await exec.executeRaw<WriteRequest>(COMPACT_TERMINAL_INTENT_SQL, [c.id, c.left, c.reservation, c.counterKeys]);
+  return redacted ?? null;
+}
+
 /** Records a request's terminal state and releases its counters; null when the result exceeds the reservation (nothing changed). */
 export async function completeWriteRow(exec: SqlExecutor, c: WriteCompletion): Promise<CompletedWriteRow | null> {
   const [done] = await exec.executeRaw<CompletedWriteRow>(c.probePurges ? COMPLETE_WRITE_PURGE_PROBE_SQL : COMPLETE_WRITE_SQL, [c.id, c.state,
