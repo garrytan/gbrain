@@ -12,7 +12,7 @@
  * names the source and the retry with --source-id. A put that names its source
  * (--source-id, --source, GBRAIN_SOURCE or a .gbrain-source pin) is never
  * refused here, nor is one run from inside a source's checkout (the local_path
- * tier counts as naming that source), and remote callers never reach it (it would be a cross-source
+ * tier counts as naming that source; not for an upload commit, which writes to the source fixed at its begin), and remote callers never reach it (it would be a cross-source
  * existence oracle outside their grant). A local writer registered for fewer
  * sources only hears about holders in sources its grant covers, and a real put
  * is checked after the write authority and after a stored request_id replay, so
@@ -30,14 +30,19 @@ import { formatSoleNonDefaultFlip, resolveRegisteredLocalPathSource } from '../s
 import { hasCapability } from '../engine-capabilities.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter } from './identity.ts';
 
-/** True when `p` is a put from the trusted local CLI where nothing named or implied a source (no flag, env, dotfile or cwd checkout). */
-export function isUnsourcedLocalPut(ctx: Pick<OperationContext, 'remote' | 'localSourceImplicit' | 'localSourceFromCheckout'>, p: Record<string, unknown>): boolean {
+/**
+ * True when `p` is a put from the trusted local CLI where nothing named or implied a source (no flag, env, dotfile or
+ * cwd checkout). `uploadCommit`: a commit_page_upload writes to the source fixed at its begin, so the commit's checkout
+ * names nothing and only a flag, env or dotfile on the commit counts.
+ */
+export function isUnsourcedLocalPut(ctx: Pick<OperationContext, 'remote' | 'localSourceImplicit' | 'localSourceFromCheckout'>, p: Record<string, unknown>,
+  uploadCommit = false): boolean {
   // A put run from inside a source's checkout (the local_path tier) names that source, as a flag, env or dotfile does.
-  return ctx.remote === false && ctx.localSourceImplicit === true && ctx.localSourceFromCheckout !== true && p.source_id === undefined;
+  return ctx.remote === false && ctx.localSourceImplicit === true && (uploadCommit || ctx.localSourceFromCheckout !== true) && p.source_id === undefined;
 }
 
-/** Operations whose unsourced put the fork check covers. */
-const FORK_CHECKED_OPERATIONS = new Set(['put_page', 'put_pages', 'begin_page_upload', 'commit_page_upload']);
+/** Operations whose put a run from inside a source's checkout names (commit_page_upload is not one: see isUnsourcedLocalPut). */
+const FORK_CHECKED_OPERATIONS = new Set(['put_page', 'put_pages', 'begin_page_upload']);
 
 /**
  * The live owner resolves the cwd tier for a CLI caller; true when `sourceId` is the source whose checkout contains
@@ -94,8 +99,8 @@ async function localGrant(engine: BrainEngine): Promise<LocalGrant | null> {
  * target already has a row; without it (a dry run, which has no admission) a slug-restricted writer is left alone.
  */
 export async function assertUnsourcedPutKeepsSource(ctx: OperationContext, target: string, p: Record<string, unknown>,
-  admitted?: { targetHasRow: boolean }): Promise<void> {
-  if (!isUnsourcedLocalPut(ctx, p) || typeof p.slug !== 'string') return;
+  admitted?: { targetHasRow: boolean; uploadCommit?: true }): Promise<void> {
+  if (!isUnsourcedLocalPut(ctx, p, admitted?.uploadCommit === true) || typeof p.slug !== 'string') return;
   let slug: string;
   try { slug = validateSlug(p.slug); } catch { return; } // the write path refuses a bad slug with its own message
   // An engine without persistence_journal (Rust) has no local-writer grants and no stored requests to consult.

@@ -6,9 +6,12 @@
  *    before anything is staged, and a commit_page_upload refuses a new page that appeared in vault after its begin;
  *    an explicit source_id still writes there. A put run from inside a source's checkout (the local_path tier, via
  *    cliRequestContext) counts as naming that source: it writes there with no refusal, for put, put_pages and
- *    uploads, while a cwd outside every checkout still refuses. The routing-flip notice is silent under --quiet.
+ *    begin_page_upload, while a cwd outside every checkout still refuses. An upload commit writes to the source fixed
+ *    at its begin, so its checkout names nothing: a refused commit retried from the holder's checkout is still
+ *    refused. The routing-flip notice is silent under --quiet.
  * 2. Fails when: put_pages or an upload writes a second copy into 'default' (the old behavior), a named source or a
- *    checkout is refused, the refusal text differs from put_page's, or --quiet still prints the flip notice.
+ *    checkout is refused, an upload commit from another source's checkout forks, the refusal text differs from
+ *    put_page's, or --quiet still prints the flip notice.
  * 3. Real seams: MCP dispatch with remote=false and localSourceImplicit (the CLI's path), the CLI context builder
  *    that resolves the cwd tier, the durable write path and the real sources table, on PGLite.
  */
@@ -23,6 +26,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { cliRequestContext, mergedRequestConfig } from '../src/core/cli-socket/execute.ts';
+import { sourceNamedByCheckout } from '../src/core/persistence/unsourced-put-fork.ts';
 
 const SLUG = 'people/erin-example';
 const page = (body: string) => ['---', 'type: person', 'title: Erin Example', '---', '# Erin Example', '', body].join('\n');
@@ -287,5 +291,30 @@ describe('a put from inside a source checkout names that source (PGLite)', () =>
     const begun = await callFrom(cwd, 'begin_page_upload', { slug, mode: 'create', total_bytes: Buffer.byteLength(text), sha256: hex(text), request_id: randomUUID() });
     expect(begun.body).toMatchObject({ detail: 'slug_in_other_source' });
     expect(await row(slug, 'default')).toBeNull();
+  }, 120_000);
+
+  test('an upload commit retried from inside the holding source checkout is still refused, and forks nothing', async () => {
+    // The commit writes to the source fixed at its begin (default here), so running it from vault's checkout names nothing.
+    const slug = 'people/lea-example';
+    const text = page2('Lea by upload.');
+    const begun = await callFrom(join(dir, 'elsewhere'), 'begin_page_upload', { slug, mode: 'create', total_bytes: Buffer.byteLength(text), sha256: hex(text), request_id: randomUUID() });
+    expect(begun.isError, begun.text).toBe(false); // nothing lives at the slug yet, so the begin is fine
+    expect((await callFrom(join(dir, 'elsewhere'), 'upload_page_part', { upload_id: begun.body.upload_id, part: 0, text, part_sha256: hex(text) })).isError).toBe(false);
+    expect((await dispatchToolCall(engine, 'put_page', { slug, content: page2('Lea is at vault-co.'), source_id: 'vault' }, { remote: false, sourceId: 'default', localSourceImplicit: true, takesHoldersAllowList: ['world'] })).isError).not.toBe(true);
+    const outside = await callFrom(join(dir, 'elsewhere'), 'commit_page_upload', { upload_id: begun.body.upload_id });
+    expect(outside.isError).toBe(true);
+    expect(outside.body.detail).toBe('slug_in_other_source');
+    expect(outside.body.message).toBe(refusal(slug));
+    const fromVault = await callFrom(join(dir, 'vault', 'sub'), 'commit_page_upload', { upload_id: begun.body.upload_id });
+    expect(fromVault.isError, fromVault.text).toBe(true);
+    expect(fromVault.body.detail).toBe('slug_in_other_source');
+    expect(fromVault.body.message).toBe(refusal(slug));
+    expect(await row(slug, 'default')).toBeNull();
+    expect(await compiled(slug, 'vault')).toContain('vault-co');
+    expect(await compiled(slug, 'vault')).not.toContain('Lea by upload.');
+    expect(Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE slug = $1', [slug]))[0]!.n)).toBe(1);
+    // The live owner's request path marks a checkout for put_page, put_pages and begin_page_upload, never for a commit.
+    expect(await sourceNamedByCheckout(engine, 'begin_page_upload', join(dir, 'vault', 'sub'), 'vault')).toBe(true);
+    expect(await sourceNamedByCheckout(engine, 'commit_page_upload', join(dir, 'vault', 'sub'), 'vault')).toBe(false);
   }, 120_000);
 });

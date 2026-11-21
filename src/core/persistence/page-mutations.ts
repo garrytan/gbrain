@@ -527,7 +527,8 @@ export async function preparePageAdmission(ctx: OperationContext,
     async () => !source.local_path && sourceId === 'default' ? ctx.engine.getConfig('sync.repo_path') : null,
   ]) as [Awaited<ReturnType<typeof submissionAuthority>>, unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, Awaited<ReturnType<typeof getWorktreeBinding>>, string | null, string | null];
   // A batch child or an upload commit carries a source_id whether or not the caller named one (put_page's own source_id is the caller's); a batch asks for the guard only when its caller named none.
-  if (input.unsourcedForkGuard === true) await (await import('./unsourced-put-fork.ts')).assertUnsourcedPutKeepsSource(ctx, sourceId, input.batch || input.stagedBody ? { ...p, source_id: undefined } : p, { targetHasRow: !!snapshot });
+  if (input.unsourcedForkGuard === true) await (await import('./unsourced-put-fork.ts')).assertUnsourcedPutKeepsSource(ctx, sourceId, input.batch || input.stagedBody ? { ...p, source_id: undefined } : p,
+    { targetHasRow: !!snapshot, ...(input.stagedBody ? { uploadCommit: true as const } : {}) });
   if (typeof intent.content === 'string' && (typeof p.expected_revision !== 'string' || p.expected_revision === snapshot?.revision)) {
     await assertTimelineNotOmitted(ctx.engine, { intent, remote: ctx.remote !== false, writer: typeof p.expected_revision === 'string' ? 'editing' : 'preserving',
       slug, sourceId, content: intent.content, prior: snapshot });
