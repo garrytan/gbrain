@@ -337,6 +337,8 @@ impl Store {
                 }
             }
         };
+        // Sweep records kept before their source index existed get it.
+        page_body::purge_record::backfill_source_index(&*kv)?;
         let index = keyword::open_index(&*kv)?;
         let flag_assumed = !created && access_flag::scan_at_open(&*kv)?;
         // The schema version is the config the TypeScript migrations keep; a brain that has none

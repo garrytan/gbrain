@@ -255,12 +255,15 @@ until `totalMs` has passed (`inlineMs` for the purge's own call) and always runs
 walks deleted, and per page the rows of those walks that were in scope, passed the prefilter and were deleted.
 
 A page can enter a sweep's scope behind the walk without a derivation write: it is soft-deleted (`softDeletePage`, the hidden derived
-pages of a purge) or a live segment of it is retired (a body flip closing a published occurrence). The store notes it on every record of
-the page's source (`note_scope_entry`; the SQL engines' triggers write `page_segment_derivation_purge_pages`), and the end of a verify
+pages of a purge) or a live published manifest row of it (no close, no staging) is closed (a body flip) or deleted (`sweepSegments`
+removing a row no generation or version names, and a page deleted for good). The store notes the page on every record of the source
+(`note_scope_entry`; for a manifest row, the source the row names, as the SQL triggers read `OLD.source_id`; the triggers write
+`page_segment_derivation_purge_pages`), and the end of a verify
 walk takes the notes: it reads the first batch of the noted pages' rows and, when that is not all of them or a row in it holds the claim,
 walks only those pages again (`recheck`) before it deletes the record. A record keeps at most 1000 notes; past that its walk goes back to
 the start of a full verify walk. A record has a source index (`b 0x0A <source> 0x00 <request id>`), so a walk reads its own source's
-records and no other's.
+records and no other's; a record kept before the index existed gets its entry when the brain is opened writable (`backfill_source_index`)
+or when the same request is recorded again. The table probe shows a record's `recheck` as the page ids it holds (`{1,2,3}`, `int[]` text).
 
 The derivation keys are grouped by page, not by source, so a batch visits the physical keys in order and keeps those of the source's
 pages; it visits at most `max(8 × batchRows, 512)` keys. A batch the cap stopped before it had `batchRows` rows stores the physical

@@ -103,6 +103,46 @@ pub(super) fn records_of_source(read: &dyn KvRead, source_id: &str) -> Result<Ve
     Ok(out)
 }
 
+/// Gives every sweep record its source index entry: records kept by the builds between the record's first commit and the index lack
+/// one, and so are never selected by a sweep, noted or consulted by the write guard. Runs at open; a read-only open finds none to
+/// repair or, when it does, leaves them for the next writable open.
+pub(crate) fn backfill_source_index(kv: &dyn crate::kv::Kv) -> Result<()> {
+    let snapshot = kv.snapshot()?;
+    let mut missing: Vec<(String, String)> = Vec::new();
+    let mut failure = None;
+    scan_prefix(
+        &*snapshot,
+        &kind_key(DERIVATION_PURGE),
+        false,
+        &mut |_, v| {
+            match serde_json::from_slice::<SweepRecord>(v) {
+                Ok(r) => match snapshot.get(&index_key(&r.source_id, &r.request_id)) {
+                    Ok(None) => missing.push((r.source_id, r.request_id)),
+                    Ok(Some(_)) => {}
+                    Err(e) => failure = Some(e),
+                },
+                Err(e) => failure = Some(StoreError::from(e)),
+            }
+            failure.is_none()
+        },
+    )?;
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    // A handle that cannot write (a read-only open) leaves the repair to the next writable one.
+    let Ok(mut tx) = kv.begin_write() else {
+        return Ok(());
+    };
+    for (source, request) in &missing {
+        tx.put(&index_key(source, request), request.as_bytes())?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 pub(super) fn record_key(request_id: &str) -> Vec<u8> {
     let mut key = kind_key(DERIVATION_PURGE);
     key.extend_from_slice(request_id.as_bytes());
@@ -193,7 +233,19 @@ pub(crate) fn probe_records(read: &dyn KvRead, f: EachRow) -> Result<()> {
                     ProbeCell::text(&format!("{{{}}}", ids.join(","))),
                 ),
                 ("phase", ProbeCell::text(phase_of(&record))),
-                ("recheck", ProbeCell::Null),
+                (
+                    "recheck",
+                    record.recheck.as_ref().map_or(ProbeCell::Null, |pages| {
+                        ProbeCell::text(&format!(
+                            "{{{}}}",
+                            pages
+                                .iter()
+                                .map(u64::to_string)
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        ))
+                    }),
+                ),
                 (
                     "cursor_pipeline",
                     record
@@ -227,7 +279,9 @@ impl Store {
         let now = self.env.now_micros();
         self.write(|tx| {
             let key = record_key(&request_id);
-            if get_json::<SweepRecord>(&*tx, &key)?.is_some() {
+            if let Some(kept) = get_json::<SweepRecord>(&*tx, &key)? {
+                // A record kept before the source index existed gets its index entry here, as at open (`backfill_source_index`).
+                tx.put(&index_key(&kept.source_id, &request_id), request_id.as_bytes())?;
                 return Ok(());
             }
             if read_source(&*tx, &q.source_id)?.is_none() {

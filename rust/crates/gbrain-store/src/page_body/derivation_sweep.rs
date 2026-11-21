@@ -216,6 +216,18 @@ pub(crate) fn note_scope_entry(tx: &mut dyn KvWrite, source_id: &str, page_id: u
     Ok(())
 }
 
+/// A manifest row is deleted: when it is a live published row (no close, no staging) its page enters the scope of every sweep of the row's
+/// own source (`source_id` of the row, as the SQL trigger on `page_body_manifest` reads `OLD.source_id`, not the page's).
+pub(crate) fn note_row_gone(tx: &mut dyn KvWrite, row: &super::ManifestRow) -> Result<()> {
+    if row.gen_to.is_none()
+        && row.staging_id.is_none()
+        && let Ok(page) = u64::try_from(row.page_id)
+    {
+        note_scope_entry(tx, &row.source_id, page)?;
+    }
+    Ok(())
+}
+
 /// The record goes back to the start of a full verify walk; the notes taken so far are covered by it.
 fn to_verify(record: &mut SweepRecord) {
     record.phase = "verify".to_string();
@@ -426,5 +438,48 @@ mod tests {
             visited.iter().sum::<usize>(),
             2 * 3000 + visited.len().saturating_sub(2 * 3000 / cap + 2)
         );
+    }
+
+    #[test]
+    fn a_record_kept_before_the_source_index_existed_is_found_after_the_repair_at_open() {
+        use crate::OpenOptions;
+        use crate::env::SystemEnv;
+        use std::sync::Arc;
+        let kv = crate::test_support::mem_kv();
+        let open =
+            || Store::open_kv(kv.clone(), Arc::new(SystemEnv), OpenOptions::default()).unwrap();
+        let found = |store: &Store| {
+            records_of_source(&*store.read().unwrap(), "default")
+                .unwrap()
+                .len()
+        };
+        let store = open();
+        let request = "d0000000-0000-4000-8000-0000000000d1";
+        let record = |claim: &str| {
+            store
+                .record_derivation_purge_row(&args(json!({ "requestId": request, "sourceId": "default",
+                    "needles": [format!(" {claim} ")], "patterns": [format!("%{claim}%")], "pageIds": [] })))
+                .unwrap();
+        };
+        let unindex = || {
+            let mut tx = kv.begin_write().unwrap();
+            tx.delete(&index_key("default", request)).unwrap();
+            tx.commit().unwrap();
+        };
+        record("alice");
+        assert_eq!(found(&store), 1);
+        // The record as an earlier build wrote it: no index entry, so no sweep selects it.
+        unindex();
+        assert_eq!(found(&store), 0);
+        assert!(store.sweep_batch("default", None, 2).unwrap().is_none());
+        // Recording it again repairs the entry (the conflict path).
+        record("other");
+        assert_eq!(found(&store), 1);
+        // The next open repairs it too, and the sweep then walks the record.
+        unindex();
+        drop(store);
+        let reopened = open();
+        assert_eq!(found(&reopened), 1);
+        assert!(reopened.sweep_batch("default", None, 2).unwrap().is_some());
     }
 }

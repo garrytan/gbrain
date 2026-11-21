@@ -822,6 +822,10 @@ fn staging_id_arg(id: &str) -> Result<String> {
 /// their client keys and recorded texts), as the Postgres foreign keys cascade. Segment texts stay
 /// until a sweep, as in PGLite.
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
+    // The foreign key's cascade deletes the page's manifest rows, which the SQL trigger notes like any other delete of a live row.
+    for (_, row) in manifest_rows(&*tx, page.id)? {
+        derivation_sweep::note_row_gone(tx, &row)?;
+    }
     delete_prefix(tx, &manifest_prefix(page.id))?;
     delete_prefix(tx, &derivation_prefix(page.id))?;
     tx.delete(&body_key(page.id))?;
@@ -1544,12 +1548,13 @@ impl Store {
             let staging_bytes = uuid_bytes(&staging);
             let mut live_seqs: HashSet<i64> = HashSet::new();
             let mut moved = Vec::new();
-            let mut closed_live = false;
+            let mut closed_live: BTreeSet<(String, u64)> = BTreeSet::new();
             for (key, mut row) in rows {
                 if live_published(&row) && close.contains(&row.occurrence_id) {
+                    // A live published row closes: the trigger notes it under the row's own source, as `derivation_sweep::note_row_gone` does.
+                    closed_live.insert((row.source_id.clone(), page.id));
                     row.gen_to = Some(input.new_generation);
                     put_json(tx, &key, &row)?;
-                    closed_live = true;
                 } else if row.staging_id.as_deref() == Some(staging.as_str()) {
                     moved.push((key, row));
                     continue;
@@ -1558,9 +1563,9 @@ impl Store {
                     live_seqs.insert(row.seq);
                 }
             }
-            if closed_live {
-                // A live segment of the page is retired: rows its occurrence backed enter a fact purge's derivation sweep's scope.
-                derivation_sweep::note_scope_entry(tx, &page.source_id, page.id)?;
+            // A live segment of the page is retired: rows its occurrence backed enter a fact purge's derivation sweep's scope.
+            for (source, page_id) in &closed_live {
+                derivation_sweep::note_scope_entry(tx, source, *page_id)?;
             }
             let retired = if retire_deferred || to_retire == 0 {
                 0
@@ -2431,6 +2436,7 @@ pub(crate) fn sweep_segments_in(
             };
             if drop {
                 tx.delete(key)?;
+                derivation_sweep::note_row_gone(tx, row)?;
                 result.manifest_rows_deleted += 1;
                 if page_scope.is_some() {
                     released.insert(row.sha256.clone());
