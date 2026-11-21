@@ -231,6 +231,15 @@ describe('graph-query foreign-edge footer (#1153)', () => {
     expect(err.join('\n')).not.toMatch(/foreign-source pages hidden/);
   });
 
+  // The footer counts the edges the walk's direction would have followed: an `in` walk of carol (other-src) hides alice's
+  // incoming edge, while carol has no outgoing foreign edge.
+  test('--direction in footer counts the incoming foreign edge of the root', async () => {
+    const { err } = await captureBoth(async () => {
+      await runGraphQuery(engine, ['people/carol', '--depth', '1', '--direction', 'in', '--source', 'other-src']);
+    });
+    expect(err.join('\n')).toMatch(/1 edge to foreign-source pages hidden/);
+  });
+
   test('an unknown --source is rejected loudly', async () => {
     await expect(runGraphQuery(engine, ['people/alice', '--source', 'nope-source'])).rejects.toThrow(/nope-source/);
   });

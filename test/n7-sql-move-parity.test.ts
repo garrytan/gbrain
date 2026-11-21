@@ -53,11 +53,16 @@ import { readConfigRows, readConfigValue } from '../src/core/config-values.ts';
 import { RestoreTargetError, resolveRestoreTarget } from '../src/core/restore-target.ts';
 import { resolveSourceId } from '../src/core/source-resolver.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
-import { firstSourceLocalPath } from '../src/core/remediation/context.ts';
+import { firstSourceLocalPath, staleExtractionBlocked } from '../src/core/remediation/context.ts';
 import { isStorageManifestSource, STORAGE_ROLE } from '../src/core/storage-manifest/door.ts';
 import { loadCacheConfig } from '../src/core/search/query-cache.ts';
 import { connectorSourceRows } from '../src/core/connectors/item-holds-store.ts';
 import { operationsByName } from '../src/core/operations.ts';
+import { backfillEffectiveDate } from '../src/core/backfill-effective-date.ts';
+import { checkSharedSkillsSources } from '../src/commands/doctor/checks/shared-skills.ts';
+import { dbAheadOfGitEntry } from '../src/commands/doctor/checks/db-ahead-of-git.ts';
+import type { DoctorContext } from '../src/commands/doctor/context.ts';
+import type { Check } from '../src/commands/doctor.ts';
 import { ENTRY_BUDGET_KEY } from '../src/commands/doctor/budget.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { archiveSource, createSource } from './engine-parity/harness.ts';
@@ -608,6 +613,46 @@ for (const kind of testBackends()) {
       await site(g, `${P}unlinked-facts.ts:87`, async e => rowsOf(await M.unlinkedOriginRows(e, SRC_IDS, AUDIT, WINDOW, false)),
         e => e.countUnlinkedFactsByOrigin({ sourceIds: SRC_IDS, auditSources: AUDIT, windowPerSource: WINDOW, hasAttempts: false }));
     }, 240_000);
+
+    // The cases above compare master's statement with the member; these run the moved callers themselves on a brain that
+    // holds an archived source and a source that sorts before `default`, so a caller that reads archived rows or loses
+    // the order fails here (mutation-checked, mut/results.tsv).
+    test('callers: archived sources stay out of the skills snapshot, the shared-skills check, the git-gap census and the stale-extraction walk; default owns the first path', async () => {
+      const [e] = await makePair(kind, closers);
+      await createSource(e!, kind, 'aaa', {}, '/tmp/n7-caller-a');
+      await createSource(e!, kind, 'zarch', { shared_skills: false }, '/tmp/n7-caller-z');
+      await archiveSource(e!, kind, 'zarch');
+      await e!.executeRaw(`UPDATE sources SET local_path = '/tmp/n7-caller-d' WHERE id = 'default'`);
+      expect(await firstSourceLocalPath(e!)).toBe('/tmp/n7-caller-d'); // master: default first, then by id
+      await e!.executeRaw(`INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline, frontmatter) VALUES ('n7/stale-archived', 'zarch', 'note', 'stale', 'b', '', '{}'::jsonb)`);
+      expect(await staleExtractionBlocked(e!)).toBeUndefined(); // an archived source's stale page never blocks the walk
+      expect(await checkSharedSkillsSources(e!)).toBeNull(); // the archived opt-out is not reported
+      const ctx = { engine: e!, progress: { heartbeat() {} } } as unknown as DoctorContext;
+      const [census] = await dbAheadOfGitEntry.run(ctx) as Check[];
+      expect((census!.details as { sources_without_git_checkout: number }).sources_without_git_checkout).toBe(2); // default and aaa; the archived one is not counted
+      const snapshot = JSON.stringify(await statusOp.handler({ engine: e!, config: {}, dryRun: false, remote: false, logger: { info() {}, warn() {}, error() {} } } as never, {}));
+      expect(snapshot).toContain('/tmp/n7-caller-a');
+      expect(snapshot).not.toContain('/tmp/n7-caller-z');
+    });
+
+    test('callers: the effective-date backfill reads, advances and clears its checkpoint', async () => {
+      const [e] = await makePair(kind, closers);
+      for (const slug of ['n7bf/one', 'n7bf/two', 'n7bf/three']) {
+        await e!.executeRaw(`INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter) VALUES ($1, 'note', $1, 'b', '', '{}'::jsonb)`, [slug]);
+      }
+      const ids = (await e!.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE slug LIKE 'n7bf/%' ORDER BY id`)).map(r => Number(r.id));
+      // A walk that stops after its first batch (the callback throws) leaves the checkpoint where the batch ended.
+      await expect(backfillEffectiveDate(e!, { maxRows: 1, onBatch: () => { throw new Error('stop after one batch'); } })).rejects.toThrow('stop after one batch');
+      expect(await readConfigValue(e!, CHECKPOINT_KEY)).toBe(String(ids[0]));
+      const first = await backfillEffectiveDate(e!, { maxRows: 1 }); // resumes after that page, and a finished walk clears the checkpoint
+      expect(first.examined).toBe(1);
+      expect(first.lastId).toBe(ids[1]);
+      expect(await readConfigValue(e!, CHECKPOINT_KEY)).toBeUndefined();
+      await e!.setConfig(CHECKPOINT_KEY, String(ids[0]));
+      const resumed = await backfillEffectiveDate(e!, { maxRows: 5 });
+      expect(resumed.examined).toBe(2); // resumes after the recorded page
+      expect(await readConfigValue(e!, CHECKPOINT_KEY)).toBeUndefined();
+    });
 
     test('no moved caller file still holds the statements master ran', () => {
       const stillThere = MOVED_FILES.filter(file => /\bFROM sources\b|\bFROM config\b|INTO config\b|writer_version_cutoff|FROM fact_relink_attempts|LIKE 'atoms|JOIN LATERAL/.test(readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')));
