@@ -9,13 +9,15 @@
  * serve-http-mcp does, on a repo-less brain; embeddings stubbed. Runs on PGLite and, with DATABASE_URL, Postgres.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent, importFromFile } from '../src/core/import-file.ts';
+import { readPageBodyPolicy } from '../src/core/page-body/limits.ts';
+import { importStreamedMarkdownFile } from '../src/core/page-body/streamed-import.ts';
 import { isFrontmatterHoldMessage, parseMarkdown } from '../src/core/markdown.ts';
 import { screenImportContent } from '../src/core/import-screen.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
@@ -62,6 +64,15 @@ const UNREAD: Array<{ label: string; content: (canary: string) => string }> = [
   { label: 'an indented fence with CRLF line endings', content: c => ` ---\r\n${keys.replace(/\n/g, '\r\n')}---\r\n${BODY(c)}` },
   { label: 'a byte order mark then an indented fence', content: c => `\uFEFF ---\n${keys}---\n${BODY(c)}` },
   { label: 'an indented fence with readable-by', content: c => ` ---\ntitle: Example\nreadable-by: [alice-example]\n---\n${BODY(c)}` },
+  { label: 'a zero-width space before the fence', content: c => `\u200B---\n${keys}---\n${BODY(c)}` },
+  { label: 'a zero-width space inside the key', content: c => ` ---\ntitle: Example\nreadable\u200B_by: [alice-example]\n---\n${BODY(c)}` },
+  { label: 'an explicit-key marker before the key', content: c => ` ---\n? readable_by : [alice-example]\n---\n${BODY(c)}` },
+  { label: 'an anchor before the key', content: c => ` ---\n&a readable_by: [alice-example]\n---\n${BODY(c)}` },
+  { label: 'a tag before the key', content: c => ` ---\n!!str readable_by: [alice-example]\n---\n${BODY(c)}` },
+  { label: 'a tag before the key in a flow mapping', content: c => ` ---\n{title: Example, !!str readable_by: [alice-example]}\n---\n${BODY(c)}` },
+  { label: 'an explicit key whose value is on the next line', content: c => ` ---\n? readable_by\n: [alice-example]\n---\n${BODY(c)}` },
+  { label: 'a --- inside an indented block scalar before the key', content: c => ` ---\ndescription: |\n  ---\nreadable_by: [alice-example]\n---\n${BODY(c)}` },
+  { label: 'a byte order mark, a blank line and a no-break space line before the fence', content: c => `\uFEFF\n\u00A0\n---\n${keys}---\n${BODY(c)}` },
   { label: 'a four-dash fence', content: c => `----\n${keys}---\n${BODY(c)}` },
   { label: 'a fence that never closes', content: c => `---\n${keys}${BODY(c)}` },
   { label: 'a fence closed by an indented line', content: c => `---\n${keys}  ---\n${BODY(c)}` },
@@ -84,9 +95,18 @@ describe('unread leading block detection', () => {
       '---\ntitle: Example\n---\nreadable_by: [alice-example]\n',
       `intro\n\n ---\n${keys}---\nbody`,
       ' ---\nwe say readable by nobody\n---\n',
+      ' ---\ntitle: Example\n# Example: {readable_by: [alice-example]}\n---\nbody', // a comment names no readers
       '', 'plain text', '---\n---\n',
     ];
     for (const content of none) expect({ content, found: unreadReadersLine(content) }).toEqual({ content, found: null });
+  });
+
+  test('a long line of padding is scanned in linear time and an oversized flow line is still caught', () => {
+    const started = performance.now();
+    expect(unreadReadersLine('---' + ' '.repeat(64_000) + '!\nbody\n')).toBeNull();
+    expect(unreadReadersLine(' ---\n' + ' '.repeat(64_000) + '{ { { x\n---\nbody\n')).toBeNull();
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(unreadReadersLine(` ---\n{title: ${'x'.repeat(5000)}, readable_by: [alice-example]}\n---\nbody`)).toBe(2);
   });
 
   test('the detector agrees with the parser: it flags only content the parser read no frontmatter from, and a read block is never flagged', () => {
@@ -131,6 +151,19 @@ describe('unread leading block detection', () => {
       writeFileSync(path, ` ---\n${keys}---\n${'x'.repeat(300 * 1024)}\n`);
       const handle = await open(path, 'r');
       try { expect(await unreadReadersFileHold(handle, 300 * 1024)).toMatchObject({ code: 'invalid_frontmatter', line: 4 }); } finally { await handle.close(); }
+      // The readers line sits past the head and the fence has not closed inside it: the whole file is read.
+      writeFileSync(path, ` ---\ntitle: Example\n${'x'.repeat(300 * 1024)}\nreadable_by: [alice-example]\n---\nbody\n`);
+      const far = await open(path, 'r');
+      try { expect(await unreadReadersFileHold(far, (await far.stat()).size)).toMatchObject({ code: 'invalid_frontmatter', line: 4 }); } finally { await far.close(); }
+      for (const opener of ['----', '+++']) {
+        writeFileSync(path, `${opener}\ntitle: Example\n${'x'.repeat(300 * 1024)}\nreadable_by: [alice-example]\n---\nbody\n`);
+        const wide = await open(path, 'r');
+        try { expect({ opener, hold: (await unreadReadersFileHold(wide, (await wide.stat()).size))?.code }).toEqual({ opener, hold: 'invalid_frontmatter' }); } finally { await wide.close(); }
+      }
+      // A first-column block that runs past the head is read by the parser, so it is not held.
+      writeFileSync(path, `---\ntitle: Example\nnote: ${'x'.repeat(300 * 1024)}\nreadable_by: [alice-example]\n---\nbody\n`);
+      const readBlock = await open(path, 'r');
+      try { expect(await unreadReadersFileHold(readBlock, (await readBlock.stat()).size)).toBeNull(); } finally { await readBlock.close(); }
       writeFileSync(path, ` ---\ntitle: Example\n---\n${'x'.repeat(1000)}\n`);
       const clean = await open(path, 'r');
       try { expect(await unreadReadersFileHold(clean, 1000)).toBeNull(); } finally { await clean.close(); }
@@ -253,6 +286,23 @@ for (const kind of testBackends()) {
       const out = await put('notes/js-block', `---js\n${keys}---\n${BODY('canaryjsblock')}`);
       expect(out.isError).toBe(true);
       expect(await stored('notes/js-block')).toBe(false);
+    }, 120_000);
+
+    test('a streamed import holds an unread block that names readers, even when the readers line is past the first 256 KiB, and still imports a first-column block', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-unread-stream-'));
+      const path = join(dir, 'page.md');
+      const policy = { ...(await readPageBodyPolicy(engine)), segmented: true };
+      const body = 'A line about acme-example.\n'.repeat(2000);
+      try {
+        for (const [slug, head] of [['notes/large-spaced', ' ---\nreadable_by: [alice-example]\n---\n'], ['notes/large-far', ` ---\ntitle: Example\n${'x'.repeat(300 * 1024)}\nreadable_by: [alice-example]\n---\n`]] as const) {
+          writeFileSync(path, head + body);
+          expect({ slug, result: await importStreamedMarkdownFile(engine, path, `${slug}.md`, { noEmbed: true, sourceId: SRC, inferFrontmatter: false }, statSync(path), policy) })
+            .toMatchObject({ result: { status: 'skipped', skip_reason: 'invalid_frontmatter' } });
+          expect({ slug, stored: await stored(slug) }).toEqual({ slug, stored: false });
+        }
+        writeFileSync(path, `---\nreadable_by: [${OWNER}]\n---\n` + body);
+        expect((await importStreamedMarkdownFile(engine, path, 'notes/large-fixed.md', { noEmbed: true, sourceId: SRC, inferFrontmatter: false }, statSync(path), policy)).status).not.toBe('skipped');
+      } finally { rmSync(dir, { recursive: true, force: true }); }
     }, 120_000);
 
     test('sync and import hold the file: the screen, the legacy import and a stored page that is not written', async () => {
