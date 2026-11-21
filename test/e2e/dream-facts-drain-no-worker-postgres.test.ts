@@ -68,6 +68,14 @@ describe('dream facts_drain on Postgres with queued facts-absorb jobs', () => {
     expect((await runPhaseFactsDrain(db, { dryRun: false })).status).toBe('skipped');
   }), 120_000);
 
+  test('a job left active by a worker that died does not hide the warning', () => onPostgres(async db => {
+    await queued(db, 'facts-absorb', 2, '3 hours');
+    await queued(db, 'embed-backfill', 1, '3 hours');
+    const stalled = await new MinionQueue(db).claim('worker-gone', 300_000, 'default', ['embed-backfill']);
+    await db.executeRaw(`UPDATE minion_jobs SET started_at = now() - interval '2 hours', lock_until = now() - interval '90 minutes' WHERE id = $1`, [stalled!.id]);
+    expect((await runPhaseFactsDrain(db, { dryRun: false })).details).toMatchObject({ reason: 'no_worker' });
+  }), 120_000);
+
   test('jobs queued minutes ago are not a stuck queue yet', () => onPostgres(async db => {
     await queued(db, 'facts-absorb', 2, '10 minutes');
     expect((await runPhaseFactsDrain(db, { dryRun: false })).status).toBe('skipped');
