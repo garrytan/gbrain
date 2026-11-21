@@ -112,6 +112,18 @@ parityTest('readSyncAdmissionEffects: pinned only for an open pass that started 
   return out;
 });
 
+parityTest('readSyncAdmissionEffects: a pass whose matching lease has expired is not pinned', {
+  methods: ['readSyncAdmissionEffects', 'writeOpCheckpointRecords', 'acquireCycleLock', 'readSourceMembership'],
+}, async (engine) => {
+  const incarnation = await incarnationOf(engine);
+  await pass(engine, incarnation, TOKEN, new Date(Date.now() - 3_600_000).toISOString());
+  // A negative TTL writes a lease that expired a minute ago, with no wait.
+  await engine.acquireCycleLock(syncLockId('default'), { holderPid: 4242, holderHost: 'host-example', acquisitionToken: TOKEN, ttlMinutes: -1, stealGraceSeconds: 0 });
+  const result = await effects(engine, incarnation, null);
+  expect(result).toEqual({ pinned: false, destructive: false });
+  return result;
+});
+
 parityTest('readSyncAdmissionEffects: destructive only for an unpublished destructive request of the incarnation admitted before set_at', {
   methods: ['readSyncAdmissionEffects', 'writeSyncAdmissionStamp', 'insertWriteRequest', 'lockPersistenceCounters', 'readSourceMembership'],
 }, async (engine) => {
