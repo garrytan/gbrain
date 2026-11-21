@@ -353,9 +353,9 @@ Owner area is a file or path family. Ordered by risk, then size.
 
 Rulings recorded Nov 20 by the owner of the swap work, except A.
 
-- A. Swap date: open, for Garry. Garry ruled an opt-in swap on Dec 1 ("do it", C1, Slack C0CJDTJG5PE, 12:15 PM PST
+- A. Swap date: open, for the project owner. The project owner ruled an opt-in swap on Dec 1 (12:15 PM PST
   Nov 19). Criterion 1 (`docs/designs/RUST_ENGINE.md:607` at `0ce95bbf7f`) needs 14 days of shadow in one epoch. A shadow that
-  starts Nov 26 gives 5 days by Dec 1. The conflict goes to Garry.
+  starts Nov 26 gives 5 days by Dec 1. The conflict goes to the project owner.
 - B. Shadow scope: yes. Read-only shadow starts Nov 26. Its report counts as swap evidence only after fix items 6 and
   10 land, because today an empty or refused read can look equal.
 - C. Owner-process tests: yes. Owner failover, clients and IPC tests run in the addon lane on every change to
