@@ -478,9 +478,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // does, so the check reads the same model and passes with PGLite's message.
       // backup_coverage is gone from this list: a Rust brain counts its live pages and reads its maturity
       // (countBrainLivePages, readBrainMaturity), so the check answers as it does on PGLite.
-      // entity_duplicates warns with the refusal of listEntityKeyRows, whose parenthesis names the reason ("the store
-      // keeps no page generation"): the entity key rows carry each page's generation since GST-3127.
-      untypedWarnings: ['canonical_content_writes', 'child_table_orphans', 'entity_duplicates',
+      // entity_duplicates is gone from this list: a Rust brain serves listEntityKeyRows, so the check answers as it does
+      // on PGLite.
+      untypedWarnings: ['canonical_content_writes', 'child_table_orphans',
         'extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
         'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
