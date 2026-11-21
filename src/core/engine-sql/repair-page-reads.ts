@@ -8,6 +8,7 @@
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 /** One FK child of pages. `allowNull`: the FK is ON DELETE SET NULL, so NULL is valid and an orphan is cleared, not deleted. */
 export interface PageChildTarget { table: string; col: string; allowNull: boolean }
@@ -33,29 +34,43 @@ export function pageChildTarget(target: { table: string; col: string }): PageChi
   return found;
 }
 
+// The table and column names reach SQL only through these constant maps; `pageChildTarget` rejects anything else first.
+const CHILD_TABLE_SQL = {
+  content_chunks: 'content_chunks', page_versions: 'page_versions', tags: 'tags', takes: 'takes', raw_data: 'raw_data',
+  timeline_entries: 'timeline_entries', links: 'links', files: 'files',
+} as const;
+const CHILD_COLUMN_SQL = { page_id: 'page_id', from_page_id: 'from_page_id', to_page_id: 'to_page_id', origin_page_id: 'origin_page_id' } as const;
+
+function childTableSql(target: PageChildTarget): SqlFragment {
+  return sqlFragment`${trustedSql(CHILD_TABLE_SQL[target.table as keyof typeof CHILD_TABLE_SQL])}`;
+}
+
 // NOT EXISTS (not `NOT IN (SELECT id FROM pages)`) so the planner can use a
 // hash anti-join: once the page-id list outgrows work_mem, NOT IN degrades to a
 // per-row rescan of pages. pages.id is the primary key (never NULL), so the
 // semantics match NOT IN exactly. The column is table-qualified because the
 // predicate also runs inside the repair's UPDATE and DELETE statements.
-export function orphanPredicate(target: PageChildTarget): string {
-  const col = `${target.table}.${target.col}`;
-  return `${target.allowNull ? `${col} IS NOT NULL AND ` : ''}NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = ${col})`;
+export function orphanPredicate(target: PageChildTarget): SqlFragment {
+  const col = sqlFragment`${childTableSql(target)}.${trustedSql(CHILD_COLUMN_SQL[target.col as keyof typeof CHILD_COLUMN_SQL])}`;
+  return sqlFragment`${target.allowNull ? sqlFragment`${col} IS NOT NULL AND ` : sqlFragment``}NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = ${col})`;
 }
 
 /** Rows of `target` whose page no longer exists (non-null references only for a SET NULL column). */
 export async function countPageChildOrphans(exec: LegacyUnscopedRead, target: { table: string; col: string }): Promise<number> {
   const t = pageChildTarget(target);
-  const [row] = await exec.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${orphanPredicate(t)}`);
+  const { text, params } = renderFragment(sqlFragment`SELECT count(*)::int AS n FROM ${childTableSql(t)} WHERE ${orphanPredicate(t)}`);
+  const [row] = await exec.executeRaw<{ n: number }>(text, params);
   return Number(row?.n ?? 0);
 }
 
 /** Deletes the orphans of `target`, or clears the reference of a SET NULL column, rechecking the predicate; the row count. */
 export async function clearPageChildOrphans(exec: SqlExecutor, target: { table: string; col: string }): Promise<number> {
   const t = pageChildTarget(target);
-  const rows = await exec.executeRaw<{ n: number }>(t.allowNull
-    ? `WITH cleared AS (UPDATE ${t.table} SET ${t.col} = NULL WHERE ${orphanPredicate(t)} RETURNING 1) SELECT count(*)::int AS n FROM cleared`
-    : `WITH removed AS (DELETE FROM ${t.table} WHERE ${orphanPredicate(t)} RETURNING 1) SELECT count(*)::int AS n FROM removed`);
+  const col = trustedSql(CHILD_COLUMN_SQL[t.col as keyof typeof CHILD_COLUMN_SQL]);
+  const { text, params } = renderFragment(t.allowNull
+    ? sqlFragment`WITH cleared AS (UPDATE ${childTableSql(t)} SET ${col} = NULL WHERE ${orphanPredicate(t)} RETURNING 1) SELECT count(*)::int AS n FROM cleared`
+    : sqlFragment`WITH removed AS (DELETE FROM ${childTableSql(t)} WHERE ${orphanPredicate(t)} RETURNING 1) SELECT count(*)::int AS n FROM removed`);
+  const rows = await exec.executeRaw<{ n: number }>(text, params);
   return Number(rows[0]?.n ?? 0);
 }
 
@@ -144,8 +159,9 @@ export async function readOriginIndexState(exec: LegacyUnscopedRead): Promise<Or
 
 /** Live twin groups (same stored origin) per source, by source id, at most `limit` sources. */
 export async function listOriginTwinCounts(exec: LegacyUnscopedRead, limit: number): Promise<OriginTwinCount[]> {
-  const rows = await exec.executeRaw<OriginTwinCount>(`SELECT source_id, count(*)::int AS groups, (sum(n) - count(*))::int AS twins
+  const { text, params } = renderFragment(sqlFragment`SELECT source_id, count(*)::int AS groups, (sum(n) - count(*))::int AS twins
     FROM (SELECT source_id, count(*) AS n FROM pages WHERE deleted_at IS NULL AND source_path IS NOT NULL GROUP BY source_id, source_path HAVING count(*) > 1) g
     GROUP BY source_id ORDER BY source_id LIMIT ${Math.max(1, Math.floor(limit))}`);
+  const rows = await exec.executeRaw<OriginTwinCount>(text, params);
   return rows.map(row => ({ source_id: row.source_id, groups: Number(row.groups), twins: Number(row.twins) }));
 }

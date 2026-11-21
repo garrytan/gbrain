@@ -7,7 +7,8 @@
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
-import { CONNECTOR_KINDS_SQL } from '../persistence/connector-kinds.ts';
+import { CONNECTOR_SOURCE_KINDS } from '../persistence/connector-kinds.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 /**
  * Persistence source bindings whose source or source incarnation no longer exists (#5732). `pending_requests` counts
@@ -32,7 +33,9 @@ const ORPHANS = `SELECT b.source_id, b.source_incarnation::text AS source_incarn
 
 /** Every orphan binding, brain-wide, by source id; at most `limit` when given. */
 export function listOrphanBindings(exec: LegacyUnscopedRead, opts: { limit?: number } = {}): Promise<OrphanBinding[]> {
-  return exec.executeRaw<OrphanBinding>(`${ORPHANS} ORDER BY b.source_id${opts.limit ? ` LIMIT ${Math.floor(opts.limit)}` : ''}`);
+  const limit = opts.limit ? sqlFragment` LIMIT ${Math.floor(opts.limit)}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`${trustedSql(ORPHANS)} ORDER BY b.source_id${limit}`);
+  return exec.executeRaw<OrphanBinding>(text, params);
 }
 
 /** Deletes one orphan binding, rechecking in the same statement that it is still orphaned and has no pending request. */
@@ -62,11 +65,12 @@ export interface LoopFactState {
  */
 export async function readLoopFactState(exec: SqlExecutor, loopId: number, opts: { lock?: boolean } = {}): Promise<LoopFactState> {
   const suffix = opts.lock ? ' FOR UPDATE' : '';
-  const [loop] = await exec.executeRaw<{ id: number; source_id: string; status: string; fact_id: number | null }>(
-    `SELECT id, source_id, status, fact_id FROM open_loops WHERE id=$1${suffix}`, [loopId]);
+  const loopRead = renderFragment(sqlFragment`SELECT id, source_id, status, fact_id FROM open_loops WHERE id=${loopId}${trustedSql(suffix)}`);
+  const [loop] = await exec.executeRaw<{ id: number; source_id: string; status: string; fact_id: number | null }>(loopRead.text, loopRead.params);
   if (!loop || loop.fact_id === null) return { loop: loop ? { ...loop, id: Number(loop.id), fact_id: null } : null, fact: null, shared: false };
+  const factRead = renderFragment(sqlFragment`SELECT id, source_id, expired_at, row_num, source_markdown_slug, fact FROM facts WHERE id=${loop.fact_id}${trustedSql(suffix)}`);
   const [fact] = await exec.executeRaw<{ id: number; source_id: string; expired_at: string | null; row_num: number | null; source_markdown_slug: string | null; fact: string }>(
-    `SELECT id, source_id, expired_at, row_num, source_markdown_slug, fact FROM facts WHERE id=$1${suffix}`, [loop.fact_id]);
+    factRead.text, factRead.params);
   const others = await exec.executeRaw(`SELECT 1 FROM open_loops WHERE fact_id=$1 AND id<>$2 AND status='open' LIMIT 1`, [loop.fact_id, loop.id]);
   return {
     loop: { ...loop, id: Number(loop.id), fact_id: Number(loop.fact_id) },
@@ -91,8 +95,13 @@ export interface ConnectorSourceRow { id: string; incarnation: string; local_pat
  * for the caller's transaction, so a config change cannot make a key current while orphans are deleted.
  */
 export async function listConnectorSources(exec: SqlExecutor, opts: { lock?: boolean } = {}): Promise<ConnectorSourceRow[]> {
-  if (opts.lock) await exec.executeRaw(`SELECT id FROM sources WHERE config->>'kind' IN (${CONNECTOR_KINDS_SQL}) ORDER BY id FOR SHARE`);
-  return exec.executeRaw<ConnectorSourceRow>(`SELECT id,incarnation::text,local_path,config,archived FROM sources WHERE config->>'kind' IN (${CONNECTOR_KINDS_SQL})`);
+  const kinds = [...CONNECTOR_SOURCE_KINDS];
+  if (opts.lock) {
+    const lock = renderFragment(sqlFragment`SELECT id FROM sources WHERE config->>'kind' = ANY(${kinds}::text[]) ORDER BY id FOR SHARE`);
+    await exec.executeRaw(lock.text, lock.params);
+  }
+  const { text, params } = renderFragment(sqlFragment`SELECT id,incarnation::text,local_path,config,archived FROM sources WHERE config->>'kind' = ANY(${kinds}::text[])`);
+  return exec.executeRaw<ConnectorSourceRow>(text, params);
 }
 
 /** A `managed-connector` checkpoint or retry pointer no source loads; `updated_at` is Postgres timestamptz text. */
@@ -101,12 +110,12 @@ export interface OrphanCheckpointRow { op: 'managed-connector' | 'managed-connec
 /** The bounds of an orphan scan or delete: `before` bounds `updated_at`, `minAgeDays` adds the age floor, `stateOp` names the pending sets. */
 export interface OrphanCheckpointBounds { before?: string | null; minAgeDays?: number | null; stateOp: string }
 
-/** The orphan test for op_checkpoints row `c`; binds loadable keys, before, min age days and the state op from parameter `$first` on. */
-const orphanPredicate = (first: number) => {
-  const [k, b, d, o] = [first, first + 1, first + 2, first + 3].map(n => `$${n}`);
-  return `(
-      ((c.op='managed-connector' AND NOT (c.fingerprint = ANY(${k}::text[])))
-        OR (c.op='managed-connector-retry' AND NOT (COALESCE(c.completed_keys->0->>'checkpointKey','') = ANY(${k}::text[]))))
+/** The orphan test for op_checkpoints row `c`; binds loadable keys, before, min age days and the state op. */
+const orphanPredicate = (loadable: readonly string[], bounds: OrphanCheckpointBounds): SqlFragment => {
+  const [keys, before, days] = [[...loadable], bounds.before ?? null, bounds.minAgeDays ?? null];
+  return sqlFragment`(
+      ((c.op='managed-connector' AND NOT (c.fingerprint = ANY(${keys}::text[])))
+        OR (c.op='managed-connector-retry' AND NOT (COALESCE(c.completed_keys->0->>'checkpointKey','') = ANY(${keys}::text[]))))
       AND NOT EXISTS (SELECT 1 FROM persistence_requests r
         WHERE (r.state IN ('queued','deferred','running','recovering') OR r.recovery IS NOT NULL)
           AND (r.intent->>'kind' LIKE 'connector\\_v2\\_%' OR r.intent->>'kind' LIKE 'managed\\_connector\\_%')
@@ -115,18 +124,19 @@ const orphanPredicate = (first: number) => {
       AND NOT EXISTS (SELECT 1 FROM op_checkpoints s
         CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.completed_keys->0->'pending','[]'::jsonb)) p
         JOIN persistence_requests r ON r.request_id::text = p->>'requestId'
-        WHERE s.op=${o} AND (r.intent->>'checkpointKey' = c.fingerprint OR r.intent->>'checkpointKey' = c.completed_keys->0->>'checkpointKey'
+        WHERE s.op=${bounds.stateOp} AND (r.intent->>'checkpointKey' = c.fingerprint OR r.intent->>'checkpointKey' = c.completed_keys->0->>'checkpointKey'
           OR r.request_id::text = c.completed_keys->0->>'requestId'))
-      AND (${b}::text IS NULL OR c.updated_at <= ${b}::text::timestamptz)
-      AND (${d}::integer IS NULL OR c.updated_at < now() - make_interval(days => ${d}::integer)))`;
+      AND (${before}::text IS NULL OR c.updated_at <= ${before}::text::timestamptz)
+      AND (${days}::integer IS NULL OR c.updated_at < now() - make_interval(days => ${days}::integer)))`;
 };
 
 /** Checkpoint and retry rows whose key is not in `loadable` and that nothing pending references, by op then fingerprint. */
 export function listOrphanConnectorCheckpoints(exec: LegacyUnscopedRead, loadable: readonly string[], bounds: OrphanCheckpointBounds,
   limit: number): Promise<OrphanCheckpointRow[]> {
-  return exec.executeRaw<OrphanCheckpointRow>(`SELECT c.op, c.fingerprint, c.updated_at::text AS updated_at FROM op_checkpoints c
-    WHERE c.op IN ('managed-connector','managed-connector-retry') AND ${orphanPredicate(2)}
-    ORDER BY c.op, c.fingerprint LIMIT $1`, [limit, [...loadable], bounds.before ?? null, bounds.minAgeDays ?? null, bounds.stateOp]);
+  const { text, params } = renderFragment(sqlFragment`SELECT c.op, c.fingerprint, c.updated_at::text AS updated_at FROM op_checkpoints c
+    WHERE c.op IN ('managed-connector','managed-connector-retry') AND ${orphanPredicate(loadable, bounds)}
+    ORDER BY c.op, c.fingerprint LIMIT ${limit}`);
+  return exec.executeRaw<OrphanCheckpointRow>(text, params);
 }
 
 /** How many checkpoint and retry rows carry one of `aliases` (#6561 alias keys) as their key. */
@@ -140,7 +150,8 @@ export async function countConnectorCheckpointsKeyed(exec: LegacyUnscopedRead, a
 /** Deletes one planned orphan, re-applying the whole orphan predicate and its stamp in the same statement. */
 export async function deleteOrphanConnectorCheckpoint(exec: SqlExecutor, row: OrphanCheckpointRow, loadable: readonly string[],
   bounds: OrphanCheckpointBounds): Promise<boolean> {
-  const deleted = await exec.executeRaw<{ op: string }>(`DELETE FROM op_checkpoints c WHERE c.op=$1 AND c.fingerprint=$2 AND c.updated_at=$3::text::timestamptz
-        AND ${orphanPredicate(4)} RETURNING c.op`, [row.op, row.fingerprint, row.updated_at, [...loadable], bounds.before ?? null, bounds.minAgeDays ?? null, bounds.stateOp]);
+  const { text, params } = renderFragment(sqlFragment`DELETE FROM op_checkpoints c WHERE c.op=${row.op} AND c.fingerprint=${row.fingerprint} AND c.updated_at=${row.updated_at}::text::timestamptz
+        AND ${orphanPredicate(loadable, bounds)} RETURNING c.op`);
+  const deleted = await exec.executeRaw<{ op: string }>(text, params);
   return deleted.length > 0;
 }

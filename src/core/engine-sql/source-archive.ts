@@ -10,6 +10,7 @@ import type { LegacyUnscopedRead } from './brands.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { EXPIRED_ARCHIVE_SQL, UNVERIFIED_ARCHIVE_SQL } from './sources.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** The source `archiveSource` archived. Times are `Date` on the SQL engines and ISO text on the Rust engine. */
 export interface ArchivedSourceRow { id: string; name: string; archived_at: Date | string; archive_expires_at: Date | string }
@@ -24,32 +25,27 @@ export interface SourceOAuthClientRow { client_id: string; client_name: string; 
 
 /** Archives an active source now with its expiry `ttlHours` later and `config.federated` false; null when missing or already archived. */
 export async function archiveSource(exec: SqlExecutor, sourceId: string, ttlHours: number): Promise<ArchivedSourceRow | null> {
-  const expiresClause = `now() + (${Math.trunc(ttlHours)} || ' hours')::interval`;
-  const rows = await exec.executeRaw<ArchivedSourceRow>(
-    `UPDATE sources
+  const { text, params } = renderFragment(sqlFragment`UPDATE sources
      SET archived = true,
          archived_at = now(),
-         archive_expires_at = ${expiresClause},
-         config = ${SOURCE_CONFIG_OBJECT_SQL} || '{"federated": false}'::jsonb
-     WHERE id = $1 AND archived = false
-     RETURNING id, name, archived_at, archive_expires_at`,
-    [sourceId],
-  );
+         archive_expires_at = now() + (${String(Math.trunc(ttlHours))}::text || ' hours')::interval,
+         config = ${trustedSql(SOURCE_CONFIG_OBJECT_SQL)} || '{"federated": false}'::jsonb
+     WHERE id = ${sourceId} AND archived = false
+     RETURNING id, name, archived_at, archive_expires_at`);
+  const rows = await exec.executeRaw<ArchivedSourceRow>(text, params);
   return rows[0] ?? null;
 }
 
 /** Un-archives an archived source, clears both archive times and sets `config.federated`; whether one was restored. */
 export async function restoreArchivedSource(exec: SqlExecutor, sourceId: string, federated: boolean): Promise<boolean> {
-  const rows = await exec.executeRaw<{ id: string }>(
-    `UPDATE sources
+  const { text, params } = renderFragment(sqlFragment`UPDATE sources
      SET archived = false,
          archived_at = NULL,
          archive_expires_at = NULL,
-         config = ${SOURCE_CONFIG_OBJECT_SQL} || $1::text::jsonb
-     WHERE id = $2 AND archived = true
-     RETURNING id`,
-    [federated ? '{"federated": true}' : '{"federated": false}', sourceId],
-  );
+         config = ${trustedSql(SOURCE_CONFIG_OBJECT_SQL)} || ${federated ? '{"federated": true}' : '{"federated": false}'}::text::jsonb
+     WHERE id = ${sourceId} AND archived = true
+     RETURNING id`);
+  const rows = await exec.executeRaw<{ id: string }>(text, params);
   return rows.length > 0;
 }
 

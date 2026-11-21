@@ -6,6 +6,7 @@
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import { renderFragment, sqlFragment } from './fragment.ts';
 
 /** A page a repair plan reads next: its id and where it lives. */
 export interface RepairPageRef { id: number; source_id: string; slug: string }
@@ -27,12 +28,13 @@ export interface AtomFenceCandidate {
 
 /** The live inline pages of `sourceIds` with two or more frontmatter contact rows, by id. */
 export async function listContactRowPages(exec: LegacyUnscopedRead, sourceIds: readonly string[], q: ContactRowQuery): Promise<RepairPageRef[]> {
-  const rows = await exec.executeRaw<RepairPageRef>(
-    `SELECT id, source_id, slug FROM pages
-        WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND body_storage='inline' AND id>$2
+  const slugs = [...q.slugs];
+  const { text, params } = renderFragment(sqlFragment`SELECT id, source_id, slug FROM pages
+        WHERE source_id=ANY(${[...sourceIds]}::text[]) AND deleted_at IS NULL AND body_storage='inline' AND id>${q.afterId}
           AND CASE WHEN jsonb_typeof(frontmatter->'contacts')='array' THEN jsonb_array_length(frontmatter->'contacts') ELSE 0 END>1
-          AND (cardinality($3::text[])=0 OR slug=ANY($3::text[]))
-        ORDER BY id LIMIT ${Math.max(1, Math.floor(q.limit))}`, [[...sourceIds], q.afterId, [...q.slugs]]);
+          AND (cardinality(${slugs}::text[])=0 OR slug=ANY(${slugs}::text[]))
+        ORDER BY id LIMIT ${Math.max(1, Math.floor(q.limit))}`);
+  const rows = await exec.executeRaw<RepairPageRef>(text, params);
   return rows.map(row => ({ ...row, id: Number(row.id) }));
 }
 

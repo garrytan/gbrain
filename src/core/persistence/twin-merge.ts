@@ -31,7 +31,7 @@ import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
 import { refreshRelationships, type RelationshipKey } from '../link-relationships.ts';
 import { SYNC_IMPORT_PROVENANCE_OP } from './sync-holds.ts';
 import { ORIGIN_TWIN_REASON } from './origin-twins.ts';
-import { LINK_LOSERS, MAP, MOVING, PAIR, TRANSITION_LOSERS } from '../engine-sql/repair-page-scans.ts';
+import { twinLinkLosersStatement, twinMoveRowsStatement, twinTransitionLosersStatement } from '../engine-sql/repair-page-scans.ts';
 
 /** Link provenances re-derived from page bodies and frontmatter: a survivor with the same body re-derives each one. */
 export const DERIVED_LINK_SOURCES = ['markdown', 'frontmatter', 'mentions', 'wikilink-resolved'];
@@ -88,14 +88,16 @@ export async function mergeTwinInto(tx: BrainEngine, input: { sourceId: string; 
   await tx.createVersion(twin.slug, { sourceId });
   await tx.detachPageOrigin(twin.page_id, ORIGIN_TWIN_REASON);
   const before = [...await relationshipKeys(tx, 'links', [twin.page_id]), ...await relationshipKeys(tx, 'link_transitions', [twin.page_id])];
-  const linkLosers = (await tx.executeRaw<{ id: number }>(LINK_LOSERS, params)).map(row => Number(row.id));
-  const transitionLosers = (await tx.executeRaw<{ id: number }>(TRANSITION_LOSERS, params)).map(row => Number(row.id));
+  const linkLosersSql = twinLinkLosersStatement(twin.page_id, survivor.page_id);
+  const transitionLosersSql = twinTransitionLosersStatement(twin.page_id, survivor.page_id);
+  const linkLosers = (await tx.executeRaw<{ id: number }>(linkLosersSql.text, linkLosersSql.params)).map(row => Number(row.id));
+  const transitionLosers = (await tx.executeRaw<{ id: number }>(transitionLosersSql.text, transitionLosersSql.params)).map(row => Number(row.id));
   if (linkLosers.length) await tx.executeRaw('DELETE FROM links WHERE id=ANY($1::int[])', [linkLosers]);
   if (transitionLosers.length) await tx.executeRaw('DELETE FROM link_transitions WHERE id=ANY($1::bigint[])', [transitionLosers]);
-  const movedLinks = (await tx.executeRaw<{ id: number }>(`UPDATE links SET from_page_id=${MAP('from_page_id')}, to_page_id=${MAP('to_page_id')}, origin_page_id=${MAP('origin_page_id')}
-    WHERE ${MOVING} AND ${PAIR} RETURNING id`, params)).map(row => Number(row.id));
-  const movedTransitions = await tx.executeRaw(`UPDATE link_transitions SET from_page_id=${MAP('from_page_id')}, to_page_id=${MAP('to_page_id')}, origin_page_id=${MAP('origin_page_id')}
-    WHERE ${MOVING} AND ${PAIR} RETURNING id`, params);
+  const moveLinksSql = twinMoveRowsStatement('links', twin.page_id, survivor.page_id);
+  const movedLinks = (await tx.executeRaw<{ id: number }>(moveLinksSql.text, moveLinksSql.params)).map(row => Number(row.id));
+  const moveTransitionsSql = twinMoveRowsStatement('link_transitions', twin.page_id, survivor.page_id);
+  const movedTransitions = await tx.executeRaw(moveTransitionsSql.text, moveTransitionsSql.params);
   const statements: Array<[string, unknown[]]> = [
     [`DELETE FROM timeline_entries s WHERE s.page_id=$1 AND EXISTS (SELECT 1 FROM timeline_entries o WHERE o.page_id=$2 AND o.date=s.date
         AND md5(o.summary)=md5(s.summary) AND o.source=s.source)`, params],

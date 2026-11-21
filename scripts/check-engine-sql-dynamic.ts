@@ -55,6 +55,8 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
   EXPIRED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant archive-window-elapsed predicate over sources (no input)',
   UNVERIFIED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant missing-or-epoch archive-time predicate over sources (no input)',
+  CREDENTIAL_RESEAL_HELD: 'src/core/page-state/credential-reseal-hold.ts: constant live-credential-re-chunk-hold predicate over the pages alias p; the op and producer are module constants (no input)',
+  NOT_CONVERSATION_SLOT_SQL: 'src/core/chronicle/ontology.ts: constant conversation-source prefix exclusion over the facts source column (no input)',
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
@@ -94,6 +96,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   derivationPrivateSql: 'src/core/search/private-visibility.ts: constant derivation-private predicate over a caller page alias; no values',
   expiryTextSql: 'src/core/engine-sql/facts-repair.ts: constant to_char UTC microsecond text of a caller column expression (code-provided); no values',
   instantTextSql: 'src/core/engine-sql/facts-repair.ts: constant to_char UTC microsecond text of a caller column expression (code-provided); no values',
+  DUPLICATE_SQL: 'src/core/engine-sql/facts-repair.ts: constant same-dedup-key EXISTS over a caller facts alias (code-provided); no values',
+  syncDeleteOrigin: 'src/core/persistence/sync-delete-tombstones.ts: constant managed-sync-deletion EXISTS predicate over a caller pages alias (code-provided); the op, intent kind and state are module constants; no values',
 
   // facts-trust.ts builders
   quarantinedProvenanceFilterFragment: 'src/core/quarantine.ts: constant fact-provenance quarantine predicate over a caller alias; no values',

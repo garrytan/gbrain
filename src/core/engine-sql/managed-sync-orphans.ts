@@ -8,6 +8,7 @@
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from '../persistence/sync-slug-mode.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 /** One unfinished `managed-sync` cursor of a source's current incarnation, with what its classification reads. */
 export interface ManagedSyncCursorRow {
@@ -49,9 +50,9 @@ export type ManagedSyncRetireMode = 'retired' | 'adoption' | 'checkpoint_moved' 
  * source now records a commit other than the cursor's start and other than where the checkpoint would put it: the
  * target, or, for a path slice short of its target's end (#6349), the start again. A company-brain cursor records its
  * approval and is never one. Shared by the classification and the retirement's re-check, so both read the same rule.
- * `$msg` is the moved-checkpoint message parameter.
+ * `msg` is the moved-checkpoint message, bound as a parameter.
  */
-const checkpointMovedSql = (msg: string) => `(c.completed_keys->0->'pending'->'intent'->>'kind'='managed_sync_checkpoint' AND c.completed_keys->0->>'companyReceiptId' IS NULL
+const checkpointMovedSql = (msg: string): SqlFragment => sqlFragment`(c.completed_keys->0->'pending'->'intent'->>'kind'='managed_sync_checkpoint' AND c.completed_keys->0->>'companyReceiptId' IS NULL
   AND (c.completed_keys->0->>'index')::int>=(c.completed_keys->0->>'total')::int
   AND s.last_commit IS DISTINCT FROM c.completed_keys->0->>'from'
   AND (c.completed_keys->0->'pending'->'intent'->'slice'->>'done'='false' OR s.last_commit IS DISTINCT FROM c.completed_keys->0->>'target')
@@ -77,7 +78,7 @@ const slugModeRefusedSql = `(c.completed_keys->0->'pending'->'intent'->>'kind'='
  * source pins another, the pass's stamp `req` ended refused `slug_root_mode_mismatch`, and nothing that pass admitted is
  * still open. Shared by the classification and the retirement's re-check.
  */
-const passSlugModeRefusedSql = (req: string) => `(p.completed_keys->0->'obligations'->>'slug_mode' IS NOT NULL
+const passSlugModeRefusedSql = (req: SqlFragment): SqlFragment => sqlFragment`(p.completed_keys->0->'obligations'->>'slug_mode' IS NOT NULL
   AND s.config->>'slug_root_mode' IS NOT NULL AND s.config->>'slug_root_mode' IS DISTINCT FROM p.completed_keys->0->'obligations'->>'slug_mode'
   AND EXISTS(SELECT 1 FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=${req} AND m.intent->>'kind'='managed_sync_checkpoint'
     AND m.intent->>'passId'=p.completed_keys->0->'telemetry'->>'pass_id' AND m.state IN ('failed','conflict') AND m.recovery IS NULL AND m.error_code='slug_root_mode_mismatch')
@@ -90,7 +91,9 @@ const passStampSql = `(SELECT n.request_id FROM persistence_requests n WHERE n.s
 /** The five reads of the classification. `sourceIds` narrows to those sources; null reads every active source. */
 export async function listManagedSyncOrphanRows(exec: LegacyUnscopedRead, sourceIds: readonly string[] | null): Promise<ManagedSyncOrphanRows> {
   const ids = sourceIds ? [...sourceIds] : null;
-  const cursors = await exec.executeRaw<ManagedSyncCursorRow>(`
+  const stamp = sqlFragment`${trustedSql(passStampSql)}`;
+  const read = <T>(f: SqlFragment) => { const { text, params } = renderFragment(f); return exec.executeRaw<T>(text, params); };
+  const cursors = await read<ManagedSyncCursorRow>(sqlFragment`
     SELECT c.fingerprint AS cursor_key,s.id AS source_id,s.incarnation::text AS source_incarnation,c.completed_keys->0->>'runId' AS run_id,
       c.completed_keys->0->'authority'->'writer'->'principal'->>'kind' AS principal_kind,
       c.completed_keys->0->'authority'->'writer'->'principal'->>'id' AS principal_id,
@@ -102,8 +105,8 @@ export async function listManagedSyncOrphanRows(exec: LegacyUnscopedRead, source
       EXISTS(SELECT 1 FROM op_checkpoints n WHERE n.op='managed-sync' AND n.fingerprint<>c.fingerprint
         AND n.completed_keys->0->>'sourceId'=s.id AND n.completed_keys->0->>'incarnation'=s.incarnation::text
         AND COALESCE(n.completed_keys->0->>'done','false')='true' AND n.updated_at>c.updated_at) AS superseded,
-      ${checkpointMovedSql('$2')} AS checkpoint_moved,
-      ${slugModeRefusedSql} AS slug_mode_refused,
+      ${checkpointMovedSql(CHECKPOINT_MOVED_MESSAGE)} AS checkpoint_moved,
+      ${trustedSql(slugModeRefusedSql)} AS slug_mode_refused,
       to_char(c.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
     FROM op_checkpoints c
     JOIN sources s ON s.id=c.completed_keys->0->>'sourceId' AND s.incarnation::text=c.completed_keys->0->>'incarnation' AND NOT COALESCE(s.archived,false)
@@ -112,27 +115,27 @@ export async function listManagedSyncOrphanRows(exec: LegacyUnscopedRead, source
       AND r.principal_id=c.completed_keys->0->'authority'->'writer'->'principal'->>'id'
       AND r.principal_kind=c.completed_keys->0->'authority'->'writer'->'principal'->>'kind'
     WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
-      AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-    ORDER BY s.id,c.updated_at,c.fingerprint`, [ids, CHECKPOINT_MOVED_MESSAGE]);
-  const failures = await exec.executeRaw<ManagedSyncFailureRow>(`
+      AND (${ids}::text[] IS NULL OR s.id=ANY(${ids}::text[]))
+    ORDER BY s.id,c.updated_at,c.fingerprint`);
+  const failures = await read<ManagedSyncFailureRow>(sqlFragment`
     SELECT f.fingerprint AS cursor_key,s.id AS source_id,s.incarnation::text AS source_incarnation,f.completed_keys->0->>'run_id' AS run_id,
       f.completed_keys->0->>'request_id' AS request_id,to_char(f.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
     FROM op_checkpoints f
     JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text=f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
-    WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
+    WHERE f.op='managed-sync-failure' AND (${ids}::text[] IS NULL OR s.id=ANY(${ids}::text[]))
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op IN ('managed-sync','managed-sync-pass') AND c.fingerprint=f.fingerprint)
-    ORDER BY s.id,f.fingerprint`, [ids]);
-  const passes = await exec.executeRaw<ManagedSyncPassRow>(`
+    ORDER BY s.id,f.fingerprint`);
+  const passes = await read<ManagedSyncPassRow>(sqlFragment`
     SELECT p.fingerprint AS cursor_key,s.id AS source_id,s.incarnation::text AS source_incarnation,p.completed_keys->0->'telemetry'->>'pass_id' AS run_id,
-      ${passStampSql}::text AS request_id,(SELECT m.state FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=${passStampSql}) AS state,
+      ${trustedSql(passStampSql)}::text AS request_id,(SELECT m.state FROM persistence_requests m WHERE m.source_id=s.id AND m.request_id=${trustedSql(passStampSql)}) AS state,
       to_char(p.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
     FROM op_checkpoints p
     JOIN sources s ON p.fingerprint=s.id||':'||s.incarnation::text AND NOT COALESCE(s.archived,false)
-    WHERE p.op='managed-sync-pass' AND ($1::text[] IS NULL OR s.id=ANY($1::text[])) AND ${passSlugModeRefusedSql(passStampSql)}
-    ORDER BY s.id`, [ids]);
+    WHERE p.op='managed-sync-pass' AND (${ids}::text[] IS NULL OR s.id=ANY(${ids}::text[])) AND ${passSlugModeRefusedSql(stamp)}
+    ORDER BY s.id`);
   // #6518: rows keyed under an incarnation the source no longer has. The join is on the source id alone; the live
   // pending-request guard stays, the live-writer guard does not apply (no current key can select these rows).
-  const retiredCursors = await exec.executeRaw<ManagedSyncRetiredCursorRow>(`
+  const retiredCursors = await read<ManagedSyncRetiredCursorRow>(sqlFragment`
     SELECT c.fingerprint AS cursor_key,s.id AS source_id,c.completed_keys->0->>'incarnation' AS source_incarnation,c.completed_keys->0->>'runId' AS run_id,
       c.completed_keys->0->'authority'->'writer'->'principal'->>'kind' AS principal_kind,
       c.completed_keys->0->'authority'->'writer'->'principal'->>'id' AS principal_id,
@@ -142,17 +145,17 @@ export async function listManagedSyncOrphanRows(exec: LegacyUnscopedRead, source
     JOIN sources s ON s.id=c.completed_keys->0->>'sourceId' AND s.incarnation::text<>c.completed_keys->0->>'incarnation' AND NOT COALESCE(s.archived,false)
     LEFT JOIN persistence_requests r ON r.source_id=s.id AND r.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
     WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
-      AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-    ORDER BY s.id,c.updated_at,c.fingerprint`, [ids]);
+      AND (${ids}::text[] IS NULL OR s.id=ANY(${ids}::text[]))
+    ORDER BY s.id,c.updated_at,c.fingerprint`);
   // A retired failure row rides with its unfinished cursor when one exists under its key (the cursor's retirement deletes it).
-  const retiredFailures = await exec.executeRaw<ManagedSyncFailureRow>(`
+  const retiredFailures = await read<ManagedSyncFailureRow>(sqlFragment`
     SELECT f.fingerprint AS cursor_key,s.id AS source_id,f.completed_keys->0->>'source_incarnation' AS source_incarnation,f.completed_keys->0->>'run_id' AS run_id,
       f.completed_keys->0->>'request_id' AS request_id,to_char(f.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at
     FROM op_checkpoints f
     JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text<>f.completed_keys->0->>'source_incarnation' AND NOT COALESCE(s.archived,false)
-    WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
+    WHERE f.op='managed-sync-failure' AND (${ids}::text[] IS NULL OR s.id=ANY(${ids}::text[]))
       AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint AND COALESCE(c.completed_keys->0->>'done','false')<>'true')
-    ORDER BY s.id,f.fingerprint`, [ids]);
+    ORDER BY s.id,f.fingerprint`);
   return { cursors, failures, passes, retiredCursors, retiredFailures };
 }
 
@@ -180,10 +183,11 @@ export async function applyManagedSyncRetireLimits(exec: SqlExecutor): Promise<v
 export async function retireManagedSyncPassSlugMode(exec: SqlExecutor, target: ManagedSyncRetireTarget, lockId: string): Promise<boolean> {
   const lease = await exec.executeRaw<{ live: boolean }>('SELECT ttl_expires_at > now() AS live FROM gbrain_cycle_locks WHERE id=$1 FOR UPDATE', [lockId]);
   if (lease[0]?.live) return false;
-  return (await exec.executeRaw(`UPDATE op_checkpoints p SET completed_keys=jsonb_set(p.completed_keys,'{0,obligations}',(p.completed_keys->0->'obligations')-'slug_mode'),updated_at=now()
-    FROM sources s WHERE p.op='managed-sync-pass' AND p.fingerprint=$1 AND s.id=$2 AND s.incarnation::text=$3 AND NOT COALESCE(s.archived,false)
-      AND p.completed_keys->0->'telemetry'->>'pass_id' IS NOT DISTINCT FROM $4::text AND ${passSlugModeRefusedSql('$5::uuid')}
-      AND ${passStampSql}=$5::uuid RETURNING p.fingerprint`, [target.cursorKey, target.sourceId, target.incarnation, target.runId, target.requestId])).length > 0;
+  const { text, params } = renderFragment(sqlFragment`UPDATE op_checkpoints p SET completed_keys=jsonb_set(p.completed_keys,'{0,obligations}',(p.completed_keys->0->'obligations')-'slug_mode'),updated_at=now()
+    FROM sources s WHERE p.op='managed-sync-pass' AND p.fingerprint=${target.cursorKey} AND s.id=${target.sourceId} AND s.incarnation::text=${target.incarnation} AND NOT COALESCE(s.archived,false)
+      AND p.completed_keys->0->'telemetry'->>'pass_id' IS NOT DISTINCT FROM ${target.runId}::text AND ${passSlugModeRefusedSql(sqlFragment`${target.requestId}::uuid`)}
+      AND ${trustedSql(passStampSql)}=${target.requestId}::uuid RETURNING p.fingerprint`);
+  return (await exec.executeRaw(text, params)).length > 0;
 }
 
 /**
@@ -191,27 +195,28 @@ export async function retireManagedSyncPassSlugMode(exec: SqlExecutor, target: M
  * deleted cursor's pending intent (null inside when it had none), or null when the cursor was kept.
  */
 export async function retireManagedSyncCursor(exec: SqlExecutor, target: ManagedSyncRetireTarget, mode: ManagedSyncRetireMode): Promise<{ intent: unknown } | null> {
-  const rows = await exec.executeRaw<{ intent: unknown }>(`
-    DELETE FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=$1
+  const { cursorKey: key, sourceId: sid, incarnation: inc, runId, requestId } = target;
+  const { text, params } = renderFragment(sqlFragment`
+    DELETE FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=${key}
       AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
-      AND c.completed_keys->0->>'sourceId'=$2 AND c.completed_keys->0->>'incarnation'=$3
+      AND c.completed_keys->0->>'sourceId'=${sid} AND c.completed_keys->0->>'incarnation'=${inc}
       AND NOT EXISTS(SELECT 1 FROM persistence_requests r WHERE r.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
-        AND r.source_id=$2 AND r.state NOT IN ('committed','failed','conflict','cancelled'))
-      AND ($4::text='retired' AND EXISTS(SELECT 1 FROM sources s WHERE s.id=$2 AND NOT COALESCE(s.archived,false) AND s.incarnation::text<>$3)
-        OR $4::text='adoption' AND NOT EXISTS(SELECT 1 FROM persistence_requests r WHERE r.source_id=$2 AND r.intent->>'cursorKey'=$1
+        AND r.source_id=${sid} AND r.state NOT IN ('committed','failed','conflict','cancelled'))
+      AND (${mode}::text='retired' AND EXISTS(SELECT 1 FROM sources s WHERE s.id=${sid} AND NOT COALESCE(s.archived,false) AND s.incarnation::text<>${inc})
+        OR ${mode}::text='adoption' AND NOT EXISTS(SELECT 1 FROM persistence_requests r WHERE r.source_id=${sid} AND r.intent->>'cursorKey'=${key}
           AND (r.state IN ('queued','running','recovering') OR r.recovery IS NOT NULL))
-        OR $4::text='checkpoint_moved' AND c.completed_keys->0->>'runId' IS NOT DISTINCT FROM $6::text
-          AND c.completed_keys->0->'pending'->>'requestId' IS NOT DISTINCT FROM $7::text
-          AND EXISTS(SELECT 1 FROM sources s WHERE s.id=$2 AND s.incarnation::text=$3 AND NOT COALESCE(s.archived,false) AND ${checkpointMovedSql('$5')})
-        OR $4::text='slug_mode_refused' AND c.completed_keys->0->>'runId' IS NOT DISTINCT FROM $6::text
-          AND c.completed_keys->0->'pending'->>'requestId' IS NOT DISTINCT FROM $7::text
-          AND EXISTS(SELECT 1 FROM sources s WHERE s.id=$2 AND s.incarnation::text=$3 AND NOT COALESCE(s.archived,false) AND ${slugModeRefusedSql})
-        OR $4::text='orphan' AND NOT EXISTS(SELECT 1 FROM persistence_local_writers w WHERE w.revoked_at IS NULL
+        OR ${mode}::text='checkpoint_moved' AND c.completed_keys->0->>'runId' IS NOT DISTINCT FROM ${runId}::text
+          AND c.completed_keys->0->'pending'->>'requestId' IS NOT DISTINCT FROM ${requestId}::text
+          AND EXISTS(SELECT 1 FROM sources s WHERE s.id=${sid} AND s.incarnation::text=${inc} AND NOT COALESCE(s.archived,false) AND ${checkpointMovedSql(CHECKPOINT_MOVED_MESSAGE)})
+        OR ${mode}::text='slug_mode_refused' AND c.completed_keys->0->>'runId' IS NOT DISTINCT FROM ${runId}::text
+          AND c.completed_keys->0->'pending'->>'requestId' IS NOT DISTINCT FROM ${requestId}::text
+          AND EXISTS(SELECT 1 FROM sources s WHERE s.id=${sid} AND s.incarnation::text=${inc} AND NOT COALESCE(s.archived,false) AND ${trustedSql(slugModeRefusedSql)})
+        OR ${mode}::text='orphan' AND NOT EXISTS(SELECT 1 FROM persistence_local_writers w WHERE w.revoked_at IS NULL
           AND w.id::text=c.completed_keys->0->'authority'->'writer'->'principal'->>'id'
           AND c.completed_keys->0->'authority'->'writer'->'principal'->>'kind' IN ('local_cli','local_stdio')
           AND (c.completed_keys->0 ? 'syncOptions')))
-    RETURNING fingerprint,c.completed_keys->0->'pending'->'intent' AS intent`,
-    [target.cursorKey, target.sourceId, target.incarnation, mode, CHECKPOINT_MOVED_MESSAGE, target.runId, target.requestId]);
+    RETURNING fingerprint,c.completed_keys->0->'pending'->'intent' AS intent`);
+  const rows = await exec.executeRaw<{ intent: unknown }>(text, params);
   return rows.length > 0 ? { intent: rows[0]!.intent ?? null } : null;
 }
 

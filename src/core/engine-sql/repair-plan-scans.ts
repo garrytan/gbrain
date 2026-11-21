@@ -8,6 +8,7 @@
 import type { LegacyUnscopedRead } from './brands.ts';
 import { liveTilingSql, untiledSql } from '../page-body/schema.ts';
 import { remoteReadFloorSql } from '../search/private-visibility.ts';
+import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 /** A live page of a source that records an origin, with the first 400 characters of its compiled truth (null when segmented). */
 export interface OriginPathPageRow { id: number; slug: string; source_path: string; revision: string; title: string; head: string | null }
@@ -71,12 +72,14 @@ export async function listSegmentedPageSlugs(exec: LegacyUnscopedRead, sourceId:
  * `sourceIds` and `slugs` narrow the scan, `limit` bounds the list (ordered by source and slug).
  */
 export async function listUntiledSegmentedPages(exec: LegacyUnscopedRead, opts: UntiledPageQuery = {}): Promise<UntiledPage[]> {
-  const rows = await exec.executeRaw<UntiledPageRow>(
-    `SELECT p.id, p.source_id, p.slug, p.knowledge_revision::text AS revision, p.body_generation, p.body_bytes, p.segment_count, p.source_path, t.n, t.covered, t.gapless
-       FROM pages p JOIN sources s ON s.id = p.source_id AND s.archived IS NOT TRUE CROSS JOIN LATERAL (${liveTilingSql('p')}) t
-      WHERE p.body_storage = 'segmented' AND p.deleted_at IS NULL AND ($1::text[] IS NULL OR p.source_id = ANY($1::text[]))
-        AND ($2::text[] IS NULL OR p.slug = ANY($2::text[])) AND ${untiledSql('p', 't')}
-      ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C" LIMIT $3`, [opts.sourceIds ? [...opts.sourceIds] : null, opts.slugs ? [...opts.slugs] : null, opts.limit ?? 1000]);
+  const sourceIds = opts.sourceIds ? [...opts.sourceIds] : null;
+  const slugs = opts.slugs ? [...opts.slugs] : null;
+  const { text, params } = renderFragment(sqlFragment`SELECT p.id, p.source_id, p.slug, p.knowledge_revision::text AS revision, p.body_generation, p.body_bytes, p.segment_count, p.source_path, t.n, t.covered, t.gapless
+       FROM pages p JOIN sources s ON s.id = p.source_id AND s.archived IS NOT TRUE CROSS JOIN LATERAL (${trustedSql(liveTilingSql('p'))}) t
+      WHERE p.body_storage = 'segmented' AND p.deleted_at IS NULL AND (${sourceIds}::text[] IS NULL OR p.source_id = ANY(${sourceIds}::text[]))
+        AND (${slugs}::text[] IS NULL OR p.slug = ANY(${slugs}::text[])) AND ${trustedSql(untiledSql('p', 't'))}
+      ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C" LIMIT ${opts.limit ?? 1000}`);
+  const rows = await exec.executeRaw<UntiledPageRow>(text, params);
   return rows.map(untiledPageOf);
 }
 
@@ -105,47 +108,59 @@ const MUTATED_PAGE = `(r.operation IN ('put_page','capture','edit_page','append_
     SELECT 1 FROM facts f WHERE f.id = ${FACT_ID} AND f.source_id = r.source_id
        AND f.row_num IS NOT NULL AND f.source_markdown_slug = r.slug))`;
 
-/** One attribution-backfill phase: the table, its three attribution columns, the proof join and the unfilled count. */
-export interface AttributionPhase { table: AttributionTable; columns: [string, string, string]; proof: string; unfilled: string }
+/** One attribution-backfill phase: the table, its three attribution columns, the proof join and the unfilled count, each over the source ids it binds. */
+export interface AttributionPhase {
+  table: AttributionTable; columns: [string, string, string];
+  proof: (sourceIds: readonly string[]) => SqlFragment; unfilled: (sourceIds: readonly string[]) => SqlFragment;
+}
 
 export const ATTRIBUTION_PHASES: AttributionPhase[] = [
   {
     table: 'pages', columns: ['revision_write_request_id', 'revision_principal_kind', 'revision_principal_id'],
-    proof: `SELECT t.id AS target_id, t.source_id, t.slug, r.id::text AS request_id, r.principal_kind, r.principal_id
+    proof: sourceIds => sqlFragment`SELECT t.id AS target_id, t.source_id, t.slug, r.id::text AS request_id, r.principal_kind, r.principal_id
       FROM pages t JOIN persistence_requests r ON r.state = 'committed' AND r.source_id = t.source_id
        AND r.outcome->>'revision' = t.knowledge_revision::text
-     WHERE t.source_id = ANY($1::text[]) AND t.revision_write_request_id IS NULL AND t.revision_principal_kind IS NULL AND ${MUTATED_PAGE}`,
-    unfilled: `SELECT count(*)::int AS n FROM pages t
-     WHERE t.source_id = ANY($1::text[]) AND t.revision_write_request_id IS NULL AND t.revision_principal_kind IS NULL`,
+     WHERE t.source_id = ANY(${[...sourceIds]}::text[]) AND t.revision_write_request_id IS NULL AND t.revision_principal_kind IS NULL AND ${trustedSql(MUTATED_PAGE)}`,
+    unfilled: sourceIds => sqlFragment`SELECT count(*)::int AS n FROM pages t
+     WHERE t.source_id = ANY(${[...sourceIds]}::text[]) AND t.revision_write_request_id IS NULL AND t.revision_principal_kind IS NULL`,
   },
   {
     table: 'page_versions', columns: ['write_request_id', 'write_principal_kind', 'write_principal_id'],
-    proof: `SELECT t.id AS target_id, p.source_id, p.slug, r.id::text AS request_id, r.principal_kind, r.principal_id
+    proof: sourceIds => sqlFragment`SELECT t.id AS target_id, p.source_id, p.slug, r.id::text AS request_id, r.principal_kind, r.principal_id
       FROM page_versions t JOIN pages p ON p.id = t.page_id
       JOIN persistence_requests r ON r.state = 'committed' AND r.source_id = p.source_id
        AND r.outcome->>'revision' = t.knowledge_revision::text
-     WHERE p.source_id = ANY($1::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL AND ${MUTATED_PAGE}`,
-    unfilled: `SELECT count(*)::int AS n FROM page_versions t JOIN pages p ON p.id = t.page_id
-     WHERE p.source_id = ANY($1::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL`,
+     WHERE p.source_id = ANY(${[...sourceIds]}::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL AND ${trustedSql(MUTATED_PAGE)}`,
+    unfilled: sourceIds => sqlFragment`SELECT count(*)::int AS n FROM page_versions t JOIN pages p ON p.id = t.page_id
+     WHERE p.source_id = ANY(${[...sourceIds]}::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL`,
   },
   {
     table: 'facts', columns: ['write_request_id', 'write_principal_kind', 'write_principal_id'],
-    proof: `SELECT t.id AS target_id, r.source_id, r.slug, r.id::text AS request_id, r.principal_kind, r.principal_id
-      FROM persistence_requests r JOIN facts t ON t.id = ${FACT_ID} AND t.source_id = r.source_id
+    proof: sourceIds => sqlFragment`SELECT t.id AS target_id, r.source_id, r.slug, r.id::text AS request_id, r.principal_kind, r.principal_id
+      FROM persistence_requests r JOIN facts t ON t.id = ${trustedSql(FACT_ID)} AND t.source_id = r.source_id
      WHERE r.state = 'committed' AND r.operation = 'remember' AND r.outcome->>'status' IN ('inserted','superseded')
-       AND t.source_id = ANY($1::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL`,
-    unfilled: `SELECT count(*)::int AS n FROM facts t
-     WHERE t.source_id = ANY($1::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL`,
+       AND t.source_id = ANY(${[...sourceIds]}::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL`,
+    unfilled: sourceIds => sqlFragment`SELECT count(*)::int AS n FROM facts t
+     WHERE t.source_id = ANY(${[...sourceIds]}::text[]) AND t.write_request_id IS NULL AND t.write_principal_kind IS NULL`,
   },
 ];
 
-/** Rows exactly one committed request proves, optionally within an id range ($2..$3). */
-export function attributionProvenSql(phase: AttributionPhase, ranged: boolean): string {
-  return `SELECT target_id, (array_agg(source_id))[1] AS source_id, (array_agg(slug))[1] AS slug,
+/** Rows exactly one committed request proves in `sourceIds`, optionally within an id range of `t.id`. */
+export function attributionProvenFragment(phase: AttributionPhase, sourceIds: readonly string[], range?: { first: number; last: number }): SqlFragment {
+  const within = range ? sqlFragment` AND t.id BETWEEN ${range.first} AND ${range.last}` : sqlFragment``;
+  return sqlFragment`SELECT target_id, (array_agg(source_id))[1] AS source_id, (array_agg(slug))[1] AS slug,
       (array_agg(request_id))[1] AS request_id, (array_agg(principal_kind))[1] AS principal_kind,
       (array_agg(principal_id))[1] AS principal_id
-    FROM (${phase.proof}${ranged ? ' AND t.id BETWEEN $2 AND $3' : ''}) proof
+    FROM (${phase.proof(sourceIds)}${within}) proof
    GROUP BY target_id HAVING count(*) = 1`;
+}
+
+/**
+ * `attributionProvenFragment` as text with its parameters numbered $1 source ids, then, when `ranged`, $2 and $3 the id range, for
+ * the caller (repair/attribution-backfill.ts) that wraps the statement in its own UPDATE and binds `[source_ids, first, last]`.
+ */
+export function attributionProvenSql(phase: AttributionPhase, ranged: boolean): string {
+  return renderFragment(attributionProvenFragment(phase, [], ranged ? { first: 0, last: 0 } : undefined)).text;
 }
 
 function attributionPhase(table: AttributionTable): AttributionPhase {
@@ -156,13 +171,15 @@ function attributionPhase(table: AttributionTable): AttributionPhase {
 
 /** The ids of the `table` rows of `sourceIds` whose attribution is unset and that exactly one committed request proves, ascending. */
 export async function listProvenAttributionTargets(exec: LegacyUnscopedRead, table: AttributionTable, sourceIds: readonly string[]): Promise<number[]> {
-  const rows = await exec.executeRaw<{ target_id: number | string }>(`${attributionProvenSql(attributionPhase(table), false)} ORDER BY target_id`, [[...sourceIds]]);
+  const { text, params } = renderFragment(sqlFragment`${attributionProvenFragment(attributionPhase(table), sourceIds)} ORDER BY target_id`);
+  const rows = await exec.executeRaw<{ target_id: number | string }>(text, params);
   return rows.map(row => Number(row.target_id));
 }
 
 /** How many `table` rows of `sourceIds` have no attribution. */
 export async function countUnfilledAttribution(exec: LegacyUnscopedRead, table: AttributionTable, sourceIds: readonly string[]): Promise<number> {
-  const [row] = await exec.executeRaw<{ n: number }>(attributionPhase(table).unfilled, [[...sourceIds]]);
+  const { text, params } = renderFragment(attributionPhase(table).unfilled(sourceIds));
+  const [row] = await exec.executeRaw<{ n: number }>(text, params);
   return Number(row?.n ?? 0);
 }
 
@@ -185,40 +202,44 @@ export interface FailedWriteRow {
 export const FAILED_WRITE_GUARD_REFUSAL = `(r.state='failed' AND (r.error_code='writer_coordinator_required'
   OR (r.error_code='storage_error' AND r.error_message LIKE 'Publication failed (P0001)%')))`;
 export const FAILED_WRITE_DRIFT_REFUSAL = `(r.state='conflict' AND r.error_code='source_changed')`;
-/** #7602: a managed fact request refused because its entity page moved ($3 the refusal messages). */
-const FACTS_MOVED_REFUSAL = `(r.operation='extract_facts' AND r.state='conflict' AND r.error_code='revision_conflict'
-  AND r.error_message = ANY($3::text[]))`;
+/** #7602: a managed fact request refused because its entity page moved (`messages` the refusal messages). */
+const factsMovedRefusal = (messages: readonly string[]): SqlFragment => sqlFragment`(r.operation='extract_facts' AND r.state='conflict' AND r.error_code='revision_conflict'
+  AND r.error_message = ANY(${[...messages]}::text[]))`;
 /** #7602: a refused fact request whose retained facts a later request of the same extraction committed on the same page. */
 const FACTS_RECOVERED = `EXISTS (SELECT 1 FROM persistence_requests c WHERE r.operation='extract_facts' AND c.operation='extract_facts'
   AND c.source_id=r.source_id AND c.slug=r.slug AND c.state='committed' AND c.sequence>r.sequence
   AND COALESCE(c.intent->>'inputDigest', c.outcome->>'input_digest')=r.intent->>'inputDigest'
   AND COALESCE(c.intent->>'batchKey', c.outcome->>'batch_key') IS DISTINCT FROM r.intent->>'batchKey')`;
 
-export function failedWriteRequestsSql(facts: boolean, byId: boolean): string {
-  return `SELECT r.id::text, r.request_id::text, r.sequence::text, r.operation, r.source_id, r.slug, r.digest, r.state, r.intent, r.authority,
+export function failedWriteRequestsFragment(sourceIds: readonly string[], query: FailedWriteQuery): SqlFragment {
+  const facts = query.factsMovedMessages !== undefined;
+  const moved = facts ? sqlFragment` OR ${factsMovedRefusal(query.factsMovedMessages!)}` : sqlFragment``;
+  const byId = query.id ? sqlFragment`AND r.id=${query.id}::uuid` : sqlFragment``;
+  return sqlFragment`SELECT r.id::text, r.request_id::text, r.sequence::text, r.operation, r.source_id, r.slug, r.digest, r.state, r.intent, r.authority,
       to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at, r.error_detail->>'origin' AS origin, r.error_code, r.page_id::text AS page_id,
-      CASE WHEN r.operation = ANY($2::text[]) AND NOT (r.operation='put_page' AND r.intent ? 'kind') THEN NULL
+      CASE WHEN r.operation = ANY(${[...query.replayable]}::text[]) AND NOT (r.operation='put_page' AND r.intent ? 'kind') THEN NULL
         ELSE r.operation || COALESCE(':' || (r.intent->>'kind'), '') END AS producer
     FROM persistence_requests r
-    WHERE r.source_id = ANY($1::text[]) AND NOT r.compacted AND r.intent IS NOT NULL AND (${FAILED_WRITE_GUARD_REFUSAL} OR ${FAILED_WRITE_DRIFT_REFUSAL}${facts ? ` OR ${FACTS_MOVED_REFUSAL}` : ''})
-      ${byId ? `AND r.id=$${facts ? 4 : 3}::uuid` : ''}
+    WHERE r.source_id = ANY(${[...sourceIds]}::text[]) AND NOT r.compacted AND r.intent IS NOT NULL AND (${trustedSql(FAILED_WRITE_GUARD_REFUSAL)} OR ${trustedSql(FAILED_WRITE_DRIFT_REFUSAL)}${moved})
+      ${byId}
     ORDER BY r.sequence`;
 }
 
-export const RECOVERED_FACT_REQUESTS_SQL = `SELECT r.id::text FROM persistence_requests r WHERE r.id = ANY($1::uuid[]) AND ${FACTS_RECOVERED}`;
+const recoveredFactRequestsFragment = (ids: readonly string[]): SqlFragment =>
+  sqlFragment`SELECT r.id::text FROM persistence_requests r WHERE r.id = ANY(${[...ids]}::uuid[]) AND ${trustedSql(FACTS_RECOVERED)}`;
 
 /**
  * The refused requests of `sourceIds` the failed-writes preview lists, by sequence. Without `id`, a refused fact request a
  * later request of the same extraction recovered is left out (#8707: one statement over the refused fact requests only).
  */
 export async function listFailedWriteRequests(exec: LegacyUnscopedRead, sourceIds: readonly string[], query: FailedWriteQuery): Promise<FailedWriteRow[]> {
-  const facts = query.factsMovedMessages !== undefined;
-  const params: unknown[] = [[...sourceIds], [...query.replayable], ...(facts ? [[...query.factsMovedMessages!]] : []), ...(query.id ? [query.id] : [])];
-  const rows = await exec.executeRaw<FailedWriteRow>(failedWriteRequestsSql(facts, !!query.id), params);
+  const { text, params } = renderFragment(failedWriteRequestsFragment(sourceIds, query));
+  const rows = await exec.executeRaw<FailedWriteRow>(text, params);
   if (query.id) return rows;
   const factIds = rows.filter(row => row.operation === 'extract_facts').map(row => row.id);
   if (!factIds.length) return rows;
-  const recovered = new Set((await exec.executeRaw<{ id: string }>(RECOVERED_FACT_REQUESTS_SQL, [factIds])).map(row => row.id));
+  const recoveredRead = renderFragment(recoveredFactRequestsFragment(factIds));
+  const recovered = new Set((await exec.executeRaw<{ id: string }>(recoveredRead.text, recoveredRead.params)).map(row => row.id));
   return rows.filter(row => !recovered.has(row.id));
 }
 
@@ -264,31 +285,30 @@ export async function readDriftConflictBounds(exec: LegacyUnscopedRead, sourceId
 }
 
 export async function listDriftConflictGroups(exec: LegacyUnscopedRead, sourceId: string, query: DriftConflictQuery): Promise<DriftConflictGroups> {
-  const params: unknown[] = [sourceId, query.floor, query.through, query.incarnation];
-  const where = [`r.source_id=$1`, `r.source_incarnation=$4::uuid`, `r.sequence > $2::bigint`, `r.sequence <= $3::bigint`, `r.state='conflict'`, `r.error_code='source_changed'`];
+  const where: SqlFragment[] = [sqlFragment`r.source_id=${sourceId}`, sqlFragment`r.source_incarnation=${query.incarnation}::uuid`, sqlFragment`r.sequence > ${query.floor}::bigint`,
+    sqlFragment`r.sequence <= ${query.through}::bigint`, sqlFragment`r.state='conflict'`, sqlFragment`r.error_code='source_changed'`];
   if (query.slugPrefixes) {
     const alternatives = query.slugPrefixes.map(base => {
-      params.push(base.endsWith('/') ? `${likeEscape(base)}%` : likeEscape(base));
-      const at = params.length;
-      return base.endsWith('/') ? `lower(r.slug) LIKE $${at}` : `(lower(r.slug) = $${at} OR lower(r.slug) LIKE $${at} || '/%')`;
+      const pattern = base.endsWith('/') ? `${likeEscape(base)}%` : likeEscape(base);
+      return base.endsWith('/') ? sqlFragment`lower(r.slug) LIKE ${pattern}` : sqlFragment`(lower(r.slug) = ${pattern} OR lower(r.slug) LIKE ${pattern} || '/%')`;
     });
-    where.push(`(${alternatives.join(' OR ')})`);
+    where.push(sqlFragment`(${joinFragments(alternatives, ' OR ')})`);
   }
   if (query.requireLivePage || query.excludePrivate) {
-    where.push(`EXISTS (SELECT 1 FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug AND p.deleted_at IS NULL${query.excludePrivate ? ` AND ${remoteReadFloorSql('p')}` : ''})`);
+    const floor = query.excludePrivate ? sqlFragment` AND ${trustedSql(remoteReadFloorSql('p'))}` : sqlFragment``;
+    where.push(sqlFragment`EXISTS (SELECT 1 FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug AND p.deleted_at IS NULL${floor})`);
   }
-  const filtered = where.join(' AND ');
-  const [totals] = await exec.executeRaw<{ slugs: number; receipts: number }>(
-    `SELECT count(DISTINCT r.slug)::int AS slugs, count(*)::int AS receipts FROM persistence_requests r WHERE ${filtered}`, params);
-  params.push(query.after, query.limit, query.driftMessage);
-  const rows = await exec.executeRaw<DriftConflictGroupRow>(
-    `SELECT r.slug, count(*)::int AS receipts, count(*) FILTER (WHERE r.error_message=$${params.length})::int AS drift_receipts,
+  const filtered = joinFragments(where, ' AND ');
+  const totalsRead = renderFragment(sqlFragment`SELECT count(DISTINCT r.slug)::int AS slugs, count(*)::int AS receipts FROM persistence_requests r WHERE ${filtered}`);
+  const [totals] = await exec.executeRaw<{ slugs: number; receipts: number }>(totalsRead.text, totalsRead.params);
+  const { text, params } = renderFragment(sqlFragment`SELECT r.slug, count(*)::int AS receipts, count(*) FILTER (WHERE r.error_message=${query.driftMessage})::int AS drift_receipts,
         to_char(min(r.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS first_seen,
         to_char(max(r.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen,
         array_agg(DISTINCT r.operation || COALESCE(':' || (r.intent->>'kind'), '') ORDER BY r.operation || COALESCE(':' || (r.intent->>'kind'), '')) AS producers,
         (array_agg(r.request_id::text ORDER BY r.sequence DESC))[1] AS last_request_id
-      FROM persistence_requests r WHERE ${filtered} AND r.slug > $${params.length - 2}
-      GROUP BY r.slug ORDER BY r.slug LIMIT $${params.length - 1}`, params);
+      FROM persistence_requests r WHERE ${filtered} AND r.slug > ${query.after}
+      GROUP BY r.slug ORDER BY r.slug LIMIT ${query.limit}`);
+  const rows = await exec.executeRaw<DriftConflictGroupRow>(text, params);
   return { slugs: Number(totals?.slugs ?? 0), receipts: Number(totals?.receipts ?? 0), rows };
 }
 

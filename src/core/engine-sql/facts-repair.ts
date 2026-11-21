@@ -351,18 +351,19 @@ export interface OntologyCandidateRow {
 
 /** Ontology rows of these sources that carry the fence step's signature (a fence row number or a provenance other than `source`), with whether a withdrawal covers each, whether it was consolidated and whether restoring it would duplicate an observation, in id order. Reads fact_withdrawals. */
 export async function listOntologyFactCandidates(raw: EngineRawRead, sourceIds: string[]): Promise<OntologyCandidateRow[]> {
-  return raw<OntologyCandidateRow>(`
+  const { text, params } = renderFragment(sqlFragment`
     SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.source, f.source_markdown_slug AS page, f.row_num,
-           ${EXPIRY_TEXT('f.expired_at')} AS expired_at,
+           ${trustedSql(expiryTextSql('f.expired_at'))} AS expired_at,
            EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
              AND (w.subject='*' OR w.subject=f.entity_slug)
              AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
            f.consolidated_into IS NOT NULL AS consolidated,
-           ${DUPLICATE_SQL('f')} AS duplicate
+           ${trustedSql(DUPLICATE_SQL('f'))} AS duplicate
       FROM facts f
-     WHERE f.source_id=ANY($1::text[]) AND f.dimension IS NOT NULL AND f.entity_slug IS NOT NULL AND f.source IS NOT NULL
-       AND (f.row_num IS NOT NULL OR f.source_markdown_slug IS DISTINCT FROM f.source) AND ${NOT_CONVERSATION_SLOT_SQL}
-     ORDER BY f.id`, [sourceIds]);
+     WHERE f.source_id=ANY(${sourceIds}::text[]) AND f.dimension IS NOT NULL AND f.entity_slug IS NOT NULL AND f.source IS NOT NULL
+       AND (f.row_num IS NOT NULL OR f.source_markdown_slug IS DISTINCT FROM f.source) AND ${trustedSql(NOT_CONVERSATION_SLOT_SQL)}
+     ORDER BY f.id`);
+  return raw<OntologyCandidateRow>(text, params);
 }
 
 export interface DuplicateFactRow {
@@ -421,16 +422,17 @@ export async function listPurgedPageFactCandidates(raw: EngineRawRead, sourceIds
   const HEAD = PURGED_HEAD_SQL;
   const PURGED_SQL = PURGED_PAGE_SQL;
   const EXCLUDED_SQL = PURGED_EXCLUDED_SQL;
-  const CANDIDATE_WHERE = `f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.source_markdown_slug IS NULL AND f.source IN (${PURGED_SOURCES_SQL})
-     AND ${HEAD} <> '' AND ${HEAD} !~ '[[:space:]]' AND (strpos(${HEAD}, '/') > 0 OR ${PURGED_SQL})
-     AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${HEAD})`;
-  return raw<PurgedCandidateRow>(`
-    SELECT f.id, f.source_id, ${HEAD} AS slug, f.fact, f.context, f.entity_slug, f.visibility, f.source,
-           ${EXCLUDED_SQL.withdrawn} AS withdrawn, ${EXCLUDED_SQL.superseded} AS superseded, ${EXCLUDED_SQL.referenced} AS referenced,
-           ${EXCLUDED_SQL.open_loop} AS open_loop, ${PURGED_SQL} AS purged
+  const candidateWhere = sqlFragment`f.source_id = ANY(${sourceIds}::text[]) AND f.expired_at IS NULL AND f.source_markdown_slug IS NULL AND f.source = ANY(${[...PAGE_EXTRACTION_SOURCE_LIST]}::text[])
+     AND ${trustedSql(HEAD)} <> '' AND ${trustedSql(HEAD)} !~ '[[:space:]]' AND (strpos(${trustedSql(HEAD)}, '/') > 0 OR ${trustedSql(PURGED_SQL)})
+     AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${trustedSql(HEAD)})`;
+  const { text, params } = renderFragment(sqlFragment`
+    SELECT f.id, f.source_id, ${trustedSql(HEAD)} AS slug, f.fact, f.context, f.entity_slug, f.visibility, f.source,
+           ${trustedSql(EXCLUDED_SQL.withdrawn)} AS withdrawn, ${trustedSql(EXCLUDED_SQL.superseded)} AS superseded, ${trustedSql(EXCLUDED_SQL.referenced)} AS referenced,
+           ${trustedSql(EXCLUDED_SQL.open_loop)} AS open_loop, ${trustedSql(PURGED_SQL)} AS purged
       FROM facts f
-     WHERE ${CANDIDATE_WHERE} AND ($2::bigint[] IS NULL OR f.id = ANY($2::bigint[]))
-     ORDER BY f.source_id, ${HEAD}, f.id`, [sourceIds, ids]);
+     WHERE ${candidateWhere} AND (${ids}::bigint[] IS NULL OR f.id = ANY(${ids}::bigint[]))
+     ORDER BY f.source_id, ${trustedSql(HEAD)}, f.id`);
+  return raw<PurgedCandidateRow>(text, params);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

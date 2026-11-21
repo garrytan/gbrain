@@ -11,6 +11,7 @@
  * Decisions stay with the callers.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 /** `listGatedMirrorRequests`: $1 host id, $2 the gate's parked-target filter (JSON text), $3 the parked codes that may stay. */
 export const GATED_MIRROR_REQUESTS_SQL = `SELECT DISTINCT r.id::text AS id,r.source_id,r.request_id::text AS request_id FROM persistence_effects e
@@ -98,16 +99,29 @@ export async function readRequestEffects(exec: LegacyUnscopedRead, requestId: st
   return exec.executeRaw<RequestEffectState>(REQUEST_EFFECTS_SQL, [requestId]);
 }
 
+/** The predicate up to the failed effect's error code, which `embeddingCandidateWhere` and `embeddingCandidateFragment` close with the never-retried list. */
+const EMBEDDING_CANDIDATE_HEAD = `e.kind='embedding' AND r.state='committed' AND e.recovery IS NULL AND e.execution_token IS NULL
+  AND (e.state='failed' OR e.state='queued' AND (e.updated_at < now() - interval '1 hour' OR e.data ? 'repair_requeued_at'))
+  AND NOT (e.state='failed' AND e.error_code`;
+
 /**
  * Stale queued (over an hour, or re-queued by a repair and not yet settled) and failed embedding effects of committed
  * writes, leaving out a failed effect whose code is one of `neverRetried` (parked targets, a zero-norm refusal). The
  * predicate `gbrain repair embedding-effects` and doctor's `stale_embedding_effects` share; codes are plain identifiers.
  */
 export function embeddingCandidateWhere(neverRetried: readonly string[]): string {
+  assertCandidateCodes(neverRetried);
+  return `${EMBEDDING_CANDIDATE_HEAD} = ANY('{${neverRetried.join(',')}}'::text[]))`;
+}
+
+/** The same predicate with the codes bound as one text[] parameter (`listEmbeddingCandidates`). */
+export function embeddingCandidateFragment(neverRetried: readonly string[]): SqlFragment {
+  assertCandidateCodes(neverRetried);
+  return sqlFragment`${trustedSql(EMBEDDING_CANDIDATE_HEAD)} = ANY(${[...neverRetried]}::text[]))`;
+}
+
+function assertCandidateCodes(neverRetried: readonly string[]): void {
   for (const code of neverRetried) if (!/^[a-z0-9_]+$/.test(code)) throw new Error(`embedding candidate code must be an identifier: ${code}`);
-  return `e.kind='embedding' AND r.state='committed' AND e.recovery IS NULL AND e.execution_token IS NULL
-  AND (e.state='failed' OR e.state='queued' AND (e.updated_at < now() - interval '1 hour' OR e.data ? 'repair_requeued_at'))
-  AND NOT (e.state='failed' AND e.error_code IN (${neverRetried.map(code => `'${code}'`).join(',')}))`;
 }
 
 /** One embedding effect `gbrain repair embedding-effects` may settle, with the characters its retry would embed. */
@@ -121,7 +135,7 @@ export interface EmbeddingCandidate {
  * effect) or over the source's live pages (a source scan); 0 when no page matches.
  */
 export async function listEmbeddingCandidates(exec: LegacyUnscopedRead, sourceIds: readonly string[], neverRetried: readonly string[]): Promise<EmbeddingCandidate[]> {
-  const rows = await exec.executeRaw<EmbeddingCandidate>(`SELECT e.id::text AS effect_id, r.source_id, r.slug, r.request_id::text AS request_id,
+  const { text, params } = renderFragment(sqlFragment`SELECT e.id::text AS effect_id, r.source_id, r.slug, r.request_id::text AS request_id,
       e.state, e.attempts, COALESCE(CASE
         WHEN e.data ? 'page_id' THEN (SELECT length(p.compiled_truth) + length(COALESCE(p.timeline,'')) FROM pages p WHERE p.id = (e.data->>'page_id')::int)
         WHEN e.data ? 'targets' THEN (SELECT SUM(length(p.compiled_truth) + length(COALESCE(p.timeline,''))) FROM pages p
@@ -129,7 +143,8 @@ export async function listEmbeddingCandidates(exec: LegacyUnscopedRead, sourceId
         ELSE (SELECT SUM(length(p.compiled_truth) + length(COALESCE(p.timeline,''))) FROM pages p WHERE p.source_id = e.source_id AND p.deleted_at IS NULL)
       END, 0)::bigint AS chars
     FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id
-    WHERE ${embeddingCandidateWhere(neverRetried)} AND (r.source_id = ANY($1::text[])
-      OR NOT EXISTS (SELECT 1 FROM sources s WHERE s.id = r.source_id AND s.incarnation = r.source_incarnation)) ORDER BY e.id`, [[...sourceIds]]);
+    WHERE ${embeddingCandidateFragment(neverRetried)} AND (r.source_id = ANY(${[...sourceIds]}::text[])
+      OR NOT EXISTS (SELECT 1 FROM sources s WHERE s.id = r.source_id AND s.incarnation = r.source_incarnation)) ORDER BY e.id`);
+  const rows = await exec.executeRaw<EmbeddingCandidate>(text, params);
   return rows.map(row => ({ ...row, attempts: Number(row.attempts), chars: Number(row.chars) }));
 }

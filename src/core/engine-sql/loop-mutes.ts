@@ -8,12 +8,18 @@
  */
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 /** A mute's kind: a counterparty email or a Gmail thread id. */
 export type SuppressionKind = 'sender' | 'thread';
 
-function suppressionMatch(kind: SuppressionKind, param: string, alias = ''): string {
-  return kind === 'sender' ? `${alias}counterparty_email = ${param}` : `lower(${alias}thread_id) = ${param}`;
+function suppressionMatch(kind: SuppressionKind, value: string): SqlFragment {
+  return kind === 'sender' ? sqlFragment`counterparty_email = ${value}` : sqlFragment`lower(thread_id) = ${value}`;
+}
+
+/** suppressionMatch over the open_loops alias `l`. */
+function loopSuppressionMatch(kind: SuppressionKind, value: string): SqlFragment {
+  return kind === 'sender' ? sqlFragment`l.counterparty_email = ${value}` : sqlFragment`lower(l.thread_id) = ${value}`;
 }
 
 /** Records the suppression; a row that exists stays as it is. */
@@ -57,13 +63,13 @@ export async function listMuteRecheckThreads(exec: LegacyUnscopedRead, sourceId:
 
 /** The reply-owed loops a mute covers (open, or queued by an earlier unmute); `apply` closes them as `dropped` by `muted`. Ids ascending. */
 export async function closeMutedLoops(exec: SqlExecutor, sourceId: string, kind: SuppressionKind, value: string, apply: boolean): Promise<number[]> {
-  const where = `source_id = $1 AND loop_type = 'unanswered_inbound' AND ${suppressionMatch(kind, '$2')}
+  const where = sqlFragment`source_id = ${sourceId} AND loop_type = 'unanswered_inbound' AND ${suppressionMatch(kind, value)}
        AND (status = 'open' OR closed_by = 'mute_recheck')`;
-  const rows = apply
-    ? await exec.executeRaw<{ id: number }>(
-      `UPDATE open_loops SET status = 'dropped', closed_at = now(), closed_by = 'muted', updated_at = now()
-        WHERE ${where} RETURNING id`, [sourceId, value])
-    : await exec.executeRaw<{ id: number }>(`SELECT id FROM open_loops WHERE ${where} ORDER BY id`, [sourceId, value]);
+  const { text, params } = renderFragment(apply
+    ? sqlFragment`UPDATE open_loops SET status = 'dropped', closed_at = now(), closed_by = 'muted', updated_at = now()
+        WHERE ${where} RETURNING id`
+    : sqlFragment`SELECT id FROM open_loops WHERE ${where} ORDER BY id`);
+  const rows = await exec.executeRaw<{ id: number }>(text, params);
   return rows.map((r) => Number(r.id)).sort((a, b) => a - b);
 }
 
@@ -72,17 +78,15 @@ export async function closeMutedLoops(exec: SqlExecutor, sourceId: string, kind:
  * loop on a thread for re-check (`mute_recheck`); one without a thread stays closed (`unmuted`).
  */
 export async function requeueMutedLoops(exec: SqlExecutor, sourceId: string, kind: SuppressionKind, value: string, apply: boolean): Promise<Array<{ id: number; thread_id: string | null }>> {
-  const rows = await exec.executeRaw<{ id: number; thread_id: string | null }>(
-    `${apply ? `UPDATE open_loops l SET closed_by = CASE WHEN l.thread_id IS NULL THEN 'unmuted' ELSE 'mute_recheck' END, updated_at = now()`
-      : 'SELECT l.id, l.thread_id FROM open_loops l'}
-      WHERE l.source_id = $1 AND l.closed_by = 'muted' AND ${suppressionMatch(kind, '$3', 'l.')}
+  const { text, params } = renderFragment(sqlFragment`${trustedSql(apply ? `UPDATE open_loops l SET closed_by = CASE WHEN l.thread_id IS NULL THEN 'unmuted' ELSE 'mute_recheck' END, updated_at = now()`
+      : 'SELECT l.id, l.thread_id FROM open_loops l')}
+      WHERE l.source_id = ${sourceId} AND l.closed_by = 'muted' AND ${loopSuppressionMatch(kind, value)}
         AND NOT EXISTS (SELECT 1 FROM loop_suppressions s
-                         WHERE s.source_id = l.source_id AND NOT (s.kind = $2 AND s.value = $3)
+                         WHERE s.source_id = l.source_id AND NOT (s.kind = ${kind} AND s.value = ${value})
                            AND ((s.kind = 'thread' AND s.value = lower(l.thread_id))
                              OR (s.kind = 'sender' AND s.value = l.counterparty_email)))
-      ${apply ? 'RETURNING l.id, l.thread_id' : ''}`,
-    [sourceId, kind, value],
-  );
+      ${trustedSql(apply ? 'RETURNING l.id, l.thread_id' : '')}`);
+  const rows = await exec.executeRaw<{ id: number; thread_id: string | null }>(text, params);
   return rows.map((r) => ({ id: Number(r.id), thread_id: r.thread_id })).sort((a, b) => a.id - b.id);
 }
 
