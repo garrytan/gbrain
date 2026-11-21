@@ -423,8 +423,10 @@ If any chapter failed, the CLI exits 1 and the user can re-run — idempotency
 keys (`book-mirror:<slug>:ch-<N>`) deduplicate completed chapters at the
 queue level, so retry is cheap. Note that reproducing verbatim book quotes
 plus the reader's verbatim words can occasionally trip a provider output
-filter; a chapter blocked that way is just a failed chapter — re-run, or
-retry with a different `--model`.
+filter. Record a chapter stopped that way as that chapter's result, a
+provider filter stop rather than a model failure, and tell the user which
+chapters it hit. Retry, with the same or a different `--model`, only if the
+user chooses to.
 
 ### Model: Opus by default
 
