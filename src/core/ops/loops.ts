@@ -246,6 +246,15 @@ interface LoopView {
   /** Trusted-local only. */
   quote?: string;
   deep_link?: string;
+  /**
+   * Trusted-local only, same gate as deep_link (it's the other half of the
+   * same Gmail-thread identity — see loops-extract.ts's dedupKey comment).
+   * Exposed so a caller can dedupe/link a commitment-type loop (no
+   * deep_link in ~70-80% of LLM-extracted commitments, docs/guides/open-loops.md)
+   * by its stable Gmail thread id instead of only the ephemeral numeric loop
+   * id, which churns across re-extractions of the same thread.
+   */
+  thread_id?: string;
 }
 
 function loopView(l: OpenLoopRow, trusted: boolean, deepLinks: Map<string, string>): LoopView {
@@ -268,6 +277,7 @@ function loopView(l: OpenLoopRow, trusted: boolean, deepLinks: Map<string, strin
     if (q) base.quote = q;
     const link = deepLinks.get(`${l.id}`);
     if (link) base.deep_link = link;
+    if (l.thread_id) base.thread_id = l.thread_id;
   }
   return base;
 }

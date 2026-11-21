@@ -314,6 +314,29 @@ describe('open_loops deep links + context (trusted local)', () => {
     expect(view.quote).toBe('Can you review the plan?'); // quote is independent of the link
   });
 
+  test('thread_id surfaces for trusted local callers, same gate as deep_link', async () => {
+    await upsertOpenLoop(
+      engine,
+      loop({ counterpartyEmail: 'bob@example.com', threadId: '18c2f4a9b3d21e09' }),
+    );
+    const res = (await openLoopsOp.handler(ctx({ remote: false }), {})) as GroupsResult;
+    const view = res.groups[0].loops[0] as { thread_id?: string };
+    expect(view.thread_id).toBe('18c2f4a9b3d21e09');
+  });
+
+  test('remote: thread_id redacted like deep_link', async () => {
+    await upsertOpenLoop(
+      engine,
+      loop({ counterpartyEmail: 'bob@example.com', threadId: '18c2f4a9b3d21e09' }),
+    );
+    const res = (await openLoopsOp.handler(
+      ctx({ remote: true, allowedSources: ['g1'], sourceId: 'g1' }),
+      {},
+    )) as GroupsResult;
+    const view = res.groups[0].loops[0] as { thread_id?: string };
+    expect(view.thread_id).toBeUndefined();
+  });
+
   test('include_context attaches the counterparty entity card when the person page exists', async () => {
     await engine.putPage(
       'people/bob-example',
