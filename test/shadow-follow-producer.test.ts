@@ -354,13 +354,13 @@ describe('selectors match the real schema', () => {
 describe('members that write more than their arguments name', () => {
   const relations = (items: Array<{ relation?: string }>) => [...new Set(items.map((i) => i.relation))];
 
-  test('a rename also reports the page versions, facts, page aliases and owner marks it rewrites', async () => {
+  test('a rename also reports the page versions, facts, withdrawals, page aliases and owner marks it rewrites', async () => {
     await engine.putPage('people/rena', PAGE('Rena'));
     await engine.insertFact({ fact: 'Rena builds boats', entity_slug: 'people/rena', source: 'mcp:remember' }, { source_id: 'default' });
     const h = followHarness(engine);
     await h.engine.updateSlug('people/rena', 'people/rena-new');
     const items = h.batches.flatMap((b) => b.items) as Array<{ relation?: string }>;
-    expect(relations(items)).toEqual(expect.arrayContaining(['pages', 'slug_aliases', 'slug_rename_history', 'page_versions', 'page_aliases', 'facts', 'owner_only_marks']));
+    expect(relations(items)).toEqual(expect.arrayContaining(['pages', 'slug_aliases', 'slug_rename_history', 'page_versions', 'page_aliases', 'facts', 'fact_withdrawals', 'owner_only_marks']));
     expect(await engine.getPage('people/rena-new')).not.toBeNull();
   });
 

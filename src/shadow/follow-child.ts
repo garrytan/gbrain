@@ -156,10 +156,15 @@ export class FollowChild {
       this.foreignOffset += whole.length;
       for (const line of whole.toString('utf8').split('\n')) {
         if (!line) continue;
-        const { at, reason } = JSON.parse(line) as { at: number; reason: string };
-        this.invalidate(`foreign_write:${reason}`, undefined, at + FOREIGN_LEASE_MS);
+        let parsed: { at?: unknown; reason?: unknown } | null = null;
+        try { parsed = JSON.parse(line) as { at?: unknown; reason?: unknown } | null; } catch { /* a malformed line counts as a write below */ }
+        if (typeof parsed?.at === 'number' && typeof parsed.reason === 'string') this.invalidate(`foreign_write:${parsed.reason}`, undefined, parsed.at + FOREIGN_LEASE_MS);
+        else this.invalidate('full_required');
       }
-    } catch { /* an unreadable file is read again next time; the 1 h retry covers a lasting failure */ }
+    } catch (error) {
+      // No file yet means no other process wrote. Anything else means writes may have gone unseen: only a full pass restores coverage.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.invalidate('full_required');
+    }
   }
 
   /** A pass that started at `since` settled these `relations` (or everything, for a full pass). */

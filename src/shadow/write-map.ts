@@ -69,11 +69,11 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   restorePage: { tables: ['pages'], plan: (a) => [pages(a[0], a[1]?.sourceId)] },
   purgeDeletedPages: { tables: ['pages', 'owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops'], plan: (a) => (a[1]?.dryRun ? [] : null) },
   updateSlug: {
-    tables: ['pages', 'slug_aliases', 'slug_rename_history', 'page_versions', 'page_aliases', 'facts', 'owner_only_marks'],
-    // A rename also snapshots the page, rebinds facts and aliases to the new slug, and can delete a fact it replaces.
+    tables: ['pages', 'slug_aliases', 'slug_rename_history', 'page_versions', 'page_aliases', 'facts', 'fact_withdrawals', 'owner_only_marks'],
+    // A rename also snapshots the page, rebinds facts, aliases and withdrawals to the new slug, and can delete a fact on either slug.
     plan: (a) => [
-      pages(a[1], a[2]?.sourceId), ...whole('slug_aliases', 'slug_rename_history', 'page_aliases'), child('page_versions', a[0], a[2]?.sourceId),
-      ...['entity_slug', 'source_markdown_slug'].map((column): Target => ({ relation: 'facts', sel: { [column]: a[0] }, del: true })), ...OWNER_MARKS,
+      pages(a[1], a[2]?.sourceId), ...whole('slug_aliases', 'slug_rename_history', 'page_aliases', 'fact_withdrawals'), child('page_versions', a[0], a[2]?.sourceId),
+      ...[a[0], a[1]].flatMap((slug) => ['entity_slug', 'source_markdown_slug'].map((column): Target => ({ relation: 'facts', sel: { [column]: slug }, del: true }))), ...OWNER_MARKS,
     ],
   },
   refreshPageBody: { tables: ['pages'], plan: (a) => [pages(a[0], a[1])] },

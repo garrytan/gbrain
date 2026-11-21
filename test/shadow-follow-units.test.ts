@@ -163,6 +163,32 @@ describe('follow child', () => {
     expect(state(3)).toMatchObject({ valid: true });
   });
 
+  test('a malformed line or an unreadable invalidations file leaves the watermark waiting for a full pass', async () => {
+    const dir = tmp();
+    writeSeedRecord(dir, SEED);
+    const file = join(dir, 'follower-invalidations.jsonl');
+    let clock = 10_000;
+    const { child, lines } = childOn(dir, {}, true, () => clock);
+    const state = (id: number) => (lines.find((l) => l.id === id) as { value: { valid: boolean; invalidated_reason: string | null } }).value;
+    child.handle(rpc(1, 'watermark', { valid: true, since: 10_500 })); // no file yet: nothing to read
+    await child.close();
+    expect(state(1)).toMatchObject({ valid: true });
+    clock = 20_000;
+    writeFileSync(file, 'not json\n');
+    child.handle(rpc(2, 'watermark', { valid: true, since: 15_000 }));
+    await child.close();
+    expect(state(2)).toMatchObject({ valid: false, invalidated_reason: 'full_required' });
+    child.handle(rpc(3, 'watermark', { valid: true, since: 20_500 }));
+    await child.close();
+    expect(state(3)).toMatchObject({ valid: true });
+    clock = 30_000;
+    rmSync(file);
+    mkdirSync(file); // present but not readable as a file
+    child.handle(rpc(4, 'watermark', { valid: true, since: 25_000 }));
+    await child.close();
+    expect(state(4)).toMatchObject({ valid: false, invalidated_reason: 'full_required' });
+  });
+
   test('rows the store displaced make the relation dirty, and the parent is told', async () => {
     const dir = tmp();
     writeSeedRecord(dir, SEED);

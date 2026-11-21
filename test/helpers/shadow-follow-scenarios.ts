@@ -65,6 +65,27 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
       } finally { await r.close(); }
     }, 90_000);
 
+    test('a rename also moves a subject-scoped withdrawal, and the watermark waits for a pass over it', async () => {
+      const r = await rig();
+      try {
+        await ctx.primary().executeRaw(`INSERT INTO fact_withdrawals (source_id, visibility, subject, fact_hash) VALUES ('default', 'private', 'people/alice-example', 'hash-1')`);
+        await tick();
+        expect((await r.reconciler.run('full')).error).toBeUndefined();
+        await r.wrapped.updateSlug('people/alice-example', 'people/alice-renamed');
+        await r.settle();
+        expect(status(r).follower.coverage_watermark).toMatchObject({ valid: false, invalidated_reason: 'relation_dirty' });
+        await tick();
+        // Every relation a rename names except the withdrawals: still not covered.
+        expect((await r.reconciler.run('dirty', ['slug_aliases', 'slug_rename_history', 'page_aliases', 'owner_only_marks'])).error).toBeUndefined();
+        expect(status(r).follower.coverage_watermark.valid).toBe(false);
+        expect((await r.reconciler.run('dirty', ['fact_withdrawals'])).error).toBeUndefined();
+        expect(status(r).follower.state).toBe('following');
+        const pass = await r.reconciler.run('full');
+        expect(pass.repaired_rows).toBe(0);
+        expect(pass.follower_misses).toBe(0);
+      } finally { await r.close(); }
+    }, 90_000);
+
     test('a rolled-back transaction changes nothing in the store', async () => {
       const r = await rig();
       try {
