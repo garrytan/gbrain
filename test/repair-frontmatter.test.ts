@@ -557,6 +557,20 @@ test('LC-2: unheld spellings that differ only by case are needs_review, never a 
   expect(await engine.readPageSnapshot('notes/max', { sourceId: s.id, includeDeleted: true })).toBeNull();
 }), 240_000);
 
+test('LC-2: a held file that gains a spelling twin before the next sync is needs_review, never a safe repair that picks one', () => each(async engine => {
+  // Unquoted continuation lines: sync holds the file, and --include-ambiguous would fold it.
+  const s = await managed(engine, { 'notes/max.md': folded(1) });
+  await s.sync();
+  expect((await s.holds()).map(h => [h.path, h.code])).toEqual([['notes/max.md', 'invalid_frontmatter']]);
+  // A second spelling arrives before any sync has held it.
+  s.write('notes/Max.md', folded(2));
+  const preview = await s.run({ includeAmbiguous: true, only: ['notes/max.md'] });
+  expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 1 });
+  expect(reviewCodes(preview)).toEqual([['notes/max.md', 'page_identity_changed']]);
+  expect(details(preview).needs_review[0]!.resolution).toContain('Keep one spelling');
+  expect(await engine.readPageSnapshot('notes/max', { sourceId: s.id, includeDeleted: true })).toBeNull();
+}), 240_000);
+
 /** A legacy source with one soft-deleted page `notes/a--b` that records `notes/a--b.md` (the spelling an older import kept). */
 async function legacyDeletedSpelling(engine: BrainEngine, id: string): Promise<string> {
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');

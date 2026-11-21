@@ -426,7 +426,7 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
   const { engine, src } = ctx;
   const sourcePath = hold?.source_path ?? path;
   const page = ctx.pages.get(sourcePath);
-  const twins = hold ? undefined : ctx.twins.get(path);
+  const twins = ctx.twins.get(path);
   if (twins) {
     return { source_id: src.sourceId, path, code: 'page_identity_changed', reason: 'spelling', resolution: `${path} and ${twins.join(', ')} differ only by case and name one page, so importing one would pick a spelling, `
       + `which frontmatter repair never does. Keep one spelling, rename or remove the others and commit, then run gbrain sync --source ${src.sourceId} --no-pull.` };
