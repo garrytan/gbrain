@@ -19,8 +19,9 @@ import { stageBatchBytes, STAGE_BATCH_BYTES } from '../src/core/page-body/limits
 import { CODES } from '../src/core/error-registry.ts';
 import { ENGINE_CAPABILITIES } from '../src/core/engine-capabilities.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
-import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
-import { ownerSocketPath } from '../src/core/rust-engine/owner-ipc/protocol.ts';
+import { connectOwner, installOwnerClient, ownerConnectionFor } from '../src/core/rust-engine/owner-ipc/client.ts';
+import { ownerLockPath, ownerSocketPath } from '../src/core/rust-engine/owner-ipc/protocol.ts';
+import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 /** A store that opens and closes and does nothing else: the lifecycle tests need no real brain. */
@@ -261,6 +262,132 @@ describe('openRustEngine', () => {
       }
     }, 30_000);
   }
+
+  test('a disconnect during a pending open keeps the owner lock until the open has settled', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-shell-lock-'));
+    const db = join(dir, 'brain.rust');
+    const gate = deferredAddon();
+    const engine = openRustEngine({ addon: gate.addon, databasePath: db });
+    const settled = engine.connect({ engine: 'pglite', database_path: db }).then(() => 'resolved', (error: { code?: string }) => error.code);
+    try {
+      await gate.opening();
+      const disconnecting = engine.disconnect();
+      await Bun.sleep(50);
+      // The store open is still running, so no other process may take the brain yet.
+      const early = await tryAcquireNativeLock(ownerLockPath(db));
+      await early?.release();
+      expect(early).toBeNull();
+      gate.finishOpen();
+      await disconnecting;
+      expect(await settled).toBe('engine_closed');
+      expect(gate.brains.map((brain) => brain.isOpen)).toEqual([false]);
+      const after = await tryAcquireNativeLock(ownerLockPath(db));
+      expect(after).not.toBeNull();
+      await after?.release();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a store close that rejects still releases the owner lock, and disconnect rethrows the close error', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-shell-close-'));
+    const db = join(dir, 'brain.rust');
+    class BrokenCloseBrain extends FakeBrain {
+      async close() { this.isOpen = false; throw Object.assign(new Error('store close failed'), { code: 'store_io' }); }
+    }
+    const engine = openRustEngine({ addon: { ...addon, Brain: BrokenCloseBrain }, databasePath: db });
+    try {
+      await engine.connect({ engine: 'pglite', database_path: db });
+      expect(engine.ownerRole).toBe('owner');
+      const outcome = await engine.disconnect().then(() => 'resolved', (error: unknown) => error);
+      expect(outcome).not.toBe('resolved');
+      expect(engine.connected).toBe(false);
+      expect(engine.ownerRole).toBeNull();
+      const lock = await tryAcquireNativeLock(ownerLockPath(db));
+      expect(lock).not.toBeNull();
+      await lock?.release();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Value: protects=a client that takes over its brain but fails the store open ends disconnected, frees the owner lock and socket, and reconnects; fails_when=the failed takeover keeps the role or stays connected; why_new=only fresh connects and early calls covered, never a takeover whose open fails; seam=none; no_claim=owner success
+  test('a client promoted to owner whose store open fails ends disconnected, gives up the owner role and lock, and an explicit reconnect succeeds', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-shell-takeover-'));
+    const db = join(dir, 'brain.rust');
+    const config = { engine: 'pglite', database_path: db } as const;
+    const first = openRustEngine({ addon, databasePath: db });
+    const gate = deferredAddon();
+    const engine = openRustEngine({ addon: gate.addon, databasePath: db, ownerWaitMs: 3_000 });
+    try {
+      await first.connect(config);
+      expect(first.ownerRole).toBe('owner');
+      await engine.connect(config);
+      expect(engine.ownerRole).toBe('client');
+      expect(engine.connected).toBe(true);
+      // The owner goes away; the client's next call runs the election, wins it, and its store open fails.
+      await first.disconnect();
+      for (let i = 0; i < 200 && !ownerConnectionFor(engine)?.closed; i++) await Bun.sleep(10);
+      expect(ownerConnectionFor(engine)?.closed).toBe(true);
+      const call = engine.getConfig('k').then(() => 'resolved', (error: { code?: string }) => error.code ?? 'rejected');
+      await gate.opening();
+      expect(engine.ownerRole).toBe('owner');
+      gate.failOpen();
+      // The call that ran the failed takeover ends with the store's own error, not the engine_closed the emptied engine gives.
+      const failure = await call;
+      expect(failure).not.toBe('resolved');
+      expect(failure).not.toBe('engine_closed');
+      expect({ connected: engine.connected, role: engine.ownerRole, stats: engine.ownerStats() }).toEqual({ connected: false, role: null, stats: null });
+      expect((await refusal(() => engine.getConfig('k'))).code).toBe('engine_closed');
+      // The lock and the socket were given up: another process can take the brain, and nothing answers there.
+      const lock = await tryAcquireNativeLock(ownerLockPath(db));
+      expect(lock).not.toBeNull();
+      await lock?.release();
+      const answered = await connectOwner(ownerSocketPath(db), { timeoutMs: 200 }).then(connection => { connection.close(); return true; }, () => false);
+      expect(answered).toBe(false);
+      // An explicit reconnect takes the brain again.
+      gate.finishOpenNow();
+      await engine.reconnect();
+      expect(engine.connected).toBe(true);
+      expect(engine.ownerRole).toBe('owner');
+      expect(gate.brains.at(-1)!.isOpen).toBe(true);
+    } finally {
+      await engine.disconnect();
+      await first.disconnect();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  // Value: protects=a call that finds the owner gone while disconnect runs does not start an election that outlives the disconnect; fails_when=the late call opens a store and takes the owner lock after disconnect resolved; why_new=failover tests never overlapped a call with disconnect; seam=none; no_claim=takeover success
+  test('a call made while disconnect runs after the owner went away does not take the brain over', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-shell-late-call-'));
+    const db = join(dir, 'brain.rust');
+    const config = { engine: 'pglite', database_path: db } as const;
+    const first = openRustEngine({ addon, databasePath: db });
+    const engine = openRustEngine({ addon, databasePath: db, ownerWaitMs: 3_000 });
+    try {
+      await first.connect(config);
+      await engine.connect(config);
+      expect(engine.ownerRole).toBe('client');
+      await first.disconnect();
+      for (let i = 0; i < 200 && !ownerConnectionFor(engine)?.closed; i++) await Bun.sleep(10);
+      expect(ownerConnectionFor(engine)?.closed).toBe(true);
+      const stopping = engine.disconnect();
+      const late = engine.getConfig('k').then(() => 'resolved', (error: { code?: string }) => error.code ?? 'rejected');
+      await Promise.all([stopping, late]);
+      // Give a leaked election the time it would need to publish its store.
+      await Bun.sleep(300);
+      expect({ connected: engine.connected, role: engine.ownerRole, stats: engine.ownerStats() }).toEqual({ connected: false, role: null, stats: null });
+      expect(await late).not.toBe('resolved');
+      const lock = await tryAcquireNativeLock(ownerLockPath(db));
+      expect(lock).not.toBeNull();
+      await lock?.release();
+    } finally {
+      await engine.disconnect();
+      await first.disconnect();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   test('a partial or unknown outcome says what may have been written', () => {
     expect(capabilityMissing('raw_sql', 'x', 'partial').detail).toContain('written=partial');

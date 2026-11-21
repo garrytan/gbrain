@@ -139,6 +139,9 @@ export interface SyncClassified {
   gitWins?: SyncClass;
 }
 
+/** #7199 / GST-3328: how many of its file's earlier committed versions a side-`unknown` page is compared with, found within how many commits (sync and the `repair file-drift` preview). */
+export const DRIFT_HISTORY_VERSIONS = 3, DRIFT_HISTORY_DEPTH = 50;
+
 const CLEAN = new Set<SyncDirtiness | null>(['clean', 'clean_eol', 'clean_lfs']);
 
 /** The class's glossary action (`convergence.classes[c].action`). `in_flight` and `keep_db_pending` are `owner`. */
