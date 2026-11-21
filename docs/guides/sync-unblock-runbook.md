@@ -474,8 +474,9 @@ it, and a `--full` continues until every path it covers is settled.
   (which waits for the owner's `sync.admission` change, as paused deletes
   do).
 - `repair`, a person decides: `held` (by code, with its triple above),
-  `drift`, `delete_drift` and `deleted_edited` (two-sided changes, held
-  `file_drift` with `side` and `state`), `dirty` (an uncommitted edit in
+  `drift`, `delete_drift` and `deleted_edited` (two-sided changes, and a file
+  `gbrain delete` removed that came back, held `file_drift` with `side` and
+  `state`), `dirty` (an uncommitted edit in
   committed mode), `spelling` (files whose names differ only by case or
   separator spelling), and
   `deletes_withheld`.

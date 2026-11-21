@@ -3724,8 +3724,9 @@ printed for unknown pages.
 two-sided change as `file_drift` with a `side` (`both`: the file and the page
 both changed since the last import; `unknown`: the page has no import record
 to tell; `deleted`: one side is a deletion) and, for a deleted side, a
-`state`: `tombstone_edited` (the page was deleted and the file was edited),
-`purged_differs` (a purged page's file differs from what was purged) or
+`state`: `tombstone_edited` (the page was deleted and the file was edited, or
+[came back as it was](#file-drift-restored)), `purged_differs` (a purged page's
+file differs from what was purged, or came back after the delete removed it) or
 `file_gone` (the file was deleted and the page changed). `gbrain sources status
 <id> --json` lists each held file with both. `--held` selects those holds:
 
