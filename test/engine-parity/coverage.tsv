@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1656/1662
+# covered: 1660/1666
 # lifecycle: 9/9
-# pages: 65/65
+# pages: 66/66
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 15/15
@@ -80,7 +80,7 @@
 # telemetry: 14/14
 # field_usage: 1/1
 # session_state: 7/7
-# alias_fanout_reads: 5/5
+# alias_fanout_reads: 6/6
 # write_guards: 10/10
 # page_visibility: 4/4
 # large_page: 2/2
@@ -115,13 +115,13 @@ getPage	pages	yes	155	yes	yes	yes	serves
 readPageSnapshot	pages	yes	46	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	869	yes	yes	yes	serves
+putPage	pages	yes	877	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	31	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	241	yes	yes	yes	serves
+softDeletePage	pages	yes	245	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	13	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	5	no	yes	yes	serves
@@ -130,10 +130,10 @@ findPages	pages	yes	4	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	6	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	serves
-listEntityKeyRows	pages	yes	1	no	yes	yes	refuses:pages
-listIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
-listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	refuses:pages
-applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
+listEntityKeyRows	pages	yes	5	no	yes	yes	serves
+listIdentityDecisions	pages	yes	4	no	yes	yes	serves
+listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	serves
+applyIdentityDecisions	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	3	yes	yes	yes	serves
 listAllSources	pages	yes	13	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
@@ -165,11 +165,12 @@ holdPageEmbedding	pages	yes	4	no	yes	yes	serves
 readReasonPurgeTombstones	pages	yes	5	no	yes	yes	serves
 advanceSourcePurgeEpoch	pages	yes	2	no	yes	yes	serves
 listSourcePathPages	pages	yes	3	no	yes	yes	serves
+listQuarantinedSlugs	pages	yes	1	no	yes	yes	serves
 readRenameIdentityRows	pages	yes	3	no	yes	yes	serves
 readLiveIdentityHolders	pages	yes	4	no	yes	yes	serves
-listPrefixSampledPages	pages	yes	3	no	yes	yes	serves
+listPrefixSampledPages	pages	yes	4	no	yes	yes	serves
 listCorpusSample	pages	yes	2	no	yes	yes	serves
-bumpPageRetrievals	pages	yes	2	no	yes	yes	serves
+bumpPageRetrievals	pages	yes	3	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	6	no	yes	yes	serves
 readLivePageIdBySlug	pages	yes	1	no	yes	yes	serves
@@ -296,7 +297,7 @@ listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
 listPageRefsForSlugs	extraction	yes	1	no	yes	yes	serves
 addLink	links	yes	135	yes	yes	yes	serves
-addLinksBatch	links	yes	34	yes	yes	yes	serves
+addLinksBatch	links	yes	35	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	15	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
@@ -525,7 +526,7 @@ listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	refuses:pages
 readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	refuses:pages
 logIngest	stats_ingest	yes	6	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	26	no	yes	yes	serves
+updateSlug	sync_aliases	yes	27	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
@@ -1387,7 +1388,7 @@ lowerTrustTier	derivation_trust	yes	2	no	yes	yes	serves
 countDerivedRowTaint	derivation_trust	yes	2	no	yes	yes	serves
 stampPageFrontmatter	derivation_trust	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	177	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	176	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -1443,9 +1444,9 @@ upsertOpenLoop	open_loops	yes	12	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	7	no	yes	yes	serves
 listOpenLoops	open_loops	yes	4	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	2	no	yes	yes	serves
-linkEntityIdentityRow	entity_identities	yes	10	no	yes	yes	serves
+linkEntityIdentityRow	entity_identities	yes	11	no	yes	yes	serves
 unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
-listEntityIdentityRows	entity_identities	yes	9	no	yes	yes	serves
+listEntityIdentityRows	entity_identities	yes	10	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
 listSourceRecords	cli_reads_import	yes	8	no	yes	yes	serves
@@ -1459,6 +1460,8 @@ readPageTrustRows	cli_reads_import	yes	17	no	yes	yes	serves
 readRowTrustRows	cli_reads_import	yes	12	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	2	no	yes	yes	serves
+listLinkPageMetadataForSlugs	cli_reads_import	yes	2	no	yes	yes	serves
+listAttendedOriginSlugs	cli_reads_import	yes	2	no	yes	yes	serves
 listStoredTimelineRows	cli_reads_import	yes	7	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
@@ -1567,6 +1570,7 @@ resolveCaseSensitiveAliases	alias_fanout_reads	yes	5	no	yes	yes	serves
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	serves
 readPageAliasRows	alias_fanout_reads	yes	4	no	yes	yes	serves
 readEntityAliasRows	alias_fanout_reads	yes	2	no	yes	yes	serves
+listSlugAliases	alias_fanout_reads	yes	1	no	yes	yes	serves
 hasSegmentStorage	write_guards	yes	1	no	yes	yes	serves
 readPageOrigin	write_guards	yes	1	no	yes	yes	serves
 listOriginClaims	write_guards	yes	2	no	yes	yes	serves

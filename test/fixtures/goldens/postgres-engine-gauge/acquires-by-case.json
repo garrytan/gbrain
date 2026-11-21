@@ -294,6 +294,9 @@
     "listPages#updated_after": {},
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
+    "listQuarantinedSlugs#default": {
+      "raw": 1
+    },
     "listSourceIds#default": {
       "raw": 1
     },

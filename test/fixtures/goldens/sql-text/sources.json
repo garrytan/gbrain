@@ -168,6 +168,18 @@
           }
         ]
       },
+      "listQuarantinedSlugs": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND NOT NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine')",
+            "textSha256": "bc5cb7265babab24fa474f7e22aa57f7752f437c58b3a031f1cf35dadb4f5051"
+          }
+        ]
+      },
       "listSourceIds": {
         "default": [
           {

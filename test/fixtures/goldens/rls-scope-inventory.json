@@ -3713,6 +3713,17 @@
         ],
         "flagOnScopes": []
       },
+      "listQuarantinedSlugs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listRecordedFenceItemKeys#default": {
         "flagOffLanes": [
           "pool"
@@ -3769,6 +3780,17 @@
         "flagOnScopes": []
       },
       "listRetiredGenerationItemKeys#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSlugAliases#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -8350,6 +8372,7 @@
         "listAppliedPolicyRevisions": "none",
         "listAtomFenceCandidates": "none",
         "listAtomWriteReceipts": "none",
+        "listAttendedOriginSlugs": "none",
         "listAttestCredentialRows": "none",
         "listAudienceAccessMembers": "none",
         "listAudienceMemberIds": "none",
@@ -8666,6 +8689,7 @@
         "listSimilarActiveFacts": "none",
         "listSingleFactMetadata": "none",
         "listSlotRows": "none",
+        "listSlugAliases": "none",
         "listSlugPathCandidates": "none",
         "listSourceBindingsForMovement": "none",
         "listSourceIds": "none",
