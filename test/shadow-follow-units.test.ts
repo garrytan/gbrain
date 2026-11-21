@@ -8,7 +8,7 @@
  * Regression it catches: a watermark that claims coverage after a lost write, a status that calls a dead follower
  * "following", an rpc that hangs when the child exits. Real-store scenarios: test/shadow-follow.test.ts.
  */
-import { afterEach, describe, expect, jest, test } from 'bun:test';
+import { afterEach, describe, expect, jest, spyOn, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,6 +18,7 @@ import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { countFingerprintMismatches, probeRecord, PROBE_CORPUS } from '../src/shadow/fingerprints.ts';
 import { FollowChild, type FollowStore } from '../src/shadow/follow-child.ts';
 import { appendPass, buildFollowStatus, lagBucket, lagP99, readFollowerFile, type FollowStatus } from '../src/shadow/follow-status.ts';
+import { openReadSource } from '../src/shadow/read-pool.ts';
 import { Reconciler } from '../src/shadow/reconcile.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { SHADOW_STATE_VERSION, shadowBrainKey, shadowDirFor, writeShadowState, type ShadowState } from '../src/shadow/state.ts';
@@ -424,5 +425,23 @@ describe('supervisor request channel', () => {
     await expect(pending).rejects.toThrow('child_unavailable');
     sup.stop();
     await expect(sup.request('m')).rejects.toThrow('child_unavailable');
+  });
+});
+
+describe('shadow read source', () => {
+  test('a failed first connection disconnects what it half opened, and a closed source never connects again', async () => {
+    const { PostgresEngine } = await import('../src/core/postgres-engine.ts');
+    const connect = spyOn(PostgresEngine.prototype, 'connect').mockRejectedValue(new Error('refused'));
+    const disconnect = spyOn(PostgresEngine.prototype, 'disconnect').mockResolvedValue(undefined);
+    try {
+      const reads = openReadSource({ capabilities: new Set(['postgres_admin']), connectedDatabaseUrl: 'postgresql://x@127.0.0.1:1/none' } as never, { pauseMs: 0 });
+      await expect(reads.read(async () => 1)).rejects.toThrow('refused');
+      expect(disconnect).toHaveBeenCalledTimes(1);
+      await expect(reads.read(async () => 1)).rejects.toThrow('refused'); // not stuck on the failed attempt
+      expect(connect).toHaveBeenCalledTimes(2);
+      await reads.close();
+      await expect(reads.read(async () => 1)).rejects.toThrow(/closed/);
+      expect(connect).toHaveBeenCalledTimes(2);
+    } finally { connect.mockRestore(); disconnect.mockRestore(); }
   });
 });

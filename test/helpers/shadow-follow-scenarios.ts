@@ -180,6 +180,27 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
       } finally { await base.close(); await r.close(); }
     }, 90_000);
 
+    test('stopping the reconciler and closing the read source ends a pass in flight and opens nothing again', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      let readsAfterStop = 0;
+      let stopped = false;
+      const reads = { pauseMs: 0, close: () => base.close(), read: <T>(fn: Parameters<typeof base.read<T>>[0]) => { if (stopped) readsAfterStop++; return base.read(fn); } };
+      let small: Reconciler;
+      const rpc = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+        const out = await r.rpc<T>(method, args);
+        if (method === 'relationDigest' && !stopped) { stopped = true; small.stop(); await base.close(); }
+        return out;
+      };
+      try {
+        small = new Reconciler({ dir: r.dir, reads, rpc, follower: r.follower, intervalRows: 2 });
+        const pass = await small.run('full');
+        expect(pass.error).toMatch(/stopped/);
+        expect(readsAfterStop).toBe(0);
+        await expect(base.read(async () => 1)).rejects.toThrow(/closed/);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
     test('an interval read before a delete does not bring the deleted row back', async () => {
       const r = await rig();
       const base = openReadSource(ctx.primary(), { pauseMs: 0 });

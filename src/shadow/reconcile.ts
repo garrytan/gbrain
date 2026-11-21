@@ -24,7 +24,8 @@ import { appendPass, NIGHTLY_MS, readPasses, type PassRecord, type Watermark } f
 import { intervalDigest, rowDigest, sortKey, sortKeyUnsupported } from './follow-digest.ts';
 import { nextGeneration, type ShadowFollower } from './follower.ts';
 import { primaryTables } from './seed-gaps.ts';
-import type { ReadSource } from './read-pool.ts';
+import type { BrainEngine } from '../core/engine.ts';
+import type { ReadQuery, ReadSource } from './read-pool.ts';
 import { relationRead } from './seed.ts';
 
 export const RECONCILE_INTERVAL_ROWS = 500;
@@ -54,6 +55,7 @@ export class Reconciler {
   private debounce: ReturnType<typeof setTimeout> | null = null;
   private nightly: ReturnType<typeof setInterval> | null = null;
   private firstCheck: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   constructor(private readonly o: ReconcilerOptions) {}
 
@@ -93,10 +95,15 @@ export class Reconciler {
   }
 
   stop(): void {
+    this.stopped = true; // a pass in flight ends at its next read, so it cannot reopen what the caller is closing
     if (this.nightly) clearInterval(this.nightly);
     if (this.debounce) clearTimeout(this.debounce);
     if (this.firstCheck) clearTimeout(this.firstCheck);
     this.nightly = this.debounce = this.firstCheck = null;
+  }
+
+  private read<T>(fn: (tx: BrainEngine, query: ReadQuery) => Promise<T>): Promise<T> {
+    return this.stopped ? Promise.reject(new Error('reconciler stopped')) : this.o.reads.read(fn);
   }
 
   private async tick(): Promise<void> {
@@ -123,18 +130,18 @@ export class Reconciler {
       const plan = await this.o.rpc<SeedPlan>('seedPlan', {}, 30_000);
       passStart = Date.now();
       const validAtStart = barrier.valid && (this.o.follower?.lastInvalidatedAt ?? 0) < passStart;
-      const tables = new Set(await this.o.reads.read((_, query) => primaryTables(query)));
+      const tables = new Set(await this.read((_, query) => primaryTables(query)));
       const maxima: Record<string, string> = {};
       for (const rp of plan.relations) {
         if (only && !only.includes(rp.relation)) continue;
         if (!tables.has(rp.relation)) { settled.push(rp.relation); continue; }
-        const read = await this.o.reads.read((tx) => relationRead(tx, rp.relation, rp.key));
+        const read = await this.read((tx) => relationRead(tx, rp.relation, rp.key));
         if (sortKeyUnsupported(read.key)) { verified = false; continue; }
         const displaced = await this.relation(rp, read, validAtStart, rec);
         if (displaced > 0) { verified = false; this.markDirty(rp.relation); } else settled.push(rp.relation);
         const [k] = read.key;
         if (kind === 'full' && read.key.length === 1 && k!.name === 'id' && ['smallint', 'integer', 'bigint'].includes(k!.type)) {
-          const [row] = await this.o.reads.read((_, query) => query(`SELECT max("id")::text AS m FROM ${quoteIdent(rp.relation)}`));
+          const [row] = await this.read((_, query) => query(`SELECT max("id")::text AS m FROM ${quoteIdent(rp.relation)}`));
           if (typeof row?.m === 'string' && /^\d+$/.test(row.m)) maxima[rp.relation] = row.m;
         }
       }
@@ -163,7 +170,7 @@ export class Reconciler {
 
   /** Evaluates the fingerprint probe corpus on the primary and in the store; the store records the result. */
   async probe(): Promise<void> {
-    const probe = await this.o.reads.read(async (tx) => ((await hasFingerprintFunctions(tx)) ? probeOnPrimary(tx) : null));
+    const probe = await this.read(async (tx) => ((await hasFingerprintFunctions(tx)) ? probeOnPrimary(tx) : null));
     if (!probe) return;
     const { sql, ...meta } = probe;
     await this.o.rpc('probe', { sql, ...meta }, 30_000);
@@ -178,7 +185,7 @@ export class Reconciler {
     for (;;) {
       const generation = nextGeneration();
       const from: readonly string[] | null = after;
-      const rows: KeysetRow[] = await this.o.reads.read((tx) => readKeysetRows(tx, read, from, size));
+      const rows: KeysetRow[] = await this.read((tx) => readKeysetRows(tx, read, from, size));
       // A full interval ends just past its last key (the next possible sort key); a short one is the end of the relation.
       const hi = rows.length === size ? `${sortKey(read.key, rows[rows.length - 1]!.key).toString('hex')}00` : null;
       const result = await this.interval(rp.relation, lo, hi, read, rows, generation);

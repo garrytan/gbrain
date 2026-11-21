@@ -24,12 +24,19 @@ const READ_TIMEOUT_MS = 30_000;
 export function openReadSource(primary: BrainEngine, opts: { pauseMs?: number } = {}): ReadSource {
   const postgres = hasCapability(primary, 'postgres_admin'); // a server database: a second connection is cheap, PGLite has one
   let dedicated: Promise<BrainEngine> | null = null;
+  let closed = false;
   const engine = (): Promise<BrainEngine> => {
+    if (closed) return Promise.reject(new Error('shadow read source is closed'));
     if (!postgres) return Promise.resolve(primary);
     dedicated ??= (async () => {
       const { PostgresEngine } = await import('../core/postgres-engine.ts');
       const own = new PostgresEngine();
-      await own.connect({ engine: 'postgres', database_url: (primary as { connectedDatabaseUrl?: string }).connectedDatabaseUrl, poolSize: 1 });
+      try {
+        await own.connect({ engine: 'postgres', database_url: (primary as { connectedDatabaseUrl?: string }).connectedDatabaseUrl, poolSize: 1 });
+      } catch (error) {
+        await own.disconnect().catch(() => undefined); // a half-opened pool must not outlive the failed attempt
+        throw error;
+      }
       return own;
     })();
     dedicated.catch(() => { dedicated = null; });
@@ -47,6 +54,7 @@ export function openReadSource(primary: BrainEngine, opts: { pauseMs?: number } 
       }, { readOnly: true });
     },
     async close() {
+      closed = true;
       const own = dedicated;
       dedicated = null;
       await (await own?.catch(() => null))?.disconnect().catch(() => undefined);
