@@ -339,9 +339,9 @@ storeDecideQualification	decide_store	yes	3	no	yes	yes	serves
 listDecideCalibrations	decide_store	yes	7	no	yes	yes	serves
 getDecideCalibration	decide_store	yes	6	no	yes	yes	serves
 setDecideCalibrationRetired	decide_store	yes	4	no	yes	yes	serves
-upsertOpenLoop	open_loops	yes	8	no	yes	yes	serves
-closeOpenLoop	open_loops	yes	5	no	yes	yes	serves
-listOpenLoops	open_loops	yes	3	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	9	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	6	no	yes	yes	serves
+listOpenLoops	open_loops	yes	4	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	4	no	yes	yes	serves
 readSourceState	write_misc	no	0	no	-	-	-
 readAdmissionSource	write_misc	no	0	no	-	-	-
