@@ -178,13 +178,26 @@ export abstract class BaseCyclePhase {
   protected meter?: BudgetMeter;
 
   /**
-   * Resolve the budget cap from config (or default). Override is the explicit
-   * value passed via opts.budgetUsd. Otherwise: config[budgetUsdKey] → default.
+   * Resolve the budget cap. Precedence: explicit opts.budgetUsd → file config
+   * (flat `budgetUsdKey`, then the `cycle` leaf map) → the DB config plane
+   * (`engine.getConfig(budgetUsdKey)`, where `gbrain config set` writes) →
+   * default. The cycle hands these phases `loadConfig()` (file only), so the
+   * DB read is what makes an operator's `config set` cap bind. An unreadable
+   * DB value keeps the default.
    */
-  private resolveBudgetUsd(ctx: OperationContext, opts: BasePhaseOpts): number {
+  private async resolveBudgetUsd(ctx: OperationContext, opts: BasePhaseOpts): Promise<number> {
     if (typeof opts.budgetUsd === 'number') return opts.budgetUsd;
-    const raw = (ctx.config as unknown as Record<string, unknown>)[this.budgetUsdKey];
-    return parseBudgetUsd(typeof raw === 'number' || typeof raw === 'string' ? raw : undefined, this.budgetUsdDefault);
+    const cfg = (ctx.config ?? {}) as unknown as Record<string, unknown>;
+    const usable = (v: unknown): v is string | number =>
+      typeof v === 'number' || (typeof v === 'string' && v.trim() !== '');
+    const flat = cfg[this.budgetUsdKey];
+    if (usable(flat)) return parseBudgetUsd(flat, this.budgetUsdDefault);
+    const cycleMap = cfg.cycle as Record<string, unknown> | undefined;
+    const leaf = this.budgetUsdKey.startsWith('cycle.') ? this.budgetUsdKey.slice('cycle.'.length) : null;
+    const fromMap = leaf && cycleMap && typeof cycleMap === 'object' ? cycleMap[leaf] : undefined;
+    if (usable(fromMap)) return parseBudgetUsd(fromMap, this.budgetUsdDefault);
+    const fromDb = await Promise.resolve(ctx.engine.getConfig?.(this.budgetUsdKey)).catch(() => null);
+    return parseBudgetUsd(fromDb ?? undefined, this.budgetUsdDefault);
   }
 
   /**
@@ -215,7 +228,7 @@ export abstract class BaseCyclePhase {
 
     // Budget meter construction. The default path reads config; tests inject.
     if (!opts.meter) {
-      const budgetUsd = this.resolveBudgetUsd(ctx, opts);
+      const budgetUsd = await this.resolveBudgetUsd(ctx, opts);
       this.meter = new BudgetMeter({
         budgetUsd,
         phase: this.name,
