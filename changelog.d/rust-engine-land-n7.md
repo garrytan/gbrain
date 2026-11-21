@@ -1,0 +1,9 @@
+**The doctor checks, repair scope, restore target, connector status and a few config reads now go through engine members instead of their own SQL.**
+
+### Changed
+- Thirty-three callers stop running their own `sources`, `config` and facts statements. They use the engine members and typed source and config reads that already exist (`listAllSources`, `listSourceRecords`, `getSource`, `readSourceIncarnation`, `setConfig`, `unsetConfig`, `readConfigValue`, `readConfigRows`, `countAtomFacts`, `listFactsPageBodies`, `listUnpreviewedTrustFacts`, `readFactTableCatalog`, the unlinked-facts counts, `countForeignEdges`, `readWriterVersionCutoff`). The callers are the doctor checks, ghost pages, the chronicle cycle, `gbrain repair` scope, `gbrain export --restore-only`, the skills status snapshot, connector holds and connector status, the storage-manifest door, the query cache config, the effective-date backfill checkpoint, and the doctor entry budget.
+- Where a statement ended in `ORDER BY id`, the caller now sorts the rows by id in code, in byte order. Source ids are lowercase ASCII, so this is the order a `C` collation database gave. On a database with another collation the order is now the byte order, not the locale order.
+- The first local path of the remediation context takes the `default` source first, then by id, as the old statement did.
+- `gbrain export --restore-only` reads the sources once and chooses among them in code. A repo path owned by two live sources still refuses, and a path owned only by an archived source still names that source.
+- On the Rust engine these members refuse as raw SQL until its store wiring lands; no Rust-served table changes.
+- No write, schema, privacy or visibility filter moved. A remote caller's source grant on the skills status snapshot is applied in code exactly as before.
