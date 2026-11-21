@@ -29,7 +29,11 @@ export async function runPhaseFactsDrain(engine: BrainEngine | null, opts: { dry
     ...(deadRetry.waiting_on ? { waiting_on: deadRetry.waiting_on } : {}), ...('error' in deadRetry ? { error: deadRetry.error } : {}) };
   const retryWarn = deadRetry.exhausted.length > 0 || 'error' in deadRetry;
   if (engine.kind !== 'pglite') {
-    const untaken = await untakenWaitingJobs(engine, 'facts-absorb').catch(() => null);
+    const untaken = await untakenWaitingJobs(engine, 'facts-absorb').catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) }));
+    if (untaken && 'error' in untaken) {
+      return { ...base, status: 'warn', details: { reason: 'no_worker_check_failed', error: untaken.error, dead_retry },
+        summary: `could not check whether a job worker runs facts-absorb jobs (${untaken.error}); run gbrain doctor --only queue_health${retryNote}` };
+    }
     if (untaken) {
       return { ...base, status: 'warn', details: { reason: 'no_worker', no_worker: untaken, dead_retry },
         summary: `${untaken.waiting} facts-absorb job(s) have waited up to ${formatAge(untaken.oldest_age_seconds)} on queue '${untaken.queue}' and no job worker has run a job there in ${untaken.threshold_hours}h, so no facts are being extracted; start one: ${untaken.fix.argv!.join(' ')}${retryNote}` };

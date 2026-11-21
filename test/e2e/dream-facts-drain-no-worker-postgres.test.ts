@@ -31,7 +31,7 @@ async function queued(db: BrainEngine, name: string, n: number, age: string): Pr
   const queue = new MinionQueue(db);
   const ids: number[] = [];
   for (let i = 0; i < n; i++) ids.push((await queue.add(name, { slug: `notes/no-worker-${name}-${age.replace(/\W/g, '')}-${i}`, sourceId: 'default' }, { queue: 'default' })).id);
-  await db.executeRaw(`UPDATE minion_jobs SET created_at = now() - $2::text::interval WHERE id = ANY($1::int[])`, [ids, age]);
+  await db.executeRaw(`UPDATE minion_jobs SET created_at = now() - $2::text::interval, updated_at = now() - $2::text::interval WHERE id = ANY($1::int[])`, [ids, age]);
   return ids;
 }
 
@@ -74,6 +74,20 @@ describe('dream facts_drain on Postgres with queued facts-absorb jobs', () => {
     const stalled = await new MinionQueue(db).claim('worker-gone', 300_000, 'default', ['embed-backfill']);
     await db.executeRaw(`UPDATE minion_jobs SET started_at = now() - interval '2 hours', lock_until = now() - interval '90 minutes' WHERE id = $1`, [stalled!.id]);
     expect((await runPhaseFactsDrain(db, { dryRun: false })).details).toMatchObject({ reason: 'no_worker' });
+  }), 120_000);
+
+  test('an old job re-queued just now, as the dead-job retry does, is not a stuck queue yet', () => onPostgres(async db => {
+    const [job] = await queued(db, 'facts-absorb', 1, '22 days');
+    await db.executeRaw(`UPDATE minion_jobs SET updated_at = now() WHERE id = $1`, [job]);
+    expect((await runPhaseFactsDrain(db, { dryRun: false })).status).toBe('skipped');
+  }), 120_000);
+
+  test('a queue on another name gets the fix that names it, and an age in hours', () => onPostgres(async db => {
+    const job = await new MinionQueue(db).add('facts-absorb', { slug: 'notes/no-worker-other', sourceId: 'default' }, { queue: 'other' });
+    await db.executeRaw(`UPDATE minion_jobs SET created_at = now() - interval '3 hours', updated_at = now() - interval '3 hours' WHERE id = $1`, [job.id]);
+    const pass = await runPhaseFactsDrain(db, { dryRun: false });
+    expect(pass.summary).toContain('3h');
+    expect(pass.details).toMatchObject({ no_worker: { queue: 'other', fix: { argv: ['gbrain', 'jobs', 'supervisor', 'start', '--queue', 'other'] } } });
   }), 120_000);
 
   test('jobs queued minutes ago are not a stuck queue yet', () => onPostgres(async db => {
