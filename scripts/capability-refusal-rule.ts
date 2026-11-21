@@ -55,26 +55,37 @@ const isRawSqlCall = (n: ts.CallExpression): boolean =>
   || (ts.isIdentifier(n.expression) && RAW_SQL_FUNCTIONS.has(n.expression.text));
 
 /**
- * Whether `node` runs a raw-SQL engine call whose failure reaches the catch. A function declaration or a
- * callback nothing awaits runs elsewhere and does not count. A callback inside an awaited call
- * (`await tx(async t => t.executeRaw(..))`, `await Promise.all(xs.map(x => e.executeRaw(..)))`) does:
- * its rejection rejects the awaited call. `awaited` starts true when `node` is the receiver of a
- * `.catch(fn)`, since the whole chain rejects into the handler.
+ * Whether a failure of a raw-SQL engine call inside `node` reaches its catch. A call in the guarded
+ * code itself counts. A call inside a callback counts when the callback hands back the call's promise
+ * (an expression body, a `return`, or an `await` in its body) and the call that receives the callback
+ * is itself awaited or returned, for example `await engine.transaction(tx => Promise.all(ids.map(id =>
+ * tx.executeRaw(q, [id]))))`. A callback whose promise nothing awaits (`schedule(() => e.executeRaw(q))`
+ * as a statement) runs elsewhere and does not count. `node` is a try block, or the receiver of
+ * `.catch(fn)`, whose promise the handler catches; `awaited` starts true for the receiver.
  */
 export function guardsRawSqlCall(node: ts.Node, awaited = false): boolean {
   let found = false;
-  const visit = (n: ts.Node, inAwait: boolean): void => {
+  // `flows`: the value of `n` reaches the catch (awaited, returned, or the `.catch` receiver).
+  const visit = (n: ts.Node, flows: boolean, inCallback: boolean): void => {
     if (found) return;
-    if (n !== node && ts.isFunctionLike(n) && !(inAwait && (ts.isArrowFunction(n) || ts.isFunctionExpression(n)))) return;
-    if (ts.isCallExpression(n) && isRawSqlCall(n)) {
+    if (n !== node && ts.isFunctionLike(n)) {
+      if (!flows) return;
+      const body = (n as ts.FunctionLikeDeclarationBase).body;
+      if (!body) return;
+      visit(body, !ts.isBlock(body), true);
+      return;
+    }
+    if (ts.isCallExpression(n) && isRawSqlCall(n) && (!inCallback || flows)) {
       found = true;
       return;
     }
-    // A callback body starts a fresh scope: what it awaits counts, what it merely starts does not.
-    const next = n !== node && ts.isFunctionLike(n) ? false : inAwait || ts.isAwaitExpression(n);
-    ts.forEachChild(n, c => visit(c, next));
+    // A statement starts a new value; await and return hand a value to the enclosing promise; other
+    // expressions (call arguments, arrays, `.then` chains, parentheses) pass on whether theirs flows.
+    let childFlows = ts.isStatement(n) || ts.isBlock(n) ? false : flows;
+    if (ts.isAwaitExpression(n) || ts.isReturnStatement(n)) childFlows = true;
+    ts.forEachChild(n, (c) => visit(c, childFlows, inCallback));
   };
-  visit(node, awaited);
+  visit(node, awaited || !ts.isBlock(node), false);
   return found;
 }
 
@@ -106,22 +117,48 @@ function thenRethrows(s: ts.Statement): boolean {
   return ts.isBlock(s) && s.statements.length > 0 && isThrow(s.statements[0]!);
 }
 
+/** A `return` of a fallback anywhere in `s` (not in a nested function); returning a rethrow helper's result is not a fallback. */
+function returnsFallback(s: ts.Node, errorName: string | undefined): boolean {
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found || ts.isFunctionLike(n)) return;
+    if (ts.isReturnStatement(n) && !(n.expression && isRethrowHelperCall(n.expression, errorName))) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(s);
+  return found;
+}
+
 /**
  * Whether the handler lets a capability refusal through before any fallback: one of its leading
- * statements, before the first return, branch or assignment, rethrows it.
+ * statements, before the first return, branch or assignment, rethrows it. A bare block is read as
+ * its statements; any other statement that can return a fallback on some path (a loop, a switch, a
+ * labelled block) ends the search, since that path skips the later check.
  */
 export function handlerRethrowsCapabilityRefusal(site: CapabilityRefusalSite): boolean {
-  const { handlerStatements: body, errorName } = site;
-  for (const s of body) {
-    if (isThrow(s)) return true;
-    if (ts.isExpressionStatement(s) && isRethrowHelperCall(s.expression, errorName)) return true;
-    if (ts.isReturnStatement(s) && s.expression && isRethrowHelperCall(s.expression, errorName)) return true;
-    if (ts.isIfStatement(s) && testsCapabilityRefusal(s.expression, errorName) && thenRethrows(s.thenStatement)) return true;
-    // Logging, locals and other side effects may come first; the first answer or branch ends the search.
-    if (ts.isReturnStatement(s) || ts.isIfStatement(s) || ts.isSwitchStatement(s) || ts.isTryStatement(s)) return false;
-    if (ts.isExpressionStatement(s) && ts.isBinaryExpression(s.expression) && s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) return false;
-  }
-  return false;
+  const { errorName } = site;
+  const scan = (body: readonly ts.Statement[]): boolean | undefined => {
+    for (const s of body) {
+      if (ts.isBlock(s)) {
+        const inner = scan(s.statements);
+        if (inner !== undefined) return inner;
+        continue;
+      }
+      if (isThrow(s)) return true;
+      if (ts.isExpressionStatement(s) && isRethrowHelperCall(s.expression, errorName)) return true;
+      if (ts.isReturnStatement(s) && s.expression && isRethrowHelperCall(s.expression, errorName)) return true;
+      if (ts.isIfStatement(s) && testsCapabilityRefusal(s.expression, errorName) && thenRethrows(s.thenStatement)) return true;
+      // Logging, locals and other side effects may come first; the first answer or branch ends the search.
+      if (ts.isReturnStatement(s) || ts.isIfStatement(s) || ts.isTryStatement(s)) return false;
+      if (ts.isExpressionStatement(s) && ts.isBinaryExpression(s.expression) && s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) return false;
+      if (returnsFallback(s, errorName)) return false;
+    }
+    return undefined;
+  };
+  return scan(site.handlerStatements) === true;
 }
 
 /** True for a violation: a catch around a raw-SQL engine call whose handler can swallow a capability refusal. */
