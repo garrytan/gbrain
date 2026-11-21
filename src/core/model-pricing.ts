@@ -209,6 +209,10 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // repair default (#6188) meters exactly; it is NOT a tier default yet
   // (openai-latest.ts METERED_ONLY keeps discovery on the gpt-5.6 family).
   'openai:gpt-6.1-sol':                   { input:  2.00, output: 10.00 },
+  // gpt-6.2 (2026-11-17): short-context standard-tier list rates; metered-only
+  // like gpt-6.1-sol (openai-latest.ts METERED_ONLY).
+  'openai:gpt-6.2-astra':                 { input:  8.00, output: 40.00 },
+  'openai:gpt-6.2-sol':                   { input:  2.00, output: 10.00 },
 
   // ── Google ─────────────────────────────────────────────────────────────
   // `gemini-1.5-pro` was retired by Google (#3510); kept so historical
