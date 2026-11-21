@@ -133,7 +133,8 @@ requests.
 
 ## Receipts, spend and state
 
-`store.ts` reads and writes through `engine.executeRaw` (no engine method).
+`store.ts` reads and writes through typed `BrainEngine` members (the decide-store family in
+`src/core/engine-sql/decide-store.ts`); it no longer calls `engine.executeRaw`.
 `decision_receipts` rows hold hashes only (`subject_ref`, `state_hash`,
 `question_hash` are HMAC-SHA256 under a per-brain salt kept in `decide_state`,
 which no config surface reads), the thresholded number, the outcome, and the

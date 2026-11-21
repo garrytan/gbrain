@@ -50,7 +50,11 @@ moving again; ask me only about the ones gbrain will not decide by itself."*
    `last_commit` is the commit the source's sync applied through, and `live`
    names the process holding its drain lease (a serve pass, a sync job, a CLI
    sync), with its heartbeat, `progress` and `stalled`; null means nothing is
-   syncing it now. Holds are bounded: `holds_summary` counts every hold by
+   syncing it now. `automatic_sync.enabled` is false when the source is
+   excluded from automatic sync (`config.syncEnabled=false`): autopilot, the
+   freshness loop and `gbrain sync --all` skip it, so nothing syncs it until an
+   explicit `gbrain sync --source <id>` runs, and `automatic_sync.fix` previews
+   turning it back on (the owner's call). Holds are bounded: `holds_summary` counts every hold by
    code, by state (`needs_human`, `actionable`, `held`) and by `fault_code`
    (the failure a `page_write_failed` hold recorded, which each such hold
    also names), and `holds` lists the first 20, needs-human first. When it
@@ -157,6 +161,7 @@ Every hold and error has three fields, from one table
 | `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
 | `tag_too_long` | page | none | yes | always: only an edit to the file clears it |
 | `visibility_noncanonical` | page | none | yes | always: only an edit to the file clears it |
+| `readers_noncanonical` | page | none | yes | always: only an edit to the file clears it |
 | `content_null_bytes` | page | none | yes | always: only an edit to the file or its removal clears it |
 | `content_filter_owned` | page | none | yes | always: sync never runs the filter that would turn the file into text |
 | `git_object_missing` | page | none | yes | always: only restoring the Git object clears it |
