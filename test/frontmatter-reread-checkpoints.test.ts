@@ -9,7 +9,12 @@
  * 2. Fails when: the re-read carries the failure checkpoint where the drain never reads it (the page gets three more
  *    paid attempts), or the held page's retry still names the old content hash (the retry is refused
  *    revision_conflict and the page can never be recovered by the displayed retry).
- * 3. Runs on PGLite (the managed-brain fixture). The model and the embedding provider are stubs; no network.
+ *    Also protects (pages-03 follow-up): the same bound for a page the input cap cut, whose failed requests' receipts
+ *    were compacted before the upgrade (fails when the carried failure count is filed under a key the drain never reads,
+ *    so the page gets three more paid attempts).
+ * 3. Runs on PGLite and, with DATABASE_URL, on Postgres (the managed-brain fixture). The Rust engine serves no raw SQL,
+ *    so the managed sync stops there with engine_capability_missing. The model and the embedding provider are stubs;
+ *    no network.
  */
 import { describe, expect, test } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
@@ -29,14 +34,17 @@ import { contentHash } from '../src/core/utils.ts';
 import { discoverExtractablePages, MAX_DETERMINISTIC_FAILURES, runPhaseExtractAtoms } from '../src/core/cycle/extract-atoms.ts';
 import { listHeldManagedAtoms } from '../src/core/persistence/atom-maintenance.ts';
 import { retryManagedAtomBatch } from '../src/core/persistence/atom-retry.ts';
+import { compactWriteReceipts } from '../src/core/persistence/journal.ts';
+import { EXTRACT_MAX_INPUT_CHARS_KEY } from '../src/core/cycle/extract-atoms-input.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
+import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
 
 const DIMS = 1536, MODEL = 'openai:text-embedding-3-small';
 const SLUG = 'meetings/kept';
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-const meeting = `---\ntype: meeting\ntitle: ${SLUG}\ndate: 2024-03-01\nroom: 0101\n---\n\n${`The committed notes of ${SLUG}, about acme-example and widget-co. `.repeat(12)}\n`;
+const meeting = `---\ntype: meeting\ntitle: ${SLUG}\ndate: 2024-03-01\nroom: 0101\n---\n\n${`The committed notes of ${SLUG}, about acme-example and widget-co. `.repeat(20)}\n`;
 const setup = ({ root }: { root: string }) => {
   mkdirSync(join(root, 'meetings'), { recursive: true }); git(root, 'init', '-q');
   writeFileSync(join(root, `${SLUG}.md`), meeting);
@@ -54,8 +62,8 @@ async function drainEffects(engine: BrainEngine): Promise<void> {
 }
 const revisionOf = async (engine: BrainEngine, slug: string) => (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision;
 type Row = { id: number; title: string; type: string; compiled_truth: string; timeline: string | null; frontmatter: Record<string, unknown>; content_hash: string };
-const pageRow = async (engine: BrainEngine) => (await engine.executeRaw<Row>(
-  'SELECT id, title, type, compiled_truth, timeline, frontmatter, content_hash FROM pages WHERE slug=$1', [SLUG]))[0]!;
+const pageRow = async (engine: BrainEngine, slug = SLUG) => (await engine.executeRaw<Row>(
+  'SELECT id, title, type, compiled_truth, timeline, frontmatter, content_hash FROM pages WHERE slug=$1', [slug]))[0]!;
 const hashOf = (row: Row, frontmatter: Record<string, unknown>) => contentHash({ title: row.title, type: row.type as never, compiled_truth: row.compiled_truth, timeline: row.timeline ?? '', frontmatter, tags: [] });
 
 /** What an older gbrain left: the old typing stored, the hash it computed over that typing, and its parser version. */
@@ -89,10 +97,10 @@ function model() {
 const VALID = JSON.stringify([{ title: 'Measured progress', atom_type: 'insight', body: 'Measure progress against clear exit criteria.' }]);
 
 /** One managed atom drain of the page at its current stored content, as the cycle runs it. */
-async function extract(engine: BrainEngine, chat: () => Promise<ChatResult>) {
-  const row = await pageRow(engine);
+async function extract(engine: BrainEngine, chat: () => Promise<ChatResult>, slug = SLUG) {
+  const row = await pageRow(engine, slug);
   const run = await runPhaseExtractAtoms(engine, { sourceId: 'default', _transcripts: [],
-    _pages: [{ slug: SLUG, content: row.compiled_truth, contentHash: row.content_hash }], _chat: chat as never });
+    _pages: [{ slug, content: row.compiled_truth, contentHash: row.content_hash }], _chat: chat as never });
   await disposePersistenceConsumer(engine);
   return run;
 }
@@ -103,7 +111,9 @@ const withStubs = (run: () => Promise<void>) => withEnv({ GBRAIN_EMBEDDING_MODEL
   try { await run(); } finally { __setEmbedTransportForTests(null); __setChatTransportForTests(null); resetGateway(); }
 });
 
-describe('pages-03: the re-read keeps managed atom failure checkpoints usable', () => {
+for (const backend of testBackends()) {
+  const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+describe(`pages-03: the re-read keeps managed atom failure checkpoints usable (${backend})`, () => {
   test('a page with two failed paid attempts gets exactly one more model call after the re-read before it is held', () => managedBrain(async ({ engine, root }) => {
     await withStubs(async () => {
       const opts = { sourceId: 'default', noPull: true };
@@ -128,7 +138,7 @@ describe('pages-03: the re-read keeps managed atom failure checkpoints usable', 
       expect((await listHeldManagedAtoms(engine, ['default'])).map(entry => [entry.locator, entry.attempts])).toEqual([[SLUG, MAX_DETERMINISTIC_FAILURES]]);
       expect(await discoverExtractablePages(engine, 'default', [SLUG])).toEqual([]);
     });
-  }, { setup }), 240_000);
+  }, { setup, databaseUrl }), 240_000);
 
   test('the retry a held page displays still recovers it after the re-read', () => managedBrain(async ({ engine, root }) => {
     await withStubs(async () => {
@@ -166,5 +176,36 @@ describe('pages-03: the re-read keeps managed atom failure checkpoints usable', 
       await extract(engine, m.chat);
       expect(m.calls()).toBe(MAX_DETERMINISTIC_FAILURES + 1);
     });
-  }, { setup }), 240_000);
+  }, { setup, databaseUrl }), 240_000);
+
+  test('a cut page with two failed paid attempts and compacted receipts gets exactly one more model call after the re-read', () => managedBrain(async ({ engine, root }) => {
+    await withStubs(async () => {
+      const opts = { sourceId: 'default', noPull: true };
+      await engine.setConfig(EXTRACT_MAX_INPUT_CHARS_KEY, '1000');
+      expect((await performManagedSync(engine, opts)).status).toBe('first_sync');
+      expect((await pageRow(engine)).compiled_truth.length).toBeGreaterThan(1000);
+      await drainEffects(engine);
+      const oldHash = await storedByOlderGbrain(engine);
+      const m = model();
+      // The older gbrain's drain read the page's first 1000 characters twice; both replies were malformed.
+      for (let attempt = 1; attempt <= MAX_DETERMINISTIC_FAILURES - 1; attempt++) await extract(engine, m.chat);
+      expect(m.calls()).toBe(MAX_DETERMINISTIC_FAILURES - 1);
+      // Its receipts aged out: the requests no longer say where the page was cut.
+      await Bun.sleep(5);
+      expect(await compactWriteReceipts(engine, 0)).toBeGreaterThan(0);
+      const intents = await engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM persistence_requests WHERE intent->'origin'->>'partialInputChars' IS NOT NULL`);
+      expect(intents[0]!.n).toBe(0);
+
+      rewriteHistory(root);
+      expect(await performManagedSync(engine, opts)).toMatchObject({ status: 'synced', modified: 1 });
+      expect((await pageRow(engine)).content_hash).not.toBe(oldHash);
+
+      for (let run = 0; run < MAX_DETERMINISTIC_FAILURES; run++) await extract(engine, m.chat);
+      expect(m.calls()).toBe(MAX_DETERMINISTIC_FAILURES);
+      expect((await listHeldManagedAtoms(engine, ['default'])).map(entry => [entry.locator, entry.attempts])).toEqual([[SLUG, MAX_DETERMINISTIC_FAILURES]]);
+    });
+  }, { setup, databaseUrl }), 240_000);
+
 });
+}

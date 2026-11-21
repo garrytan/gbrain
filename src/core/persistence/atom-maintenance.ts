@@ -21,6 +21,7 @@ import type { PreparedMutation } from './coordinator.ts';
 import type { WriteAuthority, WriteRequest } from './model.ts';
 import type { WriteReceipt } from './types.ts';
 import { MAX_DETERMINISTIC_FAILURES, writeAtomPageState } from '../cycle/extract-atoms-page-state.ts';
+import { resolveExtractAtomsInputCap } from '../cycle/extract-atoms-input.ts';
 import { effectiveVisibility, withFolderRestricted } from '../search/private-visibility.ts';
 import { declareDerivation, deriveTrust, lowerToDerivedTier, recordTaintEdges } from '../trust/taint.ts';
 import { stampDerivedRetirement, type DerivedRetiredBy } from './derived-retirement-hold.ts';
@@ -297,8 +298,10 @@ function drainKey(session: ManagedAtomSession, origin: AtomOrigin): string {
 /**
  * pages-03: the fingerprint the drain reads for a page's `managed-atoms` checkpoint `fingerprint` once a one-time
  * re-read moved the page from `fromHash` to `toHash` (its meaning unchanged): the same drain key (cut, connector run)
- * over the new content hash, at the generation the drain reads for it. Null when `fingerprint` is not a drain key of
- * `fromHash` (a run's own record, or one whose cut is unknown because its receipt was compacted).
+ * over the new content hash and the page's current slug, at the generation the drain reads for it. The cut is read
+ * from the checkpoint, from the request's receipt, or, once that receipt was compacted, taken to be the input cap in
+ * effect (a cut item is cut at the cap). Null when `fingerprint` is not a drain key of `fromHash` (a run's own record,
+ * or one cut at a cap no longer in effect whose receipt was compacted).
  */
 export async function carriedAtomDrainKey(engine: BrainEngine, pageId: number, fingerprint: string, fromHash: string, toHash: string): Promise<string | null> {
   const [row] = await engine.executeRaw<{ incarnation: string; locator: string; page_id: number; request_id: string | null; partial: string | null; slug: string | null }>(
@@ -311,7 +314,7 @@ export async function carriedAtomDrainKey(engine: BrainEngine, pageId: number, f
   const [intent] = row.request_id ? await engine.executeRaw<{ partial: string | null; generation: string | null }>(
     `SELECT intent->'origin'->>'partialInputChars' AS partial, intent->'origin'->>'generation' AS generation
        FROM persistence_requests WHERE request_id::text=$1 LIMIT 1`, [row.request_id]) : [];
-  const partials = [...new Set([undefined, Number(row.partial) || undefined, Number(intent?.partial) || undefined])];
+  const partials = [...new Set([undefined, Number(row.partial) || undefined, Number(intent?.partial) || undefined, await resolveExtractAtomsInputCap(engine)])];
   const generations = [...new Set([0, await atomGeneration(engine, pageId, fromHash), Number(intent?.generation) || 0])];
   const origin = (locator: string, contentHash: string, partialInputChars: number | undefined, generation: number): AtomOrigin => ({ kind: 'page', locator,
     contentHash, textHash: '', pageId: row.page_id, revision: null, visibility: 'private', ...(partialInputChars ? { partialInputChars } : {}), ...(generation ? { generation } : {}) });
