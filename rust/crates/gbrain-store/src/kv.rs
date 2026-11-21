@@ -158,6 +158,9 @@ pub fn scan_prefix(
     }
 }
 
+/// The callback of a paged walk: each entry's key and value; `Ok(false)` stops the walk.
+pub type PagedVisit<'a> = dyn FnMut(&[u8], &[u8]) -> Result<bool> + 'a;
+
 /// Calls `f` with each entry under `prefix`, in key order, until it returns false or fails. The entries are read `page` at a time,
 /// each page by its own scan, so `f` runs between scans (it may read the store) and a stop leaves every later page unread: at
 /// most `page - 1` entries past the one that stopped are read.
@@ -165,7 +168,7 @@ pub fn for_each_prefix_paged(
     read: &dyn KvRead,
     prefix: &[u8],
     page: usize,
-    f: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool>,
+    f: &mut PagedVisit<'_>,
 ) -> Result<()> {
     for_each_prefix_paged_from(read, prefix, prefix, page, f)
 }
@@ -177,7 +180,7 @@ pub fn for_each_prefix_paged_from(
     prefix: &[u8],
     from: &[u8],
     page: usize,
-    f: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool>,
+    f: &mut PagedVisit<'_>,
 ) -> Result<()> {
     let page = page.max(1);
     let end = prefix_end(prefix).unwrap_or_else(|| vec![0xFF; 64]);

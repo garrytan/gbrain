@@ -122,7 +122,7 @@ fn settled_another_way(r: &RequestRecord, spec: &IncompleteSyncReceiptSpec) -> R
 impl RequestRecord {
     /// `r.request_id::text = ANY($3::text[])`.
     fn request_id_in(&self, ids: &[String]) -> bool {
-        ids.iter().any(|id| *id == self.request_id)
+        ids.contains(&self.request_id)
     }
 }
 
