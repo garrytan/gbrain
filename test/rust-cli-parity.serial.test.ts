@@ -482,7 +482,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // (engine-sql/repair-page-reads.ts), so the check passes with PGLite's message.
       // backup_coverage is gone from this list: a Rust brain counts its live pages and reads its maturity
       // (countBrainLivePages, readBrainMaturity), so the check answers as it does on PGLite.
-      untypedWarnings: ['extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
+      // entity_duplicates warns with the named refusal of listEntityKeyRows, which names what the store's key rows lack
+      // in the member's parenthesis (the page id, generation, creation time and identity group, and the members and
+      // tokens filters); the full key-row shape is lane 5's.
+      untypedWarnings: ['entity_duplicates', 'extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
         'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
