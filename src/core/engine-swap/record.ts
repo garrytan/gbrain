@@ -10,6 +10,7 @@
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configDir } from '../config.ts';
+import { flushDirectory } from '../fs-durable.ts';
 
 export const SWAP_RECORD_VERSION = 1;
 
@@ -93,7 +94,7 @@ export function writeSwapRecord(path: string, record: SwapRecord, fs: SwapFs = R
     fs.close(fd);
   }
   fs.rename(tmp, path);
-  try { const dir = openSync(dirname(path), 'r'); try { fsyncSync(dir); } finally { closeSync(dir); } } catch { /* a platform without directory fsync */ }
+  flushDirectory(dirname(path), { bestEffort: true });
 }
 
 /** The state after `state` in the run's order. */

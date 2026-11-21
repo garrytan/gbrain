@@ -8,7 +8,7 @@
  * store, opened and answering. If it does not, the config is put back at once, so authority never points at an
  * unverified engine.
  */
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../spawn.ts';
 import { resolve } from 'node:path';
 import { loadConfigFileOnly, saveConfig, type GBrainConfig } from '../config.ts';
 import { resolveServeGbrainCommand } from '../serve-service.ts';
