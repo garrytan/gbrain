@@ -98,6 +98,7 @@ describe('rows (v3.2 §2.3)', () => {
     ['8 deleted_same (marker)', { page: null, record: null, marker: { kind: 'deleted', blobOids: ['A'] } }, 'deleted_same', true],
     ['8 deleted_same (the delete removed the file, the removal not committed yet)', { dirty: 'deleted', removedFile: true, page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_same', true],
     ['9 deleted_edited (LC-1: tombstone, the file the delete removed restored)', { removedFile: true, page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_edited', false],
+    ['9 deleted_edited (LC-1: a restored file whose dirtiness probe failed is held for consent, never settled as deleted_same)', { dirty: 'unknown', removedFile: true, page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_edited', false],
     ['9 deleted_edited (LC-1: marker, the file the purge removed restored)', { removedFile: true, page: null, record: null, marker: { kind: 'deleted', blobOids: ['A'] } }, 'deleted_edited', false],
     ['9 deleted_edited (tombstone)', { tree: 'B', level: 'B', page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_edited', false],
     ['8 a sync-made tombstone whose file is back unchanged imports (a revert, a branch switch)', { page: { live: false, revision: 'R1', originMatches: true, syncDeleted: true } }, 'import', false],
