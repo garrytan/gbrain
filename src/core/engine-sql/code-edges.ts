@@ -18,9 +18,12 @@ import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
-/** Rows per statement for a shape binding `bindsPerRow` params (Infinity = one statement). */
+/** The Postgres wire protocol carries at most 65,534 bind parameters per statement (a uint16 count). */
+const POSTGRES_BIND_CEILING = 60_000;
+
+/** Rows per statement for a shape binding `bindsPerRow` params, never past the wire protocol's bind ceiling. */
 function rowsPerStatement(exec: SqlExecutor, bindsPerRow: number): number {
-  return Math.floor(exec.capabilities.maxBindParamsPerStatement / bindsPerRow);
+  return Math.floor(Math.min(exec.capabilities.maxBindParamsPerStatement, POSTGRES_BIND_CEILING) / bindsPerRow);
 }
 
 function* batches<T>(rows: T[], size: number): Generator<T[]> {
