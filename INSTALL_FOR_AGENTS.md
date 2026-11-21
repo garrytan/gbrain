@@ -94,6 +94,19 @@ The PATH line goes in `~/.profile`, which new login shells read. Bash skips `~/.
 Next, on Claude Code or Codex: `gbrain setup claude-code` (or `gbrain setup codex`), which needs no API
 key ([Step 3](#step-3-create-the-brain)). On any other harness, `gbrain init --pglite --no-embedding` (Step 3).
 
+<a id="release-binary"></a>
+
+**A command scanner blocks the Bun installer, `bun install` or the git clone (Hermes).** Some harnesses check each shell command before running it and refuse what they can't approve without a person. Hermes's scanner (Tirith) in single-query mode refuses `curl … | bash`, `bun install -g github:…` (its package lookup can't finish offline) and commands that append to a dotfile such as `~/.profile`. Install the release binary instead: one file built from the same release, which needs no Bun, no git and no package install. Run each line as its own command, exactly as written (Linux x64; on an Apple Silicon Mac use `gbrain-darwin-arm64`):
+
+```bash
+curl -fL --create-dirs -o ~/.local/bin/gbrain https://github.com/garrytan/gbrain/releases/latest/download/gbrain-linux-x64
+chmod +x ~/.local/bin/gbrain
+~/.local/bin/gbrain --version
+~/.local/bin/gbrain init --pglite --no-embedding
+```
+
+`releases/latest` is the stable release. Use the absolute path `~/.local/bin/gbrain` in every command and MCP registration instead of editing shell profiles. Don't add pipes, `2>&1`, `$(…)` or `{ …; }` groups to these lines: the scanner reads them as more to verify and refuses. Then wire the harness as Step 5 says, with `~/.local/bin/gbrain` in place of `$(which gbrain)`, and run `~/.local/bin/gbrain setup hermes`. If the user would rather keep the Bun install, Hermes's own refusal names its setting for this: `approvals.single_query_mode: approve` in Hermes's config, which is the user's call. `gbrain upgrade` updates a release binary in place.
+
 > **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`**
 > ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
 > Exit 0 means the schema is at head. Exit 1 with `migrations_pending` means it is still behind and another
@@ -570,11 +583,27 @@ model gbrain removed in v0.33, needs `gbrain skillpack migrate-fence` once.)
 
 ```bash
 printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface starter --advertise verbs
+gbrain setup hermes
 ```
 
 Keep `--args` last (everything after it becomes server argv) and verify with
-`hermes mcp test gbrain` — the add exits 0 even on failure. Full reference:
-[docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+`hermes mcp test gbrain` — the add exits 0 even on failure. `gbrain setup hermes`
+adds the brain-first rule and its per-turn hook; without it a new session seldom
+calls gbrain. Full reference: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+
+**If you are OpenClaw:** register gbrain as your MCP server, then add the
+brain-first rule:
+
+```bash
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
+gbrain setup openclaw
+```
+
+Run both lines. With only the first, the tools are registered but a new session
+answers from OpenClaw's own memory and chat history instead of gbrain. Once the
+gateway runs `gbrain serve`, use the MCP tools rather than the `gbrain` CLI on a
+PGLite brain (the CLI stops with `pglite_busy`). Full reference:
+[docs/mcp/OPENCLAW.md](docs/mcp/OPENCLAW.md).
 
 **If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
 

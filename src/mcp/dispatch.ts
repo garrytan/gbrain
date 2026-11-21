@@ -456,7 +456,7 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   const r = retrieval as {
     type_filter_notice?: unknown;
     other_names?: Array<{ name: string; alias: string; slug: string }>;
-    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string; corrected_by?: number; quoted?: string; room_access?: { readable: unknown; reason?: string } }>;
+    saved_facts?: SavedFactNotice[];
     answer_id?: unknown;
     feedback?: { rateable?: boolean; how_to_rate?: string };
   };
@@ -467,12 +467,8 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
       r.other_names.map(n => `${n.alias} = ${n.name} (declared in ${n.slug})`), '; ', OTHER_NAMES_NOTICE_MAX_CHARS);
     blocks.push(`${text}${more ? ` (+${more} more)` : ''}.`);
   }
-  if (r.saved_facts?.length) {
-    const { text, more } = wholeItemsWithin('Saved facts (remember): about the entity this query names (newest first), then facts those point to, then matches for its words; recall returns more:\n',
-      r.saved_facts.map(f => `- ${f.fact}${f.quoted ? '\n' : ''} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}${f.corrected_by ? '; corrected by a newer saved fact above' : ''}${f.room_access ? `; room: ${f.room_access.readable === true ? 'readable' : f.room_access.readable === false ? `not readable (${f.room_access.reason})` : `unknown (${f.room_access.reason})`}` : ''}]`),
-      '\n', SAVED_FACTS_NOTICE_MAX_CHARS);
-    blocks.push(more ? `${text}\n(+${more} more; recall returns them)` : text);
-  }
+  const factsBlock = savedFactsNoticeBlock(r.saved_facts);
+  if (factsBlock) blocks.push(factsBlock);
   // F2: which set the rows are and which set the keyword count covers, on every search call.
   const countLine = searchCountLine(result, retrieval);
   if (countLine) blocks.push(countLine);
@@ -497,6 +493,17 @@ function rateLine(answerId: string, coach: boolean): string {
 
 /** C4: character ceilings for the model-visible notice blocks (header included). */
 export const SAVED_FACTS_NOTICE_MAX_CHARS = 1_500;
+
+type SavedFactNotice = { fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string; corrected_by?: number; quoted?: string; room_access?: { readable: unknown; reason?: string } };
+
+/** The saved facts (remember) a search or query matched, as the block MCP and the CLI print after the rows; null when there are none. */
+export function savedFactsNoticeBlock(savedFacts: SavedFactNotice[] | undefined): string | null {
+  if (!savedFacts?.length) return null;
+  const { text, more } = wholeItemsWithin('Saved facts (remember): about the entity this query names (newest first), then facts those point to, then matches for its words; recall returns more:\n',
+    savedFacts.map(f => `- ${f.fact}${f.quoted ? '\n' : ''} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}${f.corrected_by ? '; corrected by a newer saved fact above' : ''}${f.room_access ? `; room: ${f.room_access.readable === true ? 'readable' : f.room_access.readable === false ? `not readable (${f.room_access.reason})` : `unknown (${f.room_access.reason})`}` : ''}]`),
+    '\n', SAVED_FACTS_NOTICE_MAX_CHARS);
+  return more ? `${text}\n(+${more} more; recall returns them)` : text;
+}
 export const OTHER_NAMES_NOTICE_MAX_CHARS = 400;
 export const RATE_LINE_MAX_CHARS = 160;
 

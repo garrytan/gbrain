@@ -133,6 +133,9 @@ export const SETUP_HELP = `gbrain setup <harness> — give an agent harness memo
 
 Usage: gbrain setup claude-code [flags]
        gbrain setup codex [flags]
+       gbrain setup openclaw|hermes|opencode|cursor [flags]   (after the harness's own
+         MCP registration: writes the brain-first rule and per-turn hook; without it
+         agents in a new session seldom call gbrain)
 
 Resolves the brain, source, transport, launcher and registration owner first and
 prints them; refuses before writing anything when another owner holds the target.
