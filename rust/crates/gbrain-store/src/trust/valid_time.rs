@@ -106,7 +106,8 @@ pub struct ValidTimePickQuery {
 }
 
 /// The calendar date a frontmatter value declares (`validDate`): `YYYY-MM-DD`, optionally followed
-/// by `T00:00:00`, a zero fraction and `Z` or `+00:00`, with a real calendar date from year 1000.
+/// by `T`, `t` or a space, `00:00:00`, a zero fraction and an optional `Z` or `+00:00`, with a real
+/// calendar date from year 1000.
 pub(crate) fn valid_date(value: Option<&Value>) -> Option<String> {
     let s = value?.as_str()?;
     let b = s.as_bytes();
@@ -128,12 +129,16 @@ pub(crate) fn valid_date(value: Option<&Value>) -> Option<String> {
     Some(s[..10].to_string())
 }
 
-/// The accepted tail after the date: nothing, or `T00:00:00`, an optional `.0…`, then `Z` or `+00:00`.
+/// The accepted tail after the date (`DATE_FORM` in src/core/valid-time.ts): nothing, or `T`, `t` or a
+/// space, `00:00:00`, an optional `.0…`, then nothing, `Z` or `+00:00`.
 fn midnight_utc(tail: &str) -> bool {
     if tail.is_empty() {
         return true;
     }
-    let Some(rest) = tail.strip_prefix("T00:00:00") else {
+    let Some(rest) = tail
+        .strip_prefix(['T', 't', ' '])
+        .and_then(|rest| rest.strip_prefix("00:00:00"))
+    else {
         return false;
     };
     let rest = match rest.strip_prefix('.') {
@@ -146,7 +151,7 @@ fn midnight_utc(tail: &str) -> bool {
         }
         None => rest,
     };
-    rest == "Z" || rest == "+00:00"
+    rest.is_empty() || rest == "Z" || rest == "+00:00"
 }
 
 fn days_in_month(year: u32, month: u32) -> u32 {
@@ -530,13 +535,25 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn valid_date_accepts_a_calendar_date_at_utc_midnight_only() {
+    fn valid_date_accepts_a_calendar_date_at_midnight_in_the_typescript_forms_only() {
         let cases = [
             ("2026-01-01", Some("2026-01-01")),
             ("2026-01-01T00:00:00Z", Some("2026-01-01")),
             ("2026-01-01T00:00:00.000Z", Some("2026-01-01")),
             ("2026-01-01T00:00:00.0+00:00", Some("2026-01-01")),
             ("2026-01-01T00:00:00+00:00", Some("2026-01-01")),
+            // A `t` or a space before the time, and no zone (PR 9908 keeps a timestamp as written).
+            ("2026-01-01T00:00:00", Some("2026-01-01")),
+            ("2026-01-01T00:00:00.000", Some("2026-01-01")),
+            ("2026-01-01t00:00:00Z", Some("2026-01-01")),
+            ("2026-01-01t00:00:00", Some("2026-01-01")),
+            ("2026-01-01t00:00:00.0+00:00", Some("2026-01-01")),
+            ("2026-01-01 00:00:00", Some("2026-01-01")),
+            ("2026-01-01 00:00:00Z", Some("2026-01-01")),
+            ("2026-01-01 00:00:00+00:00", Some("2026-01-01")),
+            ("2026-01-01 00:00:00.000+00:00", Some("2026-01-01")),
+            ("2026-02-29 00:00:00", None),
+            ("0999-01-01 00:00:00", None),
             ("2028-02-29", Some("2028-02-29")),
             ("2000-02-29", Some("2000-02-29")),
             ("1000-01-01", Some("1000-01-01")),
@@ -556,11 +573,24 @@ mod tests {
             ("soon", None),
             ("2026/01/01", None),
             ("2026-01-01T09:00:00Z", None),
+            ("2026-01-01 12:00:00", None),
             ("2026-01-01T00:00:00.Z", None),
             ("2026-01-01T00:00:00.001Z", None),
-            ("2026-01-01T00:00:00", None),
+            ("2026-01-01T00:00:00.", None),
             ("2026-01-01T00:00:00+01:00", None),
+            ("2026-01-01T00:00:00z", None),
+            ("2026-01-01T00:00:00+00", None),
+            ("2026-01-01T00:00:00-00:00", None),
+            ("2026-01-01 00:00:00 +00:00", None),
+            ("2026-01-01T02:00:00+02:00", None),
+            ("2026-01-02T00:00:00+02:00", None),
+            ("2026-01-01  00:00:00", None),
+            ("2026-01-01\t00:00:00", None),
+            ("2026-01-01x00:00:00", None),
+            ("2026-01-01T0:00:00", None),
             ("2026-01-01 ", None),
+            ("2026-01-01T", None),
+            ("2026-01-01 00:00:00\n", None),
             ("2026-1a-01", None),
         ];
         for (input, want) in cases {

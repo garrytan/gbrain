@@ -23,7 +23,8 @@ const { parityTest } = parityArms(testBackends());
 
 /**
  * Each form writes 2026-02-01 (or, for an offset, an instant on that day). `dated` says whether the read takes it as
- * a date today. The ruling-3 forms are the offset spellings a YAML parser read as a UTC instant.
+ * a date: the DATE_FORM of PR 9908 (de145e0f23) adds a `t` or space separator and an absent zone. The ruling-3 forms
+ * are the offset spellings a YAML parser read as a UTC instant; PR 9908's fix round decides them.
  */
 const FORMS: Array<{ label: string; value: string; dated: boolean }> = [
   { label: 'date', value: '2026-02-01', dated: true },
@@ -31,12 +32,12 @@ const FORMS: Array<{ label: string; value: string; dated: boolean }> = [
   { label: 'T .000Z', value: '2026-02-01T00:00:00.000Z', dated: true },
   { label: 'T +00:00', value: '2026-02-01T00:00:00+00:00', dated: true },
   { label: 'T .0+00:00', value: '2026-02-01T00:00:00.0+00:00', dated: true },
-  { label: 'T no zone', value: '2026-02-01T00:00:00', dated: false },
-  { label: 't Z', value: '2026-02-01t00:00:00Z', dated: false },
-  { label: 't no zone', value: '2026-02-01t00:00:00', dated: false },
-  { label: 'space no zone', value: '2026-02-01 00:00:00', dated: false },
-  { label: 'space Z', value: '2026-02-01 00:00:00Z', dated: false },
-  { label: 'space .000+00:00', value: '2026-02-01 00:00:00.000+00:00', dated: false },
+  { label: 'T no zone', value: '2026-02-01T00:00:00', dated: true },
+  { label: 't Z', value: '2026-02-01t00:00:00Z', dated: true },
+  { label: 't no zone', value: '2026-02-01t00:00:00', dated: true },
+  { label: 'space no zone', value: '2026-02-01 00:00:00', dated: true },
+  { label: 'space Z', value: '2026-02-01 00:00:00Z', dated: true },
+  { label: 'space .000+00:00', value: '2026-02-01 00:00:00.000+00:00', dated: true },
   { label: 'ruling 3: +00', value: '2026-02-01T00:00:00+00', dated: false },
   { label: 'ruling 3: space before offset', value: '2026-02-01 00:00:00 +00:00', dated: false },
   { label: 'ruling 3: -00:00', value: '2026-02-01T00:00:00-00:00', dated: false },
