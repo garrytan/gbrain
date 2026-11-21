@@ -103,6 +103,14 @@ pub(super) fn records_of_source(read: &dyn KvRead, source_id: &str) -> Result<Ve
     Ok(out)
 }
 
+/// Records indexed per write transaction by the open-time repair.
+const REPAIR_BATCH: usize = 256;
+
+/// The marker of a completed repair of the source index.
+fn repair_done_key() -> Vec<u8> {
+    crate::keys::meta("derivation_purge_source_index")
+}
+
 /// Gives every sweep record its source index entry: records kept by the builds between the record's first commit and the index lack
 /// one, and so are never selected by a sweep, noted or consulted by the write guard. Runs at open; a read-only open finds none to
 /// repair or, when it does, leaves them for the next writable open.
@@ -323,5 +331,209 @@ impl Store {
                 None => Value::Null,
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::OpenOptions;
+    use crate::env::SystemEnv;
+    use crate::error::{READ_ONLY_TRANSACTION, STORE_IO};
+    use crate::kv::{Kv, KvWrite};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A kv that counts what the open-time repair reads and writes, and refuses a write with the code it is told to.
+    struct Watched {
+        inner: Arc<dyn Kv>,
+        scans: Arc<AtomicUsize>,
+        gets: Arc<AtomicUsize>,
+        begins: Arc<AtomicUsize>,
+        refuse: Option<&'static str>,
+    }
+
+    struct WatchedRead(Box<dyn KvRead>, Arc<AtomicUsize>, Arc<AtomicUsize>);
+    struct WatchedWrite(Box<dyn KvWrite>, Arc<AtomicUsize>, Arc<AtomicUsize>);
+
+    impl KvRead for WatchedRead {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+            self.2.fetch_add(1, Ordering::SeqCst);
+            self.0.get(key)
+        }
+        fn scan(
+            &self,
+            start: &[u8],
+            end: &[u8],
+            reverse: bool,
+            f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+        ) -> Result<()> {
+            self.1.fetch_add(1, Ordering::SeqCst);
+            self.0.scan(start, end, reverse, f)
+        }
+    }
+
+    impl KvRead for WatchedWrite {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+            self.2.fetch_add(1, Ordering::SeqCst);
+            self.0.get(key)
+        }
+        fn scan(
+            &self,
+            start: &[u8],
+            end: &[u8],
+            reverse: bool,
+            f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+        ) -> Result<()> {
+            self.1.fetch_add(1, Ordering::SeqCst);
+            self.0.scan(start, end, reverse, f)
+        }
+    }
+
+    impl KvWrite for WatchedWrite {
+        fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
+            self.0.put(key, value)
+        }
+        fn delete(&mut self, key: &[u8]) -> Result<()> {
+            self.0.delete(key)
+        }
+        fn commit(self: Box<Self>) -> Result<u64> {
+            self.0.commit()
+        }
+    }
+
+    impl Kv for Watched {
+        fn snapshot(&self) -> Result<Box<dyn KvRead>> {
+            Ok(Box::new(WatchedRead(
+                self.inner.snapshot()?,
+                self.scans.clone(),
+                self.gets.clone(),
+            )))
+        }
+        fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
+            self.begins.fetch_add(1, Ordering::SeqCst);
+            if let Some(code) = self.refuse {
+                return Err(StoreError::new(code, "refused"));
+            }
+            Ok(Box::new(WatchedWrite(
+                self.inner.begin_write()?,
+                self.scans.clone(),
+                self.gets.clone(),
+            )))
+        }
+        fn version(&self) -> Result<u64> {
+            self.inner.version()
+        }
+    }
+
+    fn watched(
+        inner: &Arc<dyn Kv>,
+        refuse: Option<&'static str>,
+    ) -> (Watched, [Arc<AtomicUsize>; 3]) {
+        let counters = [
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        ];
+        let kv = Watched {
+            inner: inner.clone(),
+            scans: counters[0].clone(),
+            gets: counters[1].clone(),
+            begins: counters[2].clone(),
+            refuse,
+        };
+        (kv, counters)
+    }
+
+    fn count(c: &Arc<AtomicUsize>) -> usize {
+        c.load(Ordering::SeqCst)
+    }
+
+    /// `n` sweep records as an earlier build kept them: no source index entry, and no completion marker.
+    fn unindexed(kv: &Arc<dyn Kv>, n: usize) {
+        let store =
+            Store::open_kv(kv.clone(), Arc::new(SystemEnv), OpenOptions::default()).unwrap();
+        let mut tx = kv.begin_write().unwrap();
+        for i in 0..n {
+            let request = format!("d0000000-0000-4000-8000-{i:012}");
+            let record = SweepRecord {
+                request_id: request.clone(),
+                source_id: "default".into(),
+                needles: vec![],
+                patterns: vec![],
+                page_ids: vec![],
+                created_at_us: i as i64,
+                phase: "sweep".into(),
+                cursor: None,
+                found: 0,
+                noted: vec![],
+                noted_overflow: false,
+                recheck: None,
+            };
+            put_json(&mut *tx, &record_key(&request), &record).unwrap();
+        }
+        tx.delete(&repair_done_key()).unwrap();
+        tx.commit().unwrap();
+        drop(store);
+    }
+
+    fn indexed(kv: &Arc<dyn Kv>) -> usize {
+        records_of_source(&*kv.snapshot().unwrap(), "default")
+            .unwrap()
+            .len()
+    }
+
+    #[test]
+    fn a_read_only_open_does_not_scan_and_leaves_the_records_for_the_next_writable_open() {
+        let kv = crate::test_support::mem_kv();
+        unindexed(&kv, 3);
+        let (read_only, [scans, _, begins]) = watched(&kv, Some(READ_ONLY_TRANSACTION));
+        backfill_source_index(&read_only).unwrap();
+        assert_eq!(
+            (count(&scans), count(&begins)),
+            (0, 1),
+            "one refused write, no scan"
+        );
+        assert_eq!(indexed(&kv), 0);
+    }
+
+    #[test]
+    fn once_the_repair_has_run_an_open_reads_only_the_marker() {
+        let kv = crate::test_support::mem_kv();
+        unindexed(&kv, 3);
+        backfill_source_index(&*kv).unwrap();
+        assert_eq!(indexed(&kv), 3);
+        let (second, [scans, gets, begins]) = watched(&kv, None);
+        backfill_source_index(&second).unwrap();
+        assert_eq!((count(&scans), count(&gets), count(&begins)), (0, 1, 0));
+    }
+
+    #[test]
+    fn a_repair_across_several_batches_indexes_every_record_and_marks_the_end_with_the_last_batch()
+    {
+        let kv = crate::test_support::mem_kv();
+        let n = 2 * REPAIR_BATCH + 44;
+        unindexed(&kv, n);
+        let (counted, [_, _, begins]) = watched(&kv, None);
+        backfill_source_index(&counted).unwrap();
+        assert_eq!(indexed(&kv), n);
+        assert_eq!(count(&begins), 3, "one write transaction per batch");
+        assert!(
+            kv.snapshot()
+                .unwrap()
+                .get(&repair_done_key())
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_write_that_fails_for_any_other_reason_fails_the_open() {
+        let kv = crate::test_support::mem_kv();
+        unindexed(&kv, 2);
+        let failing: Arc<dyn Kv> = Arc::new(watched(&kv, Some(STORE_IO)).0);
+        let opened = Store::open_kv(failing, Arc::new(SystemEnv), OpenOptions::default());
+        assert_eq!(opened.err().map(|e| e.code), Some(STORE_IO));
+        assert_eq!(indexed(&kv), 0);
     }
 }
