@@ -254,6 +254,18 @@ function classifyJudge(result: ChronicleJudgeResult | null, thrown: unknown): Ju
   return null;
 }
 
+/**
+ * The page `row` names: read at its slug, or, when no page with its id is there, at the slug its id has now (pages-03: a
+ * rename in the upgrade re-read moved the page while this row was leased or waiting). Null when the page is gone.
+ */
+async function readRowPage(engine: BrainEngine, row: ChronicleLedgerRow) {
+  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
+  if (snapshot && Number(snapshot.page.id) === Number(row.page_id)) return snapshot;
+  const [live] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND id=$2 AND deleted_at IS NULL',
+    [row.source_id, Number(row.page_id)]);
+  return live && live.slug !== row.slug ? engine.readPageSnapshot(live.slug, { sourceId: row.source_id }) : snapshot;
+}
+
 /** Run one claimed row. The caller claimed it (lease) and owns its outcome. */
 export async function executeChronicleRow(ctx: ChronicleExecContext, row: ChronicleLedgerRow): Promise<ChronicleRowOutcome> {
   const { engine, settings } = ctx;
@@ -261,7 +273,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   const done = (state: ChronicleLedgerRow['state'], reason: string | null, extra: Partial<Extract<ChronicleRowOutcome, { kind: 'done' }>> = {}): ChronicleRowOutcome =>
     ({ kind: 'done', state, reason, judged: false, written: 0, retired: 0, costUsd: 0, unpriced: false, dropped: {}, ...extra });
 
-  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
+  const snapshot = await readRowPage(engine, row);
   if (!snapshot || Number(snapshot.page.id) !== Number(row.page_id)) {
     await finish(engine, row, row.attempts, { state: 'skipped', reason: 'page_missing', nextAttemptAt: null });
     return done('skipped', 'page_missing');
@@ -269,7 +281,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   if (String(snapshot.page.content_hash ?? '') !== row.content_hash) {
     // pages-03: the upgrade re-read moved the page to a hash with the same meaning while this row was leased.
     const carried = await followChronicleCarry(engine, row, row.attempts);
-    if (!carried) {
+    if (!carried || carried !== String(snapshot.page.content_hash ?? '')) {
       await finish(engine, row, row.attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, keepJudged: true });
       return done('skipped', 'superseded');
     }
@@ -390,12 +402,12 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
     // attempt paid for is published against the new revision when the row follows and the page's privacy and
     // incarnation (part of the judged input) did not change.
     if (generation.superseded) {
-      const live = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
+      const live = await readRowPage(engine, row);
       const livePin = live && Number(live.page.id) === Number(row.page_id) && String(live.page.content_hash ?? '') !== row.content_hash
         ? await pinDepth(engine, live) : null;
       const carried = livePin && livePin.visibility === pin.visibility && livePin.incarnation === pin.incarnation
         ? await followChronicleCarry(engine, row, attempts) : null;
-      if (carried && livePin) {
+      if (carried && livePin && carried === String(live!.page.content_hash ?? '')) {
         row = { ...row, content_hash: carried };
         pin = livePin;
         built = build(pin);

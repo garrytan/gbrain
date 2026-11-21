@@ -14,7 +14,9 @@
 import { dataFrontmatter, LEGACY_TYPED_SCHEMA } from './data-frontmatter.ts';
 import { coerceFrontmatterString, comparableFrontmatter, parseMarkdownHead } from './markdown.ts';
 import type { BrainEngine } from './engine.ts';
+import { hasCapability } from './engine-capabilities.ts';
 import { recordChronicleCarry } from './chronicle/carry.ts';
+import { SYNC_IMPORT_PROVENANCE_OP } from './persistence/sync-holds.ts';
 
 /** parseMarkdown keeps the text it read here, so alignWithStored can read the same file the old way. */
 export const PARSED_FILE_TEXT = Symbol.for('gbrain.parsed-file-text');
@@ -135,6 +137,41 @@ export function legacyStoredFrontmatter(current: Record<string, unknown>, fileTe
 }
 
 /**
+ * pages-03: SQL true when page row `page` was stored by the importer before pages-03: its import record, at the page's
+ * current revision (or, with `renamed`, at a revision the page was renamed from without a content change), names an
+ * importer before import=2 (or none, on records from before the parser stamp). A page with no such record, or one a
+ * later edit moved past the recorded revision, is not proven old.
+ */
+export function importedByOldParserSql(page: string, renamed = false): string {
+  // A rename versions the page as it stood (updateSlug), so the version at the recorded revision holding the live
+  // content proves only the slug changed since that import.
+  const revision = renamed
+    ? `(lp.completed_keys->0->>'revision'=${page}.knowledge_revision::text OR EXISTS (SELECT 1 FROM page_versions pv
+        WHERE pv.page_id=${page}.id AND pv.knowledge_revision::text=lp.completed_keys->0->>'revision'
+          AND pv.frontmatter=${page}.frontmatter AND pv.title IS NOT DISTINCT FROM ${page}.title AND pv.type IS NOT DISTINCT FROM ${page}.type
+          AND pv.compiled_truth IS NOT DISTINCT FROM ${page}.compiled_truth AND pv.timeline IS NOT DISTINCT FROM ${page}.timeline
+          AND COALESCE(pv.content_hash, ${page}.content_hash)=${page}.content_hash AND pv.is_deleted IS NOT TRUE))`
+    : `lp.completed_keys->0->>'revision'=${page}.knowledge_revision::text`;
+  return `EXISTS (SELECT 1 FROM op_checkpoints lp JOIN sources ls ON ls.id=${page}.source_id
+    WHERE lp.op='${SYNC_IMPORT_PROVENANCE_OP}' AND lp.fingerprint=${page}.source_id||':'||ls.incarnation::text||':'||${page}.id::text
+      AND ${revision}
+      AND COALESCE(lp.completed_keys->0->'parser'->>'parser_version','import=1;') LIKE 'import=1;%')`;
+}
+
+/**
+ * pages-03: `legacyCarry` (legacyHashToCarry) when the live page `pageId` was stored by the importer before pages-03
+ * (importedByOldParserSql), also when this sync renamed it first; else null. Only such a page's old hash can be the old
+ * typing of the file it reads now: on a page today's importer stored, the same rebuilt hash is a real edit (`title: 1.1`
+ * changed to `title: 1.10`), so the paid phases' records stay where they are. An engine without raw SQL carries nothing.
+ */
+export async function provenLegacyCarry(engine: BrainEngine, sourceId: string, pageId: unknown, legacyCarry: string | null): Promise<string | null> {
+  if (!legacyCarry || pageId == null || !hasCapability(engine, 'raw_sql')) return null;
+  const proven = await engine.executeRaw(`SELECT 1 FROM pages page WHERE page.source_id=$1 AND page.id=$2 AND page.deleted_at IS NULL
+    AND ${importedByOldParserSql('page', true)}`, [sourceId, Number(pageId)]);
+  return proven.length > 0 ? legacyCarry : null;
+}
+
+/**
  * The stored hash to carry the paid page phases' records from, or null: a page stored under the old frontmatter typing
  * whose one-time re-read changes its hash and nothing it means (`hashWith` of the file's old typing is the stored hash).
  * The hash covers the title lifted out of the frontmatter too, so a `title:` the old typing changed is read as stored
@@ -195,9 +232,12 @@ export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string,
        ON CONFLICT DO NOTHING`,
       [fingerprint, carried, toHash, pageId, sourceId]);
   }
-  // The chronicle ledger row moves: it carries recorded spend and failed attempts, which a copy would count twice.
+  // The chronicle ledger row moves: it carries recorded spend and failed attempts, which a copy would count twice. It
+  // names the page's slug now, as a rename in the same sync left it.
   await tx.executeRaw(
-    `UPDATE chronicle_page_state c SET content_hash=$3 WHERE c.source_id=$4 AND c.page_id=$1 AND c.content_hash=$2
+    `UPDATE chronicle_page_state c SET content_hash=$3,
+            slug=COALESCE((SELECT p.slug FROM pages p WHERE p.id=c.page_id AND p.source_id=c.source_id AND p.deleted_at IS NULL), c.slug)
+      WHERE c.source_id=$4 AND c.page_id=$1 AND c.content_hash=$2
        AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= now())
        AND NOT EXISTS (SELECT 1 FROM chronicle_page_state n WHERE n.source_id=c.source_id AND n.page_id=c.page_id
          AND n.content_hash=$3 AND n.extractor_version=c.extractor_version)`,

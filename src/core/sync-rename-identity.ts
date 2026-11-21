@@ -36,8 +36,7 @@ import { spawn } from './spawn.ts';
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from './hardened-git.ts';
 import { explicitMarkdownTitle } from './markdown.ts';
-import { legacyTypedFrontmatter } from './frontmatter-legacy.ts';
-import { SYNC_IMPORT_PROVENANCE_OP } from './persistence/sync-holds.ts';
+import { importedByOldParserSql, legacyTypedFrontmatter } from './frontmatter-legacy.ts';
 import { isMarkdownFilePath, resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason, type RenameSideSource, type SyncManifest } from './sync.ts';
 import { computeSyncDelta, type SyncDeltaResult } from './sync-delta.ts';
 
@@ -90,15 +89,11 @@ export function frontmatterIdentity(head: Buffer | string | null): FrontmatterId
 
 /**
  * pages-03: SQL true when page row `page` stores a frontmatter id typed by the old YAML reading (`id: 007` stored as the
- * number 7): the stored id is a JSON number and the page's import record, at the page's current revision, names an
- * importer before import=2 (or none, on records from before the parser stamp). A page with no such record, or one a
- * later edit moved past the recorded revision, is not proven old, and its id compares as stored.
+ * number 7): the stored id is a JSON number and the page was stored by the old importer (importedByOldParserSql). Any
+ * other page's id compares as stored.
  */
 export function legacyTypedIdSql(page: string): string {
-  return `(jsonb_typeof(${page}.frontmatter->'id')='number' AND EXISTS (SELECT 1 FROM op_checkpoints lp JOIN sources ls ON ls.id=${page}.source_id
-    WHERE lp.op='${SYNC_IMPORT_PROVENANCE_OP}' AND lp.fingerprint=${page}.source_id||':'||ls.incarnation::text||':'||${page}.id::text
-      AND lp.completed_keys->0->>'revision'=${page}.knowledge_revision::text
-      AND COALESCE(lp.completed_keys->0->'parser'->>'parser_version','import=1;') LIKE 'import=1;%'))`;
+  return `(jsonb_typeof(${page}.frontmatter->'id')='number' AND ${importedByOldParserSql(page)})`;
 }
 
 /**

@@ -6,7 +6,9 @@
  *    older gbrain stored `title: 1.10` as '1.1' and the file did not change, the re-read stores the title as written
  *    ('1.10') and carries extract_atoms' scan state to the new hash, so the page is not scanned again: whether the title
  *    is the only value the old typing changed or other values changed too, on the inline import and on the streamed
- *    import of a page over the single-string ceiling. A file whose title really changed is scanned again.
+ *    import of a page over the single-string ceiling. A file whose title really changed is scanned again, and so is a
+ *    page today's parser stored whose `title: 1.1` was edited to `title: 1.10` (the old typing reads both as '1.1'):
+ *    only a page whose import record names the older parser is carried.
  * 2. Fails when: the legacy hash check rebuilds the old hash from the old typing of the frontmatter only (the title it
  *    hashes is today's), or skips the check when the stored frontmatter holds no old-typed value.
  * 3. Runs on PGLite (the managed-brain fixture, and a bare engine for the streamed page). No network, no model calls:
@@ -113,7 +115,7 @@ describe('pages-03: the upgrade re-read of a page whose title the old typing cha
         await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,revision}',to_jsonb($2::text)) WHERE op=$1 AND fingerprint LIKE '%:' || $3`,
           [SYNC_IMPORT_PROVENANCE_OP, await revisionOf(engine, slug), String(id)]);
       }
-      await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
+      await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"import=1;frontmatter=1;fence=1"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
       await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged,parser_fp}','\"an-older-parser\"'::jsonb) WHERE op='managed-sync-pass'");
       expect(await discoverExtractablePages(engine, 'default', SLUGS)).toEqual([]);
 
@@ -135,6 +137,27 @@ describe('pages-03: the upgrade re-read of a page whose title the old typing cha
       // extract_atoms discovery: only the page whose title the file changed is scanned again.
       expect((await discoverExtractablePages(engine, 'default', SLUGS)).map(page => page.slug)).toEqual([PAGES.retitled]);
       expect(await scanStateAt(engine, retitled.id, retitled.content_hash)).toEqual([{ n: 0 }]);
+    });
+  }, { setup }), 240_000);
+
+  test('on a page today\'s parser stored, a title edited from 1.1 to 1.10 is scanned again', () => managedBrain(async ({ engine, root }) => {
+    await withStubEmbeddings(async () => {
+      const opts = { sourceId: 'default', noPull: true };
+      writeFileSync(join(root, `${PAGES.titleOnly}.md`), file(PAGES.titleOnly, '1.1'));
+      commit(root, 'title 1.1');
+      expect((await performManagedSync(engine, opts)).status).toBe('first_sync');
+      await drainEffects(engine);
+      const before = await pageRow(engine, PAGES.titleOnly);
+      expect(before.title).toBe('1.1');
+      await scannedAt(engine, before.id, before.content_hash);
+      // A real edit: the old typing would read 1.10 as the stored 1.1, but this page was never stored by that parser.
+      writeFileSync(join(root, `${PAGES.titleOnly}.md`), file(PAGES.titleOnly, '1.10'));
+      commit(root, 'title 1.10');
+      expect(await performManagedSync(engine, opts)).toMatchObject({ status: 'synced' });
+      const after = await pageRow(engine, PAGES.titleOnly);
+      expect(after.title).toBe('1.10');
+      expect(await scanStateAt(engine, after.id, after.content_hash)).toEqual([{ n: 0 }]);
+      expect((await discoverExtractablePages(engine, 'default', [PAGES.titleOnly])).map(page => page.slug)).toEqual([PAGES.titleOnly]);
     });
   }, { setup }), 240_000);
 });
@@ -193,6 +216,12 @@ describe('pages-03: the streamed re-read of a page over the ceiling whose title 
       await tx.executeRaw('UPDATE pages SET frontmatter=$1::text::jsonb, content_hash=$2 WHERE id=$3', [JSON.stringify(legacy), storedHash, first.id]);
     });
     await scannedAt(engine, first.id, storedHash, sourceId);
+    // The older importer's record of the revision it stored (only a page it stored is carried).
+    await engine.executeRaw(`INSERT INTO op_checkpoints(op, fingerprint, completed_keys)
+      SELECT $1, s.id||':'||s.incarnation::text||':'||$3::text, jsonb_build_array(jsonb_build_object('revision', $4::text, 'parser', jsonb_build_object('parser_version', 'import=1;frontmatter=1;fence=1')))
+        FROM sources s WHERE s.id=$2
+      ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys`,
+      [SYNC_IMPORT_PROVENANCE_OP, sourceId, first.id, await revisionOf(engine, slug, sourceId)]);
     writeFileSync(file, page(fileHead));
     await disposePersistenceConsumer(engine);
     await ownerImportFile(engine, sourceId, file, `${slug}.md`, { pageId: first.id, revision: await revisionOf(engine, slug, sourceId) });

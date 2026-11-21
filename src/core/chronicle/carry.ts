@@ -74,7 +74,8 @@ export const awaitsCarriedRowSql = (alias: string) => `EXISTS (SELECT 1 FROM op_
  * record settled. `owner`: the attempt of the executor holding the row's lease (it follows its own row); without it
  * the row moves only once its lease or retry delay ended. Returns the new hash, or null when the row stays (the record
  * is kept while it still waits, else dropped). On a settled record, an owner whose attempt is still the moved row's
- * latest gets the new hash (its row moved while it judged); a settled record whose row is gone is dropped.
+ * latest gets the new hash while the page still has it (its row moved while it judged); a settled record whose row is
+ * gone is dropped.
  */
 async function moveCarried(engine: BrainEngine, key: CarryKey, owner: { attempts: number } | null): Promise<string | null> {
   return engine.transaction(async (tx) => {
@@ -100,16 +101,23 @@ async function moveCarried(engine: BrainEngine, key: CarryKey, owner: { attempts
     if (!carry) return null;
     if (carry.settled) {
       if (carry.moved_attempts == null) return drop();
-      return owner && Number(carry.moved_attempts) === owner.attempts && carry.attempts == null ? carry.to_hash : null;
+      // The moved row's judge follows only while the page still has the hash it moved to: after a later edit its answer
+      // is about content the page no longer holds, so it is not published (its spend still lands, via finish).
+      return owner && Number(carry.moved_attempts) === owner.attempts && carry.attempts == null && carry.live_hash === carry.to_hash
+        ? carry.to_hash : null;
     }
     if (carry.attempts == null || carry.live_hash !== carry.to_hash) return drop();
     if (owner ? Number(carry.attempts) !== owner.attempts : carry.waiting === true) return null;
+    // Only a fresh pending decision gives way. A skip decision (`--no-extract`, a page the writer may not have judged)
+    // is the live revision's own choice: the carried row then stays behind and the record is dropped.
     await tx.executeRaw(
       `DELETE FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4
-         AND state<>'extracted' AND attempts=0 AND cost_usd IS NULL AND cardinality(cost_attempts)=0 AND judge_input_failures=0`,
+         AND state='pending' AND no_extract=false AND attempts=0 AND cost_usd IS NULL AND cardinality(cost_attempts)=0 AND judge_input_failures=0`,
       [key.sourceId, key.pageId, carry.to_hash, CHRONICLE_EXTRACTOR_VERSION]);
+    // The moved row names the page's slug now: the re-read may also have renamed it.
     const moved = await tx.executeRaw(
-      `UPDATE chronicle_page_state c SET content_hash=$5, updated_at=now()
+      `UPDATE chronicle_page_state c SET content_hash=$5, updated_at=now(),
+              slug=COALESCE((SELECT p.slug FROM pages p WHERE p.id=c.page_id AND p.source_id=c.source_id AND p.deleted_at IS NULL), c.slug)
         WHERE c.source_id=$1 AND c.page_id=$2 AND c.content_hash=$3 AND c.extractor_version=$4 AND c.attempts=$6
           AND NOT EXISTS (SELECT 1 FROM chronicle_page_state n WHERE n.source_id=c.source_id AND n.page_id=c.page_id
             AND n.content_hash=$5 AND n.extractor_version=c.extractor_version)

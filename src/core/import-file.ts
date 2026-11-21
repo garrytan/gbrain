@@ -13,7 +13,7 @@ import { basename, extname, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { classifyImportHold, parseMarkdown, resolveParsedSubtype, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
-import { carryHashKeyedPageState, legacyHashToCarry } from './frontmatter-legacy.ts';
+import { carryHashKeyedPageState, legacyHashToCarry, provenLegacyCarry } from './frontmatter-legacy.ts';
 import { hasCapability } from './engine-capabilities.ts';
 import { alignWithStored } from './persistence/align-stored.ts';
 import { CODE_FILE_MAX_BYTES, isLargePageBytes } from './page-size-policy.ts';
@@ -487,7 +487,8 @@ export async function importFromContent(
       tags: parsed.tags,
     });
 
-    const carryHashFrom = legacyHashToCarry(existing, parsed, content, hash, (frontmatter, title) => contentHash({ ...parsed, frontmatter, title })); // pages-03
+    const carryHashFrom = await provenLegacyCarry(engine, sourceId ?? 'default', existing?.id, // pages-03
+      legacyHashToCarry(existing, parsed, content, hash, (frontmatter, title) => contentHash({ ...parsed, frontmatter, title })));
     const parsedPage: ParsedPage = {
       type: parsed.type,
       title: parsed.title,

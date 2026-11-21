@@ -91,7 +91,7 @@ async function storedByOlderGbrain(engine: BrainEngine): Promise<string> {
   });
   await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,revision}',to_jsonb($2::text)) WHERE op=$1 AND fingerprint LIKE '%:' || $3`,
     [SYNC_IMPORT_PROVENANCE_OP, await revisionOf(engine), String((await pageRow(engine)).id)]);
-  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
+  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"import=1;frontmatter=1;fence=1"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
   await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged,parser_fp}','\"an-older-parser\"'::jsonb) WHERE op='managed-sync-pass'");
   return oldHash;
 }
@@ -312,6 +312,66 @@ describe(`pages-03: the upgrade re-read while a chronicle judge is calling the m
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ content_hash: liveHash, state: 'extracted', reason: 'no_events', campaign_id: 'campaign-a', attempts: 3 });
       expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.25 + 2 * CALL_USD);
+    });
+  }, { setup, databaseUrl }), 240_000);
+
+  test('a judge whose moved row\'s page then changed again publishes nothing for the changed page and records its spend once', () => managedBrain(async ({ engine, root }) => {
+    await inGateway(async () => {
+      const judge = pausingJudge();
+      const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
+      await runPhaseChronicle(engine, { judge }); // moves the row to the re-read's hash
+      // A real edit while the judge still runs: the page now means something else.
+      writeFileSync(join(root, `${SLUG}.md`), meeting.replace('The committed notes', 'The corrected notes'));
+      git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qam', 'correct');
+      expect(await performManagedSync(engine, OPTS)).toMatchObject({ status: 'synced' });
+      const [edited] = await engine.executeRaw<{ content_hash: string }>('SELECT content_hash FROM pages WHERE id=$1', [id]);
+      expect(edited!.content_hash).not.toBe(liveHash);
+      judge.release();
+      await firstDrain;
+      // The answer was paid for once and is kept off the edited page: the moved row is superseded, not judged.
+      const moved = (await ledger(engine, id)).find(row => row.content_hash === liveHash);
+      expect(moved).toMatchObject({ state: 'skipped', reason: 'superseded', campaign_id: 'campaign-a', attempts: 2 });
+      expect(Number(moved!.cost_usd)).toBeCloseTo(0.25 + CALL_USD, 10);
+      expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.25 + CALL_USD);
+    });
+  }, { setup, databaseUrl }), 240_000);
+
+  test('a re-read with extraction turned off keeps the page unjudged after the carried row stops waiting', () => managedBrain(async ({ engine, root }) => {
+    await inGateway(async () => {
+      const { id, oldHash } = await campaignBrain(engine, '1 hour');
+      rewriteHistory(root);
+      expect(await performManagedSync(engine, { ...OPTS, noExtract: true })).toMatchObject({ status: 'synced' });
+      await drainEffects(engine);
+      const liveHash = (await pageRow(engine)).content_hash;
+      expect(liveHash).not.toBe(oldHash);
+      expect((await ledger(engine, id)).find(row => row.content_hash === liveHash)).toMatchObject({ state: 'skipped', reason: 'no_extract' });
+      await engine.executeRaw(`UPDATE chronicle_page_state SET next_attempt_at = now() - interval '1 second' WHERE page_id=$1 AND content_hash=$2`, [id, oldHash]);
+      const judge = pausingJudge();
+      judge.release();
+      await runPhaseChronicle(engine, { judge });
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(0);
+      expect((await ledger(engine, id)).find(row => row.content_hash === liveHash)).toMatchObject({ state: 'skipped', reason: 'no_extract' });
+    });
+  }, { setup, databaseUrl }), 240_000);
+
+  test('a page renamed by the re-read is judged once at its new path when the carried row stops waiting', () => managedBrain(async ({ engine, root }) => {
+    await inGateway(async () => {
+      const { id, oldHash } = await campaignBrain(engine, '1 hour');
+      git(root, 'mv', `${SLUG}.md`, 'meetings/kept-renamed.md');
+      git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'rename');
+      expect(await performManagedSync(engine, OPTS)).toMatchObject({ status: 'synced' });
+      await drainEffects(engine);
+      const [live] = await engine.executeRaw<{ id: number; slug: string; content_hash: string }>('SELECT id, slug, content_hash FROM pages WHERE id=$1 AND deleted_at IS NULL', [id]);
+      expect(live).toMatchObject({ slug: 'meetings/kept-renamed' });
+      expect(live!.content_hash).not.toBe(oldHash);
+      await engine.executeRaw(`UPDATE chronicle_page_state SET next_attempt_at = now() - interval '1 second' WHERE page_id=$1 AND content_hash=$2`, [id, oldHash]);
+      const judge = pausingJudge();
+      judge.release();
+      await runPhaseChronicle(engine, { judge });
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(1);
+      await expectJudgedOnceInCampaign(engine, id, live!.content_hash);
     });
   }, { setup, databaseUrl }), 240_000);
 
