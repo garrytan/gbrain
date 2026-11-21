@@ -175,14 +175,13 @@ function groupReads(tx: BrainEngine): BrainEngine {
 
 /**
  * #5984: reads a claimed group's preparation repeats for every member and that
- * publication checks again inside the group transaction (the local writer, the
- * source root, the coordinator switch); the source's own row (`getSource`,
- * `readSourceState`), its worktree binding (`getWorktreeBinding`) and the shared
- * skill packs are typed reads, below.
+ * publication checks again inside the group transaction (the source root, the
+ * coordinator switch); the local writer row (`readLocalWriterRow`), the source's
+ * own row (`getSource`, `readSourceState`), its worktree binding
+ * (`getWorktreeBinding`) and the shared skill packs are typed reads, below.
  * Plain reads only; a locking read is never answered here.
  */
 const STABLE_IN_PREPARATION = new Set([
-  'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
   'SELECT local_path FROM sources WHERE id=$1',
   MANAGED_MODE_SQL,
 ]);

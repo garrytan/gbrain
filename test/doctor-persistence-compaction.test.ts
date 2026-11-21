@@ -32,6 +32,16 @@ describe('persistence counter drift and compaction health', () => {
     expect(await checkPersistenceCompaction(engine)).toMatchObject({ status: 'ok', details: { live_consumers: 0, last_compaction: null } });
   }), 60_000);
 
+  // Fail-first (raw-caller-moves): the clamp count was a subquery inside the drift
+  // statement, so a brain with no counter row reported 0 clamps. It is now a typed
+  // getConfig read and is reported on its own.
+  test('the clamp count is reported even when no counter row exists yet', run(async engine => {
+    await engine.setConfig('persistence.true_up.clamped', '3');
+    const drift = await checkPersistenceCounterDrift(engine);
+    expect(drift).toMatchObject({ status: 'ok', details: { inspected: 0, drift: [], true_up_clamped: 3 } });
+    expect(drift.message).toContain('3 true-up decrement(s) were clamped at zero earlier');
+  }), 60_000);
+
   test('counters that match the receipts are ok; a counter charged past them warns with the delta and the clamp count', run(async engine => {
     const requests = await requestFixture(engine);
     await requests.admit('one'); await requests.admit('two');

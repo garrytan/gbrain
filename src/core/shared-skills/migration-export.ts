@@ -73,7 +73,8 @@ function exportPath(page: Page): string {
 
 async function exportInventory(engine: BrainEngine, sourceId: string) {
   const activePack = await loadActivePackForEngine(engine, { sourceId, remote: false });
-  const [source] = await engine.executeRaw<{ config: unknown; incarnation: string }>('SELECT config,incarnation FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
+  const state = await engine.readSourceState(sourceId);
+  const source = state && !state.archived ? state : null;
   if (!source) {
     throw opError('source_changed', 'The export source is no longer active.',
       `Source ${sourceId} was archived or removed, so nothing was exported or bound. Choose an active source for the export.`, { fix: SOURCES_FIX });

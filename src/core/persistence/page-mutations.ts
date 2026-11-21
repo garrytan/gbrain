@@ -75,14 +75,13 @@ export async function initializeLocalPersistence(ctx: OperationContext): Promise
 const flatSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 /**
  * Pre-admission reads every page of one batch makes with the same arguments:
- * the source row, the writer registration, the shared
+ * the source row, the shared
  * skillpack roots, the persistence identity and config values, and a managed
  * import's source-root and company-profile checks. All of them are rechecked
  * under lock by the admission transaction or by publication. The source row and
  * the worktree binding are typed members, answered in `batchSharedReads` below.
  */
 const BATCH_SHARED_READS = new Set([
-  'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
   'SELECT brain_id FROM persistence_brain WHERE singleton=1',
   'SELECT value FROM config WHERE key=$1',
   "SELECT config,incarnation FROM sources WHERE id=$1",

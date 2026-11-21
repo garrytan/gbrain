@@ -9,6 +9,8 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { exportDatabaseContent } from '../src/core/shared-skills/migration-export.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stableJson } from '../src/core/persistence/digest.ts';
+import { setupHash } from '../src/core/shared-skills/setup-files.ts';
 import { runSharedSkillsMigration } from '../src/core/shared-skills/migration.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
@@ -121,6 +123,18 @@ test('DB export uses the selected source schema and retains its custom types', (
   expect(parseMarkdown(readFileSync(join(result.root, 'customers/account-example.md'), 'utf8')).type).toBe('customer');
   expect(await ctx.engine.getConfig('schema_pack')).toBe('gbrain-base-v2');
   expect(await ctx.engine.getConfig('schema_pack.source.default')).toBe('company-brain');
+}), 120_000);
+
+// Pin (raw-caller-moves): the export inventory reads the source's config and
+// incarnation through the typed readSourceState member, not a raw `SELECT
+// config,incarnation FROM sources`. The policy hash stays the hash of the stored
+// row, so a receipt written before the move still matches after it.
+test('the export policy hash is the hash of the stored source config and incarnation', () => fixture(async (ctx, home) => {
+  await ctx.engine.executeRaw(`UPDATE sources SET config = config || '{"pin":{"nested":[1,"two"]}}'::jsonb WHERE id='default'`);
+  const [row] = await ctx.engine.executeRaw<{ config: unknown; incarnation: string }>("SELECT config,incarnation FROM sources WHERE id='default'");
+  const result = await exportDatabaseContent(ctx, { sourceId: 'default', root: join(home, 'content'), dryRun: true });
+  expect(result.status).toBe('planned');
+  expect(result.schema_policy?.source_config_sha256).toBe(setupHash(stableJson({ config: row.config, incarnation: row.incarnation })));
 }), 120_000);
 
 test('a source schema change during export refuses binding and remains a checkpoint conflict', () => fixture(async (ctx, home) => {
