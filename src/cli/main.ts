@@ -1103,13 +1103,13 @@ export function parseOpArgs(op: OperationMeta, args: string[]): Record<string, u
         // booleans, not fall through to the junk-key path (which would
         // consume the NEXT token as a value and corrupt positional parsing).
         if (key === 'json' || key === 'dry_run') {
-          params[key] = arg.slice(eq + 1) !== 'false';
+          params[key] = opParamValue(op, key, { type: 'boolean' }, arg.slice(eq + 1));
           continue;
         }
         const def = op.params[key];
         if (def) {
           const raw = arg.slice(eq + 1);
-          params[key] = def.type === 'boolean' ? raw !== 'false' : opFlagValue(op, key, def, raw, params[key]);
+          params[key] = opFlagValue(op, key, def, raw, params[key]);
           continue;
         }
       }

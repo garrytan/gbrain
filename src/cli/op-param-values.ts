@@ -9,12 +9,18 @@
 import { inertText } from '../core/agent-output.ts';
 import type { OperationMeta, ParamDef } from '../core/ops/contract.ts';
 import { usageError } from './cli-error.ts';
+import { isBooleanLiteral } from '../core/op-flag-tokens.ts';
 
 /** Coerce one raw CLI token for `op.params[key]`; `positional` labels a positional slot instead of a flag. */
 export function opParamValue(op: OperationMeta, key: string, def: ParamDef | undefined, raw: string, positional = false): unknown {
   if (!def) return raw;
   const name = positional ? `<${key}>` : `--${key.replace(/_/g, '-')}`;
   const usage = `gbrain ${op.cliHints?.name ?? op.name}`;
+  if (def.type === 'boolean') {
+    if (isBooleanLiteral(raw)) return raw === 'true';
+    throw usageError(`${name} must be true or false.`,
+      `Pass ${name}=true or ${name}=false (e.g. ${usage} ${name}=false); other values never turn a boolean flag on or off.`);
+  }
   if (def.type === 'number' || def.type === 'integer') {
     const n = Number(raw);
     if (raw.trim() !== '' && (def.type === 'integer' ? Number.isInteger(n) : Number.isFinite(n))) return n;
