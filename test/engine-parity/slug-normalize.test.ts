@@ -46,8 +46,15 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { extractPageLinks } from '../../src/core/link-extraction.ts';
 import { capabilityMissing } from '../../src/core/rust-engine/errors.ts';
 import { randomUUID } from 'node:crypto';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 
-const { parityTest } = parityArms(testBackends());
+const arms = parityArms(testBackends());
+// Write operations start a persistence consumer keyed on the engine the case receives (the harness's recording
+// wrapper), which the harness reset does not stop. Stop it when the case ends, so its projection and effect work
+// cannot run into the next case's reset (a Postgres deadlock on `DELETE FROM sources` under the stress gate).
+const parityTest: typeof arms.parityTest = (name, opts, scenario) => arms.parityTest(name, opts, async (engine, ...rest) => {
+  try { return await scenario(engine, ...rest); } finally { await disposePersistenceConsumer(engine); }
+});
 
 const NFC_CAFE = 'notes/café';
 const NFC_ZOE = 'people/zoë-example';
