@@ -195,7 +195,8 @@ describe('the owner byte budget of a running call that is timed out or cancelled
       expect(held).toBeGreaterThan(600);
       if (ending === 'times out') {
         const ended = errorOf(await raw.next(f => f.t === 'result' && f.id === 1));
-        expect(ended.code).toBe('timeout');
+        // The owner started it, so its outcome is unknown (routes.ts ownerCallTimeout, stage `sent`).
+        expect(ended.code).toBe('owner_unavailable');
         expect(ended.reason).toBe('outcome_unknown');
       } else {
         await raw.send({ t: 'cancel', id: 1 });

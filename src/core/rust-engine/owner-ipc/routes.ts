@@ -21,6 +21,7 @@
 import type { Capability } from '../../engine-capabilities.ts';
 import { opError, type OperationError } from '../../ops/contract.ts';
 import { RUST_ENGINE_MEMBERS, type RustEngineMember } from '../members.ts';
+import { OWNER_IPC_CONFIRMING_READS, OWNER_IPC_LOCAL_ONLY_READS } from './confirming-reads.ts';
 
 export type OwnerIpcRoute = 'local' | 'forward' | 'refuse';
 
@@ -94,6 +95,24 @@ export function ownerIpcRefusal(member: string, why: string): OperationError {
       why: 'Another process owns this brain and this process reaches it over the owner socket. Transactions and callbacks do not cross that socket; whole operations that need a transaction (page writes and imports) are sent to the owner as one request instead.' });
 }
 
+/** True when `member` only reads, so a rerun cannot repeat a write. */
+export function ownerMemberOnlyReads(member: string): boolean {
+  return OWNER_IPC_REMOTE_READS.has(member) || OWNER_IPC_LOCAL_ONLY_READS.has(member);
+}
+
+/**
+ * The advice for a call whose answer never came back after it was sent (cancel, deadline, owner gone): the owner does
+ * not stop a started call, so a write may have committed. A rerun is advised only when nothing can have been written
+ * (a read, or a write whose entry says a rerun repeats nothing); otherwise the advice names the read that confirms the
+ * write (confirming-reads.ts). A write with no entry gets the most general read.
+ */
+export function confirmingReadAdvice(member: string): string {
+  if (ownerMemberOnlyReads(member)) return `Before you rerun ${member}: it only reads, so nothing was written and running it again is safe.`;
+  const read = OWNER_IPC_CONFIRMING_READS[member] ?? 'a read of every row the call writes';
+  if (read.startsWith('nothing:')) return `Before you rerun ${member}, there is ${read}.`;
+  return `Before you rerun ${member}, run ${read} to see whether it committed; rerun it only if it did not.`;
+}
+
 /** The owner went away. `sent` says whether the owner may have started the call (its outcome is then unknown). */
 export function ownerGone(member: string, ownerPid: number | null, sent: boolean): OperationError {
   const who = ownerPid ? `The process that owns this brain (pid ${ownerPid})` : 'The process that owns this brain';
@@ -102,9 +121,9 @@ export function ownerGone(member: string, ownerPid: number | null, sent: boolean
       ? `${who} exited or closed its socket before it answered ${member}; a write may or may not have committed.`
       : `${who} exited or closed its socket, so ${member} was not sent.`,
     sent
-      ? 'Read the page or run the read again before you retry a write. Then run the command again: with no owner running, this process opens the brain itself.'
+      ? `${confirmingReadAdvice(member)} With no owner running, this process opens the brain itself.`
       : 'Run the command again: with no owner running, this process opens the brain itself.',
-    { reason: sent ? 'outcome_unknown' : 'not_sent', retryable: true,
+    { reason: sent ? 'outcome_unknown' : 'not_sent', retryable: !sent || ownerMemberOnlyReads(member),
       detail: `member=${member} via=owner_ipc owner_pid=${ownerPid ?? 'unknown'} sent=${sent}`,
       why: 'This process reached the brain through the owner process, which went away. A call in flight ends here because the owner may have started it; the next call of a long-lived engine runs the election again, so this process becomes the owner or a client of the new one.' });
 }
@@ -113,7 +132,8 @@ export function ownerGone(member: string, ownerPid: number | null, sent: boolean
  * The call's deadline passed before it finished. `stage` says how far it got: `queued` (it waited in the owner queue and
  * never ran), `not_sent` (it never left this process) or `sent` (the owner may have started it). A call the owner
  * already started is not interrupted: the store does not observe the abort, so a write can still commit after this
- * error, and its outcome is unknown.
+ * error: a sent call ends `owner_unavailable` with reason `outcome_unknown`, retryable only for a read, and names the
+ * read that confirms a write. A call that never ran keeps `timeout`.
  */
 export function ownerCallTimeout(member: string, ms: number, stage: 'queued' | 'not_sent' | 'sent'): OperationError {
   const detail = `member=${member} via=owner_ipc deadline_ms=${ms} queued=${stage === 'queued'} sent=${stage !== 'not_sent'}`;
@@ -125,10 +145,11 @@ export function ownerCallTimeout(member: string, ms: number, stage: 'queued' | '
       'Retry the same call; it waits again within its own deadline. If it keeps timing out, the owner process is busy: check its log.',
       { reason: stage === 'queued' ? 'not_started' : 'not_sent', retryable: true, detail });
   }
-  return opError('timeout',
+  return opError('owner_unavailable',
     `${member} did not finish within ${ms} ms on the brain's owner. A call the owner already started is not interrupted, so a write may or may not have committed.`,
-    'Read the page or run the read again before you retry a write. If calls keep timing out, the owner process is busy: check its log.',
-    { reason: 'outcome_unknown', retryable: true, detail });
+    `${confirmingReadAdvice(member)} If calls keep timing out, the owner process is busy: check its log.`,
+    { reason: 'outcome_unknown', retryable: ownerMemberOnlyReads(member), detail,
+      why: 'The owner process is not told to stop a started store call, so it finishes the call after this process stopped waiting.' });
 }
 
 /**
@@ -141,8 +162,8 @@ export function ownerCallCancelled(member: string, sent: boolean): OperationErro
   if (sent) {
     return opError('owner_unavailable',
       `${member} was cancelled by its caller after it was sent to the brain's owner. A call the owner already started is not interrupted, so a write may or may not have committed.`,
-      'Read the page or run the read again before you rerun a write: running it again without that check can repeat a write that already committed.',
-      { reason: 'outcome_unknown', retryable: false, detail: `member=${member} via=owner_ipc sent=true`,
+      confirmingReadAdvice(member),
+      { reason: 'outcome_unknown', retryable: ownerMemberOnlyReads(member), detail: `member=${member} via=owner_ipc sent=true`,
         why: 'The owner process is not told to stop a started store call, so it finishes the call after this process stopped waiting.' });
   }
   return opError('cancelled',

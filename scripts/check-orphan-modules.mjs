@@ -56,6 +56,7 @@ const PERMITTED_TEST_ONLY = [
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
   { path: 'src/core/rust-engine.ts', reason: "held: the Rust engine shell (plan PR 8, docs/designs/RUST_ENGINE.md); the addon loader PR on rust-engine/core wires openRustEngine into engine construction" },
   { path: 'src/core/rust-engine/members.ts', reason: 'held: the Rust engine shell member table; reached through src/core/rust-engine.ts once the addon loader wires openRustEngine' },
+  { path: 'src/core/rust-engine/owner-ipc/confirming-reads.ts', reason: 'held: the Rust engine owner socket (rust-owner-ipc); reached through routes.ts once the addon loader wires openRustEngine' },
   { path: 'src/core/rust-engine/owner-ipc/election.ts', reason: 'held: the Rust engine owner socket (rust-owner-ipc); reached through src/core/rust-engine.ts connect once the addon loader wires openRustEngine' },
   { path: 'src/core/rust-engine/owner-ipc/owner-ops.ts', reason: 'held: the Rust engine owner socket (rust-owner-ipc); reached through src/core/rust-engine.ts connect once the addon loader wires openRustEngine' },
   { path: 'src/core/rust-engine/owner-ipc/server.ts', reason: 'held: the Rust engine owner socket (rust-owner-ipc); reached through src/core/rust-engine.ts connect once the addon loader wires openRustEngine' },

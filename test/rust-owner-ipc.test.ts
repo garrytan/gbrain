@@ -35,6 +35,7 @@ import { EventEmitter } from 'node:events';
 import { decodeError, decodeValue, encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import { withRequestSignal } from '../src/core/request-signal.ts';
 import { withReadDeadline } from '../src/core/read-deadline.ts';
+import { waitFor } from './helpers/wait-for.ts';
 import { callerAccessRecord, currentCallerAccess, withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { storePagePolicy } from '../src/core/rust-engine/store-members/private-provenance.ts';
 import { requestSignal } from '../src/core/request-signal.ts';
@@ -248,6 +249,10 @@ describe('deadlines, cancel and permits', () => {
     (owner as unknown as Record<string, unknown>).getHealth = () => new Promise((_resolve, reject) => {
       requestSignal()?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
     });
+    // A write that ends only when its request signal aborts, like getHealth: the owner may still commit it.
+    (owner as unknown as Record<string, unknown>).insertFact = () => new Promise((_resolve, reject) => {
+      requestSignal()?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
     // getRecentSalience answers with the caller access the owner ran it under, after the Rust store's own privacy gate.
     (owner as unknown as Record<string, unknown>).getRecentSalience = async (opts?: { excludePrivate?: boolean }) => {
       storePagePolicy('getRecentSalience', opts?.excludePrivate);
@@ -280,13 +285,45 @@ describe('deadlines, cancel and permits', () => {
       await Bun.sleep(100);
       expect(server.stats()).toMatchObject({ active: 2, queued: 2 });
       const errors = await Promise.all(calls);
-      for (const error of errors) expect((error as OperationError).code).toBe('timeout');
-      // The two that ran may have done their work (the store does not see the abort); the two queued never ran.
+      // The two that ran may have done their work (the store does not see the abort), so their outcome is unknown; the
+      // two queued never ran and keep `timeout`.
+      expect(errors.map(e => (e as OperationError).code)).toEqual(['owner_unavailable', 'owner_unavailable', 'timeout', 'timeout']);
       expect(errors.map(e => (e as OperationError).reason)).toEqual(['outcome_unknown', 'outcome_unknown', 'not_started', 'not_started']);
+      // getHealth only reads, so a rerun is safe even after the send.
+      expect(errors.map(e => (e as OperationError).retryable)).toEqual([true, true, true, true]);
       expect(Date.now() - started).toBeLessThan(2_000);
       expect(await settled()).toMatchObject({ active: 0, queued: 0 });
       // The pool still serves: a fast call after the timeouts completes.
       expect(await engine.getPage('nothing-here')).toBeNull();
+    } finally { close(); }
+  });
+
+  // Value: protects=a write whose answer never came back after the send is reported unknown with the read that confirms
+  // it, never as safe to rerun; fails_when=a sent write's cancel or deadline says retryable or advises a rerun without
+  // naming listFactsByEntity; why_new=the cancel and deadline tests above use getHealth, which writes nothing;
+  // seam=none; no_claim=whether the owner committed the fact
+  test('a write cancelled or past its deadline after the send is unknown, not retryable, and names the facts read for that entity', async () => {
+    const { engine, close } = await clientOf(server.socketPath);
+    const fact = [{ fact: 'x', entity_slug: 'people/alice-example', source: 'test' }, { source_id: 'default' }] as never[];
+    try {
+      const controller = new AbortController();
+      const cancelled = withRequestSignal(controller.signal, () => (engine.insertFact as (...a: never[]) => Promise<unknown>)(...fact)).then(() => null, e => e);
+      await waitFor(() => server.stats().active === 1, { label: 'insertFact running on the owner' });
+      controller.abort();
+      const timedOut = withReadDeadline(Date.now() + 150, () => (engine.insertFact as (...a: never[]) => Promise<unknown>)(...fact)).then(() => null, e => e);
+      for (const error of [(await cancelled) as OperationError, (await timedOut) as OperationError]) {
+        expect(error).toMatchObject({ code: 'owner_unavailable', reason: 'outcome_unknown', retryable: false });
+        expect(error.suggestion).toBe('Before you rerun insertFact, run listFactsByEntity for that entity to see whether it committed; rerun it only if it did not.'
+          + (error.message.includes('did not finish within') ? ' If calls keep timing out, the owner process is busy: check its log.' : ''));
+      }
+      // Before the send nothing ran, so the answers stay as they were: `cancelled`, and a retryable `timeout`.
+      const early = (await withRequestSignal(AbortSignal.abort(), () => (engine.insertFact as (...a: never[]) => Promise<unknown>)(...fact)).then(() => null, e => e)) as OperationError;
+      expect(early.code).toBe('cancelled');
+      const late = (await withReadDeadline(Date.now() - 1, () => (engine.insertFact as (...a: never[]) => Promise<unknown>)(...fact)).then(() => null, e => e)) as OperationError;
+      // Already past its deadline: it ends before it runs (at the client, or in the owner queue), so a retry is safe.
+      expect(late).toMatchObject({ code: 'timeout', retryable: true });
+      expect(['not_sent', 'not_started']).toContain(late.reason as string);
+      expect(await settled()).toMatchObject({ active: 0, queued: 0 });
     } finally { close(); }
   });
 
@@ -322,7 +359,8 @@ describe('deadlines, cancel and permits', () => {
       expect(sent.code).not.toBe('cancelled');
       expect(sent.reason).toBe('outcome_unknown');
       expect(sent.message).toContain('may or may not have committed');
-      expect(sent.suggestion).toContain('before you rerun');
+      // getHealth only reads, so the advice says so instead of naming a read that confirms a write.
+      expect(sent.suggestion).toContain('it only reads, so nothing was written');
       expect(sent.suggestion).not.toContain('run the call again to repeat it');
       expect(sent.detail).toContain('sent=true');
       expect(await settled()).toMatchObject({ active: 0, queued: 0 });
