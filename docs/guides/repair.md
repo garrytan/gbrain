@@ -3237,7 +3237,7 @@ at least a quarter of them, across 20 or more entities. It reports each such
 day with its fact and entity counts, the most frequent source tags, and how
 many of those claims state exactly one earlier ISO date of their own ("Acme
 Example closed a seed round on 2025-03-14"). A remote caller sees only its
-permitted sources. `gbrain repair fact-claim-dates` moves those facts to the
+permitted sources. A same-day concentration can also reflect real events. Dates in wiki links, Markdown destinations, or before a quoted title are held for review. Check the original evidence before applying any candidate. `gbrain repair fact-claim-dates` moves those facts to the
 date their claim states. It is explicit-only, preview-bound and destructive,
 and it never runs on upgrade.
 
