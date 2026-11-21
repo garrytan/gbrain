@@ -106,7 +106,9 @@ function keptWritten(incoming: unknown, stored: unknown, written: unknown): unkn
   if (!isMapping(incoming) || !isMapping(stored) || !isMapping(written)) return incoming;
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(incoming)) {
-    out[key] = Object.hasOwn(stored, key) && Object.hasOwn(written, key) ? keptWritten(entry, stored[key], written[key]) : entry;
+    // An own data property, as the YAML and JSON parsers make: assigning `__proto__` would call the inherited setter.
+    Object.defineProperty(out, key, { enumerable: true, writable: true, configurable: true,
+      value: Object.hasOwn(stored, key) && Object.hasOwn(written, key) ? keptWritten(entry, stored[key], written[key]) : entry });
   }
   return out;
 }

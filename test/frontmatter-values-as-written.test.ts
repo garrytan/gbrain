@@ -23,7 +23,7 @@ import { parseMarkdown, serializePageToMarkdown } from '../src/core/markdown.ts'
 import { computeEffectiveDate, parseDateLoose } from '../src/core/effective-date.ts';
 import { validDate } from '../src/core/valid-time.ts';
 import { corePriority } from '../src/core/core-memory.ts';
-import { legacyTypedFrontmatter } from '../src/core/frontmatter-legacy.ts';
+import { legacyTypedFrontmatter, legacyWrittenValues, restoreWrittenValues } from '../src/core/frontmatter-legacy.ts';
 import { endedInviteProposal } from '../src/core/chronicle/invite-projection.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
@@ -222,6 +222,21 @@ describe('pages-03: frontmatter values as written', () => {
     expect((await engine.getPage('people/hal-example'))!.frontmatter).toMatchObject(expected);
     expect(parseMarkdown(readFileSync(join(root, 'people/hal-example.md'), 'utf8')).frontmatter).toMatchObject(expected);
   }, { setup: userFileSetup }), 120_000);
+
+  test('on an older page\'s first write, a nested __proto__ key the caller left alone keeps its key and its written text', () => {
+    const file = '---\ntitle: Hal\ndetails:\n  role: cto\n  since: 2020-01-01\n  __proto__: 007\n---\nHal likes tea.\n';
+    const parsed = parseMarkdown(file).frontmatter as Record<string, unknown>;
+    expect(Object.hasOwn(parsed.details as object, '__proto__')).toBe(true);
+    // What an older gbrain stored (the old typing, through JSON), and the caller's put that changes only details.role.
+    const stored = JSON.parse(JSON.stringify(legacyTypedFrontmatter(file))) as Record<string, unknown>;
+    const incoming = JSON.parse(JSON.stringify(stored)) as Record<string, unknown>;
+    (incoming.details as Record<string, unknown>).role = 'ceo';
+    restoreWrittenValues(incoming, stored, legacyWrittenValues(parsed, file, stored));
+    const details = incoming.details as Record<string, unknown>;
+    expect(Object.getPrototypeOf(details)).toBe(Object.prototype);
+    expect(Object.hasOwn(details, '__proto__')).toBe(true);
+    expect(JSON.parse(JSON.stringify(details))).toEqual(JSON.parse('{"role":"ceo","since":"2020-01-01","__proto__":"007"}'));
+  });
 
   test('on an older page\'s first write, a value the caller changed keeps the new value and the others get their written text back', () => managedBrain(async ({ engine, ctx, root }) => {
     await importedUnderOldTyping(engine);
