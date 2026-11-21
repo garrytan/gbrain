@@ -1,4 +1,4 @@
-//! Jobs: `access_tokens` (the mint insert, the active-token find, the write grant read, the live-token scope read, the read floor) (rust/docs/store/access-tokens.md).
+//! Jobs: `access_tokens` (the mint insert, the active-token find, the write grant read, the live-token scope read, the member read, the read floor) (rust/docs/store/access-tokens.md).
 
 use gbrain_store::jobs::TokenInsert;
 use napi::Env;
@@ -61,6 +61,16 @@ impl Brain {
         id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_live_access_token_scope(&id))
+    }
+
+    /// `readAccessTokenMemberId(id)`: the member the token is bound to, or null.
+    #[napi]
+    pub fn read_access_token_member_id<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_access_token_member_id(&id))
     }
 
     /// `setAccessTokenMinTrust(id, tier)`: whether a token had the id.

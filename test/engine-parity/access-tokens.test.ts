@@ -26,6 +26,7 @@
 import { describe } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { credentialScopeFor } from '../../src/core/access/requester-scope.ts';
+import { defaultSourceMemberWriter } from '../../src/core/persistence/page-visibility.ts';
 import { setMinTrust } from '../../src/core/trust/min-trust.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
 import { hashToken } from '../../src/core/utils.ts';
@@ -129,5 +130,12 @@ describe('engine parity: access_tokens members', () => {
         revoked: await engine.readLiveAccessTokenScope(revoked.id),
       };
       return { member, live: await scope(live.id), revoked: await scope(revoked.id), missing: await scope('00000000-0000-4000-8000-000000000000') };
+    });
+
+  parityTest('the default-source member read of a legacy token\'s write answers no member for an unbound or missing token',
+    { methods: ['insertAccessToken', 'readAccessTokenMemberId'] }, async (engine) => {
+      const live = await mintLegacyToken(engine, { name: 'writer', scopes: ['read', 'write'], takesHolders: ['world'] });
+      const writer = (id: string) => defaultSourceMemberWriter(engine, { remote: true, principal: { kind: 'legacy_token', id }, sourceId: 'default' } as never);
+      return { member: await engine.readAccessTokenMemberId(live.id), unbound: await writer(live.id), missing: await writer('00000000-0000-4000-8000-000000000000') };
     });
 });

@@ -1009,6 +1009,7 @@ export const RUST_ENGINE_MEMBERS = {
   findActiveAccessTokens: 'minion_queue',
   setAccessTokenMinTrust: 'minion_queue',
   readLiveAccessTokenScope: 'minion_queue',
+  readAccessTokenMemberId: 'minion_queue',
   insertLeasePressure: 'minion_queue',
   countLeasePressure: 'minion_queue',
   listRecentLeasePressure: 'minion_queue',

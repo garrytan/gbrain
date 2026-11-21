@@ -7267,6 +7267,7 @@
         "readAccessPolicyRevisions": "none",
         "readAccessStateUnreadable": "none",
         "readAccessStoreConfig": "none",
+        "readAccessTokenMemberId": "none",
         "readAccessTokenWriteGrant": "none",
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",

@@ -2,7 +2,7 @@
 //! of `src/core/engine-sql/access-tokens.ts` run them (rust/docs/store/access-tokens.md).
 //!
 //! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust, readAccessTokenWriteGrant,
-//! readLiveAccessTokenScope, and the name read of readWriteAttributionNames (`read_access_token_names`).
+//! readLiveAccessTokenScope, readAccessTokenMemberId (always unbound: the member column is not kept), and the name read of readWriteAttributionNames (`read_access_token_names`).
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2B (this file only):
 //! - `m 0x2B id -> TokenRecord`: one token row, keyed by its generated UUID.
@@ -247,6 +247,13 @@ impl Store {
             })),
             _ => Ok(Value::Null),
         }
+    }
+
+    /// `readAccessTokenMemberId(id)`: the member the token is bound to. The store keeps no member column (the binding is
+    /// written by `access/members.ts` raw SQL, which this store refuses), so every token, and an id no token has, is
+    /// unbound: None.
+    pub fn read_access_token_member_id(&self, _id: &str) -> Result<Option<String>> {
+        Ok(None)
     }
 
     /// `setAccessTokenMinTrust(id, tier)`: sets (or clears, with None) one token's floor; whether a token had the id.

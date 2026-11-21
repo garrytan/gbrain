@@ -295,10 +295,10 @@ export async function remoteReadersChecked<T extends { parsedPage: { frontmatter
 export async function defaultSourceMemberWriter(engine: BrainEngine, authority: Pick<WriteAuthority, 'remote' | 'actingFor' | 'principal' | 'sourceId'>): Promise<string | null> {
   const { principal } = authority;
   if (!authority.remote || authority.actingFor || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return null;
-  // An OAuth client's binding comes from its typed row read, which every engine serves; a token's is still raw SQL.
+  // Both bindings come from typed reads, which every engine serves.
   const memberId = principal.kind === 'oauth_client'
     ? await engine.readOauthClient(principal.id).then(found => found ? requireOauthClientColumns(found, ['member_id']).member_id : null)
-    : (await engine.executeRaw<{ member_id: string | null }>('SELECT member_id FROM access_tokens WHERE id::text = $1', [principal.id]))[0]?.member_id;
+    : await engine.readAccessTokenMemberId(principal.id);
   return memberId && await noGrantFloorReads(engine, authority.sourceId) ? `member:${memberId}` : null;
 }
 

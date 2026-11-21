@@ -4652,6 +4652,8 @@ export interface BrainEngine {
   setAccessTokenMinTrust(id: string, tier: string | null): Promise<void>;
   /** A live token's `reads_unscoped` and `created_at` (access/requester-scope.ts `credentialScopeFor`), or null when revoked or absent. */
   readLiveAccessTokenScope(id: string): Promise<AccessTokenScopeRow | null>;
+  /** The member a token is bound to, or null (persistence/page-visibility.ts `defaultSourceMemberWriter`). */
+  readAccessTokenMemberId(id: string): Promise<string | null>;
   /** One rate-lease bounce appended to the lease-pressure log. */
   insertLeasePressure(row: LeasePressureInsert): Promise<void>;
   /** How many lease bounces match every given field (window in ms, job id, lease key). */

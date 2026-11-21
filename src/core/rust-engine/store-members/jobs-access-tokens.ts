@@ -27,3 +27,7 @@ export const readLiveAccessTokenScope: StoreMember<[id: string], AccessTokenScop
   const row = await storeCall({ member: 'readLiveAccessTokenScope' }, () => brain.readLiveAccessTokenScope(id)) as AccessTokenScopeRow | null;
   return row ? withDates(row, ['created_at']) : null;
 };
+
+/** The member a token is bound to. The store keeps no member column, so it answers null for every token. */
+export const readAccessTokenMemberId: StoreMember<[id: string], string | null> = (brain, id) =>
+  storeCall({ member: 'readAccessTokenMemberId' }, () => brain.readAccessTokenMemberId(id)) as Promise<string | null>;

@@ -1,5 +1,5 @@
 //! The `access_tokens` members (`insertAccessToken`, `findActiveAccessTokens`, `readAccessTokenWriteGrant`, `readLiveAccessTokenScope`,
-//! `setAccessTokenMinTrust`). What the parity
+//! `readAccessTokenMemberId`, `setAccessTokenMinTrust`). What the parity
 //! file cannot see lives here: the stored message of each refusal (the TypeScript member turns it into SQLSTATE 23514 /
 //! 23505 and the constraint name), that a refused write leaves the table as it was, and the generated ids.
 
@@ -209,5 +209,17 @@ fn the_scope_read_answers_a_live_tokens_creation_time_and_null_for_a_revoked_or_
         b.read_live_access_token_scope("00000000-0000-4000-8000-000000000000")
             .unwrap(),
         Value::Null
+    );
+}
+
+#[test]
+fn the_member_read_answers_unbound_for_a_minted_or_missing_token() {
+    let b = brain("tokens-member");
+    let live = insert(&b, token("live", "h1", json!({}))).unwrap();
+    assert_eq!(b.read_access_token_member_id(&live).unwrap(), None);
+    assert_eq!(
+        b.read_access_token_member_id("00000000-0000-4000-8000-000000000000")
+            .unwrap(),
+        None
     );
 }

@@ -2,7 +2,8 @@
  * The `access_tokens` columns the legacy-token mint and the read-floor command touch, as typed members
  * (rust/docs/store/access-tokens.md): insert one token row, find the active tokens a target names, set one token's
  * `min_trust`, and read whether a live token reads unscoped and when it was created (access/requester-scope.ts
- * `credentialScopeFor`). SQL once for both engines, so a store that is not SQL serves the same members.
+ * `credentialScopeFor`), and read the member a token is bound to (persistence/page-visibility.ts
+ * `defaultSourceMemberWriter`). SQL once for both engines, so a store that is not SQL serves the same members.
  *
  * Not here: every other access_tokens reader and writer (verify, list, revoke, rescope, rotate) stays raw SQL.
  * A column a brain's migrations have not added raises Postgres's undefined-column error (42703) on the SQL engines;
@@ -89,6 +90,15 @@ export async function readLiveAccessTokenScope(tx: Raw, id: string): Promise<Acc
   const [row] = await tx.executeRaw<AccessTokenScopeRow>(
     'SELECT reads_unscoped, created_at FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL', [id]);
   return row ?? null;
+}
+
+/**
+ * The member a token is bound to (`gbrain auth rescope --member`), revoked or not, or null for an unbound token or an id
+ * no token has. persistence/page-visibility.ts `defaultSourceMemberWriter` reads it for a remote write.
+ */
+export async function readAccessTokenMemberId(tx: Raw, id: string): Promise<string | null> {
+  const [row] = await tx.executeRaw<{ member_id: string | null }>('SELECT member_id FROM access_tokens WHERE id::text = $1', [id]);
+  return row?.member_id ?? null;
 }
 
 /** Set (or clear, with null) one token's read floor by row id. A tier outside the six is 23514 (`access_tokens_min_trust_check`). */
