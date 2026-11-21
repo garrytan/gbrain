@@ -67,7 +67,7 @@ describe('engine parity: the parks and owed-purge records of a derived-origin pu
     methods: ['putPage', 'readLivePageIdBySlug', 'readOpCheckpointDoc', 'transaction', 'executeRaw'],
   }, async (engine) => {
     const { origin, dependent, plain } = await seedOrigin(engine);
-    const strip = (parks: Array<Record<string, unknown>>) => parks.map(({ parked_at: _parked, page_id, ...rest }) => ({ ...rest, page_id: page_id === origin ? '<origin>' : page_id }));
+    const strip = (parks: Array<{ parked_at: unknown; page_id: unknown; slug: string }>) => parks.map(({ parked_at: _parked, page_id, ...rest }) => ({ ...rest, page_id: page_id === origin ? '<origin>' : page_id }));
     const none = await engine.transaction(tx => parkUncarriedInPurge(tx, []));
     const plainOnly = await engine.transaction(tx => parkUncarriedInPurge(tx, [plain, dependent]));
     const parked = strip(await engine.transaction(tx => parkUncarriedInPurge(tx, [origin, plain], { heldRequestId: 'req-1' })) as never);
