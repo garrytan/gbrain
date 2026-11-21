@@ -1,0 +1,10 @@
+**gbrain installs and connects to Hermes without changing Hermes's security settings: `gbrain setup hermes` now registers the MCP server through Hermes's own `hermes mcp add`, and the install docs add a release-binary route Hermes's command scanner allows.**
+
+<!-- behavior-change: setup_hermes_registers_mcp_gst2714 -->
+
+### Fixed
+- `gbrain setup hermes` registers gbrain's MCP server itself, through `hermes mcp add` (Hermes validates the entry, connects to it and writes its own `config.yaml`), then checks it with `hermes mcp test gbrain`. It used to print a step to follow by hand, and agents inside Hermes tried to edit `config.yaml` directly, which Hermes refuses ("Agent cannot modify security-sensitive configuration"). Setup finds `hermes` on PATH or where Hermes's installer puts it, leaves an `mcp_servers.gbrain` entry it did not write alone, keeps its marked hook block through Hermes's rewrite of `config.yaml`, and prints the one command to run when no `hermes` command is found. `--remove` runs `hermes mcp remove gbrain`; `--instructions-only` still leaves MCP alone.
+
+### Changed
+- `INSTALL_FOR_AGENTS.md` adds a release-binary install route (`#release-binary`) for harnesses whose command scanner refuses the Bun installer or `bun install -g`, such as Hermes in single-query mode: download the stable `gbrain-linux-x64` (or `gbrain-darwin-arm64`) release file to `~/.local/bin/gbrain`, then `~/.local/bin/gbrain init --pglite --no-embedding` and `~/.local/bin/gbrain setup hermes`. Every command in it passes Hermes v2026.9.24's command checks with Tirith 0.4.2 and 0.5.0, online or offline.
+- The README has a Hermes section with that route, and `docs/mcp/HERMES.md` and the "If you are Hermes" step lead with `gbrain setup hermes`, keeping the `hermes mcp add` command as the by-hand fallback.

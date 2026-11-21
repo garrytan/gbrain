@@ -481,7 +481,7 @@ describe('gbrain setup: consent and refusals', () => {
   });
 
   for (const [harness, guide] of [['openclaw', 'docs/mcp/OPENCLAW.md'], ['hermes', 'docs/mcp/HERMES.md']] as const) {
-    test(`${harness}: setup writes only the brain-first block and names its guide for the MCP step`, async () => {
+    test(`${harness}: setup writes the brain-first block and names its guide for the MCP step`, async () => {
       const b = box();
       if (harness === 'hermes') {
         // Hermes seeds SOUL.md on first run; setup never creates one (it would replace the default identity).
@@ -490,7 +490,8 @@ describe('gbrain setup: consent and refusals', () => {
       }
       const r = await setup(b, [harness, '--json'], { OPENCLAW_STATE_DIR: undefined, OPENCLAW_WORKSPACE_DIR: undefined, OPENCLAW_PROFILE: undefined, HERMES_HOME: undefined });
       expect(r.exitCode).toBe(0);
-      expect(r.doc).toMatchObject({ harness, instructions_only: true, mcp: { setup: 'manual', docs: guide }, instructions: { action: 'write' } });
+      // Hermes's MCP step runs through its own CLI (test/setup-hermes-mcp.test.ts); with no hermes here it prints the command.
+      expect(r.doc).toMatchObject({ harness, instructions_only: true, mcp: { setup: harness === 'hermes' ? 'print' : 'manual', docs: guide }, instructions: { action: 'write' } });
       expect(r.doc.instructions.path).toBe(harness === 'openclaw' ? join(b.home, '.openclaw', 'workspace', 'AGENTS.md') : join(b.home, '.hermes', 'SOUL.md'));
       expect(existsSync(claudeJson(b))).toBe(false);
     });
