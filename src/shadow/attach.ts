@@ -11,9 +11,9 @@ import type { BrainEngine } from '../core/engine.ts';
 import { resolveServeGbrainCommand } from '../core/serve-service.ts';
 import type { FollowOptions } from './follow.ts';
 import { ShadowFollower } from './follower.ts';
+import { openReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
 import { readSeedRecord } from './seed.ts';
-import { InvalidationLines } from './invalidations.ts';
 import { MirrorQueue } from './mirror.ts';
 import type { ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
@@ -25,19 +25,17 @@ export interface AttachShadowDeps {
   supervisor?: Partial<ShadowSupervisorOptions>;
   random?: () => number;
   /**
-   * Shadow follow: a producer to publish committed primary writes to, or 'ndjson' to send them as `inv` lines to the
-   * child. When left out and the brain has been seeded (seed.json), the follower applies committed writes to the
-   * Rust store (follower.ts) and a reconciler repairs what it missed. A brain with no seed follows nothing.
+   * Shadow follow: a producer to publish committed primary writes to. When left out and the brain has been seeded
+   * (seed.json), the follower applies committed writes to the Rust store (follower.ts) and a reconciler repairs what it
+   * missed. A brain with no seed follows nothing.
    */
-  follow?: FollowOptions | 'ndjson';
+  follow?: FollowOptions;
 }
 
 export interface AttachedShadow<E extends BrainEngine> {
   engine: E;
   queue: MirrorQueue;
   supervisor: ShadowSupervisor;
-  /** Set when `follow: 'ndjson'` asked for lines. */
-  invalidations?: InvalidationLines;
   /** Set when the brain is seeded and `follow` was left out. */
   follower?: ShadowFollower;
   reconciler?: Reconciler;
@@ -59,13 +57,14 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   };
   const seeded = deps.follow === undefined && readSeedRecord(dir) !== null;
   const rpc = <T>(method: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<T> => supervisor.request<T>(method, args, timeoutMs);
-  const reconciler = seeded ? new Reconciler({ dir, primary: engine, rpc, follower: null }) : undefined;
-  const follower = seeded ? new ShadowFollower({
-    primary: engine, send: (line) => supervisor.send(line), rpc,
+  const reads = seeded ? openReadSource(engine) : undefined;
+  const follower = reads ? new ShadowFollower({
+    reads, send: (line) => supervisor.send(line), rpc,
     onDirty: (relation) => reconciler?.markDirty(relation),
     onFirstBatch: () => { void reconciler?.probe().catch(() => undefined); },
   }) : undefined;
-  if (reconciler && follower) { reconciler.follower = follower; reconciler.startNightly(); }
+  const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower }) : undefined;
+  reconciler?.startNightly();
   engine.registerBeforeDisconnect(async () => {
     try {
       if (supervisor.active() && supervisor.childPid !== null) queue.flushStats();
@@ -75,11 +74,11 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       reconciler?.stop();
       queue.stop();
       supervisor.stop();
+      await reads?.close().catch(() => undefined);
     }
   });
-  const invalidations = deps.follow === 'ndjson' ? new InvalidationLines(supervisor) : undefined;
-  const follow = invalidations ? { sink: invalidations } : follower ? { sink: follower } : deps.follow === 'ndjson' ? undefined : deps.follow;
-  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow }), queue, supervisor, invalidations, follower, reconciler };
+  const follow = follower ? { sink: follower } : deps.follow;
+  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow }), queue, supervisor, follower, reconciler };
 }
 
 /** The engine factory's entry point: the wrapped engine. */

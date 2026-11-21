@@ -318,13 +318,14 @@ async function reconcileCommand(
   brain: { key: string; dir: string }, json: boolean, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void,
 ): Promise<number> {
   if (!readSeedRecord(brain.dir)) { err('engine shadow: reconcile needs a seeded store. Run gbrain engine shadow seed first.'); return 1; }
-  const [{ Reconciler }, { ShadowSupervisor }, { shadowChildArgv }] = await Promise.all([
-    import('../shadow/reconcile.ts'), import('../shadow/supervisor.ts'), import('../shadow/attach.ts'),
+  const [{ Reconciler }, { ShadowSupervisor }, { shadowChildArgv }, { openReadSource }] = await Promise.all([
+    import('../shadow/reconcile.ts'), import('../shadow/supervisor.ts'), import('../shadow/attach.ts'), import('../shadow/read-pool.ts'),
   ]);
   const primary = await (deps.openPrimary ?? openConfiguredPrimary)();
   const supervisor = new ShadowSupervisor({ dir: brain.dir, argv: shadowChildArgv(brain.dir), stillEnabled: () => true, ...deps.reconcileSupervisor });
+  const reads = openReadSource(primary);
   try {
-    const reconciler = new Reconciler({ dir: brain.dir, primary, rpc: (method, args, timeoutMs) => supervisor.request(method, args, timeoutMs) });
+    const reconciler = new Reconciler({ dir: brain.dir, reads, rpc: (method, args, timeoutMs) => supervisor.request(method, args, timeoutMs) });
     const pass = await reconciler.run('full');
     if (json) out(JSON.stringify(pass, null, 2));
     else {
@@ -335,6 +336,7 @@ async function reconcileCommand(
     return pass.error ? 1 : 0;
   } finally {
     supervisor.stop();
+    await reads.close();
     await primary.disconnect();
   }
 }

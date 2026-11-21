@@ -10,6 +10,7 @@ import { openRustEngine } from '../../src/core/rust-engine.ts';
 import type { FollowStore } from '../../src/shadow/follow-child.ts';
 import { FollowChild } from '../../src/shadow/follow-child.ts';
 import { ShadowFollower } from '../../src/shadow/follower.ts';
+import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { Reconciler } from '../../src/shadow/reconcile.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
@@ -43,21 +44,24 @@ export async function openFollowRig(primary: BrainEngine, addon: RustAddon, dir:
     dir, store: async () => store, owner: () => true,
     writeControl: (line) => { const msg = JSON.parse(line); waiters.get(msg.id)?.(msg); },
   });
+  await new Promise((resolve) => setTimeout(resolve, 5)); // a pass settles only what was invalidated before it started: not in the session's own millisecond
   let nextId = 0;
   const rpc = <T>(method: string, args: Record<string, unknown> = {}): Promise<T> => new Promise<T>((resolve, reject) => {
     const id = ++nextId;
     waiters.set(id, (resp) => { waiters.delete(id); if (resp.ok) resolve(resp.value as T); else reject(Object.assign(new Error(resp.error?.message), { code: resp.error?.code })); });
     child.handle({ t: 'rpc', id, method, args });
   });
+  const reads = openReadSource(primary, { pauseMs: 0 });
   const follower = new ShadowFollower({
-    primary, rpc, send: (line) => { child.handle(JSON.parse(line)); return true; },
+    reads, rpc, send: (line) => { child.handle(JSON.parse(line)); return true; },
     onDirty: (relation) => { opts.dirty?.(relation); },
   });
-  const reconciler = new Reconciler({ dir, primary, rpc, follower });
+  const reconciler = new Reconciler({ dir, reads, rpc, follower });
+  // The store was just seeded from the primary, which proves everything up to now; a session otherwise starts invalid.
   const wrapped = wrapShadowEngine(primary, { counters: newMirrorCounters(), offer: () => {}, active: () => true }, { sampleRate: 0, follow: { sink: follower } });
   const settle = async (): Promise<void> => { await follower.settle(); await rpc('state'); };
   return {
     wrapped, follower, child, reconciler, store, seedId: record.seed_id, dir, rust: rust as unknown as BrainEngine, rpc, settle,
-    close: async () => { await settle(); await child.close(); await rust.disconnect(); },
+    close: async () => { await settle(); await child.close(); await reads.close(); await rust.disconnect(); },
   };
 }

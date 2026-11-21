@@ -10,7 +10,7 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -65,13 +65,14 @@ describe('follow child', () => {
     const dir = tmp();
     writeSeedRecord(dir, SEED);
     const { child, lines } = childOn(dir, {}, true, () => 10_000);
+    child.handle(rpc(1, 'watermark', { valid: true, since: 9_500 })); // a pass that started before this session: refused
+    child.handle(rpc(2, 'watermark', { valid: true, since: 10_500 }));
     child.handle(apply(9_000));
-    child.handle(rpc(1, 'watermark', { valid: true, since: 9_500 }));
     await child.close();
     const file = readFollowerFile(dir)!;
-    expect(file).toMatchObject({ epoch_id: 'seed-1', applied_rows: 1, last_seq: 1, watermark: { valid: true, through: new Date(9_500).toISOString() } });
+    expect(file).toMatchObject({ epoch_id: 'seed-1', applied_rows: 1, last_seq: 1, watermark: { valid: true, through: new Date(9_000).toISOString() } });
     expect(file.lag.epoch[lagBucket(1000)]).toBe(1);
-    expect(lines[0]).toMatchObject({ t: 'resp', id: 1, ok: true });
+    expect(lines[1]).toMatchObject({ t: 'resp', id: 2, ok: true });
   });
 
   test('a fingerprint the store computes differently is counted, per row, in the epoch totals', async () => {
@@ -85,40 +86,80 @@ describe('follow child', () => {
     expect(countFingerprintMismatches([['a', 'b']], [])).toBe(1);
   });
 
-  test('a failed apply invalidates the watermark; the first reason stays; a restore must postdate it', async () => {
+  test('a new session is invalid until a pass starts after it; a later invalidation needs a later pass; the first reason stays', async () => {
     const dir = tmp();
     writeSeedRecord(dir, SEED);
     let clock = 5_000;
     const { child, lines } = childOn(dir, { replaceRelationRows: async () => { throw Object.assign(new Error('x'), { code: 'invalid_state' }); } }, true, () => clock);
-    child.handle(rpc(1, 'watermark', { valid: true, since: 1_000 }));
-    child.handle(apply(1));
-    child.handle({ t: 'watermark', valid: false, reason: 'later_reason' });
-    child.handle(rpc(2, 'watermark', { valid: true, since: 4_000 }));
-    child.handle(rpc(3, 'state'));
-    await child.close();
-    expect(lines.find((l) => l.id === 2)).toMatchObject({ ok: true, value: { valid: false, invalidated_reason: 'apply_failed:invalid_state' } });
+    child.handle(rpc(1, 'watermark', { valid: true, since: 4_000 })); // older than the session start
+    await child.close(); // events run in order but later than the call: settle between clock changes
     clock = 6_000;
-    const again = childOn(dir, {}, true, () => clock);
-    again.child.handle(rpc(4, 'watermark', { valid: true, since: 5_500 }));
-    await again.child.close();
-    expect(readFollowerFile(dir)!.watermark.valid).toBe(true);
+    child.handle(apply(1)); // fails: a full obligation at 6000
+    child.handle(rpc(2, 'watermark', { valid: true, since: 5_500 }));
+    child.handle(rpc(3, 'watermark', { valid: true, since: 6_500 }));
+    child.handle({ t: 'watermark', valid: false, reason: 'later_reason' });
+    child.handle(rpc(4, 'state'));
+    await child.close();
+    const state = (id: number) => lines.find((l) => l.id === id);
+    expect(state(1)).toMatchObject({ ok: true, value: { valid: false, invalidated_reason: 'not_reconciled' } });
+    expect(state(2)).toMatchObject({ value: { valid: false, invalidated_reason: 'not_reconciled' } });
+    expect(state(3)).toMatchObject({ value: { valid: true, invalidated_reason: null } });
+    expect(state(4)).toMatchObject({ value: { valid: false, invalidated_reason: 'later_reason' } });
   });
 
-  test('a child that did not stop cleanly starts invalid; a clean stop keeps coverage', async () => {
+  test('a dirty relation is settled by a pass for it that started after it; a full pass settles everything older', async () => {
+    const dir = tmp();
+    writeSeedRecord(dir, SEED);
+    let clock = 1_000;
+    const { child, lines } = childOn(dir, {}, true, () => clock);
+    child.handle(rpc(1, 'watermark', { valid: true, since: 1_500 })); // the session start
+    clock = 2_000;
+    child.handle({ t: 'watermark', valid: false, reason: 'relation_dirty', relation: 'pages' });
+    await child.close();
+    clock = 3_000;
+    child.handle({ t: 'watermark', valid: false, reason: 'relation_dirty', relation: 'tags' });
+    child.handle(rpc(2, 'watermark', { valid: true, since: 2_500, relations: ['pages', 'tags'] })); // tags was marked after it started
+    child.handle(rpc(3, 'watermark', { valid: true, since: 3_500, relations: ['tags'] }));
+    child.handle(rpc(4, 'watermark', { valid: true, since: 3_600 }));
+    await child.close();
+    const state = (id: number) => (lines.find((l) => l.id === id) as { value: { valid: boolean; invalidated_reason: string | null } }).value;
+    expect(state(2)).toMatchObject({ valid: false, invalidated_reason: 'relation_dirty' });
+    expect(state(3)).toMatchObject({ valid: true });
+    expect(state(4)).toMatchObject({ valid: true });
+  });
+
+  test('every owner session starts invalid, even after a clean stop', async () => {
     const dir = tmp();
     writeSeedRecord(dir, SEED);
     const first = childOn(dir);
-    first.child.handle(rpc(1, 'watermark', { valid: true, since: 1 }));
+    first.child.handle(rpc(1, 'watermark', { valid: true, since: Date.now() + 10 }));
     await first.child.close();
-    expect(readFollowerFile(dir)!.clean_stop).toBe(true);
+    expect(readFollowerFile(dir)!.watermark.valid).toBe(true);
     const second = childOn(dir);
     second.child.tick();
-    expect(readFollowerFile(dir)!.watermark.valid).toBe(true);
-    second.child.tick(); // never closed: the file now says the child is running
-    const crashed = childOn(dir);
-    expect(readFollowerFile(dir)!.clean_stop).toBe(false);
-    crashed.child.tick();
-    expect(readFollowerFile(dir)!.watermark).toMatchObject({ valid: false, invalidated_reason: 'follower_restarted' });
+    expect(readFollowerFile(dir)!.watermark).toMatchObject({ valid: false, invalidated_reason: 'follower_session_start' });
+  });
+
+  test('another process\'s child leaves lines; the owner reads them before it advances the watermark and holds a lease past them', async () => {
+    const dir = tmp();
+    writeSeedRecord(dir, SEED);
+    let clock = 10_000;
+    const owner = childOn(dir, {}, true, () => clock);
+    const client = childOn(dir, {}, false, () => clock);
+    owner.child.handle(rpc(1, 'watermark', { valid: true, since: 10_500 }));
+    await owner.child.close();
+    clock = 20_000;
+    client.child.handle(apply(1)); // a client child cannot apply: it tells the owner
+    await client.child.close();
+    expect(readFileSync(join(dir, 'follower-invalidations.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1);
+    owner.child.handle(rpc(2, 'watermark', { valid: true, since: 20_500 })); // inside the one-second lease after the line
+    await owner.child.close();
+    clock = 22_000;
+    owner.child.handle(rpc(3, 'watermark', { valid: true, since: 21_500 }));
+    await owner.child.close();
+    const state = (id: number) => (owner.lines.find((l) => l.id === id) as { value: { valid: boolean; invalidated_reason: string | null } }).value;
+    expect(state(2)).toMatchObject({ valid: false });
+    expect(state(3)).toMatchObject({ valid: true });
   });
 
   test('a child that does not own the store answers not_owner and writes nothing', async () => {

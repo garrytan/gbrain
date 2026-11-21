@@ -9,11 +9,12 @@
  * carries a later generation and the store keeps the newer one.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { DIGEST_SESSION_SETTINGS, digestQuery, quoteIdent, type DigestPlan } from '../core/persistence/graduation-digest.ts';
+import { quoteIdent, type DigestPlan } from '../core/persistence/graduation-digest.ts';
 import type { SeedFollowKey, SeedPlan, SeedRelationPlan } from '../core/rust-engine/store.ts';
 import { hasFingerprintFunctions, type FingerprintPair } from './fingerprints.ts';
 import { rowDigest, sortKey, sortKeyUnsupported } from './follow-digest.ts';
 import type { Invalidation, InvalidationBatch, InvalidationSink } from './invalidations.ts';
+import type { ReadSource } from './read-pool.ts';
 import { relationRead } from './seed.ts';
 
 export const FOLLOW_QUEUE_BOUND = 1024;
@@ -30,7 +31,8 @@ export function nextGeneration(): number {
 }
 
 export interface FollowerOptions {
-  primary: BrainEngine;
+  /** Where the follower re-reads changed rows from the primary. */
+  reads: ReadSource;
   /** The supervisor's `send`: false when the line was not accepted. */
   send: (line: string) => boolean;
   /** The supervisor's `request`. */
@@ -39,18 +41,15 @@ export interface FollowerOptions {
   onDirty?: (relation: string) => void;
   /** The first batch of this process: time to run the fingerprint probe. */
   onFirstBatch?: () => void;
-  now?: () => number;
-  queueBound?: number;
 }
 
-type Batch = InvalidationBatch & { shed_before?: number };
 type RowsItem = Extract<Invalidation, { kind: 'rows' }>;
 interface ReadRow { key: string[]; values: Record<string, string | null>; fp?: FingerprintPair }
 
 export class ShadowFollower implements InvalidationSink {
   /** When this process last invalidated (or failed to deliver) coverage; reconcile compares it to a pass's start. */
   lastInvalidatedAt = 0;
-  private readonly queue: Batch[] = [];
+  private readonly queue: InvalidationBatch[] = [];
   private draining: Promise<void> | null = null;
   private lastSeq: number | null = null;
   private pendingInvalid: string | null = null;
@@ -59,14 +58,13 @@ export class ShadowFollower implements InvalidationSink {
   private planCache: Promise<Map<string, SeedRelationPlan>> | null = null;
   private readonly reads = new Map<string, Promise<DigestPlan>>();
   private hasFingerprints: boolean | null = null;
-  private readonly now: () => number;
 
-  constructor(private readonly o: FollowerOptions) { this.now = o.now ?? Date.now; }
+  constructor(private readonly o: FollowerOptions) {}
 
   publish(batch: InvalidationBatch): void {
     try {
-      if (this.queue.length >= (this.o.queueBound ?? FOLLOW_QUEUE_BOUND)) { this.invalidate('queue_overflow'); return; }
-      this.queue.push(batch as Batch);
+      if (this.queue.length >= FOLLOW_QUEUE_BOUND) { this.invalidate('queue_overflow'); return; }
+      this.queue.push(batch);
       this.draining ??= new Promise<void>((resolve) => setImmediate(() => { void this.drain().finally(resolve); }));
     } catch { /* the follower never fails a write */ }
   }
@@ -76,10 +74,16 @@ export class ShadowFollower implements InvalidationSink {
     while (this.draining) await this.draining;
   }
 
-  /** The coverage watermark must go invalid: something was lost or cannot be described. */
-  invalidate(reason: string): void {
-    this.lastInvalidatedAt = this.now();
-    if (!this.send({ t: 'watermark', valid: false, reason })) this.pendingInvalid ??= reason;
+  /**
+   * The coverage watermark must go invalid: something was lost or cannot be described. With a `relation` only that
+   * relation is dirty, and the child holds the obligation until a pass for it repairs it; if that line is lost the
+   * whole watermark goes invalid instead.
+   */
+  invalidate(reason: string, relation?: string): void {
+    const sent = this.send({ t: 'watermark', valid: false, reason, ...(relation ? { relation } : {}) });
+    if (sent && relation) return;
+    this.lastInvalidatedAt = Date.now();
+    if (!sent) this.pendingInvalid ??= relation ? 'relation_dirty_shed' : reason;
   }
 
   private send(message: Record<string, unknown>): boolean {
@@ -101,8 +105,8 @@ export class ShadowFollower implements InvalidationSink {
     return this.planCache;
   }
 
-  private async process(batch: Batch): Promise<void> {
-    if ((this.lastSeq !== null && batch.seq !== this.lastSeq + 1) || (batch.shed_before ?? 0) > 0) this.invalidate(batch.shed_before ? 'batch_shed' : 'seq_gap');
+  private async process(batch: InvalidationBatch): Promise<void> {
+    if (this.lastSeq !== null && batch.seq !== this.lastSeq + 1) this.invalidate('seq_gap');
     this.lastSeq = batch.seq;
     if (!this.probed) { this.probed = true; try { this.o.onFirstBatch?.(); } catch { /* best effort */ } }
     if (this.pendingInvalid && this.send({ t: 'watermark', valid: false, reason: this.pendingInvalid })) this.pendingInvalid = null;
@@ -112,7 +116,7 @@ export class ShadowFollower implements InvalidationSink {
       if (item.kind === 'invalid') { this.reads.clear(); this.invalidate(`invalid:${item.reason}`); }
       else if (item.kind === 'relation') {
         if (!plan.has(item.relation)) continue;
-        this.invalidate('relation_dirty');
+        this.invalidate('relation_dirty', item.relation);
         try { this.o.onDirty?.(item.relation); } catch { /* best effort */ }
       } else if (plan.has(item.relation)) byRelation.set(item.relation, [...(byRelation.get(item.relation) ?? []), item]);
     }
@@ -122,28 +126,23 @@ export class ShadowFollower implements InvalidationSink {
   private readPlan(rp: SeedRelationPlan, tx: BrainEngine): Promise<DigestPlan> {
     let read = this.reads.get(rp.relation);
     if (!read) {
-      read = (async () => {
-        const extra = rp.relation === 'facts' && this.hasFingerprints
-          ? [`gbrain_fact_fingerprint(t."fact") AS fp0`, `gbrain_fact_fingerprint_v1(t."fact") AS fp1`] : [];
-        return relationRead(tx, rp.relation, rp.key, extra);
-      })();
+      const extra = rp.relation === 'facts' && this.hasFingerprints
+        ? [`gbrain_fact_fingerprint(t."fact") AS fp0`, `gbrain_fact_fingerprint_v1(t."fact") AS fp1`] : [];
+      read = relationRead(tx, rp.relation, rp.key, extra);
       this.reads.set(rp.relation, read);
       read.catch(() => this.reads.delete(rp.relation));
     }
     return read;
   }
 
-  private async applyRows(batch: Batch, rp: SeedRelationPlan, items: RowsItem[]): Promise<void> {
+  private async applyRows(batch: InvalidationBatch, rp: SeedRelationPlan, items: RowsItem[]): Promise<void> {
     const generation = nextGeneration();
     const found = new Map<string, ReadRow>();
     const wanted = new Map<string, string[]>();
     let read!: DigestPlan;
     // Outside the snapshot: a single-connection engine cannot run a second query while its transaction is open.
-    if (rp.relation === 'facts') this.hasFingerprints ??= await hasFingerprintFunctions(this.o.primary);
-    await this.o.primary.transaction(async (tx) => {
-      const query = digestQuery(tx);
-      await query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-      await query(DIGEST_SESSION_SETTINGS);
+    if (rp.relation === 'facts') this.hasFingerprints ??= await this.o.reads.read((tx) => hasFingerprintFunctions(tx));
+    await this.o.reads.read(async (tx) => {
       read = await this.readPlan(rp, tx);
       if (sortKeyUnsupported(read.key)) return;
       const groups = new Map<string, { columns: string[]; tuples: string[][] }>();
@@ -157,7 +156,7 @@ export class ShadowFollower implements InvalidationSink {
       for (const { columns, tuples } of groups.values()) await this.readWhere(tx, read, columns, tuples, found);
       const before = [...wanted.values()].filter((k) => k.length === read.key.length);
       if (before.length) await this.readWhere(tx, read, read.key.map((k) => k.name), before, found);
-    }, { readOnly: true });
+    });
     if (sortKeyUnsupported(read.key)) { this.invalidate(`sort_key_unsupported:${rp.relation}`); return; }
 
     const tuples = new Map<string, string[]>([...wanted].filter(([, k]) => k.length === read.key.length));
@@ -179,7 +178,7 @@ export class ShadowFollower implements InvalidationSink {
       };
       chunk = []; bytes = 0;
       if (this.send(message)) { this.sentQueued = this.queue.length; return true; }
-      this.lastInvalidatedAt = this.now();
+      this.lastInvalidatedAt = Date.now();
       this.pendingInvalid ??= 'apply_shed';
       return false;
     };

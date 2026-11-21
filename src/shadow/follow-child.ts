@@ -5,9 +5,19 @@
  * fingerprint totals and the probe and allocator results. Every number is an EPOCH total (one epoch is one seed).
  *
  * Coverage watermark. Valid means: every committed primary write up to `through` is in the store, or a reconcile
- * pass has proven it. The first reason it went invalid is kept. Only an explicit restore (a clean reconcile pass that
- * started after the last invalidation) makes it valid again. A child that did not stop cleanly starts invalid.
+ * pass has proven it. The first reason it went invalid is kept. The child holds the obligations behind an invalid
+ * watermark: `fullAt` (something that only a full pass can prove: the time of the last such invalidation) and `dirty`
+ * (relations a pass for just those relations repairs, with the time each was last marked). A restore names the time
+ * its pass started: it settles an obligation only when that is older than the pass, and the watermark is valid again
+ * only when no obligation is left. Every owner session starts with a full obligation, so a restart is never trusted.
+ *
+ * Only one child owns the Rust store. A child that does not (another process's) cannot apply anything, so it appends
+ * a line to `follower-invalidations.jsonl` for every write it was handed; the owner reads those lines before it
+ * advances the watermark and treats each as a full obligation that lasts a second past the line (FOREIGN_LEASE_MS),
+ * which covers the writes whose lines were throttled.
  */
+import { appendFileSync, closeSync, openSync, readSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { RustStore } from '../core/rust-engine/store.ts';
 import { countFingerprintMismatches, PROBE_CORPUS, probeRecord, type FingerprintPair } from './fingerprints.ts';
 import { lagBucket, NOT_RUN_PROBE, readFollowerFile, writeFollowerFile, type FollowerFile } from './follow-status.ts';
@@ -18,6 +28,8 @@ export type FollowStore = Pick<RustStore, 'replaceRelationRows' | 'replaceInterv
 
 export const FOLLOW_CHILD_QUEUE_BOUND = 1024;
 const WRITE_EVERY_MS = 1_000;
+const FOREIGN_FILE = 'follower-invalidations.jsonl';
+const FOREIGN_LEASE_MS = 1_000;
 
 interface ApplyEvent {
   t: 'apply'; seq: number; committed_at: number; relation: string; generation: number; queued?: number;
@@ -25,7 +37,7 @@ interface ApplyEvent {
   digests: Parameters<RustStore['replaceRelationRows']>[5]; fp?: (FingerprintPair | null)[];
 }
 export type FollowEvent = ApplyEvent
-  | { t: 'watermark'; valid: false; reason: string }
+  | { t: 'watermark'; valid: false; reason: string; relation?: string }
   | { t: 'depth'; queued: number }
   | { t: 'rpc'; id: number; method: string; args: Record<string, unknown> };
 
@@ -42,20 +54,22 @@ export interface FollowChildOptions {
 const errorCode = (error: unknown): string => (error as { code?: string })?.code ?? (error instanceof Error ? error.name : 'rpc_failed');
 
 export class FollowChild {
-  private readonly seedId: string | null;
   private readonly file: FollowerFile | null;
   private chain: Promise<void> = Promise.resolve();
   private depth = 0;
   private servingQueued = 0;
   private readonly waiting: number[] = [];
   private lastWrite = 0;
-  private lastInvalidatedAt = 0;
+  private fullAt: number | null = null;
+  private readonly dirty = new Map<string, number>();
+  private foreignOffset = 0;
+  private lastForeign = 0;
+  private foreignTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly now: () => number;
 
   constructor(private readonly o: FollowChildOptions) {
     this.now = o.now ?? Date.now;
     const seed = readSeedRecord(o.dir);
-    this.seedId = seed?.seed_id ?? null;
     if (!seed) { this.file = null; return; }
     const old = readFollowerFile(o.dir);
     const keep = old && old.epoch_id === seed.seed_id ? old : null;
@@ -63,10 +77,12 @@ export class FollowChild {
       version: 1, epoch_id: seed.seed_id, epoch_started_at: seed.finished_at, updated_at: new Date(this.now()).toISOString(), applied_rows: 0,
       queue_depth: 0, lag_ms: 0, last_seq: null, watermark: { valid: false, through: null, invalidated_reason: 'not_reconciled' },
       lag: { epoch: [], hours: {} }, fingerprints: { checked_rows: 0, mismatches: 0 }, probe: NOT_RUN_PROBE,
-      allocators: { verified: false, checked_at: null }, clean_stop: false,
+      allocators: { verified: false, checked_at: null },
     };
-    if (keep && !keep.clean_stop && keep.watermark.valid) this.invalidate('follower_restarted');
-    this.file.clean_stop = false;
+    if (!o.owner()) return;
+    // A new owner session proves nothing about the writes before it: only a full pass that starts after this settles it.
+    this.invalidate(keep ? 'follower_session_start' : 'not_reconciled');
+    try { writeFileSync(join(o.dir, FOREIGN_FILE), ''); } catch { /* no lines to miss yet */ }
   }
 
   /** Queues one event; ordering is the order of calls. */
@@ -79,30 +95,80 @@ export class FollowChild {
   }
 
   /** Flushes follower.json (called on the heartbeat). */
-  tick(): void { this.write(true); }
+  tick(): void { this.readForeign(); this.write(true); }
 
   async close(): Promise<void> {
     await this.chain;
-    if (this.file && this.depth === 0 && this.servingQueued === 0) this.file.clean_stop = true;
+    if (this.foreignTimer) { clearTimeout(this.foreignTimer); this.foreignTimer = null; this.appendForeign('closing'); }
     this.write(true);
   }
 
   private async run(event: FollowEvent): Promise<void> {
     if (event.t === 'apply') await this.apply(event);
-    else if (event.t === 'watermark') this.invalidate(event.reason);
+    else if (event.t === 'watermark') this.invalidate(event.reason, event.relation);
     else if (event.t === 'rpc') await this.rpc(event);
     this.write(false);
   }
 
-  private invalidate(reason: string): void {
-    this.lastInvalidatedAt = this.now();
+  /** `relation` makes only that relation dirty; `until` (default now) is the time a pass must start after to settle it. */
+  private invalidate(reason: string, relation?: string, until = this.now()): void {
     const w = this.file?.watermark;
-    if (!w || !w.valid) return;
+    if (!w) return;
+    if (!this.o.owner()) { this.noteForeign(reason); return; }
+    if (relation) this.dirty.set(relation, Math.max(this.dirty.get(relation) ?? 0, until));
+    else this.fullAt = Math.max(this.fullAt ?? 0, until);
+    if (!w.valid) return;
     w.valid = false; w.through = null; w.invalidated_reason = reason;
+  }
+
+  /** Not the owner: leaves a line for the owner (at most one a second; the last one waits for its turn). */
+  private noteForeign(reason: string): void {
+    const wait = FOREIGN_LEASE_MS - (this.now() - this.lastForeign);
+    if (wait <= 0) { this.appendForeign(reason); return; }
+    if (this.foreignTimer) return;
+    this.foreignTimer = setTimeout(() => { this.foreignTimer = null; this.appendForeign(reason); }, wait);
+    (this.foreignTimer as { unref?: () => void }).unref?.();
+  }
+
+  private appendForeign(reason: string): void {
+    this.lastForeign = this.now();
+    try { appendFileSync(join(this.o.dir, FOREIGN_FILE), `${JSON.stringify({ at: this.lastForeign, pid: process.pid, reason })}\n`); } catch { /* the owner learns at its next full pass */ }
+  }
+
+  /** The owner: takes in the lines other processes' children appended since it last looked. */
+  private readForeign(): void {
+    if (!this.file || !this.o.owner()) return;
+    try {
+      const path = join(this.o.dir, FOREIGN_FILE);
+      const size = statSync(path).size;
+      if (size < this.foreignOffset) this.foreignOffset = 0;
+      if (size === this.foreignOffset) return;
+      const buffer = Buffer.alloc(size - this.foreignOffset);
+      const fd = openSync(path, 'r');
+      try { readSync(fd, buffer, 0, buffer.length, this.foreignOffset); } finally { closeSync(fd); }
+      const whole = buffer.subarray(0, buffer.lastIndexOf(10) + 1);
+      this.foreignOffset += whole.length;
+      for (const line of whole.toString('utf8').split('\n')) {
+        if (!line) continue;
+        const { at, reason } = JSON.parse(line) as { at: number; reason: string };
+        this.invalidate(`foreign_write:${reason}`, undefined, at + FOREIGN_LEASE_MS);
+      }
+    } catch { /* an unreadable file is read again next time; the 1 h retry covers a lasting failure */ }
+  }
+
+  /** A pass that started at `since` settled these `relations` (or everything, for a full pass). */
+  private restore(since: number, relations: string[] | undefined): void {
+    const file = this.file!;
+    if (!relations && this.fullAt !== null && this.fullAt < since) this.fullAt = null;
+    for (const [relation, at] of this.dirty) if (at < since && (!relations || relations.includes(relation))) this.dirty.delete(relation);
+    if (this.fullAt === null && this.dirty.size === 0 && !file.watermark.valid) {
+      file.watermark = { valid: true, through: new Date(since).toISOString(), invalidated_reason: null };
+    }
   }
 
   private async apply(e: ApplyEvent): Promise<void> {
     const file = this.file;
+    this.readForeign();
     const store = this.o.owner() ? await this.o.store() : null;
     const done = (): void => { const i = this.waiting.indexOf(e.committed_at); if (i >= 0) this.waiting.splice(i, 1); };
     if (!file || !store) { done(); this.invalidate(`apply_failed:${this.o.owner() ? 'addon_unavailable' : 'not_owner'}`); return; }
@@ -139,15 +205,15 @@ export class FollowChild {
 
   private async call(method: string, a: Record<string, unknown>): Promise<unknown> {
     const file = this.file;
-    if (!file || !this.seedId) throw Object.assign(new Error('the store has no seed'), { code: 'not_seeded' });
+    if (!file) throw Object.assign(new Error('the store has no seed'), { code: 'not_seeded' });
     if (!this.o.owner()) throw Object.assign(new Error('another process owns the Rust store'), { code: 'not_owner' });
     const store = await this.o.store();
     if (!store) throw Object.assign(new Error('the Rust addon is unavailable'), { code: 'addon_unavailable' });
-    const id = this.seedId;
+    const id = file.epoch_id;
     const lo = (a.lo ?? null) as string | null;
     const hi = (a.hi ?? null) as string | null;
     switch (method) {
-      case 'state': return { ...file.watermark };
+      case 'state': this.readForeign(); return { ...file.watermark };
       case 'seedPlan': return store.seedPlan();
       case 'relationDigest': return store.relationDigest(id, a.relation as string, lo, hi);
       case 'relationEntries': return store.relationEntries(id, a.relation as string, lo, hi, a.limit as number);
@@ -167,11 +233,8 @@ export class FollowChild {
         return file.probe;
       }
       case 'watermark': {
-        const w = file.watermark;
-        if (a.valid === false) this.invalidate(String(a.reason ?? 'invalidated'));
-        else if (this.lastInvalidatedAt < (a.since as number) && (!a.onlyIfReason || (w.invalidated_reason ?? '').startsWith(a.onlyIfReason as string))) {
-          file.watermark = { valid: true, through: new Date(a.since as number).toISOString(), invalidated_reason: null };
-        }
+        this.readForeign();
+        this.restore(a.since as number, a.relations as string[] | undefined);
         return { ...file.watermark };
       }
       default: throw Object.assign(new Error(`unknown method ${method}`), { code: 'unknown_method' });

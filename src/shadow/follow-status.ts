@@ -33,8 +33,6 @@ export interface FollowerFile {
   fingerprints: { checked_rows: number; mismatches: number };
   probe: ProbeRecord;
   allocators: { verified: boolean; checked_at: string | null };
-  /** The child drained its queue and wrote this on the way out; a file without it means the child died. */
-  clean_stop: boolean;
 }
 
 export interface PassRecord {
@@ -128,7 +126,8 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   let clean = 0;
   for (let i = fulls.length - 1; i >= 0 && fulls[i]!.repaired_rows === 0 && !fulls[i]!.error; i--) clean++;
   const hours = Object.entries(live?.lag.hours ?? {}).filter(([h]) => Number(h) >= Math.floor(now.getTime() / 3_600_000) - 24);
-  const last24 = hours.reduce<number[]>((acc, [, counts]) => counts.map((n, i) => n + (acc[i] ?? 0)), []);
+  const last24: number[] = [];
+  for (const [, counts] of hours) counts.forEach((n, i) => { last24[i] = (last24[i] ?? 0) + n; });
   const fresh = live !== null && now.getTime() - Date.parse(live.updated_at) < FRESH_FOLLOWER_MS;
   const watermark = live?.watermark ?? { valid: false, through: null, invalidated_reason: seed ? 'not_started' : 'not_seeded' };
   const queue = live?.queue_depth ?? 0;

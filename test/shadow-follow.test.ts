@@ -86,11 +86,10 @@ const dirs: string[] = [];
       expect(attached.follower).toBeDefined();
       await attached.engine.putPage('people/dora-example', { type: 'person', title: 'Dora Example', compiled_truth: 'Dora.', timeline: '' });
       await attached.follower!.settle();
-      attached.supervisor.stop(); // ends the child's stdin: it applies what it holds, writes a clean stop and exits
+      attached.supervisor.stop(); // ends the child's stdin: it applies what it holds, writes its status and exits
       attached.reconciler!.stop();
       const deadline = Date.now() + 20_000;
-      while (Date.now() < deadline && readFollowerFile(home)?.clean_stop !== true) await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(readFollowerFile(home)).toMatchObject({ clean_stop: true, applied_rows: expect.any(Number) });
+      while (Date.now() < deadline && !(readFollowerFile(home)?.applied_rows ?? 0)) await new Promise((resolve) => setTimeout(resolve, 100));
       expect(readFollowerFile(home)!.applied_rows).toBeGreaterThan(0);
     });
     const rust = openRustEngine({ addon, databasePath: join(home, 'store') });
