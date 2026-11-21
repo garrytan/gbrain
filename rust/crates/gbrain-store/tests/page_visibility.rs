@@ -319,3 +319,57 @@ fn the_open_form_hides_every_page_that_names_readers_and_reads_the_store_flag_fo
     assert!(!hidden("atoms/from-alice", &open(&[])));
     assert!(hidden("atoms/from-alice", &access_policy(&[])));
 }
+
+#[test]
+fn who_can_read_lists_each_source_row_of_the_slug() {
+    let dir = TempDir::new("visibility-who-can-read");
+    let store = seeded(&dir);
+    source(&store, "alpha", json!({}));
+    source(&store, "chat", json!({ "kind": "imessage" }));
+    for id in ["alpha", "chat"] {
+        let input: PageInput = serde_json::from_value(
+            json!({"type": "note", "title": "o", "compiled_truth": "body", "frontmatter": {}}),
+        )
+        .unwrap();
+        let opts: PutPageOptions = serde_json::from_value(json!({ "sourceId": id })).unwrap();
+        store.put_page("notes/open", &input, &opts).unwrap();
+    }
+    let list = |slug: &str, source: Option<&str>, form: OwnerOnlyForm| {
+        store
+            .list_who_can_read_pages(slug, source, form)
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.source_id, r.owner_only, r.folder_rule_ids))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        list("notes/open", None, OwnerOnlyForm::Fn),
+        vec![
+            ("alpha".to_string(), false, None),
+            ("chat".to_string(), true, None),
+            ("default".to_string(), false, None),
+        ]
+    );
+    assert_eq!(
+        list("notes/open", None, OwnerOnlyForm::Closed),
+        vec![
+            ("alpha".to_string(), true, None),
+            ("chat".to_string(), true, None),
+            ("default".to_string(), true, None),
+        ]
+    );
+    assert_eq!(
+        list("notes/open", Some("default"), OwnerOnlyForm::Off),
+        vec![("default".to_string(), false, None)]
+    );
+    assert_eq!(
+        list("notes/gone", None, OwnerOnlyForm::Fn),
+        vec![("default".to_string(), false, None)]
+    );
+    assert!(list("notes/missing", None, OwnerOnlyForm::Fn).is_empty());
+    let row = &store
+        .list_who_can_read_pages("notes/alice", Some("default"), OwnerOnlyForm::Off)
+        .unwrap()[0];
+    assert_eq!(row.page_type, "note");
+    assert_eq!(row.frontmatter["readable_by"], json!(["member:alice"]));
+}

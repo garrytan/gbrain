@@ -16,7 +16,8 @@ import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postg
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
-import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
+import { accessAllowedSql, callerAccessAllowedSql, folderRulesAllowedSql, privacyPartSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
+import { ownerOnlyPageSql } from '../src/core/access/owner-only.ts';
 
 /** caller.ts MEMBER_SQL at 7470c703ed: MEMBERS_WHERE_SQL(`m.id = (${member})`), copied verbatim. */
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
@@ -328,6 +329,54 @@ const PINS: Pin[] = [
     from: 'src/core/access/owner-only.ts:66 sourceIsOwnerOnly',
     case: { method: 'readOwnerOnlySourceConfig', variant: 'default', run: e => e.readOwnerOnlySourceConfig('default') },
     texts: ['SELECT config FROM sources WHERE id = $1'],
+  },
+  {
+    from: 'src/core/access/open-pages.ts:190 openPages at 8d2e667543 (the open-page count, rendered in the pinned access context)',
+    case: { method: 'countOpenPages', variant: 'default', run: e => e.countOpenPages(['default'], [{ source: 'default', prefix: 'x/' }]) },
+    texts: () => [`SELECT p.source_id AS source, CASE WHEN strpos(p.slug, '/') > 0 THEN split_part(p.slug, '/', 1) ELSE '(root)' END AS folder,
+              p.type AS type, (${privacyPartSql('p')}) AS visible, count(*)::int AS pages
+         FROM pages p
+        WHERE p.deleted_at IS NULL AND ${accessAllowedSql('p', [], [])} AND p.source_id = ANY($1::text[]) AND NOT (p.source_id = $2 AND starts_with(p.slug, $3))
+        GROUP BY 1, 2, 3, 4`],
+  },
+  {
+    from: 'src/core/access/open-pages.ts:159 withOpenScope at 8d2e667543 (the folder-rule state check)',
+    case: { method: 'readAccessStateUnreadable', variant: 'default', run: e => e.readAccessStateUnreadable() },
+    texts: ['SELECT gbrain_access_state_unreadable() AS unreadable'],
+  },
+  {
+    // Equivalent, not verbatim: the caller ran `SELECT id FROM sources ORDER BY id`; the member sorts by byte order
+    // (COLLATE "C") so the three engines list source ids in one order whatever the database collation.
+    from: 'src/core/access/open-pages.ts:167 withOpenScope at 8d2e667543 (every source when no member reads one)',
+    case: { method: 'listSourceIds', variant: 'default', run: e => e.listSourceIds() },
+    texts: ['SELECT id FROM sources ORDER BY id COLLATE "C"'],
+  },
+  ...(['mode', 'fn', 'closed'] as const).map(form => ({
+    from: `src/commands/access.ts:183 whoCanRead at 8d2e667543 (every row of the slug, owner-only form ${form})`,
+    case: { method: 'listWhoCanReadPages', variant: `all-sources-${form}`, run: (e: Parameters<SqlCase['run']>[0]) => e.listWhoCanReadPages('notes/a', undefined, form) },
+    texts: () => [`SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', form)} AS owner_only
+       FROM pages p WHERE p.slug = $1 ORDER BY p.source_id`],
+  })),
+  {
+    from: 'src/commands/access.ts:183 whoCanRead at 8d2e667543 (the rows of the slug in one source)',
+    case: { method: 'listWhoCanReadPages', variant: 'one-source', run: e => e.listWhoCanReadPages('notes/a', 'default', 'mode') },
+    texts: () => [`SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', 'mode')} AS owner_only
+       FROM pages p WHERE p.slug = $1 AND p.source_id = $2 ORDER BY p.source_id`],
+  },
+  {
+    from: 'src/commands/access.ts:211 whoCanRead at 8d2e667543 (does the read path admit one member)',
+    case: { method: 'readPageAdmitsCaller', variant: 'member', run: e => e.readPageAdmitsCaller('default', 'notes/a', ['alice-example', 'group:team-a']) },
+    texts: () => [`SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${accessAllowedSql('p', ['alice-example', 'group:team-a'])}`],
+  },
+  {
+    from: 'src/commands/access.ts:222 whoCanRead at 8d2e667543 (do the owner\'s folder rules admit an audience page)',
+    case: { method: 'readPageFolderRulesAdmit', variant: 'rules', run: e => e.readPageFolderRulesAdmit('default', 'notes/a', ['default:r1']) },
+    texts: () => [`SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${folderRulesAllowedSql('p', ['default:r1'])}`],
+  },
+  {
+    from: 'src/commands/access.ts:225 whoCanRead at 8d2e667543 (the rules that keep derived rows to their readers)',
+    case: { method: 'countLineageClosingRules', variant: 'default', run: e => e.countLineageClosingRules(['default:r1'], 'default') },
+    texts: ["SELECT count(*)::int AS n FROM unnest($1::text[]) AS x WHERE NOT EXISTS (SELECT 1 FROM access_rules r WHERE r.source_id = $2 AND x = $2 || ':' || r.rule_id AND NOT r.covers_derived)"],
   },
 ];
 

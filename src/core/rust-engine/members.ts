@@ -140,6 +140,7 @@ export const RUST_ENGINE_MEMBERS = {
   hasExtractedEvents: 'pages',
   // sources
   getSource: 'sources',
+  listSourceIds: 'sources',
   listSourceLocalPaths: 'sources',
   listLocalPathSources: 'sources',
   readPlainSyncSource: 'sources',
@@ -1021,6 +1022,12 @@ export const RUST_ENGINE_MEMBERS = {
   listActiveAccessMembers: 'access_control',
   hasLabelledOnlyMember: 'access_control',
   listAccessTokens: 'access_control',
+  readAccessStateUnreadable: 'access_control',
+  countOpenPages: 'access_control',
+  listWhoCanReadPages: 'access_control',
+  readPageAdmitsCaller: 'access_control',
+  readPageFolderRulesAdmit: 'access_control',
+  countLineageClosingRules: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',
   countPagesDueForMentions: 'pages',

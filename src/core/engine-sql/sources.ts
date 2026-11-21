@@ -144,6 +144,16 @@ export async function getSource(exec: LegacyUnscopedRead, sourceId: string): Pro
 }
 
 /**
+ * Every source id, archived sources included, in byte order of the id: the sources an open-page count reads when no
+ * member reads one (access/open-pages.ts). `COLLATE "C"` keeps a Postgres server with a linguistic locale (en_US.utf8)
+ * in the order PGLite and the Rust engine give. Unscoped on master.
+ */
+export async function listSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
+  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id COLLATE "C"');
+  return rows.map(r => r.id);
+}
+
+/**
  * Local paths of every source that has one, unscoped on master (`withSourceFilesystemLock` read it through
  * `executeRaw`). Empty strings are dropped as well as NULLs.
  */

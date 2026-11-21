@@ -2,7 +2,7 @@
  * Source-resolution members (BrainEngine listLocalPathSources, listSourceRoutingRows, countDefaultSourceSplit): the
  * typed reads source-resolver.ts makes instead of raw SQL. Store side: rust/crates/gbrain-store/src/cli_reads/sources.rs.
  * listStaleSyncSourceIds (the advisor's stale-sync read) and readSourceRow/lockSourceRow (one source's check columns)
- * read the store's source records here. countSourcePages counts one source's pages and insertSource creates a source
+ * read the store's source records here, and listSourceIds (the open-page count's source fallback) lists their ids. countSourcePages counts one source's pages and insertSource creates a source
  * (store side: the same cli_reads/sources.rs).
  */
 import type { SourceRecordRow } from '../../engine.ts';
@@ -45,6 +45,12 @@ export const listStaleSyncSourceIds: StoreMember<[], string[]> = async (brain) =
   const staleBefore = Date.now() - 7 * 86_400_000;
   return rows.filter(r => r.last_sync_at !== null && new Date(r.last_sync_at).getTime() < staleBefore).map(r => r.id)
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+};
+
+/** Every source id, archived ones included, in byte order (the SQL's `ORDER BY id COLLATE "C"`). */
+export const listSourceIds: StoreMember<[], string[]> = async (brain) => {
+  const rows = (await storeCall({ member: 'listSourceIds' }, () => brain.listSourceRecords())) as SourceRecordRow[];
+  return rows.map(r => r.id).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 };
 
 async function sourceCheckRow(brain: StoreBrain, member: string, sourceId: string): Promise<SourceCheckRow | null> {

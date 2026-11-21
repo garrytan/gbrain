@@ -14,6 +14,8 @@ import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia, FolderAccessRows } from './engine-sql/access-control.ts';
+import type { OpenPageCount, OpenPageExclusion, WhoCanReadPageRow } from './engine-sql/access-setup.ts';
+import type { OwnerOnlyForm } from './access/owner-only.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
@@ -1419,6 +1421,9 @@ export interface BrainEngine {
 
   /** One source row (id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides), or null when no source has that id. */
   getSource(sourceId: string): Promise<SourceDetailRow | null>;
+
+  /** Every source id, archived ones too, in byte order (`COLLATE "C"`): the open-page count's sources when no member reads one. */
+  listSourceIds(): Promise<string[]>;
 
   /**
    * Local paths of every source that has one (non-null, non-empty), in no particular order. The filesystem lock
@@ -4469,6 +4474,28 @@ export interface BrainEngine {
 
   /** The enabled, untombstoned member (with its groups) an id, the stdio member config key, a live token or a live client names; null when none. */
   readLiveMember(via: LiveMemberVia, key: string): Promise<LiveMemberRow | null>;
+
+  /** Whether row-level security keeps this database role from reading the folder access tables (`gbrain_access_state_unreadable()`). */
+  readAccessStateUnreadable(): Promise<boolean>;
+
+  /**
+   * The open pages of `sources` (live, and the read path's floor with an empty identity admits them), less each
+   * excluded prefix, grouped by source, top-level folder, type and whether the privacy rules admit the page; an empty
+   * list reads nothing (access/open-pages.ts).
+   */
+  countOpenPages(sources: readonly string[], exclude: readonly OpenPageExclusion[]): Promise<OpenPageCount[]>;
+
+  /** The page rows named `slug` (in `sourceId` when given), soft-deleted ones too, with the owner-only test in `form`, by source id (whoCanRead). */
+  listWhoCanReadPages(slug: string, sourceId: string | undefined, form: OwnerOnlyForm): Promise<WhoCanReadPageRow[]>;
+
+  /** Whether the read path's floor for `identity`, rendered in the current caller record, admits the page row (whoCanRead). */
+  readPageAdmitsCaller(sourceId: string, slug: string, identity: readonly string[]): Promise<boolean>;
+
+  /** Whether every folder rule covering the page row is one of `satisfied` (whoCanRead). */
+  readPageFolderRulesAdmit(sourceId: string, slug: string, satisfied: readonly string[]): Promise<boolean>;
+
+  /** How many of a page's qualified rule ids name no applied raw-only (`covers_derived` false) rule of `sourceId` (whoCanRead). */
+  countLineageClosingRules(ruleIds: readonly string[], sourceId: string): Promise<number>;
 
   /**
    * The applied folder rules any of `readers` meets (none read when `readers` is empty) and every folder prefix that

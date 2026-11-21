@@ -1,5 +1,6 @@
 file	equal	stopped
 test/engine-parity/access-flag.test.ts	1	0
+test/engine-parity/access-reports.test.ts	6	1
 test/engine-parity/access-tokens.test.ts	2	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0

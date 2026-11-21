@@ -355,9 +355,10 @@ describe('who-can-read and the open-page count on a brain that has, or once had,
   // members the read path serves: the readable_by members of a page, the owner alone for an iMessage page, and every open
   // page in the open count, while the owner-only source exists and after it is removed. They once judged pages without the
   // brain's schema version, so the owner-only test took its closed form and every page read as owner-only.
-  // Rust arm: a known stop. whoCanRead and openPages read members, folder rules and the page rows through executeRaw
-  // (src/commands/access.ts whoCanRead, src/core/access/caller.ts folderAccessFor, src/core/access/open-pages.ts), so
-  // the case ends on the raw_sql refusal. When the store serves those reads it must give these same readers and counts.
+  // Rust arm: a known stop. The reports read through typed members now (test/engine-parity/access-reports.test.ts), but
+  // this case first adds members, and member writes run through executeRaw (src/core/access/members.ts addMember), so it
+  // ends on the raw_sql refusal (docs/designs/RUST_ENGINE.md rows 32 and 32a). When the store keeps members it must give
+  // these same readers and counts.
   parityTest(
     'who-can-read names the members get_page serves, and the open count counts every open page, with an iMessage source and after its removal',
     { methods: ['executeRaw', 'putPage', 'setConfig'], requires: 'raw_sql' },

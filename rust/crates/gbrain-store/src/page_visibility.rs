@@ -2,7 +2,7 @@
 //! the page it names and which of a list of pages the caller reads (the TypeScript
 //! `engine-sql/page-visibility.ts`).
 //!
-//! Members: readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe. The TypeScript member turns the
+//! Members: readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe, listWhoCanReadPages. The TypeScript member turns the
 //! caller's rendered page policy into a [`PrivacyPolicy`] (or refuses), so both reads judge a page
 //! with `page_hidden` (facts/privacy.rs): `entity_privacy` false is the member-access part alone.
 //! A soft-deleted page still has its row, so `readPageHiddenFromCaller` judges it too, and
@@ -14,6 +14,11 @@
 //! hidden; else whether the row names readers, since the store keeps no folder rules), and whether
 //! the page's source or any source is owner-only (`config ->> 'kind'` is `imessage`, or
 //! `config ->> 'owner_only'` is `true`).
+//!
+//! `listWhoCanReadPages` is the page read `gbrain access who-can-read` opens with
+//! (`engine-sql/access-setup.ts`): every row with the slug, soft-deleted ones too, in source id
+//! byte order, with `ownerOnlyPageSql` in the form asked for. The store keeps no folder rules, so
+//! `folder_rule_ids` is null.
 //!
 //! Every page policy PGLite renders for a caller that is not the owner ends with the owner-only test
 //! (`ownerOnlyAllowedSql`); `page_hidden` applies it in the form the policy names (owner_only.rs):
@@ -27,10 +32,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 use crate::facts::{PrivacyPolicy, page_hidden};
-use crate::owner_only::{any_owner_only, source_owner_only};
+use crate::owner_only::{OwnerOnlyForm, OwnerOnlySources, any_owner_only, source_owner_only};
 use crate::owner_only_marks::any_marked;
 use crate::pages::read_page;
+use crate::sources::all_sources;
 use crate::{Result, Store};
+use serde_json::{Map, Value};
 
 /// One (source, slug) a caller asks about.
 #[derive(Debug, Clone, Deserialize)]
@@ -57,7 +64,53 @@ pub struct WriteVisibilityProbe {
     pub owner_only_any: bool,
 }
 
+/// One `listWhoCanReadPages` row, in the SQL's column names.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WhoCanReadPageRow {
+    pub slug: String,
+    pub source_id: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub frontmatter: Map<String, Value>,
+    pub folder_rule_ids: Option<Vec<String>>,
+    pub owner_only: bool,
+}
+
 impl Store {
+    /// `listWhoCanReadPages(slug, sourceId, form)`: the page rows named `slug`, live or
+    /// soft-deleted, in `source_id` only when given, by source id bytes, each with whether
+    /// `ownerOnlyPageSql(form)` holds for it.
+    pub fn list_who_can_read_pages(
+        &self,
+        slug: &str,
+        source_id: Option<&str>,
+        form: OwnerOnlyForm,
+    ) -> Result<Vec<WhoCanReadPageRow>> {
+        let read = self.read()?;
+        let owner_only = OwnerOnlySources::read(&*read)?;
+        let mut ids: Vec<String> = match source_id {
+            Some(id) => vec![id.to_owned()],
+            None => all_sources(&*read)?.into_iter().map(|s| s.id).collect(),
+        };
+        ids.sort();
+        let mut rows = Vec::new();
+        for id in ids {
+            let Some(page) = read_page(&*read, &id, slug)? else {
+                continue;
+            };
+            let hidden = owner_only.page_hidden(&*read, &page, form)?;
+            rows.push(WhoCanReadPageRow {
+                slug: page.slug,
+                source_id: page.source_id,
+                page_type: page.page_type,
+                frontmatter: page.frontmatter,
+                folder_rule_ids: None,
+                owner_only: hidden,
+            });
+        }
+        Ok(rows)
+    }
+
     /// `readWriteVisibilityProbe(sourceId, slug, { policy })`: the opening read of a remote page
     /// write's visibility check, where `policy` is the empty-identity page policy with privacy.
     pub fn read_write_visibility_probe(

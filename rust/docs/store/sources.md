@@ -17,6 +17,7 @@ until the first stamp; the import members read and write it ([import-members.md]
 | `brain.setSourceArchived(id, archived)` | `boolean`, whether the source exists | `sources archive` and `restore` |
 | `brain.insertSource(id, name, localPath, config)` | the new `SourceRow`; a taken `id` or `name` refuses `constraint_violation` and writes nothing; ids are 1 to 32 of `a-z0-9-` (`invalid_argument` otherwise) | `insertSource` (`sources add`) |
 | `brain.countSourcePages(sourceId, includeDeleted)` | `number`, the source's pages; soft-deleted pages count only with `includeDeleted`; an unknown source has none | `countSourcePages` (`sources list`, `status`, `remove`) |
+| `listSourceIds()` (TypeScript member over `brain.listSourceRecords()`) | `string[]`, every source id, archived ones included, in byte order | `listSourceIds` (`ORDER BY id COLLATE "C"`): the open-page count's source list when no member reads a source |
 
 `upsertSource` and `setSourceArchived` are not in PGLite's engine interface; the store needs a way
 to make a source, and the page methods below are source-scoped.

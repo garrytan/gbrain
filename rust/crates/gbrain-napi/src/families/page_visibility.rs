@@ -1,4 +1,5 @@
-//! The page visibility guards a remote page write runs (`src/core/engine-sql/page-visibility.ts`).
+//! The page visibility guards a remote page write runs (`src/core/engine-sql/page-visibility.ts`),
+//! and the page read `gbrain access who-can-read` opens with (`src/core/engine-sql/access-setup.ts`).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 
@@ -61,6 +62,25 @@ impl Brain {
             s.read_caller_page_access(
                 &required::<Vec<PageRef>>(pages, "readCallerPageAccess pages")?,
                 &required(policy, "readCallerPageAccess policy")?,
+            )
+        })
+    }
+
+    /// `listWhoCanReadPages(slug, sourceId, form)`: the page rows named `slug`, with the owner-only
+    /// test in `form` (`off`, `fn` or `closed`).
+    #[napi]
+    pub fn list_who_can_read_pages<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        source_id: Option<String>,
+        form: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_who_can_read_pages(
+                &slug,
+                source_id.as_deref(),
+                required(form, "listWhoCanReadPages form")?,
             )
         })
     }

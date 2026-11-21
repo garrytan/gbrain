@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1177/1177
+# covered: 1181/1184
 # lifecycle: 9/9
-# pages: 48/48
+# pages: 49/49
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 13/13
@@ -67,7 +67,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 34/34
+# write_misc: 37/40
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -96,13 +96,13 @@ getPage	pages	yes	131	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	602	yes	yes	yes	serves
+putPage	pages	yes	604	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	173	yes	yes	yes	serves
+softDeletePage	pages	yes	174	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -119,6 +119,7 @@ listAllPageRefs	pages	yes	2	yes	yes	yes	serves
 listAllSources	pages	yes	5	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
 getSource	pages	yes	7	no	yes	yes	serves
+listSourceIds	pages	yes	2	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
 readPlainSyncSource	pages	yes	1	no	yes	yes	serves
@@ -469,8 +470,8 @@ replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	20	no	yes	yes	serves
-setConfig	config	yes	33	no	yes	yes	serves
+getConfig	config	yes	21	no	yes	yes	serves
+setConfig	config	yes	35	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -677,7 +678,7 @@ insertOauthClient	minion_queue	yes	18	no	yes	yes	serves
 updateOauthClientBudget	minion_queue	yes	2	no	yes	yes	serves
 readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	8	no	yes	yes	serves
-listOauthClients	minion_queue	yes	1	no	yes	yes	serves
+listOauthClients	minion_queue	yes	2	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
 insertAccessToken	minion_queue	yes	2	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	2	no	yes	yes	serves
@@ -1038,7 +1039,7 @@ listSegmentedPages	withdrawal_pages	yes	1	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	1	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	7	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	8	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -1125,9 +1126,9 @@ sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
-listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
+listActiveAccessMembers	write_misc	yes	2	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves
-listAccessTokens	write_misc	yes	2	no	yes	yes	serves
+listAccessTokens	write_misc	yes	3	no	yes	yes	serves
 notifierCoverageRecorded	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
 writeOpCheckpointKeys	write_misc	yes	2	no	yes	yes	serves
@@ -1147,10 +1148,16 @@ attachSourcePath	write_misc	yes	1	no	yes	yes	serves
 listAppliedPolicyRevisions	write_misc	yes	2	no	yes	yes	serves
 readMayActFor	write_misc	yes	3	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	2	no	yes	yes	serves
-readAccessMembers	write_misc	yes	2	no	yes	yes	serves
+readAccessMembers	write_misc	yes	3	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	2	no	yes	yes	serves
 readLiveMember	write_misc	yes	4	no	yes	yes	serves
+readAccessStateUnreadable	write_misc	yes	2	no	yes	yes	serves
+countOpenPages	write_misc	yes	5	no	yes	yes	serves
+listWhoCanReadPages	write_misc	yes	1	no	yes	yes	serves
+readPageAdmitsCaller	write_misc	no	0	no	-	-	-
+readPageFolderRulesAdmit	write_misc	no	0	no	-	-	-
+countLineageClosingRules	write_misc	no	0	no	-	-	-
 readFolderAccess	write_misc	yes	4	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves

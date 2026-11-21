@@ -302,6 +302,28 @@
         ],
         "flagOnScopes": []
       },
+      "countLineageClosingRules#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "countOpenPages#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countPagesBy#grouped+since+remote": {
         "flagOffLanes": [
           "pool"
@@ -3009,6 +3031,17 @@
         ],
         "flagOnScopes": []
       },
+      "listSourceIds#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listSourceLastCommits#default": {
         "flagOffLanes": [
           "pool"
@@ -3254,6 +3287,50 @@
         "flagOnScopes": []
       },
       "listTrueUpRequests#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listWhoCanReadPages#all-sources-closed": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listWhoCanReadPages#all-sources-fn": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listWhoCanReadPages#all-sources-mode": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listWhoCanReadPages#one-source": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3653,6 +3730,17 @@
         "flagOnScopes": []
       },
       "readAccessMembers#live": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readAccessStateUnreadable#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4168,6 +4256,28 @@
         "flagOnScopes": []
       },
       "readOwnerOnlySourcesPresent#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPageAdmitsCaller#member": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPageFolderRulesAdmit#rules": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5775,10 +5885,12 @@
         "countLeasePressure": "none",
         "countLegacyDerivedPages": "none",
         "countLegacyFactsPending": "none",
+        "countLineageClosingRules": "none",
         "countMcpResolvedTakes": "none",
         "countOffGridTakeWeights": "none",
         "countOnboardSignal": "none",
         "countOpenJobsByOwner": "none",
+        "countOpenPages": "none",
         "countOrphanChunks": "none",
         "countOutstandingBySource": "none",
         "countOversizedEmbedSkips": "none",
@@ -6301,6 +6413,7 @@
         "listSimilarActiveFacts": "none",
         "listSingleFactMetadata": "none",
         "listSlotRows": "none",
+        "listSourceIds": "none",
         "listSourceIncarnations": "none",
         "listSourceLastCommits": "none",
         "listSourceLocalPaths": "none",
@@ -6364,6 +6477,7 @@
         "listWakeCrons": "none",
         "listWakeWatches": "none",
         "listWantedPages": "none",
+        "listWhoCanReadPages": "none",
         "listWithdrawalChunks": "none",
         "listWithdrawalSlugs": "none",
         "listWorldFactsFromPrivateSources": "none",
@@ -6471,6 +6585,7 @@
         "rawTransaction": "none",
         "readAccessCredentials": "none",
         "readAccessMembers": "none",
+        "readAccessStateUnreadable": "none",
         "readAccessTokenWriteGrant": "none",
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
@@ -6601,10 +6716,12 @@
         "readOpCheckpointKeys": "none",
         "readOwnerOnlySourceConfig": "none",
         "readOwnerOnlySourcesPresent": "none",
+        "readPageAdmitsCaller": "none",
         "readPageAliasRows": "none",
         "readPageBodySizes": "none",
         "readPageEmbeddingBudget": "none",
         "readPageFileOrigin": "none",
+        "readPageFolderRulesAdmit": "none",
         "readPageHiddenFromCaller": "none",
         "readPageIdInSource": "none",
         "readPageIndexingState": "none",

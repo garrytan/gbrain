@@ -14,6 +14,7 @@ local writer registration it already keeps; it adds no keys.
 | `brain.readPageHiddenFromCaller(sourceId, slug, policy)` | `true` when the page row of the source (live or soft-deleted) fails `policy`; `false` for a missing page | `readPageHiddenFromCaller` |
 | `brain.readWriteVisibilityProbe(sourceId, slug, policy)` | `{ any_labelled, identity_may_open, owner_only_source, owner_only_any }`. `any_labelled` is `false` (the store keeps no access members). `identity_may_open` is `null` when the page row (live or soft-deleted) is missing or passes `policy`, else whether it names readers (`readable_by`; the store keeps no folder rules). `owner_only_source` and `owner_only_any`: the source, or any source, has `config ->> 'kind'` `imessage` or `config ->> 'owner_only'` `true` | `readWriteVisibilityProbe` |
 | `brain.readCallerPageAccess(pages, policy)` | `[{ source_id, slug, readable }]`, one row per distinct `{ sourceId, slug }` of `pages` that names a page row, `readable` when the row is live and passes `policy`. Rows come in pair order; PGLite sets no order | `readCallerPageAccess` |
+| `brain.listWhoCanReadPages(slug, sourceId, form)` | `[{ slug, source_id, type, frontmatter, folder_rule_ids, owner_only }]`, every page row named `slug` (live or soft-deleted), in `sourceId` only when given, by source id bytes; `owner_only` is whether the owner-only test holds in `form` (`fn` or `closed`; the TypeScript member reads `mode` as `fn`, since the store keeps no owner-only read mode); `folder_rule_ids` is `null` (the store keeps no folder rules) | `listWhoCanReadPages` (`gbrain access who-can-read`) |
 
 `policy` is the store `PrivacyPolicy` of `facts/privacy.rs` (`page_hidden`). With `entityPrivacy` false it is the
 member-access part alone (the page's readers, and the origin of a derived page): the `access` part of the members.
@@ -37,6 +38,9 @@ member-access part alone (the page's readers, and the origin of a derived page):
   cleared) guarantees whenever the config says unrestricted. A reader identity reaches the policy only through a
   page's readers, so the same holds for a member caller
   (`test/engine-parity/unrestricted-member-page-reads.test.ts`).
+- `listWhoCanReadPages(slug, sourceId, form)` (`src/core/rust-engine/store-members/access-reports.ts`) passes
+  `closed` through and reads `fn` and `mode` as `fn`: the store keeps no owner-only read mode, so `mode` never widens
+  the test. The capability is `pages`.
 - `readWriterSlugFence(principal)` reads a `local_cli` or `local_stdio` writer's stored grant ceiling
   (`brain.readLocalWriter`) and returns its `slugPrefixes`, or `null`. Another kind, other than an OAuth client,
   carries no fence and reads nothing. The capability is `persistence_journal`.

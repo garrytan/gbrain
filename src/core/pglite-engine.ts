@@ -222,6 +222,8 @@ import * as connectGateImpl from './engine-sql/connect-gate.ts';
 import * as beliefImpl from './engine-sql/belief.ts';
 import * as configImpl from './engine-sql/config.ts';
 import * as accessControlImpl from './engine-sql/access-control.ts';
+import * as accessSetupImpl from './engine-sql/access-setup.ts';
+import * as accessPolicyImpl from './engine-sql/access-policy.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AudiencePrincipalRows, MayActForVia, FolderAccessRows } from './engine-sql/access-control.ts';
 import * as cycleLocksImpl from './engine-sql/cycle-locks.ts';
 import * as jobsImpl from './engine-sql/jobs.ts';
@@ -285,7 +287,7 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import * as ownerOnlyMarksImpl from './engine-sql/owner-only-marks.ts';
 import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
-import { ownerOnlyLineageReadable } from './access/owner-only.ts';
+import { ownerOnlyLineageReadable, type OwnerOnlyForm } from './access/owner-only.ts';
 import * as pageBodyImpl from './engine-sql/page-body.ts';
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput, SegmentChunkInput,
   SegmentedEmbedRef, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from './page-body/types.ts';
@@ -1545,6 +1547,7 @@ export class PGLiteEngine implements BrainEngine {
 
   // Import-path guard, attribution and config reads: SQL in engine-sql (persistence-state, transaction-settings, belief, config, access-control, sources).
   getSource(sourceId: string) { return sourcesImpl.getSource(unscopedExecutor(this.engineSql, 'sources: single-row read ran unscoped through executeRaw'), sourceId); }
+  listSourceIds() { return sourcesImpl.listSourceIds(unscopedExecutor(this.engineSql, 'sources: open-page count read it unscoped through executeRaw')); }
   getConfigValues(keys: readonly string[]) { return configImpl.getConfigValues(unscopedExecutor(this.engineSql, 'config: keyed read ran unscoped through executeRaw'), keys); }
   readManagedModeRows() { return persistenceStateImpl.readManagedModeRows(unscopedExecutor(this.engineSql, 'persistence: managed-mode read ran unscoped through executeRaw')); }
 
@@ -1992,6 +1995,12 @@ export class PGLiteEngine implements BrainEngine {
   readAccessCredentials(by: AccessCredentialLookup): Promise<AccessCredentialRow[]> { return accessControlImpl.readAccessCredentials(this, by); }
   listAudienceAccessMembers(): Promise<string[]> { return accessControlImpl.listAudienceAccessMembers(this); }
   readLiveMember(via: LiveMemberVia, key: string): Promise<LiveMemberRow | null> { return accessControlImpl.readLiveMember(this, via, key); }
+  readAccessStateUnreadable() { return accessPolicyImpl.readAccessStateUnreadable(this); }
+  countOpenPages(sources: readonly string[], exclude: readonly accessSetupImpl.OpenPageExclusion[]) { return accessSetupImpl.countOpenPages(this, sources, exclude); }
+  listWhoCanReadPages(slug: string, sourceId: string | undefined, form: OwnerOnlyForm) { return accessSetupImpl.listWhoCanReadPages(this, slug, sourceId, form); }
+  readPageAdmitsCaller(sourceId: string, slug: string, identity: readonly string[]) { return accessSetupImpl.readPageAdmitsCaller(this, sourceId, slug, identity); }
+  readPageFolderRulesAdmit(sourceId: string, slug: string, satisfied: readonly string[]) { return accessSetupImpl.readPageFolderRulesAdmit(this, sourceId, slug, satisfied); }
+  countLineageClosingRules(ruleIds: readonly string[], sourceId: string) { return accessSetupImpl.countLineageClosingRules(this, ruleIds, sourceId); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return entityReadsImpl.readMentionLastPass(unscopedExecutor(this.engineSql, 'entities: mention pass time ran unscoped through executeRaw'), sourceId); }
   countPagesDueForMentions(q: entityReadsImpl.MentionDueQuery) { return entityReadsImpl.countPagesDueForMentions(unscopedExecutor(this.engineSql, 'entities: mention-due count ran unscoped through executeRaw'), q); }

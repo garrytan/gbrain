@@ -26,8 +26,8 @@ import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
 import { readClientGrant } from '../core/grants/service.ts';
 import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
 import { credentialReadSources } from '../core/grants/shared-exposure.ts';
-import { accessAllowedSql, folderRulesAllowedSql, isPrivacyPrivatePage, schemaVersionNow, withCallerAccess } from '../core/search/private-visibility.ts';
-import { ownerOnlyForm, ownerOnlyPageSql } from '../core/access/owner-only.ts';
+import { isPrivacyPrivatePage, schemaVersionNow, withCallerAccess } from '../core/search/private-visibility.ts';
+import { ownerOnlyForm } from '../core/access/owner-only.ts';
 import { membersReadLineageOn, setMembersReadLineage } from '../core/access/lineage.ts';
 import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
 import { folderAccessFor } from '../core/access/caller.ts';
@@ -180,10 +180,7 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
   const schema = await schemaVersionNow(engine);
   const remotePolicy = { privacyRelaxed: false, restricted: true, ...schema };
   // owner_only: the page is in, or derived from, an owner-only source (imessage, apple-contacts, owner_only: true), so only the owner reads it.
-  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown; folder_rule_ids: string[] | null; owner_only: boolean }>(
-    `SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', ownerOnlyForm(schema.schemaVersion))} AS owner_only
-       FROM pages p WHERE p.slug = $1${sourceId ? ' AND p.source_id = $2' : ''} ORDER BY p.source_id`,
-    sourceId ? [slug, sourceId] : [slug]);
+  const rows = await engine.listWhoCanReadPages(slug, sourceId, ownerOnlyForm(schema.schemaVersion));
   if (!rows.length) {
     throw opError('not_found', `No page "${slug}"${sourceId ? ` in source ${sourceId}` : ''}.`, 'Check the slug with gbrain list or gbrain search.');
   }
@@ -208,9 +205,9 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
     const allowed: string[] = [];
     if (readers !== null || ruled || ownerOnly) {
       for (const { id, identity, folder } of members) {
-        const admitted = await withCallerAccess({ identity, ...folder, restricted: true, owner: id === ownerId, remotePolicy }, () => engine.executeRaw(
-          `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${accessAllowedSql('p', identity)}`, [row.source_id, row.slug]));
-        if (admitted.length) allowed.push(id);
+        const admitted = await withCallerAccess({ identity, ...folder, restricted: true, owner: id === ownerId, remotePolicy }, () =>
+          engine.readPageAdmitsCaller(row.source_id, row.slug, identity));
+        if (admitted) allowed.push(id);
       }
     }
     const audiencePage = row.slug.startsWith(MEMBER_PAGE_PREFIX) && audienceIds.includes(row.slug.slice(MEMBER_PAGE_PREFIX.length));
@@ -219,13 +216,11 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
     if (ownerOpened) allowed.push(optIn!);
     const ownerRecord = members.find(m => m.id === ownerId);
     const audienceOpened = audiencePage && !!ownerRecord && !allowed.includes(ownerRecord.id) && (readers !== null || ruled)
-      && (await withCallerAccess({ identity: ownerRecord.identity, ...ownerRecord.folder, restricted: true, owner: true, remotePolicy }, () => engine.executeRaw(
-        `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${folderRulesAllowedSql('p', ownerRecord.folder.satisfiedRuleIds)}`, [row.source_id, row.slug]))).length > 0;
+      && await withCallerAccess({ identity: ownerRecord.identity, ...ownerRecord.folder, restricted: true, owner: true, remotePolicy }, () =>
+        engine.readPageFolderRulesAdmit(row.source_id, row.slug, ownerRecord.folder.satisfiedRuleIds));
     if (audienceOpened) allowed.push(ownerRecord!.id);
-    const lineageRules = ruled ? await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM unnest($1::text[]) AS x WHERE NOT EXISTS (SELECT 1 FROM access_rules r WHERE r.source_id = $2 AND x = $2 || ':' || r.rule_id AND NOT r.covers_derived)`,
-      [row.folder_rule_ids, row.source_id]) : [{ n: 0 }];
-    const closesLineage = readers !== null || Number(lineageRules[0]?.n ?? 0) > 0;
+    const lineageRules = ruled ? await engine.countLineageClosingRules(row.folder_rule_ids!, row.source_id) : 0;
+    const closesLineage = readers !== null || lineageRules > 0;
     const nobody = ownerOnly ? null : readByNobodyNote({ slug: row.slug, source_id: row.source_id, readers }, ruled, allowed.length, known, ownerId);
     const notes = [
       ...(nobody ? [nobody] : []),

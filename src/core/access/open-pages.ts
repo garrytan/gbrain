@@ -13,7 +13,7 @@
  * withOpenScope, openPageSql and membersReadOpen.
  */
 import type { BrainEngine } from '../engine.ts';
-import { accessAllowedSql, privacyPartSql, readHonorAliases, remotePrivacyRelaxed, schemaVersionNow, withCallerAccess, withoutCallerAccess } from '../search/private-visibility.ts';
+import { readHonorAliases, remotePrivacyRelaxed, schemaVersionNow, withCallerAccess, withoutCallerAccess } from '../search/private-visibility.ts';
 import { credentialReadSources, SENSITIVE_PAGE_TYPES, stdioReadSources } from '../grants/shared-exposure.ts';
 import { grantFromClient, grantFromRow, grantFromTokenRow, privatePagesSources, type PrincipalGrant } from '../grants/model.ts';
 import { stdioMemberId } from './caller.ts';
@@ -22,6 +22,7 @@ import { isStatementTimeout } from '../persistence/bounded-reads.ts';
 import { agentBlock } from '../agent-markers.ts';
 import { ownerMemberId } from './owner.ts';
 import { brainServes } from './serves.ts';
+import { openPageSql } from '../engine-sql/access-setup.ts';
 
 export const OPEN_PAGES_TOP = 10;
 export const OPEN_PAGES_TIMEOUT_MS = 30_000;
@@ -66,7 +67,7 @@ export const COMPANY_SOURCE_ID = 'company';
  */
 export async function memberKeyReadSources(engine: BrainEngine, source: string): Promise<string[]> {
   const federated = await localFederatedSourceIds(engine, source, 'seed_default').catch(() => undefined) ?? [source];
-  const company = source !== COMPANY_SOURCE_ID && (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND archived IS NOT TRUE', [COMPANY_SOURCE_ID])).length > 0;
+  const company = source !== COMPANY_SOURCE_ID && (await engine.listUnarchivedSourceIds()).some(s => s.id === COMPANY_SOURCE_ID);
   return [...new Set([source, ...(company ? [COMPANY_SOURCE_ID] : []), ...federated])];
 }
 
@@ -79,8 +80,7 @@ async function memberReads(engine: BrainEngine, owner: string | null, planned: O
   const reads = new Map<string, Set<string>>();
   const privateOf = new Map<string, Set<string>>();
   const labelledOnly = new Set<string>();
-  for (const m of await engine.executeRaw<{ id: string; labelled_only: unknown }>(
-    'SELECT id, labelled_only FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id')) {
+  for (const m of (await engine.readAccessMembers({ includeRemoved: false })).filter(m => m.disabled_at == null)) {
     if (m.id === owner) continue;
     reads.set(m.id, new Set());
     if (m.labelled_only === true) labelledOnly.add(m.id);
@@ -92,10 +92,10 @@ async function memberReads(engine: BrainEngine, owner: string | null, planned: O
     return memo.get(key)!;
   };
   const credentials: Array<{ member: string; grant: PrincipalGrant }> = [
-    ...(await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NOT NULL'))
+    ...(await engine.listAccessTokens()).filter(row => row.revoked_at == null && row.member_id != null)
       .map(row => ({ member: String(row.member_id), grant: grantFromTokenRow(row as never) })),
-    ...(await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL AND member_id IS NOT NULL'))
-      .map(row => ({ member: String(row.member_id), grant: grantFromClient(grantFromRow(row)) })),
+    ...(await engine.listOauthClients()).filter(row => row.deleted_at == null && row.member_id != null)
+      .map(row => ({ member: String(row.member_id), grant: grantFromClient(grantFromRow(row as never)) })),
   ];
   for (const { member, grant } of credentials) {
     const set = reads.get(member);
@@ -144,8 +144,8 @@ export interface OpenScope {
   privateSources: string[];
 }
 
-/** The open-page predicate over pages alias `p`: live, and the read path's floor with an empty identity admits it. */
-export const openPageSql = (p: string) => `${p}.deleted_at IS NULL AND ${accessAllowedSql(p, [], [])}`;
+/** The open-page predicate over pages alias `p` (engine-sql/access-setup.ts), re-exported for repair-propose.ts. */
+export { openPageSql };
 
 /** Whether the members read an open page of `source` whose privacyPartSql value is `visible`. */
 export const membersReadOpen = (scope: OpenScope, source: string, visible: unknown) => visible === true || scope.relaxed || scope.privateSources.includes(source);
@@ -156,15 +156,14 @@ export const membersReadOpen = (scope: OpenScope, source: string, visible: unkno
  */
 export async function withOpenScope<T>(engine: BrainEngine, opts: OpenPagesOptions, read: (scope: OpenScope, bounded: <R>(fn: (e: BrainEngine) => Promise<R>) => Promise<R>) => Promise<T>): Promise<T> {
   return withoutCallerAccess(async () => {
-    const [state] = await engine.executeRaw<{ unreadable: unknown }>('SELECT gbrain_access_state_unreadable() AS unreadable');
-    if (state?.unreadable === true) {
+    if (await engine.readAccessStateUnreadable()) {
       throw Object.assign(new Error('the folder-rule state cannot be read, so every page reads as covered and a count would say 0'), { code: 'open_pages_unknown' });
     }
     const owner = opts.planned?.owner !== undefined ? opts.planned.owner : await ownerMemberId(engine);
     const { reads, privateSources } = await memberReads(engine, owner, opts.planned);
     const reading = [...reads.values()].filter(s => s.size > 0);
     const readSources = [...new Set(reading.flatMap(s => [...s]))].sort();
-    const sources = readSources.length ? readSources : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(s => s.id);
+    const sources = readSources.length ? readSources : await engine.listSourceIds();
     if (sources.length) await readHonorAliases(engine);
     const relaxed = sources.length ? await remotePrivacyRelaxed(engine) : false;
     const scope: OpenScope = { owner, members: { reading: reading.length, counted: reads.size }, sources, relaxed, privateSources: [...privateSources].sort() };
@@ -182,17 +181,7 @@ export async function openPages(engine: BrainEngine, opts: OpenPagesOptions = {}
     const result: OpenPages = { owner, members: scope.members, sources, total: 0, sensitive: 0, private: 0, archive: 0,
       folders: [], other: { folders: 0, pages: 0, sensitive: 0 }, top_sensitive: null };
     if (!sources.length) return result;
-    const params: unknown[] = [sources];
-    const exclude = (opts.exclude ?? []).map(x => {
-      params.push(x.source, x.prefix);
-      return ` AND NOT (p.source_id = $${params.length - 1} AND starts_with(p.slug, $${params.length}))`;
-    }).join('');
-    const rows = await boundedRead(e => e.executeRaw<{ source: string; folder: string; type: string | null; visible: unknown; pages: number | string }>(
-      `SELECT p.source_id AS source, CASE WHEN strpos(p.slug, '/') > 0 THEN split_part(p.slug, '/', 1) ELSE '(root)' END AS folder,
-              p.type AS type, (${privacyPartSql('p')}) AS visible, count(*)::int AS pages
-         FROM pages p
-        WHERE ${openPageSql('p')} AND p.source_id = ANY($1::text[])${exclude}
-        GROUP BY 1, 2, 3, 4`, params));
+    const rows = await boundedRead(e => e.countOpenPages(sources, opts.exclude ?? []));
     const folders = new Map<string, OpenFolder>();
     const byType = new Map<string, { source: string; type: string; pages: number }>();
     for (const row of rows) {
