@@ -2,17 +2,15 @@ import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawal
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type { LinkPageMetadataRow, PageAtRevisionRef, SourceIncarnationRow, SourceRecordRow, StoredTimelineRow } from './engine-sql/cli-reads-import.ts';
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
-import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type { FenceHoldRow } from './engine-sql/fence-holds.ts';
-import type {
-  EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount,
-  WaitingScopeState,
-} from './engine-sql/jobs-status.ts';
 export type { LinkPageMetadataRow, PageAtRevisionRef, SourceIncarnationRow, SourceRecordRow, StoredTimelineRow } from './engine-sql/cli-reads-import.ts';
 export type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
+import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
+import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
+import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
@@ -46,6 +44,11 @@ import type { PageTypeRef } from './engine-sql/trust-tier-reads.ts';
 import type {
   PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow,
 } from './engine-sql/jobs-health.ts';
+import type {
+  EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount,
+  WaitingScopeState,
+} from './engine-sql/jobs-status.ts';
+import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
 import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from './engine-sql/withdrawal-discovery.ts';
 import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow } from './engine-sql/alias-fanout-reads.ts';
 import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
@@ -1416,6 +1419,21 @@ export interface BrainEngine {
   pagesLinkingTo(fromIds: number[], toIds: number[]): Promise<number[]>;
   /** One brain-wide MCP onboarding count (SQL in engine-sql/health.ts). */
   countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
+  /** Graph counts and endpoint reads of doctor, orphans, graph-query, the entity card, link preparation and search (SQL and contracts in engine-sql/link-reads.ts). */
+  inboundLinkCoverage(opts?: { sourceIds?: string[] }): Promise<{ livePages: number; linkedPages: number }>;
+  listJunkEntityHubs(opts: { edgeThreshold: number; maxChunks: number; limit: number }): Promise<JunkEntityHubRow[]>;
+  countEntityPages(filter: EntityTypeFilter, opts?: { sourceId?: string; excludeQuarantined?: boolean }): Promise<number>;
+  entityGraphCoverage(filter: EntityTypeFilter): Promise<{ entities: number; connected: number; withTimeline: number } | null>;
+  countForeignEdges(slug: string, sourceId: string, direction: 'in' | 'out' | 'both'): Promise<number>;
+  listLivePageSummaries(scope?: PageReadScope): Promise<LivePageSummary[]>;
+  countInboundLinks(slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }): Promise<number>;
+  readEntityInboundEdges(slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }): Promise<EntityInboundEdgeRow[]>;
+  listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]): Promise<LinkEndpointPage[]>;
+  listPagesTitledIn(queryLower: string, scope: PageReadScope): Promise<TitledPage[]>;
+  wordLexemes(words: string[]): Promise<Map<string, string[]>>;
+  /** The stored link rows and origin page bodies behind returned link contexts, for a world-only caller (eligibility/fence-overlay.ts worldLinkContexts). */
+  readLinkContextMatches(asks: readonly LinkContextAsk[]): Promise<LinkContextMatch[]>;
+  readLinkContextOriginPages(ids: readonly number[]): Promise<LinkContextOriginPage[]>;
   /** Doctor's effective-date sample and timeline clock, the projection's stored-timeline read and delete, repair timeline's reads, the orphan prune's walk (SQL and contracts in engine-sql/timeline-reads.ts). */
   sampleEffectiveDates(): Promise<EffectiveDateSampleCounts>;
   sampleEffectiveDateSources(): Promise<EffectiveDateFallbackRow[]>;
@@ -3069,6 +3087,43 @@ export interface BrainEngine {
   readSegmentedVersionBodyBytes(pageId: number, generation: number): Promise<number | null>;
   /** gbrain export: the sources with an access policy, in id order, whose folder rulebooks an export carries (engine-sql/export-reads.ts). */
   listAccessPolicySourceIds(): Promise<string[]>;
+  // Facts statements, doctor checks (engine-sql/facts-doctor.ts). Each runs the statement its caller ran through executeRaw.
+  /** conversation_outcomes_stale: the newest unexpired extraction-outcome rows of `sourceIds`, newest id first, at most `limit`. */
+  listConversationFactRows(sourceIds: string[], limit: number): Promise<FactsDoctorSql.ConversationFactRow[]>;
+  /** facts_redaction_marker: active facts holding a redaction marker in live sources (only `sourceIds` when given). */
+  countRedactedFacts(sourceIds?: string[]): Promise<number>;
+  /** outside_content_fences: per imported page a third party wrote, its fence-indexed fact, take and link counts, by source id and slug. */
+  listOutsideContentFenceCounts(): Promise<FactsDoctorSql.OutsideContentFenceRow[]>;
+  /** facts_health: unexpired facts naming an `atoms/` page, in every source. */
+  countAtomFacts(): Promise<number>;
+  /** trust_release_unpreviewed_fields: current user_confirmed facts a trust release raised without previewing their fence fields, by id, at most `limit`, each with the total. */
+  listUnpreviewedTrustFacts(limit: number): Promise<FactsDoctorSql.UnpreviewedTrustFactRow[]>;
+  /** unlinked_facts: per source and origin, counts over each source's newest `windowPerSource` active facts; `hasAttempts` says the brain has `fact_relink_attempts`. */
+  countUnlinkedFactsByOrigin(opts: { sourceIds: string[]; auditSources: string[]; windowPerSource: number; hasAttempts: boolean }): Promise<FactsDoctorSql.UnlinkedOriginRow[]>;
+  /** unlinked_facts: the 7-day counts of active facts (unlinked share, relink judgments, inference tiers); null when no row comes back. */
+  countUnlinkedFactStats(opts: { sourceIds: string[]; auditSources: string[]; hasAttempts: boolean }): Promise<FactsDoctorSql.UnlinkedFactStatsRow | null>;
+  /** unlinked_facts: relink attempt outcomes (every no_subject, the linked ones of the last 7 days) by outcome and tier. */
+  countFactRelinkOutcomes(sourceIds: string[]): Promise<FactsDoctorSql.FactRelinkOutcomeRow[]>;
+  /** unlinked_facts: the pages holding the targeted unlinked conversation rows of one source, most rows first. */
+  listUnlinkedConversationSlugs(opts: { sourceId: string; auditSources: string[]; windowPerSource: number; fix: FactsDoctorSql.ConversationFixKind; hasAttempts: boolean }): Promise<Array<{ slug: string }>>;
+  /** fact_take_vectors: per source, the embeddable facts with no vector, with a vector not current for `model` and `dims` or the text, and the partially embedded ones. */
+  countFactEmbeddingCoverage(opts: { sourceId?: string | null; model: string; dims: number }): Promise<FactsDoctorSql.FactEmbeddingCoverageRow[]>;
+  /** The embeddable facts whose vector is not current for `model` and `dims` or the text, over every source or `sourceId`, with the sum of their lengths in characters. */
+  countStaleFactEmbeddings(opts: { model: string; dims: number; sourceId?: string | null }): Promise<{ count: number; chars: number }>;
+  /** fence_integrity: live markdown pages of these sources stored in segments with no checkout file walked; null when no row answers. */
+  countSegmentedCensusPages(sourceIds: string[], checkedOutSourceIds: string[]): Promise<{ n: number } | null>;
+  /** facts_undated_lines: every live `type: facts` page with whether it is segmented and the bounded prefix of its body, by (source, slug). */
+  listFactsPageBodies(): Promise<FactsDoctorSql.FactsPageBodyRow[]>;
+  /** unlinked_facts: the `facts` and `fact_relink_attempts` table names the brain has (null for one it lacks). */
+  readFactTableCatalog(): Promise<{ facts: string | null; attempts: string | null } | null>;
+
+  // and PGLite read their catalog; the Rust engine reads its per-vector records (an empty store has no column yet).
+  /** A `content_chunks` vector column: whether it exists and its width (null when the type is not a vector type). */
+  /** The stored embedding identity (model and width of `content_chunks.embedding`); null when the brain has no vector column. Postgres and PGLite throw when the width is unknown. */
+  /** The tables that carry an `embedding` vector column, in PRIMARY_EMBEDDING_TABLES order. */
+  /** Whether any row of `store` holds a vector. */
+  /** Per source with chunks, the chunk count and how many hold a vector in a fixed column (`embedding_image`, `embedding_multimodal`), in source id order. */
+
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
   getSourceStrictness(sourceId: string): Promise<boolean>;
 
@@ -3089,6 +3144,14 @@ export interface BrainEngine {
 
   /** Sets each named setting to the value at its index for the rest of the current transaction (`set_config(name, value, true)`), in one statement. */
   applyTransactionSettings(names: readonly string[], values: readonly string[]): Promise<void>;
+  // The writer-version reads (engine-sql/writer-versions.ts): which binaries admitted and published the retained requests.
+  /** When the brain started stamping writer versions (migration 178), as ISO text; null when not recorded. */
+  readWriterVersionCutoff(): Promise<string | null>;
+  /** The latest admitter and consumer version per host and principal across all retained requests, newest first, at most `limit`. */
+  listWriterVersions(limit: number): Promise<WriterVersionRow[]>;
+  /** Committed requests published in the last `days`, grouped per role, host, principal and version, stamped after the cutoff. */
+  recentWriterVersions(days: number): Promise<RecentWriterVersionRow[]>;
+
 
   /**
    * What the belief ledger knows about one source (incarnation, purge epoch, newest coverage event, whether any purge
