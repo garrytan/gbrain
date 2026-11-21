@@ -1,7 +1,10 @@
 //! Takes: the reads behind the doctor, onboarding, purge, fence import, scorecard and supersession
-//! repair sites (rust/docs/store/takes-reads.md). Same shape as `../takes.rs`.
+//! repair sites, and the reads and the delete of `gbrain extract takes` (rust/docs/store/takes-reads.md).
+//! Same shape as `../takes.rs`.
 
-use gbrain_store::takes::{McpResolvedInput, PurgeTakesInput, TakePreimageInput};
+use gbrain_store::takes::{
+    IncomingTake, McpResolvedInput, PurgeTakesInput, TakePreimageInput, TakesLeavingFence,
+};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -82,5 +85,106 @@ impl Brain {
         self.run(env, move |s| {
             s.list_take_supersession_candidates(&source_ids)
         })
+    }
+
+    /// `readLivePageIdBySlug(slug, sourceId)`: the id, or null.
+    #[napi]
+    pub fn read_live_page_id_by_slug<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_live_page_id_by_slug(&slug, &source_id))
+    }
+
+    /// `readPageTierRef(pageId)`: `{ source_id, slug, trust_tier }`, or null.
+    #[napi]
+    pub fn read_page_tier_ref<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_tier_ref(page_id as i64))
+    }
+
+    /// `readPageTierRows(ids)`: `[{ id, source_id, slug, trust_tier }]`.
+    #[napi]
+    pub fn read_page_tier_rows<'env>(
+        &self,
+        env: &'env Env,
+        ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<i64> = required(ids, "readPageTierRows ids")?;
+            s.read_page_tier_rows(&ids)
+        })
+    }
+
+    /// `pageHasFrontmatterKey(pageId, key)`: resolves a boolean.
+    #[napi]
+    pub fn page_has_frontmatter_key<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        key: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.page_has_frontmatter_key(page_id as i64, &key)
+        })
+    }
+
+    /// `listTakeIdsLeavingFence(pageId, fence)`: the take ids.
+    #[napi]
+    pub fn list_take_ids_leaving_fence<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        fence: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let fence: TakesLeavingFence = required(fence, "listTakeIdsLeavingFence fence")?;
+            s.list_take_ids_leaving_fence(page_id as i64, &fence)
+        })
+    }
+
+    /// `listTakePreimages(pageId, ids, incoming)`: `[{ preimage, gone }]`.
+    #[napi]
+    pub fn list_take_preimages<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        ids: Value,
+        incoming: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<i64> = required(ids, "listTakePreimages ids")?;
+            let incoming: Vec<IncomingTake> = required(incoming, "listTakePreimages incoming")?;
+            s.list_take_preimages(page_id as i64, &ids, &incoming)
+        })
+    }
+
+    /// `deleteTakesByIds(ids)`: resolves when the takes are deleted.
+    #[napi]
+    pub fn delete_takes_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<i64> = required(ids, "deleteTakesByIds ids")?;
+            s.delete_takes_by_ids(&ids)
+        })
+    }
+
+    /// `findTakeId(pageId, rowNum)`: the id, or null.
+    #[napi]
+    pub fn find_take_id<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        row_num: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.find_take_id(page_id as i64, row_num as i64))
     }
 }

@@ -14,6 +14,7 @@ import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
 import { ownerReadPolicyFragment, privateFactFilterForCaller, privateFactFilterForReader, privateProvenanceFilterUnderPolicy, readPolicyFragment, remoteProvenanceFloorSql, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { factVisibilitySql, grantedPrivateFactSql, onOwnedMemoryPageSql, withdrawalCoversFactSql, withdrawalReachedFactSql } from '../access/member-facts.ts';
 import { retiredPageSql } from '../entities/resolve.ts';
+import { MARK_NEEDS_REDERIVE_SQL } from '../facts/derivation-inputs.ts';
 import { eligibleFactEmbedding, OVERSIZED_SCAN_CAP, staleFactEmbedding } from '../facts/embedding-identity.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import type { FactCandidate as ReplacementFact } from '../facts/single-prepare.ts';
@@ -162,7 +163,8 @@ function customPlan<T>(transaction: EngineRawTransaction, fragment: SqlFragment)
 
 /**
  * The pool's candidate rows of one arm: the keyword arm (full-text over the fact and its entity name, best rank
- * first, under a custom plan), the named entity's active facts, or that entity's ended facts (history), newest first.
+ * first, under a custom plan), the named entity's active facts, or that entity's ended facts (history), newest first
+ * (a future-dated fact as of when it was written).
  * Every arm reads under the caller's read policy and filters, and `similarity` is the row's cosine to `vector` when
  * the row's embedding is comparable with it.
  */
@@ -175,11 +177,15 @@ export async function listFactsForRelevance(raw: EngineRawRead, transaction: Eng
        ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT ${q.limit}`);
   }
   const named = q.entity!;
+  // GST-3170: a future-dated fact ranks as of when it was written; each active branch keeps an index-ordered scan.
+  const ranked = trustedSql('(CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC');
+  const branch = (order: ReturnType<typeof trustedSql>, from: ReturnType<typeof trustedSql>) => sqlFragment`(SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, q.filters)}
+       AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug} AND ${from} ORDER BY ${order} DESC, f.id DESC LIMIT ${q.limit})`;
   const { text, params } = renderFragment(q.arm === 'entity'
-    ? sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, q.filters)} AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug}
-       ORDER BY f.valid_from DESC, f.id DESC LIMIT ${q.limit}`
+    ? sqlFragment`SELECT * FROM (${branch(trustedSql('f.valid_from'), trustedSql('f.valid_from <= now()'))} UNION ALL ${branch(trustedSql('f.created_at'), trustedSql('f.valid_from > now()'))}) f
+       ORDER BY ${ranked} LIMIT ${q.limit}`
     : sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, { ...q.filters, includeExpired: true })} AND ${endedFactSql()} AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug}
-       ORDER BY f.valid_from DESC, f.id DESC LIMIT ${q.limit}`);
+       ORDER BY ${ranked} LIMIT ${q.limit}`);
   return raw<FactRelevanceRow>(text, params);
 }
 
@@ -227,7 +233,7 @@ export interface SavedFactsMatchQuery {
 }
 
 export type SavedFactMatchRow = SavedFactMatch & CollapseColumns
-  & { at: unknown; matched: unknown[]; need: unknown; cue: boolean; trust_rank: unknown; pool_rank: unknown };
+  & { at: unknown; matched: unknown[]; need: unknown; cue: boolean; trust_rank: unknown; pool_rank: unknown; dimension: string | null };
 
 /**
  * The keyword scan behind a `search` / `query` saved-facts block: active facts that share the query's words, matched as
@@ -258,7 +264,7 @@ export async function matchSavedFacts(raw: EngineRawRead, q: SavedFactsMatchQuer
          FROM w
        )
        SELECT * FROM (SELECT m.*, row_number() OVER (PARTITION BY m.cue AND cardinality(m.matched) < m.need ORDER BY cardinality(m.matched) DESC, m.at DESC, m.id DESC) AS pool_rank FROM (
-         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, ${trustedSql(savedFactCollapseColumns())},
+         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, f.dimension, ${trustedSql(savedFactCollapseColumns())},
            ARRAY(SELECT w.i FROM w, (SELECT ${doc} AS d OFFSET 0) x WHERE CASE WHEN w.pat IS NOT NULL THEN lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE w.pat
              ELSE x.d @@ w.tq END ORDER BY w.i) AS matched,
            LEAST(4, GREATEST(LEAST(2, k.n), ceil(k.n * 0.75)::int)) AS need,
@@ -331,6 +337,37 @@ export async function listRestatedPrivateCopies(raw: EngineRawRead,
          AND (w.valid_until IS NULL OR w.valid_until > now()))
      ORDER BY f.id LIMIT 1`);
   return raw(text, params);
+}
+
+/**
+ * Of `ids`, the facts taken from a page whose type is one of `pageTypes`, in the fact's own source: the page that holds
+ * the fact (`source_markdown_slug`), a page recorded as its derivation input, or the page a backstop fact's
+ * `source_session` names (`backstop`: each `[source, session prefix]` pair, the slug after the prefix). Any page row
+ * counts, a soft-deleted one too.
+ */
+export async function listFactsFromQuotedPages(raw: EngineRawRead,
+  opts: { ids: readonly number[]; pageTypes: readonly string[]; backstop: readonly [readonly [string, string], readonly [string, string]] }): Promise<number[]> {
+  if (!opts.ids.length) return [];
+  const [[syncSource, syncPrefix], [putSource, putPrefix]] = opts.backstop;
+  const rows = await raw<{ id: number | string }>(
+    `SELECT f.id FROM facts f WHERE f.id = ANY($1::bigint[]) AND (
+       EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages p ON p.id = (CASE WHEN d.input_id ~ '^[0-9]{1,18}$' THEN d.input_id::bigint END)
+         WHERE d.derived_table = 'facts' AND d.derived_id = f.id::text AND d.input_table = 'pages' AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.type = ANY($2::text[]) AND p.slug = (CASE
+         WHEN f.source = $3::text AND left(f.source_session, length($4::text)) = $4::text THEN substr(f.source_session, length($4::text) + 1)
+         WHEN f.source = $5::text AND left(f.source_session, length($6::text)) = $6::text THEN substr(f.source_session, length($6::text) + 1) END)))`,
+    [[...new Set(opts.ids.map(Number))], [...opts.pageTypes], syncSource, syncPrefix, putSource, putPrefix]);
+  return rows.map(r => Number(r.id));
+}
+
+/** Of `ids`, the facts whose stored tier ranks at or above `floor`; an id with no row is not among them. */
+export async function listOwnerTierFacts(raw: EngineRawRead, opts: { ids: readonly number[]; floor: TrustTier }): Promise<number[]> {
+  if (!opts.ids.length) return [];
+  const ids = [...new Set(opts.ids.map(Number))];
+  const { text, params } = renderFragment(sqlFragment`SELECT id FROM facts WHERE id = ANY(${ids}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))} >= ${TRUST_TIER_RANK[opts.floor]}::int`);
+  const rows = await raw<{ id: number | string }>(text, params);
+  return rows.map(r => Number(r.id));
 }
 
 /** How many facts carry `taint_inputs` in their write origin, and how many of those are stamped external_untrusted. */
@@ -569,14 +606,6 @@ export async function recordDerivationEdges(raw: EngineRawRead, derived: Derivat
     ON CONFLICT DO NOTHING`, [derived.table, derived.id, sourceId, JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })))]);
 }
 
-/** The rows derived from any of `frontier`, sorted by table and id, at most `limit` (the caller asks for one more than it keeps to learn whether any were left). */
-export async function listDerivedRows(raw: EngineRawRead, frontier: readonly DerivationEdgeRef[], limit: number): Promise<Array<{ derived_table: string; derived_id: string }>> {
-  return raw<{ derived_table: string; derived_id: string }>(`SELECT DISTINCT d.derived_table,d.derived_id
-      FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
-        ON d.input_table=f.input_table AND d.input_id=f.input_id
-      ORDER BY d.derived_table,d.derived_id LIMIT $2`, [JSON.stringify(frontier.map(f => ({ input_table: f.table, input_id: f.id }))), limit]);
-}
-
 /** Expires these facts of the source (those already expired keep their time); returns how many rows it touched. Runs in the caller's transaction. */
 export async function expireDerivedFacts(raw: EngineRawRead, ids: number[], sourceId: string): Promise<number> {
   return (await raw(`UPDATE facts SET expired_at=COALESCE(expired_at,now()) WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id`, [ids, sourceId])).length;
@@ -587,16 +616,23 @@ export async function deactivateDerivedTakes(raw: EngineRawRead, ids: number[], 
   return (await raw(`UPDATE takes k SET active=false FROM pages p WHERE k.id=ANY($1::bigint[]) AND p.id=k.page_id AND p.source_id=$2 RETURNING k.id`, [ids, sourceId])).length;
 }
 
-/** Soft-deletes these pages of the source; returns how many rows it touched. Runs in the caller's transaction. */
-export async function softDeleteDerivedPages(raw: EngineRawRead, ids: number[], sourceId: string): Promise<number> {
-  return (await raw(`UPDATE pages SET deleted_at=COALESCE(deleted_at,now()) WHERE id=ANY($1::integer[]) AND source_id=$2 RETURNING id`, [ids, sourceId])).length;
+/**
+ * Soft-deletes these pages of the source (#9653: only a page not already deleted keeps a fresh `deleted_at`); returns one row per page of
+ * the source that is now hidden, `now` true when this call hid it. Runs in the caller's transaction.
+ */
+export async function softDeleteDerivedPages(raw: EngineRawRead, ids: number[], sourceId: string): Promise<Array<{ id: number; now: boolean }>> {
+  return raw<{ id: number; now: boolean }>(`WITH gone AS (SELECT id FROM pages WHERE id=ANY($1::integer[]) AND source_id=$2 AND deleted_at IS NOT NULL),
+        hid AS (UPDATE pages SET deleted_at=now() WHERE id=ANY($1::integer[]) AND source_id=$2 AND deleted_at IS NULL RETURNING id)
+        SELECT id, true AS now FROM hid UNION ALL SELECT id, false AS now FROM gone`, [ids, sourceId]);
 }
 
-/** Marks each derived row of `table` as needing re-derivation (a later mark replaces the reason and request). Runs in the caller's transaction. */
-export async function markNeedsRederive(raw: EngineRawRead, table: string, ids: string[], sourceId: string, requestId: string | null, reason: string): Promise<void> {
-  await raw(`INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason)
-      SELECT $1,unnest($2::text[]),$3,$4::uuid,$5 ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,marked_at=now()`,
-  [table, ids, sourceId, requestId, reason]);
+/**
+ * Marks each derived row of `table` as needing re-derivation (a later mark replaces the reason and request). `hiddenNow` names the pages
+ * this transaction just hid: their `marked_at` is their `deleted_at`; any other mark keeps that moment or is stamped now (MARK_NEEDS_REDERIVE_SQL,
+ * #9653). Runs in the caller's transaction.
+ */
+export async function markNeedsRederive(raw: EngineRawRead, table: string, ids: string[], sourceId: string, requestId: string | null, reason: string, hiddenNow: string[]): Promise<void> {
+  await raw(MARK_NEEDS_REDERIVE_SQL, [table, ids, sourceId, requestId, reason, hiddenNow]);
 }
 
 export interface MemberPageWithdrawalQuery {

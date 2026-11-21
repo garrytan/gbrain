@@ -16,7 +16,7 @@ import { folderHoldingSlug, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG } from '../f
 import { maintenancePreflight, planHeldRowDrop, submitMaintenanceIntent, submitPlannedFactFenceAdoption, type HeldDrop } from '../persistence/prepared-maintenance.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { assertStrictGitHome } from '../persistence/git-declared.ts';
-import { isStatementTimeout, PreparationDeadlineError } from '../persistence/bounded-reads.ts';
+import { isConnectionEnd, isStatementTimeout, PreparationDeadlineError } from '../persistence/bounded-reads.ts';
 import { ReadDeadlineError, withReadDeadline } from '../read-deadline.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
 import { registerEngineView } from '../persistence/switches.ts';
@@ -208,7 +208,7 @@ export async function moveRuledSharedHeld(engine: BrainEngine, sourceId: string)
 
 /**
  * The engine the sync path plans a held move on: every raw read through it, the bare-name resolver's alias read and
- * holdingHome's config read included, ends on the server at `deadlineAt`, and one ended there rejects as a
+ * holdingHome's config read included, ends on the server at `deadlineAt` (its wait for a pool connection too), and one ended there rejects as a
  * PreparationDeadlineError. PGLite plans on the engine.
  */
 const DEADLINE_BOUND: ReadonlySet<PropertyKey> = new Set(['resolveAliases', 'heldEntityPageDeleted', 'readHeldAccessState', 'heldTargetPageLive', 'listHeldMoveRows',
@@ -216,11 +216,15 @@ const DEADLINE_BOUND: ReadonlySet<PropertyKey> = new Set(['resolveAliases', 'hel
 
 function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {
   if (engine.kind !== 'postgres') return engine;
+  // #6040: the deadline also ends the wait for a free connection, which reads queued on the same lock can hold (#8155).
+  const deadline = AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()));
   const view: BrainEngine = registerEngineView(new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: Parameters<BrainEngine['executeRaw']>[2]) => {
       if (Date.now() >= deadlineAt) throw new PreparationDeadlineError('held_move_plan', null);
-      try { return await target.executeRaw(sql, params, { ...opts, timeoutMs: Math.max(1, deadlineAt - Date.now()) }); } catch (error) {
+      const signal = opts?.signal ?? deadline;
+      try { return await target.executeRaw(sql, params, { ...opts, timeoutMs: Math.max(1, deadlineAt - Date.now()), signal }); } catch (error) {
         if (isStatementTimeout(error)) throw new PreparationDeadlineError('held_move_plan', error.code, error);
+        if (!opts?.signal && (signal.aborted || (isConnectionEnd(error) && Date.now() >= deadlineAt))) throw new PreparationDeadlineError('held_move_plan', null, error);
         throw error;
       }
     };

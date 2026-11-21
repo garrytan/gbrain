@@ -35,6 +35,23 @@ fn client(b: &Brain, id: &str, name: &str, extra: Value) {
     b.insert_oauth_client(&row).unwrap();
 }
 
+/// What the table's agent-grant constraint asks of a client with the `agent` scope word.
+fn agent_grant() -> Value {
+    json!({
+        "bound_tools": ["search"], "source_id": "default", "bound_source_id": "default",
+        "federated_read": ["default"], "bound_max_concurrent": 1, "delegated_namespace": "job",
+    })
+}
+
+fn agent_scope(b: &Brain, id: &str, name: &str, scope: &str, extra: Value) {
+    let mut row = agent_grant();
+    row["scope"] = json!(scope);
+    for (k, v) in extra.as_object().unwrap() {
+        row[k] = v.clone();
+    }
+    client(b, id, name, row);
+}
+
 fn reserve(b: &Brain, n: u32, cid: &str, cents: f64, extra: Value) -> Value {
     let mut spec = json!({
         "reservation_id": uuid(n), "client_id": cid, "estimated_cents": cents,
@@ -124,15 +141,10 @@ fn the_day_sum_starts_at_the_utc_midnight_the_caller_names() {
 #[test]
 fn an_agent_scope_token_or_a_tool_binding_lists_the_client_and_a_deleted_one_never() {
     let b = brain("sp-agent");
-    client(&b, "a", "alpha", json!({ "scope": "read agent write" }));
+    agent_scope(&b, "a", "alpha", "read agent write", json!({}));
     client(&b, "b", "beta", json!({ "bound_tools": ["search"] }));
     client(&b, "c", "gamma", json!({ "scope": "read write" }));
-    client(
-        &b,
-        "d",
-        "delta",
-        json!({ "scope": "agent", "deleted_at": iso(T0) }),
-    );
+    agent_scope(&b, "d", "delta", "agent", json!({ "deleted_at": iso(T0) }));
     client(&b, "e", "agentless", json!({ "scope": "agents" }));
     let rows = b.read_agent_client_spend().unwrap();
     let ids: Vec<&str> = rows
@@ -409,4 +421,30 @@ fn a_ledger_amount_past_its_scale_is_refused_and_a_fraction_is_rounded_to_four_d
     assert_eq!(last["token_name"], json!("tok"));
     assert_eq!(last["provider"], json!("prov"));
     assert_eq!(last["model"], json!("mod"));
+}
+
+/// Postgres refuses a NUL byte in text, and the owner index uses it as the owner separator: a client id
+/// `owner\0other` must not be recorded, or the sum for `owner` would count its spend.
+#[test]
+fn a_client_id_with_a_nul_byte_is_refused_and_never_counted_for_another_owner() {
+    let b = brain("sp-nul");
+    let row = |client: &str| LogInsert {
+        client_id: Some(client.into()),
+        token_name: None,
+        operation: "x".into(),
+        spend_cents: 100.0,
+        provider: None,
+        model: None,
+    };
+    assert_eq!(
+        code(b.insert_spend_log(&row("owner\u{0}other"))),
+        "constraint_violation"
+    );
+    assert!(log(&b).is_empty(), "the refused write left no ledger row");
+    b.insert_spend_log(&row("owner")).unwrap();
+    assert_eq!(
+        b.sum_client_spend_since("owner", &day_start(b.clock.now()))
+            .unwrap(),
+        100.0
+    );
 }

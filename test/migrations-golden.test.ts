@@ -28,15 +28,13 @@ describe('migrations full-record golden', () => {
     expectGolden('migrations/records', golden, normalizer);
   }, 60_000);
 
-  test('versions are unique and the runner applies them ascending; gaps 17-19 and 100 stay gaps', () => {
+  test('versions are unique and the runner applies them ascending; gaps 17-19, 100 and 331-333 stay gaps', () => {
     const versions = MIGRATIONS.map((m) => m.version);
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    // 322-325 are master's migrations. This branch numbers its own migration 326 so it does not
-    // collide with them, and it has not merged master yet. The merge with master closes these gaps;
-    // drop them from this list in that merge.
-    expect(golden.gaps).toEqual([17, 18, 19, 100, 322, 323, 324, 325]);
+    // 331 is master's next migration, 332 and 333 sit on lane branches: the trunk's v334 leaves them free.
+    expect(golden.gaps).toEqual([17, 18, 19, 100, 331, 332, 333]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);

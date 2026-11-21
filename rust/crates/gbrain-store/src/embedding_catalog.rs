@@ -11,6 +11,11 @@
 //! the column reads as absent, as on a PGLite brain before its schema is created. The model is the
 //! model of the first chunk vector, else the config `embedding_model`.
 //!
+//! `embedding_image` and `embedding_multimodal` are declared `vector(1024)` on every Postgres and
+//! PGLite brain (schema.sql, bootstrap.ts, migration v078), and no migration changes their width.
+//! So both read as present at 1024 whatever the text width is, although the store keeps no vector
+//! for them (a chunk image vector is refused on write).
+//!
 //! A first vector cannot show a brain that mixes models or widths. Postgres has the same blind
 //! spot: it reads the model from config and the width from the column type, never from the rows.
 
@@ -25,6 +30,10 @@ use serde_json::{Value, json};
 
 /// The one vector column the store keeps.
 const VECTOR_COLUMN: &str = "embedding";
+
+/// The fixed-width image columns Postgres and PGLite always declare, and their width.
+const FIXED_COLUMNS: [&str; 2] = ["embedding_image", "embedding_multimodal"];
+const FIXED_COLUMN_WIDTH: u64 = 1024;
 
 /// The first chunk vector in key order, if any.
 fn first_chunk_vector(read: &dyn KvRead) -> Result<Option<StoredVector>> {
@@ -53,12 +62,16 @@ fn known_width(read: &dyn KvRead, first: Option<&StoredVector>) -> Result<Option
 
 impl Store {
     /// `readChunkVectorColumn(column)`: `{ exists, dims }` of a `content_chunks` vector column.
-    /// Only `embedding` can exist, and only once the store has a width.
+    /// `embedding` exists once the store has a width; `embedding_image` and
+    /// `embedding_multimodal` always exist at 1024; no other column exists.
     pub fn read_chunk_vector_column(&self, column: &str) -> Result<Value> {
         if column.contains('\0') {
             return Err(StoreError::invalid(
                 "readChunkVectorColumn: a column name may not hold a NUL byte",
             ));
+        }
+        if FIXED_COLUMNS.contains(&column) {
+            return Ok(json!({ "exists": true, "dims": FIXED_COLUMN_WIDTH }));
         }
         if column != VECTOR_COLUMN {
             return Ok(json!({ "exists": false, "dims": null }));

@@ -219,7 +219,7 @@ const PINS: Pin[] = [
   {
     from: 'src/core/cycle/synthesize-concepts.ts:178 runPhaseSynthesizeConcepts',
     run: e => e.listDreamAtomPages('default'),
-    sent: [{ text: `SELECT slug, title, compiled_truth, frontmatter, NOT (${privatePagesFilterFragment('pages')}) AS private
+    sent: [{ text: `SELECT slug, title, compiled_truth, knowledge_revision::text AS revision, frontmatter, NOT (${privatePagesFilterFragment('pages')}) AS private
            FROM pages
           WHERE type = 'atom'
             AND source_id = $1

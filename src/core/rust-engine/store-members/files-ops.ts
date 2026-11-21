@@ -62,14 +62,9 @@ function policy(member: string, excludePrivate: boolean): unknown {
   return storePagePolicy(member, excludePrivate, { callerReaders: true }) ?? null;
 }
 
-function listRows(brain: StoreBrain, member: string, kind: 'slug' | 'all' | 'verify', slug?: string): Promise<Row[]> {
-  return storeCall({ member }, async () => ((await brain.listFileRows(kind, slug)) as Row[]).map(row => withDates(row, ['created_at'])));
+function listRows(brain: StoreBrain, member: string, kind: 'verify'): Promise<Row[]> {
+  return storeCall({ member }, async () => ((await brain.listFileRows(kind)) as Row[]).map(row => withDates(row, ['created_at'])));
 }
-
-export const listFileRowsForSlug: Member<'listFileRowsForSlug'> = (brain, slug) =>
-  listRows(brain, 'listFileRowsForSlug', 'slug', text('listFileRowsForSlug', 'slug', slug));
-
-export const listAllFileRows: Member<'listAllFileRows'> = brain => listRows(brain, 'listAllFileRows', 'all');
 
 export const listFileRowsForVerify: Member<'listFileRowsForVerify'> = brain => listRows(brain, 'listFileRowsForVerify', 'verify');
 

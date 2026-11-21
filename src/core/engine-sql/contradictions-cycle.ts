@@ -11,6 +11,7 @@ import { NON_EMPLOYER_PREFIXES, NON_EMPLOYER_TYPES } from '../link-target-roles.
 import { entityTypePredicateSql, type EntityTypeFilter } from '../schema-pack/entity-types.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
+import { ownerOnlyTakeAllowedSql } from '../search/private-visibility.ts';
 import { chunkVisibleFilter, requiresSafeChunks, safeChunksFilter } from '../search/safe-chunks.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import type { PageReadPolicy } from '../types.ts';
@@ -274,7 +275,7 @@ export async function listLiveChunksByIds(raw: EngineRawRead, ids: number[], pol
   return raw<LiveChunkRow>(`${LIVE_CHUNKS_HEAD}${pageSql} AND ${chunkVisibleFilter('p', 'cc')}${safe}`, params);
 }
 
-/** The active takes with these ids that the caller's read policy admits: page policy, holder allow-list and the trust floor. */
+/** The active takes with these ids that the caller's read policy admits: page policy, holder allow-list, the owner-only take rule (#9704) and the trust floor. */
 export async function listLiveTakesByIds(raw: EngineRawRead, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined): Promise<LiveTakeRow[]> {
   const params: unknown[] = [ids];
   const pageSql = pageReadFilter('p', policy, params, true);
@@ -283,7 +284,7 @@ export async function listLiveTakesByIds(raw: EngineRawRead, ids: number[], poli
     params.push(policy.takesHoldersAllowList);
     holderSql = takeHolderSql(params.length);
   }
-  return raw<LiveTakeRow>(`${LIVE_TAKES_HEAD}${pageSql}${holderSql}
+  return raw<LiveTakeRow>(`${LIVE_TAKES_HEAD}${pageSql}${holderSql}${policy.excludePrivate ? ownerOnlyTakeAllowedSql('t') : ''}
         AND ${projectionEligibleSql('takes', 't', floor ? { floor } : undefined)}`, params);
 }
 

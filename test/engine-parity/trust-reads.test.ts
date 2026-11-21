@@ -6,12 +6,15 @@
  *  - Contract: getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getEffectiveDates, getSalienceScores,
  *    aliasCanonicalRefs, the keyword members (searchKeyword, searchKeywordChunks, countKeywordPages, searchKeywordPages,
  *    searchTitles), the link and graph reads (getBacklinkCounts, getAdjacencyBoosts, supersedingPageSlugs,
- *    relationalFanout, relationalChainHop, listLivePageSummaries, listPagesTitledIn), resolveFrozenHits, countWorldFacts, listFactsForRelevance and countUncomparableFacts drop a row below the floor
+ *    relationalFanout, relationalChainHop, listLivePageSummaries, listPagesTitledIn), resolveFrozenHits, countWorldFacts, listFactsForRelevance, countUncomparableFacts and the fact list reads
+ *    (listSupersessions, listFactsByEntity, listFactsSince, listFactsKeyset, listFactsBySession) drop a row below the floor
  *    (`trustFloorSql`) and, with suppression on, an agent-written-or-lower row with an instruction-family flag receipt
  *    (`activationSuppressedSql`), the same on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm
  *    with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: hybrid search, whoknows and the entity card pass these options; an engine that ignores them ranks or
- *    counts rows the caller's policy hides, and one that refuses them stops those commands.
+ *    counts rows the caller's policy hides, and one that refuses them stops those commands. Hot memory
+ *    (facts/meta-hook.ts) reads listFactsBySession and listFactsSince with the caller's eligibility on every MCP call:
+ *    an engine that refuses it stops the call, and one that ignores it puts a fact the policy hides in hot memory.
  *  - Why existing coverage misses it: the cases of these members pass no trust option, so an engine that drops the
  *    option or refuses it passes them.
  *  - Seam: none. Pages and facts are written in a transaction whose write trust settings declare the tier; receipts
@@ -400,6 +403,118 @@ describe('engine parity: trust floor and flag suppression on reads', () => {
         expect(list).toEqual(['agent fact', 'agent other-flag fact', 'curated fact', 'observed fact']);
       }
       for (const list of Object.values(out.confirmedOnly)) expect(list).toEqual([]);
+      return out;
+    },
+  );
+  parityTest(
+    'the four fact list reads under a read eligibility drop a fact below the floor, a flagged agent-written one and one from a quarantined page',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFact', 'insertFacts', 'upsertWriteGateReceipt',
+      'listFactsByEntity', 'listFactsSince', 'listFactsKeyset', 'listFactsBySession'] },
+    async (engine) => {
+      await engine.putPage('people/a-example', { type: 'person', title: 'A', compiled_truth: 'A', timeline: '' });
+      await engine.putPage('notes/held', { type: 'note', title: 'Held', compiled_truth: 'held', timeline: '' });
+      const session = 'session-eligibility';
+      const facts: Array<{ fact: string; tier: string | null; flag?: string[] }> = [
+        { fact: 'curated fact', tier: 'operator_curated' },
+        { fact: 'observed fact', tier: 'tool_observed' },
+        { fact: 'agent fact', tier: 'agent_written' },
+        { fact: 'agent flagged fact', tier: 'agent_written', flag: ['exfiltration'] },
+        { fact: 'agent other-flag fact', tier: 'agent_written', flag: ['other'] },
+        { fact: 'unknown flagged fact', tier: null, flag: ['override'] },
+        { fact: 'outside fact', tier: 'external_untrusted' },
+      ];
+      for (const [i, f] of facts.entries()) {
+        const { id } = await declared(engine, f.tier, tx => tx.insertFact({
+          fact: f.fact, entity_slug: 'people/a-example', visibility: 'world', source: 'mcp:remember', embedding: null,
+          source_session: session, valid_from: new Date(Date.UTC(2026, 4, 1 + i)),
+        } as never, { source_id: 'default' }));
+        if (f.flag) await engine.upsertWriteGateReceipt({ target_table: 'facts', target_id: String(id), source_id: 'default', ...receipt(f.flag) });
+      }
+      // A curated fact whose provenance page is quarantined: only a read with an eligibility policy hides it.
+      await declared(engine, 'operator_curated', tx => tx.insertFacts([{
+        fact: 'held page fact', entity_slug: 'people/a-example', source_markdown_slug: 'notes/held', row_num: 1, kind: 'fact',
+        visibility: 'world', source: 'fence', source_session: session, valid_from: new Date(Date.UTC(2026, 4, 20)),
+      }] as never, { source_id: 'default' }));
+      await engine.putPage('notes/held', { type: 'note', title: 'Held', compiled_truth: 'held', timeline: '', frontmatter: { quarantine: { reason: 'test' } } });
+      type Eligibility = NonNullable<Parameters<BrainEngine['listFactsSince']>[2]>['eligibility'];
+      // The hot-memory call shape (facts/meta-hook.ts): active rows, world visibility, fingerprints.
+      const shape = (eligibility: Eligibility) => ({ activeOnly: true, limit: 30, visibility: ['world' as const], fingerprint: true, ...(eligibility ? { eligibility } : {}) });
+      const reads: Record<string, (e: Eligibility) => Promise<Array<{ fact: string }>>> = {
+        byEntity: (e) => engine.listFactsByEntity('default', 'people/a-example', shape(e)),
+        since: (e) => engine.listFactsSince('default', new Date(Date.UTC(2000, 0, 1)), shape(e)),
+        keyset: (e) => engine.listFactsKeyset('default', null, shape(e)),
+        bySession: (e) => engine.listFactsBySession('default', session, shape(e)),
+      };
+      const out: Record<string, Record<string, string[]>> = {};
+      for (const [read, run] of Object.entries(reads)) {
+        const texts = async (e: Eligibility) => sorted((await run(e)).map(r => r.fact));
+        const byPolicy: Record<string, string[]> = { none: await texts(undefined) };
+        for (const [name, policy] of Object.entries(POLICIES)) {
+          const floor = policy.minTrust || undefined;
+          byPolicy[name] = await texts({ ...(floor ? { floor } : {}), ...(policy.suppressFlagged ? { suppressFlagged: true } : {}) } as Eligibility);
+        }
+        expect(byPolicy.none).toContain('held page fact');
+        expect(byPolicy.scoped).not.toContain('held page fact');
+        expect(byPolicy.agentSuppressed).toEqual(['agent fact', 'agent other-flag fact', 'curated fact', 'observed fact']);
+        expect(byPolicy.confirmedOnly).toEqual([]);
+        out[read] = byPolicy;
+      }
+      for (const read of ['since', 'keyset', 'bySession']) expect(out[read]).toEqual(out.byEntity!);
+      return out;
+    },
+  );
+  parityTest(
+    'the four fact list reads under each eligibility drop their facts, and the delta read policy with no floor still hides a quarantined page fact',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFact', 'insertFacts', 'upsertWriteGateReceipt', 'listFactsByEntity', 'listFactsSince', 'listFactsKeyset', 'listFactsBySession'] },
+    async (engine) => {
+      await engine.putPage('people/a-example', { type: 'person', title: 'A', compiled_truth: 'A', timeline: '' });
+      await engine.putPage('notes/held', { type: 'note', title: 'Held', compiled_truth: 'held', timeline: '' });
+      const facts: Array<{ fact: string; tier: string | null; flag?: string[] }> = [
+        { fact: 'curated fact', tier: 'operator_curated' },
+        { fact: 'observed fact', tier: 'tool_observed' },
+        { fact: 'agent fact', tier: 'agent_written' },
+        { fact: 'agent flagged fact', tier: 'agent_written', flag: ['exfiltration'] },
+        { fact: 'agent other-flag fact', tier: 'agent_written', flag: ['other'] },
+        { fact: 'unknown flagged fact', tier: null, flag: ['override'] },
+        { fact: 'outside fact', tier: 'external_untrusted' },
+      ];
+      for (const [i, f] of facts.entries()) {
+        const { id } = await declared(engine, f.tier, tx => tx.insertFact({
+          fact: f.fact, entity_slug: 'people/a-example', visibility: 'world', source: 'mcp:remember', embedding: null,
+          source_session: 's1', valid_from: new Date(Date.UTC(2026, 4, 1 + i)),
+        } as never, { source_id: 'default' }));
+        if (f.flag) await engine.upsertWriteGateReceipt({ target_table: 'facts', target_id: String(id), source_id: 'default', ...receipt(f.flag) });
+      }
+      // A curated fact whose provenance page is quarantined: only a read with an eligibility policy hides it.
+      await declared(engine, 'operator_curated', tx => tx.insertFacts([{
+        fact: 'held page fact', entity_slug: 'people/a-example', source_markdown_slug: 'notes/held', row_num: 1, kind: 'fact',
+        visibility: 'world', source: 'fence', source_session: 's1', valid_from: new Date(Date.UTC(2026, 4, 20)),
+      }] as never, { source_id: 'default' }));
+      await engine.putPage('notes/held', { type: 'note', title: 'Held', compiled_truth: 'held', timeline: '', frontmatter: { quarantine: { reason: 'test' } } });
+      const texts = (rows: Array<{ fact: string }>) => sorted(rows.map(r => r.fact));
+      const reads = async (eligibility?: NonNullable<Parameters<BrainEngine['listFactsKeyset']>[2]>['eligibility']) => {
+        const opts = eligibility ? { eligibility } : {};
+        return {
+          byEntity: texts(await engine.listFactsByEntity('default', 'people/a-example', opts)),
+          since: texts(await engine.listFactsSince('default', new Date(Date.UTC(2020, 0, 1)), opts)),
+          keyset: texts(await engine.listFactsKeyset('default', null, opts)),
+          bySession: texts(await engine.listFactsBySession('default', 's1', opts)),
+        };
+      };
+      const out: Record<string, Awaited<ReturnType<typeof reads>>> = { none: await reads() };
+      for (const [name, policy] of Object.entries(POLICIES)) {
+        const floor = policy.minTrust || undefined;
+        out[name] = await reads({ ...(floor ? { floor } : {}), ...(policy.suppressFlagged ? { suppressFlagged: true } : {}) });
+      }
+      // The delta read passes a policy with no floor and no suppression: it still hides the quarantined page's fact.
+      out.noFloor = await reads({ floor: undefined });
+      for (const read of ['byEntity', 'since', 'keyset', 'bySession'] as const) {
+        expect(out.none[read]).toContain('held page fact');
+        expect(out.scoped[read]).not.toContain('held page fact');
+        expect(out.noFloor[read]).not.toContain('held page fact');
+        expect(out.agentSuppressed[read]).toEqual(['agent fact', 'agent other-flag fact', 'curated fact', 'observed fact']);
+        expect(out.confirmedOnly[read]).toEqual([]);
+      }
       return out;
     },
   );

@@ -19,7 +19,7 @@ import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibil
 import { withDates } from '../store-codec.ts';
 import { FACTS_FENCE_BEGIN } from '../../facts-fence.ts';
 import { FACTLESS_SETTLE_LIMIT } from '../../engine-sql/facts-purge.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storeFloorPolicy, storePrivacyPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -76,7 +76,7 @@ export const findActiveSingleFact: Member<'findActiveSingleFact'> = async (brain
   const remoteFloor = opts.remoteFloor ? storeFloorPolicy('findActiveSingleFact') : undefined;
   const row: Row | null = await storeCall({ member: 'findActiveSingleFact' }, () => brain.findActiveSingleFact({
     sourceId: opts.sourceId, entitySlug: opts.entitySlug, visibility: opts.visibility, fact: opts.fact,
-    attributedTo: opts.attributedTo, pageSlug: opts.pageSlug, remoteFloor }));
+    attributedTo: opts.attributedTo, pageSlug: opts.pageSlug, remoteFloor, newest: opts.newest === true }));
   return row === null ? null : withDates(row, FACT_DATES) as never;
 };
 
@@ -106,6 +106,10 @@ export const recordDerivationEdges: Member<'recordDerivationEdges'> = (brain, de
       derived: { table: derived.table, id: derived.id }, sourceId, inputs: edges.map((e) => ({ table: e.table, id: e.id })) });
   });
 
-export const listDerivedRows: Member<'listDerivedRows'> = (brain, frontier, limit) =>
-  storeCall({ member: 'listDerivedRows' }, () => brain.listDerivedRows({
-    frontier: frontier.map((f) => ({ table: f.table, id: f.id })), limit }));
+/** One hop of the walk over the store's `derivation_inputs`. A limit or id that is not what PGLite binds is refused rather than answered. */
+export const listDerivedRows: Member<'listDerivedRows'> = (brain, frontier, limit) => {
+  const member = 'listDerivedRows';
+  if (!Number.isSafeInteger(limit)) refuseMember(member, 'a limit that is not an integer');
+  for (const ref of frontier) if (typeof ref.table !== 'string' || typeof ref.id !== 'string') refuseMember(member, 'a frontier row whose table or id is not text');
+  return storeCall({ member }, () => brain.listDerivedRows({ frontier: frontier.map((f) => ({ table: f.table, id: f.id })), limit }));
+};

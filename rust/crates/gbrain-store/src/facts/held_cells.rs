@@ -213,9 +213,12 @@ pub(super) struct LiveRow {
 pub(super) fn held(rows: &[LiveRow], key: &HeldFenceCellKey, row_num: i32) -> bool {
     let narrower = |r: &&LiveRow| r.row.visibility != "world" && !r.admitted;
     rows.iter()
-        .filter(narrower)
+        .filter(|r| narrower(r))
         .any(|r| r.row.row_num == Some(row_num))
-        || (rows.iter().filter(narrower).any(|r| states(&r.row, key))
+        || (rows
+            .iter()
+            .filter(|r| narrower(r))
+            .any(|r| states(&r.row, key))
             && !rows
                 .iter()
                 .any(|r| r.row.visibility == "world" && states(&r.row, key)))

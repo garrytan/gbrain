@@ -113,7 +113,7 @@ fn cycle_row(row: &JobRecord) -> Value {
         "name": row.name,
         "status": row.status,
         "started_at": row.started_at.map(iso),
-        "result": row.result.as_ref().map(jsonb),
+        "result": row.result.as_ref().map(ordered),
     })
 }
 

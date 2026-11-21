@@ -19,23 +19,25 @@ import type { SearchOpts, SearchResult } from '../../types.ts';
 import { rowToSearchResult } from '../../utils.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
+import { dateMicros, whereFields } from './search-filters.ts';
 
 /** The `SearchOpts` keys the vector statement reads and the store applies. */
 const VECTOR_FILTERS = [
   'limit', 'offset', 'type', 'types', 'exclude_slugs', 'exclude_slug_prefixes', 'include_slug_prefixes', 'detail',
   'language', 'symbolKind', 'sourceId', 'sourceIds', 'source_boosts', 'embeddingColumn', 'requireSafeChunks', 'excludePrivate',
+  'where', 'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive', 'minTrust',
+  'suppressFlagged',
 ] as const;
 
 /**
  * Keys the vector statement never reads, or reads only to steer its HNSW candidate pool (`vectorLegacyGuard`,
- * `hnswIterativeScan`, `onVectorPoolMeta`), which an exact scan does not have. A date bound's `*Inclusive` flag does
- * nothing without the bound. `where`, `afterDate`, `beforeDate`, `minTrust` and `suppressFlagged` are absent: the store
- * applies none of them, so a set one refuses. `excludePrivate` is served as the page policy (private-provenance.ts).
+ * `hnswIterativeScan`, `onVectorPoolMeta`), which an exact scan does not have. `excludePrivate` is served as the page
+ * policy (private-provenance.ts).
  */
 const VECTOR_IGNORED = [
   'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn',
   'autocut', 'nearSymbol', 'walkDepth', 'orFallback', 'orFill', 'keywordTimeoutCache', 'rankQuery', 'keywordPhrase',
-  'afterDateInclusive', 'beforeDateInclusive', 'recencyBoost', 'salience', 'recency', 'since', 'until', 'tokenBudget',
+  'recencyBoost', 'salience', 'recency', 'since', 'until', 'tokenBudget',
   'useCache', 'intentWeighting', 'reranker', 'floorRatio', 'crossModal', 'graph_signals', 'relationalRetrieval',
   'relationalRetrievalDepth', 'relationalRerankPin', 'relationalPlanner', 'relationalOrientOneHop',
   'relationalChainSlots', 'takesHoldersAllowList',
@@ -45,7 +47,7 @@ const VECTOR_IGNORED = [
 const TAKES_IGNORED = [
   'minTrust', 'suppressFlagged', 'requireSafeChunks', 'offset', 'type', 'types', 'where', 'exclude_slugs',
   'exclude_slug_prefixes', 'source_boosts', 'include_slug_prefixes', 'detail', 'language', 'symbolKind',
-  'embeddingColumn', 'afterDate', 'beforeDate', ...VECTOR_IGNORED.filter((key) => key !== 'takesHoldersAllowList'),
+  'embeddingColumn', 'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive', ...VECTOR_IGNORED.filter((key) => key !== 'takesHoldersAllowList'),
 ] as const;
 
 /** The SQL module's source filter: a non-empty `sourceIds` wins over a truthy `sourceId`; neither is no scope. */
@@ -79,15 +81,8 @@ function guardModel(column: SearchOpts['embeddingColumn']): string | null {
   return resolved.embeddingModel || null;
 }
 
-/** An empty `where` adds no clause; any other refuses (the store applies no frontmatter predicates). */
-function refuseUnapplied(opts: SearchOpts): SearchOpts {
-  const { where, ...rest } = opts;
-  if (where && Object.keys(where).length > 0) refuseMember('searchVector', 'option where');
-  return rest;
-}
-
 export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOpts], SearchResult[]> = async (brain, embedding, opts = {}) => {
-  const o = takeOptions('searchVector', refuseUnapplied(opts), VECTOR_FILTERS, VECTOR_IGNORED) as SearchOpts;
+  const o = takeOptions('searchVector', opts, VECTOR_FILTERS, VECTOR_IGNORED) as SearchOpts;
   const model = guardModel(o.embeddingColumn);
   // The store keeps one vector column, `embedding`; a brain whose config routes vectors to another column is refused
   // as the embedding members refuse it, not answered from the wrong space.
@@ -101,12 +96,23 @@ export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOp
   if (o.limit && o.limit > cap) {
     console.warn(`[gbrain] Warning: search limit clamped from ${o.limit} to ${cap}`);
   }
+  // `excludePrivate` is the page policy `buildVisibilityClause` adds; a caller whose policy is wider refuses.
+  const policy = storePagePolicy('searchVector', o.excludePrivate);
   const options = {
     limit,
     offset: jsNumber(Number(o.offset || 0)),
     type: o.type || null,
     types: o.types?.length ? o.types : null,
     exclude_slugs: o.exclude_slugs?.length ? o.exclude_slugs : null,
+    // `frontmatterWhereClauses`: an absent or empty `where` adds no clause.
+    where: o.where ? whereFields('searchVector', o.where) : [],
+    // `dateBound`: a truthy bound read as `timestamptz`, strict unless its `*Inclusive` flag is set.
+    after_date: o.afterDate ? { micros: dateMicros('searchVector', o.afterDate), inclusive: Boolean(o.afterDateInclusive) } : null,
+    // `pageEligibleSql`'s floor: a truthy `minTrust` (an empty one adds no clause).
+    min_trust: o.minTrust ? String(o.minTrust) : null,
+    // `pageEligibleSql`'s `activationSuppressedSql`: only a truthy `suppressFlagged` adds it.
+    suppress_flagged: Boolean(o.suppressFlagged),
+    before_date: o.beforeDate ? { micros: dateMicros('searchVector', o.beforeDate), inclusive: Boolean(o.beforeDateInclusive) } : null,
     hard_excludes: resolveHardExcludes(o.exclude_slug_prefixes, o.include_slug_prefixes),
     detail: o.detail === 'low' ? 'low' : null,
     language: o.language || null,
@@ -115,8 +121,7 @@ export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOp
     model,
     source_factors: sourceFactors(o.source_boosts ?? resolveBoostMap(), o.detail),
     require_safe_chunks: requiresSafeChunks(o),
-    // `excludePrivate` is the page policy `buildVisibilityClause` adds; a caller whose policy is wider refuses.
-    exclude_private: storePagePolicy('searchVector', o.excludePrivate) ?? null,
+    exclude_private: policy ?? null,
   };
   const query = Array.from(embedding);
   const rows: Record<string, unknown>[] = await storeCall({ member: 'searchVector' }, () => brain.searchVector(query, options));

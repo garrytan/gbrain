@@ -39,7 +39,7 @@ describe('autoLinkLockKey (ops/pages.ts)', () => {
 });
 
 describe('registerClientNameLockKey (commands/agent-register.ts)', () => {
-  test('exact string (cross-process wire contract shared by register + reissue rotation)', () => {
+  test('exact string (cross-process wire contract of the registration name lock)', () => {
     expect(registerClientNameLockKey('aurora-coder')).toBe('register_client_name:aurora-coder');
   });
 

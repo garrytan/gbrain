@@ -70,7 +70,7 @@ function adminUrl(databaseUrl: string): { admin: string; name: string } {
  * says this runner created it. Never touches a database it did not create.
  */
 export async function preparePostgresDatabase(databaseUrl: string, fresh: boolean): Promise<'created' | 'recreated' | 'existing'> {
-  const { default: postgres } = await import('postgres');
+  const { default: postgres } = await import('#postgres');
   const { admin, name } = adminUrl(databaseUrl);
   const sql = postgres(admin, { max: 1, onnotice: () => {} });
   try {

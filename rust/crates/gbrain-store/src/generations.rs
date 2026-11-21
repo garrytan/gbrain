@@ -42,7 +42,7 @@
 //!
 //! JSON columns (`completeness`, `held_context`, `proposal`, `preimage`) arrive as JSON text or
 //! values, are refused where Postgres `jsonb` refuses them, and are stored in Postgres `jsonb` key
-//! order (`dream::jsonb`).
+//! order (`jsonb::ordered`).
 //!
 //! A source delete removes the source's rows of all five tables (`remove_source_rows`); a deleted
 //! generation row sets its activations' `generation_id` to null.
@@ -53,8 +53,9 @@
 
 use crate::cli_reads::pg_jsonb;
 use crate::cli_reads::pg_text::{jsonb_text as jsonb_text_of, pg_lower};
-use crate::dream::{int4, jsonb, jsonb_check};
+use crate::dream::{int4, jsonb_check};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
+use crate::jsonb::ordered as jsonb;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
@@ -169,7 +170,7 @@ struct GenerationRecord {
 struct ItemRecord {
     identity_hash: String,
     action: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     preimage: Option<Value>,
     #[serde(default)]
     preimage_bytes: Option<i32>,
@@ -1379,6 +1380,25 @@ mod tests {
     use crate::access_flag::RESTRICTIONS_PRESENT_KEY as FLAG;
     use crate::test_support::store;
 
+    /// Stores an open page through `put_page`, so a later raw put changes a full page record.
+    fn put_open_page(store: &Store, slug: &str) {
+        let input: crate::pages::PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": {"tags": ["a"]}
+        }))
+        .unwrap();
+        let opts: crate::pages::PutPageOptions =
+            serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+        store.put_page(slug, &input, &opts).unwrap();
+    }
+
+    /// The stored page record with `readable_by` added, for a raw put inside a write closure.
+    fn with_readers(tx: &mut dyn KvWrite, slug: &str) -> Result<()> {
+        let page = keys::page("default", slug);
+        let mut record: Value = serde_json::from_slice(&tx.get(&page)?.unwrap())?;
+        record["frontmatter"]["readable_by"] = json!(["alice-example"]);
+        tx.put(&page, &serde_json::to_vec(&record)?)
+    }
+
     fn key() -> GenerationKey {
         GenerationKey {
             source_id: "default".into(),
@@ -1404,6 +1424,7 @@ mod tests {
     #[test]
     fn a_generation_write_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_open_page(&store, "notes/closed");
         assert_eq!(store.get_config(FLAG).unwrap(), None);
         store
             .write(|tx| {
@@ -1411,9 +1432,7 @@ mod tests {
                 let id = crate::pages::next_id(tx, ID_COUNTER)?;
                 tx.put(&pointer_key(&key(), "held"), &id.to_be_bytes())?;
                 tx.delete(&pointer_key(&key(), "held"))?;
-                let page = keys::page("default", "notes/closed");
-                let record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
-                tx.put(&page, &serde_json::to_vec(&record)?)
+                with_readers(tx, "notes/closed")
             })
             .unwrap();
         assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
@@ -1601,6 +1620,8 @@ mod tests {
     #[test]
     fn an_attempt_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_open_page(&store, "notes/closed");
+        assert_eq!(store.get_config(FLAG).unwrap(), None);
         store
             .write(|tx| {
                 let record = AttemptRecord {
@@ -1613,9 +1634,7 @@ mod tests {
                 };
                 put_json(tx, &attempt_key("a1"), &record)?;
                 tx.put(&attempt_index_key(&record, "a1"), &[])?;
-                let page = keys::page("default", "notes/closed");
-                let page_record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
-                tx.put(&page, &serde_json::to_vec(&page_record)?)
+                with_readers(tx, "notes/closed")
             })
             .unwrap();
         assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));

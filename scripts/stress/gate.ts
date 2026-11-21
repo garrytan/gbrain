@@ -85,7 +85,7 @@ function classify(root: string, files: string[], weights: Weights, unmeasured = 
 export interface GatePlanInput { event: string; baseSha?: string; headSha?: string; stressFiles?: string; stressBase?: string; stressHead?: string }
 
 /** The PR gate: every changed test file plus helper importers, ten iterations, shards under the budget. */
-export function planGate(root: string, input: GatePlanInput, weights = loadWeights(root)): Plan | { error: string } {
+export function planGate(root: string, input: GatePlanInput, weights = loadWeights(root)): Plan | { error: string; why?: string } {
   let files: string[];
   let helpers: HelperExpansion[] = [];
   let base = input.baseSha ?? '';
@@ -122,7 +122,8 @@ export function planGate(root: string, input: GatePlanInput, weights = loadWeigh
   const { stress, notStressed } = classify(root, files, weights, GATE_UNMEASURED_QUANTILE);
   let shards = planShards(stress, DEFAULT_ITERATIONS, GATE_SHARD_BUDGET_MS);
   if (shards.length > GATE_MAX_SHARDS) shards = planShards(stress, DEFAULT_ITERATIONS, GATE_FALLBACK_SHARD_BUDGET_MS);
-  if (shards.length > GATE_MAX_SHARDS) return { error: `the plan needs ${shards.length} shards of up to ${GATE_FALLBACK_SHARD_BUDGET_MS / 60_000} minutes, past GitHub's ${GATE_MAX_SHARDS}-job matrix limit. Next: split the PR, or dispatch the stress workflow with stress_files naming a subset` };
+  if (shards.length > GATE_MAX_SHARDS) return { error: `the plan needs ${shards.length} shards of up to ${GATE_FALLBACK_SHARD_BUDGET_MS / 60_000} minutes, past GitHub's ${GATE_MAX_SHARDS}-job matrix limit. Next: split the PR so each part plans ${GATE_MAX_SHARDS} shards or fewer; this head's stress check stays red until then`,
+    why: `GitHub refuses a matrix over ${GATE_MAX_SHARDS} jobs, and stressing only part of the changed files would let the rest land untested` };
   return {
     ...emptyPlan('gate', stress.length ? `${stress.length} file(s) × ${DEFAULT_ITERATIONS} iterations` : 'no changed test files to stress'),
     run: stress.length > 0, diagnostic, base, head, helpers, notStressed, shards,
@@ -162,8 +163,9 @@ export function raceHuntHelperImporters(root: string, since = '26 hours ago'): {
  * iterations nightly and the spare capacity rotates by day so each file still
  * reaches 10 within the week. When even 3 iterations do not fit 12 shards,
  * every file runs 3 in up to 24 shards, the second 12 queued behind the
- * first. Files are never dropped: what does not fit is `unrun` and the job
- * fails "race hunt over budget".
+ * first. Listed files take the floor before helper importers, so a widely
+ * imported helper can never push a listed arm out. Files are never dropped:
+ * what does not fit is `unrun` and the job fails "race hunt over budget".
  */
 export function planRaceHunt(root: string, opts: { day: number; extra?: string[]; diagnostic?: boolean }, weights = loadWeights(root)): Plan {
   const list = readArmsList(root);
@@ -189,7 +191,8 @@ export function planRaceHunt(root: string, opts: { day: number; extra?: string[]
     } else {
       depth = new Map();
       const floor: typeof stress = [];
-      for (const f of stress) {
+      const listed = new Set(list.files);
+      for (const f of [...stress].sort((a, b) => Number(!listed.has(a.file)) - Number(!listed.has(b.file)))) {
         if (planShards([...floor, f], RACE_MIN_ITERATIONS, RACE_SHARD_BUDGET_MS).length <= RACE_FLOOR_MAX_SHARDS) { floor.push(f); depth.set(f.file, RACE_MIN_ITERATIONS); } else unrun.push(f.file);
       }
     }
@@ -441,7 +444,7 @@ async function main(argv: string[]): Promise<number> {
     if (mode === 'gate') {
       const result = planGate(ROOT, { event: env.EVENT ?? '', baseSha: env.BASE_SHA, headSha: env.HEAD_SHA, stressFiles: env.STRESS_FILES, stressBase: env.STRESS_BASE, stressHead: env.STRESS_HEAD });
       if ('error' in result) {
-        console.error(`::error::stress gate: the plan could not be computed: ${result.error}. Why: the gate stresses every test file the diff touches, so a guessed list could skip one. Docs: ${STRESS_DOCS}`);
+        console.error(`::error::stress gate: the plan could not be computed: ${result.error}. Why: ${result.why ?? 'the gate stresses every test file the diff touches, so a guessed list could skip one'}. Docs: ${STRESS_DOCS}`);
         return 1;
       }
       plan = result;

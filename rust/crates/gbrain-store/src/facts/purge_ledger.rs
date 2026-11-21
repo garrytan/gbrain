@@ -247,7 +247,7 @@ impl Store {
                 tx,
                 &k,
                 &PurgeRecord {
-                    request_id,
+                    request_id: request_id.clone(),
                     actor: row.actor.clone(),
                     reason: row.reason.clone(),
                     purged_at_us,

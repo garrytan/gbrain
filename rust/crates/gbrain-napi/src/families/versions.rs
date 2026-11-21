@@ -64,6 +64,20 @@ impl Brain {
         self.run(env, move |s| s.prune_holding_page_versions(page_id))
     }
 
+    /// `readLatestVersionIdAtTier(pageId, tier)`: resolves the page's newest version id stamped
+    /// with the tier, or null.
+    #[napi]
+    pub fn read_latest_version_id_at_tier<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        tier: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_latest_version_id_at_tier(page_id, &tier)
+        })
+    }
+
     /// `stampVersionChangeReason({ pageId, afterVersionId, reason })`: resolves how many versions
     /// took the reason.
     #[napi]

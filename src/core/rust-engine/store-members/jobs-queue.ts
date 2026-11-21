@@ -102,7 +102,7 @@ export const listRecentSynthesisCompletions: StoreMember<[sourceId: string, hour
 
 /**
  * The retry policy runs on the delegated policy handle (../delegated-policy-handle.ts): the job reads and the client's
- * open-job count; a delegated client's grant read, and anything else, refuses before the store writes. A policy that
+ * open-job count; the client's grant read (readOauthClient), and anything else, refuses before the store writes. A policy that
  * took the client lock refuses too, since the lock holds nothing across store calls. The store's UPDATE re-checks that
  * the job is still failed or dead.
  */

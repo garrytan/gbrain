@@ -268,13 +268,15 @@ export interface DreamAtomPage {
   slug: string;
   title: string;
   compiled_truth: string;
+  /** #9653: the page's knowledge_revision when it was read (a held concept's rebuild refuses if it moved). */
+  revision: string;
   frontmatter: { concepts?: string[]; imported_from?: string };
   private: boolean;
 }
 
 /** The live atom pages of `sourceId` that were not imported, with whether each is private. */
 export async function listDreamAtomPages(raw: EngineRawRead, sourceId: string): Promise<DreamAtomPage[]> {
-  const { text, params } = renderFragment(sqlFragment`SELECT slug, title, compiled_truth, frontmatter, NOT (${trustedSql(privatePagesFilterFragment('pages'))}) AS private
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, title, compiled_truth, knowledge_revision::text AS revision, frontmatter, NOT (${trustedSql(privatePagesFilterFragment('pages'))}) AS private
            FROM pages
           WHERE type = 'atom'
             AND source_id = ${sourceId}

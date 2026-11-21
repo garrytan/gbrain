@@ -9,7 +9,7 @@ import { isHostAbsolutePath } from '../path-confine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { admitChangeReason, CHANGE_REASON_OPERATIONS } from './change-reason.ts';
-import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
+import { grantedWriteSource, readsButWritesOnly, writeGrantRefusal } from './write-grant.ts';
 import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, isLegacyStoredPageSlug, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
@@ -38,7 +38,7 @@ import { claimWorktree, getWorktreeBinding, sharedWorktreeBinding } from './owne
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import type { Principal, WriteRequest } from './model.ts';
-import { normalizeSubagentPageInput, undeclaredPageTypeWarning, type PageTypeWarning } from './page-input.ts';
+import { normalizeSubagentPageInput, stripPageTextNul, undeclaredPageTypeWarning, type PageTypeWarning } from './page-input.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { decideUnboundWrite, isUnboundSourcePage } from './unbound-source.ts';
 import { assertRestoreOrigin } from './detached-pages.ts';
@@ -57,6 +57,7 @@ import type { GuestSource } from '../guests/sources.ts';
 import { admitGuestOperation, assertGuestFrontmatter, assertGuestReaders, GUEST_NOTE_INTENT_KEY, guestPageImmutable, guestSourcesUnreadable, refuseRemoteGuestDelete, schemaBehindGuests } from '../guests/admission.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
+import { OWNED_FOLDER_KINDS } from '../owned-folder/paths.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   // #5994: a failed-writes replay is admitted under the original writer.
@@ -94,10 +95,14 @@ const BATCH_SHARED_READS = new Set([
  * file is skipped; a file it does not skip is admitted and rechecked under
  * lock. It also answers the local writer's credential check once per batch;
  * with this set, batchSharedReads answers the shared skill pack reads once too.
+ * The credential check reads the writer row through the typed
+ * `readLocalWriterRow`; `WRITER_ROW_SQL` names it here.
  */
+const WRITER_ROW_SQL = 'SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=$1::uuid';
 export const SCREENING_SHARED_READS: ReadonlySet<string> = new Set([
-  'SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=$1::uuid',
+  WRITER_ROW_SQL,
 ]);
+/** The shared reads above, plus their typed twins: the brain identity always, the unlocked writer row when `extra` names it. */
 export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string>): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
   const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
@@ -108,6 +113,7 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
   return new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       BATCH_SHARED_READS.has(flatSql(sql)) || extra?.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
+    if (key === 'readPersistenceBrainId') return () => once('typed:brain', () => target.readPersistenceBrainId());
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
     // The worktree binding, once per source and host; an absence is read again, since a later page may claim the worktree.
@@ -164,7 +170,7 @@ export function pageMutationSource(ctx: OperationContext, params: Record<string,
   const granted = grantedWriteSource(ctx);
   if (ctx.remote !== false && sourceId !== granted && !perCallWriteSource(ctx, sourceId)) {
     throw writeGrantRefusal(ctx,
-      `This connection writes only to source ${granted}. Pass source_id ${granted} (or omit it), or ask the brain host's operator to grant write access to ${sourceId}.`);
+      `${readsButWritesOnly(ctx, sourceId, granted)}This connection writes only to source ${granted}. Pass source_id ${granted} (or omit it), or ask the brain host's operator to grant write access to ${sourceId}.`);
   }
   return sourceId;
 }
@@ -256,6 +262,9 @@ export async function submitPageMutation(ctx: OperationContext,
   // cache could explain drops it and prepares the write once more, uncached, so it ends as it would without it.
   const cached = await preadmitReads(ctx.engine);
   let prepared = await preparePageAdmission(cached ? { ...ctx, engine: cached } : ctx, { ...input, params });
+  // A replay returns its stored receipt without the locked admission recheck, so it is authorized again uncached:
+  // a writer revoked since the cache was filled is refused, as without the cache.
+  if (prepared.prior && cached) prepared = await preparePageAdmission(ctx, { ...input, params });
   if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
   const brainId = cached ? cachedPreadmitBrain(ctx.engine) : undefined;
   // Phase 4.4: the admission transaction runs on the warm single-write lane when it is free.
@@ -456,6 +465,10 @@ export async function preparePageAdmission(ctx: OperationContext,
   }
   // GST-1943: the storage manifest takes page writes only from the storage verbs (and the owner's import of its own commits).
   assertStorageSourceWriter(ctx, sourceId, source.role, { managedFileImport: input.managedFileImport });
+  if (source.kind && OWNED_FOLDER_KINDS.includes(source.kind)) await (await import('../owned-folder/remove.ts')).assertOwnedPagesUnchanged(ctx.engine, sourceId, input.operation);
+  // A managed file import keeps the file canonical: its content is re-read and compared at preparation.
+  const nulRemoved = input.managedFileImport ? 0 : stripPageTextNul(input.operation, p);
+  if (nulRemoved) ctx.logger?.warn(`[nul_removed] ${input.operation} ${JSON.stringify(String(p.slug))}: removed ${nulRemoved} U+0000 character(s) from the page text; the page is stored without them.`);
   // After the replay check: the request digest covers what the caller sent, so a retry matches whatever the page's type is by then.
   if (input.operation === 'put_page' && ctx.remote !== false && typeof p.content === 'string' && typeof p.slug === 'string') {
     p.content = await unquotedPutContent(ctx.engine, sourceId, p.slug.toLowerCase(), p.content);

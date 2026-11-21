@@ -42,20 +42,20 @@ async function runUnscopedMultiUserToken(ctx: DoctorContext): Promise<Check[]> {
     if (!memo.has(key)) memo.set(key, chatChannelCensus(engine, sources));
     return memo.get(key)!;
   };
-  const credentials: Array<{ subject: ExposureSubject; grant: PrincipalGrant }> = [];
+  const credentials: Array<{ subject: ExposureSubject; grant: PrincipalGrant; member?: string | null }> = [];
   const actsForAudience = (row: Record<string, unknown>) => Array.isArray(row.may_act_for) && row.may_act_for.length > 0;
   for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE revoked_at IS NULL ORDER BY created_at, id')) {
     if (actsForAudience(row)) continue;
-    credentials.push({ subject: { kind: 'legacy_token', name: String(row.name) }, grant: grantFromTokenRow(row) });
+    credentials.push({ subject: { kind: 'legacy_token', name: String(row.name) }, grant: grantFromTokenRow(row), member: typeof row.member_id === 'string' ? row.member_id : null });
   }
   for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id')) {
     if (actsForAudience(row)) continue;
     const grant = grantFromRow(row);
-    credentials.push({ subject: { kind: 'oauth_client', id: grant.clientId, name: grant.clientName || undefined }, grant: grantFromClient(grant) });
+    credentials.push({ subject: { kind: 'oauth_client', id: grant.clientId, name: grant.clientName || undefined }, grant: grantFromClient(grant), member: typeof row.member_id === 'string' ? row.member_id : null });
   }
   const findings: Finding[] = [];
-  for (const { subject, grant } of credentials) {
-    const c = await census(await credentialReadSources(engine, grant));
+  for (const { subject, grant, member } of credentials) {
+    const c = await census(await credentialReadSources(engine, grant, member ?? null));
     const reasons = exposureReasons({ census: c });
     if (reasons.length) findings.push({ subject, label: subjectLabel(subject), reasons, census: c });
   }

@@ -1,6 +1,6 @@
 //! Effect scans: the statements of `src/core/engine-sql/persistence-effect-scans.ts` that the
-//! effect worker's pass sends before and when it claims effects (rust/docs/store/persistence.md,
-//! "Effect scans").
+//! effect worker's pass sends before and when it claims effects, and the read of the effects a
+//! write receipt lists (rust/docs/store/persistence.md, "Effect scans").
 //!
 //! Each scan joins `persistence_effects` to `persistence_worktrees` on the host that owns the
 //! worktree. This engine keeps no worktree, so every scan answers no row (the claim itself is

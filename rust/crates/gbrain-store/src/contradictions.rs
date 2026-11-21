@@ -19,9 +19,10 @@
 //! Time: `ran_at` and the cache's `created_at` are the store's clock. As in PGLite, the cache's
 //! `expires_at` and the trend's cutoff are millisecond times (they come from `Date.now()` there).
 
-use crate::dream::{int4, jsonb, jsonb_check};
+use crate::dream::{int4, jsonb_check};
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::jsonb::ordered;
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
@@ -51,7 +52,9 @@ struct RunRecord {
     judge_errors_total: i32,
     cost_usd_total: f32,
     duration_ms: i32,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     source_tier_breakdown: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     report_json: Value,
 }
 
@@ -71,14 +74,15 @@ impl RunRecord {
             "judge_errors_total": self.judge_errors_total,
             "cost_usd_total": real(self.cost_usd_total),
             "duration_ms": self.duration_ms,
-            "source_tier_breakdown": jsonb(&self.source_tier_breakdown),
-            "report_json": jsonb(&self.report_json),
+            "source_tier_breakdown": ordered(&self.source_tier_breakdown),
+            "report_json": ordered(&self.report_json),
         })
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheRecord {
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     verdict: Value,
     created_at_us: i64,
     expires_at_us: i64,
@@ -285,7 +289,7 @@ impl Store {
             }
             let record = RunRecord {
                 ran_at_us: self.env.now_micros(),
-                ..record
+                ..record.clone()
             };
             put_json(tx, &key, &record)?;
             tx.put(&run_time_key(record.ran_at_us, &record.run_id), &[])?;
@@ -361,16 +365,16 @@ impl Store {
     /// `None`.
     pub fn get_contradiction_cache_entry(
         &self,
-        key: &ContradictionCacheInput,
+        input: &ContradictionCacheInput,
     ) -> Result<Option<Value>> {
-        let Some(key) = cache_lookup_key(key)? else {
+        let Some(key) = cache_lookup_key(input)? else {
             return Ok(None);
         };
         let now = self.env.now_micros();
         let record: Option<CacheRecord> = get_json(&*self.read()?, &key)?;
         Ok(record
             .filter(|r| r.expires_at_us > now)
-            .map(|r| jsonb(&r.verdict)))
+            .map(|r| ordered(&r.verdict)))
     }
 
     /// `putContradictionCacheEntry(entry)`: inserts or replaces the verdict, with

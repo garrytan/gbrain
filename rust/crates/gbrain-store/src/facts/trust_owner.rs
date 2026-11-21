@@ -1,15 +1,14 @@
 //! Group 5 facts reads over the stamped trust columns and the write-gate receipts that serve the
 //! owner (src/core/engine-sql/facts-trust.ts): `readFactForOwnerAction` (the row `gbrain trust
-//! confirm` binds its preview to), `countDerivedFactTaint` (the doctor taint share),
-//! `listLexicalContestCandidates` (the keyless conflict slot) and `listStandingPreferences` (the
-//! `gbrain trust review` list).
+//! confirm` binds its preview to), `countDerivedFactTaint` (the doctor taint share) and `listStandingPreferences` (the
+//! `gbrain trust review` list). `listLexicalContestCandidates` is `facts/contest.rs`.
 //!
 //! The TypeScript member (src/core/rust-engine/store-members/facts-trust-owner.ts) refuses an id
 //! that is not an integer, turns the times into `Date`, and passes the claim rule's owner floor and
 //! connector kinds (src/core/trust/claim-state.ts) so the store keeps no second copy of them.
 
 use super::trust_reads::all_fact_rows;
-use super::{FactRecord, entity_rows, opt_time, read_fact, source_rows};
+use super::{FactRecord, opt_time, read_fact, source_rows};
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
@@ -28,18 +27,6 @@ use std::collections::HashMap;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OwnerActionFactQuery {
     pub id: i64,
-}
-
-/// `listLexicalContestCandidates({ sourceId, entitySlug, kind, visibility, pageSlug, writer })`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LexicalContestQuery {
-    pub source_id: String,
-    pub entity_slug: String,
-    pub kind: String,
-    pub visibility: String,
-    pub page_slug: Option<String>,
-    pub writer: String,
 }
 
 /// `listStandingPreferences({ sourceId, since })` with the claim rule the member passes:
@@ -135,47 +122,6 @@ impl Store {
             }
         }
         Ok(json!({ "derived": derived, "external": external }))
-    }
-
-    /// `listLexicalContestCandidates`: the active facts of `sourceId` on `entitySlug` with this
-    /// `kind` and `visibility`, more trusted than `writer` (a writer name that is no tier ranks 0).
-    /// With a non-empty `pageSlug`, only the facts on that page (`source_markdown_slug`); otherwise
-    /// only facts off the owned memory pages (`onOwnedMemoryPageSql`). Newest id first, at most 200.
-    pub fn list_lexical_contest_candidates(&self, q: &LexicalContestQuery) -> Result<Vec<Value>> {
-        let mut checked = vec![
-            ("sourceId", q.source_id.as_str()),
-            ("entitySlug", q.entity_slug.as_str()),
-            ("kind", q.kind.as_str()),
-            ("visibility", q.visibility.as_str()),
-            ("writer", q.writer.as_str()),
-        ];
-        if let Some(page) = q.page_slug.as_deref() {
-            checked.push(("pageSlug", page));
-        }
-        no_nul("listLexicalContestCandidates", &checked)?;
-        let now = self.env.now_micros();
-        let writer = TrustTier::parse(&q.writer).map_or(0, TrustTier::rank);
-        let page = q.page_slug.as_deref().filter(|p| !p.is_empty());
-        let read = self.read()?;
-        let mut rows: Vec<FactRecord> = entity_rows(&*read, &q.source_id, &q.entity_slug)?
-            .into_iter()
-            .filter(|f| {
-                f.kind == q.kind
-                    && f.visibility == q.visibility
-                    && f.active(now)
-                    && f.tier().rank() > writer
-                    && match page {
-                        Some(p) => f.source_markdown_slug.as_deref() == Some(p),
-                        None => !f.on_owned_memory_page(),
-                    }
-            })
-            .collect();
-        rows.sort_by_key(|f| std::cmp::Reverse(f.id));
-        Ok(rows
-            .into_iter()
-            .take(200)
-            .map(|f| json!({ "id": f.id, "fact": f.fact, "trust_tier": f.tier().as_str() }))
-            .collect())
     }
 
     /// `listStandingPreferences`: the unexpired `preference` and `commitment` facts at an

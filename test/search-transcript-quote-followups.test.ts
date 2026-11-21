@@ -228,7 +228,8 @@ for (const backend of testBackends()) {
     test('item 10: context_pack counts entity facts it withholds when quoting fails, instead of dropping them silently', async () => {
       const failing = new Proxy(engine, {
         get(target, prop, receiver) {
-          if (prop === 'listFactIdsAtTrustFloor') return () => Promise.reject(new Error('probe: quote lookup failed'));
+          // The owner-tier lookup an untrusted pack quotes by is the listOwnerTierFacts member.
+          if (prop === 'listOwnerTierFacts') return () => Promise.reject(new Error('probe: quote lookup failed'));
           const value = Reflect.get(target, prop, receiver);
           return typeof value === 'function' ? value.bind(target) : value;
         },

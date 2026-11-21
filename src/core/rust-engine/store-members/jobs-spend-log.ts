@@ -4,7 +4,7 @@
  */
 import type {
   AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow,
-  OauthClientInsert, SettleLogOutcome, SpendLogInsert,
+  SettleLogOutcome, SpendLogInsert,
 } from '../../engine-sql/spend-log.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -33,11 +33,6 @@ export const sumClientSpendSince: StoreMember<[clientId: string, since: Date], n
 
 export const readClientBudgetUsd: StoreMember<[clientId: string], string | null> = (brain, clientId) =>
   storeCall({ member: 'readClientBudgetUsd' }, () => brain.readClientBudgetUsd(clientId));
-
-export const insertOauthClient: StoreMember<[row: OauthClientInsert], void> = async (brain, row) => {
-  await storeCall({ member: 'insertOauthClient' }, () =>
-    brain.insertOauthClient({ ...row, deleted_at: row.deleted_at ? row.deleted_at.toISOString() : null }));
-};
 
 export const updateOauthClientBudget: StoreMember<[clientId: string, usd: number | null], boolean> = (brain, clientId, usd) =>
   storeCall({ member: 'updateOauthClientBudget' }, () => brain.updateOauthClientBudget(clientId, usd));

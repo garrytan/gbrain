@@ -4,8 +4,9 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: countFactFingerprintLeftovers, loadPurgeTarget, planFactPurgeIds, listFactsReconcileBacklog,
  *    settleFactsReconcile, lockReconcileRevision, selectFactsReconcileDrain, listRelinkCandidateRows, countRelinkCandidates, listSimilarActiveFacts, findActiveSingleFact,
- *    listSingleFactMetadata, listUnfencedFactRows, listHeldFenceFactRows, listWithdrawalSlugs and
- *    expireFactsByWithdrawal return the same observable result on every engine arm (PGLite always; Postgres with
+ *    listSingleFactMetadata, listUnfencedFactRows, listHeldFenceFactRows, listWithdrawalSlugs,
+ *    expireFactsByWithdrawal and listDerivedRows (one hop of the derivation walk) return the same observable result
+ *    on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that answers one of these differently changes which rows `forget --purge` removes and counts
  *    as left, which pages a withdrawal rewrites, which facts relink and fence repair touch, and which fact a save treats
@@ -538,6 +539,36 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     const other = await find('people/a', 'assistant', null);
     expect(other).toBe('on-page');
     return { found, other, row: { fact: row.fact, attributed_to: row.attributed_to, kind: row.kind, visibility: row.visibility, confidence: row.confidence, embedding_model: row.embedding_model, created: row.created_at instanceof Date, row_num: row.row_num, trust_tier: row.trust_tier, write_origin: row.write_origin } };
+  });
+
+  parityTest('findActiveSingleFact with newest answers the highest-id active copy, as remember links the unlinked copy of a claim', { methods: ['findActiveSingleFact'] }, async (engine) => {
+    const seed = new Seed(engine);
+    await engine.putPage('notes/private', note('Private', 'private', { visibility: 'private' }));
+    await seed.one('old', { fact: 'Likes tea' });
+    await seed.one('new', { fact: 'likes  TEA.', attributed_to: 'user' });
+    const expired = await seed.one('expired', { fact: 'Likes tea' });
+    await engine.expireFact(expired);
+    await seed.one('linked', { fact: 'Likes tea', entity_slug: 'people/a' });
+    await seed.one('world', { fact: 'Likes tea', visibility: 'world' });
+    await seed.fence([
+      { label: 'member-old', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'memory/members/alice' },
+      { label: 'member-new', fact: 'Likes tea', row_num: 2, source_markdown_slug: 'memory/members/alice' },
+    ]);
+    await seed.fence([{ label: 'on-private', fact: 'Likes tea', row_num: 1, source_markdown_slug: 'notes/private' }]);
+    const find = async (pageSlug: string | null, newest: boolean | undefined, remoteFloor = false) => {
+      const row = await engine.findActiveSingleFact({ sourceId: SRC, entitySlug: null, visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug, remoteFloor, ...(newest === undefined ? {} : { newest }) });
+      return row === null ? null : seed.name(row.id);
+    };
+    const found = {
+      lowest: await find(null, undefined), lowestFalse: await find(null, false), newest: await find(null, true),
+      member: await find('memory/members/alice', true), memberLowest: await find('memory/members/alice', undefined),
+      emptyPage: await find('', true), privatePage: await find('notes/private', true),
+      privateFloor: await find('notes/private', true, true), noPageFloor: await find(null, true, true),
+    };
+    // The private page's fence row is the highest id, so the floor is not vacuous: it hides that row and keeps 'new'.
+    expect(found).toEqual({ lowest: 'old', lowestFalse: 'old', newest: 'on-private', member: 'member-new', memberLowest: 'member-old',
+      emptyPage: null, privatePage: 'on-private', privateFloor: null, noPageFloor: 'new' });
+    return found;
   });
 
   parityTest('findActiveSingleFact under the remote provenance floor drops facts on private pages', { methods: ['findActiveSingleFact'] }, async (engine) => {

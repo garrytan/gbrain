@@ -1,7 +1,7 @@
 //! Chunk reads beyond the core chunks family.
 //!
 //! Store methods for getChunkPage, getChunkWindows, countChunklessPagesWithContent,
-//! listChunklessPagesWithContent and the chunk reads and deletes of
+//! listChunklessPagesWithContent, hasUnsealedPages and the chunk reads and deletes of
 //! `src/core/engine-sql/chunk-reads.ts`.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
@@ -144,6 +144,20 @@ impl Brain {
             let input: gbrain_store::chunk_queries::CodeChunksExistInput =
                 arg(input, "codeChunksExist input")?;
             s.code_chunks_exist(&input)
+        })
+    }
+
+    /// `hasUnsealedPages(input)`: a boolean.
+    #[napi]
+    pub fn has_unsealed_pages<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::chunk_queries::UnsealedPagesInput =
+                arg(input, "hasUnsealedPages input")?;
+            s.has_unsealed_pages(&input)
         })
     }
 

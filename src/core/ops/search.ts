@@ -46,13 +46,13 @@ import { searchFilterHint } from '../search/filter-hint.ts';
 import { TargetTrace, diagnoseProbe, diagnoseTrace, probeTarget, type ExplainTargetDiagnosis } from '../search/explain-target.ts';
 import { assembleEvidenceForHits, capDeliveredSnippets, capEvidenceToBudget, countEvidenceTokens, deliverEvidence, pagePlanHits, queryBudgetUsesAuto, resolveEvidencePlan, selectLongPages, unsupportedDelivery, withLongPagePolicy, type DeliveryMeta, type DeliveryScope, type EvidencePlan, type FrozenHit, type ReturnUnit } from '../search/evidence-delivery.ts';
 import { resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
-import { SAFE_FENCE_CHUNKER_VERSION, chunkManifestReads } from '../search/safe-chunks.ts';
+import { chunkManifestReads } from '../search/safe-chunks.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
 import { reconcileTypeFilter } from './search-type-filter.ts';
 import { probeProjectionReadiness } from '../search/projection-readiness.ts';
 import { countEmbeddingHeld, countPendingProjections, countProjectionRebuild, coverageRelevance, type RetrievalCoverage } from '../search/retrieval-coverage.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../search/source-boost.ts';
-import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION, SEARCH_MATCH_DESCRIPTION } from '../operations-descriptions.ts';
 import { declaredNames, titleName } from '../mentions/aliases.ts';
 import { aliasPhrase, resolveQueryEntity, wholeQueryEntityNames, withAliasFanOut, type FanoutMeta, type ResolvedEntity } from '../search/alias-fanout.ts';
@@ -244,37 +244,16 @@ async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], 
  * re-sealed (`gbrain repair safe-chunks`, or an unchanged re-import), so a
  * remote result on such a brain may be incomplete, not a clean or complete
  * answer. Same scope precedence as sourceScopeOpts (federated array > scalar
- * > brain-wide); LIMIT 1 probe, portable SQL on both engines, fail-open.
- *
- * The predicate is the plain range `chunker_version < N` (the column is
- * SMALLINT NOT NULL, so it is the same set as `NOT safeChunksFilter`), NOT
- * the COALESCE form the read legs use: only the range matches the partial
- * `pages_safe_chunk_pending_idx`, which holds unsealed pages only, and this
- * runs on every remote result.
+ * > brain-wide); one LIMIT 1 probe through the typed `hasUnsealedPages`
+ * read (engine-sql/chunk-reads.ts), fail-open except for a refused capability.
  */
 async function hasUnsealedPagesInScope(ctx: OperationContext, scope: SourceScope, excludePrivate: boolean,
   filters: { types?: string[]; excludeSlugPrefixes: string[] }): Promise<boolean> {
-  if (scope.sourceIds?.length === 0) return false;
-  const params: unknown[] = [];
   // The same page filters the search itself applied: a withheld page it could never return is not a gap.
-  const clauses = [pageReadFilter('p', { ...scope, excludePrivate }, params, true)];
-  if (filters.types) {
-    params.push(filters.types);
-    clauses.push(`p.type = ANY($${params.length}::text[])`);
-  }
-  for (const prefix of filters.excludeSlugPrefixes) {
-    params.push(prefix);
-    clauses.push(`LEFT(p.slug, LENGTH($${params.length}::text)) <> $${params.length}`);
-  }
   try {
-    const rows = await ctx.engine.executeRaw(
-      `SELECT 1 FROM pages p
-       WHERE ${clauses.join(' AND ')}
-         AND p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION} LIMIT 1`,
-      params,
-    );
-    return rows.length > 0;
-  } catch {
+    return await ctx.engine.hasUnsealedPages({ ...scope, excludePrivate, types: filters.types, excludeSlugPrefixes: filters.excludeSlugPrefixes });
+  } catch (err) {
+    rethrowCapabilityRefusal(err); // an engine that cannot read the fence refuses; it never reports a complete index
     return false;
   }
 }

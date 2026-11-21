@@ -45,6 +45,7 @@ import {
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import { guardLedgerChecksEntry } from './checks/guard-ledger-checks.ts';
+import { ownerOnlyMarksTriggersEntry } from './checks/owner-only-marks-triggers.ts';
 import { postgresTlsEntry } from './checks/postgres-tls.ts';
 import { databaseEncodingEntry } from './checks/database-encoding.ts';
 import { schemaFunctionBodiesEntry } from './checks/schema-function-bodies.ts';
@@ -100,6 +101,7 @@ import { factsPagesEntry } from './checks/facts-pages.ts';
 import { embedBackfillStalledEntry } from './checks/embed-backfill-stalled.ts';
 import { contentDriftSweepEntry } from './checks/content-drift-sweep.ts';
 import { connectorAccountMismatchEntry } from './checks/connector-account-mismatch.ts';
+import { ownerIdentityEntry } from './checks/owner-identity.ts';
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
 import { unscopedMultiUserTokenEntry } from './checks/unscoped-multi-user-token.ts';
@@ -115,6 +117,7 @@ import { gitWriterEntry } from './checks/git-writer.ts';
 import { foreignWritersEntry } from './checks/foreign-writers.ts';
 import { retrievalFeedbackEntry } from './checks/retrieval-feedback.ts';
 import { transcriptSecretExposureEntry } from './checks/transcript-secrets.ts';
+import { secretStoreEntry } from './checks/secret-store.ts';
 import { autoChronicleEntry } from './checks/auto-chronicle.ts';
 import { factsDrainEntry } from './checks/facts-drain.ts';
 import { wakeshiftEntry } from './checks/wakeshift.ts';
@@ -127,7 +130,7 @@ import { factAdmissionFloorsEntry } from './checks/fact-admission-floors.ts';
 import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
 import { edgeValidityEntry } from './checks/edge-validity.ts';
 import { coreMemoryEntry } from './checks/core-memory.ts';
-import { personTitleDuplicatesEntry } from './checks/entity-duplicates.ts';
+import { entityDuplicatesEntry, personTitleDuplicatesEntry } from './checks/entity-duplicates.ts';
 import { plannerStatsEntry } from './checks/planner-stats.ts';
 import { revisionBackfillEntry } from './checks/revision-backfill.ts';
 import { beliefLedgerEntry } from './checks/belief-ledger.ts';
@@ -162,6 +165,7 @@ import { sharedAgentAccessEntry } from './checks/shared-agent-access.ts';
 import { ownerReadsRestrictedEntry } from './checks/owner-reads-restricted.ts';
 import { accessLineageEntry } from './checks/access-lineage.ts';
 import { accessLabelledOnlyEntry } from './checks/access-labelled-only.ts';
+import { accessPagesReadByNobodyEntry } from './checks/access-pages-read-by-nobody.ts';
 import { attestReadAccessEntry } from './checks/attest-read-access.ts';
 import { guestSourceEntry } from './checks/guest-source.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
@@ -266,12 +270,14 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   ownerReadsRestrictedEntry,
   accessLineageEntry,
   accessLabelledOnlyEntry,
+  accessPagesReadByNobodyEntry,
   attestReadAccessEntry,
   guestSourceEntry,
   rlsEntry,
   postgresTlsEntry,
   functionSearchPathEntry,
   guardLedgerChecksEntry,
+  ownerOnlyMarksTriggersEntry,
   databaseEncodingEntry,
   schemaVersionEntry,
   schemaFunctionBodiesEntry,
@@ -372,6 +378,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   managedSyncConvergenceEntry,
   // #7160: title-prefixed person pages next to the unprefixed page (read-only, preview-first).
   personTitleDuplicatesEntry,
+  // plan autoplan-20261117192252 PR 1: likely duplicate person and company pages by key, name and slug shape (read-only).
+  entityDuplicatesEntry,
   // GST-1601: the one-sided local edits adopted in the last 24 h per source (informational, always ok).
   localEditAdoptionsEntry,
   // GBRA-221: live fence rows on imported pages whose body is outside-authored text (review only).
@@ -384,6 +392,10 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   storageManifestEntry,
   // GST-2731: facts pages (type: facts) with fact lines that carry no date (read-only; the fix asks the user for the dates).
   factsPagesEntry,
+  // GST-2988 PR 3: secret store entries, backups, keys and escrow, spool, held-back commits and side refs (read-only).
+  secretStoreEntry,
+  // GST-3216: who gbrain takes the owner to be; warns on shared identifiers and ambiguous owner pages (read-only).
+  ownerIdentityEntry,
   fenceIntegrityEntry,
   searchModeEntry,
 ];

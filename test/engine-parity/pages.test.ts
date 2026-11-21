@@ -806,6 +806,63 @@ describe('engine parity: pages', () => {
     },
   );
 
+  /** Pages for resolveSlugs' fuzzy half: near titles, a private and a reader-named look-alike, a deleted one, a tie. */
+  async function seedFuzzy(engine: BrainEngine, backend: Parameters<typeof createSource>[1]) {
+    await createSource(engine, backend, 'alt');
+    const page = (slug: string, title: string, frontmatter: Record<string, unknown> = {}, sourceId?: string) =>
+      engine.putPage(slug, { type: 'person', title, compiled_truth: `${title} body`, timeline: '', frontmatter }, sourceId ? { sourceId } : undefined);
+    await page('people/alice-example', 'Alice Example');
+    await page('people/alicia-example', 'Alicia Example');
+    await page('people/alina-other', 'Alina Other');
+    await page('companies/acme-example', 'Acme Example');
+    await page('people/secret-alice', 'Alice Example', { visibility: 'private' });
+    await page('people/readers-alice', 'Alice Example', { readable_by: ['alice-example'] });
+    await page('people/deleted-alice', 'Alice Example');
+    await engine.softDeletePage('people/deleted-alice');
+    // Written in reverse slug order, so a store that keeps insertion order is not sorted by accident.
+    await page('people/twin-c', 'Twin Title');
+    await page('people/twin-b', 'Twin Title');
+    await page('people/twin-a', 'Twin Title', {}, 'alt');
+  }
+  const FUZZY_PARTIALS = ['people/alice-example', 'People/Alice-Example', 'people/ali', 'Alise Exampel', 'people/ali_e',
+    'Twin Title', 'Alice Example', 'zzzz-nothing', ''];
+
+  parityTest(
+    "resolveSlugs' fuzzy half: exact first, slug ILIKE, a title typo, ties by slug, hidden pages stay hidden",
+    { methods: ['putPage', 'softDeletePage', 'resolveSlugs'] },
+    async (engine, backend) => {
+      await seedFuzzy(engine, backend);
+      const all = async (opts?: Parameters<BrainEngine['resolveSlugs']>[1]) => {
+        const got: Record<string, string[]> = {};
+        for (const partial of FUZZY_PARTIALS) got[partial] = await engine.resolveSlugs(partial, opts);
+        return got;
+      };
+      const trusted = await all();
+      const alt = await all({ sourceId: 'alt' });
+      const both = await all({ sourceIds: ['alt', 'default'] });
+      const open = await withCallerAccess({ identity: [], hidePrivate: true, restricted: false }, () => all({ excludePrivate: true }));
+      const member = await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, () => all({ excludePrivate: true }));
+      // Exact: a live page with the slug wins outright.
+      expect(trusted['people/alice-example']).toEqual(['people/alice-example']);
+      // Prefix: the slug contains the partial (ILIKE, so case and `_` follow Postgres).
+      expect(trusted['people/ali']).toContain('people/alicia-example');
+      expect(trusted['People/Alice-Example']).toContain('people/alice-example');
+      expect(trusted['people/ali_e']).toContain('people/alice-example');
+      // Typo: no slug contains it; the title trigrams carry it, best first.
+      expect(trusted['Alise Exampel'][0]).toBe('people/alice-example');
+      // Tie: equal similarity sorts by slug.
+      expect(both['Twin Title']).toEqual(['people/twin-a', 'people/twin-b', 'people/twin-c']);
+      expect(alt['Twin Title']).toEqual(['people/twin-a']);
+      // Hidden: a private page and a reader-named page leave the open caller's list, never a deleted page.
+      expect(trusted['Alice Example']).toContain('people/secret-alice');
+      expect(open['Alice Example']).not.toContain('people/secret-alice');
+      expect(open['Alice Example']).not.toContain('people/readers-alice');
+      expect(Object.values(trusted).flat()).not.toContain('people/deleted-alice');
+      expect(trusted['zzzz-nothing']).toEqual([]);
+      return { trusted, alt, both, open, member };
+    },
+  );
+
   parityTest('same slug in two sources stays separate', { methods: ['putPage', 'getPage', 'deletePage', 'resolveSlugs'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     await engine.putPage('notes/a', NOTE);
@@ -833,5 +890,80 @@ describe('engine parity: pages', () => {
     const sampleSlugs = sorted(sample.map((r) => r.slug));
     expect(sampleSlugs).toEqual(['wiki/bio/one', 'wiki/vc/one']);
     return { prefixedView, sampleSlugs };
+  });
+  parityTest(
+    'listEntityKeyRows: live, unretired pages of the types, only the named keys, keyset-paged',
+    { methods: ['putPage', 'softDeletePage', 'listEntityKeyRows'] },
+    async (engine) => {
+      await seed(engine, [
+        ['people/alice-example', { ...ALICE, frontmatter: { email: 'alice@example.com', role: 'pm', emails: ['a@example.com'] } }],
+        ['people/bob-example', { type: 'person', title: 'Bob Example', compiled_truth: 'Bob.', frontmatter: { merged_into: 'people/alice-example', email: 'b@example.com' } }],
+        ['people/carol-example', { type: 'person', title: 'Carol Example', compiled_truth: 'Carol.', frontmatter: {} }],
+        ['companies/acme-example', ACME],
+        ['notes/acme-example', { type: 'note', title: 'Acme note', compiled_truth: 'Note.', frontmatter: { email: 'n@example.com' } }],
+      ]);
+      await engine.softDeletePage('people/carol-example');
+      const args = { types: ['company', 'person'], keys: ['email', 'emails'] };
+      const first = await engine.listEntityKeyRows({ ...args, limit: 1 });
+      const rest = await engine.listEntityKeyRows({ ...args, after: { source_id: first[0]!.source_id, slug: first[0]!.slug }, limit: 10 });
+      expect([...first, ...rest].map((r) => r.slug)).toEqual(['companies/acme-example', 'people/alice-example']);
+      expect(rest[0]!.keys).toEqual({ email: 'alice@example.com', emails: ['a@example.com'] });
+      expect([...first, ...rest].every(r => /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(r.created_at))).toBe(true);
+      const untimed = (rows: typeof first) => rows.map(({ created_at: _at, page_id: _id, generation: _gen, ...r }) => r);
+      return { first: untimed(first), rest: untimed(rest) };
+    },
+  );
+  parityTest(
+    'listIdentityDecisions / applyIdentityDecisions: decisions by (source, slug), confirmed members linked, missing pages pending',
+    { methods: ['putPage', 'applyIdentityDecisions', 'listIdentityDecisions', 'listRestrictedIdentityMembers'] },
+    async (engine) => {
+      await seed(engine, [['people/alice-example', ALICE], ['people/bob-example', { type: 'person', title: 'Bob Example', compiled_truth: 'Bob.', frontmatter: {} }]]);
+      const ref = (slug: string) => ({ source_id: 'default', slug });
+      const decision = (decision_id: string, verdict: 'same' | 'different', slugs: string[]) => ({
+        decision_id, verdict, members: slugs.map(ref), group_id: `dedupe/${decision_id}`, entity_id: verdict === 'same' ? `dedupe/${decision_id}` : null,
+        canonical: verdict === 'same' ? ref(slugs[0]!) : null, decided_by: 'owner', decided_at: '2026-11-18T00:00:00Z', origin: 'database' as const,
+        home_source_id: null, git_blob: null,
+      });
+      const applied = await engine.applyIdentityDecisions({ upsert: [
+        decision('0000000000000001', 'same', ['people/alice-example', 'people/bob-example']),
+        decision('0000000000000002', 'same', ['people/carol-example', 'people/dan-example']),
+        decision('0000000000000003', 'different', ['people/alice-example', 'people/erin-example']),
+      ] });
+      expect(applied).toEqual({ upserted: 3, removed: 0, linked: 2, unlinked: 0 });
+      const read = await engine.listIdentityDecisions();
+      expect(read.decisions.map(d => [d.decision_id, d.verdict, d.members.length, d.canonical?.slug ?? null]))
+        .toEqual([['0000000000000001', 'same', 2, 'people/alice-example'], ['0000000000000002', 'same', 2, 'people/carol-example'], ['0000000000000003', 'different', 2, null]]);
+      expect(read.pending.map(p => [p.decision_id, p.slug, p.reason])).toEqual([['0000000000000002', 'people/carol-example', 'page_missing'], ['0000000000000002', 'people/dan-example', 'page_missing']]);
+      expect(await engine.listRestrictedIdentityMembers([])).toEqual([]);
+      expect(await engine.listRestrictedIdentityMembers([ref('people/alice-example'), ref('people/carol-example')])).toEqual([]);
+      const removed = await engine.applyIdentityDecisions({ remove: ['0000000000000001'] });
+      expect(removed).toEqual({ upserted: 0, removed: 1, linked: 0, unlinked: 2 });
+      return { applied, decisions: read.decisions.map(d => ({ ...d, decided_at: d.decided_at.slice(0, 10) })), pending: read.pending, removed };
+    },
+  );
+
+  parityTest('bumpPageRetrievals records a retrieval that the samplers read and staleBias ranks behind a never-retrieved page', { methods: ['bumpPageRetrievals', 'listPrefixSampledPages', 'listCorpusSample'] }, async (engine) => {
+    await seed(engine, [['wiki/vc/a', NOTE], ['wiki/vc/b', NOTE]]);
+    const a = Number((await engine.getPage('wiki/vc/a'))!.id);
+    await engine.bumpPageRetrievals([]);
+    await engine.bumpPageRetrievals([a, a, 987654]);
+    const plain = await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'] });
+    const stale = await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'], staleBias: true });
+    const first = plain[0]?.last_retrieved_at;
+    expect(first).toBeInstanceOf(Date);
+    // A second bump inside the 5-minute window leaves the recorded time alone.
+    await engine.bumpPageRetrievals([a]);
+    const again = (await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'] }))[0]?.last_retrieved_at;
+    const sample = sorted((await engine.listCorpusSample({ n: 10, seed: 3 })).map((r) => `${r.slug}:${r.last_retrieved_at instanceof Date}`));
+    const view = {
+      plain: plain.map((r) => `${r.slug}:${r.last_retrieved_at instanceof Date}`),
+      stale: stale.map((r) => `${r.slug}:${r.last_retrieved_at instanceof Date}`),
+      throttled: again instanceof Date && again.getTime() === (first as Date).getTime(),
+      sample,
+    };
+    expect(view).toEqual({
+      plain: ['wiki/vc/a:true'], stale: ['wiki/vc/b:false'], throttled: true, sample: ['wiki/vc/a:true', 'wiki/vc/b:false'],
+    });
+    return view;
   });
 });

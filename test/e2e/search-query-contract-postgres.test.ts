@@ -43,12 +43,11 @@ import { withEnv } from '../helpers/with-env.ts';
 
   test('restricted runtime roles retain RLS and local settings through relaxed retries', async () => {
     await engine.executeRaw('CREATE ROLE query_contract_reader NOLOGIN');
-    // timeline_entries: the keyword arm's `stale` column reads it (docs/ENGINES.md read-role recipe).
-    const tables = ['pages', 'content_chunks', 'sources', 'timeline_entries'];
+    const tables = ['pages', 'content_chunks', 'sources'];
     const original = await engine.executeRaw<{ relname: string; relrowsecurity: boolean }>(`SELECT relname, relrowsecurity FROM pg_class WHERE relname = ANY($1::text[])`, [tables]);
     try {
       await engine.executeRaw('GRANT USAGE ON SCHEMA public TO query_contract_reader');
-      await engine.executeRaw(`GRANT SELECT ON ${tables.join(', ')} TO query_contract_reader`);
+      await engine.executeRaw('GRANT SELECT ON pages, content_chunks, sources TO query_contract_reader');
       for (const table of tables) {
         await engine.executeRaw(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
         await engine.executeRaw(`CREATE POLICY query_contract_allow ON ${table} FOR SELECT TO query_contract_reader USING (true)`);

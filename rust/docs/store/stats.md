@@ -39,11 +39,11 @@ two engines share that code instead of copying it:
   pages with `countStalePagesForExtraction` (per source when scoped), applies
   `shouldExcludeFromOrphanReporting` to `linkable`, and computes the coverage, the five score parts
   and `brain_score` with the arithmetic of `engine-sql/health.ts`.
-- `resolveEntityTypes` runs one `executeRaw` for a brain-wide reading: the registered sources with
-  a `schema_pack.source.<id>` config row. The Rust engine does not serve `executeRaw`, so the member
-  passes a small engine shim that answers that one query from `listConfigKeys` and the source list.
-  The shim matches the key as LIKE does (`_` matches any one character). Any other query throws,
-  and `resolveEntityTypes` then reports `pack_unavailable`, as it does for a failed read on PGLite.
+- `resolveEntityTypes` reads the registered sources with a `schema_pack.source.<id>` config row for a
+  brain-wide reading. The Rust engine does not serve `executeRaw`, so the member passes an engine of
+  `kind: 'rust'` and the resolver answers from `listConfigKeys` and the source list (the key matches as LIKE
+  does: `_` matches any one character). Any other raw query refuses with `engine_capability_missing`, and
+  `resolveEntityTypes` then reports `pack_unavailable`, as it does for a failed read on PGLite.
 - `findAnomalies` computes the window bounds from `since` and `lookback_days` (an invalid `since`
   throws the same `RangeError`), zero-fills the store's day counts over the same days as
   `generate_series`, and runs `computeAnomaliesFromBuckets`. `excludePrivate` (any truthy value) applies

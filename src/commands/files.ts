@@ -149,7 +149,7 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
 }
 
 async function listFiles(engine: BrainEngine, slug?: string) {
-  const rows = slug ? await engine.listFileRowsForSlug(slug) : await engine.listAllFileRows();
+  const rows = await engine.listFiles({ pageSlug: slug || null, limit: 100 });
 
   if (rows.length === 0) {
     console.log(slug ? `No files for page: ${slug}` : 'No files stored.');

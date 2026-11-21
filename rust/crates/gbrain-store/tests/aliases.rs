@@ -178,6 +178,77 @@ fn resolve_aliases_is_source_scoped_and_hides_pages_that_are_not_live() {
 }
 
 #[test]
+fn resolve_aliases_under_exclude_private_hides_the_aliases_of_private_pages() {
+    let dir = TempDir::new("aliases-private");
+    let store = open(&dir);
+    source(&store, "other");
+    put(&store, "people/open");
+    put_in(
+        &store,
+        "people/hidden",
+        "hidden",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    put_in(
+        &store,
+        "people/by-access",
+        "access",
+        json!({ "access": "private" }),
+        None,
+    );
+    put_in(&store, "people/b", "b", json!({}), Some("other"));
+    set(&store, "people/open", "default", &["shared", "open"]).unwrap();
+    set(&store, "people/hidden", "default", &["shared", "hid"]).unwrap();
+    set(&store, "people/by-access", "default", &["acc"]).unwrap();
+    set(&store, "people/b", "other", &["shared"]).unwrap();
+    let names = ["shared", "open", "hid", "acc"];
+    let everything = vec![
+        pair("acc", &["default/people/by-access"]),
+        pair("hid", &["default/people/hidden"]),
+        pair("open", &["default/people/open"]),
+        pair(
+            "shared",
+            &[
+                "default/people/hidden",
+                "default/people/open",
+                "other/people/b",
+            ],
+        ),
+    ];
+    assert_eq!(resolve(&store, &names, json!({})), everything);
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
+    assert_eq!(
+        resolve(&store, &names, json!({ "excludePrivate": policy })),
+        vec![
+            pair("open", &["default/people/open"]),
+            pair("shared", &["default/people/open", "other/people/b"]),
+        ]
+    );
+    // Without the alias-key test (`honorAliases` false) only `visibility` hides a page.
+    let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
+    assert_eq!(
+        resolve(&store, &names, json!({ "excludePrivate": visibility_only })),
+        vec![
+            pair("acc", &["default/people/by-access"]),
+            pair("open", &["default/people/open"]),
+            pair("shared", &["default/people/open", "other/people/b"]),
+        ]
+    );
+    assert_eq!(
+        resolve(
+            &store,
+            &names,
+            json!({ "sourceId": "default", "excludePrivate": policy })
+        ),
+        vec![
+            pair("open", &["default/people/open"]),
+            pair("shared", &["default/people/open"]),
+        ]
+    );
+}
+
+#[test]
 fn alias_rows_outlive_a_hard_delete_and_answer_for_a_new_page() {
     let dir = TempDir::new("aliases-hard-delete");
     let store = open(&dir);
@@ -488,7 +559,7 @@ fn alias_canonical_refs_reads_live_and_private_pages_by_policy() {
         canonical_refs(&store, &refs, json!({ "live": true })),
         strings(&["default/c/open", "default/c/private", "other/c/away"])
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         canonical_refs(
             &store,
@@ -665,7 +736,7 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
             pair("restricted", &["default/c/restricted"]),
         ]
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": policy })),
         vec![
@@ -673,7 +744,7 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
             pair("open", &["default/c/open"]),
         ]
     );
-    let no_aliases = json!({ "honorAliases": false, "entityPrivacy": true });
+    let no_aliases = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": no_aliases })),
         vec![

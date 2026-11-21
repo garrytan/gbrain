@@ -105,10 +105,10 @@ export function quotePageText(text: string, slug: string, type: string | null | 
   return text ? fenceTranscriptText(isQuotedPageType(type) ? neutralizeToolCalls(text) : text, slug) : text;
 }
 
-/** Each page id's stored type (one query), for reads whose rows name only their page_id (get_timeline, get_chunks). */
-export async function pageTypesById(engine: Pick<BrainEngine, 'readPageTypesByIds'>, ids: readonly number[]): Promise<ReadonlyMap<number, string | null>> {
+/** Each page id's stored type (one read), for reads whose rows name only their page_id (get_timeline, get_chunks). */
+export async function pageTypesById(engine: Pick<BrainEngine, 'listPageRefsByIds'>, ids: readonly number[]): Promise<ReadonlyMap<number, string | null>> {
   if (!ids.length) return new Map();
-  const rows = await engine.readPageTypesByIds(ids);
+  const rows = await engine.listPageRefsByIds(ids);
   return new Map(rows.map(r => [r.id, r.type]));
 }
 
@@ -131,7 +131,8 @@ const BACKSTOP_SESSION_PREFIXES: readonly [readonly [source: string, prefix: str
  */
 export async function factsFromQuotedPages(engine: Pick<BrainEngine, 'listFactsFromQuotedPages'>, ids: readonly number[]): Promise<ReadonlySet<number>> {
   if (!ids.length) return new Set();
-  return new Set(await engine.listFactsFromQuotedPages(ids, [...QUOTED_PAGE_TYPES], BACKSTOP_SESSION_PREFIXES));
+  const [sync, put] = BACKSTOP_SESSION_PREFIXES;
+  return new Set(await engine.listFactsFromQuotedPages({ ids, pageTypes: [...QUOTED_PAGE_TYPES], backstop: [sync!, put!] }));
 }
 
 /** What a third-party row's marker names (its slug, or `fact <id>` for a fact row); null otherwise. Only these rows get tool calls summarized. */
@@ -495,9 +496,8 @@ export function relabelGuestQuote(text: string, slug: string, guest: string): st
 }
 
 /** Of `ids`, the facts whose stored tier is at or above the owner's (OWNER_TIER_FLOOR); an id with no row is not among them. */
-async function ownerTierFacts(engine: Pick<BrainEngine, 'listFactIdsAtTrustFloor'>, ids: readonly number[]): Promise<ReadonlySet<number>> {
-  if (!ids.length) return new Set();
-  return new Set(await engine.listFactIdsAtTrustFloor(ids, OWNER_TIER_FLOOR));
+async function ownerTierFacts(engine: Pick<BrainEngine, 'listOwnerTierFacts'>, ids: readonly number[]): Promise<ReadonlySet<number>> {
+  return ids.length ? new Set(await engine.listOwnerTierFacts({ ids, floor: OWNER_TIER_FLOOR })) : new Set();
 }
 
 /**
@@ -507,7 +507,7 @@ async function ownerTierFacts(engine: Pick<BrainEngine, 'listFactIdsAtTrustFloor
  * live-ingested fact, read from the database, not from the caller's row); any other comes back as it is.
  */
 export async function quoteFacts<T extends { id: number; fact: string; source?: string | null; collapsed_ids?: number[] }>(
-  engine: Pick<BrainEngine, 'listFactsFromQuotedPages' | 'listFactIdsAtTrustFloor'>, facts: T[], untrusted = false): Promise<Array<T & { quoted?: 'transcript' }>> {
+  engine: Pick<BrainEngine, 'listFactsFromQuotedPages' | 'listOwnerTierFacts'>, facts: T[], untrusted = false): Promise<Array<T & { quoted?: 'transcript' }>> {
   const [fromPages, owners] = await Promise.all([factsFromQuotedPages(engine, facts.flatMap(f => f.collapsed_ids ?? [f.id])),
     untrusted ? ownerTierFacts(engine, facts.map(f => f.id)) : null]);
   return facts.map(f => isQuotedFactSource(f.source) || (f.collapsed_ids ?? [f.id]).some(id => fromPages.has(Number(id))) || (owners !== null && !owners.has(Number(f.id)))

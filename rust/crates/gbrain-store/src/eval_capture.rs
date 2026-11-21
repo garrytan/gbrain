@@ -456,11 +456,11 @@ impl Store {
             let id = next_id(tx, NEXT_CANDIDATE_ID)?;
             let record = CandidateRecord {
                 id,
-                tool_name,
-                query,
+                tool_name: tool_name.clone(),
+                query: query.clone(),
                 retrieved_slugs: retrieved,
-                retrieved_chunk_ids: chunk_ids,
-                source_ids,
+                retrieved_chunk_ids: chunk_ids.clone(),
+                source_ids: source_ids.clone(),
                 expand_enabled: input.expand_enabled,
                 detail: input.detail.clone(),
                 detail_resolved: input.detail_resolved.clone(),

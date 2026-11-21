@@ -600,8 +600,8 @@ function timelineChunks(timeline: ReadonlyMap<string, ExtractedTimelineEntry>): 
  * row lock (lockPageKeys), so the rows go straight to its id; the engine sanitizes free text as addTimelineEntry does (#2011).
  */
 function insertCanonicalTimeline(tx: BrainEngine, pageId: number, entries: ExtractedTimelineEntry[]) {
-  return tx.insertPageTimelineRows(pageId, entries.map(entry => ({ date: entry.date, source: entry.source,
-    summary: entry.summary, detail: entry.detail ?? '' })));
+  return tx.insertCanonicalTimelineRows(pageId, entries.map(entry => ({ date: entry.date, source: sanitizeForJsonb(entry.source || ''),
+    summary: sanitizeForJsonb(entry.summary), detail: sanitizeForJsonb(entry.detail || '') })));
 }
 
 /** The page body's own entry for one timeline row (same date, source and summary), inserted when the page carries it. */
@@ -715,7 +715,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     const removedDates: string[] = [];
     // W1 #6783 §12 (a): a timeline row or take more trusted than the writer is never deleted, replaced or deactivated by
     // it. It stays as it is and a `forget` proposal asks the owner (trust/fence-guard.ts), decided before any statement runs.
-    const heldTimeline = await heldRows(tx, 'timeline_entries', [...deletionRows, ...refreshRows].map(row => Number(row.id)));
+    const heldTimeline = await heldRows(tx, 'timeline_entries', id, [...deletionRows, ...refreshRows].map(row => Number(row.id)));
     const deletions = deletionRows.filter(row => !heldTimeline.has(Number(row.id)));
     const refreshes = refreshRows.filter(row => !heldTimeline.has(Number(row.id)));
     const heldTakes = projectFences ? await guardFenceTakes(tx, id, takes, takeRowsGone) : [];

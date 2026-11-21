@@ -9,7 +9,7 @@ use gbrain_store::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT};
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::sources::SourceInput;
-use gbrain_store::timeline::{AddTimelineOptions, TimelineInput, TimelineRowInsert};
+use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
 use gbrain_store::timeline_queries::{
     ChronicleOptions, EventProjectionInput, LastSeenOptions, OnThisDayOptions,
     TimelineDetailRefresh, TimelineRowRemoval,
@@ -775,7 +775,7 @@ fn update_timeline_details_rewrites_a_detail_only_while_it_is_the_preimage() {
 
 /// `excludePrivate` with the policy PGLite renders for no caller record.
 fn policy() -> Value {
-    json!({"honorAliases": true, "entityPrivacy": true})
+    json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"})
 }
 
 #[test]
@@ -852,7 +852,7 @@ fn exclude_private_drops_rows_whose_depth_or_event_page_the_policy_hides() {
     );
     // The policy without the privacy part judges readers only: the readers event still hides. The
     // foreign event has no effective date, so it orders at midnight.
-    let readers_only = json!({"honorAliases": true, "entityPrivacy": false});
+    let readers_only = json!({"honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn"});
     assert_eq!(
         field(&day(json!({"excludePrivate": readers_only})), "summary"),
         vec![
@@ -885,59 +885,4 @@ fn exclude_private_drops_rows_whose_depth_or_event_page_the_policy_hides() {
     let kept = seen(json!({"asof": "2026-07-05", "excludePrivate": policy()}));
     assert_eq!(kept["last_date"], json!("2026-07-01"));
     assert_eq!(kept["last_event_slug"], json!("life/events/open"));
-}
-
-#[test]
-fn insert_page_timeline_rows_inserts_in_order_skips_duplicates_and_writes_nothing_on_a_bad_row() {
-    let b = Brain::new("tq-insert");
-    let page = b.page("people/insert", "default", json!({}));
-    b.entry("people/insert", "2026-02-03", "already here");
-    let rows = |v: Value| -> Vec<TimelineRowInsert> { serde_json::from_value(v).unwrap() };
-    let by_id = || {
-        let mut out = rows_of(&b, "people/insert");
-        out.sort();
-        out.into_iter().map(|r| (r.1, r.2)).collect::<Vec<_>>()
-    };
-    b.store
-        .insert_page_timeline_rows(
-            page as i64,
-            &rows(json!([
-                {"date": "2026-03-01", "source": "", "summary": "first", "detail": ""},
-                {"date": "2026-01-01", "source": "cal", "summary": "second", "detail": "d"},
-                {"date": "2026-02-03", "source": "diary", "summary": "already here", "detail": "new"},
-                {"date": "2026-03-01", "source": "", "summary": "first", "detail": "twin"},
-            ])),
-        )
-        .unwrap();
-    let want: Vec<(String, String)> = [
-        ("2026-02-03", "already here"),
-        ("2026-03-01", "first"),
-        ("2026-01-01", "second"),
-    ]
-    .iter()
-    .map(|(d, s)| ((*d).into(), (*s).into()))
-    .collect();
-    assert_eq!(by_id(), want);
-    b.store.insert_page_timeline_rows(page as i64, &[]).unwrap();
-    b.store.insert_page_timeline_rows(987_654, &[]).unwrap();
-    let bad = rows(json!([
-        {"date": "2026-04-01", "summary": "before the bad row"},
-        {"date": "2026-02-30", "summary": "not a calendar date"},
-    ]));
-    assert_eq!(
-        b.store
-            .insert_page_timeline_rows(page as i64, &bad)
-            .unwrap_err()
-            .code,
-        INVALID_ARGUMENT
-    );
-    let missing = rows(json!([{"date": "2026-04-01", "summary": "no page"}]));
-    assert_eq!(
-        b.store
-            .insert_page_timeline_rows(987_654, &missing)
-            .unwrap_err()
-            .code,
-        CONSTRAINT_VIOLATION
-    );
-    assert_eq!(by_id(), want);
 }

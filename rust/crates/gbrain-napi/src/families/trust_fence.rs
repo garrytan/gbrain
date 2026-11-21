@@ -14,6 +14,7 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::{FenceOverlayInput, FenceTarget, HeldFenceCellsInput};
+use gbrain_store::trust::held_rows::{GuardedTakeRowsQuery, HeldRowsQuery};
 
 #[napi]
 impl Brain {
@@ -74,6 +75,30 @@ impl Brain {
         self.run(env, move |s| {
             let a: gbrain_store::pages::PageTrustRestore = required(spec, "restorePageTrust spec")?;
             s.restore_page_trust(&a)
+        })
+    }
+
+    /// `listHeldRows({ table, pageId, ids, writer?, pending })`: `[{ id, trust_tier }]`. With no
+    /// `writer`, the writer's tier comes from the store's write trust context (`applyWriteTrust`).
+    #[napi]
+    pub fn list_held_rows<'env>(&self, env: &'env Env, q: Value) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: HeldRowsQuery = required(q, "listHeldRows args")?;
+            s.list_held_rows(&q, &s.fence_context())
+        })
+    }
+
+    /// `listGuardedTakeRows({ incoming, gone, pending? })`: `[{ id, page_id, row_num, trust_tier, change }]`.
+    /// The writer's tier comes from the store's write trust context (`applyWriteTrust`).
+    #[napi]
+    pub fn list_guarded_take_rows<'env>(
+        &self,
+        env: &'env Env,
+        q: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: GuardedTakeRowsQuery = required(q, "listGuardedTakeRows args")?;
+            s.list_guarded_take_rows(&q, &s.fence_context())
         })
     }
 }

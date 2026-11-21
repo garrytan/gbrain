@@ -74,6 +74,7 @@ pub(crate) struct ProfileRecord {
     pub accuracy: Option<f32>,
     pub partial_rate: Option<f32>,
     pub grade_completion: f32,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub domain_scorecards: Value,
     pub pattern_statements: Vec<String>,
     pub voice_gate_passed: bool,
@@ -207,7 +208,13 @@ fn to_real(x: Option<f64>, column: &str) -> Result<Option<f32>> {
         None => Ok(None),
         Some(x) => {
             let r = x as f32;
-            if x.is_finite() && r.is_infinite() {
+            // A NaN or infinity (a native caller only) would be stored as null and no longer decode.
+            if !x.is_finite() {
+                return Err(StoreError::invalid(format!(
+                    "insertCalibrationProfile: {column} is not a finite number"
+                )));
+            }
+            if r.is_infinite() {
                 return Err(StoreError::invalid(format!(
                     "insertCalibrationProfile: {column} is out of range for type real"
                 )));
@@ -425,8 +432,8 @@ impl Store {
             let id = next_id(tx, NEXT_ID)?;
             let record = ProfileRecord {
                 id,
-                source_id,
-                holder,
+                source_id: source_id.clone(),
+                holder: holder.clone(),
                 wave_version: input
                     .wave_version
                     .clone()
@@ -438,12 +445,12 @@ impl Store {
                 accuracy,
                 partial_rate,
                 grade_completion,
-                domain_scorecards,
-                pattern_statements,
+                domain_scorecards: domain_scorecards.clone(),
+                pattern_statements: pattern_statements.clone(),
                 voice_gate_passed,
                 voice_gate_attempts,
-                active_bias_tags,
-                model_id,
+                active_bias_tags: active_bias_tags.clone(),
+                model_id: model_id.clone(),
             };
             put_json(tx, &record_key(id), &record)?;
             tx.put(&time_key(record.generated_at_us, id), &id.to_be_bytes())?;

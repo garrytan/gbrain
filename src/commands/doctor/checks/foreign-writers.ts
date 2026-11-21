@@ -242,7 +242,8 @@ function scanRepo(repo: Repo, deadline: number): { report: RepoReport; partial: 
   for (const r of ledger) {
     if (r.e === 'start') start = Date.parse(r.t);
     else if (r.e === 'commit') {
-      ledgered.add(r.sha);
+      // GST-2988: a commit a publish redaction rebuilt keeps the status of the commit it supersedes, so a rebuild never launders a foreign commit.
+      if (r.writer !== 'redact_rebuild' || r.held || r.supersedes?.some(sha => ledgered.has(sha))) ledgered.add(r.sha);
       // The intent this commit line completes: the same process's newest open one. Only an intent left open can explain a commit.
       const who = `${r.host}\0${r.pid}\0${r.writer}`;
       const open = intents.findLast(i => !i.resolved && i.who === who);

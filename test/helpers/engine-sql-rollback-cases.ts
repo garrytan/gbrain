@@ -39,6 +39,21 @@ async function seedPage(engine: BrainEngine): Promise<void> {
 
 export const ROLLBACK_CASES: RollbackCase[] = [
   {
+    domain: 'identity-decisions',
+    async seed(engine) {
+      await seedPage(engine);
+    },
+    async write(tx) {
+      const applied = await tx.applyIdentityDecisions({ upsert: [{ decision_id: '00000000000000aa', verdict: 'different',
+        members: [{ source_id: 'default', slug: SLUG }, { source_id: 'default', slug: LINK_TARGET }], group_id: null, entity_id: null, canonical: null,
+        decided_by: 'owner', origin: 'database', home_source_id: null, git_blob: null }] });
+      expect(applied.upserted).toBe(1);
+    },
+    async observe(engine) {
+      return (await engine.listIdentityDecisions()).decisions.length;
+    },
+  },
+  {
     domain: 'salience',
     async seed(engine) {
       await seedPage(engine);

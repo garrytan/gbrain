@@ -222,7 +222,10 @@ impl Store {
             put_json(
                 tx,
                 &calibration_key(id),
-                &CalibrationRecord { id, ..record },
+                &CalibrationRecord {
+                    id,
+                    ..record.clone()
+                },
             )?;
             Ok(id)
         })

@@ -21,8 +21,8 @@ import { judgeWidenedCaller, ownerOnlyFormIn, renderForStoreCaller, storePageTex
 
 /**
  * The store policy for page policy part `part` of the current caller, or a refusal. The caller is judged by
- * judgeWidenedCaller (private-provenance.ts), which also judges an anonymous caller on a brain whose config holds no
- * member-access restriction under the restricted rendering the store implements.
+ * judgeWidenedCaller (private-provenance.ts), which also judges a caller on a brain whose config holds no member-access
+ * restriction, anonymous or with a reader identity, under the restricted rendering the store implements.
  */
 function callerPolicy(member: string, part: PagePolicyPart): StorePrivacyPolicy {
   if (part === 'read') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });

@@ -17,47 +17,17 @@
 //! other update members the store serves set no watched column, or set `expired_at` to a time, so the guard has
 //! nothing to do.
 
-use super::purge::{owned_memory_subject, unbacked};
-use super::{FactRecord, MEMBER_PAGE_PREFIX};
+use super::FactRecord;
+use super::purge::earliest_withdrawal;
 use crate::error::Result;
 use crate::kv::KvRead;
-use crate::trust::fingerprint::{fact_fingerprint, fact_fingerprint_v1};
-use crate::trust::withdrawals::withdrawals_at;
-
-/// The earliest withdrawal that reaches `row`, as the guard's `SELECT min(withdrawn_at)` finds it.
-fn reaching_withdrawal(read: &dyn KvRead, row: &FactRecord) -> Result<Option<i64>> {
-    let member_page = row
-        .source_markdown_slug
-        .as_deref()
-        .filter(|slug| slug.starts_with(MEMBER_PAGE_PREFIX));
-    let unbacked = member_page.is_none() && unbacked(read, row)?;
-    let hashes = [fact_fingerprint(&row.fact), fact_fingerprint_v1(&row.fact)];
-    let mut earliest: Option<i64> = None;
-    for (subject, hash, at) in withdrawals_at(read, &row.source_id, &row.visibility)? {
-        if !hashes.contains(&hash) {
-            continue;
-        }
-        let reaches = match member_page {
-            Some(page) => subject == page,
-            None => {
-                subject == "*"
-                    || row.entity_slug.as_deref() == Some(subject.as_str())
-                    || (unbacked && !owned_memory_subject(&subject))
-            }
-        };
-        if reaches {
-            earliest = Some(earliest.map_or(at, |e| e.min(at)));
-        }
-    }
-    Ok(earliest)
-}
 
 /// Applies the guard to `row`, the row about to be saved: a no-op for an expired row.
 pub(crate) fn preserve_withdrawal(read: &dyn KvRead, row: &mut FactRecord) -> Result<()> {
     if row.expired_at_us.is_some() {
         return Ok(());
     }
-    if let Some(withdrawn) = reaching_withdrawal(read, row)? {
+    if let Some(withdrawn) = earliest_withdrawal(read, row)? {
         row.expired_at_us = Some(withdrawn);
         row.valid_until_us = Some(row.valid_until_us.map_or(withdrawn, |u| u.min(withdrawn)));
     }

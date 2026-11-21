@@ -112,7 +112,7 @@ export async function listPoolUnbackedKeys(raw: EngineRawRead, scope: FactPoolSc
  * facts whose text matches the call-off words, under exactly the pool's read policy.
  */
 export async function listCallOffCueFacts(raw: EngineRawRead, scope: FactPoolScope, pairs: ReadonlyArray<{ source_id: string; entity_slug: string }>): Promise<CueFactRow[]> {
-  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY f.valid_from DESC, f.id DESC) AS call_off_rank
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
        FROM facts f WHERE ${poolWhere(scope, undefined)} AND f.fact ~* ${CALL_OFF_SQL}
          AND (f.source_id, f.entity_slug) IN (SELECT * FROM unnest(${pairs.map(p => p.source_id)}::text[], ${pairs.map(p => p.entity_slug)}::text[]))) f
      WHERE f.call_off_rank <= ${CALL_OFF_DEPTH}`);
@@ -128,45 +128,6 @@ export async function listPoolEntityPairs(raw: EngineRawRead, scope: FactPoolSco
 /** The whole fact rows of these ids within these sources (recall's final read; the caller strips the embedding). */
 export async function listFactRowsByIds(raw: EngineRawRead, sourceIds: readonly string[], ids: readonly number[]): Promise<FactRowSqlShape[]> {
   return raw<FactRowSqlShape>('SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])', [[...sourceIds], [...ids]]);
-}
-
-/** The backstop provenance pairs `listFactsFromQuotedPages` reads: `[source, source_session prefix]` for a synced, then a written page. */
-export type QuotedBackstopSessions = readonly [readonly [string, string], readonly [string, string]];
-
-/**
- * Of `ids`, the facts taken from a page of one of `pageTypes`: the page holding the fact, a page recorded as its derivation
- * input, or the page a backstop fact's `source_session` names (search/transcript-quote.ts factsFromQuotedPages).
- */
-export async function listFactsFromQuotedPages(raw: EngineRawRead, ids: readonly number[], pageTypes: readonly string[],
-  backstopSessions: QuotedBackstopSessions): Promise<number[]> {
-  if (!ids.length) return [];
-  const [[syncSource, syncPrefix], [putSource, putPrefix]] = backstopSessions;
-  const rows = await raw<{ id: number | string }>(
-    `SELECT f.id FROM facts f WHERE f.id = ANY($1::bigint[]) AND (
-       EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.type = ANY($2::text[]))
-       OR EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages p ON p.id = (CASE WHEN d.input_id ~ '^[0-9]{1,18}$' THEN d.input_id::bigint END)
-         WHERE d.derived_table = 'facts' AND d.derived_id = f.id::text AND d.input_table = 'pages' AND p.type = ANY($2::text[]))
-       OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.type = ANY($2::text[]) AND p.slug = (CASE
-         WHEN f.source = $3::text AND left(f.source_session, length($4::text)) = $4::text THEN substr(f.source_session, length($4::text) + 1)
-         WHEN f.source = $5::text AND left(f.source_session, length($6::text)) = $6::text THEN substr(f.source_session, length($6::text) + 1) END)))`,
-    [[...new Set(ids.map(Number))], [...pageTypes], syncSource, syncPrefix, putSource, putPrefix]);
-  return rows.map(r => Number(r.id));
-}
-
-/** Of `ids`, the facts whose stored tier ranks at or above `floor` (an unknown stored tier ranks 0); an id with no row is absent. */
-export async function listFactIdsAtTrustFloor(raw: EngineRawRead, ids: readonly number[], floor: TrustTier): Promise<number[]> {
-  if (!ids.length) return [];
-  if (!isTrustTier(floor)) throw new Error(`listFactIdsAtTrustFloor: unknown trust tier ${JSON.stringify(floor)}`);
-  const { text, params } = renderFragment(sqlFragment`SELECT id FROM facts WHERE id = ANY(${[...new Set(ids.map(Number))]}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))} >= ${TRUST_TIER_RANK[floor]}`);
-  const rows = await raw<{ id: number | string }>(text, params);
-  return rows.map(r => Number(r.id));
-}
-
-/** Each page id's stored type, deleted or not; an id with no page is absent. */
-export async function readPageTypesByIds(raw: EngineRawRead, ids: readonly number[]): Promise<Array<{ id: number; type: string | null }>> {
-  if (!ids.length) return [];
-  const rows = await raw<{ id: number | string; type: string | null }>('SELECT id, type FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(ids.map(Number))]]);
-  return rows.map(r => ({ id: Number(r.id), type: r.type }));
 }
 
 const READABLE_PAGE_SLUGS_HEAD = 'SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND ';

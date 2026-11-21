@@ -33,8 +33,7 @@ import { underGitCheckout } from '../../core/git-remote.ts';
 export async function plainDirectorySyncRoot(engine: BrainEngine, opts: SyncOpts, managed: boolean): Promise<string | null> {
   if (opts.githubItem || opts.srcSubpath) return null;
   const sourceId = opts.sourceId ?? 'default';
-  const [source] = await engine.executeRaw<{ local_path: string | null; last_commit: string | null; config: { kind?: unknown } | null }>(
-    'SELECT local_path,last_commit,config FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
+  const source = await engine.readPlainSyncSource(sourceId);
   const registered = source?.local_path;
   if (!registered || !isAbsolute(registered) || source.config?.kind != null) return null;
   let root: string;

@@ -40,6 +40,8 @@ export interface ClientGrant {
   takesHolders: string[] | null;
   privatePages: PrivatePagesGrant;
   privateFacts: PrivateFactsGrant;
+  /** GST-2898: also read every shared source, now and later (read_shared_revision equals grant_revision). */
+  readShared?: boolean;
   boundSlugPrefixes: string[] | null;
   allowedOperations: string[] | null;
   boundTools: string[] | null;
@@ -98,6 +100,7 @@ export function grantFromRow(row: Record<string, unknown>): ClientGrant {
     sourceId: nullable(row.source_id), federatedRead: stringArray(row.federated_read) ?? [],
     sourcesNone: row.source_grant === 'none', takesHolders: stringArray(row.takes_holders),
     privatePages: privatePagesFromColumn(row.private_pages), privateFacts: privatePagesFromColumn(row.private_facts),
+    readShared: readSharedFromColumns(row.read_shared_revision, row.grant_revision),
     boundSlugPrefixes: legacyPrefixes, allowedOperations: stringArray(row.allowed_operations),
     boundTools: stringArray(row.bound_tools), boundSourceId: nullable(row.bound_source_id),
     boundBrainId: normalizeGrantBrain(nullable(row.bound_brain_id)),
@@ -113,6 +116,17 @@ export function grantFromRow(row: Record<string, unknown>): ClientGrant {
     revision: Number(row.grant_revision ?? 0), repairReasons: stringArray(row.grant_repair_reasons) ?? [],
     revoked: row.deleted_at != null,
   };
+}
+
+/**
+ * GST-2898: the read-shared switch is on only while `read_shared_revision` equals the row's `grant_revision`. Every
+ * grant write by this build re-stamps it; an older build's grant write bumps the revision alone, so the switch turns
+ * off instead of re-widening a key that build narrowed. NULL, a missing column or anything unreadable reads as off.
+ */
+export function readSharedFromColumns(stamp: unknown, revision: unknown): boolean {
+  if (stamp == null || revision == null) return false;
+  const s = Number(stamp);
+  return Number.isSafeInteger(s) && s === Number(revision);
 }
 
 /** A `private_pages` or `private_facts` column value; anything but `granted_sources` reads as `none` (fail closed). */
@@ -150,6 +164,7 @@ export function validateClientGrant(grant: ClientGrant, ctx: GrantValidationCont
   if (grant.revoked) reasons.push('client_revoked');
   if (grant.sourcesNone === true) {
     if (grant.sourceId !== null || grant.federatedRead.length > 0) reasons.push('sources_none_inconsistent');
+    if (grant.readShared === true) reasons.push('read_shared_needs_source');
   } else {
     if (!grant.sourceId || !ctx.activeSourceIds.has(grant.sourceId)) reasons.push('source_inactive');
     if (grant.federatedRead.length === 0 || grant.federatedRead.some(id => !ctx.activeSourceIds.has(id))) reasons.push('read_source_inactive');
@@ -194,6 +209,12 @@ export interface PrincipalGrant {
   takesHolders: string[] | null;
   privatePages: PrivatePagesGrant;
   privateFacts: PrivateFactsGrant;
+  /**
+   * GST-2898: also read every shared source, now and later. Stored apart from `sources` and the `permissions`
+   * mirror (read_shared_revision), so the drift check never sees it and older binaries read less.
+   * credentialReadSources (shared-exposure.ts) is the one place that turns it into a read set.
+   */
+  readShared?: boolean;
   revision: number;
   shape: 'unified' | 'legacy_permissions';
   /**
@@ -294,6 +315,7 @@ export function grantFromTokenRow(row: TokenGrantRow): PrincipalGrant {
     privatePages: privatePagesFromColumn(row.private_pages),
     privateFacts: privatePagesFromColumn(row.private_facts),
     revision: Number(row.grant_revision ?? 0),
+    readShared: row.source_grant != null && readSharedFromColumns(row.read_shared_revision, row.grant_revision),
   };
   const { malformed, ...legacy } = tokenGrantFromPermissions(row.permissions);
   if (row.source_grant == null) {
@@ -318,7 +340,7 @@ export function grantFromClient(grant: ClientGrant): PrincipalGrant {
   return {
     principal: { kind: 'oauth_client', id: grant.clientId }, scopes: [...grant.scopes], sources,
     allowedOperations: grant.allowedOperations, takesHolders: grant.takesHolders ?? null,
-    privatePages: privatePagesFromColumn(grant.privatePages), privateFacts: privatePagesFromColumn(grant.privateFacts), revision: grant.revision,
+    privatePages: privatePagesFromColumn(grant.privatePages), privateFacts: privatePagesFromColumn(grant.privateFacts), revision: grant.revision, readShared: grant.readShared === true,
     shape: 'unified', drift: [], permissionsMalformed: false,
   };
 }
@@ -396,19 +418,31 @@ export function permissionsMirror(g: Pick<PrincipalGrant, 'sources' | 'allowedOp
 }
 
 /**
+ * The unified columns as values: source_grant, source_id, federated_read, allowed_operations, takes_holders (arrays as
+ * arrays, NULL as null). The typed token insert takes these; `tokenGrantColumnValues` is the same in text[] literals.
+ */
+export function tokenGrantColumnArrays(g: Pick<PrincipalGrant, 'sources' | 'allowedOperations' | 'takesHolders'>): {
+  source_grant: string; source_id: string | null; federated_read: string[] | null; allowed_operations: string[] | null; takes_holders: string[] | null;
+} {
+  const s = g.sources;
+  return {
+    source_grant: s.kind,
+    source_id: s.kind === 'scalar' || s.kind === 'federated' ? s.writeSource : null,
+    federated_read: s.kind === 'federated' ? [...s.readSources] : s.kind === 'none' ? [] : null,
+    allowed_operations: g.allowedOperations === null ? null : [...g.allowedOperations],
+    takes_holders: g.takesHolders === null ? null : [...g.takesHolders],
+  };
+}
+
+/**
  * Bind values for the unified columns, in order: source_grant, source_id,
  * federated_read, allowed_operations, takes_holders (arrays as text[]
  * literals, NULL as null). Pair with `TOKEN_GRANT_COLUMNS`.
  */
 export function tokenGrantColumnValues(g: Pick<PrincipalGrant, 'sources' | 'allowedOperations' | 'takesHolders'>): [string, string | null, string | null, string | null, string | null] {
-  const s = g.sources;
-  return [
-    s.kind,
-    s.kind === 'scalar' || s.kind === 'federated' ? s.writeSource : null,
-    s.kind === 'federated' ? pgArray(s.readSources) : s.kind === 'none' ? '{}' : null,
-    g.allowedOperations === null ? null : pgArray(g.allowedOperations),
-    g.takesHolders === null ? null : pgArray(g.takesHolders),
-  ];
+  const a = tokenGrantColumnArrays(g);
+  const lit = (v: string[] | null) => (v === null ? null : pgArray(v));
+  return [a.source_grant, a.source_id, lit(a.federated_read), lit(a.allowed_operations), lit(a.takes_holders)];
 }
 export const TOKEN_GRANT_COLUMNS = ['source_grant', 'source_id', 'federated_read', 'allowed_operations', 'takes_holders'] as const;
 /**
@@ -416,7 +450,7 @@ export const TOKEN_GRANT_COLUMNS = ['source_grant', 'source_id', 'federated_read
  * transaction selects these by name: a prepared SELECT * whose plan was cached before a migration added a column
  * fails there with 0A000 ("cached plan must not change result type") until the connection re-prepares it.
  */
-export const TOKEN_GRANT_ROW_COLUMNS = ['id', 'scopes', 'permissions', 'private_pages', 'private_facts', 'grant_revision', ...TOKEN_GRANT_COLUMNS] as const;
+export const TOKEN_GRANT_ROW_COLUMNS = ['id', 'scopes', 'permissions', 'private_pages', 'private_facts', 'grant_revision', 'read_shared_revision', ...TOKEN_GRANT_COLUMNS] as const;
 /**
  * The select list of `TOKEN_GRANT_ROW_COLUMNS` that this brain's access_tokens has. Admission authorizes before it
  * replays an accepted request or refuses a schema behind this build, and membership has no schema admission, so a

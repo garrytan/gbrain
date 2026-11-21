@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use crate::chunks::read_chunks;
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::{in_links, no_nul, out_links};
 use crate::pages::{PageRecord, all_pages, next_id};
@@ -48,6 +48,7 @@ struct IngestRecord {
     source_id: String,
     source_type: String,
     source_ref: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pages_updated: Value,
     summary: String,
     created_at_us: i64,
@@ -60,7 +61,7 @@ impl IngestRecord {
             "source_id": self.source_id,
             "source_type": self.source_type,
             "source_ref": self.source_ref,
-            "pages_updated": self.pages_updated,
+            "pages_updated": crate::jsonb::ordered(&self.pages_updated),
             "summary": self.summary,
             "created_at": iso(self.created_at_us),
         })
@@ -200,22 +201,6 @@ fn json_has_nul(value: &Value) -> bool {
         Value::Array(items) => items.iter().any(json_has_nul),
         Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || json_has_nul(v)),
         _ => false,
-    }
-}
-
-/// `jsonb` keeps one value per key (the last) and orders keys by length, then bytes.
-fn jsonb_normalize(value: Value) -> Value {
-    match value {
-        Value::Array(items) => Value::Array(items.into_iter().map(jsonb_normalize).collect()),
-        Value::Object(map) => {
-            let mut entries: Vec<(String, Value)> = map
-                .into_iter()
-                .map(|(k, v)| (k, jsonb_normalize(v)))
-                .collect();
-            entries.sort_by(|(a, _), (b, _)| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
-            Value::Object(entries.into_iter().collect::<Map<String, Value>>())
-        }
-        other => other,
     }
 }
 
@@ -508,17 +493,18 @@ impl Store {
                 "logIngest: pages_updated must not contain a NUL character",
             ));
         }
-        let pages_updated = jsonb_normalize(pages_updated);
+        // jsonb keeps one value per key (the last; a parsed Map already did) in jsonb key order.
+        let pages_updated = crate::jsonb::order(pages_updated);
         let created_at_us = self.env.now_micros();
         self.write(|tx| {
             let id = next_id(tx, NEXT_INGEST_LOG_ID)?;
             let record = IngestRecord {
                 id,
-                source_id,
-                source_type,
-                source_ref,
-                pages_updated,
-                summary,
+                source_id: source_id.clone(),
+                source_type: source_type.clone(),
+                source_ref: source_ref.clone(),
+                pages_updated: pages_updated.clone(),
+                summary: summary.clone(),
                 created_at_us,
             };
             put_json(tx, &ingest_key(created_at_us, id), &record)
@@ -662,6 +648,7 @@ impl Store {
         let mut baseline: [BTreeMap<String, Days>; 2] = [BTreeMap::new(), BTreeMap::new()];
         type Today = BTreeMap<String, (BTreeSet<u64>, BTreeSet<String>)>;
         let mut today: [Today; 2] = [BTreeMap::new(), BTreeMap::new()];
+        let mut owner_only = OwnerOnlyCache::default();
         for page in all_pages(&*read)? {
             if !live(&page)
                 || quarantined(&page)
@@ -675,7 +662,7 @@ impl Store {
                 continue;
             }
             if let Some(policy) = &input.exclude_private
-                && page_hidden(&*read, &page, policy)?
+                && owner_only.page_hidden(&*read, &page, policy)?
             {
                 continue;
             }

@@ -5,7 +5,8 @@
  *  - Contract: listSourceRecords, readSourceIncarnation, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
  *    hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listStoredTimelineRows and
  *    filterPagesAtRevision return the same observable result on every engine arm (PGLite always; Postgres with
- *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
+ *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1), and so do the page labels pageActivationVerdicts builds
+ *    from readPageTrustRows for `gbrain delta`, the turn context and the retrieval reflex.
  *  - Regression: an engine that answers one of these differently changes which sources an import loads, which writes a
  *    guest-source guard refuses, which pages a trust stamp marks, which links reconciliation sees and which extract
  *    stamps land; the Rust engine has no SQL, so each read has to exist as a typed method it can implement.
@@ -19,6 +20,8 @@ import { describe, expect } from 'bun:test';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { pageActivationVerdicts } from '../../src/core/eligibility/activation.ts';
+import type { ReadEligibility } from '../../src/core/eligibility/policy.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -193,6 +196,37 @@ describe('engine parity: CLI import reads', () => {
       'unknown-flagged': { tier: 'unknown', flagged: true },
     });
     return flags;
+  });
+
+  parityTest('pageActivationVerdicts labels live pages by key with the stored tier, origin and flag, and applies the floor and flag suppression', { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'softDeletePage', 'upsertPageWriteGateReceipt', 'readPageTrustRows'] }, async (engine) => {
+    // `gbrain delta` and the turn context label their page rows through this read; an engine that cannot answer it
+    // falls back to tier `unknown` and origin `unrecorded` for every page.
+    await declaredWrite(engine, 'operator_curated', { channel: 'import' }, tx => note(tx, 'verdict/curated'));
+    await declaredWrite(engine, 'agent_written', { channel: 'agent' }, tx => note(tx, 'verdict/agent-flagged'));
+    await engine.upsertPageWriteGateReceipt('default', 'verdict/agent-flagged', {
+      content_hash: 'h1', tier: 'agent_written', detector_version: 1, verdict: 'flag', reason_families: ['override'],
+      reasons: ['override found'], detector_error: false, request_id: null,
+    });
+    await note(engine, 'verdict/undeclared');
+    await declaredWrite(engine, 'operator_curated', { channel: 'import' }, tx => note(tx, 'verdict/deleted'));
+    await engine.softDeletePage('verdict/deleted');
+    const keys = ['verdict/curated', 'verdict/agent-flagged', 'verdict/undeclared', 'verdict/deleted', 'verdict/missing']
+      .map(slug => ({ source_id: 'default', slug }));
+    const view = async (policy: ReadEligibility) => Object.fromEntries(sorted([...(await pageActivationVerdicts(engine, keys, policy)).entries()]
+      .map(([k, v]) => [k.split('\u0000')[1]!, { ...v, origin: typeof v.origin === 'string' ? JSON.parse(v.origin) : v.origin }] as const), ([slug]) => slug));
+    const open = await view({});
+    const floored = await view({ floor: 'operator_curated', suppressFlagged: true });
+    const none = await pageActivationVerdicts(engine, [], {});
+    expect(open).toEqual({
+      'verdict/agent-flagged': { tier: 'agent_written', origin: { channel: 'agent' }, belowFloor: false, suppressed: false, unconfirmed: true },
+      'verdict/curated': { tier: 'operator_curated', origin: { channel: 'import' }, belowFloor: false, suppressed: false, unconfirmed: false },
+      'verdict/undeclared': { tier: 'unknown', origin: null, belowFloor: false, suppressed: false, unconfirmed: false },
+    });
+    expect(Object.fromEntries(Object.entries(floored).map(([slug, v]) => [slug, [v.belowFloor, v.suppressed]]))).toEqual({
+      'verdict/agent-flagged': [true, true], 'verdict/curated': [false, false], 'verdict/undeclared': [true, false],
+    });
+    expect(none.size).toBe(0);
+    return { open, floored };
   });
 
   parityTest('readRowTrustRows reads the tier, origin and activation flag each timeline write stamped; an unknown id reads none', { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'addTimelineEntry', 'getTimeline', 'upsertWriteGateReceipt', 'readRowTrustRows'] }, async (engine) => {

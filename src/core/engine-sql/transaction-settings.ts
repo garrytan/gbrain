@@ -101,3 +101,12 @@ export async function applyTransactionSettings(exec: SqlExecutor, names: readonl
 export async function beginSnapshotRead(tx: Pick<BrainEngine, 'executeRaw'>, opts: { readOnly?: boolean } = {}): Promise<void> {
   await tx.executeRaw(opts.readOnly ? 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY' : 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
 }
+
+/**
+ * `SET LOCAL statement_timeout = <ms>`: bounds every later statement of the current transaction. Runs on the
+ * transaction engine, as beginSnapshotRead does. `ms` must be a non-negative integer, so the statement text is safe.
+ */
+export async function setLocalStatementTimeout(tx: Pick<BrainEngine, 'executeRaw'>, ms: number): Promise<void> {
+  if (!Number.isFinite(ms) || !Number.isSafeInteger(ms) || ms < 0) throw new Error(`setLocalStatementTimeout: ms must be a non-negative integer, got ${ms}`);
+  await tx.executeRaw(`SET LOCAL statement_timeout = ${ms}`);
+}

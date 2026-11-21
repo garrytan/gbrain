@@ -42,7 +42,7 @@ fn snapshot(b: &Brain, slug: &str) -> i64 {
 
 fn identities(b: &Brain, q: Value) -> Vec<Value> {
     let mut q = q;
-    q["world"] = json!({ "honorAliases": true, "entityPrivacy": true });
+    q["world"] = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     b.list_valid_time_identities(&args::<ValidTimeIdentityQuery>(q))
         .unwrap()
 }
@@ -100,14 +100,14 @@ fn identities_list_the_live_pages_with_the_slug_by_source_with_checkout_and_worl
     let public = identities(
         &b,
         json!({ "slug": "notes/shared", "sourceId": null, "sourceIds": null,
-                "excludePrivate": { "honorAliases": true, "entityPrivacy": true } }),
+                "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" } }),
     );
     assert_eq!(sources_of(&public), [("beta".into(), true)]);
     // Without the privacy part the policy only reads the reader list, which no page names.
     let readers_only = identities(
         &b,
         json!({ "slug": "notes/shared", "sourceId": null, "sourceIds": null,
-                "excludePrivate": { "honorAliases": false, "entityPrivacy": false } }),
+                "excludePrivate": { "honorAliases": false, "entityPrivacy": false, "ownerOnly": "fn" } }),
     );
     assert_eq!(readers_only.len(), 2);
     assert!(
@@ -154,7 +154,7 @@ fn pick_policy(
 ) -> Value {
     b.pick_valid_time_edition(&args::<ValidTimePickQuery>(json!({
         "pageId": page, "asOf": as_of, "excludePrivate": exclude_private, "pinOrd": pin, "inlineMaxBytes": 5,
-        "policy": { "honorAliases": true, "entityPrivacy": privacy },
+        "policy": { "honorAliases": true, "entityPrivacy": privacy, "ownerOnly": "fn" },
     })))
     .unwrap()
 }
@@ -422,6 +422,79 @@ fn the_pick_marks_a_private_edition_invisible() {
         (r["ord"].clone(), r["visible"].clone()),
         (json!(VALID_TIME_CURRENT_ORD), json!(false))
     );
+}
+
+/// The pick under a caller's readers: a version that names readers is visible to a policy whose
+/// identity one of them is, and a private version to a grant on the page's source.
+fn pick_as(b: &Brain, page: i64, policy: Value) -> bool {
+    b.pick_valid_time_edition(&args::<ValidTimePickQuery>(json!({
+        "pageId": page, "asOf": "2026-02-01", "excludePrivate": true, "pinOrd": null,
+        "inlineMaxBytes": 1_000_000, "policy": policy,
+    })))
+    .unwrap()["row"]["visible"]
+        .as_bool()
+        .unwrap()
+}
+
+#[test]
+fn the_pick_judges_a_version_by_the_callers_readers_and_grants() {
+    let b = brain("valid-time-readers");
+    source(&b, "vault", None);
+    put(
+        &b,
+        "default",
+        "notes/listed",
+        "Listed.",
+        json!({ "valid_from": "2026-01-01", "readable_by": ["alice-example"] }),
+    );
+    snapshot(&b, "notes/listed");
+    put(
+        &b,
+        "default",
+        "notes/listed",
+        "Open.",
+        json!({ "valid_from": "2026-06-01" }),
+    );
+    put(
+        &b,
+        "vault",
+        "notes/secret",
+        "Hidden.",
+        json!({ "valid_from": "2026-01-01", "visibility": "private" }),
+    );
+    b.create_version("notes/secret", Some("vault")).unwrap();
+    put(
+        &b,
+        "vault",
+        "notes/secret",
+        "Open.",
+        json!({ "valid_from": "2026-06-01" }),
+    );
+    let listed = page_id(&b, "notes/listed");
+    let secret = identities(
+        &b,
+        json!({ "slug": "notes/secret", "sourceId": "vault", "sourceIds": null, "excludePrivate": null }),
+    )[0]["id"]
+        .as_i64()
+        .unwrap();
+    let policy = |identity: Value, grants: Value| {
+        json!({ "honorAliases": true, "entityPrivacy": true,
+                "identity": identity, "privateReadableSources": grants })
+    };
+    let none = policy(json!([]), json!([]));
+    let reader = policy(json!(["member:alice-example"]), json!([]));
+    let stranger = policy(json!(["member:bob-example"]), json!([]));
+    let granted = policy(json!([]), json!(["vault"]));
+    let wrong_grant = policy(json!([]), json!(["default"]));
+    assert!(!pick_as(&b, listed, none.clone()));
+    assert!(pick_as(&b, listed, reader.clone()));
+    assert!(!pick_as(&b, listed, stranger));
+    // A grant opens privacy, never readers.
+    assert!(!pick_as(&b, listed, wrong_grant.clone()));
+    assert!(!pick_as(&b, secret, none));
+    assert!(!pick_as(&b, secret, reader));
+    assert!(pick_as(&b, secret, granted));
+    assert!(!pick_as(&b, secret, wrong_grant));
 }
 
 #[test]

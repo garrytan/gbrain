@@ -1,5 +1,6 @@
 //! Page write guards: the observable behaviour of `readPageOrigin`, `listOriginClaims`,
-//! `bindPageOrigin`, `stampPageIngest`, `sealImportedPage` and `readLivePageBody`, matched to the
+//! `bindPageOrigin`, `stampPageIngest`, `sealImportedPage`, `readLivePageBody`,
+//! `readInlinePageRegions` and `readStoredPageTier`, matched to the
 //! PGLite engine (`engine-sql/write-guards.ts`).
 
 mod common;
@@ -270,6 +271,62 @@ fn read_live_page_body_reads_an_inline_page_and_skips_tombstones() {
         .unwrap();
     assert_eq!(
         store.read_live_page_body("notes/body", "default").unwrap(),
+        None
+    );
+}
+
+#[test]
+fn read_inline_page_regions_reads_a_page_by_id_a_tombstone_included() {
+    let dir = TempDir::new("wg-regions");
+    let store = open(&dir);
+    let id = put(&store, "notes/regions", None);
+    let regions = store.read_inline_page_regions(id).unwrap().unwrap();
+    assert_eq!(
+        (
+            regions.compiled_truth.as_deref(),
+            regions.timeline.as_deref()
+        ),
+        (Some("Body."), Some(""))
+    );
+    store
+        .soft_delete_page("notes/regions", Some("default"))
+        .unwrap();
+    assert_eq!(store.read_inline_page_regions(id).unwrap(), Some(regions));
+    assert_eq!(store.read_inline_page_regions(id + 1000).unwrap(), None);
+}
+
+#[test]
+fn read_stored_page_tier_reads_the_stamped_tier_a_tombstone_included() {
+    let dir = TempDir::new("wg-tier");
+    let store = open(&dir);
+    put(&store, "notes/tier", None);
+    let stamped = page(&store, "notes/tier")["trust_tier"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_owned();
+    assert_eq!(
+        store
+            .read_stored_page_tier("default", "notes/tier")
+            .unwrap(),
+        Some(stamped)
+    );
+    store
+        .soft_delete_page("notes/tier", Some("default"))
+        .unwrap();
+    assert!(
+        store
+            .read_stored_page_tier("default", "notes/tier")
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        store.read_stored_page_tier("other", "notes/tier").unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .read_stored_page_tier("default", "notes/none")
+            .unwrap(),
         None
     );
 }

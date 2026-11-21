@@ -79,6 +79,8 @@ export async function runReindexMultimodal(
   engine: BrainEngine,
   opts: ReindexMultimodalOpts,
 ): Promise<ReindexMultimodalResult> {
+  const { assertBrainEmbeddingEnabled } = await import('../core/embedding-dim-check.ts');
+  if (!opts.noEmbed && !opts.costEstimate) await assertBrainEmbeddingEnabled(engine);
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('reindex_multimodal', 0);
 
@@ -259,6 +261,7 @@ export async function runReindexMultimodal(
       // failed_indices surfaced. We persist what succeeded and log what
       // failed for the next run to retry.
       if (!opts.noEmbed) {
+        await assertBrainEmbeddingEnabled(engine);
         const result = await embedMultimodalSafe(
           items.map(it => ({ kind: 'text' as const, text: it.text })),
           { inputType: 'document' },

@@ -1,7 +1,7 @@
 /**
- * BrainEngine parity: the quote reads of search/transcript-quote.ts (which facts came from a third-party page, which
- * facts sit at or above the owner's trust tier, each page id's type) and the bare-name page lookup of a slot-history
- * question (search/slot-history.ts entityKeys), all in src/core/engine-sql/facts-recall.ts.
+ * BrainEngine parity: the quote reads of search/transcript-quote.ts (which facts came from a third-party page and which
+ * facts sit at or above the owner's trust tier, src/core/engine-sql/facts-trust.ts) and the bare-name page lookup of a
+ * slot-history question (search/slot-history.ts entityKeys, src/core/engine-sql/facts-recall.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member below returns the same observable result on every engine arm (PGLite always; Postgres with
@@ -63,9 +63,9 @@ describe('engine parity: quote and slot-history reads', () => {
     for (const [n, id] of other) ids.set(n, id);
     const all = [...ids.values()];
     const answers = {
-      quoted: named(ids, await engine.listFactsFromQuotedPages([...all, all[0]!, 99_999_999], QUOTED, BACKSTOP)),
-      withNotes: named(ids, await engine.listFactsFromQuotedPages(all, [...QUOTED, 'note'], BACKSTOP)),
-      none: await engine.listFactsFromQuotedPages([], QUOTED, BACKSTOP),
+      quoted: named(ids, await engine.listFactsFromQuotedPages({ ids: [...all, all[0]!, 99_999_999], pageTypes: QUOTED, backstop: BACKSTOP })),
+      withNotes: named(ids, await engine.listFactsFromQuotedPages({ ids: all, pageTypes: [...QUOTED, 'note'], backstop: BACKSTOP })),
+      none: await engine.listFactsFromQuotedPages({ ids: [], pageTypes: QUOTED, backstop: BACKSTOP }),
     };
     expect(answers).toEqual({
       quoted: ['bySlug', 'deletedPage', 'put', 'synced'],
@@ -105,13 +105,13 @@ describe('engine parity: quote and slot-history reads', () => {
     for (const [n, input] of Object.entries(inputs)) {
       await engine.recordDerivationEdges({ table: 'facts', id: String(ids.get(n)) }, SRC, [input]);
     }
-    const answers = named(ids, await engine.listFactsFromQuotedPages([...ids.values()], QUOTED, BACKSTOP));
+    const answers = named(ids, await engine.listFactsFromQuotedPages({ ids: [...ids.values()], pageTypes: QUOTED, backstop: BACKSTOP }));
     expect(answers).toEqual(['derived', 'fromDeleted', 'fromOtherSource', 'padded']);
     return answers;
   });
 
-  parityTest('listFactIdsAtTrustFloor keeps the facts whose stored tier ranks at or above the floor', {
-    methods: ['listFactIdsAtTrustFloor', 'transaction', 'applyTransactionSettings', 'insertFact'],
+  parityTest('listOwnerTierFacts keeps the facts whose stored tier ranks at or above the floor', {
+    methods: ['listOwnerTierFacts', 'transaction', 'applyTransactionSettings', 'insertFact'],
   }, async (engine) => {
     const ids = new Map<string, number>();
     for (const tier of ['user_confirmed', 'operator_curated', 'agent_written', null] as Array<TrustTier | null>) {
@@ -126,10 +126,10 @@ describe('engine parity: quote and slot-history reads', () => {
     }
     const all = [...ids.values(), 99_999_999];
     const answers = {
-      owner: named(ids, await engine.listFactIdsAtTrustFloor(all, 'operator_curated')),
-      unknown: named(ids, await engine.listFactIdsAtTrustFloor(all, 'unknown')),
-      confirmed: named(ids, await engine.listFactIdsAtTrustFloor(all, 'user_confirmed')),
-      none: await engine.listFactIdsAtTrustFloor([], 'unknown'),
+      owner: named(ids, await engine.listOwnerTierFacts({ ids: all, floor: 'operator_curated' })),
+      unknown: named(ids, await engine.listOwnerTierFacts({ ids: all, floor: 'unknown' })),
+      confirmed: named(ids, await engine.listOwnerTierFacts({ ids: all, floor: 'user_confirmed' })),
+      none: await engine.listOwnerTierFacts({ ids: [], floor: 'unknown' }),
     };
     expect(answers).toEqual({
       owner: ['operator_curated', 'user_confirmed'],
@@ -137,24 +137,6 @@ describe('engine parity: quote and slot-history reads', () => {
       confirmed: ['user_confirmed'],
       none: [],
     });
-    return answers;
-  });
-
-  parityTest('readPageTypesByIds reads each page id type, soft-deleted pages included, and skips ids with no page', {
-    methods: ['readPageTypesByIds', 'putPage', 'getPage', 'softDeletePage'],
-  }, async (engine) => {
-    await engine.putPage('chats/a', page('chat'));
-    await engine.putPage('notes/gone', page('note'));
-    const chat = Number((await engine.getPage('chats/a'))!.id);
-    const gone = Number((await engine.getPage('notes/gone'))!.id);
-    await engine.softDeletePage('notes/gone');
-    const rows = await engine.readPageTypesByIds([chat, gone, chat, 99_999_999]);
-    const answers = {
-      types: sorted(rows.map((r) => `${Number(r.id) === chat ? 'chat' : Number(r.id) === gone ? 'gone' : r.id}:${r.type}`)),
-      idKinds: rows.map((r) => typeof r.id),
-      none: await engine.readPageTypesByIds([]),
-    };
-    expect(answers).toEqual({ types: ['chat:chat', 'gone:note'], idKinds: ['number', 'number'], none: [] });
     return answers;
   });
 

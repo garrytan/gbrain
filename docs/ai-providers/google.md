@@ -1,7 +1,7 @@
 # Google Gemini
 
 GBrain calls Gemini natively for chat, query expansion and embeddings: model
-strings `google:<model>`, such as `google:gemini-2.5-flash` for chat and
+strings `google:<model>`, such as `google:gemini-3.5-flash-lite` for chat and
 `google:gemini-embedding-2` for embeddings. Embedding models, dimensions and
 pricing are in [embedding providers](../integrations/embedding-providers.md#google-gemini).
 
@@ -39,5 +39,5 @@ redirect your key; the same rule covers `ANTHROPIC_BASE_URL` and
 `OPENAI_BASE_URL`.
 
 Verify the override with one short request through the proxy, for example
-`gbrain think "ping" --model google:gemini-2.5-flash`, and check that the proxy
-logged a `/v1beta/models/gemini-2.5-flash:generateContent` call.
+`gbrain think "ping" --model google:gemini-3.5-flash-lite`, and check that the proxy
+logged a `/v1beta/models/gemini-3.5-flash-lite:generateContent` call.

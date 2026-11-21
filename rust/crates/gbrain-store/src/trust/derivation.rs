@@ -93,7 +93,7 @@ impl Store {
         }
         self.write(|tx| {
             let mut lowered = Vec::new();
-            for id in ids {
+            for &id in &ids {
                 let Some(page) = read_page_by_id(&*tx, id)? else {
                     continue;
                 };
@@ -173,7 +173,7 @@ impl Store {
         no_nul(op, &[("sourceId", spec.source_id.as_str())])?;
         let slugs: BTreeSet<&str> = spec.slugs.iter().map(String::as_str).collect();
         self.write(|tx| {
-            for slug in slugs {
+            for &slug in &slugs {
                 let Some(mut page) = read_page(&*tx, &spec.source_id, slug)? else {
                     continue;
                 };

@@ -20,6 +20,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -137,9 +138,8 @@ export interface SiblingIdentity {
 export async function readSiblingIdentity(engine: BrainEngine, sourceId: string, row: { slug: string; title: string | null },
   opts: { excludePrivate: boolean; excludeQuarantined?: boolean; policy?: MentionPolicy; pack?: PackTypes | null }): Promise<SiblingIdentity> {
   const siblings = await readIdentitySiblings(engine, sourceId, row, opts);
-  const aliasRows = await engine.executeRaw<SiblingIdentity['aliasRows'][number]>(
-    `SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm`,
-    [sourceId, [row.slug, ...siblings.pages.map(p => p.slug)]]).catch(() => []);
+  const aliasRows: SiblingIdentity['aliasRows'] = await engine.readEntityAliasRows(sourceId, [row.slug, ...siblings.pages.map(p => p.slug)])
+    .catch(e => { rethrowCapabilityMissing(e); return []; });
   if (!siblings.pages.length && !siblings.capped) return { aliasRows };
   return {
     aliasRows,
@@ -179,11 +179,11 @@ export async function readCardIdentity(engine: BrainEngine, sourceId: string,
   if (identity_siblings) out.identity_siblings = identity_siblings;
   // Snapshot reads carry the withdrawal overlay get_page shows, so a forgotten fence row is struck and the sanitizer drops it.
   const { snapshots } = await engine.readPageSnapshotsBatch(slugs.map(slug => ({ slug, sourceId })))
-    .catch(() => ({ snapshots: new Map<string, PageSnapshot>() }));
+    .catch((e) => { rethrowCapabilityMissing(e); return { snapshots: new Map<string, PageSnapshot>() }; });
   const bodies = new Map<string, { title: string; body: string }>();
   for (const slug of slugs) {
     const snapshot = snapshots.get(pageSnapshotKey(sourceId, slug));
-    if (snapshot) bodies.set(slug, { title: snapshot.page.title ?? slug, body: await excerptSource(engine, snapshot).catch(() => '') });
+    if (snapshot) bodies.set(slug, { title: snapshot.page.title ?? slug, body: await excerptSource(engine, snapshot).catch((e) => { rethrowCapabilityMissing(e); return ''; }) });
   }
   const excerpt: IdentityExcerptLine[] = [];
   const omitted: string[] = [];

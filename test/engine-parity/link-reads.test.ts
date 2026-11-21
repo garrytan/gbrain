@@ -8,8 +8,9 @@
  *    always; Postgres with DATABASE_URL; the Rust arm through
  *    test/engine-parity/harness.ts): coverage counts, junk hubs, entity
  *    counts, graph coverage, foreign edges, live page summaries, the entity
- *    card's backlink count, link endpoints, titled pages, word lexemes, and the
- *    link rows and origin bodies behind a world-only caller's link contexts.
+ *    card's backlink count and incoming edges, link endpoints, titled pages,
+ *    word lexemes, and the link rows and origin bodies behind a world-only
+ *    caller's link contexts.
  *  - Regression: an engine whose read drifts gives a different doctor score,
  *    orphan ratio, graph-query note, backlink count, link target or search
  *    anchor per backend.
@@ -352,6 +353,53 @@ describe('engine parity: link reads', () => {
       expect(m.get('running')).toEqual(['run']);
       expect(m.get('the')).toEqual([]);
       return sorted([...m].map(([w, lexemes]) => `${w}=>${lexemes.join('|')}`));
+    },
+  );
+
+  parityTest(
+    'readEntityInboundEdges: the links countInboundLinks counts, by link id, with the scope relationship\'s temporal columns',
+    { methods: ['putPage', 'addLink', 'addLinksBatch', 'softDeletePage', 'countInboundLinks', 'readEntityInboundEdges'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      for (const slug of ['notes/a', 'notes/b', 'notes/origin-gone', 'notes/origin-open']) await put(engine, slug, 'note');
+      await put(engine, 'people/alice-example', 'person');
+      await put(engine, 'companies/acme-example', 'company');
+      await put(engine, 'notes/private', 'note', { visibility: 'private' });
+      await put(engine, 'notes/far', 'note', {}, 'other');
+      await put(engine, 'notes/far-origin', 'note', {}, 'other');
+      const ACME = 'companies/acme-example';
+      await engine.addLink('people/alice-example', ACME, 'works at Acme', 'works_at', 'manual');
+      await engine.addLink('notes/a', ACME, 'cites Acme', 'cites', 'manual');
+      await engine.addLink('notes/b', ACME, '', 'mentions', 'mentions');
+      await engine.addLink('notes/private', ACME, 'private note', 'cites', 'manual');
+      await engine.addLink('notes/far', ACME, '', 'cites', 'manual', undefined, undefined, { fromSourceId: 'other', toSourceId: 'default' });
+      await engine.addLinksBatch([
+        { from_slug: 'notes/b', to_slug: ACME, link_type: 'cites', link_source: 'frontmatter', origin_slug: 'notes/origin-gone', origin_field: 'refs' },
+        { from_slug: 'notes/b', to_slug: ACME, link_type: 'invested_in', link_source: 'frontmatter', origin_slug: 'notes/origin-open', origin_field: 'refs' },
+        { from_slug: 'notes/a', to_slug: ACME, link_type: 'advises', link_source: 'frontmatter', origin_slug: 'notes/far-origin', origin_source_id: 'other', origin_field: 'refs' },
+      ]);
+      await engine.softDeletePage('notes/origin-gone');
+      // recorded_at is the write time on each arm: compare whether it is set, not its value.
+      const view = (rs: Awaited<ReturnType<BrainEngine['readEntityInboundEdges']>>) =>
+        rs.map(r => ({ ...r, temporal_recorded_at: r.temporal_recorded_at == null ? null : 'set' }));
+      const out: Record<string, unknown> = {};
+      for (const excludePrivate of [false, true]) {
+        for (const originSameSource of [false, true]) {
+          const opts = { excludePrivate, originSameSource };
+          const rows = await engine.readEntityInboundEdges(ACME, 'default', opts);
+          expect(rows.length).toBe(await engine.countInboundLinks(ACME, 'default', opts));
+          out[`${excludePrivate}:${originSameSource}`] = view(rows);
+        }
+      }
+      out.other = view(await engine.readEntityInboundEdges(ACME, 'other', { excludePrivate: false, originSameSource: false }));
+      out.missing = await engine.readEntityInboundEdges('companies/missing', 'default', { excludePrivate: false, originSameSource: false });
+      const local = out['false:false'] as Array<{ from_slug: string; link_type: string; temporal_semantics: string | null }>;
+      expect(local.map(r => `${r.from_slug}:${r.link_type}`)).toEqual([
+        'people/alice-example:works_at', 'notes/a:cites', 'notes/private:cites', 'notes/b:invested_in', 'notes/a:advises',
+      ]);
+      expect(local[0]!.temporal_semantics).toBe('state');
+      expect((out['true:true'] as unknown[]).length).toBe(3);
+      return out;
     },
   );
 

@@ -341,7 +341,7 @@ impl Store {
             .map(|r| r.validate(now))
             .collect::<Result<Vec<_>>>()?;
         self.write(|tx| {
-            for mut record in records {
+            for mut record in records.iter().cloned() {
                 record.id = next_id(tx, RECEIPT_ID)?;
                 put_json(tx, &receipt_key(record.id), &record)?;
                 tx.put(&time_key(record.created_at_us, record.id), &[])?;

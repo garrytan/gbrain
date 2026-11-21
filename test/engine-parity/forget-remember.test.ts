@@ -16,8 +16,8 @@
  *  - Seam: the forget and the purge are their ledger commits, not the whole commands. The withdrawal is written with
  *    `insertFactWithdrawal` + `expireFactsByWithdrawal`, the pair `forget` commits through (facts/withdrawal.ts; a
  *    subjectless claim withdraws source-wide, subject '*'); the tombstone with `insertFactPurge`, the ledger writer
- *    `gbrain forget <id> --purge` commits through (facts/purge.ts). The forget command's own reads
- *    (persistence/forget-prepare.ts) and the purge's sweep still send raw SQL, which the Rust engine refuses, so the
+ *    `gbrain forget <id> --purge` commits through (facts/purge.ts). The forget command's target discovery
+ *    (facts/withdrawal-discovery.ts) and the purge's sweep still send raw SQL, which the Rust engine refuses, so the
  *    whole commands cannot run on every arm yet (TODOS rust-forget-commands). The remember handler runs whole, on the
  *    arm's engine with the persistence consumer it starts. The brain is keyless, as in remember-whole.test.ts. Ids and
  *    times differ between arms, so they are folded out.

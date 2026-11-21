@@ -25,6 +25,7 @@ import type { BrainEngine } from '../engine.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { privatePagesFilterFastForCaller, privatePagesFilterForCaller, privateLinkOriginFilterForCaller } from '../search/private-visibility.ts';
 import { isIdentityUnionEnabled, listEntityIdentities } from '../entity-identity.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 import { stripTakesFence } from '../takes-fence.ts';
 import { stripFactsFence } from '../facts-fence.ts';
 import { redactFindings } from '../secret-scan.ts';
@@ -82,7 +83,7 @@ async function targetPages(engine: BrainEngine, scope: ReferrerScope, union?: bo
       const members = await listEntityIdentities(engine, { slug: scope.slug, slugSourceId: scope.sourceId, sourceId: scope.sourceId,
         allowedSources: scope.referrerSources, excludePrivate: scope.excludePrivate });
       for (const m of members) if (!targets.some(t => t.slug === m.slug && t.source_id === m.source_id)) targets.push({ slug: m.slug, source_id: m.source_id });
-    } catch { /* the union never breaks the base read */ }
+    } catch (e) { rethrowCapabilityMissing(e); /* the union never breaks the base read */ }
   }
   return { sources: targets.map(t => t.source_id), slugs: targets.map(t => t.slug) };
 }

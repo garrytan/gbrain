@@ -1,6 +1,6 @@
 /**
- * Page version members (BrainEngine createVersion, getVersions, and the change-reason pair readLatestVersionId and
- * stampVersionChangeReason, engine-sql/version-reasons.ts, and the holding-page cap pruneHoldingPageVersions,
+ * Page version members (BrainEngine createVersion, getVersions, the change-reason pair readLatestVersionId and
+ * stampVersionChangeReason, readLatestVersionIdAtTier, engine-sql/version-reasons.ts, and the holding-page cap pruneHoldingPageVersions,
  * engine-sql/version-prune.ts). A segmented page's snapshot references its body
  * generation and keeps content_hash, as insertSegmentedVersion does. A version keeps the reason a write stamped on it:
  * getVersions reads it as `replaced_because` (the trusted read; `excludePrivate` is refused). `revertToVersion` is not
@@ -8,6 +8,7 @@
  */
 import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-state/version-types.ts';
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
+import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
@@ -18,12 +19,17 @@ function requireInteger(member: string, name: string, value: number): void {
 /**
  * `reason` is served (a null one is none), and so is `historyGap` (the page records `version_history_gap_at` first). A
  * Git-sourced reason (`reasonSource`) is refused. The store prunes the page's history after the snapshot as
- * `createPageVersion` does (rust/crates/gbrain-store/src/version_prune.rs).
+ * `createPageVersion` does (rust/crates/gbrain-store/src/version_prune.rs). A segmented page is refused (the store
+ * answers `invalid_state` before it writes): PGLite versions it as a reference to its live body generation, which the
+ * Rust store does not keep.
  */
 export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string; reason?: string | null; historyGap?: boolean }], PageVersion> = async (brain, slug, opts) => {
   const scope = takeOptions('createVersion', opts && opts.reason === null ? { ...opts, reason: undefined } : opts, ['sourceId', 'reason', 'historyGap']);
   return toCreatedVersion(await storeCall({ member: 'createVersion', slug, sourceId: scope.sourceId as string | undefined },
-    () => brain.createVersion(slug, scope)));
+    () => brain.createVersion(slug, scope).catch((error: unknown) => {
+      if (storeErrorCode(error) === 'invalid_state') refuseMember('createVersion', 'a segmented page');
+      throw error;
+    })));
 };
 
 export const getVersions: StoreMember<[slug: string, opts?: GetVersionsOpts<boolean>], PageVersionRows<boolean>> = async (brain, slug, opts) => {
@@ -47,6 +53,14 @@ export const pruneHoldingPageVersions: StoreMember<[pageId: number], number> = a
   const member = 'pruneHoldingPageVersions';
   requireInteger(member, 'page id', pageId);
   return storeCall({ member }, () => brain.pruneHoldingPageVersions(pageId));
+};
+
+/** The page's newest version id stamped with `tier`, or null (engine-sql/version-reasons.ts readLatestVersionIdAtTier). */
+export const readLatestVersionIdAtTier: StoreMember<[pageId: number, tier: string], number | null> = async (brain, pageId, tier) => {
+  const member = 'readLatestVersionIdAtTier';
+  requireInteger(member, 'page id', pageId);
+  if (typeof tier !== 'string') refuseMember(member, 'a tier that is not text');
+  return storeCall({ member }, () => brain.readLatestVersionIdAtTier(pageId, tier));
 };
 
 export const stampVersionChangeReason: StoreMember<[spec: { pageId: number; afterVersionId: number; reason: string }], number> = async (brain, spec) => {

@@ -155,7 +155,9 @@ struct HoldRecord {
     reason_families: Vec<String>,
     reasons: Vec<String>,
     detector_error: bool,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     payload: Value,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     write_origin: Option<Value>,
     request_id: Option<String>,
     status: String,
@@ -178,8 +180,8 @@ impl HoldRecord {
             "detector_error": self.detector_error,
             "reason_families": self.reason_families,
             "reasons": self.reasons,
-            "payload": self.payload,
-            "write_origin": self.write_origin,
+            "payload": crate::jsonb::order(self.payload.clone()),
+            "write_origin": self.write_origin.clone().map(crate::jsonb::order),
             "request_id": self.request_id,
             "status": self.status,
             "seen_count": self.seen_count,
@@ -648,7 +650,16 @@ impl Store {
     pub fn delete_stale_write_gate_receipts(&self, older_than_days: i64) -> Result<u64> {
         let op = "deleteStaleWriteGateReceipts";
         let days = int4(op, "olderThanDays", older_than_days)?;
-        let cutoff = self.env.now_micros() - i64::from(days) * MICROS_PER_DAY;
+        // A retention this long is past the timestamp range SQL accepts; wrapping here would put
+        // the cutoff in the future and delete fresh receipts.
+        let cutoff = i64::from(days)
+            .checked_mul(MICROS_PER_DAY)
+            .and_then(|span| self.env.now_micros().checked_sub(span))
+            .ok_or_else(|| {
+                StoreError::invalid(format!(
+                    "{op}: olderThanDays {days} is out of timestamp range"
+                ))
+            })?;
         self.write(|tx| {
             let mut deleted = 0;
             for r in all_receipts(tx)? {
@@ -1023,6 +1034,23 @@ mod tests {
             .unwrap();
         assert_eq!(ids(&left), vec![again]);
         assert_eq!(s.delete_stale_write_gate_receipts(-1).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_retention_past_the_timestamp_range_refuses_and_keeps_every_receipt() {
+        let s = store();
+        s.upsert_write_gate_receipt(receipt("facts", "1", fields("h", "flag")))
+            .unwrap();
+        let err = s
+            .delete_stale_write_gate_receipts(i64::from(i32::MAX))
+            .unwrap_err();
+        assert_eq!(err.code, crate::error::INVALID_ARGUMENT);
+        assert_eq!(
+            s.list_write_gate_receipts_for("facts", "1", 10)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

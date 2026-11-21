@@ -5,9 +5,8 @@
 mod memory_env;
 
 use gbrain_store::facts::InsertFactsArgs;
-use gbrain_store::facts::trust_owner::{
-    LexicalContestQuery, OwnerActionFactQuery, StandingPreferencesQuery,
-};
+use gbrain_store::facts::contest::LexicalContestQuery;
+use gbrain_store::facts::trust_owner::{OwnerActionFactQuery, StandingPreferencesQuery};
 use gbrain_store::sources::SourceInput;
 use gbrain_store::trust::write_gate::ReceiptInput;
 use memory_env::{Brain, brain};

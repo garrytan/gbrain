@@ -97,6 +97,9 @@ export const MANAGED_LINK_EXTRACTION_WIDTH = 4;
  * their link targets existed; then pages whose watermark is stale follow. Each
  * page's links and watermark commit together, bound to the revision that was
  * read; a page edited meanwhile, or with unresolved attendance, stays stale.
+ * With `backlog: false` only `slugs` are derived and the stale backlog is left
+ * for a later run (a refresh derives its own imports under its lock and drains
+ * the backlog after releasing it).
  * Then, unless `mentions: false` (sync's inline extraction), the mention pass
  * runs (mentions/pass.ts); a budgeted run gives link work half the budget
  * while mention-due pages exist.
@@ -113,7 +116,7 @@ export const MANAGED_LINK_EXTRACTION_WIDTH = 4;
  * timer and in-process request until its last page.
  */
 export async function extractManagedStaleLinks(engine: BrainEngine,
-  opts: { sourceId?: string; slugs?: readonly string[]; maxPages?: number; timeBudgetMs?: number; signal?: AbortSignal; mentions?: boolean } = {}): Promise<ManagedLinkExtraction> {
+  opts: { sourceId?: string; slugs?: readonly string[]; maxPages?: number; timeBudgetMs?: number; signal?: AbortSignal; mentions?: boolean; backlog?: boolean } = {}): Promise<ManagedLinkExtraction> {
   const result: ManagedLinkExtraction = { pages: 0, created: 0, removed: 0, timeline: 0, skipped: 0, attendance_skipped: 0, remaining: 0 };
   const startMs = Date.now();
   const withMentions = opts.mentions !== false;
@@ -204,7 +207,7 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
     Math.min(maxPages, await engine.countStalePagesForExtraction({ sourceId: opts.sourceId, versionTs, held: 'exclude' })));
   if (opts.slugs?.length && opts.sourceId) await each([...new Set(opts.slugs)].map(slug => ({ slug, sourceId: opts.sourceId! })));
   let afterPageId = 0;
-  while (budget()) {
+  while (opts.backlog !== false && budget()) {
     const rows = await engine.listStalePagesForExtraction({ batchSize: 25, afterPageId, sourceId: opts.sourceId, versionTs, held: 'exclude' });
     if (!rows.length) break;
     afterPageId = rows[rows.length - 1]!.id;

@@ -20,7 +20,7 @@ export const SCOPE_READ_ACCESS: Partial<CallerAccess> = {
 };
 
 /** A scope read's record for one call: SCOPE_READ_ACCESS with this call's folder coverage and the brain's schema version (GST-2687). */
-export async function scopeReadAccess(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Partial<CallerAccess>> {
+export async function scopeReadAccess(engine: Pick<BrainEngine, 'executeRaw' | 'readFolderAccess'>): Promise<Partial<CallerAccess>> {
   const { folderCoverage } = await folderAccessFor(engine, []);
   return { ...SCOPE_READ_ACCESS, folderCoverage, remotePolicy: { privacyRelaxed: false, restricted: true, ...await schemaVersionNow(engine) } };
 }

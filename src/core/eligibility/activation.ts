@@ -18,11 +18,13 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Notice } from '../agent-output.ts';
 import { admitsTrust, minTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
-import { guestView, loadGuestMarks, unattributedGuest, withGuestSourceSql, type GuestStamp } from '../guests/marker.ts';
+import { guestView, loadGuestMarks, unattributedGuest, type GuestStamp } from '../guests/marker.ts';
 import { activationSuppressedSql, type EligibilityTable } from './sql.ts';
 import type { ReadEligibility } from './policy.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
+/** pageActivationVerdicts reads page trust through the typed member; guest marks are still read raw. */
+type PageExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows'>;
 
 export interface ActivationRef { table: EligibilityTable; id: number }
 
@@ -41,18 +43,21 @@ export interface ActivationVerdict {
   unconfirmed: boolean;
 }
 
-const TABLE_SQL: Readonly<Record<EligibilityTable, string>> = {
-  facts: 'facts', takes: 'takes', timeline_entries: 'timeline_entries', pages: 'pages',
-};
+/** The typed trust reads activationVerdicts runs: each row's tier and its `activationSuppressedSql` flag. */
+type VerdictExec = Pick<BrainEngine, 'readRowTrustRows' | 'readPageTrustRows'>;
+
+/** One table's rows by id: pages through readPageTrustRows, the projection tables through readRowTrustRows. */
+async function trustRowsById(engine: VerdictExec, table: EligibilityTable, ids: number[]): Promise<Array<{ id: number; trust_tier: string; flagged: boolean }>> {
+  return table === 'pages' ? engine.readPageTrustRows({ ids }) : engine.readRowTrustRows({ table, ids });
+}
 
 /** Tier and suppression state for each referenced row; rows that no longer exist are absent. */
-export async function activationVerdicts(engine: Exec, refs: readonly ActivationRef[], policy: ReadEligibility): Promise<Map<string, ActivationVerdict>> {
+export async function activationVerdicts(engine: VerdictExec, refs: readonly ActivationRef[], policy: ReadEligibility): Promise<Map<string, ActivationVerdict>> {
   const out = new Map<string, ActivationVerdict>();
   const byTable = new Map<EligibilityTable, number[]>();
   for (const r of refs) if (Number.isFinite(r.id)) byTable.set(r.table, [...(byTable.get(r.table) ?? []), r.id]);
   for (const [table, ids] of byTable) {
-    const rows = await engine.executeRaw<{ id: number | string; trust_tier: string; flagged: boolean }>(
-      `SELECT a.id, a.trust_tier, ${activationSuppressedSql(table, 'a')} AS flagged FROM ${TABLE_SQL[table]} a WHERE a.id = ANY($1::bigint[])`, [[...new Set(ids)]]);
+    const rows = await trustRowsById(engine, table, [...new Set(ids)]);
     for (const row of rows) {
       const tier = storedTrustTier(row.trust_tier);
       const flagged = row.flagged === true;
@@ -80,7 +85,7 @@ export interface ActivationPartition<T> {
  * proactive surface never injects what it could not check). Order is kept.
  */
 export async function partitionForActivation<T>(
-  engine: Exec, items: readonly T[], refOf: (item: T) => ActivationRef, policy: ReadEligibility,
+  engine: VerdictExec, items: readonly T[], refOf: (item: T) => ActivationRef, policy: ReadEligibility,
 ): Promise<ActivationPartition<T>> {
   if (items.length === 0) return { kept: [], withheld: 0 };
   let verdicts: Map<string, ActivationVerdict>;
@@ -126,15 +131,13 @@ export interface PageKey { source_id: string; slug: string }
  * (retrieval reflex pointers, volunteered pages): verdicts per live page
  * key, with the label fields. Missing pages are absent (callers drop them).
  */
-export async function pageActivationVerdicts(engine: Exec, keys: readonly PageKey[], policy: ReadEligibility):
+export async function pageActivationVerdicts(engine: PageExec, keys: readonly PageKey[], policy: ReadEligibility):
   Promise<Map<string, ActivationVerdict & { origin: unknown; guest?: GuestStamp }>> {
   const out = new Map<string, ActivationVerdict & { origin: unknown; guest?: GuestStamp }>();
   if (keys.length === 0) return out;
-  const rows = await withGuestSourceSql(guestSql => engine.executeRaw<{ id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean }>(
-    `SELECT a.id, a.source_id, a.slug, a.trust_tier, a.write_origin, ${activationSuppressedSql('pages', 'a')} AS flagged,
-        ${guestSql('s.config', 'a.source_id')} AS guest FROM pages a LEFT JOIN sources s ON s.id = a.source_id
-      WHERE a.deleted_at IS NULL AND (a.source_id, a.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
-    [keys.map(k => k.source_id), keys.map(k => k.slug)]));
+  // The typed member every engine serves (engine-sql/cli-reads-import.ts on PGLite and Postgres, the Rust store), with
+  // the same guest_sources fallback withGuestSourceSql gave the inline statement this replaced.
+  const rows = await engine.readPageTrustRows({ keys: keys.map(k => ({ source_id: k.source_id, slug: k.slug })) });
   // GBRA-504: a page in a guest source carries its guest mark (one batched read), or reads unattributed.
   const marks = rows.some(r => r.guest === true) ? await loadGuestMarks(engine, rows.filter(r => r.guest === true).map(r => Number(r.id))) : null;
   for (const row of rows) {

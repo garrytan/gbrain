@@ -1,0 +1,6 @@
+**On Postgres, a decide read that gets stuck during a doctor check now ends at the check's time budget, and the decide store and decide proposals now sit behind engine members.**
+
+### Changed
+- The queries behind the decide store (state, spend, receipts and calibrations) and the decide proposals (supersede and review proposals, the review queue and the sweep retry table) now live in `src/core/engine-sql/` and are called through thirty-six new `BrainEngine` members on PGLite, Postgres and the opt-in Rust engine. The decide store, the decide proposals store, the review lane and the eval flags call the members instead of running the SQL themselves. PGLite and Postgres brains return the same results as before; the callers moved to the members and the SQL did not change.
+- On Postgres, the doctor's decide-health check still stops at its time budget when a decide read is stuck behind a lock, instead of running past it. The reads it makes (`readDecideState`, `decideSlotUsage`, `dailyDecideSpend`, `listDecideResolvedModels`, `listDecideMixedModelDecisions`, `listDecideReceiptStats`, `listDecideCalibrations`) run under the check's deadline, as the raw queries did before they moved.
+- On the Rust engine all thirty-six decide members work.

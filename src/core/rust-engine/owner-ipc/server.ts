@@ -4,8 +4,12 @@
  * BrainEngine calls through it (client.ts). The server takes any BrainEngine, so tests can host a PGLite engine as the
  * owner while the Rust store is still being built.
  *
- * - Calls run on a permit pool (OWNER_IPC_DEFAULT_PERMITS). A call over the limit waits in a FIFO queue; at its
- *   `deadline_at` it ends with `timeout` (queued or running), and a `cancel` frame ends it with nothing more sent.
+ * - Calls run on a permit pool (OWNER_IPC_DEFAULT_PERMITS). A call over the limit waits in its connection's queue,
+ *   and a free permit goes to the connections in turn (round-robin, FIFO inside one connection), so one client that
+ *   floods the owner does not starve another. At its `deadline_at` a call ends with `timeout` (queued or running), and
+ *   a `cancel` frame ends it with nothing more sent. The timeout reason is `not_started` when the call never left
+ *   the queue and `outcome_unknown` when it was running (the store does not observe the abort, so a running write can
+ *   still commit).
  * - Every call runs under its own AbortController: the request signal of the call (request-signal.ts), any
  *   AbortSignal argument the client sent, and the read deadline of the caller are restored in the owner.
  * - A permit is released only when the engine call itself settles, never when its reply is sent early (a timeout or
@@ -20,6 +24,7 @@ import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
 import type { BrainEngine } from '../../engine.ts';
 import { withRequestSignal } from '../../request-signal.ts';
 import { withReadDeadline } from '../../read-deadline.ts';
+import { withCallerAccess, withoutCallerAccess, type CallerAccess } from '../../search/private-visibility.ts';
 import { claimLocalIpcBinding, isWindowsIpcPipe } from '../../context/ipc-path.ts';
 import { decodeValue, encodeError, encodeValue, type Wire } from './codec.ts';
 import {
@@ -59,6 +64,17 @@ interface PendingCall {
   /** Epoch ms after which the call must not start; a call past it ends with `timeout` and never runs. */
   deadlineAt?: number;
   reply(frame: object): void;
+}
+
+/**
+ * The caller-access record a frame carried, as withCallerAccess takes it. Anything that is not an object with an array
+ * `identity` is refused, never read as no record: a caller that had a record never runs with the owner's wider view.
+ */
+function callerAccessOf(member: string, value: unknown): CallerAccess {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !Array.isArray((value as { identity?: unknown }).identity)) {
+    throw ownerIpcRefusal(member, 'its caller access record is not an object with an identity list');
+  }
+  return value as CallerAccess;
 }
 
 function timeoutReason(): Error {
@@ -101,7 +117,17 @@ export async function serveOwnerEngine(
   const permits = Math.max(1, opts.permits ?? OWNER_IPC_DEFAULT_PERMITS);
   const maxFrameBytes = opts.maxFrameBytes ?? OWNER_IPC_MAX_FRAME_BYTES;
   const wholeOperations = opts.wholeOperations ?? {};
-  const queue: PendingCall[] = [];
+  // One FIFO lane per connection, in turn order: the next permit goes to the first lane, which then moves to the end.
+  const lanes = new Map<object, PendingCall[]>();
+  const nextQueued = (): PendingCall | undefined => {
+    for (const [lane, calls] of lanes) {
+      lanes.delete(lane);
+      const call = calls.shift();
+      if (calls.length) lanes.set(lane, calls);
+      if (call) return call;
+    }
+    return undefined;
+  };
   const sockets = new Set<Socket>();
   let active = 0;
   let closing = false;
@@ -111,13 +137,14 @@ export async function serveOwnerEngine(
 
   const expire = (call: PendingCall, queued: boolean) => {
     if (call.timer) clearTimeout(call.timer);
-    call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerCallTimeout(call.member, 0, queued)) });
+    call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerCallTimeout(call.member, 0, queued ? 'queued' : 'sent')) });
     call.controller.abort(timeoutReason());
   };
 
   const pump = () => {
-    while (active < permits && queue.length) {
-      const call = queue.shift()!;
+    while (active < permits) {
+      const call = nextQueued();
+      if (!call) return;
       if (call.done) continue;
       if (closing) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); continue; }
       // A timer fires on a later turn, so a call whose deadline passed while it waited is checked here, before it runs.
@@ -160,20 +187,22 @@ export async function serveOwnerEngine(
     if (closing) { socket.destroy(); return; }
     sockets.add(socket);
     const calls = new Map<number, PendingCall>();
-    const send = (frame: object) => {
+    // `member` names the call a result answers; `reply` passes it because it drops the call from `calls` first.
+    const send = (frame: object, member?: string) => {
       if (socket.destroyed) return;
       const line = frameLine(frame, maxFrameBytes);
       if (line !== null) { socket.write(line); return; }
       const id = (frame as { id?: number }).id;
-      const call = id === undefined ? undefined : calls.get(id);
-      if ((frame as { t?: string }).t === 'result' && call) {
-        socket.write(frameLine({ t: 'result', id, ok: false, error: encodeError(ownerResponseTooLarge(call.member, maxFrameBytes)) })!);
+      const name = member ?? (id === undefined ? undefined : calls.get(id)?.member);
+      if ((frame as { t?: string }).t === 'result' && name !== undefined) {
+        socket.write(frameLine({ t: 'result', id, ok: false, error: encodeError(ownerResponseTooLarge(name, maxFrameBytes)) })!);
       }
     };
     socket.once('close', () => {
       sockets.delete(socket);
       for (const call of calls.values()) { call.done = true; call.controller.abort(new DOMException('The client closed its connection.', 'AbortError')); }
       calls.clear();
+      lanes.delete(calls);
     });
     readFrames(socket, frame => {
       switch (frame.t) {
@@ -193,13 +222,13 @@ export async function serveOwnerEngine(
     }, () => { /* the close handler ends this connection's calls */ }, maxFrameBytes);
   };
 
-  const admit = (frame: Record<string, unknown>, calls: Map<number, PendingCall>, send: (frame: object) => void) => {
+  const admit = (frame: Record<string, unknown>, calls: Map<number, PendingCall>, send: (frame: object, member?: string) => void) => {
     const id = Number(frame.id);
     const member = String(frame.t === 'fn' ? frame.name : frame.member);
     const controller = new AbortController();
     const call: PendingCall = {
       id, member, controller, done: false, queued: true, run: () => Promise.resolve(),
-      reply: out => { if (calls.get(id) === call) calls.delete(id); call.done = true; send(out); },
+      reply: out => { if (calls.get(id) === call) calls.delete(id); call.done = true; send(out, member); },
     };
     calls.set(id, call);
     const refuse = (error: unknown) => call.reply({ t: 'result', id, ok: false, error: encodeError(error) });
@@ -224,8 +253,12 @@ export async function serveOwnerEngine(
     } catch (error) { refuse(error); return; }
     const deadlineAt = typeof frame.deadline_at === 'number' ? frame.deadline_at : undefined;
     const readDeadlineAt = typeof frame.read_deadline_at === 'number' ? frame.read_deadline_at : undefined;
+    let access: CallerAccess | null;
+    try { access = frame.access === undefined ? null : callerAccessOf(member, decodeValue(frame.access as Wire)); } catch (error) { refuse(error); return; }
+    const invoke = () => readDeadlineAt === undefined ? target(...args) : withReadDeadline(readDeadlineAt, () => target(...args));
+    // The call runs under the caller's access record, re-checked by withCallerAccess, or under none when it had none.
     call.run = () => withRequestSignal(controller.signal, () =>
-      readDeadlineAt === undefined ? target(...args) : withReadDeadline(readDeadlineAt, () => target(...args)));
+      access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke));
     if (deadlineAt !== undefined) {
       call.deadlineAt = deadlineAt;
       // A request that arrives after its deadline never starts: a fast write would otherwise commit before the timer.
@@ -234,12 +267,13 @@ export async function serveOwnerEngine(
       call.timer = setTimeout(() => {
         if (call.done) return;
         const queued = call.queued;
-        call.reply({ t: 'result', id, ok: false, error: encodeError(ownerCallTimeout(member, ms, queued)) });
+        call.reply({ t: 'result', id, ok: false, error: encodeError(ownerCallTimeout(member, ms, queued ? 'queued' : 'sent')) });
         controller.abort(timeoutReason());
       }, ms);
       call.timer.unref?.();
     }
-    queue.push(call);
+    const lane = lanes.get(calls);
+    if (lane) lane.push(call); else lanes.set(calls, [call]);
     pump();
   };
 
@@ -264,17 +298,19 @@ export async function serveOwnerEngine(
 
   return {
     socketPath,
-    stats: () => ({ active, queued: queue.filter(call => !call.done).length, connections: sockets.size }),
+    stats: () => ({ active, queued: [...lanes.values()].reduce((sum, calls) => sum + calls.filter(call => !call.done).length, 0), connections: sockets.size }),
     // Stops new work, aborts every queued and running call, and resolves only when the server is closed AND every
     // engine call that started has settled, so the caller cannot release the owner lock while old work still runs.
     // A second close() gets the same promise, so no caller can release the lock before the drain ends.
     close: () => (closed ??= (async () => {
       closing = true;
       const serverClosed = new Promise<void>(resolve => server.close(() => resolve()));
-      for (const call of queue) {
-        if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
+      for (const calls of lanes.values()) {
+        for (const call of calls) {
+          if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
+        }
       }
-      queue.length = 0;
+      lanes.clear();
       for (const socket of sockets) socket.destroy();
       while (running.size) await Promise.allSettled([...running]);
       await serverClosed;

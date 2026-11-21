@@ -1,7 +1,6 @@
 //! Group 5 facts members that serve the owner from the stamped trust columns and the write-gate
-//! receipts: `readFactForOwnerAction`, `countDerivedFactTaint`, `listLexicalContestCandidates` and
-//! `listStandingPreferences`; and `matchSavedFacts`, the saved-facts keyword scan that ranks by
-//! the stamped tier.
+//! receipts: `readFactForOwnerAction`, `countDerivedFactTaint` and
+//! `listStandingPreferences`. `matchSavedFacts` and `listLexicalContestCandidates` are in `facts_trust.rs`.
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store::facts::trust_owner` call on
 //! the pool through `Brain::run` and resolves plain JSON. The TypeScript members
@@ -13,10 +12,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::saved_match::SavedFactsMatchQuery;
-use gbrain_store::facts::trust_owner::{
-    LexicalContestQuery, OwnerActionFactQuery, StandingPreferencesQuery,
-};
+use gbrain_store::facts::trust_owner::{OwnerActionFactQuery, StandingPreferencesQuery};
 
 #[napi]
 impl Brain {
@@ -39,19 +35,6 @@ impl Brain {
         self.run(env, move |s| s.count_derived_fact_taint())
     }
 
-    /// `listLexicalContestCandidates(args)`: resolves the more-trusted slot facts, newest first.
-    #[napi]
-    pub fn list_lexical_contest_candidates<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: LexicalContestQuery = required(args, "listLexicalContestCandidates args")?;
-            s.list_lexical_contest_candidates(&a)
-        })
-    }
-
     /// `listStandingPreferences(args)`: resolves the flagged unconfirmed standing instructions.
     #[napi]
     pub fn list_standing_preferences<'env>(
@@ -62,19 +45,6 @@ impl Brain {
         self.run(env, move |s| {
             let a: StandingPreferencesQuery = required(args, "listStandingPreferences args")?;
             s.list_standing_preferences(&a)
-        })
-    }
-
-    /// `matchSavedFacts(args)`: resolves the saved facts that share the query's words.
-    #[napi]
-    pub fn match_saved_facts<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: SavedFactsMatchQuery = required(args, "matchSavedFacts args")?;
-            s.match_saved_facts(&a)
         })
     }
 }

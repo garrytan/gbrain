@@ -7,6 +7,7 @@
  * ledger before it changes.
  */
 import type { BrainEngine } from '../../engine.ts';
+import { TAKE_PREIMAGE_SQL } from '../../engine-sql/takes-reads.ts';
 import type { GenerationAdapter } from '../contract.ts';
 import type { TakePreimage } from '../../engine-sql/takes-reads.ts';
 import { fenceRowKey, publishFenceGeneration, takeRowIdentity, TAKE_FENCE_KIND, type FenceGenerationOutcome, type FenceItem, type FenceRead } from '../fence.ts';
@@ -26,8 +27,7 @@ export const takeItem = (preimage: TakePreimage, key = `take:${preimage.id}`): F
 /** Full rows of the takes `ids` of page `pageId` (before-states), and of the takes `replaced` would overwrite at their numbers. */
 export async function takePreimages(db: BrainEngine, pageId: number, ids: readonly number[], replaced: readonly IncomingTake[] = []): Promise<{ gone: TakePreimage[]; replaced: TakePreimage[] }> {
   if (!ids.length && !replaced.length) return { gone: [], replaced: [] };
-  const rows = await db.readTakePreimages({ pageId, by: 'id', gone: ids,
-    incoming: replaced.map(take => ({ row_num: take.rowNum, claim: take.claim, kind: take.kind, holder: take.holder })) });
+  const rows = await db.listTakePreimages(pageId, ids, replaced.map(take => ({ row_num: take.rowNum, claim: take.claim, kind: take.kind, holder: take.holder })));
   return { gone: rows.filter(row => row.gone).map(row => row.preimage), replaced: rows.filter(row => !row.gone).map(row => row.preimage) };
 }
 

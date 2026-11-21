@@ -1173,7 +1173,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
       : isTurnRuleHarness(harness) ? turnRuleHookFor(harness, off, flags, projectDir, rerun.join(' ')) : null;
   // Loud failure: an accepted install whose per-turn hook does not load exits non-zero and names the harness's own check.
   // A 'print' outcome installed nothing and already names the step that does, so it is reported, not verified.
-  const check = !off && !flags.dryRun && instructions?.decision.value === 'accepted' && !flags.noHooks && process.env.GBRAIN_HOOKS !== '0' && turnHook && turnHook.action !== 'print' && turnHook.action !== 'remove' ? verifyTurnHook(harness, { projectDir }) : null;
+  const check = !off && !flags.dryRun && instructions?.decision.value === 'accepted' && !flags.noHooks && process.env.GBRAIN_HOOKS !== '0' && turnHook && turnHook.action !== 'print' && turnHook.action !== 'remove' && !('unchanged' in turnHook && turnHook.unchanged) ? verifyTurnHook(harness, { projectDir }) : null;
   const resolver = harness === 'claude-code' || harness === 'codex' || harness === 'hermes' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
   const skillPlugin = harness === 'openclaw' ? await openclawSkillFor(flags) : null;
   const cursorPins = harness === 'cursor' && projectDir ? await cursorPinsFor(flags, projectDir) : null;

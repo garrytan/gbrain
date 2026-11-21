@@ -13,9 +13,7 @@
 
 use super::embedding::md5_hex;
 use super::relink::Memos;
-use super::{
-    AUDIT_ROW_SOURCES, DAY_US, FactRecord, MEMBER_PAGE_PREFIX, count_arg, like, source_rows,
-};
+use super::{AUDIT_ROW_SOURCES, DAY_US, FactRecord, count_arg, like, source_rows};
 use crate::Store;
 use crate::error::{Result, StoreError};
 use crate::kv::KvRead;
@@ -24,8 +22,6 @@ use crate::pages::{all_pages, read_page, read_page_by_id};
 use crate::sources::{SourceRecord, all_sources, read_source};
 use crate::takes::all_takes;
 use crate::timeline_queries::jsonb_field_text;
-use crate::trust::fingerprint::{fact_fingerprint, fact_fingerprint_v1};
-use crate::trust::withdrawals::{withdrawal_time, withdrawn_claim};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -516,9 +512,10 @@ impl Store {
     /// width, or `embedded_text_hash` other than `md5(fact)`) and `partial` (not stale, but longer
     /// than `EMBED_MAX_CHARS` UTF-16 units). A fact is embeddable when it is not expired or
     /// superseded, not past `valid_until`, not an audit row, in a source that exists and is not
-    /// archived, and its page (`source_markdown_slug`) is not soft-deleted. The store keeps no
-    /// `fact_withdrawals` (the Rust engine refuses `executeRaw`, their only writer), so none hides
-    /// a fact. Rows come by source id.
+    /// archived, its page (`source_markdown_slug`) is not soft-deleted, and it has no
+    /// withdrawal of its claim (`eligibleFactEmbedding`: the row's source and visibility, either
+    /// fingerprint, subject `*` or the row's entity, or only the page's own subject on a member
+    /// page). Rows come by source id.
     pub fn count_fact_embedding_coverage(&self, q: &CoverageQuery) -> Result<Vec<Value>> {
         let mut groups: BTreeMap<String, [u64; 3]> = BTreeMap::new();
         self.for_each_embeddable_fact("countFactEmbeddingCoverage", q, &mut |row, stale| {
@@ -598,7 +595,7 @@ impl Store {
                 {
                     continue;
                 }
-                if embedding_withdrawn(&*read, &row)? {
+                if withdrawn_for_embedding(&*read, &row)? {
                     continue;
                 }
                 let stale = row.embedding.is_none()
@@ -611,26 +608,25 @@ impl Store {
         Ok(())
     }
 }
-
-/// `retainedFactEmbedding`'s two `fact_withdrawals` anti-joins: a withdrawal at the fact's source and visibility under
-/// `gbrain_fact_fingerprint` or `gbrain_fact_fingerprint_v1` of its text, whose subject is the fact's page for a fact
-/// on a member page (`memory/members/...`), else `*` or the fact's entity.
-fn embedding_withdrawn(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
-    match row.source_markdown_slug.as_deref() {
-        Some(page) if page.starts_with(MEMBER_PAGE_PREFIX) => {
-            for hash in [fact_fingerprint(&row.fact), fact_fingerprint_v1(&row.fact)] {
-                if withdrawal_time(read, &row.source_id, &row.visibility, page, &hash)?.is_some() {
-                    return Ok(true);
-                }
-            }
-            Ok(false)
-        }
-        _ => withdrawn_claim(
+/// `eligibleFactEmbedding`'s withdrawal anti-join: a withdrawal of the row's claim (either fingerprint) in its source and
+/// visibility whose subject is `*` or the row's entity, or, on a member page (`memory/members/..`), the page's own slug.
+/// It is narrower than the write-time guard: an unbacked name key gets no extra subjects here.
+fn withdrawn_for_embedding(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+    let member = row
+        .source_markdown_slug
+        .as_deref()
+        .filter(|s| s.starts_with("memory/members/"));
+    Ok(
+        crate::trust::withdrawals::withdrawals_of(
             read,
             &row.source_id,
             &row.visibility,
             &row.fact,
-            row.entity_slug.as_deref(),
-        ),
-    }
+        )?
+        .iter()
+        .any(|(subject, _)| match member {
+            Some(slug) => subject == slug,
+            None => subject == "*" || row.entity_slug.as_deref() == Some(subject.as_str()),
+        }),
+    )
 }

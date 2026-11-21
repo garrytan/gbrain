@@ -589,14 +589,18 @@ export async function maybeDrainDeferredEmbeds(engine: BrainEngine): Promise<voi
     for (const source of [...state.pending]) if (source && await getCompanyBrainProfile(engine, source)) state.pending.delete(source);
     if (!state.pending.size) { decideDeferredEmbed({ decision: 'no_sources' }); return; }
     const { detectCapabilities } = await import('./capability.ts');
-    if (!detectCapabilities().embeddings.available) { decideDeferredEmbed({ decision: 'keyless' }); return; }
+    const { embeddingSendBlocked, embeddingsDisabled } = await import('./embedding-disabled.ts');
+    const blocked = await embeddingSendBlocked(engine);
+    // #9715: a setting nobody could read keeps the sources pending and retries; off by choice drains as keyless.
+    const unreadable = blocked && !await embeddingsDisabled(engine);
+    if (!detectCapabilities().embeddings.available || (blocked && !unreadable)) { decideDeferredEmbed({ decision: 'keyless' }); return; }
     const passStart = performance.now();
-    log(`embed-drain started sources=${state.pending.size}`);
+    log(unreadable ? `embed-drain held: embedding_disabled could not be read sources=${state.pending.size}` : `embed-drain started sources=${state.pending.size}`);
     const { runEmbedCore } = await import('../commands/embed.ts');
-    let failed = false;
+    let failed = unreadable;
     // Snapshot one fair pass. A source queued again during its own provider
     // call stays pending, even when that earlier call reports no stale work.
-    for (const sourceId of [...state.pending]) {
+    for (const sourceId of unreadable ? [] : [...state.pending]) {
       if (state.stopped) break;
       state.pending.delete(sourceId);
       const sourceStart = performance.now();

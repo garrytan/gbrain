@@ -12,6 +12,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 
+/// The source a plain-directory sync reads (`PlainSyncSourceRow`). The store keeps no
+/// `last_commit`, so it is always null.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PlainSyncSourceRow {
+    pub local_path: Option<String>,
+    pub last_commit: Option<String>,
+    pub config: Map<String, Value>,
+}
+
 /// A source with a checkout path: `LocalPathSourceRow`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LocalPathSourceRow {
@@ -99,6 +108,17 @@ impl Store {
                 })
             })
             .collect())
+    }
+
+    /// `readPlainSyncSource(id)`: the source when it exists and is not archived.
+    pub fn read_plain_sync_source(&self, id: &str) -> Result<Option<PlainSyncSourceRow>> {
+        Ok(read_source(&*self.read()?, id)?
+            .filter(|s| !s.archived)
+            .map(|s| PlainSyncSourceRow {
+                local_path: s.local_path,
+                last_commit: None,
+                config: s.config,
+            }))
     }
 
     /// Every source, archived ones included, in id order, each with `default_has_pages`.

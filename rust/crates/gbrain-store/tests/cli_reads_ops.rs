@@ -97,7 +97,7 @@ fn exact_batch_needs_a_word_and_a_non_negative_limit() {
 }
 
 #[test]
-fn identity_and_rank_refuse_private_filters_the_store_does_not_keep() {
+fn identity_and_rank_refuse_exclude_private_without_a_page_policy() {
     let dir = TempDir::new("cli-reads-ops-private");
     let store = open(&dir);
     // excludePrivate with no page policy is refused: the store never guesses the caller.
@@ -110,6 +110,7 @@ fn identity_and_rank_refuse_private_filters_the_store_does_not_keep() {
         source_ids: vec!["default".into()],
         types: EntityTypeFilter::default(),
         remote: remote.clone(),
+        emails_only: false,
         limit: 10,
     };
     assert!(store.list_exact_identity_candidates(&identity).is_err());
@@ -204,6 +205,7 @@ fn identity_finds_a_live_page_by_its_alias_rows_in_the_named_sources_and_refuses
                 per_source: Vec::new(),
             },
             remote: None,
+            emails_only: false,
             limit: 10,
         })
     };
@@ -428,4 +430,89 @@ fn exact_rescan_chunks_keep_safe_fenced_pages_the_caller_may_read() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn identity_finds_a_page_by_its_phone_digits_and_emails_only_skips_titles_and_phones() {
+    let dir = TempDir::new("cli-reads-ops-phone");
+    let store = open(&dir);
+    page(
+        &store,
+        "default",
+        "people/alice-example",
+        "person",
+        json!({"phone": "+1 (415) 555-0100"}),
+    );
+    page(
+        &store,
+        "default",
+        "people/bob-example",
+        "person",
+        json!({"phones": ["415.555.0199", 4155550142_i64], "email": "bob@example.com"}),
+    );
+    page(
+        &store,
+        "default",
+        "people/carol-example",
+        "person",
+        json!({"phone": null}),
+    );
+    let read = |probes: ExactIdentityProbes, emails_only: bool| -> Vec<String> {
+        store
+            .list_exact_identity_candidates(&ExactIdentityInput {
+                probes,
+                source_ids: vec!["default".into()],
+                types: EntityTypeFilter {
+                    types: vec!["person".into()],
+                    per_source: Vec::new(),
+                },
+                remote: None,
+                emails_only,
+                limit: 10,
+            })
+            .unwrap()
+            .into_iter()
+            .map(|r| r.slug)
+            .collect()
+    };
+    let phones = |d: &[&str]| ExactIdentityProbes {
+        phones: d.iter().map(|s| s.to_string()).collect(),
+        ..ExactIdentityProbes::default()
+    };
+    assert_eq!(
+        read(phones(&["14155550100"]), false),
+        ["people/alice-example"]
+    );
+    assert_eq!(read(phones(&["4155550199"]), false), ["people/bob-example"]);
+    assert_eq!(read(phones(&["4155550142"]), false), ["people/bob-example"]);
+    assert!(read(phones(&["4155550100"]), false).is_empty());
+    // emailsOnly drops the phone and title arms; the email arm still runs.
+    assert!(read(phones(&["14155550100"]), true).is_empty());
+    let titled = ExactIdentityProbes {
+        title_raw: "PEOPLE/ALICE-EXAMPLE".into(),
+        emails: vec!["bob@example.com".into()],
+        ..ExactIdentityProbes::default()
+    };
+    assert_eq!(
+        read(titled.clone(), false),
+        ["people/alice-example", "people/bob-example"]
+    );
+    assert_eq!(read(titled, true), ["people/bob-example"]);
+    // No title key and no raw title: no title arm, so an empty probe finds nothing.
+    assert!(read(ExactIdentityProbes::default(), false).is_empty());
+    let rows = store
+        .list_exact_identity_candidates(&ExactIdentityInput {
+            probes: phones(&["4155550199"]),
+            source_ids: vec!["default".into()],
+            types: EntityTypeFilter {
+                types: vec!["person".into()],
+                per_source: Vec::new(),
+            },
+            remote: None,
+            emails_only: false,
+            limit: 10,
+        })
+        .unwrap();
+    assert_eq!(rows[0].phones, json!(["415.555.0199", 4155550142_i64]));
+    assert_eq!(rows[0].phone, Value::Null);
 }

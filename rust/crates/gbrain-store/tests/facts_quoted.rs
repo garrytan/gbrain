@@ -1,10 +1,12 @@
-//! The quote and slot-history reads of `facts/quoted.rs`, each against the rows its PGLite statement returns
-//! (src/core/engine-sql/facts-recall.ts).
+//! `listFactsFromQuotedPages` (`facts/quote.rs`, src/core/engine-sql/facts-trust.ts) across sources, sessions and
+//! derivation input edges, and `listReadablePageSlugs` (`facts/quoted.rs`, src/core/engine-sql/facts-recall.ts), each
+//! against the rows its PGLite statement returns. tests/facts_quote.rs holds the base quote cases and the owner-tier read.
 
 mod memory_env;
 
 use gbrain_store::facts::InsertFactsArgs;
-use gbrain_store::facts::quoted::{QuotedFactsQuery, ReadablePageSlugsQuery, TrustFloorQuery};
+use gbrain_store::facts::quote::QuotedPagesQuery;
+use gbrain_store::facts::quoted::ReadablePageSlugsQuery;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
 use memory_env::{Brain, brain};
@@ -55,10 +57,6 @@ fn fact(b: &Brain, source: &str, tier: Option<&str>, row: Value) -> u64 {
     tx.commit_transaction().unwrap();
     b.clock.advance(1);
     out["ids"][0].as_u64().unwrap()
-}
-
-fn as_i64(ids: &[u64]) -> Vec<i64> {
-    ids.iter().map(|id| *id as i64).collect()
 }
 
 #[test]
@@ -131,79 +129,25 @@ fn quoted_facts_name_a_typed_page_by_slug_or_backstop_session_in_their_own_sourc
         other_source,
         plain,
     ];
-    let mut ids = as_i64(&all);
-    ids.extend([by_slug as i64, -1, 999_999]);
-    let q: QuotedFactsQuery = args(json!({
+    let mut ids = all.to_vec();
+    ids.extend([by_slug, 999_999]);
+    let q: QuotedPagesQuery = args(json!({
         "ids": ids, "pageTypes": ["conversation"],
-        "backstopSessions": [["sync:import", "sync:"], ["mcp:put_page", "put_page:"]],
+        "backstop": [["sync:import", "sync:"], ["mcp:put_page", "put_page:"]],
     }));
     assert_eq!(
         b.list_facts_from_quoted_pages(&q).unwrap(),
         [by_slug, deleted_page, synced, put]
     );
 
-    let none: QuotedFactsQuery =
-        args(json!({ "ids": [], "pageTypes": ["conversation"], "backstopSessions": [] }));
+    let none: QuotedPagesQuery =
+        args(json!({ "ids": [], "pageTypes": ["conversation"], "backstop": [] }));
     assert!(b.list_facts_from_quoted_pages(&none).unwrap().is_empty());
-    let no_sessions: QuotedFactsQuery = args(json!({
-        "ids": as_i64(&all), "pageTypes": ["conversation", "note"], "backstopSessions": [] }));
+    let no_sessions: QuotedPagesQuery = args(json!({
+        "ids": all, "pageTypes": ["conversation", "note"], "backstop": [] }));
     assert_eq!(
         b.list_facts_from_quoted_pages(&no_sessions).unwrap(),
         [by_slug, deleted_page, note]
-    );
-}
-
-#[test]
-fn trust_floor_keeps_facts_whose_stored_tier_ranks_at_or_above_it() {
-    let b = brain("quoted-trust-floor");
-    let confirmed = fact(&b, "default", Some("user_confirmed"), json!({}));
-    let curated = fact(&b, "default", Some("operator_curated"), json!({}));
-    let agent = fact(&b, "default", Some("agent_written"), json!({}));
-    let unknown = fact(&b, "default", None, json!({}));
-    let ids = as_i64(&[confirmed, curated, agent, unknown, 999_999]);
-    let q = |floor: &str| -> TrustFloorQuery { args(json!({ "ids": ids, "floor": floor })) };
-    assert_eq!(
-        b.list_fact_ids_at_trust_floor(&q("operator_curated"))
-            .unwrap(),
-        [confirmed, curated]
-    );
-    assert_eq!(
-        b.list_fact_ids_at_trust_floor(&q("unknown")).unwrap(),
-        [confirmed, curated, agent, unknown]
-    );
-    assert_eq!(
-        b.list_fact_ids_at_trust_floor(&q("user_confirmed"))
-            .unwrap(),
-        [confirmed]
-    );
-    assert!(b.list_fact_ids_at_trust_floor(&q("not-a-tier")).is_err());
-}
-
-#[test]
-fn page_types_by_id_include_deleted_pages_and_skip_missing_ids() {
-    let b = brain("quoted-page-types");
-    let chat = page(&b, "default", "chats/a", "conversation", json!({}));
-    let gone = page(&b, "default", "notes/gone", "note", json!({}));
-    b.soft_delete_page("notes/gone", Some("default")).unwrap();
-    let rows = b
-        .read_page_types_by_ids(&[chat as i64, gone as i64, chat as i64, -1, 999_999])
-        .unwrap();
-    let mut rows: Vec<(u64, String)> = rows
-        .iter()
-        .map(|r| {
-            (
-                r["id"].as_u64().unwrap(),
-                r["type"].as_str().unwrap().to_string(),
-            )
-        })
-        .collect();
-    rows.sort();
-    assert_eq!(
-        rows,
-        [
-            (chat, "conversation".to_string()),
-            (gone, "note".to_string())
-        ]
     );
 }
 
@@ -332,10 +276,10 @@ fn quoted_facts_follow_a_derivation_input_edge_to_a_typed_page() {
         too_long,
         plain,
     ];
-    let q: QuotedFactsQuery = args(json!({
-        "ids": as_i64(&all),
+    let q: QuotedPagesQuery = args(json!({
+        "ids": all,
         "pageTypes": ["conversation"],
-        "backstopSessions": [["sync:import", "sync:"], ["mcp:put_page", "put_page:"]],
+        "backstop": [["sync:import", "sync:"], ["mcp:put_page", "put_page:"]],
     }));
     let mut want = vec![derived, from_deleted, from_other_source, padded];
     want.sort_unstable();

@@ -12,6 +12,10 @@
  *    would show wrong or missing records, and a release could act on a hold twice.
  *  - Why existing coverage misses it: the write gate tests drive these statements through `executeRaw` on PGLite
  *    alone; no case compares engines.
+ *  - The allow-rule case: the owner's allow rules (`trust_allow_rules`) are written by `trust allow` (trust/allow-rules.ts),
+ *    which is raw SQL. The SQL arms list and filter the rules it adds; the Rust arm must refuse that write (no Rust brain
+ *    holds an allow rule) and list none, so `trust review` and the write gate's allow check read an empty set there
+ *    instead of stopping on the raw read they used to run.
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18). Ids differ between arms, so each case
  *    returns ids as positions in the list of ids it created, and times only as their shape.
  */
@@ -19,6 +23,8 @@ import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { waitFor } from '../helpers/wait-for.ts';
+import { isCapabilityRefusal } from './arm-capabilities.ts';
+import { addTrustAllowRule, listTrustAllowRules, removeTrustAllowRule } from '../../src/core/trust/allow-rules.ts';
 import type { WriteGateHoldRow, WriteGateReceiptFields, WriteGateReceiptRow } from '../../src/core/engine-sql/trust-write-gate.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -179,4 +185,35 @@ describe('engine parity: write gate receipts and holds', () => {
       };
     },
   );
+
+  parityTest('listTrustAllowRuleRows lists no allow rule on a fresh brain, removed ones included', { methods: ['listTrustAllowRuleRows'] }, async (engine) => {
+    const out = { active: await listTrustAllowRules(engine), withRemoved: await listTrustAllowRules(engine, { includeRemoved: true }),
+      source: await listTrustAllowRules(engine, { sourceIds: ['default'] }), rows: await engine.listTrustAllowRuleRows() };
+    expect(out).toEqual({ active: [], withRemoved: [], source: [], rows: [] });
+    return out;
+  });
+
+  parityTest('listTrustAllowRuleRows lists the allow rules trust allow adds, active and by source; the add refuses on Rust', { methods: ['listTrustAllowRuleRows'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    const empty = await listTrustAllowRules(engine);
+    expect(empty).toEqual([]);
+    const add = (sourceId: string, reasonFamily: string | null) =>
+      addTrustAllowRule(engine, { sourceId, uriPrefix: 'https://feeds.example.com/', reasonFamily, reason: 'parity' }, null);
+    const first = await add('default', 'standing_instruction').then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(first, 'raw_sql')).toBe(true);
+      expect(await listTrustAllowRules(engine, { includeRemoved: true })).toEqual([]);
+      throw first;
+    }
+    expect(first).toBeNull();
+    const second = await add('work', null);
+    const third = await add('default', null);
+    expect(await removeTrustAllowRule(engine, third.rule.id, null)).not.toBeNull();
+    const view = async (opts: Parameters<typeof listTrustAllowRules>[1]) => (await listTrustAllowRules(engine, opts)).map((r) => ({
+      ...r, id: r.id - second.rule.id, ref: `a+${r.id - second.rule.id}`, created_at: r.created_at ? 'set' : null, removed_at: r.removed_at ? 'set' : null,
+    }));
+    return { empty, active: await view({}), withRemoved: await view({ includeRemoved: true }), work: await view({ sourceIds: ['work'] }),
+      none: await view({ sourceIds: [] }) };
+  });
 });
+

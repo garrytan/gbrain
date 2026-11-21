@@ -1,7 +1,8 @@
 /**
  * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
- * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers` and `listVersionReasonWriters`; and the
+ * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers`, `listVersionReasonWriters` and
+ * `listPageRefsByIds`; and the
  * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
  * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
  * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` answers false: the store keeps no `needs_rederive`
@@ -9,19 +10,21 @@
  * snapshot already. Its `READ ONLY` is enforced: every later write in the transaction refuses as Postgres refuses it.
  *
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
- *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is not the no-caller one (a member
- *    page, a grant, a lineage read, a labelled-only caller), as `storePagePolicy` refuses it;
+ *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is neither the no-caller one nor the
+ *    canonical one for its reader identity and private-readable sources (the remote floor: for no readers), such as
+ *    a lineage read or a labelled-only, owner or audience caller;
  *  - the trust scan over `takes` and `timeline_entries`, which the store does not stamp yet;
  *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`, always and before any store call: the store keeps no
  *    belief ledger (every `belief_events` and `belief_page_lifetimes` write goes through `executeRaw`), so a read could
  *    only answer an empty list where PGLite has events (TODOS.md `rust-belief-ledger`);
  *  - `listValidTimeIdentities` under `excludePrivate`, and `pickValidTimeEdition` always, for a caller whose page or
- *    snapshot policy is not the no-caller one (the pick reports every row's visibility);
+ *    snapshot policy is neither the no-caller one nor the canonical one for its reader identity and private-readable
+ *    sources (a labelled-only, owner, audience or lineage caller; the pick reports every row's visibility);
  *  - `pickValidTimeEdition` on a date that is not `YYYY-MM-DD`, rather than guess at Postgres's text order. The store
  *    prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same retained history, each version's
  *    change reason and `successor_pruned` mark, and the page's `version_history_gap_at`;
- *  - `listAmendmentsNotApplied` under `excludePrivate` for a caller whose remote read floor is not the no-caller page
- *    policy, and on dates that are not `YYYY-MM-DD`;
+ *  - `listAmendmentsNotApplied` under `excludePrivate` for a caller whose remote read floor is not the page policy of
+ *    no readers (a labelled-only caller), and on dates that are not `YYYY-MM-DD`;
  *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
  */
 import type { BrainEngine } from '../../engine.ts';
@@ -34,7 +37,7 @@ import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
+import { judgeWidenedCaller, renderForStoreCaller, storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -52,7 +55,9 @@ export const listCorePageRows: Member<'listCorePageRows'> = (brain, spec) => {
   const member = 'listCorePageRows';
   requireCount(member, 'limit', spec.limit);
   const policy = spec.excludePrivate
-    ? storePageTextPolicy(member, () => (spec.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')))
+    ? spec.forCaller
+      ? storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true })
+      : storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true })
     : null;
   const e = spec.eligibility;
   return storeCall({ member }, () => brain.listCorePageRows({
@@ -94,6 +99,15 @@ export const listVersionReasonWriters: Member<'listVersionReasonWriters'> = (bra
   return storeCall({ member }, () => brain.listVersionReasonWriters({ ids: [...ids] }));
 };
 
+export const listPageRefsByIds: Member<'listPageRefsByIds'> = async (brain, ids) => {
+  const member = 'listPageRefsByIds';
+  if (ids.length === 0) return [];
+  for (const id of ids) requireInteger(member, 'page id', id);
+  const rows: Array<{ id: number; source_id: string; slug: string; type: string | null }> =
+    await storeCall({ member }, () => brain.listPageRefsByIds({ ids: [...ids] }));
+  return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
+};
+
 /** Why the belief reads refuse: an answer from the store would be an empty ledger, never the one PGLite keeps. */
 const NO_BELIEF_LEDGER = 'the belief ledger, which the store does not keep yet';
 
@@ -103,8 +117,8 @@ export const listVisibleBeliefLifetimes: Member<'listVisibleBeliefLifetimes'> = 
 
 export const listValidTimeIdentities: Member<'listValidTimeIdentities'> = (brain, spec) => {
   const member = 'listValidTimeIdentities';
-  const excludePrivate = storePagePolicy(member, spec.excludePrivate) ?? null;
-  const world = storePageTextPolicy(member, () => privatePagesFilterFragment('p'));
+  const excludePrivate = storePagePolicy(member, spec.excludePrivate, { callerReaders: true }) ?? null;
+  const world = storePageTextPolicy(member, () => privatePagesFilterFragment('p'), { noReaders: true });
   return storeCall({ member }, () => brain.listValidTimeIdentities({
     slug: spec.slug, sourceId: spec.sourceId, sourceIds: spec.sourceIds ? [...spec.sourceIds] : null, excludePrivate, world,
   }));
@@ -121,10 +135,15 @@ export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain
   if (spec.pinOrd !== null) requireInteger(member, 'pinned ordinal', spec.pinOrd);
   requireCount(member, 'inline byte limit', spec.inlineMaxBytes);
   if (validDate(spec.asOf) !== spec.asOf) refuseMember(member, 'an as-of date that is not YYYY-MM-DD');
-  const policy = storePageTextPolicy(member, () => privatePagesFilterForCaller('p'));
-  if (snapshotVisibleSql() !== withoutCallerAccess(snapshotVisibleSql)) {
-    refuseMember(member, 'a caller whose readers or grants widen the snapshot policy');
-  }
+  const policy = storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
+  // The store judges a version by the page policy's readers: the caller's snapshot text must be the canonical one for them.
+  const readers = { identity: policy.identity ?? [], privateReadableSources: policy.privateReadableSources ?? [] };
+  const snapshotServed = judgeWidenedCaller(() => {
+    const text = snapshotVisibleSql();
+    if (text === withoutCallerAccess(snapshotVisibleSql)) return true;
+    return text === renderForStoreCaller({ ...readers, hidePrivate: true }, snapshotVisibleSql) || undefined;
+  });
+  if (!snapshotServed) refuseMember(member, 'a caller whose snapshot policy is not the canonical one for its readers');
   const got = await storeCall({ member }, () => brain.pickValidTimeEdition({
     pageId: spec.pageId, asOf: spec.asOf, excludePrivate: spec.excludePrivate, pinOrd: spec.pinOrd, inlineMaxBytes: spec.inlineMaxBytes,
     policy,
@@ -144,7 +163,7 @@ export const listAmendmentsNotApplied: Member<'listAmendmentsNotApplied'> = (bra
   if (validDate(spec.editionFrom) !== spec.editionFrom || validDate(spec.asOf) !== spec.asOf) {
     refuseMember(member, 'an edition or as-of date that is not YYYY-MM-DD');
   }
-  const excludePrivate = spec.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p')) : null;
+  const excludePrivate = spec.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true }) : null;
   return storeCall({ member }, () => brain.listAmendmentsNotApplied({
     pageId: spec.pageId, editionFrom: spec.editionFrom, asOf: spec.asOf, excludePrivate,
     sourceIds: spec.sourceIds ? [...spec.sourceIds] : null, limit: spec.limit,

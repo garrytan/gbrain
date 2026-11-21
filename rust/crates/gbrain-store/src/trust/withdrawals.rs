@@ -95,7 +95,7 @@ fn split(key: &[u8], prefix_len: usize) -> Option<(String, String, String)> {
 }
 
 /// The table's CHECK: Postgres refuses any other visibility with a check violation.
-fn check_visibility(op: &str, visibility: &str) -> Result<()> {
+pub(super) fn check_visibility(op: &str, visibility: &str) -> Result<()> {
     if VISIBILITIES.contains(&visibility) {
         Ok(())
     } else {
@@ -105,7 +105,8 @@ fn check_visibility(op: &str, visibility: &str) -> Result<()> {
     }
 }
 
-fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
+/// The time (micros) of the withdrawal `[source, visibility, subject, fact_hash]`, if any.
+pub(super) fn at(read: &dyn KvRead, parts: &[&str]) -> Result<Option<i64>> {
     Ok(get_json::<WithdrawalRecord>(read, &key(parts))?.map(|r| r.withdrawn_at_us))
 }
 
@@ -121,32 +122,78 @@ pub(crate) fn withdrawal_time(
     at(read, &[source_id, visibility, subject, fact_hash])
 }
 
-/// Every withdrawal of `source_id` at `visibility` as `(subject, fact_hash, withdrawn_at_us)`, in key
-/// order: the rows the facts insert and update guard `gbrain_preserve_fact_withdrawal` scans
-/// (`facts/withdrawal_guard.rs`).
-pub(crate) fn withdrawals_at(
+/// One stored withdrawal of a source (`fact_withdrawals` row).
+pub(crate) struct WithdrawalRow {
+    pub visibility: String,
+    pub subject: String,
+    pub fact_hash: String,
+    pub withdrawn_at_us: i64,
+}
+
+/// Every withdrawal of `source_id`, in key order (visibility, subject, fact_hash).
+pub(crate) fn source_withdrawals(read: &dyn KvRead, source_id: &str) -> Result<Vec<WithdrawalRow>> {
+    let prefix = source_prefix(source_id);
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let Some((visibility, subject, fact_hash)) = split(k, prefix.len()) else {
+            return true;
+        };
+        match serde_json::from_slice::<WithdrawalRecord>(v) {
+            Ok(r) => {
+                rows.push(WithdrawalRow {
+                    visibility,
+                    subject,
+                    fact_hash,
+                    withdrawn_at_us: r.withdrawn_at_us,
+                });
+                true
+            }
+            Err(e) => {
+                failed = Some(e);
+                false
+            }
+        }
+    })?;
+    match failed {
+        Some(e) => Err(StoreError::invalid(format!(
+            "fact withdrawals: corrupt record: {e}"
+        ))),
+        None => Ok(rows),
+    }
+}
+
+/// Every withdrawal of `source_id` at `visibility` whose fingerprint is `claim`'s fingerprint or
+/// its v1 fingerprint, as its subject and the time it was made: the rows
+/// `gbrain_preserve_fact_withdrawal` reads.
+pub(crate) fn withdrawals_of(
     read: &dyn KvRead,
     source_id: &str,
     visibility: &str,
-) -> Result<Vec<(String, String, i64)>> {
-    let prefix = source_prefix(source_id);
-    let mut out = Vec::new();
-    let mut failure = None;
-    scan_prefix(read, &prefix, false, &mut |k, v| {
-        if let Some((seen, subject, hash)) = split(k, prefix.len())
-            && seen == visibility
+    claim: &str,
+) -> Result<Vec<(String, i64)>> {
+    let hashes = [fact_fingerprint(claim), fact_fingerprint_v1(claim)];
+    let mut prefix = key(&[source_id, visibility]);
+    prefix.push(0);
+    let mut found = Vec::new();
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        if let Some(rest) = k
+            .get(prefix.len()..)
+            .and_then(|b| std::str::from_utf8(b).ok())
+            && let Some((subject, hash)) = rest.rsplit_once('\0')
+            && hashes.iter().any(|h| h == hash)
         {
-            match serde_json::from_slice::<WithdrawalRecord>(v) {
-                Ok(r) => out.push((subject, hash, r.withdrawn_at_us)),
-                Err(e) => failure = Some(StoreError::from(e)),
-            }
+            found.push((subject.to_string(), hash.to_string()));
         }
-        failure.is_none()
+        true
     })?;
-    match failure {
-        Some(e) => Err(e),
-        None => Ok(out),
+    let mut out = Vec::with_capacity(found.len());
+    for (subject, hash) in found {
+        if let Some(at) = at(read, &[source_id, visibility, &subject, &hash])? {
+            out.push((subject, at));
+        }
     }
+    Ok(out)
 }
 
 /// `EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = $source AND w.visibility =
@@ -439,26 +486,7 @@ impl Store {
         if old_slug == new_slug {
             return Ok(());
         }
-        self.write(|tx| {
-            let prefix = source_prefix(source_id);
-            let mut moved = Vec::new();
-            scan_prefix(tx, &prefix, false, &mut |k, v| {
-                if let Some((visibility, subject, hash)) = split(k, prefix.len())
-                    && subject == old_slug
-                {
-                    moved.push((k.to_vec(), visibility, hash, v.to_vec()));
-                }
-                true
-            })?;
-            for (old_key, visibility, hash, value) in moved {
-                tx.delete(&old_key)?;
-                let new_key = key(&[source_id, &visibility, new_slug, &hash]);
-                if tx.get(&new_key)?.is_none() {
-                    tx.put(&new_key, &value)?;
-                }
-            }
-            Ok(())
-        })
+        self.write(|tx| move_subject_in(tx, source_id, old_slug, new_slug))
     }
 
     /// `hasFactWithdrawalForSubject`: whether any withdrawal of the source has this subject.
@@ -573,6 +601,38 @@ impl Store {
         rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
         Ok(rows)
     }
+}
+
+/// Moves `source_id`'s withdrawals of subject `old_slug` to `new_slug` inside `tx`: a withdrawal `new_slug` already has
+/// keeps its time (`MOVE_WITHDRAWAL_SUBJECT_SQL`). A page rename runs it with the fact rows (`facts::rename_slug_rows`),
+/// so a claim withdrawn about the old slug stays withdrawn about the new one.
+pub(crate) fn move_subject_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    old_slug: &str,
+    new_slug: &str,
+) -> Result<()> {
+    if old_slug == new_slug {
+        return Ok(());
+    }
+    let prefix = source_prefix(source_id);
+    let mut moved = Vec::new();
+    scan_prefix(tx, &prefix, false, &mut |k, v| {
+        if let Some((visibility, subject, hash)) = split(k, prefix.len())
+            && subject == old_slug
+        {
+            moved.push((k.to_vec(), visibility, hash, v.to_vec()));
+        }
+        true
+    })?;
+    for (old_key, visibility, hash, value) in moved {
+        tx.delete(&old_key)?;
+        let new_key = key(&[source_id, &visibility, new_slug, &hash]);
+        if tx.get(&new_key)?.is_none() {
+            tx.put(&new_key, &value)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -29,6 +29,7 @@ use crate::keys;
 use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::read_page;
+use crate::trust::withdrawals::withdrawals_of;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
@@ -86,8 +87,8 @@ pub(super) fn fence_columns(out: &mut Map<String, Value>, r: &FactRecord) {
 
 /// `SELECT * FROM facts` for one row, as the single-fact decision reads it: every column, the
 /// times as ISO text, `embedding` as the vector's text, and the stamped `trust_tier` and
-/// `write_origin` and `source_window`. The store keeps no write-principal columns: they are NULL,
-/// the values a row written here carries, as `listFactsByEntity` answers.
+/// `write_origin`, the write receipt (`write_receipt.rs`) and `source_window`, as
+/// `listFactsByEntity` answers.
 fn select_star(r: &FactRecord) -> Value {
     let time = |us: Option<i64>| us.map(iso);
     let mut out = Map::new();
@@ -116,17 +117,7 @@ fn select_star(r: &FactRecord) -> Value {
     out.insert("value".into(), json!(r.value));
     out.insert("value_hash".into(), json!(r.value_hash));
     out.insert("dim_status".into(), json!(r.dim_status));
-    for column in [
-        "write_request_id",
-        "write_principal_kind",
-        "write_principal_id",
-        "last_write_request_id",
-        "last_write_principal_kind",
-        "last_write_principal_id",
-        "last_written_at",
-    ] {
-        out.insert(column.into(), Value::Null);
-    }
+    r.receipt.extend_json(&mut out);
     out.insert("source_window".into(), json!(r.source_window));
     out.insert("write_origin".into(), json!(r.write_origin));
     out.insert("trust_tier".into(), json!(r.tier().as_str()));
@@ -226,6 +217,8 @@ pub struct SingleFactQuery {
     pub page_slug: Option<String>,
     /// `remoteProvenanceFloorSql('facts')` when the caller passes `remoteFloor`.
     pub remote_floor: Option<PrivacyPolicy>,
+    /// The highest-id match instead of the lowest.
+    pub newest: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -473,7 +466,8 @@ impl Store {
     /// the lowest-id active row of the entity (NULL equals NULL) and visibility with the same
     /// fingerprint whose speaker slot fits (`attributedTo` unset, the row's unset, or equal) and
     /// that sits on `pageSlug` (a non-empty slug) or, with no `pageSlug`, on no owned memory page.
-    /// An empty `pageSlug` matches nothing. The row is `SELECT *`.
+    /// An empty `pageSlug` matches nothing. With `newest` it is the highest-id row instead. The row
+    /// is `SELECT *`.
     pub fn find_active_single_fact(&self, q: &SingleFactQuery) -> Result<Value> {
         const OP: &str = "findActiveSingleFact";
         no_nul(OP, &[("sourceId", &q.source_id), ("fact", &q.fact)])?;
@@ -496,7 +490,13 @@ impl Store {
                     .is_none_or(|who| row.attributed_to.as_ref().is_none_or(|a| a == who))
                 && fits_page
                 && fact_fingerprint(&row.fact) == hash
-                && found.as_ref().is_none_or(|best| row.id < best.id)
+                && found.as_ref().is_none_or(|best| {
+                    if q.newest {
+                        row.id > best.id
+                    } else {
+                        row.id < best.id
+                    }
+                })
                 && !hidden_by_policy(&*read, &row, &q.remote_floor)?
             {
                 found = Some(row);
@@ -643,6 +643,38 @@ impl Store {
             Ok(expired.into_iter().map(|id| json!({ "id": id })).collect())
         })
     }
+}
+
+/// The earliest withdrawal `gbrain_preserve_fact_withdrawal` finds for `row`, as the time it was
+/// made: a withdrawal of the same source and visibility, with the claim's fingerprint (or its v1
+/// fingerprint), and a subject that reaches the row. A row on a member page (`memory/members/..`)
+/// matches only that page's own withdrawals (GST-2346); any other row matches subject `*`, its
+/// entity, or, on an unbacked name key, any subject but an owned memory page (GBRA-574).
+pub(crate) fn earliest_withdrawal(read: &dyn KvRead, row: &FactRecord) -> Result<Option<i64>> {
+    let ledger = withdrawals_of(read, &row.source_id, &row.visibility, &row.fact)?;
+    if ledger.is_empty() {
+        return Ok(None);
+    }
+    let member = row
+        .source_markdown_slug
+        .as_deref()
+        .filter(|s| s.starts_with(MEMBER_PAGE_PREFIX));
+    let unbacked = member.is_none() && unbacked(read, row)?;
+    let mut earliest: Option<i64> = None;
+    for (subject, at) in ledger {
+        let covers = match member {
+            Some(slug) => subject == slug,
+            None => {
+                subject == "*"
+                    || row.entity_slug.as_deref() == Some(subject.as_str())
+                    || (unbacked && !owned_memory_subject(&subject))
+            }
+        };
+        if covers {
+            earliest = Some(earliest.map_or(at, |e| e.min(at)));
+        }
+    }
+    Ok(earliest)
 }
 
 /// A withdrawal under `subject` reaches `row`: every subject, the row's entity, an unbacked name

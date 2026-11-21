@@ -2,8 +2,8 @@
  * BrainEngine parity — the vector catalog the embedding commands read, and the stale-fact count.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: readChunkVectorColumn, readEmbeddingIdentity, listEmbeddingStores, hasStoredVectors and
- *    countStaleFactEmbeddings return the same observable result on every engine arm (PGLite always; Postgres with
+ *  - Contract: readChunkVectorColumn, readEmbeddingIdentity, listEmbeddingStores, hasStoredVectors,
+ *    countChunkVectorCoverage and countStaleFactEmbeddings return the same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: `gbrain embeddings enable` on a keyless Rust brain read the Postgres catalog through `executeRaw`, which
  *    the Rust engine refuses, so the command failed and the readiness fix it named re-initialized the store as PGLite.
@@ -12,7 +12,8 @@
  *  - Why existing coverage misses it: the statements ran through `executeRaw`, which the parity cases cannot call (D18).
  *  - Seam: none. The width and model are seeded through setConfig (the Rust store has no column type; it reads the
  *    config when no vector is stored), the vectors through upsertChunks, insertFact and updateTakeEmbeddings.
- *    `embedding_image` and `embedding_multimodal` have no Rust form and are not compared.
+ *    `embedding_image` and `embedding_multimodal` are fixed `vector(1024)` columns on Postgres and PGLite; the Rust store
+ *    answers them at that width whatever the text width is.
  */
 import { describe, expect } from 'bun:test';
 import { basisEmbedding, createSource, parityArms } from './harness.ts';
@@ -52,6 +53,41 @@ describe('engine parity: embedding catalog', () => {
     expect(embedding).toEqual({ exists: true, dims: 1536 });
     expect(missing).toEqual({ exists: false, dims: null });
     return { embedding, missing };
+  });
+
+  parityTest('readChunkVectorColumn reads embedding_image and embedding_multimodal at their fixed 1024 width, with or without a text width', { methods: ['readChunkVectorColumn'] }, async (engine) => {
+    const before = {
+      image: await engine.readChunkVectorColumn('embedding_image'),
+      multimodal: await engine.readChunkVectorColumn('embedding_multimodal'),
+    };
+    await configure(engine);
+    const after = {
+      image: await engine.readChunkVectorColumn('embedding_image'),
+      multimodal: await engine.readChunkVectorColumn('embedding_multimodal'),
+    };
+    const fixed = { exists: true, dims: 1024 };
+    expect(before).toEqual({ image: fixed, multimodal: fixed });
+    expect(after).toEqual(before);
+    return { before, after };
+  });
+
+  parityTest('countChunkVectorCoverage counts each source\'s chunks and none covered in the fixed columns, soft-deleted pages too', { methods: ['countChunkVectorCoverage', 'upsertChunks', 'softDeletePage'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await createSource(engine, backend, 'empty');
+    const empty = await engine.countChunkVectorCoverage('embedding_multimodal');
+    await engine.putPage('notes/a', { type: 'note', title: 'A', compiled_truth: 'alpha body' });
+    await engine.upsertChunks('notes/a', [chunk(0, 'alpha body', { embedding: basisEmbedding(1), model: MODEL }), chunk(1, 'alpha two')]);
+    await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'gone body' });
+    await engine.upsertChunks('notes/gone', [chunk(0, 'gone body')]);
+    await engine.softDeletePage('notes/gone');
+    await engine.putPage('notes/b', { type: 'note', title: 'B', compiled_truth: 'beta body' }, { sourceId: 'other' });
+    await engine.upsertChunks('notes/b', [chunk(0, 'beta body')], { sourceId: 'other' });
+    const multimodal = await engine.countChunkVectorCoverage('embedding_multimodal');
+    const image = await engine.countChunkVectorCoverage('embedding_image');
+    expect(empty).toEqual([]);
+    expect(multimodal).toEqual([{ source_id: 'default', total: 3, covered: 0 }, { source_id: 'other', total: 1, covered: 0 }]);
+    expect(image).toEqual(multimodal);
+    return { empty, multimodal, image };
   });
 
   parityTest('readEmbeddingIdentity reads the configured model and the column width, before and after a vector is stored', { methods: ['readEmbeddingIdentity', 'upsertChunks'] }, async (engine) => {

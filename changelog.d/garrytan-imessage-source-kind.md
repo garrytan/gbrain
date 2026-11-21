@@ -1,8 +1,0 @@
-**You can bring your iMessage history into your brain from a Mac, as private pages only you can read.**
-
-### Added
-- A new `imessage` source kind: `gbrain sources add <id> --kind imessage` imports one page per chat per day through GBrain Helper, a small app on your own Mac that reads the Messages database and answers gbrain on `127.0.0.1` (`gbrain config set apple.helper.port <port>`). Each sync re-reads the recent days, so an edit or an unsend on your phone updates the page and retires facts taken from the old text. Setup and every error code: docs/guides/apple-setup.md.
-- iMessage pages are private, live only in the database (nothing reaches a Git checkout, commit or push, even on a brain that has one) and are stored at the external-untrusted trust tier, like email. Embedding and fact extraction run only if you already configured a provider for them.
-- Owner-only sources: an `imessage` source, or any source whose config sets `owner_only: true`, is readable only by the local CLI and by agents bound to the brain's owner. Every other member, guest, shared room or unbound key gets `not_found` for its pages and for anything derived from them (facts, concepts, timelines), whatever privacy relaxations the brain has on, and their writes into such a source are refused. Removing the source stops hiding derived pages and facts stored in other sources, so delete those first if they should stay private.
-- New error codes `apple_helper_not_running`, `apple_helper_unauthorized`, `apple_full_disk_access_pending` and `apple_schema_mismatch`, each with its fix.
-- Schema migration v320 adds the `gbrain_owner_only_lineage` database function. A brain with no owner-only source runs no extra query and plans no extra step on its read paths.

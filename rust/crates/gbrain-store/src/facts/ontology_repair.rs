@@ -304,7 +304,7 @@ impl Store {
         let trust = &self.write_trust()?;
         self.write(|tx| {
             let mut referrers: BTreeMap<u64, Option<u64>> = BTreeMap::new();
-            for (id, keep) in keep_of {
+            for (&id, &keep) in &keep_of {
                 for referrer in ids_under(&*tx, &refs_prefix(id))? {
                     referrers.entry(referrer).or_insert(keep);
                 }
@@ -326,7 +326,7 @@ impl Store {
         let ids = id_set(OP, &a.ids)?;
         let trust = &self.write_trust()?;
         self.write(|tx| {
-            for id in ids {
+            for &id in &ids {
                 let Some(old) = read_fact(&*tx, id)? else {
                     continue;
                 };
@@ -350,7 +350,7 @@ impl Store {
         let ids = id_set(OP, &a.ids)?;
         let trust = &self.write_trust()?;
         self.write(|tx| {
-            for id in ids {
+            for &id in &ids {
                 if let Some(old) = read_fact(&*tx, id)?
                     && old.dimension.is_some()
                 {

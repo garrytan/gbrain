@@ -11,6 +11,9 @@
  *    engine has no SQL, so the statement has to exist as a typed member.
  *  - Why existing coverage misses it: the statement ran through `executeRaw` inside persistence/large-page-guard.ts,
  *    which the parity cases cannot call (D18).
+ *  - readPageBodySizes (append_page's read after its write, persistence/page-append.ts): the body and truth sizes of a
+ *    page by id, deleted or not; a segmented page answers body_bytes and truth_bytes. A wrong size breaks the append's
+ *    receipt (body_bytes, appended_bytes) and the mention range of its added bytes.
  *  - Seam: none. Typed members only (no executeRaw: D18).
  */
 import { describe, expect } from 'bun:test';
@@ -47,5 +50,31 @@ describe('engine parity: large-page write guard', () => {
     expect(sizes['notes/size-missing']).toBeNull();
     expect(otherSource).toBeNull();
     return { sizes, otherSource };
+  });
+
+  parityTest('readPageBodySizes answers a page\'s body and truth sizes by id, deleted or not, and null for no page', {
+    methods: ['putPage', 'softDeletePage', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging',
+      'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction', 'getPage', 'readPageBodySizes'],
+  }, async (engine) => {
+    const inline = await engine.putPage('notes/sizes-inline', { ...NOTE, compiled_truth: 'café body', timeline: '- 2026-01-01 € event' });
+    const empty = await engine.putPage('notes/sizes-empty', { ...NOTE, compiled_truth: '', timeline: '' });
+    const gone = await engine.putPage('notes/sizes-gone', { ...NOTE, compiled_truth: 'gone body', timeline: '' });
+    await engine.softDeletePage('notes/sizes-gone');
+    await publishSegmentedPage(engine, 'notes/sizes-segmented', [ONE, TWO]);
+    const segmented = await engine.getPage('notes/sizes-segmented');
+    expect(segmented).not.toBeNull();
+    const sizes = {
+      inline: await engine.readPageBodySizes(Number(inline.id)),
+      empty: await engine.readPageBodySizes(Number(empty.id)),
+      gone: await engine.readPageBodySizes(Number(gone.id)),
+      segmented: await engine.readPageBodySizes(Number(segmented!.id)),
+      missing: await engine.readPageBodySizes(Number(inline.id) + 100_000),
+    };
+    expect(sizes.inline).toEqual({ bytes: Buffer.byteLength('café body') + Buffer.byteLength('- 2026-01-01 € event'), truth: Buffer.byteLength('café body') });
+    expect(sizes.empty).toEqual({ bytes: 0, truth: 0 });
+    expect(sizes.gone).toEqual({ bytes: Buffer.byteLength('gone body'), truth: Buffer.byteLength('gone body') });
+    expect(sizes.segmented?.bytes).toBe(ONE.body.byteLength + TWO.body.byteLength);
+    expect(sizes.missing).toBeNull();
+    return sizes;
   });
 });

@@ -5,7 +5,7 @@
 //! One answer row per incoming row, in incoming order: the live page's tier, the tier of the page's newest fact at the
 //! row number (expired facts count, as the SQL reads `facts` with no `expired_at` filter) and whether that fact is
 //! activation-suppressed, whether a held fact hold of the page carries the row's fingerprint, and, with `hideHeld`,
-//! whether the row is held from a world-only fact reader (`held_cells::held` for an uncut claim). `purged` is whether a
+//! whether the row is held from a world-only fact reader (`held_cells::held` with no row admitted, for an uncut claim). `purged` is whether a
 //! fact purge tombstone at the row's visibility names its fingerprint under subject `*` or the page
 //! (`purge_ledger::purged_claim`).
 //! See rust/docs/store/facts.md, "The fence overlay".

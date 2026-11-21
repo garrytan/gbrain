@@ -16,14 +16,15 @@
  *  - Seam: none for the cases. Typed methods only (no executeRaw: D18); the
  *    sealed-projection fixture goes through chunk-fixtures.ts (see its header).
  */
-import { describe, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { SearchResult } from '../../src/core/types.ts';
 import { basisEmbedding, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, installChunks, seedPage } from './chunk-fixtures.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
-const { parityTest } = parityArms(testBackends());
+const { parityTest, arms } = parityArms(testBackends());
 
 /** Order-significant, engine-independent view of a result row. */
 function hit(r: SearchResult) {
@@ -117,6 +118,25 @@ describe('engine parity: search', () => {
       const multiType = sorted((await engine.searchKeyword(q, { limit: 10, types: ['concept', 'writing'] })).map((r) => r.type));
       expect(multiType).toEqual(['concept', 'writing']);
       return { all, limited, offset, excluded, prefixExcluded, typed, multiType };
+    },
+  );
+
+  parityTest(
+    'searchKeyword hides the prefixes GBRAIN_SEARCH_EXCLUDE names; include_slug_prefixes opts back in',
+    { methods: ['searchKeyword'] },
+    async (engine) => {
+      await seedCorpus(engine);
+      const q = 'fat code thin harness';
+      const slugs = async (opts: Parameters<BrainEngine['searchKeyword']>[1]) => sorted((await engine.searchKeyword(q, opts)).map((r) => r.slug));
+      const plain = await slugs({ limit: 10 });
+      expect(plain.some((s) => s.startsWith('openclaw/'))).toBe(true);
+      return withEnv({ GBRAIN_SEARCH_EXCLUDE: ' openclaw/ ,' }, async () => {
+        const hidden = await slugs({ limit: 10 });
+        expect(hidden.some((s) => s.startsWith('openclaw/'))).toBe(false);
+        const optedIn = await slugs({ limit: 10, include_slug_prefixes: ['openclaw/'] });
+        expect(optedIn).toEqual(plain);
+        return { plain, hidden, optedIn };
+      });
     },
   );
 
@@ -533,6 +553,167 @@ describe('engine parity: search', () => {
   );
 
   parityTest(
+    'searchKeyword with excludePrivate hides the pages the private-page policy hides and a limit counts only visible pages',
+    { methods: ['searchKeyword'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      // The pages the policy hides repeat the term, so they outrank every visible page: a limit that counted them would
+      // return fewer visible pages than it asks for.
+      const hot = 'lanternfish lanternfish lanternfish lanternfish ledger';
+      const plain = 'lanternfish ledger entry';
+      const page = (title: string, compiled_truth: string, extra: Record<string, unknown> = {}) =>
+        ({ type: 'note' as const, title, compiled_truth, timeline: '', ...extra });
+      const put = (slug: string, input: ReturnType<typeof page>, sourceId?: string) =>
+        seedPage(engine, { slug, input, chunks: [chunk(0, input.compiled_truth)] }, sourceId ? { sourceId } : undefined);
+      await put('notes/open-a', page('Open A', plain));
+      await put('notes/open-b', page('Open B', `${plain} again`));
+      await put('notes/visibility-private', page('Visibility private', hot, { frontmatter: { visibility: 'private' } }));
+      await put('notes/access-private', page('Access private', hot, { frontmatter: { access: 'private' } }));
+      await put('notes/confidentiality-secret', page('Confidentiality secret', hot, { frontmatter: { confidentiality: 'secret' } }));
+      await put('notes/public-wins', page('Public wins', hot, { frontmatter: { visibility: 'public', access: 'private' } }));
+      await put('notes/named-readers', page('Named readers', hot, { frontmatter: { readable_by: ['someone'] } }));
+      await put('atoms/derived-atom', page('Derived atom', hot, { type: 'atom' }));
+      await put('notes/handle-secret', page('Handle secret', 'unrelated words only', { frontmatter: { visibility: 'private' } }));
+      await put('notes/work-open', page('Work open', plain), 'work');
+      await put('notes/work-private', page('Work private', hot, { frontmatter: { visibility: 'private' } }), 'work');
+
+      const q = 'lanternfish ledger';
+      type Opts = Parameters<BrainEngine['searchKeyword']>[1];
+      const slugs = async (query: string, opts?: Opts) =>
+        (await engine.searchKeyword(query, opts)).map((r) => `${r.source_id}:${r.slug}`);
+      const out = {
+        omitted: await slugs(q, { limit: 20 }),
+        off: await slugs(q, { limit: 20, excludePrivate: false }),
+        on: await slugs(q, { limit: 20, excludePrivate: true }),
+        onOneRow: await slugs(q, { limit: 1, excludePrivate: true }),
+        onSecondRow: await slugs(q, { limit: 1, offset: 1, excludePrivate: true }),
+        onDefaultSource: await slugs(q, { limit: 20, excludePrivate: true, sourceId: 'default' }),
+        onWorkSource: await slugs(q, { limit: 20, excludePrivate: true, sourceIds: ['work'] }),
+        onTyped: await slugs(q, { limit: 20, excludePrivate: true, type: 'atom' }),
+        onRelaxed: await slugs('lanternfish nonesuchword', { limit: 20, excludePrivate: true, orFallback: true }),
+        handleOff: await slugs('handle-secret lanternfish', { limit: 20, orFallback: true }),
+        handleOn: await slugs('handle-secret lanternfish', { limit: 20, orFallback: true, excludePrivate: true }),
+      };
+      // The policy hides pages: the visible ones, and no others, answer.
+      expect(out.omitted).toEqual(out.off);
+      expect(out.off.length).toBe(10);
+      expect(sorted(out.on)).toEqual(['default:notes/open-a', 'default:notes/open-b', 'default:notes/public-wins', 'work:notes/work-open']);
+      expect(out.onOneRow.length).toBe(1);
+      expect(out.onSecondRow.length).toBe(1);
+      expect(out.onOneRow).not.toEqual(out.onSecondRow);
+      expect(sorted(out.onWorkSource)).toEqual(['work:notes/work-open']);
+      expect(out.onTyped).toEqual([]);
+      expect(out.handleOff).toContain('default:notes/handle-secret');
+      expect(out.handleOn).not.toContain('default:notes/handle-secret');
+      return out;
+    },
+  );
+
+  // The harness counts a typed refusal as an acceptable Rust outcome for a case, so the case above would also pass on a Rust
+  // arm that still refused excludePrivate (the arm's tally says how many cases ended on a refusal). This test fails on that
+  // arm: it reads the answer, and it asserts the options the store still cannot answer. A refusal caught inside a parity
+  // case would fail the arm's check, so both are asserted here on the Rust arm's own engine.
+  test('the Rust arm answers excludePrivate on every keyword member and still refuses an option no member handles', async () => {
+    const rust = arms().find((arm) => arm.backend === 'rust');
+    if (!rust) return;
+    const engine = rust.engine;
+    await seedPage(engine, { slug: 'notes/refusal-probe', input: { type: 'note', title: 'Refusal probe', compiled_truth: 'periwinkle ledger', timeline: '' }, chunks: [chunk(0, 'periwinkle ledger')] });
+    await seedPage(engine, {
+      slug: 'notes/refusal-hidden',
+      input: { type: 'note', title: 'Refusal hidden', compiled_truth: 'periwinkle periwinkle periwinkle ledger', timeline: '', frontmatter: { visibility: 'private' } },
+      chunks: [chunk(0, 'periwinkle periwinkle periwinkle ledger')],
+    });
+    const slugs = async (opts: Parameters<BrainEngine['searchKeyword']>[1]) => (await engine.searchKeyword('periwinkle ledger', opts)).map((r) => r.slug);
+    expect(await slugs({ limit: 5 })).toEqual(['notes/refusal-hidden', 'notes/refusal-probe']);
+    expect(await slugs({ limit: 5, excludePrivate: true })).toEqual(['notes/refusal-probe']);
+    expect(await slugs({ limit: 1, excludePrivate: true })).toEqual(['notes/refusal-probe']);
+    const refusal = async (run: () => Promise<unknown>) => {
+      const error = await run().then(() => null, (e: unknown) => e as { code?: string; message?: string });
+      return { code: error?.code, message: error?.message };
+    };
+    const got = await refusal(() => engine.searchKeyword('periwinkle', { excludePrivate: true, notAnOption: true } as never));
+    expect(got.code).toBe('engine_capability_missing');
+    expect(got.message).toContain('notAnOption');
+    // The other keyword members and the title arm (which reads titles, so it asks for `refusal`) answer excludePrivate too,
+    // and hide the private page.
+    const pageSlugs = (rows: Array<{ slug: string }>) => [...new Set(rows.map((r) => r.slug))];
+    const others = {
+      searchTitles: pageSlugs(await engine.searchTitles('refusal', { excludePrivate: true })),
+      searchKeywordChunks: pageSlugs(await engine.searchKeywordChunks('periwinkle', { excludePrivate: true })),
+      countKeywordPages: await engine.countKeywordPages('periwinkle', { excludePrivate: true }),
+      searchKeywordPages: pageSlugs(await engine.searchKeywordPages('periwinkle', { excludePrivate: true }, { limit: 5, offset: 0 })),
+    };
+    expect(others).toEqual({ searchTitles: ['notes/refusal-probe'], searchKeywordChunks: ['notes/refusal-probe'], countKeywordPages: 1, searchKeywordPages: ['notes/refusal-probe'] });
+    // The title arm reads titles only: it finds the probe by its title, and without the option it returns the hidden page too.
+    expect((await engine.searchTitles('refusal probe', { limit: 5, excludePrivate: true })).map((r) => r.slug)).toEqual(['notes/refusal-probe']);
+    expect((await engine.searchTitles('refusal', { limit: 5 })).map((r) => r.slug).sort()).toEqual(['notes/refusal-hidden', 'notes/refusal-probe']);
+    const titlesRefusal = await refusal(() => engine.searchTitles('refusal', { excludePrivate: true, notAnOption: true } as never));
+    expect(titlesRefusal.code).toBe('engine_capability_missing');
+    expect(titlesRefusal.message).toContain('notAnOption');
+  });
+
+  parityTest(
+    'searchTitles with excludePrivate hides the pages the private-page policy hides, matches titles only and counts only visible pages',
+    { methods: ['searchTitles'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      const put = (slug: string, title: string, frontmatter?: Record<string, unknown>, sourceId?: string, type: 'note' | 'atom' = 'note', timeline = '') =>
+        seedPage(engine, {
+          slug,
+          input: { type, title, compiled_truth: `${title} body`, timeline, ...(frontmatter ? { frontmatter } : {}) },
+          chunks: [chunk(0, `${title} body`)],
+        }, sourceId ? { sourceId } : undefined);
+      // The hidden pages repeat the term in the title, so they outrank every visible page: a limit that counted them would
+      // return fewer visible pages than it asks for.
+      await put('notes/open-a', 'Pelican ledger');
+      await put('notes/open-b', 'Pelican ledger again and again');
+      await put('notes/visibility-private', 'Pelican pelican pelican ledger', { visibility: 'private' });
+      await put('notes/access-private', 'Pelican pelican pelican ledger access', { access: 'private' });
+      await put('notes/public-wins', 'Pelican public ledger', { visibility: 'public', access: 'private' });
+      await put('notes/named-readers', 'Pelican pelican named ledger', { readable_by: ['someone'] });
+      await put('atoms/derived-atom', 'Pelican pelican derived ledger', undefined, undefined, 'atom');
+      await put('notes/work-open', 'Pelican work ledger', undefined, 'work');
+      await put('notes/work-private', 'Pelican pelican work ledger', { visibility: 'private' }, 'work');
+      // The word is in the timeline only: the whole-vector match finds the page, the title-only match (the safe-chunks rule) does not.
+      await put('notes/sealed-timeline', 'Heron notes', undefined, undefined, 'note', 'kingfisher sighted');
+      await put('notes/sealed-timeline-private', 'Heron private notes', { visibility: 'private' }, undefined, 'note', 'kingfisher sighted');
+
+      const q = 'pelican ledger';
+      type Opts = Parameters<BrainEngine['searchTitles']>[1];
+      const slugs = async (query: string, opts?: Opts) =>
+        (await engine.searchTitles(query, opts)).map((r) => `${r.source_id}:${r.slug}`);
+      const out = {
+        omitted: await slugs(q, { limit: 20 }),
+        off: await slugs(q, { limit: 20, excludePrivate: false }),
+        on: await slugs(q, { limit: 20, excludePrivate: true }),
+        onOneRow: await slugs(q, { limit: 1, excludePrivate: true }),
+        onSecondRow: await slugs(q, { limit: 1, offset: 1, excludePrivate: true }),
+        onDefaultSource: await slugs(q, { limit: 20, excludePrivate: true, sourceId: 'default' }),
+        onWorkSource: await slugs(q, { limit: 20, excludePrivate: true, sourceIds: ['work'] }),
+        onTyped: await slugs(q, { limit: 20, excludePrivate: true, type: 'atom' }),
+        onRelaxed: await slugs('pelican ledger nonesuchword', { limit: 20, excludePrivate: true }),
+        timelineOff: await slugs('kingfisher', { limit: 20 }),
+        timelineOn: await slugs('kingfisher', { limit: 20, excludePrivate: true }),
+        timelineOnSafeOff: await slugs('kingfisher', { limit: 20, excludePrivate: true, requireSafeChunks: false }),
+      };
+      expect(out.omitted).toEqual(out.off);
+      expect(out.off.length).toBe(9);
+      expect(sorted(out.on)).toEqual(['default:notes/open-a', 'default:notes/open-b', 'default:notes/public-wins', 'work:notes/work-open']);
+      expect(out.onOneRow.length).toBe(1);
+      expect(out.onSecondRow.length).toBe(1);
+      expect(out.onOneRow).not.toEqual(out.onSecondRow);
+      expect(sorted(out.onWorkSource)).toEqual(['work:notes/work-open']);
+      expect(out.onTyped).toEqual([]);
+      expect(sorted(out.onRelaxed)).toEqual(sorted(out.on));
+      // excludePrivate turns the safe-chunks rule on, which matches titles alone; requireSafeChunks: false keeps the whole-vector match.
+      expect(sorted(out.timelineOff)).toEqual(['default:notes/sealed-timeline', 'default:notes/sealed-timeline-private']);
+      expect(out.timelineOn).toEqual([]);
+      expect(out.timelineOnSafeOff).toEqual(['default:notes/sealed-timeline']);
+      return out;
+    },
+  );
+
+  parityTest(
     'searchTitles: sealed timelines, timeline entries, the candidate cut, the OR retry by rarity, identifiers and paging',
     { methods: ['searchTitles'] },
     async (engine) => {
@@ -617,9 +798,9 @@ describe('engine parity: search', () => {
   );
 
   parityTest(
-    'keyword search marks a page stale on every arm when a timeline entry is newer than the page',
+    'keyword search marks a page stale as each SQL engine does when a timeline entry is newer than the page',
     { methods: ['searchKeyword', 'searchKeywordChunks', 'searchKeywordPages'] },
-    async (engine) => {
+    async (engine, backend) => {
       for (const slug of ['notes/otter-fresh', 'notes/otter-stale']) {
         const page = { type: 'note' as const, title: slug, compiled_truth: 'otter colony survey', timeline: '' };
         await seedPage(engine, { slug, input: page, chunks: [chunk(0, 'otter colony survey')] });
@@ -633,9 +814,16 @@ describe('engine parity: search', () => {
         chunks: view(await engine.searchKeywordChunks('otter colony', { limit: 10 })),
         pages: view(await engine.searchKeywordPages('otter colony', undefined, { limit: 10 })),
       };
-      const expected = ['notes/otter-fresh false', 'notes/otter-stale true'];
-      expect(out).toEqual({ keyword: expected, chunks: expected, pages: expected });
-      return out;
+      // The SQL engines disagree, and the Rust arm matches PGLite: PGLite's keyword and chunk arms read the newest timeline
+      // entry, Postgres reads no timeline_entries (a read role may have no SELECT on it) and reports false, and the page
+      // search (keyword-statement.ts, shared by both) always reports false.
+      const marked = ['notes/otter-fresh false', 'notes/otter-stale true'];
+      const unmarked = ['notes/otter-fresh false', 'notes/otter-stale false'];
+      const arm = backend === 'postgres' ? unmarked : marked;
+      expect(out).toEqual({ keyword: arm, chunks: arm, pages: unmarked });
+      // The stale flag differs by engine by design (above), so the arms compare only the pages each search found.
+      const slugs = (rows: string[]) => rows.map((r) => r.split(' ')[0]);
+      return { keyword: slugs(out.keyword), chunks: slugs(out.chunks), pages: out.pages };
     },
   );
 

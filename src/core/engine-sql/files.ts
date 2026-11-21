@@ -8,7 +8,7 @@
  * a no-op, different content_hash overwrites in place. Reads were unscoped on
  * master (EO4 inventory): `LegacyUnscopedRead`.
  */
-import type { FileRow, FileSpec } from '../engine.ts';
+import type { FileRow, FileSpec, ListFilesOptions } from '../engine.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment } from './fragment.ts';
@@ -45,6 +45,28 @@ export async function getFile(exec: LegacyUnscopedRead, sourceId: string, storag
       LIMIT 1
     `);
     return rows.length > 0 ? fileRow(rows[0]) : null;
+  }
+
+/**
+ * The files `gbrain files list` prints: one slug's by filename, or every file by page slug (no slug last) then
+ * filename. The id tie-break keeps a page of equal names in one fixed order.
+ */
+export async function listFiles(exec: LegacyUnscopedRead, opts: ListFilesOptions): Promise<FileRow[]> {
+    const { rows } = opts.pageSlug != null
+      ? await exec.run(sqlFragment`
+      SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at
+      FROM files
+      WHERE page_slug = ${opts.pageSlug}
+      ORDER BY filename, id
+      LIMIT ${opts.limit}
+    `)
+      : await exec.run(sqlFragment`
+      SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at
+      FROM files
+      ORDER BY page_slug, filename, id
+      LIMIT ${opts.limit}
+    `);
+    return rows.map(row => fileRow(row));
   }
 
 export async function listFilesForPage(exec: LegacyUnscopedRead, pageId: number): Promise<FileRow[]> {

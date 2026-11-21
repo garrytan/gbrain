@@ -1,0 +1,73 @@
+name: OpenClaw skill resolver bench
+
+# The skill-resolver plugin in a real OpenClaw gateway on the public labelled
+# request set (scripts/bench/openclaw-skill-resolver-real.ts): right skill in
+# the block, false suggestions on no-skill turns, deadline misses and the
+# plugin's p95, at 750 skills. Keyless (loopback fake model). Reports only;
+# it gates nothing. Run by hand (workflow_dispatch) after a resolver change,
+# on the 4-vCPU runner twice: idle, and with 3 busy-loop processes as a loaded
+# machine. It has no schedule, so a slow or red run never opens a master-red
+# incident.
+
+on:
+  workflow_dispatch:
+    inputs:
+      openclaw:
+        description: OpenClaw version
+        type: string
+        default: '2026.11.5'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    name: OpenClaw skill resolver bench (${{ matrix.load == 0 && 'idle' || 'loaded' }})
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        load: [0, 3]
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24.18.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile
+      - name: Install OpenClaw
+        timeout-minutes: 8
+        run: scripts/ci-install-openclaw.sh
+        env:
+          OPENCLAW_SPEC: openclaw@${{ inputs.openclaw || '2026.11.5' }}
+      - name: Run the bench
+        timeout-minutes: 45
+        run: |
+          bun scripts/bench/openclaw-skill-resolver-real.ts --load ${{ matrix.load }} --out "$RUNNER_TEMP/openclaw-skill-resolver-bench.json"
+          { echo '```json'; cat "$RUNNER_TEMP/openclaw-skill-resolver-bench.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the summary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openclaw-skill-resolver-bench-load-${{ matrix.load }}
+          path: |
+            ${{ runner.temp }}/openclaw-skill-resolver-bench.json
+            ${{ runner.temp }}/openclaw-skill-resolver-bench.turns.jsonl
+          retention-days: 30
+          if-no-files-found: warn

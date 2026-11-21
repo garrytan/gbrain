@@ -275,6 +275,9 @@ export interface TimelineRowRemoval { id: number; date: string; source: string; 
 /** One stored non-event timeline row whose detail a write refreshes: `detail` is the preimage, `next` the new text. */
 export interface TimelineDetailRefresh { id: number; detail: string; next: string | undefined }
 
+/** One timeline bullet of a page body the fence projection inserts as the page's own row (`date` is `YYYY-MM-DD`). */
+export interface CanonicalTimelineRow { date: string; source: string; summary: string; detail: string }
+
 const REMOVE_TIMELINE_ROWS_SQL = `DELETE FROM timeline_entries t USING jsonb_to_recordset($2::text::jsonb) AS d(id integer,date date,source text,summary text,detail text,removed boolean)
         WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=d.id AND t.date=d.date AND t.source=d.source
           AND t.summary=d.summary AND t.detail=d.detail RETURNING t.date::text AS date, d.removed`;
@@ -291,23 +294,17 @@ export async function removeTimelineRows(exec: SqlExecutor, pageId: number, rows
   return exec.executeRaw<{ date: string; removed: boolean }>(REMOVE_TIMELINE_ROWS_SQL, [pageId, JSON.stringify(rows)]);
 }
 
-/** One entry a page body carries, inserted by the canonical projection (`BrainEngine.insertPageTimelineRows`). */
-export interface TimelineRowInsert { date: string; source: string; summary: string; detail: string }
-
-const INSERT_PAGE_TIMELINE_ROWS_SQL = `INSERT INTO timeline_entries (page_id,date,source,summary,detail)
+const INSERT_CANONICAL_TIMELINE_SQL = `INSERT INTO timeline_entries (page_id,date,source,summary,detail)
     SELECT $1,r.date::date,r.source,r.summary,r.detail FROM jsonb_to_recordset($2::text::jsonb) AS r(ord integer,date text,source text,summary text,detail text)
     ORDER BY r.ord
     ON CONFLICT (page_id,date,md5(summary),source) DO NOTHING`;
 
 /**
- * Inserts the page body's entries on the page in the order given (`BrainEngine.insertPageTimelineRows`). A row equal to
- * a stored one (same date, summary and source) is skipped; one bad row fails the whole statement. Free text is NUL and
- * lone-surrogate sanitized (#2011).
+ * Inserts the page's own timeline rows in `rows` order; a row equal on (date, summary, source) to a stored row of the
+ * page is skipped (`BrainEngine.insertCanonicalTimelineRows`). The page id is not checked for soft deletion.
  */
-export async function insertPageTimelineRows(exec: SqlExecutor, pageId: number, rows: readonly TimelineRowInsert[]): Promise<void> {
-  const ordered = rows.map((row, ord) => ({ ord, date: row.date, source: sanitizeForJsonb(row.source || ''),
-    summary: sanitizeForJsonb(row.summary), detail: sanitizeForJsonb(row.detail || '') }));
-  await exec.executeRaw(INSERT_PAGE_TIMELINE_ROWS_SQL, [pageId, JSON.stringify(ordered)]);
+export async function insertCanonicalTimelineRows(exec: SqlExecutor, pageId: number, rows: readonly CanonicalTimelineRow[]): Promise<void> {
+  await exec.executeRaw(INSERT_CANONICAL_TIMELINE_SQL, [pageId, JSON.stringify(rows.map((row, ord) => ({ ord, ...row })))]);
 }
 
 /** Replaces the detail of the page's own (non-event) rows named in `rows` with `next` when the stored detail still equals `detail` (`BrainEngine.updateTimelineDetails`). */

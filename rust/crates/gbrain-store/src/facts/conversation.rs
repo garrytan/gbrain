@@ -44,9 +44,9 @@ use super::{
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
+use crate::jsonb::order as jsonb_order;
 use crate::kv::{KvRead, KvWrite};
 use crate::links::no_nul;
-use crate::raw_files::jsonb_order;
 use crate::timeline_queries::jsonb_field_text;
 use crate::trust::WriteTrust;
 use serde::Deserialize;

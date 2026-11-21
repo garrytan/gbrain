@@ -67,3 +67,14 @@ export async function readPageAliasRows(exec: LegacyUnscopedRead, sourceIds: rea
     WHERE source_id = ANY(${[...sourceIds]}::text[]) AND slug = ANY(${[...slugs]}::text[])
     ORDER BY source_id COLLATE "C", slug COLLATE "C", alias_norm COLLATE "C", origin COLLATE "C"`);
 }
+
+/** One `page_aliases` row of an entity card page or identity sibling. */
+export interface EntityAliasRow { slug: string; alias_norm: string; origin: string | null; alias_text: string | null }
+
+/**
+ * The entity card's alias rows (verbs/entity-card.ts `readAka`, entity-card-identity.ts `readSiblingIdentity`): every
+ * `page_aliases` row of a listed slug in the source, by alias. The text is the card's statement, byte for byte.
+ */
+export async function readEntityAliasRows(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[]): Promise<EntityAliasRow[]> {
+  return rows<EntityAliasRow>(exec, sqlFragment`SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = ${sourceId} AND slug = ANY(${[...slugs]}::text[]) ORDER BY alias_norm`);
+}

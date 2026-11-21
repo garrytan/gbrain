@@ -6,7 +6,7 @@
 //! `rust/docs/store/transactions.md`.
 //!
 //! One open transaction is a [`Transaction`]: the store's single write transaction (the `base`,
-//! taken with `Kv::begin_write`, so it holds the writer until it ends) plus a stack of in-memory
+//! taken with `Kv::begin_write_exclusive`, so it holds the writer until it ends) plus a stack of in-memory
 //! layers above it. A [`Store`] bound to a transaction ([`Store::begin_transaction`]) runs every
 //! family method against it unchanged:
 //!
@@ -19,17 +19,21 @@
 //!   rolling it back drops it. Only [`Store::commit_transaction`] calls the record store's commit.
 //!
 //! Allocators never roll back. A counter is a meta record (`keys::meta`) whose name starts with
-//! `next_` and whose value is 8 bytes (the big-endian next id). The transaction remembers the
-//! highest counter value it wrote; when a layer is dropped that value is written back into the
-//! layer below, and when the whole transaction rolls back it is written in a follow-up write
-//! transaction. An id handed out inside a rolled-back transaction is never handed out again, also
-//! after a reopen.
+//! `next_` and whose value is 8 bytes (the big-endian next id). Ids come from `KvWrite::allocate`,
+//! which a bound statement sends straight to the base, under every layer, so dropping a layer
+//! does not give its ids back (and, with concurrent writes on, the ids are shared with the other
+//! writers). A counter written directly is remembered at its highest value and written back into
+//! the layer below when a layer is dropped. When the whole transaction rolls back, every counter
+//! it advanced is raised in a follow-up write (`KvWrite::raise_counter`, which never conflicts).
+//! An id handed out inside a rolled-back transaction is never handed out again, also after a
+//! reopen.
 //!
 //! Keys: `keys::LOCK_QUEUE` (`w`) is reserved for this file. No `w` record is written: a page-key
-//! lock is held in memory by the transaction that took it, because the store admits one write
-//! transaction at a time, so no other writer can reach a held key before the transaction ends.
-//! The tag stays reserved for a lock queue that outlives a transaction (a writer pool with more
-//! than one writer); its bytes after the tag are this file's to define then.
+//! lock is held in memory by the transaction that took it, because an explicit transaction holds
+//! the store's writer exclusively (`Kv::begin_write_exclusive`; with concurrent writes on, no
+//! other commit lands until it ends), so no other writer can reach a held key before the
+//! transaction ends. The tag stays reserved for a lock queue that outlives a transaction; its
+//! bytes after the tag are this file's to define then.
 //!
 //! A scan callback must not call the store: the merged scan holds the transaction's state lock
 //! while it runs.
@@ -112,6 +116,10 @@ struct State {
     statement: Option<Layer>,
     /// The highest value each counter took in this transaction.
     counters: BTreeMap<Vec<u8>, u64>,
+    /// The highest value each sequence took through `allocate`. Allocations go to the base
+    /// directly and never roll back with a layer; only a whole-transaction rollback writes
+    /// these forward.
+    allocated: BTreeMap<Vec<u8>, u64>,
 }
 
 /// An open transaction. Shared by the bound [`Store`] and every reader it hands out.
@@ -269,6 +277,26 @@ impl State {
         }
     }
 
+    /// Takes `count` ids from the base's allocator and remembers the highest value the sequence
+    /// took, so a rollback writes it forward.
+    fn allocate(&mut self, key: &[u8], count: u64) -> Result<u64> {
+        if self
+            .layers_top_down()
+            .any(|layer| layer.writes.contains_key(key))
+        {
+            return Err(StoreError::new(
+                INVALID_STATE,
+                "an id sequence key was also written directly inside the transaction",
+            ));
+        }
+        let base = self.base.as_mut().ok_or_else(closed)?;
+        let first = base.allocate(key, count)?;
+        let end = first + count;
+        let seen = self.allocated.entry(key.to_vec()).or_insert(end);
+        *seen = (*seen).max(end);
+        Ok(first)
+    }
+
     /// Merges `layer` into what is now the top (the statement's parent savepoint, or the base).
     fn merge_down(&mut self, layer: Layer) -> Result<()> {
         if let Some(parent) = self.savepoints.last_mut() {
@@ -358,6 +386,11 @@ impl KvWrite for StatementWriter<'_> {
     fn delete(&mut self, key: &[u8]) -> Result<()> {
         lock(&self.0.state).write_top(key, None)
     }
+    /// Ids come from the record store's own allocator, under every layer: an allocator never
+    /// rolls back, and on a store with concurrent writers the ids are shared with them.
+    fn allocate(&mut self, key: &[u8], count: u64) -> Result<u64> {
+        lock(&self.0.state).allocate(key, count)
+    }
     fn commit(self: Box<Self>) -> Result<u64> {
         Err(StoreError::new(
             INVALID_STATE,
@@ -423,7 +456,7 @@ impl Store {
                 "a transaction is already open on this store; nest with a savepoint",
             ));
         }
-        let base = self.kv.begin_write()?;
+        let base = self.kv.begin_write_exclusive()?;
         let tx = Arc::new(Transaction {
             state: Mutex::new(State {
                 base: Some(base),
@@ -431,6 +464,7 @@ impl Store {
                 savepoints: Vec::new(),
                 statement: None,
                 counters: BTreeMap::new(),
+                allocated: BTreeMap::new(),
             }),
             exclusive: Mutex::new(()),
             kv: self.kv.clone(),
@@ -517,6 +551,7 @@ impl Store {
         let base = state.base.take().ok_or_else(closed)?;
         state.root_locks.clear();
         state.counters.clear();
+        state.allocated.clear();
         if tx.opened_read_only {
             drop(base);
             return tx.kv.version();
@@ -539,17 +574,20 @@ impl Store {
             state.savepoints.clear();
             state.statement = None;
             state.root_locks.clear();
-            std::mem::take(&mut state.counters)
+            let mut counters = std::mem::take(&mut state.counters);
+            for (key, value) in std::mem::take(&mut state.allocated) {
+                let seen = counters.entry(key).or_insert(value);
+                *seen = (*seen).max(value);
+            }
+            counters
         };
         if counters.is_empty() {
             return Ok(());
         }
+        // Blind raises: they never conflict with a concurrent writer, so this needs no retry.
         let mut write = tx.kv.begin_write()?;
         for (key, value) in counters {
-            let current = write.get(&key)?.and_then(|b| keys::be8(&b)).unwrap_or(0);
-            if current < value {
-                write.put(&key, &value.to_be_bytes())?;
-            }
+            write.raise_counter(&key, value)?;
         }
         write.commit()?;
         Ok(())

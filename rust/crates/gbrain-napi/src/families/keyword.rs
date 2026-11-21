@@ -1,7 +1,7 @@
 //! Keyword search members and title trigrams.
 //!
 //! Store methods for: findByTitleFuzzy, searchKeyword (`searchKeywordArm` and
-//! `keywordRareTermPages`), searchKeywordChunks, countKeywordPages, searchKeywordPages and
+//! `keywordRareTermPages`), searchKeywordChunks, the CJK fallback of both (`searchKeywordCjk`), countKeywordPages, searchKeywordPages and
 //! searchTitles (`searchTitlesAttempts`).
 //!
 //! One `#[napi] impl Brain` block per family file; each method decodes its arguments, runs one
@@ -12,7 +12,7 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
-use crate::store_binding::{Brain, arg};
+use crate::store_binding::{Brain, arg, required};
 
 #[napi]
 impl Brain {
@@ -49,6 +49,26 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.search_keyword_chunks(&query, &arg(options, "searchKeywordChunks options")?)
+        })
+    }
+
+    /// `searchKeywordCjk(query, options, run)`: the CJK fallback of searchKeyword (`run.dedup`)
+    /// and searchKeywordChunks, `{ rows, capped, capHit }`. `run` carries the match terms, the OR
+    /// fallback and the bounded arm's work bound (`CjkRun`).
+    #[napi]
+    pub fn search_keyword_cjk<'env>(
+        &self,
+        env: &'env Env,
+        query: String,
+        options: Option<Value>,
+        run: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.search_keyword_cjk(
+                &query,
+                &arg(options, "searchKeywordCjk options")?,
+                &required(run, "searchKeywordCjk run")?,
+            )
         })
     }
 

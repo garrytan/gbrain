@@ -7,7 +7,8 @@
  * Every function takes the engine (or transaction) it runs on. Counts come back as numbers.
  */
 import type { BrainEngine } from '../engine.ts';
-import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { ownerOnlyTakeAllowedSql, privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
@@ -59,6 +60,25 @@ export async function listTakeRowsForPage(tx: Raw, pageId: number): Promise<Arra
   return rows.map(r => ({ row_num: Number(r.row_num), claim: r.claim }));
 }
 
+/** Which fence generation `listHeldFenceTakeRows` checks: the page's take_fence generation in one source. */
+export interface HeldFenceTakeSpec { sourceId: string; kind: string; ownerKey: string; pageId: number }
+
+/** A stored take as the fence row it was, resolution cells included. */
+export interface HeldFenceTakeRow {
+  row_num: number; claim: string; kind: string; holder: string; weight: number; since_date: string | null; until_date: string | null;
+  source: string | null; active: boolean; resolved_at: Date | string | null; resolved_quality: string | null; resolved_outcome: boolean | null;
+  resolved_source: string | null; resolved_value: number | null; resolved_unit: string | null; resolved_by: string | null;
+}
+
+/** The page's stored takes by row number while its fence generation is held `fence_absent`; none otherwise. */
+export async function listHeldFenceTakeRows(tx: Raw, spec: HeldFenceTakeSpec): Promise<HeldFenceTakeRow[]> {
+  const held = await tx.executeRaw(`SELECT 1 FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND held_reason='fence_absent'`,
+    [spec.sourceId, spec.kind, spec.ownerKey]);
+  if (!held.length) return [];
+  return tx.executeRaw<HeldFenceTakeRow>(`SELECT row_num, claim, kind, holder, weight, since_date, until_date, source, active,
+      resolved_at, resolved_quality, resolved_outcome, resolved_source, resolved_value, resolved_unit, resolved_by FROM takes WHERE page_id=$1 ORDER BY row_num`, [spec.pageId]);
+}
+
 export interface McpResolvedSpec {
   /** The source scope the caller's read policy resolved to; null is every source. */
   sourceIds: readonly string[] | null;
@@ -70,7 +90,7 @@ export interface McpResolvedSpec {
 
 /** Resolved takes whose `resolved_by` carries the MCP server stamp, in the caller's source and holder scope. */
 export async function countMcpResolvedTakes(tx: Raw, spec: McpResolvedSpec): Promise<number> {
-  const privacy = spec.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('p'))}` : sqlFragment``;
+  const privacy = spec.excludePrivate ? sqlFragment` AND ${trustedSql(`${privatePagesFilterForCaller('p')}${ownerOnlyTakeAllowedSql('t')}`)}` : sqlFragment``;
   const sources = spec.sourceIds ? sqlFragment` AND p.source_id = ANY(${[...spec.sourceIds]}::text[])` : sqlFragment``;
   const holders = spec.holders ? sqlFragment` AND t.holder = ANY(${[...spec.holders]}::text[])` : sqlFragment``;
   const { text, params } = renderFragment(sqlFragment`SELECT count(*)::text AS n FROM takes t JOIN pages p ON p.id = t.page_id
@@ -110,6 +130,57 @@ export async function hasCodeEdgesSymbol(tx: Raw, sourceId: string): Promise<boo
   const [owned] = await tx.executeRaw<{ e: boolean }>(
     'SELECT EXISTS(SELECT 1 FROM code_edges_symbol WHERE source_id = $1) AS e', [sourceId]);
   return !!owned?.e;
+}
+
+// ---- The reads and the delete of `gbrain extract takes` (cycle/extract-takes.ts, generations/adapters/take-rows.ts) ----
+// Each statement is the text the caller sent through `executeRaw`, byte for byte (test/engine-sql-takes-reads.test.ts).
+
+/** The id of the live page `slug` in `sourceId`, or null. */
+export async function readLivePageIdBySlug(tx: Raw, slug: string, sourceId: string): Promise<number | null> {
+  const rows = await tx.executeRaw<{ id: number | string }>(
+    `SELECT id FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL LIMIT 1`,
+    [slug, sourceId],
+  );
+  return rows[0] ? Number(rows[0].id) : null;
+}
+
+/** A page's source, slug and stored trust tier (`unknown` when none is stored), deleted or not. */
+export interface PageTierRef { source_id: string; slug: string; trust_tier: TrustTier }
+
+/** Page `pageId`'s source, slug and stored trust tier, deleted or not; null when no page has the id. */
+export async function readPageTierRef(tx: Raw, pageId: number): Promise<PageTierRef | null> {
+  const [page] = await tx.executeRaw<{ source_id: string; slug: string; trust_tier: string | null }>('SELECT source_id, slug, trust_tier FROM pages WHERE id = $1', [pageId]);
+  return page ? { source_id: page.source_id, slug: page.slug, trust_tier: storedTrustTier(page.trust_tier) } : null;
+}
+
+/** The pages among `ids`, deleted or not, with their source, slug and stored tier, in no set order. */
+export async function readPageTierRows(tx: Raw, ids: readonly number[]): Promise<Array<PageTierRef & { id: number }>> {
+  const rows = await tx.executeRaw<{ id: number | string; source_id: string; slug: string; trust_tier: string | null }>(
+    'SELECT id,source_id,slug,trust_tier FROM pages WHERE id=ANY($1::int[])', [[...ids]]);
+  return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, trust_tier: storedTrustTier(r.trust_tier) }));
+}
+
+/** Whether page `pageId`'s frontmatter has the top-level key `key` (`frontmatter ? key`), deleted or not. */
+export async function pageHasFrontmatterKey(tx: Raw, pageId: number, key: string): Promise<boolean> {
+  return (await tx.executeRaw('SELECT 1 FROM pages WHERE id=$1 AND frontmatter ? $2', [pageId, key])).length > 0;
+}
+
+/**
+ * Which of a page's takes a reconcile would remove: `removed` lists the takes at no row number of `rowNums`; `replaced`
+ * lists the takes that no `rows` entry states at the same row number with the same claim. In no set order.
+ */
+export type TakesLeavingFence =
+  | { change: 'removed'; rowNums: readonly number[] }
+  | { change: 'replaced'; rows: ReadonlyArray<{ row_num: number; claim: string }> };
+
+/** The ids of page `pageId`'s takes that leave its fence (`TakesLeavingFence`), in no set order. */
+export async function listTakeIdsLeavingFence(tx: Raw, pageId: number, fence: TakesLeavingFence): Promise<number[]> {
+  const rows = fence.change === 'removed'
+    ? await tx.executeRaw<{ id: number | string }>(`SELECT id FROM takes WHERE page_id = $1 AND NOT (row_num = ANY($2::integer[]))`, [pageId, [...fence.rowNums]])
+    : await tx.executeRaw<{ id: number | string }>(`SELECT id FROM takes WHERE page_id = $1 AND NOT EXISTS (
+        SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) AS f(row_num int, claim text) WHERE f.row_num = takes.row_num AND f.claim = takes.claim)`,
+    [pageId, JSON.stringify(fence.rows.map(r => ({ row_num: r.row_num, claim: r.claim })))]);
+  return rows.map(r => Number(r.id));
 }
 
 /** The columns a take's before-state keeps (every column but its vector and write attribution). */
@@ -189,4 +260,28 @@ export async function readTakePreimages(tx: Raw, read: TakePreimageRead): Promis
   }
   return tx.executeRaw<{ preimage: TakePreimage; gone: boolean }>(
     TAKE_PREIMAGES_SQL.rowNum, [read.pageId, [...read.gone], incoming]);
+}
+
+/**
+ * The before-states of page `pageId`'s takes `ids` (`gone`) and of the takes an incoming row of the same number would
+ * overwrite with another claim, kind or holder (`gone` false): `readTakePreimages` by id, as the extract-takes
+ * reconcile calls it. test/extract-takes-sql-pin.test.ts pins the statement.
+ */
+export async function listTakePreimages(tx: Raw, pageId: number, ids: readonly number[],
+  incoming: ReadonlyArray<{ row_num: number; claim: string; kind: string; holder: string }>): Promise<Array<{ preimage: TakePreimage; gone: boolean }>> {
+  const rows = await tx.executeRaw<{ preimage: TakePreimage; gone: boolean }>(TAKE_PREIMAGES_SQL.id,
+    [pageId, [...ids], JSON.stringify(incoming.map(t => ({ row_num: t.row_num, claim: t.claim, kind: t.kind, holder: t.holder })))]);
+  return rows.map(r => ({ preimage: r.preimage, gone: r.gone === true }));
+}
+
+/** Deletes the takes `ids`, whatever their page, with the synthesis evidence that cites them; an empty list deletes nothing. */
+export async function deleteTakesByIds(tx: Raw, ids: readonly number[]): Promise<void> {
+  if (!ids.length) return;
+  await tx.executeRaw('DELETE FROM takes WHERE id = ANY($1::bigint[])', [[...ids]]);
+}
+
+/** The id of page `pageId`'s take at `rowNum`, or null. */
+export async function findTakeId(tx: Raw, pageId: number, rowNum: number): Promise<number | null> {
+  const [take] = await tx.executeRaw<{ id: number | string }>('SELECT id FROM takes WHERE page_id=$1 AND row_num=$2', [pageId, rowNum]);
+  return take ? Number(take.id) : null;
 }

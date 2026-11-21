@@ -30,7 +30,7 @@ use sha2::{Digest, Sha256};
 
 mod receipt;
 mod tier;
-pub(crate) use receipt::TimelineReceipt;
+pub(crate) use crate::write_receipt::WriteReceipt as TimelineReceipt;
 pub(crate) use tier::TimelineTrust;
 
 const NEXT_TIMELINE_ID: &str = "next_timeline_id";
@@ -114,16 +114,6 @@ pub struct TimelineBatchInput {
     pub source_id: Option<String>,
 }
 
-/// One row of `insertPageTimelineRows`: an entry the page body carries, in body order.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-pub struct TimelineRowInsert {
-    pub date: Option<String>,
-    pub source: Option<String>,
-    pub summary: Option<String>,
-    pub detail: Option<String>,
-}
-
 /// `TimelineOpts` of `getTimeline`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -199,7 +189,7 @@ pub(crate) fn parse_date(text: &str) -> Result<String> {
 /// The id is taken before the dedup check, as `INSERT .. ON CONFLICT DO NOTHING` takes the
 /// serial's next value before it finds the conflict: a deduped add leaves the same gap in
 /// the ids PGLite leaves, so the ids `getTimeline` returns match.
-fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool> {
+pub(crate) fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool> {
     let dedup = record.dedup_key();
     record.id = next_id(tx, NEXT_TIMELINE_ID)?;
     if tx.get(&dedup)?.is_some() {
@@ -439,7 +429,7 @@ impl Store {
                 }
                 return Err(missing("addTimelineEntry", "page", slug, source_id));
             };
-            let Some(date) = date else {
+            let Some(date) = date.clone() else {
                 return Err(not_null("date"));
             };
             let Some(summary) = entry.summary.as_deref() else {
@@ -517,66 +507,6 @@ impl Store {
                 }
             }
             Ok(inserted)
-        })
-    }
-
-    /// `insertPageTimelineRows(pageId, rows)`: inserts the rows on the page in the order given, as
-    /// `INSERT .. SELECT .. ORDER BY ord ON CONFLICT DO NOTHING` does: a row equal to a stored one
-    /// (or to an earlier row of the call) is skipped, and each row takes an id, skipped or not. A
-    /// soft-deleted page takes rows too. Every date is read before any row is written, so one bad
-    /// row fails the whole call; a page that does not exist is the foreign key's
-    /// `constraint_violation`. No row inserts nothing, even for a missing page.
-    pub fn insert_page_timeline_rows(
-        &self,
-        page_id: i64,
-        rows: &[TimelineRowInsert],
-    ) -> Result<()> {
-        let mut asked = Vec::with_capacity(rows.len());
-        for row in rows {
-            let date = match row.date.as_deref() {
-                Some(text) => parse_date(text)?,
-                None => return Err(not_null("date")),
-            };
-            let Some(summary) = row.summary.as_deref() else {
-                return Err(not_null_summary());
-            };
-            asked.push((date, summary, row));
-        }
-        if asked.is_empty() {
-            return Ok(());
-        }
-        self.write(|tx| {
-            let page = match u64::try_from(page_id) {
-                Ok(id) => read_page_by_id(&*tx, id)?.map(|page| page.id),
-                Err(_) => None,
-            };
-            let Some(page_id) = page else {
-                return Err(StoreError::new(
-                    CONSTRAINT_VIOLATION,
-                    format!(
-                        "insert or update on table \"timeline_entries\" violates foreign key constraint on page_id: page {page_id} does not exist"
-                    ),
-                ));
-            };
-            let now = self.env.now_micros();
-            for (date, summary, row) in asked {
-                insert_entry(
-                    tx,
-                    TimelineRecord {
-                        id: 0,
-                        page_id,
-                        date,
-                        source: clean(row.source.as_deref().unwrap_or("")),
-                        summary: clean(summary),
-                        detail: clean(row.detail.as_deref().unwrap_or("")),
-                        event_page_id: None,
-                        created_at_us: now,
-                        receipt: TimelineReceipt::default(),
-                        trust: TimelineTrust::default(),
-                    },
-                )?;
-            }
-            Ok(())
         })
     }
 
@@ -931,7 +861,7 @@ mod tests {
                 .map(|row| row["summary"].clone())
                 .collect()
         };
-        let policy = json!({"honorAliases": true, "entityPrivacy": true});
+        let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
         assert_eq!(summaries("people/a", json!({})).len(), 4);
         // The event page is judged by id: a read scoped to `default` still hides the private event
         // page in `alt`, and an entry whose event page is gone fails the EXISTS.

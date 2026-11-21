@@ -178,7 +178,7 @@ impl Store {
                     "generation": r.generation.generation,
                     "retired_at": iso(r.generation.created_at_us),
                     "expired_at": f.expired_at_us.map(iso),
-                    "preimage": r.preimage,
+                    "preimage": crate::jsonb::ordered(r.preimage),
                     "fingerprint": fingerprint,
                     "page_id": page.as_ref().map(|p| p.id),
                     // `p.deleted_at IS NOT NULL` over the LEFT JOIN: false with no page row.

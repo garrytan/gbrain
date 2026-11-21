@@ -17,8 +17,9 @@
  *    check the flags and the id form against a recording stub, and no case ran the command on a Rust brain.
  *  - Seam: none. Pages come from putPage, proposals from recordEdgeProposal. The dated case runs the add_timeline_entry
  *    write to the end on every engine, so the subject page's timeline is compared too. On a Rust brain the write's page
- *    projection rebuild still stops at one named known stop (RUST_KNOWN_STOP). Ids differ between arms, so each output
- *    names a proposal by the row it seeded (P1 to P5), and a creation time by its form.
+ *    projection rebuild still stops at one named known stop (RUST_KNOWN_STOP), once per consumer drain that reaches it.
+ *    Ids differ between arms, so each output names a proposal by the row it seeded (P1 to P5), and a creation time by
+ *    its form.
  */
 import { describe, expect, spyOn } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -121,10 +122,11 @@ function idNamed(labels: Map<number, string>, name: string): string {
 /**
  * The one raw-SQL stop left in the dated case on Rust (owner: lane 3, cut 1, rust-engine/rust-rebuild-path, due 5 PM PST
  * Nov 23): the add_timeline_entry write rebuilds the page projections, and selectWindowJobs
- * (src/core/page-state/projections.ts:664, called from rebuildPendingPageProjections) probes the queued pages through
+ * (src/core/page-state/projections.ts, called from rebuildPendingPageProjections) probes the queued pages through
  * executeRaw. The rebuild logs the refusal and keeps the work queued, so the command still prints the same output.
  * Whichever of this change and lane 3's cut 1 lands second in rust-engine/main removes this pin; the case must then be
- * equal on all three arms. The pin fails as soon as Rust stops refusing there or refuses anywhere else.
+ * equal on all three arms. The pin fails as soon as Rust stops refusing there or refuses anywhere else; a refusal at
+ * the stop repeats once per consumer drain that reaches it before the case ends.
  */
 const RUST_KNOWN_STOP = {
   frames: [/at selectWindowJobs \([^)]*src\/core\/page-state\/projections\.ts:\d+:/, /at (?:async )?rebuildPendingPageProjections \([^)]*src\/core\/page-state\/projections\.ts:\d+:/],
@@ -214,7 +216,7 @@ describe('engine parity: gbrain edge-proposals', () => {
 
   parityTest('date records the start line on the subject page and rejects the undated proposal, once', {
     methods: ['putPage', 'readPageIdInSource', 'recordEdgeProposal', 'setConfig', 'listEdgeProposalCliRows', 'readEdgeProposalSourceId',
-      'markEdgeProposalDated', 'getSource', 'insertPageTimelineRows'],
+      'markEdgeProposalDated', 'getSource', 'insertCanonicalTimelineRows'],
   }, async (base, backend) => {
     const refusals: unknown[] = [];
     const engine = keepingRefusals(base, refusals);
@@ -238,9 +240,12 @@ describe('engine parity: gbrain edge-proposals', () => {
       datedReference ??= value;
       return value;
     }
-    // The known stop (RUST_KNOWN_STOP): exactly one refusal, at selectWindowJobs. Zero means lane 3's typed read is
-    // served: remove this pin and let the harness compare the case.
-    expect({ backend, rawSqlRefusals: stops }).toEqual({ backend, rawSqlRefusals: [{ message: RUST_KNOWN_STOP.message, atKnownStop: true }] });
+    // The known stop (RUST_KNOWN_STOP): one or more refusals, every one at selectWindowJobs. The refused rebuild keeps the
+    // page queued, and each persistence consumer tick with upkeep starts the resident projection drain again
+    // (consumer.ts runResidentProjectionInvocation, polled every 250 ms), so a slow (loaded) run can retry the same stop
+    // before the case ends. Zero means lane 3's typed read is served: remove this pin and let the harness compare the case.
+    expect({ backend, refused: stops.length > 0 }).toEqual({ backend, refused: true });
+    expect({ backend, rawSqlRefusals: stops }).toEqual({ backend, rawSqlRefusals: stops.map(() => ({ message: RUST_KNOWN_STOP.message, atKnownStop: true })) });
     expect({ backend, value }).toEqual({ backend, value: datedReference as typeof value });
     // Every result above holds on Rust too; the arm still counts as stopped until the pin is removed.
     throw refusals[0];
