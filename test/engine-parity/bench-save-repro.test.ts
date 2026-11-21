@@ -3,7 +3,9 @@
  * source a user can save to commits on every engine and never stays queued.
  *
  * Fail-first: on rust-engine/main 0ce95bbf7f and rust-engine/bound-write-rust 3d53109dc0 every case here fails on the
- * Rust arm only. Each fix lane keeps its case as written and makes it pass on Rust.
+ * Rust arm only. Each fix lane keeps its case as written and makes it pass on Rust. Until then cases 2 and 3 carry a
+ * `rustPendingStop` pin (harness.ts): on Rust the write ends write_pending behind exactly the named typed refusal. The
+ * pin fails when that refusal changes or goes away, so the owner's fix lane removes it.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: (1) a put_page to a git-rooted source that no writer claimed commits the page and writes its file on
@@ -79,7 +81,9 @@ describe('the bench save failures', () => {
     }
   });
 
-  parityTest('case 2: a forced update of an existing page commits, and a later write behind it commits', { methods: ['createVersion', 'getPage'] }, async (engine) => {
+  parityTest('case 2: a forced update of an existing page commits, and a later write behind it commits', { methods: ['createVersion', 'getPage'],
+    rustPendingStop: { capability: 'page_versions', member: 'createVersion (option preimage)', site: 'src/core/import-file.ts createVersion preimage',
+      owner: 'lane 2b, rust-engine/version-preimage-rust', due: '5 PM PST Nov 22' } }, async (engine) => {
     try {
       const created = await run(engine, 'put_page', { slug: 'people/carol-example', content: person('v1') });
       const updated = await run(engine, 'put_page', { slug: 'people/carol-example', content: person('v2'), force: true });
@@ -91,7 +95,9 @@ describe('the bench save failures', () => {
     } finally { await disposePersistenceConsumer(engine); }
   });
 
-  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: ['readPageSnapshot'] }, async (engine) => {
+  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: ['readPageSnapshot'],
+    rustPendingStop: { capability: 'raw_sql', member: 'executeRaw', site: 'src/core/chronicle/ledger.ts', frame: 'src/core/chronicle/ledger.ts',
+      owner: 'lane 7, rust-engine/chronicle-decision-rust', due: '5 PM PST Nov 22' } }, async (engine) => {
     try {
       const big = '---\ntitle: Conv\ntype: conversation\n---\n' + 'User: hello there, this is a long line of conversation text.\n'.repeat(90);
       const part = await run(engine, 'put_page', { slug: 'conversations/conv-example/part-1', content: big });
