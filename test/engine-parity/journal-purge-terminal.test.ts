@@ -12,6 +12,8 @@
  *  - Regression: both steps ran raw SQL through executeRaw (the request lock `SELECT * ... FOR UPDATE` and the
  *    compaction's `WITH effects ... UPDATE persistence_requests ...`), so on a Rust brain the purge stopped on the raw_sql
  *    refusal at the first of them.
+ *    redactRequestIntents locks the affected requests through the same typed lock: a pending request refuses the purge
+ *    with purge_blocked_pending_recovery and changes nothing; a page purge (skipPending) leaves it and redacts nothing.
  *  - Why existing coverage misses it: write-request-cancel.test.ts cancels through cancel_write_request, whose error code
  *    is `cancelled` and never compacts; the purge parity files stop before the journal cancel.
  *  - Seam: GBRAIN_HOME through withEnv (the registration files live under it). Typed members only (no executeRaw: D18).
@@ -29,7 +31,7 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { registerServeLocalWriters } from '../../src/core/persistence/provider.ts';
 import { requestPrincipalForContext } from '../../src/core/persistence/page-mutations.ts';
 import { submissionAuthority } from '../../src/core/persistence/authority.ts';
-import { cancelRequestsHoldingStagings } from '../../src/core/persistence/intent-redaction.ts';
+import { cancelRequestsHoldingStagings, redactRequestIntents } from '../../src/core/persistence/intent-redaction.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -98,6 +100,21 @@ describe('engine parity: a purge cancels the writes that would publish purged co
       };
       const done = { state: 'cancelled', error_code: 'purged_content', intent: null, compacted: true, shrunk: true };
       expect(result as unknown).toEqual({ cancelled: 2, again: 0, before: [2, 2], after: [0, 0], first: done, second: done });
+      return result;
+    }));
+  parityTest('a purge that meets a pending write refuses before redacting, and a page purge leaves the pending write',
+    { methods: ['readLocalWriterRow', 'insertWriteRequest', 'readWriteRequest', 'lockPersistenceCounters', 'transaction'] },
+    (engine) => inFreshHome(async () => {
+      const { principal } = await admit(engine, [{ requestId: QUEUED, slug: 'notes/first' }]);
+      const id = (await engine.readWriteRequest(principal.kind as never, principal.id, QUEUED))!.id;
+      const targets = [{ id, principal_kind: principal.kind, principal_id: principal.id }];
+      let refused: unknown = null;
+      try { await engine.transaction((tx) => redactRequestIntents(tx, targets)); }
+      catch (error) { refused = (error as { code?: unknown }).code ?? String(error); }
+      const skipped = await engine.transaction((tx) => redactRequestIntents(tx, targets, undefined, { skipPending: true }));
+      const row = await engine.readWriteRequest(principal.kind as never, principal.id, QUEUED);
+      const result = { refused, skipped, left: { state: row?.state, compacted: row?.compacted, intent: row?.intent !== null } };
+      expect(result as unknown).toEqual({ refused: 'purge_blocked_pending_recovery', skipped: 0, left: { state: 'queued', compacted: false, intent: true } });
       return result;
     }));
 });

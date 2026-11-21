@@ -77,7 +77,7 @@ test/engine-parity/jobs-status.test.ts	11	0
 test/engine-parity/jobs-subagent.test.ts	16	0
 test/engine-parity/jobs-wake.test.ts	15	0
 test/engine-parity/jobs.test.ts	14	1
-test/engine-parity/journal-purge-terminal.test.ts	1	0
+test/engine-parity/journal-purge-terminal.test.ts	1	1
 test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/large-page.test.ts	2	0
 test/engine-parity/lifecycle.test.ts	10	1
