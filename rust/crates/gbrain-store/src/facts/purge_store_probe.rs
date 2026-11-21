@@ -456,51 +456,8 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kv::counting::Counting;
     use crate::persistence::effects::effect_entries_for_test;
-    use std::cell::Cell;
-    use std::collections::BTreeMap;
-
-    /// A read-only store that counts the entries scans hand out and the keys read.
-    #[derive(Default)]
-    struct Counting {
-        entries: BTreeMap<Vec<u8>, Vec<u8>>,
-        delivered: Cell<usize>,
-        gets: Cell<usize>,
-    }
-
-    impl KvRead for Counting {
-        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-            self.gets.set(self.gets.get() + 1);
-            Ok(self.entries.get(key).cloned())
-        }
-        fn scan(
-            &self,
-            start: &[u8],
-            end: &[u8],
-            reverse: bool,
-            f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
-        ) -> Result<()> {
-            let range = self.entries.range(start.to_vec()..end.to_vec());
-            let mut each = |(k, v): (&Vec<u8>, &Vec<u8>)| {
-                self.delivered.set(self.delivered.get() + 1);
-                f(k, v)
-            };
-            if reverse {
-                for entry in range.rev() {
-                    if !each(entry) {
-                        break;
-                    }
-                }
-            } else {
-                for entry in range {
-                    if !each(entry) {
-                        break;
-                    }
-                }
-            }
-            Ok(())
-        }
-    }
 
     fn request(n: usize, source: &str) -> (Vec<u8>, Vec<u8>) {
         let record: RequestRecord = serde_json::from_value(json!({
@@ -555,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn the_effect_count_stops_at_the_cap_and_reads_no_later_effect() {
+    fn the_effect_count_stops_at_the_cap_and_reads_no_later_index_entry_or_record() {
         let mut store = Counting::default();
         let effects: Vec<_> = (1..=40)
             .map(|id| effect(id, "default", "removes notes/doomed"))
@@ -563,13 +520,15 @@ mod tests {
         store.entries.extend(effect_entries_for_test(&effects));
         let probe = |cap| {
             store.gets.set(0);
+            store.delivered.set(0);
             let found = count_effects(&store, "default", &forms(), None, cap).unwrap();
-            (found, store.gets.get())
+            (found, store.delivered.get(), store.gets.get())
         };
-        // Each effect read is one get; a stop leaves the rest of the index unread.
-        assert_eq!(probe(1), (1, 1));
-        assert_eq!(probe(6), (6, 6));
-        assert_eq!(probe(500), (40, 40));
+        // (matches, index entries handed out, records read). The index is read a page of 8 at a time, a record when its turn comes.
+        assert_eq!(probe(1), (1, 8, 1));
+        assert_eq!(probe(6), (6, 8, 6));
+        assert_eq!(probe(9), (9, 16, 9));
+        assert_eq!(probe(500), (40, 40, 40));
     }
 
     #[test]

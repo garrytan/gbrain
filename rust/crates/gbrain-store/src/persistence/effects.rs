@@ -19,7 +19,7 @@ use super::{request_by_id, violation};
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso};
 use crate::error::{Result, STORE_CORRUPT, StoreError};
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::{get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -180,34 +180,29 @@ pub(crate) fn request_effects(read: &dyn KvRead, request_id: &str) -> Result<Vec
     Ok(out)
 }
 
-/// Calls `f` with each stored effect in id order (the claim-order index) until it returns false. The index holds only a
-/// request id and kind per effect; a record is read when its turn comes, so a stop leaves the later ones unread.
+/// Index entries read per scan by `for_each_effect`.
+const EFFECT_PAGE: usize = 8;
+
+/// Calls `f` with each stored effect in id order (the claim-order index) until it returns false. The index is read
+/// `EFFECT_PAGE` entries at a time and a record when its turn comes, so a stop leaves the later pages and records unread.
 pub(crate) fn for_each_effect(
     read: &dyn KvRead,
     f: &mut dyn FnMut(EffectRecord) -> Result<bool>,
 ) -> Result<()> {
-    let mut entries = Vec::new();
-    scan_prefix(
+    for_each_prefix_paged(
         read,
         &[keys::PERSISTENCE, EFFECT_ORDER],
-        false,
+        EFFECT_PAGE,
         &mut |_, value| {
-            entries.push(serde_json::from_slice::<OrderEntry>(value));
-            true
+            let entry = serde_json::from_slice::<OrderEntry>(value).map_err(|e| {
+                StoreError::new(STORE_CORRUPT, format!("unreadable effect order entry: {e}"))
+            })?;
+            match get_json::<EffectRecord>(read, &effect_key(&entry.request_id, &entry.kind))? {
+                Some(record) => f(record),
+                None => Ok(true),
+            }
         },
-    )?;
-    for entry in entries {
-        let entry = entry.map_err(|e| {
-            StoreError::new(STORE_CORRUPT, format!("unreadable effect order entry: {e}"))
-        })?;
-        if let Some(record) =
-            get_json::<EffectRecord>(read, &effect_key(&entry.request_id, &entry.kind))?
-            && !f(record)?
-        {
-            break;
-        }
-    }
-    Ok(())
+    )
 }
 
 /// Every stored effect, in id order (the claim-order index).
