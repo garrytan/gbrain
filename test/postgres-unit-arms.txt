@@ -760,6 +760,7 @@ test/shared-skills-retention-capacity.test.ts
 test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts
 test/slug-move-keeps-trust-9735.test.ts
+test/source-add-manifest-preview-9871.test.ts
 test/source-lifecycle-dry-run-physical-root-6849.test.ts
 test/source-purge-stranded-pages-7072.test.ts
 test/source-resolver-null-path.test.ts
