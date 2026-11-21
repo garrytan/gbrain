@@ -427,15 +427,33 @@ async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: By
   const prefix = await inferredHeadPrefix(bytes.subarray(skip, skip + FRONTMATTER_HEAD_MAX_BYTES), await sourcePath());
   return !!prefix?.length && await matches({ prefix, skip }, true) === true;
 }
+/** Whether the page owns no file in its source's checkout: any file at its path is not its canonical file, so it is neither read, written nor removed. */
+async function ownsNoFile(engine: BrainEngine, sourceId: string, slug: string, snapshot: PageSnapshot | null): Promise<boolean> {
+  // #6212: a legacy slug (admitted only to delete or restore its existing row) never owns a file: its recorded
+  // source_uri or source_path may name the file of another page, such as the one sync now slugs it to.
+  if (!isOpPageSlug(slug)) return true;
+  // #5409: a read-only mirror's checkout belongs to its Git remote; nothing is written or removed there.
+  if (await sourceMirrorReadOnly(engine, sourceId)) return true;
+  if (!snapshot || snapshot.page.source_path) return false;
+  if (await isMirrorOnlyPage(engine, sourceId, slug)) return true;
+  // #5254: a page written while its source was unbound stays database-only in
+  // every state (live, tombstone, restore, revert, delete, purge); any file at
+  // its derived path is not its canonical file and is neither written nor removed.
+  if (await isUnboundSourcePage(engine, sourceId, slug)) return true;
+  // #6948: a page that gave its file up to a duplicate it was merged into never writes or removes a file again (restore,
+  // edit, purge); any file at its slug path is another page's.
+  return isOriginTwinPage(engine, sourceId, slug);
+}
 /**
  * pages-03: the first write of a whole page (string content) over a page stored under the old frontmatter typing takes
  * the file's text for the values the caller left alone. This returns, for such a page, the values its canonical file holds as written where the
  * stored page holds the old typing (frontmatter-legacy.ts legacyWrittenValues); empty for every other page. Reads only
- * the file's head, at the path prepareFileTarget compares; any failure reads as no file (the write is unchanged).
+ * the file's head, at the path prepareFileTarget compares, and only of a page that owns its file (ownsNoFile); any failure reads as no file (the write is unchanged).
  */
 async function legacyFileValues(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot | null, content: unknown, activePack?: ParseOpts['activePack']): Promise<Map<string, unknown>> {
   if (typeof content !== 'string' || !row.worktree_id || !snapshot || snapshot.page.deleted_at || !mayHoldLegacyTyped(snapshot.page.frontmatter)) return new Map();
   try {
+    if (await ownsNoFile(engine, row.source_id, row.slug, snapshot)) return new Map();
     const binding = await getWorktreeBinding(engine, row.source_id);
     if (!binding?.local_path) return new Map();
     const root = join(binding.local_path, binding.relative_path), mode = await scannerSlugRootMode(engine, row.source_id, root);
@@ -469,19 +487,7 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   // large-file.ts), and the push gate scans a staged file over the cap in bounded windows (workspace-push.ts).
   if (content !== null && !isStreamedContent(content) && Buffer.byteLength(content, 'utf-8') > PUSH_SCAN_MAX_FILE_BYTES) throw opError('request_too_large', 'The canonical file would exceed the pre-push secret-scan cap.',
     `Nothing was written. The rendered file of ${row.slug} is over ${PUSH_SCAN_MAX_FILE_BYTES} bytes, which the pre-push secret scan cannot scan, so it would block every push of source ${row.source_id}. Keep the page under the 24 MiB page ceiling (docs/guides/memory-boundaries.md#large-pages).`);
-  // #6212: a legacy slug (admitted only to delete or restore its existing row) never owns a file: its recorded
-  // source_uri or source_path may name the file of another page, such as the one sync now slugs it to.
-  if (!isOpPageSlug(row.slug)) return undefined;
-  // #5409: a read-only mirror's checkout belongs to its Git remote; nothing is written or removed there.
-  if (await sourceMirrorReadOnly(engine, row.source_id)) return undefined;
-  if (snapshot && !snapshot.page.source_path && await isMirrorOnlyPage(engine, row.source_id, row.slug)) return undefined;
-  // #5254: a page written while its source was unbound stays database-only in
-  // every state (live, tombstone, restore, revert, delete, purge); any file at
-  // its derived path is not its canonical file and is neither written nor removed.
-  if (snapshot && !snapshot.page.source_path && await isUnboundSourcePage(engine, row.source_id, row.slug)) return undefined;
-  // #6948: a page that gave its file up to a duplicate it was merged into never writes or removes a file again (restore,
-  // edit, purge); any file at its slug path is another page's.
-  if (snapshot && !snapshot.page.source_path && await isOriginTwinPage(engine, row.source_id, row.slug)) return undefined;
+  if (await ownsNoFile(engine, row.source_id, row.slug, snapshot)) return undefined;
   const binding = await getWorktreeBinding(engine, row.source_id, hostId);
   if (!binding?.local_path) throw opError('owner_unavailable', 'The canonical worktree is unavailable on this host.',
     `This host does not hold source ${row.source_id}'s canonical worktree (or it has no local path), so the file of ${row.slug} was not written. Inspect the owner before resubmitting; the write publishes on the host that owns the source.`,
