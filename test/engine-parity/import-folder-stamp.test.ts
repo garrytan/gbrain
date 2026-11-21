@@ -86,4 +86,21 @@ describe('engine parity: the folder-source sync stamp', () => {
     expect(out).toEqual({ unsetFirst: 'unset', known: true, unknown: false, after: 'set' });
     return out;
   });
+
+  parityTest('markSourceSynced with an incarnation stamps only the source of that incarnation', { methods: ['markSourceSynced', 'getSource', 'readSourceMembership'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'dept-z', {}, '/srv/brain/dept-z');
+    const incarnation = (await engine.readSourceMembership('dept-z'))!.incarnation;
+    const before = Date.now();
+    // A managed sync run guards its stamp with the incarnation it started under: another one stamps nothing.
+    const other = await engine.markSourceSynced('dept-z', { incarnation: 'f0000000-0000-4000-8000-000000000000' });
+    const afterOther = stamp((await engine.getSource('dept-z'))?.last_sync_at, before);
+    const upper = await engine.markSourceSynced('dept-z', { incarnation: incarnation.toUpperCase() });
+    const afterOwn = stamp((await engine.getSource('dept-z'))?.last_sync_at, before);
+    const unknown = await engine.markSourceSynced('no-such-source', { incarnation });
+    const malformed = await engine.markSourceSynced('dept-z', { incarnation: 'not-a-uuid' }).then(() => 'answered', (e: { code?: string }) =>
+      e?.code === 'invalid_argument' || e?.code === '22P02' ? 'refused' : `other: ${String(e)}`);
+    const out = { other, afterOther, upper, afterOwn, unknown, malformed };
+    expect(out).toEqual({ other: false, afterOther: 'unset', upper: true, afterOwn: 'set', unknown: false, malformed: 'refused' });
+    return out;
+  });
 });

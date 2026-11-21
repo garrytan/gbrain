@@ -52,14 +52,17 @@ impl Brain {
         })
     }
 
-    /// `markSourceSynced(id)`: whether the source exists.
+    /// `markSourceSynced(id, { incarnation? }?)`: whether a source was stamped.
     #[napi]
     pub fn mark_source_synced<'env>(
         &self,
         env: &'env Env,
         id: String,
+        options: Option<Value>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.mark_source_synced(&id))
+        self.run(env, move |s| {
+            s.mark_source_synced(&id, &arg(options, "markSourceSynced options")?)
+        })
     }
 
     /// `setSourceArchived(id, archived)`: whether the source exists.

@@ -1,5 +1,6 @@
 /** Source members (BrainEngine listAllSources, updateSourceConfig, markSourceSynced, getSource, listSourceLocalPaths, countRepoBoundSources, getSourceStrictness). */
 import type { SourceDetailRow, SourceRow } from '../../engine.ts';
+import type { SourceSyncStampOptions } from '../../engine-sql/sources.ts';
 import { toSource, withDates } from '../store-codec.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 
@@ -12,9 +13,9 @@ export const listAllSources: StoreMember<[opts?: { includeArchived?: boolean; lo
 export const updateSourceConfig: StoreMember<[sourceId: string, patch: Record<string, unknown>], boolean> = (brain, sourceId, patch) =>
   storeCall({ member: 'updateSourceConfig', sourceId }, () => brain.updateSourceConfig(sourceId, patch));
 
-/** Sets the source's last sync time to the store clock; false for an unknown source, which changes nothing. */
-export const markSourceSynced: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
-  storeCall({ member: 'markSourceSynced', sourceId }, () => brain.markSourceSynced(sourceId));
+/** Sets the source's last sync time to the store clock; false for an unknown source (or another incarnation), which changes nothing. */
+export const markSourceSynced: StoreMember<[sourceId: string, opts?: SourceSyncStampOptions], boolean> = (brain, sourceId, opts) =>
+  storeCall({ member: 'markSourceSynced', sourceId }, () => brain.markSourceSynced(sourceId, takeOptions('markSourceSynced', opts, ['incarnation'])));
 
 /**
  * The row or null; `created_at` and `last_sync_at` come back as Dates, like the driver's. The store keeps the source's
