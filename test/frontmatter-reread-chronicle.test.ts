@@ -23,7 +23,9 @@
  *      lands on the old hash after the row left it), and when two runs move the row at once (it fails when the second
  *      deletes the forwarding record the first just settled);
  *    - a judge whose lease ended just before the re-read moved its row at once keeps its spend and outcome on the moved
- *      row (it fails when the move leaves no forwarding record).
+ *      row (it fails when the move leaves no forwarding record);
+ *    - a judge whose row moved does not overwrite a newer decision on the moved row (it fails when the late outcome
+ *      replaces a skip), and its spend still lands.
  * 4. Runs on PGLite and, with DATABASE_URL, on Postgres (the managed-brain fixture). The Rust engine serves no raw SQL,
  *    so the managed sync and the chronicle phase stop there with engine_capability_missing. The judge is the phase's
  *    injected judge, recording spend on the ambient BudgetTracker; the embedding provider is a stub. No network, no
@@ -299,6 +301,27 @@ describe(`pages-03: the upgrade re-read while a chronicle judge is calling the m
       expect(judge.calls).toBe(1);
       await expectJudgedOnceInCampaign(engine, id, liveHash);
       expect(await ledger(engine, id)).toHaveLength(1);
+    });
+  }, { setup, databaseUrl }), 240_000);
+
+  test('a judge whose row moved does not overwrite a newer decision on the moved row, though its spend lands', () => managedBrain(async ({ engine, root }) => {
+    await inGateway(async () => {
+      const judge = pausingJudge();
+      const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
+      await runPhaseChronicle(engine, { judge }); // moves the row
+      // A later write that kept the content (an added link, a --no-extract write) decides the page again: what
+      // upsertChronicleRow writes over the moved row, its attempts kept.
+      await engine.executeRaw(`UPDATE chronicle_page_state SET state='skipped', reason='no_extract', trigger='auto', no_extract=true,
+          request_id=$3::uuid, next_attempt_at=NULL, decided_at=now(), updated_at=now(), campaign_id=NULL, attempt_cap_usd=NULL,
+          max_attempts=NULL, pricing_policy=NULL, campaign_max_usd=NULL
+        WHERE page_id=$1 AND content_hash=$2`, [id, liveHash, randomUUID()]);
+      judge.release();
+      await firstDrain;
+      expect(judge.calls).toBe(1);
+      const rows = await ledger(engine, id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ content_hash: liveHash, state: 'skipped', reason: 'no_extract', attempts: 2 });
+      expect(Number(rows[0]!.cost_usd)).toBeCloseTo(0.25 + CALL_USD, 10);
     });
   }, { setup, databaseUrl }), 240_000);
 

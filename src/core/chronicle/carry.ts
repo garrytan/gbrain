@@ -105,7 +105,7 @@ export const awaitsCarriedRowSql = (alias: string) => `EXISTS (SELECT 1 FROM op_
  * latest gets the new hash while the page still has it (its row moved while it judged); a settled record whose row is
  * gone is dropped.
  */
-async function moveCarried(engine: BrainEngine, key: CarryKey, owner: { attempts: number } | null): Promise<string | null> {
+async function moveCarried(engine: BrainEngine, key: CarryKey, owner: { attempts: number; requestId: string | null } | null): Promise<string | null> {
   return engine.transaction(async (tx) => {
     const fingerprint = fingerprintOf(key);
     const drop = async () => { await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [CHRONICLE_CARRY_OP, fingerprint]); return null; };
@@ -115,13 +115,15 @@ async function moveCarried(engine: BrainEngine, key: CarryKey, owner: { attempts
     const [held] = await tx.executeRaw<{ held: number }>('SELECT 1 AS held FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR UPDATE',
       [CHRONICLE_CARRY_OP, fingerprint]);
     if (!held) return null;
-    const [carry] = await tx.executeRaw<{ to_hash: string; live_hash: string | null; attempts: number | null; waiting: boolean | null; settled: boolean; moved_attempts: number | null }>(
+    const [carry] = await tx.executeRaw<{ to_hash: string; live_hash: string | null; attempts: number | null; waiting: boolean | null; settled: boolean; moved_attempts: number | null; moved_request: string | null }>(
       `SELECT m.completed_keys->0->>'toHash' AS to_hash,
               (SELECT p.content_hash FROM pages p WHERE p.id=$3 AND p.source_id=$2 AND p.deleted_at IS NULL) AS live_hash,
               c.attempts, (c.state IN ('pending','failed') AND c.next_attempt_at > now()) AS waiting,
               m.completed_keys->0->>'settled' IS NOT NULL AS settled,
               (SELECT n.attempts FROM chronicle_page_state n WHERE n.source_id=$2 AND n.page_id=$3
-                  AND n.content_hash=m.completed_keys->0->>'toHash' AND n.extractor_version=$5) AS moved_attempts
+                  AND n.content_hash=m.completed_keys->0->>'toHash' AND n.extractor_version=$5) AS moved_attempts,
+              (SELECT n.request_id::text FROM chronicle_page_state n WHERE n.source_id=$2 AND n.page_id=$3
+                  AND n.content_hash=m.completed_keys->0->>'toHash' AND n.extractor_version=$5) AS moved_request
          FROM op_checkpoints m
          LEFT JOIN chronicle_page_state c ON c.source_id=$2 AND c.page_id=$3 AND c.content_hash=$4 AND c.extractor_version=$5
         WHERE m.op=$1 AND m.fingerprint=$6`,
@@ -130,9 +132,10 @@ async function moveCarried(engine: BrainEngine, key: CarryKey, owner: { attempts
     if (carry.settled) {
       if (carry.moved_attempts == null) return drop();
       // The moved row's judge follows only while the page still has the hash it moved to: after a later edit its answer
-      // is about content the page no longer holds, so it is not published (its spend still lands, via finish).
-      return owner && Number(carry.moved_attempts) === owner.attempts && carry.attempts == null && carry.live_hash === carry.to_hash
-        ? carry.to_hash : null;
+      // is about content the page no longer holds, so it is not published (its spend still lands, via finish). Nor after
+      // a newer decision on the moved row (a write that kept the content, e.g. with extraction turned off).
+      return owner && Number(carry.moved_attempts) === owner.attempts && carry.moved_request === owner.requestId
+        && carry.attempts == null && carry.live_hash === carry.to_hash ? carry.to_hash : null;
     }
     if (carry.attempts == null || carry.live_hash !== carry.to_hash) return drop();
     if (owner ? Number(carry.attempts) !== owner.attempts : carry.waiting === true) return null;
@@ -189,8 +192,8 @@ export async function settleCarryInto(engine: BrainEngine, row: { source_id: str
 }
 
 /** The executor holding `row`'s lease follows it to its page's new hash; null when the row was not carried there. */
-export async function followChronicleCarry(engine: BrainEngine, row: { source_id: string; page_id: number | string; content_hash: string }, attempts: number): Promise<string | null> {
-  return moveCarried(engine, { sourceId: row.source_id, pageId: Number(row.page_id), fromHash: row.content_hash }, { attempts });
+export async function followChronicleCarry(engine: BrainEngine, row: { source_id: string; page_id: number | string; content_hash: string; request_id: string | null }, attempts: number): Promise<string | null> {
+  return moveCarried(engine, { sourceId: row.source_id, pageId: Number(row.page_id), fromHash: row.content_hash }, { attempts, requestId: row.request_id ?? null });
 }
 
 /** Moves every carried row whose lease or retry delay ended; drops records whose row or page moved on, and settled records whose moved row is gone. */

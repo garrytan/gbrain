@@ -140,11 +140,14 @@ async function finish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: num
     // The row is locked at its hash before its hash is resolved: a carry move of the row waits until this attempt's
     // spend and outcome are on it, and a move that committed first is found through its forwarding record.
     await tx.executeRaw(`SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 FOR UPDATE`, [...key(row)]);
-    await recordFinish(tx, { ...row, content_hash: await carriedRowHash(tx, row) }, attempt, patch);
+    // A row found through a forwarding record takes the outcome only while its decision is still the one this attempt
+    // judged: a later write that kept the content may have decided the page again.
+    const hash = await carriedRowHash(tx, row);
+    await recordFinish(tx, { ...row, content_hash: hash }, attempt, patch, hash !== row.content_hash);
   });
 }
 
-async function recordFinish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: number, patch: Parameters<typeof finish>[3]): Promise<void> {
+async function recordFinish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: number, patch: Parameters<typeof finish>[3], sameDecision = false): Promise<void> {
   if (patch.costUsd != null) {
     await engine.executeRaw(
       `UPDATE chronicle_page_state SET cost_usd=COALESCE(cost_usd, 0) + $5::numeric, cost_attempts=array_append(cost_attempts, $6::int)
@@ -158,11 +161,12 @@ async function recordFinish(engine: BrainEngine, row: ChronicleLedgerRow, attemp
        judge_window_chars=CASE WHEN $15::boolean THEN judge_window_chars ELSE $13::int END,
        judge_window_hash=CASE WHEN $15::boolean THEN judge_window_hash ELSE $14 END,
        judge_input_failures=judge_input_failures + $16::int, updated_at=now()
-      WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND attempts=$11`,
+      WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND attempts=$11
+        AND (NOT $17::boolean OR request_id IS NOT DISTINCT FROM $18::uuid)`,
     [...key(row), patch.state, patch.reason, patch.nextAttemptAt ? patch.nextAttemptAt.toISOString() : null, patch.unpriced ?? null,
       patch.events ? patch.events.map((e) => e.slug) : null, patch.events ? patch.events.map((e) => e.hash) : null, attempt,
       patch.judged?.inputHash ?? null, patch.judged?.window.length ?? null, patch.judged?.windowHash ?? null,
-      patch.keepJudged === true, patch.countFailure ? 1 : 0]);
+      patch.keepJudged === true, patch.countFailure ? 1 : 0, sameDecision, row.request_id ?? null]);
 }
 
 function backoff(attempts: number, now: Date, maxAttempts: number): Date | null {
