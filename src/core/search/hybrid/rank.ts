@@ -420,11 +420,9 @@ export async function sizeReturnPool(
     adaptiveDecision = r.decision;
   }
 
-  // v0.42.3.0 — autocut (score-discontinuity result-sizing). OFF by default
-  // in every mode bundle (ranker wave rule R2: it dropped relevant hits on
-  // multi-part questions); per-call `autocut: true` or config
-  // `search.autocut true` turns it on (resolvedMode.autocut, resolved per-call
-  // > config > bundle like every other knob). Cuts the ranked set at the largest
+  // v0.42.3.0 — autocut (score-discontinuity result-sizing). OFF in every mode bundle (rule
+  // R2: it dropped relevant hits on multi-part questions); `autocut: true` or `search.autocut
+  // true` turns it on (resolvedMode.autocut, resolved per-call > config > bundle). Cuts the ranked set at the largest
   // cross-encoder rerank-score cliff, BEFORE the limit slice, first page only.
   // Runs AFTER adaptive-return so an agent-forced intent cap composes (both are
   // trim-only with never-empty failsafes). The reranker scored the full

@@ -1110,10 +1110,8 @@ const query: Operation = {
       // (config default applies). The wrapper still applies adaptive sizing
       // while semantic cache reuse is suspended.
       adaptiveReturn: typeof p.adaptive_return === 'boolean' ? (p.adaptive_return as boolean) : undefined,
-      // v0.42.3.0 — autocut override. Omitted = the resolved default, OFF in
-      // every mode bundle (`search.autocut true` turns it on). `true` trims at
-      // the steepest score drop and can drop relevant hits on multi-part
-      // questions; `false` forces the full top-K.
+      // v0.42.3.0 — autocut override. Omitted = OFF in every mode bundle (`search.autocut true` turns
+      // it on); `true` trims at the steepest score drop (can drop relevant hits), `false` = full top-K.
       autocut: typeof p.autocut === 'boolean' ? (p.autocut as boolean) : pagePlanHits(plan).autocut,
       // v0.43 — relational recall override. Omitted = smart default (mode bundle).
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
