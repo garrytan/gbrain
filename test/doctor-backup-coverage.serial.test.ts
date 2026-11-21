@@ -91,22 +91,23 @@ function makeHealthyRepo(name: string): string {
 
 /** Minimal engine stub (dispatch-response-meta idiom) — never a real PGLite. */
 function makeEngine(sourcePaths: Array<{ id: string; local_path: string }>, pageCount = 0): BrainEngine {
+  const sourceRows = () => sourcePaths.map((s) => ({
+    id: s.id,
+    name: s.id,
+    local_path: s.local_path,
+    last_commit: null,
+    last_sync_at: null,
+    config: '{}',
+    created_at: new Date(),
+    archived: false,
+    newest_content_at: null,
+  }));
   return {
     kind: 'pglite',
+    // loadAllSources reads the source list through this typed member (N4 moved it off `FROM sources`).
+    listSourceRecords: async () => sourceRows(),
     executeRaw: async (sql: string) => {
-      if (/FROM sources/i.test(sql)) {
-        return sourcePaths.map((s) => ({
-          id: s.id,
-          name: s.id,
-          local_path: s.local_path,
-          last_commit: null,
-          last_sync_at: null,
-          config: '{}',
-          created_at: new Date(),
-          archived: false,
-          newest_content_at: null,
-        }));
-      }
+      if (/FROM sources/i.test(sql)) return sourceRows();
       if (/FROM pages/i.test(sql)) return [{ n: pageCount }];
       throw new Error(`unexpected sql in stub: ${sql}`);
     },
@@ -408,6 +409,7 @@ function makeCountingEngine(kind: 'pglite' | 'postgres', sources: Array<{ id: st
   const listing = makeEngine(sources, pages);
   return {
     kind,
+    listSourceRecords: () => listing.listSourceRecords(),
     executeRaw: async (sql: string) => {
       if (/AS pages/i.test(sql)) return [{ pages, facts, since: new Date(Date.now() - 60_000).toISOString() }];
       return listing.executeRaw(sql);
