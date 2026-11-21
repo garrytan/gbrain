@@ -31,6 +31,7 @@ const PLAIN: Record<string, string> = {
   'src/core/persistence/origin-twins.ts readOriginClaimants privatePagesFilterFragment': 'maintenance: classifies twin pages as private',
   'src/core/persistence/rows-behind.ts scanRowsBehind privatePagesFilterFragment': 'maintenance: lineage privacy of rows behind the projection',
   'src/core/rust-engine/store-members/trust-tier-reads.ts listValidTimeIdentities privatePagesFilterFragment': 'the Rust store derives the world flag of the page under the same policy; the read itself is gated by privatePagesFilterForCaller',
+  'src/core/rust-engine/store-members/entity-identities.ts listRestrictedIdentityMembers privatePagesFilterFragment': 'write-side: the Rust store judges which duplicate-decision members may be written into the home repository under the same world policy as the SQL member; local dedupe only',
   'src/core/rust-engine/store-members/link-temporal.ts originPolicy privatePagesFilterFragment': 'write-side: the Rust store records whether a link origin is public under the same policy',
 };
 

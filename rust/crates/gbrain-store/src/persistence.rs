@@ -17,6 +17,13 @@
 //! | `d 0x05 <request id> 0x00 <kind>` | one `persistence_effects` row (`effects.rs`), JSON |
 //! | `d 0x06 <id, 8 bytes big-endian>` | the effect claim-order index (`effects.rs`), JSON |
 //! | `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoint.rs`), empty |
+//! | `d 0x08 0x01 <host_id>` | one `sync_notifier_leases` row (`notifier.rs`), JSON |
+//! | `d 0x08 0x02 <source_id>` | one `sync_notifier_sources` row (`notifier.rs`), JSON |
+//! | `d 0x08 0x03 <source_id> 0x00 <intent>` | one `sync_wanted_markers` row (`notifier.rs`), JSON |
+//! | `d 0x09 0x01 <worktree_id>` | one `persistence_worktrees` row (`worktrees.rs`), JSON |
+//! | `d 0x09 0x02 <worktree_id> 0x00 <host_id>` | one `persistence_host_bindings` row (`worktrees.rs`), JSON |
+//! | `d 0x09 0x03 <source_id>` | one `persistence_source_bindings` row (`worktrees.rs`), JSON |
+//! | `d 0x10 <refresh id>` | one `persistence_worktree_refreshes` row (`worktree_admission.rs`), JSON |
 //!
 //! `d 0x05` and `d 0x06` are the `persistence_effects` rows and their claim-order index (`effects.rs`); no other
 //! family here uses them.
@@ -37,9 +44,13 @@
 //! runs one write transaction at a time, so a read never overlaps a write. Each member's body is a
 //! `*_in` function over one `KvWrite`, so a store write transaction can run several of them.
 //!
-//! Every request row on this engine has a null `worktree_id` (the insert refuses another value:
-//! no worktree binding exists here), so the worktree terms of the claim statements are answered
-//! as Postgres answers them for a null worktree.
+//! A request or effect that names a worktree reads its `persistence_worktrees` row (written by
+//! `worktrees.rs`) through `worktree_rows.rs`: an insert refuses a worktree id with no row, as the
+//! foreign key does, and the claim terms on a worktree (owner, state, fence, recovery, lane,
+//! waiting) live in `write_claim_terms.rs`. A row admitted `deferred` names its refresh
+//! (`deferred_refresh_id`, checked against the refresh rows of `worktree_admission.rs`); the claim
+//! takes it once `RELEASED_DEFERRED`, and the state writes refuse what `gbrain_guard_deferred_request`
+//! refuses.
 
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso, parse_iso};
@@ -53,12 +64,17 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod checkpoint_rows;
+mod dream_reads;
 mod effect_scans;
 mod effect_worker;
 mod effects;
 mod housekeeping;
 mod idle_probe;
+#[cfg(test)]
+mod lease_order_tests;
 mod noop_settle;
+mod notifier;
 mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
@@ -66,12 +82,23 @@ mod receipt_list;
 mod sync_pass_pages;
 mod sync_run_reads;
 mod topology;
+mod worktree_admission;
+#[cfg(test)]
+mod worktree_claim_tests;
+mod worktree_rows;
+mod worktrees;
+mod write_claim_terms;
 mod writer_versions;
-pub use effect_worker::{EffectClaim, EffectSettle, Settle};
+pub use effect_worker::{EffectClaim, EffectSettle, LinksRearm, Settle};
+pub(crate) use effects::all_effects;
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
 pub use noop_settle::NoopSettleCandidateSpec;
+pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
+pub use notifier::{
+    NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
+};
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
@@ -80,6 +107,8 @@ pub use receipt_list::WriteRequestListFilter;
 pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;
+pub use worktree_admission::WorktreeAdmissionKey;
+pub use worktrees::{HostBindingInsert, SourceBindingInsert, WorktreeInsert};
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
 const COUNTER: u8 = 0x01;
@@ -92,6 +121,11 @@ const QUEUE: u8 = 0x04;
 /// The byte after `keys::PERSISTENCE` of a resumable op's checkpoint path (persistence/op_checkpoint.rs).
 /// Not 0x05 or 0x06: those are the `persistence_effects` rows and their claim-order index.
 const CHECKPOINT_PATH: u8 = 0x07;
+/// The byte after `keys::PERSISTENCE` of a commit notifier row (persistence/notifier.rs). 0x05 to
+/// 0x07 are reserved for effect rows and operation checkpoint paths.
+const NOTIFIER: u8 = 0x08;
+/// The byte after `keys::PERSISTENCE` of a worktree binding row (persistence/worktrees.rs).
+const WORKTREES: u8 = 0x09;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[
@@ -318,6 +352,38 @@ pub(crate) fn count_outstanding_by_source_in(
         .into_iter()
         .map(|(source_id, n)| json!({ "source_id": source_id, "n": n }))
         .collect())
+}
+
+/// The journal half of `readWriteWatermarkRow` (`engine-sql/applied-watermark-reads.ts`): the
+/// outstanding requests of one source incarnation (lowest sequence, how many, oldest admission) and,
+/// when none is outstanding, the newest sequence in the brain. `incarnation` is `None` for an absent
+/// source, which has no outstanding request.
+pub(crate) fn read_request_watermark_in(
+    read: &dyn KvRead,
+    source_id: &str,
+    incarnation: Option<&str>,
+) -> Result<Value> {
+    let all = all_requests(read)?;
+    let pending: Vec<_> = all
+        .iter()
+        .filter(|r| {
+            r.source_id == source_id
+                && incarnation == Some(r.source_incarnation.as_str())
+                && OUTSTANDING_STATES.contains(&r.state.as_str())
+        })
+        .collect();
+    let pending_min = pending.iter().map(|r| r.sequence).min();
+    let pending_since = pending.iter().map(|r| r.created_at_us).min().map(iso);
+    let newest = match pending_min {
+        None => all.iter().map(|r| r.sequence).max(),
+        Some(_) => None,
+    };
+    Ok(json!({
+        "pending_min": pending_min,
+        "pending_count": pending.len(),
+        "pending_since": pending_since,
+        "newest_sequence": newest,
+    }))
 }
 
 /// `persistence/receipt-bytes.ts` `COMPACTED_HEADROOM_BYTES`.
@@ -582,7 +648,8 @@ fn bigint_param(v: &Option<Value>, what: &str) -> Result<Value> {
 /// `insertWriteRequest`: the request row and its counter charge (`ADMIT_WRITE_SQL`). The table's
 /// constraints are checked as Postgres checks them: the principal kind, state, target kind and
 /// protocol version CHECKs, the `(principal_kind, principal_id, request_id)` unique key, the NOT
-/// NULL slug, and the worktree and refresh foreign keys, which nothing here can satisfy.
+/// NULL slug, and the worktree and refresh foreign keys: a worktree id must name a worktree row
+/// (`worktree_rows.rs`) and a refresh id a refresh row (`worktree_admission.rs`).
 pub(crate) fn insert_write_request_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
@@ -616,15 +683,21 @@ pub(crate) fn insert_write_request_in(
     let Some(slug) = input.slug.clone() else {
         return Err(violation("a write request needs a slug"));
     };
-    if input.worktree_id.is_some() {
-        return Err(violation(
-            "no persistence worktree exists on this engine, so worktree_id cannot be set",
-        ));
+    let worktree_id = optional_uuid(&input.worktree_id, "worktreeId")?;
+    if let Some(id) = worktree_id.as_str()
+        && worktree_rows::read_worktree_row(&*tx, id)?.is_none()
+    {
+        return Err(violation(format!(
+            "worktree_id {id} names no persistence_worktrees row"
+        )));
     }
-    if input.deferred_refresh_id.is_some() {
-        return Err(violation(
-            "no worktree refresh exists on this engine, so deferred_refresh_id cannot be set",
-        ));
+    let deferred_refresh_id = optional_uuid(&input.deferred_refresh_id, "deferredRefreshId")?;
+    if let Some(id) = deferred_refresh_id.as_str()
+        && !worktree_admission::refresh_exists(&*tx, id)?
+    {
+        return Err(violation(format!(
+            "deferred_refresh_id {id} names no persistence_worktree_refreshes row"
+        )));
     }
     if input.principal_id.contains('\0') {
         // Postgres text refuses a NUL byte, and the duplicate lookup below cannot find a key
@@ -669,6 +742,8 @@ pub(crate) fn insert_write_request_in(
     extra.insert("admitter_version".into(), json!(input.admitter_version));
     extra.insert("admitter_host_id".into(), admitter_host_id);
     extra.insert("admitter_segment_reader".into(), json!(true));
+    extra.insert("deferred_refresh_id".into(), deferred_refresh_id);
+    extra.insert("worktree_id".into(), worktree_id);
     let record = RequestRecord {
         id: env.new_uuid(),
         principal_kind: input.principal_kind.clone(),
@@ -717,6 +792,30 @@ fn lease_end(now: i64, lease_ms: f64) -> i64 {
     now + (lease_ms * 1000.0).round() as i64
 }
 
+/// `gbrain_guard_deferred_request`'s refusal of a claim of a deferred row whose holds are not released.
+const DEFERRED_CLAIM_REFUSED: &str = "writer_upgrade_required: a deferred request is claimed only by a refresh-barrier consumer after its refresh and import are released";
+
+/// `gbrain_guard_deferred_request` (v292, v294) for an update that is not a claim: a row becomes
+/// `deferred` only at admission (no update here sets `deferred_import_from`), and a deferred row
+/// leaves only to `conflict`, `failed` or `cancelled`.
+pub(crate) fn guard_deferred_transition(old: &str, new: &str) -> Result<()> {
+    if old != "deferred" && new != "deferred" {
+        return Ok(());
+    }
+    if new == "deferred" {
+        if old == "deferred" {
+            return Ok(());
+        }
+        return Err(violation(
+            "unsupported_mutation_protocol: only admission, or a refresh-barrier consumer holding its claim for an import, defers a request",
+        ));
+    }
+    if matches!(new, "conflict" | "failed" | "cancelled") {
+        return Ok(());
+    }
+    Err(violation(DEFERRED_CLAIM_REFUSED))
+}
+
 /// `CLAIM_STAMP_SQL`: running, the token, the lease and the first phase. `passed_sync` is false:
 /// it asks for an earlier queued sync row on the same worktree, and every worktree here is null.
 /// `seen_sequence` is the newest sequence for a sync row: requests are never deleted on this
@@ -731,6 +830,11 @@ pub(crate) fn stamp_write_claim_in(
     let Some(mut record) = request_by_id(&*tx, &stamp.id)? else {
         return Ok(None);
     };
+    // gbrain_guard_deferred_request: the claim runs as a refresh-barrier consumer
+    // (REFRESH_BARRIER_CLAIM_PREDICATE), so a deferred row moves to running only once released.
+    if record.state == "deferred" && !worktree_admission::released_deferred_in(&*tx, &record)? {
+        return Err(violation(DEFERRED_CLAIM_REFUSED));
+    }
     let now = env.now_micros();
     record.state = "running".into();
     record.updated_at_us = now;
@@ -811,6 +915,7 @@ pub(crate) fn complete_write_row_in(
     if !REQUEST_STATES.contains(&c.state.as_str()) {
         return Err(violation(format!("\"{}\" is not a request state", c.state)));
     }
+    guard_deferred_transition(&record.state, &c.state)?;
     let reservation = extra_i64(&record, "terminal_reservation");
     let (effect_bytes, unfinished) = effects::effect_totals(&*tx, &c.id)?;
     // SQL sums these as exact numerics, so a sum past i64 is simply too big, never a wrapped small one.
@@ -1040,9 +1145,21 @@ pub(crate) fn expire_stale_write_claims_in(
     env: &dyn Env,
     spec: &ExpireClaims,
 ) -> Result<u64> {
-    uuid_param(&spec.host_id, "hostId")?;
+    let host = uuid_param(&spec.host_id, "hostId")?;
     let now = env.now_micros();
-    let mut candidates: Vec<RequestRecord> = all_requests(&*tx)?
+    let mut owned = Vec::new();
+    for r in all_requests(&*tx)? {
+        // `r.worktree_id IS NULL OR EXISTS (... w.owner_host_id=$1::uuid)`.
+        let mine = match write_claim_terms::worktree_of(&r) {
+            None => true,
+            Some(w) => worktree_rows::read_worktree_row(&*tx, &w)?
+                .is_some_and(|row| row.owned_by(Some(&host))),
+        };
+        if mine {
+            owned.push(r);
+        }
+    }
+    let mut candidates: Vec<RequestRecord> = owned
         .into_iter()
         .filter(|r| {
             if r.state != "running"
@@ -1095,10 +1212,56 @@ pub(crate) fn expire_stale_write_claims_in(
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ClaimableSpec {
+    /// `$1`: the consumer's host id (a uuid), which selects the worktree rows it may claim.
+    pub host_id: Option<String>,
     pub exclude_roots: Vec<String>,
     pub fifo_roots: Vec<String>,
     pub lane_roots: Vec<String>,
+    /// `$5` and `$6`: the consumer nonce and per-worktree sync-seen sequences of the `waiting`
+    /// term, which matches worktree rows only (`g.worktree_id=r.worktree_id`).
+    pub nonce: Option<String>,
+    pub sync_seen: Map<String, Value>,
     pub priority: Option<bool>,
+    /// `CLAIM_HEAD_LEASE_HELD` ($7-$9): a non-resident consumer ranks a managed-sync row whose
+    /// source's drain lease another live process holds after every other row. `None` for a
+    /// resident consumer.
+    pub lease_holder: Option<LeaseHolder>,
+}
+
+/// The lock a non-resident consumer checks before it takes a managed-sync row.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeaseHolder {
+    pub lock_prefix: String,
+    pub pid: f64,
+    pub host: String,
+}
+
+impl ClaimableSpec {
+    /// The parameters Postgres casts before it reads a row: `$1::uuid` and `$8::integer`.
+    fn check(&self) -> Result<()> {
+        if let Some(host) = &self.host_id {
+            effect_scans::host_uuid(host)?;
+        }
+        if let Some(h) = &self.lease_holder
+            && (h.pid.fract() != 0.0 || h.pid < f64::from(i32::MIN) || h.pid > f64::from(i32::MAX))
+        {
+            return Err(StoreError::invalid(format!(
+                "invalid input syntax for type integer: \"{}\"",
+                h.pid
+            )));
+        }
+        Ok(())
+    }
+
+    /// Whether sync row `r`'s drain lease is held by a process other than this consumer.
+    fn lease_held(&self, read: &dyn KvRead, r: &RequestRecord, now: i64) -> Result<bool> {
+        let Some(h) = self.lease_holder.as_ref().filter(|_| sync_kind(&r.intent)) else {
+            return Ok(false);
+        };
+        let id = format!("{}{}", h.lock_prefix, r.source_id);
+        crate::jobs::lock_held_by_other(read, &id, h.pid as i64, &h.host, now)
+    }
 }
 
 fn foreground_priority(read: &dyn KvRead, given: Option<bool>) -> Result<bool> {
@@ -1125,7 +1288,7 @@ fn names_page(sync: &RequestRecord, write: &RequestRecord) -> Option<bool> {
     and3(same_source, or3(or3(slug, page), renamed))
 }
 
-/// `PASSES_QUEUED_SYNC(earlier, r, priority, laneRoots)` with a null `earlier.worktree_id`.
+/// `PASSES_QUEUED_SYNC(earlier, r, priority, laneRoots)`.
 fn passes_queued_sync(
     earlier: &RequestRecord,
     r: &RequestRecord,
@@ -1133,11 +1296,11 @@ fn passes_queued_sync(
     lane_roots: &[String],
 ) -> Option<bool> {
     let lane_running = if earlier.state == "running" && earlier.intent.get("lane").is_some() {
-        // `NULL::text = ANY(laneRoots)`: false over an empty array, otherwise NULL.
-        if lane_roots.is_empty() {
-            Some(false)
-        } else {
-            None
+        match write_claim_terms::worktree_of(earlier) {
+            Some(w) => Some(lane_roots.contains(&w)),
+            // `NULL::text = ANY(laneRoots)`: false over an empty array, otherwise NULL.
+            None if lane_roots.is_empty() => Some(false),
+            None => None,
         }
     } else {
         Some(false)
@@ -1150,33 +1313,41 @@ fn passes_queued_sync(
     and3(out, not3(names_page(earlier, r)))
 }
 
+/// `COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)`: the root a claim skips by.
 fn root_key(r: &RequestRecord) -> String {
-    format!("db:{}", r.source_incarnation)
+    write_claim_terms::worktree_of(r).unwrap_or_else(|| format!("db:{}", r.source_incarnation))
 }
 
-/// `claimableWriteSql(priority, laneRoots)` for a request with a null worktree.
+/// `claimableWriteSql(priority, laneRoots)`. `r` is a candidate (`candidates`): queued, or a
+/// released deferred row. A row with a null worktree is ordered by its source incarnation's
+/// pending rows; a row on a worktree by that worktree's terms (`write_claim_terms.rs`).
 fn claimable(
     r: &RequestRecord,
     pending: &[&RequestRecord],
+    worktrees: &write_claim_terms::WorktreeClaims<'_>,
     priority: bool,
     spec: &ClaimableSpec,
     lane_roots: &[String],
     now: i64,
-) -> bool {
-    if r.state != "queued" || spec.exclude_roots.contains(&root_key(r)) {
-        return false;
+) -> Result<bool> {
+    if spec.exclude_roots.contains(&root_key(r)) {
+        return Ok(false);
     }
     if extra_time(r, "next_attempt_at").is_some_and(|t| t > now) {
-        return false;
+        return Ok(false);
     }
-    !pending.iter().any(|e| {
+    if let Some(w) = write_claim_terms::worktree_of(r) {
+        return worktrees.claimable(r, &w, spec, priority, lane_roots);
+    }
+    Ok(!pending.iter().any(|e| {
         e.sequence < r.sequence
             && e.source_incarnation == r.source_incarnation
             && extra_is_null(e, "worktree_id")
             && passes_queued_sync(e, r, priority, lane_roots) == Some(false)
-    })
+    }))
 }
 
+/// The pending rows a null-worktree candidate is ordered behind.
 fn pending(all: &[RequestRecord]) -> Vec<&RequestRecord> {
     all.iter()
         .filter(|r| {
@@ -1186,6 +1357,17 @@ fn pending(all: &[RequestRecord]) -> Vec<&RequestRecord> {
         .collect()
 }
 
+/// The rows the claim may take: `r.state='queued' OR RELEASED_DEFERRED('r')`.
+fn candidates<'a>(read: &dyn KvRead, all: &'a [RequestRecord]) -> Result<Vec<&'a RequestRecord>> {
+    let mut out = Vec::new();
+    for r in all {
+        if r.state == "queued" || worktree_admission::released_deferred_in(read, r)? {
+            out.push(r);
+        }
+    }
+    Ok(out)
+}
+
 /// `hasClaimableWrite`: whether `selectClaimableWrite` would find a row, with the plain switch
 /// and no lane roots.
 pub(crate) fn has_claimable_write_in(
@@ -1193,48 +1375,70 @@ pub(crate) fn has_claimable_write_in(
     env: &dyn Env,
     spec: &ClaimableSpec,
 ) -> Result<bool> {
+    spec.check()?;
     let priority = foreground_priority(read, spec.priority)?;
     let all = all_requests(read)?;
     let pending = pending(&all);
+    let worktrees = write_claim_terms::WorktreeClaims::new(read, &all)?;
     let now = env.now_micros();
-    Ok(pending
-        .iter()
-        .any(|r| claimable(r, &pending, priority, spec, &[], now)))
+    for r in candidates(read, &all)? {
+        if claimable(r, &pending, &worktrees, priority, spec, &[], now)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// `selectClaimableWrite`: the row `claimNextWrite` claims next, or `None`. `first` is the switch
 /// unless the row's root is in `fifoRoots`. On a root in `laneRoots` only a foreground write is
 /// claimed; a null worktree compares as NULL there, so with any lane root a sync row or a row that
-/// does not go first is skipped. A claimable foreground row comes before the sync rows it passes,
-/// then sequence order. The sync-lease ordering (`LEASE_HELD`) and the foreground wait
-/// (`FOREGROUND_WAITING_ON`) match on the worktree, so they change nothing here.
+/// does not go first is skipped. A sync row that would go first waits while its worktree's
+/// `waiting` foreground write is newer (`write_claim_terms.rs`). The order: a sync row whose
+/// drain lease another process holds last, then a claimable foreground row before the sync rows
+/// it passes, then sequence order.
 pub(crate) fn select_claimable_write_in(
     read: &dyn KvRead,
     env: &dyn Env,
     spec: &ClaimableSpec,
 ) -> Result<Option<Value>> {
+    spec.check()?;
     let priority = foreground_priority(read, spec.priority)?;
     let all = all_requests(read)?;
     let pending = pending(&all);
+    let worktrees = write_claim_terms::WorktreeClaims::new(read, &all)?;
     let now = env.now_micros();
-    let mut best: Option<(bool, &RequestRecord)> = None;
-    for r in pending.iter().copied() {
+    // `free` and `ahead` rank higher when true.
+    let mut best: Option<((bool, bool), &RequestRecord)> = None;
+    for r in candidates(read, &all)? {
         let first = priority && !spec.fifo_roots.contains(&root_key(r));
-        if !spec.lane_roots.is_empty() && (sync_kind(&r.intent) || !first) {
+        let sync = sync_kind(&r.intent);
+        let worktree = write_claim_terms::worktree_of(r);
+        let on_lane = match &worktree {
+            Some(w) => spec.lane_roots.contains(w),
+            None => !spec.lane_roots.is_empty(),
+        };
+        if on_lane && (sync || !first) {
             continue;
         }
-        if !claimable(r, &pending, first, spec, &spec.lane_roots, now) {
+        if !claimable(r, &pending, &worktrees, first, spec, &spec.lane_roots, now)? {
             continue;
         }
-        let ahead = first && !sync_kind(&r.intent);
+        if let Some(w) = &worktree
+            && sync
+            && first
+            && worktrees.waits(w, r.sequence, spec)?
+        {
+            continue;
+        }
+        let rank = (!spec.lease_held(read, r, now)?, first && !sync);
         let better = match best {
             None => true,
-            Some((b_ahead, b)) => {
-                (ahead, std::cmp::Reverse(r.sequence)) > (b_ahead, std::cmp::Reverse(b.sequence))
+            Some((b_rank, b)) => {
+                (rank, std::cmp::Reverse(r.sequence)) > (b_rank, std::cmp::Reverse(b.sequence))
             }
         };
         if better {
-            best = Some((ahead, r));
+            best = Some((rank, r));
         }
     }
     Ok(best.map(|(_, r)| r.to_row()))
@@ -1265,6 +1469,18 @@ impl Store {
     /// `insertWriteRequest(row)`: the stored request row.
     pub fn insert_write_request(&self, input: &WriteRequestInsert) -> Result<Value> {
         self.write(|tx| insert_write_request_in(tx, &*self.env, input))
+    }
+
+    /// `insertWriteRequestGroup(rows)`: the stored rows in item order, all inserted in one store
+    /// write. A refusal at any row drops the whole write, so no row and no counter charge is kept.
+    pub fn insert_write_request_group(&self, inputs: &[WriteRequestInsert]) -> Result<Value> {
+        self.write(|tx| {
+            inputs
+                .iter()
+                .map(|input| insert_write_request_in(tx, &*self.env, input))
+                .collect::<Result<Vec<_>>>()
+                .map(Value::Array)
+        })
     }
 
     /// `stampWriteClaim(id, token, leaseMs, phaseJson)`: the claimed row or `None`.
@@ -1317,6 +1533,16 @@ impl Store {
         principal_id: &str,
     ) -> Result<Vec<Value>> {
         count_outstanding_by_source_in(&*self.read()?, principal_kind, principal_id)
+    }
+
+    /// `readWriteWatermarkRow`'s journal half: `{ pending_min, pending_count, pending_since,
+    /// newest_sequence }` of one source incarnation (`None` for an absent source).
+    pub fn read_request_watermark(
+        &self,
+        source_id: &str,
+        incarnation: Option<&str>,
+    ) -> Result<Value> {
+        read_request_watermark_in(&*self.read()?, source_id, incarnation)
     }
 
     /// `readCounterRows(keys)`: the counter rows that exist, in byte order (`COLLATE "C"`), unlocked.

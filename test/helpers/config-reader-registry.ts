@@ -54,6 +54,7 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'ocr_skipped_budget', reason: 'image-OCR run counter (import-file.ts), read by doctor queue_assets' },
   { key: 'page_state.revision_backfill', reason: 'page-state revision backfill progress marker' },
   { key: 'schema_migration_timeout', reason: 'the last schema migration that ran out of its statement budget, written and cleared by migrate.ts (migration-timeout.ts, #7108)' },
+  { key: 'persistence.writer_admin_lock', reason: 'the brain-level writer admin lock that only gbrain sources writer lock/unlock set (persistence/admin-lock.ts); gbrain config set refuses it as reserved, and the typed lock reads (writer-admin, worktree claim, administration) read it' },
   { key: 'persistence.database_only_sources', reason: 'list maintained by gbrain sources writer activate/deactivate; config unset (which takes any key) is the documented escape hatch' },
   { key: 'persistence.maintenance.last_compaction', reason: 'receipt compaction pass cursor (compaction-pass.ts)' },
   { key: 'persistence.true_up.compacted_through', reason: 'receipt true-up cursor (receipt-true-up.ts)' },

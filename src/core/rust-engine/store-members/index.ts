@@ -49,6 +49,8 @@ import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
+import * as syncHoldStore from './sync-hold-store.ts';
+import * as syncStatusReads from './sync-status-reads.ts';
 import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
@@ -67,6 +69,7 @@ import * as withdrawalPages from './withdrawal-pages.ts';
 import * as withdrawalFence from './withdrawal-fence.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
+import * as notifier from './notifier.ts';
 import * as effectScans from './effect-scans.ts';
 import * as ownerScans from './owner-scans.ts';
 import * as effectWorker from './effect-worker.ts';
@@ -75,9 +78,13 @@ import * as pageEmbeddingBudget from './page-embedding-budget.ts';
 import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
+import * as worktreeClaim from './worktree-claim.ts';
+import * as writerAdmin from './writer-admin.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
 import * as syncRunReads from './sync-run-reads.ts';
+import * as accessPolicy from './access-policy.ts';
+import * as accessSetup from './access-setup.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as entityIdentities from './entity-identities.ts';
@@ -100,6 +107,11 @@ import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
+import * as synopsisTier from './synopsis-tier.ts';
+import * as sourceCrMode from './source-cr-mode.ts';
+import * as remoteLinks from './remote-links.ts';
+import * as factsBackstop from './facts-backstop.ts';
+import * as dreamJournal from './dream-journal.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -144,14 +156,27 @@ export const STORE_MEMBERS = {
   ...aliasFanoutReads,
   ...entityIdentities,
   ...persistence, ...housekeeping, ...effectScans, ...ownerScans, ...effectWorker, ...noopSettle,
+  // The git sync hold store and managed sync pass rows, kept as op checkpoint rows (rust/docs/store/persistence.md, "Checkpoint rows").
+  ...syncHoldStore,
+  ...syncStatusReads,
+  // The commit notifier's host lease and host source list (rust/docs/store/persistence.md, "Commit notifier").
+  ...notifier,
   // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).
   ...pageEmbeddingBudget,
   ...embeddingInstall,
   ...writeMisc,
+  // The unmanaged writer claim over the store's worktree bindings (rust/docs/store/persistence.md, "Worktree bindings").
+  ...worktreeClaim,
+  // Writer administration: the reviewed state digest, the operator lock, transfer prepare and cancel (same section).
+  ...writerAdmin,
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,
   ...syncRunReads,
+  // The folder-rule policy members access/policy.ts runs (rust/docs/store/access_rules.md).
+  ...accessPolicy,
+  // The access setup and policy-store members outside access/policy.ts (rust/docs/store/access_rules.md).
+  ...accessSetup,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).
@@ -170,6 +195,16 @@ export const STORE_MEMBERS = {
   ...fieldUsage,
   // Group A: the decide store (rust/docs/store/decide-store.md).
   ...decideStore,
+  // The synopsis tier's configuration read (rust/docs/store/synopsis-tier.md).
+  ...synopsisTier,
+  // A source's own contextual-retrieval mode (rust/docs/store/source-cr-mode.md).
+  ...sourceCrMode,
+  // The remote links effect's edge reads and writes and its batch re-arm (rust/docs/store/remote-links.md).
+  ...remoteLinks,
+  // The facts backstop effect's two extraction reads (rust/docs/store/jobs.md, "Facts extraction reads").
+  ...factsBackstop,
+  // The dream cycle's persistence journal reads (rust/docs/store/dream.md, "Dream cycle statements").
+  ...dreamJournal,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

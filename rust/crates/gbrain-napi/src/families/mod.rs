@@ -2,6 +2,7 @@
 //! block; napi-rs merges the blocks into one JavaScript class. Every family is listed once, here,
 //! so building a family never edits this list.
 
+mod access_rules;
 mod chunks;
 mod cli_entities;
 mod cli_reads_export;
@@ -18,6 +19,7 @@ mod import_members;
 mod journal;
 mod large_page;
 mod links;
+mod notifier;
 mod op_checkpoint;
 mod page_visibility;
 mod pages;
@@ -30,6 +32,7 @@ mod trust;
 mod trust_fence;
 mod trust_proposals;
 mod versions;
+mod worktrees;
 mod write_attribution;
 mod write_guards;
 mod write_misc;
@@ -54,6 +57,7 @@ mod extraction;
 mod facts;
 mod facts_cycle;
 mod facts_doctor;
+mod facts_extraction;
 mod facts_holding_purges;
 mod facts_loops;
 mod facts_purge;
@@ -72,6 +76,7 @@ mod page_embedding_budget;
 mod page_ops;
 mod raw_files;
 mod relations;
+mod remote_links;
 mod salience;
 mod stats;
 mod takes;
@@ -87,3 +92,5 @@ mod withdrawal_fence;
 mod withdrawal_pages;
 // Group C: decide proposals and review proposals (rust/docs/store/decide-proposals.md).
 mod decide_proposals;
+mod source_cr_mode;
+mod synopsis_tier;

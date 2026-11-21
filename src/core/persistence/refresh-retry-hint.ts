@@ -6,23 +6,17 @@
  * history, or already past its typical duration, is retried in floor-sized steps. A refresh that stopped in
  * recovery_required (its outcome keeps the refusal) is left out, since its duration includes the wait for an operator.
  */
-import type { SqlEngine } from './model.ts';
+import type { BrainEngine } from '../engine.ts';
 
 const PHASE_FLOOR_MS: Record<string, number> = { draining: 2_000, fenced: 2_000, merged: 2_000, syncing: 15_000 };
 const MAX_RETRY_AFTER_MS = 10 * 60_000;
-const HISTORY = 10;
 
 export interface RefreshRetryHint { retryAfterMs: number; phase: string; elapsedMs: number | null; typicalMs: number | null }
 
-export async function refreshRetryHint(engine: SqlEngine, refresh: { id: string; state: string }): Promise<RefreshRetryHint> {
-  const [row] = await engine.executeRaw<{ elapsed_ms: number | string | null; typical_ms: number | string | null }>(`SELECT
-    (EXTRACT(EPOCH FROM now()-f.created_at)*1000)::bigint AS elapsed_ms,
-    (SELECT (percentile_cont(0.5) WITHIN GROUP (ORDER BY d.ms))::bigint FROM (SELECT EXTRACT(EPOCH FROM p.completed_at-p.created_at)*1000 AS ms
-      FROM persistence_worktree_refreshes p WHERE p.worktree_id=f.worktree_id AND p.state='completed' AND p.completed_at IS NOT NULL AND p.outcome->'refusal' IS NULL
-      ORDER BY p.completed_at DESC LIMIT ${HISTORY}) d) AS typical_ms
-    FROM persistence_worktree_refreshes f WHERE f.id=$1::uuid`, [refresh.id]).catch(() => []);
-  const elapsedMs = row?.elapsed_ms == null ? null : Number(row.elapsed_ms);
-  const typicalMs = row?.typical_ms == null ? null : Number(row.typical_ms);
+export async function refreshRetryHint(engine: Pick<BrainEngine, 'readRefreshTiming'>, refresh: { id: string; state: string }): Promise<RefreshRetryHint> {
+  const timing = await engine.readRefreshTiming(refresh.id).catch(() => null);
+  const elapsedMs = timing?.elapsed_ms ?? null;
+  const typicalMs = timing?.typical_ms ?? null;
   const floor = PHASE_FLOOR_MS[refresh.state] ?? PHASE_FLOOR_MS.syncing!;
   const left = typicalMs !== null && elapsedMs !== null ? typicalMs - elapsedMs : 0;
   return { retryAfterMs: Math.min(MAX_RETRY_AFTER_MS, Math.max(floor, Math.round(left))), phase: refresh.state, elapsedMs, typicalMs };

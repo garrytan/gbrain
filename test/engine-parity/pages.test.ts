@@ -963,6 +963,29 @@ describe('engine parity: pages', () => {
     },
   );
 
+  parityTest('bumpPageRetrievals stamps the most-linked page once per 5 minutes and staleBias then prefers a never-retrieved page',
+    { methods: ['bumpPageRetrievals', 'listPrefixSampledPages'] }, async (engine) => {
+      await seed(engine, [['wiki/vc/linked', NOTE], ['wiki/vc/quiet', NOTE], ['notes/a', NOTE]]);
+      await engine.addLink('notes/a', 'wiki/vc/linked', '', 'mentions');
+      const linked = Number((await engine.getPage('wiki/vc/linked'))!.id);
+      const sample = async (staleBias: boolean) => {
+        const [row] = await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'], staleBias });
+        return { slug: row!.slug, retrieved: row!.last_retrieved_at };
+      };
+      const before = await sample(false);
+      expect(before).toEqual({ slug: 'wiki/vc/linked', retrieved: null });
+      await engine.bumpPageRetrievals([linked, 987654]);
+      const first = await sample(false);
+      expect(first.retrieved).toBeInstanceOf(Date);
+      await engine.bumpPageRetrievals([linked]);
+      const again = await sample(false);
+      const unmoved = again.retrieved!.getTime() === first.retrieved!.getTime();
+      expect(unmoved).toBe(true);
+      const biased = await sample(true);
+      expect(biased).toEqual({ slug: 'wiki/vc/quiet', retrieved: null });
+      return { before, stamped: first.slug, unmoved, biased };
+    });
+
   parityTest('bumpPageRetrievals records a retrieval that the samplers read and staleBias ranks behind a never-retrieved page', { methods: ['bumpPageRetrievals', 'listPrefixSampledPages', 'listCorpusSample'] }, async (engine) => {
     await seed(engine, [['wiki/vc/a', NOTE], ['wiki/vc/b', NOTE]]);
     const a = Number((await engine.getPage('wiki/vc/a'))!.id);

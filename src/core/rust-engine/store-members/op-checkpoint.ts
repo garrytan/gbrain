@@ -52,3 +52,8 @@ export const readSyncImportPageRows: StoreMember<[q: SyncImportPageQuery, window
   storeCall({ member: 'readSyncImportPageRows' }, () => brain.readSyncImportPageRows(
     { sourceId: q.sourceId, incarnation: q.incarnation, expected: q.expected, chunkerVersion: MARKDOWN_CHUNKER_VERSION },
     'ids' in window ? { ids: [...window.ids] } : { after: window.after, limit: window.limit }));
+
+
+/** The checkpoints stamped more than `ttlDays` days ago and not exempt deleted with their paths; how many. */
+export const purgeStaleCheckpoints: StoreMember<[ttlDays: number], number> = (brain, ttlDays) =>
+  storeCall({ member: 'purgeStaleCheckpoints' }, () => brain.purgeStaleCheckpoints(ttlDays));

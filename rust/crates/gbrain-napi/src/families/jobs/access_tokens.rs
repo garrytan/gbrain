@@ -33,6 +33,16 @@ impl Brain {
         self.run(env, move |s| s.find_active_access_tokens(&target))
     }
 
+    /// `readAccessTokenNames(ids)`: `[{ id, name }]` of the tokens with those ids, revoked ones included, by id.
+    #[napi]
+    pub fn read_access_token_names<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_access_token_names(&ids))
+    }
+
     /// `setAccessTokenMinTrust(id, tier)`: whether a token had the id.
     #[napi]
     pub fn set_access_token_min_trust<'env>(

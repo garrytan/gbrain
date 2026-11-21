@@ -1,12 +1,15 @@
 /**
  * The reads of the CLI import and extract paths (BrainEngine listSourceRecords through filterPagesAtRevision), served
  * by gbrain-store `cli_reads::import`. What the store does not keep (commit columns, ingestion receipts, guest_sources,
- * page trust) and what each member answers for it: rust/docs/store/cli-reads-import.md.
+ * page trust) and what each member answers for it: rust/docs/store/cli-reads-import.md. readSyncDispatchRow builds the
+ * sync routing row from readSourceState and hasCompanyBrainReceipt.
  */
 import type {
   GuestSourceLookupRow, LinkPageMetadataRow, PageAtRevisionRef, PageTrustLookup, PageTrustRow, RowTrustLookup, RowTrustRow,
   SourceIncarnationRow, SourceRecordRow, StoredTimelineRow,
 } from '../../engine.ts';
+import type { SyncDispatchRow } from '../../engine-sql/sync-dispatch.ts';
+import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import { withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -17,6 +20,21 @@ export const listSourceRecords: StoreMember<[], SourceRecordRow[]> = async (brai
 
 export const readSourceIncarnation: StoreMember<[sourceId: string], SourceIncarnationRow | null> = (brain, sourceId) =>
   storeCall({ member: 'readSourceIncarnation', sourceId }, () => brain.readSourceIncarnation(sourceId));
+
+/**
+ * The sync routing row from the store's own source reads. The store keeps no writer bindings (isSourceClaimed is false)
+ * and one unmanaged brain (readManagedModeRows answers `enabled: false`), so `claimed` is false and `modes` is [false].
+ */
+export const readSyncDispatchRow: StoreMember<[sourceId: string], SyncDispatchRow> = async (brain, sourceId) => {
+  const member = 'readSyncDispatchRow';
+  const source: SourceStateRow | null = await storeCall({ member, sourceId }, () => brain.readSourceState(sourceId));
+  if (!source) return { id: null, archived: null, config: null, incarnation: null, local_path: null, claimed: false, company_receipt: false, modes: [false] };
+  const receipt: boolean = await storeCall({ member, sourceId }, () => brain.hasCompanyBrainReceipt(sourceId));
+  return {
+    id: sourceId, archived: source.archived, config: source.config, incarnation: String(source.incarnation),
+    local_path: source.local_path, claimed: false, company_receipt: receipt, modes: [false],
+  };
+};
 
 export const hasCompanyBrainReceipt: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
   storeCall({ member: 'hasCompanyBrainReceipt', sourceId }, () => brain.hasCompanyBrainReceipt(sourceId));
@@ -44,6 +62,14 @@ export const readDatabaseClock: StoreMember<[], string> = (brain) =>
 
 export const listLinkPageMetadata: StoreMember<[sourceId?: string], LinkPageMetadataRow[]> = (brain, sourceId) =>
   storeCall({ member: 'listLinkPageMetadata', sourceId }, () => brain.listLinkPageMetadata(sourceId));
+
+export const listLinkPageMetadataForSlugs: StoreMember<[sourceId: string, slugs: readonly string[]], LinkPageMetadataRow[]> =
+  (brain, sourceId, slugs) => storeCall({ member: 'listLinkPageMetadataForSlugs', sourceId },
+    () => brain.readLinkPageMetadataForSlugs(sourceId, [...slugs]));
+
+export const listAttendedOriginSlugs: StoreMember<[sourceId: string, slugs?: readonly string[]], string[]> =
+  (brain, sourceId, slugs) => storeCall({ member: 'listAttendedOriginSlugs', sourceId },
+    () => brain.listAttendedOriginSlugs(sourceId, slugs ? [...slugs] : null));
 
 export const listStoredTimelineRows: StoreMember<[sourceId: string, slug: string], StoredTimelineRow[]> = (brain, sourceId, slug) =>
   storeCall({ member: 'listStoredTimelineRows', sourceId, slug }, () => brain.listStoredTimelineRows(sourceId, slug));

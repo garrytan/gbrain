@@ -61,6 +61,15 @@ export function requireManagedPersistence(engine: object, step: string, why: str
 }
 
 /**
+ * The named refusal of a step that runs its rows through raw SQL (the refresh writer) on an engine without `raw_sql`
+ * (the Rust engine). The step calls it first, so nothing of it ran. PGLite, Postgres and transaction handles pass. The
+ * member text is `step: why`.
+ */
+export function requireRawSql(engine: object, step: string, why: string): void {
+  if (!servesRawSql(engine)) throw capabilityMissing('raw_sql', `${step}: ${why}`);
+}
+
+/**
  * Whether `engine` can hold managed-checkout state at all. Without `managed_persistence` no worktree, refresh or
  * worktree-owned write can exist (their admission refuses above), so an owner scan over them has nothing to find and
  * returns empty instead of reading. PGLite, Postgres and transaction handles (no capability set) answer true.

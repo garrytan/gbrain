@@ -20,6 +20,7 @@ const OPEN_WITHOUT_DEFERRED = /'queued', ?'running', ?'recovering'/g;
 const DECIDED: Record<string, { count: number; why: string }> = {
   'src/commands/book-mirror.ts': { count: 1, why: 'receipt state (a deferred row reads as queued)' },
   'src/core/engine-sql/persistence-claims.ts': { count: 7, why: 'copies of journal.ts lists, pinned by test/persistence-journal-statements.test.ts. The claimable-row test (claimableWriteSql): its two EARLIER_HEAD lists, with the written-out EARLIER_DEFERRED probe and RELEASED_DEFERRED beside them. The FIFO head read (claimHeadText): its waiting list pairs RELEASED_DEFERRED, its two named-sync lists match managed sync rows, which are never deferred, and its two EARLIER_HEAD lists sit beside the EARLIER_DEFERRED probe (worktree rows) or match rows with no worktree, which are never deferred; test/claim-head-deferred-decisions.test.ts proves each' },
+  'src/core/engine-sql/sync-status-reads.ts': { count: 1, why: 'managed sync: the drain stall probe head-request read moved here from sync-drain.ts' },
   'src/core/engine-sql/persistence-housekeeping.ts': { count: 2, why: 'the compaction listing writes out terminal-classify.ts supersessionSql (test/persistence-journal-statements.test.ts pins the copy): the same two lists and the same decision' },
   'src/core/engine-sql/dream-cycle.ts': { count: 1, why: 'cycle producer, never deferred (listLaterPersistenceRequests, moved from cycle/synthesize-postprocess.ts)' },
   'src/core/engine-sql/facts-trust.ts': { count: 1, why: 'facts producer, never deferred (readPendingWriteReceipt, moved from facts/absorb-log.ts)' },
@@ -36,7 +37,7 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/persistence/schema.ts': { count: 3, why: 'the original state CHECK and partial indexes; deferred rows have their own index' },
   'src/core/persistence/sync-admission-sql.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/sync-cursor-key.ts': { count: 2, why: 'managed sync' },
-  'src/core/persistence/sync-drain.ts': { count: 2, why: 'managed sync' },
+  'src/core/persistence/sync-drain.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/sync-dry-run-writer.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/sync-movement.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/sync-pass-batch.ts': { count: 1, why: 'managed sync' },

@@ -14,9 +14,10 @@ use crate::store_binding::{Brain, arg, required};
 
 #[napi]
 impl Brain {
-    /// `createVersion(slug, { sourceId?, reason?, historyGap? }?)`: snapshots the page and resolves
-    /// the version row; `reason` is the snapshot's change reason, and `historyGap` records that the
-    /// page lost history first.
+    /// `createVersion(slug, { sourceId?, reason?, reasonSource?, historyGap? }?)`: snapshots the page
+    /// and resolves the version row; `reason` is the snapshot's change reason (dropped when a purge
+    /// tombstoned its `reasonSource` (commit, path)), and `historyGap` records that the page lost
+    /// history first.
     #[napi]
     pub fn create_version<'env>(
         &self,

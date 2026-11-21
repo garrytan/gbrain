@@ -334,11 +334,11 @@ that are not `invalid` at their current revision, never-attempted first, then ol
 page delete removes the page's row (`cascade::remove_page_rows` calls `facts::reconcile::remove_page_rows`, the
 `ON DELETE CASCADE`); a soft delete keeps it. `lockReconcileRevision` answers whether the live page `(sourceId, slug)`
 is at `revision` (`facts/reconcile.rs`); a soft-deleted or missing page, or a null revision, answers false. Postgres
-locks the row `FOR SHARE` for the rest of the transaction. Once a store transaction is served on Rust (a later landing; `engine.transaction` is a typed refusal in this landing), the
-read runs inside the caller's store transaction and sees its writes; that transaction holds the store's single writer from
-begin to commit, so no other writer changes the page before the settle commits. Outside a transaction it reads the last
-commit.
-`listSingleFactMetadata` is served by `facts/trust_reads.rs` (below), except under the remote provenance floor.
+locks the row `FOR SHARE` for the rest of the transaction. On Rust the read runs inside the caller's store transaction
+and sees its writes; that transaction holds the store's single writer from begin to commit, so no other writer changes
+the page before the settle commits. Outside a transaction it reads the last commit. The extract_facts commit step
+(lock, then the `complete` settle, in one transaction) runs whole on Rust.
+`listSingleFactMetadata` is served by `facts/trust_reads.rs` (below).
 
 ## Group 5: repair classifiers and loop retirement (`facts/repair.rs`)
 
@@ -409,7 +409,7 @@ doctor and write-path callers stop on that refusal instead of the `raw_sql` refu
 
 | Member | Reads or writes | What the store would need |
 | --- | --- | --- |
-| `listActiveSourceIds`, `listUnarchivedSourceIds` | `sources` | The source ids in byte order; `archived` is false or unset. |
+| `listActiveSourceIds`, `listUnarchivedSourceRows` | `sources` | The source ids in byte order; `archived` is false or unset. |
 | `readRepairBrainId` | `persistence_brain` | The brain id row, or null (callers fall back to `host`). |
 | `listAgentSessionTakeCandidates`, `retireSessionTakes`, `listInactiveTakeIds` | `takes`, `facts` | The `consolidated_into` and `consolidated_at` columns of facts and the take columns `kind`, `holder`, `active`, `resolved_at`, `created_at`. |
 | `listSettledSessionFacts`, `reattributeSessionFacts`, `listOtherAttributedFactIds` | `facts` | `attributed_to`, `context`, `superseded_by`, `row_num`; the re-attribution appends its note once and runs in a transaction. |
@@ -449,7 +449,7 @@ key range of its own: they read the fact rows and the write-gate holds (`trust/w
 
 | Member | Site | Served | Notes |
 |---|---|---|---|
-| `listSingleFactMetadata` | `facts/purge.ts` | yes, without the remote floor | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. The member refuses `remoteFloor: true` and an id that is not an `int4`. |
+| `listSingleFactMetadata` | `facts/purge.ts` | yes | `id = ANY(ids)` within `sourceId`: a repeated id answers once and an id no row has answers nothing. The SQL has no `ORDER BY`; the store answers in id order. With `remoteFloor: true` the member passes the floor policy (`storeFloorPolicy`) and the store drops a row whose provenance page fails it, as `remoteProvenanceFloorSql('facts')` does. The member refuses an id that is not an `int4`. |
 | `listUnpreviewedTrustFacts` | doctor `trust-release-unpreviewed` | yes | Unexpired `user_confirmed` facts whose `write_origin` names the `trust_release` channel and has no `fields_previewed`, each joined to the newest released fact hold with the same source, slug, fence row (`payload->>'row_num'` as text, so `"3"` matches row 3) and request id (`IS NOT DISTINCT FROM`). A fact with no such hold drops out. In id order, at most `limit`; every row carries `total`, the count before the limit. The member refuses a limit that is not a non-negative integer. |
 
 ## Withdrawal discovery reads (`facts/withdrawal_discovery.rs`)
