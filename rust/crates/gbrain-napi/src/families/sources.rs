@@ -52,6 +52,16 @@ impl Brain {
         })
     }
 
+    /// `markSourceSynced(id)`: whether the source exists.
+    #[napi]
+    pub fn mark_source_synced<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.mark_source_synced(&id))
+    }
+
     /// `setSourceArchived(id, archived)`: whether the source exists.
     #[napi]
     pub fn set_source_archived<'env>(

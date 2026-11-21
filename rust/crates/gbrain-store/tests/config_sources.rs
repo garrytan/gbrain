@@ -280,6 +280,35 @@ fn sources_survive_a_reopen() {
 }
 
 #[test]
+fn mark_source_synced_sets_only_the_last_sync_time_and_an_unknown_source_is_false() {
+    let dir = TempDir::new("src-synced");
+    let store = open(&dir);
+    store.upsert_source(&input("dept", Some("/d"))).unwrap();
+    let before = store.get_source("dept").unwrap().unwrap();
+    assert_eq!(before.last_sync_at, None);
+    assert!(store.mark_source_synced("dept").unwrap());
+    let after = store.get_source("dept").unwrap().unwrap();
+    let stamped = after.last_sync_at.clone().expect("the stamp is set");
+    assert!(stamped.ends_with('Z'), "an ISO timestamp: {stamped}");
+    // Only the sync time moved.
+    assert_eq!(
+        gbrain_store::sources::SourceDetailRow {
+            last_sync_at: None,
+            ..after
+        },
+        before
+    );
+    assert!(!store.mark_source_synced("missing").unwrap());
+    assert!(store.get_source("missing").unwrap().is_none());
+    store.close();
+    let store = open(&dir);
+    assert_eq!(
+        store.get_source("dept").unwrap().unwrap().last_sync_at,
+        Some(stamped)
+    );
+}
+
+#[test]
 fn a_fresh_brain_records_the_callers_initial_config_and_a_reopen_keeps_its_own() {
     let dir = TempDir::new("cfg-initial");
     let path = dir.path().join("brain");

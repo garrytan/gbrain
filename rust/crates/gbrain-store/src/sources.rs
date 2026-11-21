@@ -264,6 +264,20 @@ impl Store {
         })
     }
 
+    /// `markSourceSynced(id)`: sets the source's last sync time to the store clock, the stamp a
+    /// clean `gbrain import` of a folder source makes. Returns whether the source exists; an
+    /// unknown id changes nothing. Mirrors `markSourceSynced` (`last_sync_at = now()`).
+    pub fn mark_source_synced(&self, id: &str) -> Result<bool> {
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, id)? else {
+                return Ok(false);
+            };
+            record.last_sync_at_us = Some(self.env.now_micros());
+            put_json(tx, &source_key(id), &record)?;
+            Ok(true)
+        })
+    }
+
     /// `getSource(id)`: the source row, archived or not, or `None`. Mirrors `getSource`.
     pub fn get_source(&self, id: &str) -> Result<Option<SourceDetailRow>> {
         Ok(read_source(&*self.read()?, id)?.map(SourceDetailRow::from))

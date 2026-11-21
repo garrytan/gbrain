@@ -65,6 +65,7 @@ test/engine-parity/harness-consumer-stop.test.ts	2	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/holding-page-purges.test.ts	2	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
+test/engine-parity/import-folder-stamp.test.ts	3	0
 test/engine-parity/import-members.test.ts	9	0
 test/engine-parity/import-path.test.ts	5	3
 test/engine-parity/import-writes.test.ts	11	0
