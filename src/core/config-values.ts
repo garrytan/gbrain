@@ -30,7 +30,12 @@ export type ConfigReader = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainE
 export async function readConfigRows(engine: ConfigReader | Pick<BrainEngine, 'getConfigValues'>, keys: readonly string[],
   opts: { signal?: AbortSignal } = {}): Promise<Array<{ key: string; value: string }>> {
   opts.signal?.throwIfAborted();
-  const typed = (engine as Partial<Pick<BrainEngine, 'getConfigValues'>>).getConfigValues;
+  // The typed read takes no signal, so an abort only stops the wait and a statement still queued for a connection stays
+  // on the pool (#6278: a saturated pool then accumulates one per consumer tick). Where raw SQL serves, a signalled read
+  // runs the statement through executeRaw with the signal, as master did, so the abort cancels the statement itself.
+  const caps = (engine as { capabilities?: ReadonlySet<string> }).capabilities;
+  const cancellable = !!opts.signal && typeof (engine as Partial<ConfigReader>).executeRaw === 'function' && (typeof caps?.has !== 'function' || caps.has('raw_sql'));
+  const typed = cancellable ? undefined : (engine as Partial<Pick<BrainEngine, 'getConfigValues'>>).getConfigValues;
   const read = typed
     ? () => untilAborted(typed.call(engine, keys), opts.signal)
     : () => (engine as ConfigReader).executeRaw<{ key: string; value: string }>(CONFIG_VALUES_SQL, [[...keys]], { signal: opts.signal });

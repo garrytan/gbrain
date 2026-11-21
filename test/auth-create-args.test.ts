@@ -9,6 +9,11 @@ describe('parseAuthCreateArgs', () => {
     expect(parseAuthCreateArgs(['claude-code'])).toEqual({ name: 'claude-code', takesHolders: undefined });
   });
 
+  test('a name equal to a flag value is still the name: the usual member key is named after its write source', () => {
+    expect(parseAuthCreateArgs(['--sources', 'alice-example', '--read-shared', 'on', 'alice-example'])).toMatchObject({ name: 'alice-example', sources: ['alice-example'], readShared: true });
+    expect(parseAuthCreateArgs(['world', '--takes-holders', 'world']).name).toBe('world');
+  });
+
   test('name + --takes-holders', () => {
     expect(parseAuthCreateArgs(['claude-code', '--takes-holders', 'world,garry'])).toEqual({
       name: 'claude-code',

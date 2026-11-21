@@ -37,14 +37,16 @@ import { GIT_SSRF_SUBCOMMAND_FLAGS, ownRemoteTransportFlags as transportFlags } 
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { acquireNativeLock, acquireNativeLockSync, type NativeLockSyncHandle } from '../persistence/native-lock.ts';
-import { recordCommit, recordIntent } from './commit-ledger.ts';
+import { pushableHead, recordCommit, recordIntent } from './commit-ledger.ts';
 import { CREDENTIAL_STATE_NAME, credentialRefusal, pushCredentialRefusedError, readCredentialRefusalFile, recordCredentialRefusalFile, type CredentialRefusalState } from './push-credential.ts';
 import { OperationError, opError } from '../ops/contract.ts';
-import { shellQuote, type Action } from '../agent-output.ts';
+import { shellQuote, type Action, type Notice } from '../agent-output.ts';
+import { onPushMode, redactUnpushed, spoolSealer, type RedactOutcome } from './redact-unpushed.ts';
 import { isSyncable } from '../sync.ts';
 import { untrackAdmitted, untrackTargets, type UntrackPageVerdict } from './untrack-admission.ts';
 export { untrackAdmitted, untrackPageCandidates } from './untrack-admission.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
+import { assertNotOwnedPaths } from '../owned-folder/paths.ts';
 
 export const COMMIT_LOCK_NAME = 'brain-commit.lock';
 /** Taken by pre-#6530 helpers and hooks; held too so they still exclude us during the mixed-version window. */
@@ -91,6 +93,9 @@ export interface CommitPushResult {
   superseded_remote_paths?: string[];
   /** A managed canonical worktree: the named paths were committed (or had no change) and nothing was pushed. */
   managed?: true;
+  /** GST-2988 (`secrets.on_push` redact): values that look like secrets in the unpushed commits were replaced by store markers before the push. */
+  redaction?: Pick<RedactOutcome, 'values' | 'rebuilt' | 'old_head' | 'new_head' | 'push_target' | 'backup_ref' | 'held' | 'held_commit' | 'side_refs' | 'unsigned' | 'spooled' | 'map' | 'rules'>;
+  notices?: Notice[];
   /** Managed only: commits on the branch its upstream lacks as last fetched; null when no fetched upstream can be read. */
   unpublished?: number | null;
   /** Managed only: the branch's configured upstream (`origin/main`); null when it names none. */
@@ -414,7 +419,7 @@ function restoreIndex(root: string, rel: string[], before: string[], flagged: st
  * `untrack`: commit the removal of the named paths instead (#7753); `db_only` (GST-2519, a managed canonical worktree)
  * admits only files under a storage.db_only dir HEAD's gbrain.yml declares (untrackAdmitted).
  */
-interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; bases?: ReadonlyMap<string, string>; untrack?: 'any' | { dbOnly: ManagedFilesystemRoot; pages?: UntrackPageVerdict } }
+export interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; owned?: true; bases?: ReadonlyMap<string, string>; untrack?: 'any' | { dbOnly: ManagedFilesystemRoot; pages?: UntrackPageVerdict } }
 
 /** A named path `git add -A` left out of the index while still exiting 0 (GST-2116). */
 
@@ -571,7 +576,8 @@ function stagePaths(root: string, rel: string[], before: string[], flagged: stri
  * Stage and commit exactly `rel` (the caller holds the commit lock), after admitPaths. A commit git refuses leaves the
  * index as it found it. `skipped` lists the named paths git left out (GST-2116); the rest are still committed.
  */
-function commitPaths(root: string, rel: string[], message: string, scope: CommitScope): { sha: string | null; skipped: SkippedPath[] } {
+export function commitPaths(root: string, rel: string[], message: string, scope: CommitScope): { sha: string | null; skipped: SkippedPath[] } {
+  if (!scope.owned) assertNotOwnedPaths(rel, 'Refusing to commit');
   admitPaths(root, rel, scope.roots, scope.bases);
   const dirtyBefore = directoryStatus(root, rel);
   const before = indexEntries(root, rel);
@@ -581,6 +587,7 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
   try {
     const sparse = stagePaths(root, rel, before, flagged);
     const paths = withRenamePartners(root, rel);
+    if (!scope.owned) assertNotOwnedPaths(gitOk(root, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--', ...literalPathspecs(paths)], 'diff --cached').split('\0').filter(Boolean), 'Refusing to commit');
     const partners = paths.filter(p => !insideSourceRoots(p, scope.roots));
     if (partners.length) throw outsideRootError(root, scope.roots, partners, 'A staged rename would commit');
     // A file git did not index would fail `commit --only` for every path; it is left out here and reported as skipped.
@@ -1496,14 +1503,30 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     throw busy;
   }
 
+  let redaction: RedactOutcome | undefined;
   const cycle = (onlyWhenClean: boolean, start: string | null, resolutions?: Map<string, Resolution>, expectRemote?: string) => {
     const requested = existsSync(requestPath);
     rmSync(requestPath, { force: true });
     try {
-      const head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
-      const target = start && !isAncestor(root, start, head) ? start : head;
+      let head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
+      const fromHead = !(start && !isAncestor(root, start, head));
+      let target = fromHead ? pushableHead(root, head) : start!;
       if (!opts.allowOutsideSourceRoot) assertLocalCommitsInsideRoots(ctx, target, roots);
-      const published = publish(ctx, target, resolutions, expectRemote, cwd);
+      let published: Published;
+      try {
+        published = publish(ctx, target, resolutions, expectRemote, cwd);
+      } catch (e) {
+        // GST-2988: with secrets.on_push redact (the default), the checked-out branch's unpushed commits are rebuilt with store markers and published.
+        if ((e as { code?: string }).code !== 'publish_secret_found' || !fromHead || elsewhere || onPushMode() !== 'redact') throw e;
+        const base = git(root, ['rev-parse', '--verify', '--quiet', ctx.trackingRef]).stdout.trim();
+        const outcome = redactUnpushed(root, { base, sealer: spoolSealer(root, null), publishLockHeld: true, lockWaitMs: opts.lockWaitMs, ...(opts.scanTimeoutMs ? { budgetMs: opts.scanTimeoutMs } : {}) });
+        if (!outcome || !('redacted' in outcome)) throw e;
+        redaction = outcome;
+        head = outcome.new_head;
+        target = outcome.push_target;
+        if (!opts.allowOutsideSourceRoot) assertLocalCommitsInsideRoots(ctx, target, roots);
+        published = publish(ctx, target, resolutions, expectRemote, cwd);
+      }
       if (!elsewhere) rmSync(absGitPath(root, CONFLICT_STATE_NAME), { force: true });
       rmSync(absGitPath(root, CREDENTIAL_STATE_NAME), { force: true });
       const moved = published.sha === head || elsewhere || opts.keepCheckout ? { checkout: 'unchanged' as const } : advanceWithLock(root, published.sha, head, onlyWhenClean, opts.lockWaitMs);
@@ -1539,6 +1562,8 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     integrated: published.integrated, confirmed: published.confirmed, checkout: moved.checkout, ...(moved.reason ? { lagging_reason: moved.reason } : {}),
     ...(published.quarantined ? { quarantined: published.quarantined } : {}),
     ...(published.superseded ? { superseded_remote_paths: published.superseded } : {}),
+    ...(redaction ? { redaction: { values: redaction.values, rebuilt: redaction.rebuilt, old_head: redaction.old_head, new_head: redaction.new_head, push_target: redaction.push_target, backup_ref: redaction.backup_ref,
+      held: redaction.held, held_commit: redaction.held_commit, side_refs: redaction.side_refs, unsigned: redaction.unsigned, spooled: redaction.spooled, map: redaction.map, rules: redaction.rules }, ...(redaction.notices.length ? { notices: redaction.notices } : {}) } : {}),
   };
   if (skipped.length) throw skippedPathsError(root, skipped, result);
   return result;

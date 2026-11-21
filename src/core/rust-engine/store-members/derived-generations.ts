@@ -155,10 +155,10 @@ export const readHeldGenerationProposal: StoreMember<[id: number], HeldGeneratio
   storeCall({ member: 'readHeldGenerationProposal' }, () => brain.readHeldGenerationProposal(id));
 
 /** The incarnation of each known source of `sourceIds`, in id order: one `readSourceIncarnation` per distinct id. */
-export const listSourceIncarnations: StoreMember<[sourceIds: readonly string[]], SourceIncarnationListRow[]> = async (brain, sourceIds) => {
+export const listGenerationSourceIncarnations: StoreMember<[sourceIds: readonly string[]], SourceIncarnationListRow[]> = async (brain, sourceIds) => {
   const rows: SourceIncarnationListRow[] = [];
   for (const id of [...new Set(sourceIds)].sort()) {
-    const row = await storeCall<{ incarnation: string } | null>({ member: 'listSourceIncarnations', sourceId: id }, () => brain.readSourceIncarnation(id));
+    const row = await storeCall<{ incarnation: string } | null>({ member: 'listGenerationSourceIncarnations', sourceId: id }, () => brain.readSourceIncarnation(id));
     if (row) rows.push({ id, incarnation: row.incarnation });
   }
   return rows;

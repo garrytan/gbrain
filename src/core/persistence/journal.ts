@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { WRITE_SWITCHES, writeSwitchOn } from './switches.ts';
 import type { BrainEngine } from '../engine.ts';
 import { getCode } from '../retry-matcher.ts';
-import { requireTransactions } from '../rust-engine/errors.ts';
+import { requireManagedPersistence, requireTransactions } from '../rust-engine/errors.ts';
 import { assertRecoveryStagingAbsent } from './staging.ts';
 import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -25,6 +25,7 @@ import { claimOwner, claimOwnerKind, claimPhaseStamp, startClaimPhase } from './
 import { CONSUMER_LIVE_MS, consumerIdentity, RESIDENT_CONSUMER_KINDS } from './consumer-heartbeat.ts';
 import { classifyHolderLiveness, syncLockId } from '../db-lock.ts';
 import { publicFailureDetail } from './publication-failure.ts';
+import { ownerWidened } from '../search/private-visibility.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear, RELEASED_DEFERRED } from './worktree-refresh-schema.ts';
 import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint.ts';
@@ -143,6 +144,7 @@ async function outstandingRefusal(tx: Pick<BrainEngine, 'countOutstandingBySourc
  * about to settle, keep their slots (#8759). Read only when the plain check would refuse.
  */
 async function heldBehindImport(tx: SqlEngine, principal: Principal | null, sourceId: string): Promise<{ count: number; bytes: number }> {
+  requireManagedPersistence(tx, 'heldBehindImport', 'it counts the writes held behind a managed import or refresh');
   const [row] = await tx.executeRaw<{ count: number | string; bytes: number | string }>(`SELECT count(*) AS count,COALESCE(sum(r.intent_bytes),0) AS bytes
     FROM persistence_requests r WHERE r.state='deferred' AND NOT ${RELEASED_DEFERRED('r')} AND ((r.deferred_import_from IS NOT NULL AND r.source_id=$1)
       OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.id=r.deferred_refresh_id AND f.released_at IS NULL AND $1=ANY(f.source_ids)))${principal ? ' AND r.principal_kind=$2 AND r.principal_id=$3' : ''}`,
@@ -252,7 +254,7 @@ export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRe
 }
 /** #5984: the progress columns a waiter polls (engine-sql/persistence-journal.ts `readWriteRequestProgress`). */
 export { WRITE_PROGRESS_SQL, type WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
-import type { WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
+import type { CompletedWriteRow, WriteCompletion, WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
 export async function getWriteRequestProgress(engine: Pick<BrainEngine, 'readWriteRequestProgress'>, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
   return engine.readWriteRequestProgress(id, { signal });
 }
@@ -294,6 +296,8 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
   if (!Number.isSafeInteger(terminalBytes) || terminalBytes < 1024) throw new TypeError('Invalid terminal receipt reservation.');
   const stamp = writerStamp({ engine });
   const origin = resolveAdmissionOrigin(input.origin);
+  if (input.worktreeId) requireManagedPersistence(engine, 'admitWrite', 'a write to a managed worktree checks its refresh fence, owner and binding');
+  if (input.targetKind === 'skill_bundle') requireManagedPersistence(engine, 'admitWrite', 'a skill bundle write publishes to the protocol-2 canonical owner of a managed checkout');
   // #6741 C: a declared background producer is refused before any receipt when the source's owner fails its verification.
   if (input.worktreeId && declaredBackground(input.origin)) await assertBackgroundOwner(engine, input.sourceId, ownerStatusFix);
   const barrier = !!input.worktreeId && deferrable(input) && await readRefreshBarrier(engine);
@@ -367,6 +371,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
 export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: WriteAdmission[], overrides?: Partial<JournalLimits>): Promise<WriteRequest[]> {
   const first = inputs[0];
   if (!first) return [];
+  requireManagedPersistence(tx, 'admitWriteGroupInTransaction', 'a grouped admission checks one worktree, source and counter set for the whole group');
   if (inputs.some(input => input.sourceId !== first.sourceId || input.sourceIncarnation !== first.sourceIncarnation || input.worktreeId !== first.worktreeId
     || String(input.topologyGeneration) !== String(first.topologyGeneration) || input.principal.kind !== first.principal.kind || input.principal.id !== first.principal.id
     || input.operation !== first.operation || (input.targetKind ?? 'page') !== 'page' || (input.protocolVersion ?? 1) !== 1 || digest(input.authority) !== digest(first.authority))) {
@@ -626,6 +631,7 @@ function deferrable(input: WriteAdmission): boolean {
 }
 /** PR B: whether the refresh barrier is on (docs/designs/REFRESH_WRITE_BARRIER.md). */
 async function readRefreshBarrier(engine: BrainEngine): Promise<boolean> {
+  requireManagedPersistence(engine, 'readRefreshBarrier', 'a write may wait behind a managed refresh');
   return writeSwitchOn(engine, 'refresh_barrier').catch(() => false);
 }
 /**
@@ -1001,6 +1007,32 @@ export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersi
     `The journal row of request ${row.request_id} in source ${row.source_id} disappeared before its completion was recorded, so no outcome was saved. Inspect the source's requests with the command in fix before submitting anything again.`,
     { fix: ownerStatusFix(row.source_id) });
   if (isTerminal(current)) return current;
+  const completion = terminalCompletion(tx, row, current, state, outcome, error);
+  const terminal = await tx.completeWriteRow(completion);
+  if (!terminal) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
+  return finishTerminal(tx, row, current, terminal, error);
+}
+
+/**
+ * Cancels `row` before publication, in the caller's transaction, which already declared the protocol, locked the
+ * counters and read `current` through `lockWriteRequest`. The engine re-checks and completes the row in one step
+ * (`cancelWriteRow`), so a request that another pass claimed, published or ended meanwhile is returned unchanged.
+ */
+export async function cancelLockedWrite(tx: SqlEngine & Pick<BrainEngine, 'cancelWriteRow'>, row: WriteRequest, current: WriteRequest): Promise<WriteRequest> {
+  const error = { code: 'cancelled', message: 'Cancelled before publication.' };
+  const completion = terminalCompletion(tx, row, current, 'cancelled', {}, error);
+  const result = await tx.cancelWriteRow({ ...completion, state: 'cancelled', expectState: current.state, expectExecutionToken: current.execution_token ?? null });
+  if (!result) throw opError('not_found', 'Write request not found.',
+    `The journal row of request ${row.request_id} in source ${row.source_id} disappeared before its cancellation was recorded, so nothing was cancelled. Inspect the source's requests with the command in fix before submitting anything again.`,
+    { fix: ownerStatusFix(row.source_id) });
+  if (result.status === 'kept') return result.row;
+  if (result.status === 'too_large') throw capacityError('terminal result and effects exceed their reserved bounded encoding');
+  return finishTerminal(tx, row, current, result.row, error);
+}
+
+/** The completion statement's numbers for `current` ending in `state`; throws write_claim_lost when another pass holds the claim. */
+function terminalCompletion(tx: SqlEngine, row: WriteRequest, current: WriteRequest, state: WriteCompletion['state'],
+  outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown }): WriteCompletion {
   // G7b: a strict write whose door commit landed before its row keeps naming that commit when it ends without committing.
   const landed = (current.outcome as { persistence?: { landed_before_row?: boolean } } | null)?.persistence;
   if (state !== 'committed' && landed?.landed_before_row === true && !('persistence' in outcome)) outcome = { ...outcome, persistence: landed };
@@ -1016,10 +1048,15 @@ export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersi
   // #6696 (A1): the true-up sizes the reservation down to what the receipt keeps, once no effect is unfinished.
   const retained = retainedReceiptBytes({ intent: current.intent, authority: current.authority, outcome, error_message: error?.message ?? null,
     error_detail: error?.detail ?? current.error_detail, client_request_id: current.client_request_id }, { stage: 'terminal' });
-  const terminal = await tx.completeWriteRow({ id: row.id, state, outcome, errorCode: error?.code ?? null, errorMessage: error?.message ?? null,
+  return { id: row.id, state, outcome, errorCode: error?.code ?? null, errorMessage: error?.message ?? null,
     consumerVersion: stamp.version, consumerHostId: stamp.hostId, errorDetail: error?.detail, resultBytes, counterKeys: ['brain', principalKey(requestPrincipal(row))],
-    intentBytes: Number(current.intent_bytes), retainedBytes: retained, terminalReservation: Number(current.terminal_reservation), probePurges });
-  if (!terminal) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
+    intentBytes: Number(current.intent_bytes), retainedBytes: retained, terminalReservation: Number(current.terminal_reservation), probePurges };
+}
+
+/** After the completion statement: a terminal write whose intent carries purged content keeps no copy of it. */
+async function finishTerminal(tx: SqlEngine, row: WriteRequest, current: WriteRequest, terminal: CompletedWriteRow,
+  error?: { code: string; message: string; detail?: unknown }): Promise<WriteRequest> {
+  const probePurges = intentCarriesContent(current.intent);
   const { purge_has_facts: purgeFacts, purge_has_pages: purgePages, ...doneRow } = terminal;
   const done = doneRow as WriteRequest;
   // #5575: a terminal write whose stored intent carries purged content (refused by the purge guards, refused for another
@@ -1229,9 +1266,10 @@ export function receiptFor(stored: WriteRequest, facts?: WriteHealthFacts, now =
   // PR B: a deferred row reads as queued (every receipt reader, an older client's included, knows that state) plus `deferred`.
   const state: Exclude<RequestState, 'deferred'> = stored.state === 'deferred' ? 'queued' : stored.state;
   const row = { ...stored, state };
+  const outcome = row.outcome && 'private_rows_kept' in row.outcome && !ownerWidened() ? (({ private_rows_kept: _kept, ...rest }) => rest)(row.outcome) : row.outcome;
   return {
-    ...(row.outcome ?? {}),
-    ...(row.outcome ? { outcome: row.outcome } : {}),
+    ...(outcome ?? {}),
+    ...(outcome ? { outcome } : {}),
     request_id: row.request_id, ...(row.client_request_id ? { client_request_id: row.client_request_id } : {}), state,
     ...(stored.state === 'deferred' ? { deferred: { ...(stored.deferred_refresh_id ? { refresh_id: stored.deferred_refresh_id } : {}),
       ...(stored.deferred_import_from != null ? { pending_import: true } : {}) } } : {}),

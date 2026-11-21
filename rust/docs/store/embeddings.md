@@ -98,7 +98,10 @@ A new signature starts a new ledger. A window is `reserved_at` in microseconds; 
 millisecond later than the one it replaces. An unlimited cap crosses the addon as `null`.
 
 A take vector counts only while its `B 'k'` row equals the take's `claim_rev`, so a claim edit makes it
-stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`).
+stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`). `addTakesBatch` also deletes the
+vector when it changes a claim, as Postgres nulls the column; that raises the vector generation, so a warm
+vector index (vectors.rs) rebuilds and `searchTakesVector` stops ranking the old claim's vector. Test: `a_take_vector_is_current_only_at_the_claim_revision` in
+`rust/crates/gbrain-store/tests/embedding_catalog.rs`.
 
 ## Embedding install
 
@@ -124,12 +127,15 @@ text hash where PGLite keeps md5; both answer "the text has not changed since th
 
 | Brain method | Returns | Members |
 |---|---|---|
-| `brain.readChunkVectorColumn({ name })` | `{ exists, dims }` for `embedding`: the width of the first stored chunk vector, else the config `embedding_dimensions`; with neither, or for any other column, `{ exists: false, dims: null }` | `readChunkVectorColumn` |
+| `brain.readChunkVectorColumn({ name })` | `{ exists, dims }` for `embedding`: the width of the first stored chunk vector, else the config `embedding_dimensions`; with neither, `{ exists: false, dims: null }`. `embedding_image` and `embedding_multimodal`: always `{ exists: true, dims: 1024 }`. Any other column: `{ exists: false, dims: null }` | `readChunkVectorColumn` |
 | `brain.readEmbeddingIdentity()` | `{ model, dimensions }` with the same width; the model is the first chunk vector's, else the config `embedding_model`; null with no width | `readEmbeddingIdentity` |
 | `brain.hasStoredVectors({ name })` | whether `content_chunks`, `facts` or `takes` holds a vector (a take's only at its current claim revision); `query_cache` is always false | `hasStoredVectors` |
 
 `listEmbeddingStores` is answered in TS (every table of `PRIMARY_EMBEDDING_TABLES`).
-`embedding_image` and `embedding_multimodal` read as absent: the store keeps no such vectors.
+`embedding_image` and `embedding_multimodal` are declared `vector(1024)` on every Postgres and PGLite brain
+(`src/schema.sql`, `engine-sql/bootstrap.ts`, migration v078) and no migration changes their width, so the
+store reports them present at 1024, as PGLite does. The store keeps no vector for them: a chunk image vector
+is still refused on write.
 
 ## Known edges
 
@@ -137,8 +143,11 @@ text hash where PGLite keeps md5; both answer "the text has not changed since th
   from its ledger row, so no money is spent on it, but each embedding run lists it again.
 - `reservePageSpend`'s embedding branch, `listBudgetLimitedPages`, `readPageSizeStates` and
   `holdPageEmbedding` are still raw SQL, so a Rust brain refuses them (`engine_capability_missing`).
-- PGLite's generation filter (`chunkGenerationFilter`) is read as the chunk view the page shows now
-  (`visible_at`).
+- The stale reads (`countStaleChunks`, `sumStaleChunkChars`, `listStaleChunks`), `readEmbeddingStateCounts`,
+  `listEmbeddingStateRows` and the `includeUnsealed` reads take PGLite's `chunkGenerationFilter`: an inline chunk only
+  on a page that is not segmented, and a segmented chunk only at or below the page's generation with a live manifest
+  row. A chunk whose occurrence a deferred retire closed is not read. The served reads (`getEmbeddingsByChunkIds`,
+  `cosinesByChunkIds`, sealed `getChunksWithEmbeddings`) keep `chunkVisibleFilter`, the generation alone (`visible_at`).
 - A segmented page counts as having no chunkless content.
 - Segment chunks get no pending stamp.
 - `ops` mode counts `embedded` exactly; `unstamped_created_at_min` is null.

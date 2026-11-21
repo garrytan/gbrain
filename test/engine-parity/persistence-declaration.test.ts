@@ -21,10 +21,11 @@ import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
-import { submissionAuthority } from '../../src/core/persistence/authority.ts';
+import { authorizeWrite, submissionAuthority } from '../../src/core/persistence/authority.ts';
+import { withAdmissionOrigin } from '../../src/core/persistence/admission-origin.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite, assertWriteHeadroom, readOutstandingRoom } from '../../src/core/persistence/journal.ts';
-import { principalKey } from '../../src/core/persistence/model.ts';
+import { principalKey, type WriteAuthority } from '../../src/core/persistence/model.ts';
 import { schemaAdmissionRefusal } from '../../src/core/persistence/schema-admission.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
@@ -33,15 +34,17 @@ const { parityTest } = parityArms(testBackends());
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROTOCOL = 'gbrain.persistence_protocol';
 const REQUESTS = ['b0000000-0000-4000-8000-0000000000b1', 'b0000000-0000-4000-8000-0000000000b2'];
+const WORKTREE = 'd0000000-0000-4000-8000-0000000000d1';
 
 /** Admits one put_page request for `slug` on `sourceId` through the real admission path, as a CLI put does. */
-async function admitPut(engine: BrainEngine, slug: string, requestId: string, sourceId = 'default') {
+async function admitPut(engine: BrainEngine, slug: string, requestId: string, sourceId = 'default',
+  operation = 'put_page', intent: Record<string, unknown> = { body: slug }) {
   const source = await engine.readSourceMembership(sourceId);
   const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId,
     logger: { info() {}, warn() {}, error() {} } } as OperationContext;
-  const authority = await submissionAuthority(ctx, 'put_page', sourceId, source!.incarnation, slug);
-  return admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId,
-    sourceIncarnation: source!.incarnation, slug, requestId, callerIntent: { body: slug }, intent: { body: slug } });
+  const authority = await submissionAuthority(ctx, operation, sourceId, source!.incarnation, slug);
+  return admitWrite(engine, { principal: authority.principal, authority, operation, sourceId,
+    sourceIncarnation: source!.incarnation, slug, requestId, callerIntent: intent, intent });
 }
 
 /** Outstanding count and intent bytes per counter, read under the counter lock. */
@@ -155,5 +158,99 @@ describe('engine parity: persistence declaration', () => {
     } finally {
       await engine.setConfig('version', version ?? String(LATEST_SCHEMA_VERSION));
     }
+  });
+
+  parityTest('a write owned by an OAuth client or legacy token with no live grant refuses permission_denied', {
+    methods: ['readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readSourceMembership'],
+  }, async (engine) => {
+    const source = await engine.readSourceMembership('default');
+    const ids = { oauth_client: 'parity-unknown-client', legacy_token: 'c0000000-0000-4000-8000-0000000000c1' } as const;
+    const out: unknown[] = [];
+    for (const kind of ['oauth_client', 'legacy_token'] as const) {
+      for (const lock of [false, true]) {
+        const id = ids[kind];
+        const authority: WriteAuthority = { version: 1, principal: { kind, id }, remote: true, sourceId: 'default',
+          sourceIncarnation: source!.incarnation, scopes: ['read', 'write'], operations: null, slugPrefixes: null };
+        await engine.shareLockWriteCredential(kind, id);
+        const grant = kind === 'oauth_client' ? await engine.readOAuthClientWriteGrant(id, { lock }) : await engine.readAccessTokenWriteGrant(id, { lock });
+        const refusal = await authorizeWrite(engine, authority, 'put_page', 'notes/grant-check', lock).then(() => null, (e: { code?: string; message?: string }) => e);
+        expect(refusal?.code).toBe('permission_denied');
+        out.push({ kind, lock, grant, code: refusal?.code, message: refusal?.message });
+      }
+    }
+    return out;
+  });
+
+  parityTest('a write to a managed worktree refuses on an engine without managed persistence, naming that capability', {
+    methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
+    requires: 'managed_persistence',
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const source = await engine.readSourceMembership('default');
+    const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+      logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+    const authority = await submissionAuthority(ctx, 'put_page', 'default', source!.incarnation, 'notes/parity-worktree');
+    const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default',
+      sourceIncarnation: source!.incarnation, slug: 'notes/parity-worktree', requestId: REQUESTS[0]!, worktreeId: WORKTREE, topologyGeneration: 1,
+      callerIntent: { body: 'x' }, intent: { body: 'x' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
+    // An engine without the capability stops here, before any worktree read: the refusal names it, not raw SQL.
+    if (refusal?.code === 'engine_capability_missing') {
+      expect({ reason: refusal.reason, step: refusal.message?.includes('admitWrite') }).toEqual({ reason: 'managed_persistence', step: true });
+      throw refusal;
+    }
+    // An engine with it reads the worktree binding; this worktree is not bound to the source, so nothing is accepted.
+    expect(refusal?.code).toBe('source_changed');
+    return { managed: engine.capabilities.has('managed_persistence'), code: refusal?.code, reason: refusal?.reason ?? null };
+  });
+
+  parityTest('a skill bundle write refuses on an engine without managed persistence, naming that capability', {
+    methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
+    requires: 'managed_persistence',
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const source = await engine.readSourceMembership('default');
+    const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+      logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+    const authority = await submissionAuthority(ctx, 'put_skill', 'default', source!.incarnation, 'skills/parity-pack/parity-skill');
+    const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_skill', sourceId: 'default',
+      sourceIncarnation: source!.incarnation, slug: 'skills/parity-pack/parity-skill', requestId: REQUESTS[1]!, targetKind: 'skill_bundle', protocolVersion: 2,
+      callerIntent: { name: 'parity-skill' }, intent: { name: 'parity-skill' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
+    // An engine without the capability refuses the bundle by name, not as a shared-skill owner that is not yet activated.
+    if (!engine.capabilities.has('managed_persistence')) {
+      expect({ code: refusal?.code, reason: refusal?.reason }).toEqual({ code: 'engine_capability_missing', reason: 'managed_persistence' });
+      throw refusal;
+    }
+    // An engine with it checks the shared-skill owner; none was activated, so nothing is accepted.
+    expect(refusal?.code).toBe('writer_not_quiesced');
+    return { code: refusal?.code, message: refusal?.message };
+  });
+
+  parityTest('every admission branch a plain write reaches ends typed: admit, replay, changed replay, background pause, and a managed sync job past the cap', {
+    requires: 'managed_persistence',
+    methods: ['declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequest', 'readAdmissionRate', 'getConfigValues'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const first = await admitPut(engine, 'notes/parity-replay', REQUESTS[0]!);
+    const replay = await admitPut(engine, 'notes/parity-replay', REQUESTS[0]!);
+    const changed = await admitPut(engine, 'notes/parity-replay-other', REQUESTS[0]!).then(() => null, (e: { code?: string }) => e.code);
+    await engine.setConfig('persistence.limits.principal_lifetime_ids', '10');
+    await engine.setConfig('persistence.capacity.background_pause_pct', '10');
+    const paused = await withAdmissionOrigin('background', () => admitPut(engine, 'notes/parity-background', REQUESTS[1]!))
+      .then(() => null, (e: { code?: string }) => e.code);
+    expect(replay.id).toBe(first.id);
+    expect(changed).toBe('idempotency_conflict');
+    expect(paused).toBe('write_capacity_backpressure');
+    // A managed sync job past the outstanding cap counts the writes held behind its import, which needs managed persistence.
+    await engine.setConfig('persistence.limits.principal_outstanding', '1');
+    const sync = await admitPut(engine, 'jobs/parity-sync', 'b0000000-0000-4000-8000-0000000000b5', 'default', 'submit_job', { kind: 'managed_sync_import' })
+      .then(() => null, (e: { code?: string; reason?: string }) => e);
+    if (!engine.capabilities.has('managed_persistence')) {
+      expect(sync).toMatchObject({ code: 'engine_capability_missing', reason: 'managed_persistence' });
+      throw sync;
+    }
+    return { replayed: true, state: replay.state, changed, paused, sync: sync?.code };
   });
 });

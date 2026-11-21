@@ -77,7 +77,7 @@ it writes (`checkActivationId`), so Postgres's `a.id::uuid` cast never meets one
 The repair lists take the filter `{ runId?, since?, ownerKey?, id? }` (`generations/repair.rs`): each present field
 narrows the rows as its SQL fragment does, and a row with a null `run_id` never matches a run. `since` must be an ISO
 8601 instant with a zone; the TypeScript member on every engine checks it and binds it as `YYYY-MM-DDTHH:MM:SS.ffffffZ`
-(`repairSinceInstant`), so a bare date, a time with no zone or a word refuses on every engine. `listSourceIncarnations`
+(`repairSinceInstant`), so a bare date, a time with no zone or a word refuses on every engine. `listGenerationSourceIncarnations`
 is not a store method: the TypeScript member reads `readSourceIncarnation` once per distinct id and sorts by id in
 byte order, as the statement's `ORDER BY id COLLATE "C"` does.
 

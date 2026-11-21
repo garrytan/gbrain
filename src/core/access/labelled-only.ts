@@ -55,9 +55,9 @@ export async function labelledOnlyMembers(engine: BrainEngine): Promise<Array<{ 
 }
 
 /** Whether any member carries the grant: the one cheap test a write runs before resolving its writer. Unreadable counts as yes. */
-export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
+export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'hasLabelledOnlyMember'>): Promise<boolean> {
   try {
-    return (await engine.executeRaw('SELECT 1 FROM access_members WHERE labelled_only LIMIT 1')).length > 0;
+    return await engine.hasLabelledOnlyMember();
   } catch {
     return true;
   }

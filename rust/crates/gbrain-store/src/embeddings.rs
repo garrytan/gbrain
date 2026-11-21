@@ -25,12 +25,15 @@
 //! pending stamp, the vector's width) lives on the chunk record (`chunks::EmbedState`), so the
 //! stale and state reads never decode a vector.
 
-use crate::chunks::{ChunkRecord, EmbedState, chunk_rows, read_chunks, read_segment_view};
+use crate::chunks::{
+    ChunkRecord, EmbedState, SegmentView, chunk_rows, read_chunks, read_segment_view,
+};
 use crate::error::{STORE_CORRUPT, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::{PageRecord, all_pages, read_page};
 use crate::sources::{DEFAULT_SOURCE, read_source};
 use crate::takes::{TakeRecord, all_takes, read_take, write_take};
+use crate::vectors::{check_query, norm_sq, served_cosine};
 use crate::{Result, Store, keys, put_json};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -74,7 +77,7 @@ fn generation_key() -> [u8; 2] {
     [keys::EMBEDDING_STATE, GENERATION]
 }
 
-fn signature_key(page_id: u64) -> Vec<u8> {
+pub(crate) fn signature_key(page_id: u64) -> Vec<u8> {
     let mut key = vec![keys::EMBEDDING_STATE, PAGE_SIGNATURE];
     key.extend_from_slice(&page_id.to_be_bytes());
     key
@@ -360,6 +363,33 @@ pub(crate) fn remove_chunk_vector(
     bump_generation(tx)
 }
 
+/// Resets what a contextual retrieval tier embedded on a page (`updatePageContextualRetrievalState` to `none`): its
+/// embedding signature goes, and every chunk with a vector, staged or not, loses it, its embed time and its text and
+/// input hashes and is stamped pending at `now_us`. Each dropped vector raises the vector generation.
+pub(crate) fn reset_page_vectors(tx: &mut dyn KvWrite, page_id: u64, now_us: i64) -> Result<()> {
+    tx.delete(&signature_key(page_id))?;
+    for mut chunk in read_chunks(&*tx, page_id)? {
+        if !chunk.embed.has_vector() {
+            continue;
+        }
+        let embed = EmbedState {
+            dims: 0,
+            embedded_at_us: None,
+            text_hash: None,
+            input_hash: None,
+            pending_since_us: Some(now_us),
+        };
+        drop_vector(tx, &mut chunk, embed)?;
+    }
+    Ok(())
+}
+
+/// Clears a page's embedding signature (PGLite's `embedding_signature=NULL`), as a fact
+/// withdrawal does for each page it invalidates (`facts::withdrawal_pages`).
+pub(crate) fn clear_signature(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&signature_key(page_id))
+}
+
 /// Deletes this family's records of a page that is deleted for good (`cascade::remove_page_rows`).
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     tx.delete(&signature_key(page.id))?;
@@ -414,8 +444,8 @@ struct PageCtx {
     signature: Option<String>,
     /// Every chunk record of the page, visible or not.
     chunks: Vec<ChunkRecord>,
-    /// The body generation chunks are visible at (PGLite's `chunkGenerationFilter`).
-    generation: u64,
+    /// The page's segment view: its body generation and live occurrences.
+    view: SegmentView,
 }
 
 impl PageCtx {
@@ -435,9 +465,20 @@ impl PageCtx {
         self.page.text_projection_revision.as_deref() == Some(self.page.knowledge_revision.as_str())
     }
 
-    /// The generation-visible chunks in chunk index order.
+    /// The generation-visible chunks in chunk index order (`chunkVisibleFilter`, the served reads).
     fn visible(&self) -> impl Iterator<Item = &ChunkRecord> {
-        self.chunks.iter().filter(|c| c.visible_at(self.generation))
+        self.chunks
+            .iter()
+            .filter(|c| c.visible_at(self.view.generation))
+    }
+
+    /// The live body's chunks in chunk index order (`chunkGenerationFilter`, the stale and state reads): a closed
+    /// occurrence's chunk that a deferred retire left and an inline chunk left on a segmented page are not.
+    fn live_body(&self) -> impl Iterator<Item = &ChunkRecord> {
+        let segmented_page = crate::chunks::segmented(&self.page);
+        self.chunks
+            .iter()
+            .filter(move |c| crate::chunks::in_live_body(c, segmented_page, &self.view))
     }
 
     /// PGLite's `chunklessPagesWhere` without the source filter. A segmented page's body lives in
@@ -512,13 +553,13 @@ fn page_contexts(read: &dyn KvRead) -> Result<Vec<PageCtx>> {
     let mut out = Vec::with_capacity(pages.len());
     for page in pages {
         let chunks = read_chunks(read, page.id)?;
-        let generation = read_segment_view(read, page.id)?.generation;
+        let view = read_segment_view(read, page.id)?;
         let signature = read_signature(read, page.id)?;
         out.push(PageCtx {
             page,
             signature,
             chunks,
-            generation,
+            view,
         });
     }
     Ok(out)
@@ -717,7 +758,7 @@ impl Store {
         let read = self.read()?;
         let mut out = Vec::new();
         for ctx in page_contexts(&*read)? {
-            for chunk in ctx.visible() {
+            for chunk in ctx.live_body() {
                 if options.stale(&ctx, chunk) {
                     out.push(each(chunk));
                 }
@@ -767,7 +808,7 @@ impl Store {
             {
                 continue;
             }
-            for chunk in ctx.visible().filter(|c| !c.embed.has_vector()) {
+            for chunk in ctx.live_body().filter(|c| !c.embed.has_vector()) {
                 let index = i64::from(chunk.chunk_index);
                 let updated = ctx.page.updated_at_us;
                 let after = if updated_desc {
@@ -948,6 +989,37 @@ impl Store {
         Ok(out)
     }
 
+    /// `cosinesByChunkIds(ids, query)`: `[{ id, cosine }]`, an exact scan of the chunks that
+    /// `getEmbeddingsByChunkIds` reads (served, with a vector). The text-space cosine of the stored
+    /// vector and `query`, as `cosineByChunkIdsStatement` computes it: 0 for another dimension
+    /// count or a zero vector or query; an id that is no served chunk with a vector has no row.
+    /// A query pgvector cannot parse (empty, NaN, infinite) refuses before any row is read.
+    pub fn cosines_by_chunk_ids(&self, ids: &[u64], query: &[f64]) -> Result<Vec<Value>> {
+        let query = check_query(query)?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let query_norm_sq = norm_sq(&query);
+        let wanted: HashSet<u64> = ids.iter().copied().collect();
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for ctx in page_contexts(&*read)? {
+            if !ctx.sealed() {
+                continue;
+            }
+            for chunk in ctx.visible() {
+                if !wanted.contains(&chunk.id) || !chunk.embed.has_vector() {
+                    continue;
+                }
+                if let Some(stored) = read_chunk_vector(&*read, chunk.page_id, chunk.chunk_index)? {
+                    let cosine = served_cosine(&query, query_norm_sq, &stored.vector);
+                    out.push(json!({ "id": chunk.id, "cosine": cosine }));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// `getChunksWithEmbeddings(slug, { sourceId?, includeUnsealed? })`: the chunks of every page
     /// with this exact slug (in `sourceId`, or in any source), with their vectors, ordered by
     /// chunk index (then page id). The TypeScript member refuses a result that spans two pages.
@@ -974,7 +1046,7 @@ impl Store {
             if !options.include_unsealed && !sealed {
                 continue;
             }
-            for row in chunk_rows(&*read, &page, true)? {
+            for row in chunk_rows(&*read, &page, true, options.include_unsealed)? {
                 rows.push(row);
             }
         }
@@ -1002,7 +1074,7 @@ impl Store {
         let mut eligible = 0u64;
         let mut overdue = 0u64;
         for ctx in &pages {
-            for chunk in ctx.visible() {
+            for chunk in ctx.live_body() {
                 if ops && chunk.embed.has_vector() {
                     continue;
                 }
@@ -1131,7 +1203,7 @@ impl Store {
                 })
             };
             let mut by_state: BTreeMap<&'static str, (u64, u64)> = BTreeMap::new();
-            for chunk in ctx.visible() {
+            for chunk in ctx.live_body() {
                 let entry = by_state.entry(ctx.chunk_state(chunk)).or_default();
                 entry.0 += 1;
                 entry.1 += chunk.chunk_text.len() as u64;

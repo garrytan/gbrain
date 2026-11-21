@@ -332,7 +332,7 @@ fn mcp_resolved_takes_under_exclude_private_skip_the_pages_the_page_policy_hides
         add(&b, &[take(*p, 1, "resolved", json!({"holder": holder}))]);
         resolve(&b, *p, 1, Some("mcp:client"));
     }
-    let policy = |honor_aliases: bool, entity_privacy: bool| json!({"honorAliases": honor_aliases, "entityPrivacy": entity_privacy});
+    let policy = |honor_aliases: bool, entity_privacy: bool| json!({"honorAliases": honor_aliases, "entityPrivacy": entity_privacy, "ownerOnly": "fn"});
     // No policy counts every page.
     assert_eq!(mcp(&b, json!({})), 7);
     assert_eq!(mcp(&b, json!({"excludePrivate": null})), 7);

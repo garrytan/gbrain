@@ -9,8 +9,8 @@ use gbrain_store::journal::Principal;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::persistence::{
     ClaimRelease, ClaimStamp, ClaimableSpec, ExpireClaims, HousekeepingClaim, HousekeepingTurn,
-    ProjectionWindowCursor, SegmentedProjectionFilter, TopologyChangeInsert, WriteCompletion,
-    WriteRequestInsert,
+    ProjectionWindowCursor, SegmentedProjectionFilter, TopologyChangeInsert, WriteCancellation,
+    WriteCompletion, WriteRequestInsert,
 };
 use serde_json::{Value, json};
 
@@ -128,6 +128,20 @@ fn counters_are_created_at_zero_deduplicated_and_in_key_order() {
         .lock_persistence_counters(&["a\0b".into()])
         .unwrap_err();
     assert_eq!(err.code, INVALID_ARGUMENT);
+}
+
+#[test]
+fn a_principal_id_with_a_nul_byte_is_refused_before_a_duplicate_could_slip_in() {
+    let dir = TempDir::new("persist-insert-nul");
+    let store = open(&dir);
+    let mut input = insert_input(&store, REQ_1, "people/a", json!({}));
+    input.principal_id = "a\0b".into();
+    for _ in 0..2 {
+        assert_eq!(
+            store.insert_write_request(&input).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+    }
 }
 
 #[test]
@@ -323,6 +337,37 @@ fn completion_releases_counters_and_records_the_outcome() {
 }
 
 #[test]
+fn completion_stores_the_outcome_and_error_detail_in_jsonb_key_order() {
+    let dir = TempDir::new("persist-complete-order");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let text = |v: &Value| serde_json::to_string(v).unwrap();
+    let mut ids = Vec::new();
+    for request in [REQ_1, "b0000000-0000-4000-8000-0000000000b9"] {
+        let row = store
+            .insert_write_request(&insert_input(&store, request, "notes/a", json!({})))
+            .unwrap();
+        ids.push(row["id"].as_str().unwrap().to_string());
+    }
+    let mut committed = completion(&ids[0], "committed", 512);
+    committed.outcome = json!({"status": "ok", "zz": 1, "fact": {"kind": "fact", "id": 7}});
+    let done = store.complete_write_row(&committed).unwrap().unwrap();
+    // Shorter keys first, then bytes: not the caller's order, and not plain byte order either.
+    let ordered = r#"{"zz":1,"fact":{"id":7,"kind":"fact"},"status":"ok"}"#;
+    assert_eq!(text(&done["outcome"]), ordered);
+    let read = store.read_write_request_by_id(&ids[0]).unwrap().unwrap();
+    assert_eq!(text(&read["outcome"]), ordered);
+    let mut failed = completion(&ids[1], "failed", 0);
+    failed.outcome = Value::Null;
+    failed.error_detail = json!({"retryable": false, "at": "publish"});
+    let done = store.complete_write_row(&failed).unwrap().unwrap();
+    assert_eq!(
+        text(&done["error_detail"]),
+        r#"{"at":"publish","retryable":false}"#
+    );
+}
+
+#[test]
 fn completion_that_overflows_the_reservation_changes_nothing() {
     let dir = TempDir::new("persist-complete-overflow");
     let store = open(&dir);
@@ -339,6 +384,91 @@ fn completion_that_overflows_the_reservation_changes_nothing() {
         "queued"
     );
     assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+}
+
+fn cancellation(id: &str, expect_state: &str, token: Option<&str>) -> WriteCancellation {
+    let mut completion = completion(id, "cancelled", 0);
+    completion.outcome = json!({});
+    completion.error_code = Some("cancelled".into());
+    completion.error_message = Some("Cancelled before publication.".into());
+    WriteCancellation {
+        completion,
+        expect_state: expect_state.into(),
+        expect_execution_token: token.map(str::to_string),
+    }
+}
+
+#[test]
+fn a_cancel_ends_a_queued_request_once_and_keeps_what_it_may_not_end() {
+    let dir = TempDir::new("persist-cancel");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let row = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        store
+            .cancel_write_row(&cancellation(REQ_2, "queued", None))
+            .unwrap(),
+        None
+    );
+    let stale = store
+        .cancel_write_row(&cancellation(&id, "running", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(stale["status"], "kept");
+    assert_eq!(stale["row"]["state"], "queued");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+    let done = store
+        .cancel_write_row(&cancellation(&id, "queued", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(done["status"], "cancelled");
+    assert_eq!(done["row"]["state"], "cancelled");
+    assert_eq!(done["row"]["error_code"], "cancelled");
+    assert_eq!(done["row"]["outcome"], json!({}));
+    for key in keys() {
+        assert_eq!(counter(&store, &key)["outstanding_count"], 0);
+    }
+    let again = store
+        .cancel_write_row(&cancellation(&id, "queued", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(again["status"], "kept");
+    assert_eq!(again["row"]["state"], "cancelled");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 0);
+}
+
+#[test]
+fn a_cancel_keeps_a_request_claimed_under_another_token_and_one_too_large_to_record() {
+    let dir = TempDir::new("persist-cancel-kept");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let row = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    store.stamp_write_claim(&stamp(&id, 1000.0, None)).unwrap();
+    let other = store
+        .cancel_write_row(&cancellation(&id, "running", None))
+        .unwrap()
+        .unwrap();
+    assert_eq!(other["status"], "kept");
+    let mut big = cancellation(&id, "running", Some(TOKEN));
+    big.completion.result_bytes = 5000;
+    let too_large = store.cancel_write_row(&big).unwrap().unwrap();
+    assert_eq!(too_large["status"], "too_large");
+    assert_eq!(too_large["row"]["state"], "running");
+    assert_eq!(counter(&store, "brain")["outstanding_count"], 1);
+    let mut wrong = cancellation(&id, "running", Some(TOKEN));
+    wrong.completion.state = "failed".into();
+    assert!(store.cancel_write_row(&wrong).is_err());
+    let done = store
+        .cancel_write_row(&cancellation(&id, "running", Some(TOKEN)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(done["status"], "cancelled");
 }
 
 #[test]

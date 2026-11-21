@@ -15,15 +15,16 @@
 //! image chunk whose text matches is returned. `ts_rank` is a `real`; the product with the
 //! factor is a `double precision`, so the score is the f32 rank widened and then multiplied.
 
-use super::filters::{
-    KeywordOptions, PageFilter, chunk_vector, result_row, row_count, source_factor,
-};
+use std::collections::BTreeSet;
+
+use super::filters::{KeywordOptions, PageFilter, result_row, row_count, source_factor};
 use super::rank::ts_rank;
 use super::tsearch::{ts_matches, websearch_to_tsquery};
+use super::walk::{Admit, ChunkSource, PageOrder, walk_chunks};
 use crate::Store;
-use crate::chunks::{ChunkRecord, read_chunks, read_segment_view};
+use crate::chunks::ChunkRecord;
 use crate::error::Result;
-use crate::pages::{PageRecord, all_pages};
+use crate::pages::PageRecord;
 use crate::timeline::latest_entry_micros;
 use serde_json::Value;
 
@@ -49,45 +50,51 @@ impl Store {
         let q = websearch_to_tsquery(query)?;
         let read = self.read()?;
         let mut filter = PageFilter::new(options)?;
+        let source = ChunkSource::plan(&*read, &[&q], &[], |_| Ok(Some(BTreeSet::new())))?;
+        let mut admit = Admit {
+            filter: Some(&mut filter),
+            text_only: false,
+            basenames: None,
+        };
         let mut hits: Vec<Hit> = Vec::new();
         let mut pages: Vec<PageRecord> = Vec::new();
-        for page in all_pages(&*read)? {
-            if !filter.keeps(&*read, &page)? {
-                continue;
-            }
-            let generation = read_segment_view(&*read, page.id)?.generation;
-            let mut factor: Option<f64> = None;
-            let mut stale: Option<bool> = None;
-            for chunk in read_chunks(&*read, page.id)? {
-                if !chunk.visible_at(generation) || !filter.keeps_chunk(&chunk) {
-                    continue;
-                }
-                let vector = chunk_vector(&chunk)?;
-                if !ts_matches(&vector, &q) {
-                    continue;
-                }
-                let factor = *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
-                let stale = match stale {
-                    Some(s) => s,
-                    None => {
-                        let s = latest_entry_micros(&*read, page.id)?
-                            .is_some_and(|latest| page.updated_at_us < latest);
-                        stale = Some(s);
-                        s
+        walk_chunks(
+            &*read,
+            &source,
+            PageOrder::Any,
+            &mut admit,
+            &mut |page, chunks| {
+                let mut factor: Option<f64> = None;
+                let mut stale: Option<bool> = None;
+                for (chunk, vector) in chunks {
+                    if !ts_matches(&vector, &q) {
+                        continue;
                     }
-                };
-                hits.push(Hit {
-                    score: f64::from(ts_rank(&vector, &q)) * factor,
-                    page_id: page.id,
-                    page: pages.len(),
-                    chunk,
-                    stale,
-                });
-            }
-            if hits.last().is_some_and(|h| h.page == pages.len()) {
-                pages.push(page);
-            }
-        }
+                    let factor =
+                        *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
+                    let stale = match stale {
+                        Some(s) => s,
+                        None => {
+                            let s = latest_entry_micros(&*read, page.id)?
+                                .is_some_and(|latest| page.updated_at_us < latest);
+                            stale = Some(s);
+                            s
+                        }
+                    };
+                    hits.push(Hit {
+                        score: f64::from(ts_rank(&vector, &q)) * factor,
+                        page_id: page.id,
+                        page: pages.len(),
+                        chunk,
+                        stale,
+                    });
+                }
+                if hits.last().is_some_and(|h| h.page == pages.len()) {
+                    pages.push(page);
+                }
+                Ok(true)
+            },
+        )?;
         hits.sort_by(|a, b| {
             b.score
                 .total_cmp(&a.score)

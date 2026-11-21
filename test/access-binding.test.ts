@@ -146,7 +146,9 @@ for (const kind of testBackends()) {
     }, 60_000);
 
     test('dispatch reads the identity the verifier joined without a query; only an AuthInfo no verifier built is looked up', async () => {
-      const noQueries = { executeRaw: async () => { throw new Error('dispatch must not query when the verifier joined the member'); } } as unknown as BrainEngine;
+      // The lookup goes to the typed member (a read refused here is a query dispatch must not make); executeRaw refuses too.
+      const refuse = async () => { throw new Error('dispatch must not query when the verifier joined the member'); };
+      const noQueries = { executeRaw: refuse, readLiveMember: refuse } as unknown as BrainEngine;
       const joined = { token: '', clientId: 'x', scopes: ['read'], principal: { kind: 'legacy_token' as const, id: tokens.alice!.id } };
       expect(await memberIdentityFor(noQueries, { ...joined, member: { id: 'alice-example', groups: ['team-a'] } })).toEqual(['group:team-a', 'member:alice-example']);
       expect(await memberIdentityFor(noQueries, { ...joined, member: null })).toEqual([]);

@@ -174,6 +174,10 @@ export interface ServeOptions {
   // Defaults to GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS (seconds; 60 when
   // unset, 0 disables) when omitted.
   bootTimeoutMs?: number;
+  // Test seam for the boot-readiness deadline's clock and timers, so tests
+  // drive the no-progress window without real time. Defaults to Date.now and
+  // unref'd global timers.
+  bootClock?: { now: () => number; setTimeout: (fn: () => void, ms: number) => unknown; clearTimeout: (handle: unknown) => void };
   // Test seam for the idle maintenance sweep [ENG-5]. Replaces the sweep
   // body so unit tests can assert timer wiring without importing the real
   // sweep core (which opens engine work). Defaults to a lazy-imported
@@ -497,16 +501,21 @@ async function serveBrain(
   // same as the graceful-shutdown path, so a wedged WASM close can't trap
   // us either.
   const bootTimeoutMs = opts.bootTimeoutMs ?? resolveBootTimeoutMs();
-  let bootDeadline: ReturnType<typeof setTimeout> | null = null;
+  const clock = opts.bootClock ?? {
+    now: () => Date.now(),
+    setTimeout: (fn: () => void, ms: number) => { const t = setTimeout(fn, ms); t.unref?.(); return t; },
+    clearTimeout: (h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  };
+  let bootDeadline: unknown = null;
   let bootPhase = 'starting';
-  let bootProgressAt = Date.now();
+  let bootProgressAt = clock.now();
   const bootStartedAt = bootProgressAt;
-  const stopProgressWatch = bootTimeoutMs > 0 ? onForwardProgress(() => { bootProgressAt = Date.now(); }) : () => {};
+  const stopProgressWatch = bootTimeoutMs > 0 ? onForwardProgress(() => { bootProgressAt = clock.now(); }) : () => {};
   if (bootTimeoutMs > 0) {
     const log = opts.log ?? ((msg: string) => console.error(msg));
     const exit = opts.exit ?? ((code?: number) => { process.exit(code); });
     const fire = () => {
-      log(formatBootTimeout(bootTimeoutMs, bootPhase, engine, Date.now() - bootStartedAt));
+      log(formatBootTimeout(bootTimeoutMs, bootPhase, engine, clock.now() - bootStartedAt));
       const cleanup = setTimeout(() => { exit(1); }, CLEANUP_DEADLINE_MS);
       cleanup.unref?.();
       Promise.resolve()
@@ -524,17 +533,15 @@ async function serveBrain(
     // whatever remains of the window since the last phase change or
     // progress note, and fires only once a full window passed without one.
     const check = () => {
-      const idle = Date.now() - bootProgressAt;
+      const idle = clock.now() - bootProgressAt;
       if (idle >= bootTimeoutMs) { fire(); return; }
-      bootDeadline = setTimeout(check, bootTimeoutMs - idle);
-      bootDeadline.unref?.();
+      bootDeadline = clock.setTimeout(check, bootTimeoutMs - idle);
     };
-    bootDeadline = setTimeout(check, bootTimeoutMs);
-    bootDeadline.unref?.();
+    bootDeadline = clock.setTimeout(check, bootTimeoutMs);
   }
 
   try {
-    await start(engine, { surface, surfaceSource: resolved.source, ...(resolved.invalidEnv !== undefined ? { invalidSurfaceEnv: resolved.invalidEnv } : {}), ...(sourceGuard ? { sourceGuard } : {}), onBootPhase: phase => { bootPhase = phase; bootProgressAt = Date.now(); }, ...(access === 'read-only' ? { access } : {}), ...(advertise ? { advertise } : {}), ...(stdioMember !== undefined ? { stdioMember } : {}) });
+    await start(engine, { surface, surfaceSource: resolved.source, ...(resolved.invalidEnv !== undefined ? { invalidSurfaceEnv: resolved.invalidEnv } : {}), ...(sourceGuard ? { sourceGuard } : {}), onBootPhase: phase => { bootPhase = phase; bootProgressAt = clock.now(); }, ...(access === 'read-only' ? { access } : {}), ...(advertise ? { advertise } : {}), ...(stdioMember !== undefined ? { stdioMember } : {}) });
     // `--stdio-idle-timeout` arms its timer during lifecycle installation,
     // but its stdin activity listener must wait until startMcpServer has
     // attached the MCP SDK transport listener. Attaching any `data` listener
@@ -544,7 +551,7 @@ async function serveBrain(
     // Opt-in warm CLI socket; bound after the stdout redirect so a request's captured console output keeps its stream.
     if (cliSocketOn) void import('../core/cli-socket/server.ts').then(m => m.startCliSocket(engine, opts.log ?? ((msg: string) => console.error(msg))));
   } finally {
-    if (bootDeadline) clearTimeout(bootDeadline);
+    if (bootDeadline) clock.clearTimeout(bootDeadline);
     stopProgressWatch();
   }
   // startMcpServer returns after the SDK has wired up its stdin 'data'

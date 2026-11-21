@@ -1,6 +1,7 @@
 //! A port of the pg_trgm scoring functions: `similarity`, `word_similarity`,
 //! `strict_word_similarity` and `show_trgm` (contrib/pg_trgm/trgm_op.c, PostgreSQL 18, the default
 //! build: KEEPONLYALNUM, IGNORECASE, DIVUNION, LPADDING 2, RPADDING 1).
+//! Derived from PostgreSQL 18.6; licence and notice: third-party/postgresql/NOTICE.md
 //!
 //! - A word is a run of alphanumeric characters (`t_isalnum`). Each word is lowercased and padded
 //!   as `"  word "`; its trigrams are the 3-character windows of that padded text.
@@ -14,15 +15,17 @@
 //! `trgm_strict_word_similarity(a, b) as f64 >= TRGM_STRICT_WORD_SIMILARITY_THRESHOLD` is `a <<% b`.
 //!
 //! Character classes: the parity database (PGLite) uses the libc `C.UTF-8` ctype, where `iswalnum`
-//! and `towlower` cover non-ASCII letters. This port uses Rust's Unicode `is_alphanumeric` and the
-//! first character of `to_lowercase`. The two can differ on rare code points (for example some
-//! symbols that glibc classes as alphabetic); a database with the `C` ctype would treat every
-//! non-ASCII character as a separator.
+//! and `towlower` cover non-ASCII letters. This port uses the tables the tsearch parser ports from
+//! that ctype (`parser::is_alnum_char`, `stem::pg_lower`), not Rust's Unicode classes, which differ on
+//! code points such as `\u{b2}` (a separator there, a letter-or-digit to Rust). A database with the `C`
+//! ctype would treat every non-ASCII character as a separator.
 //!
 //! Other families call these functions (searchTakes and others), so the items carry
 //! `allow(dead_code)` until a caller in this crate uses them.
 #![allow(dead_code)]
 
+use super::parser::is_alnum_char;
+use super::stem::pg_lower;
 use std::collections::HashMap;
 
 /// `pg_trgm.similarity_threshold` default (`%`).
@@ -84,15 +87,20 @@ fn compact(chars: &[char]) -> Trgm {
     }
 }
 
+/// `towlower` of the C.UTF-8 ctype, as the tsearch lowercaser does it (`stem::pg_lower`).
 fn lower(c: char) -> char {
-    c.to_lowercase().next().unwrap_or(c)
+    let mut buf = [0u8; 4];
+    pg_lower(c.encode_utf8(&mut buf))
+        .chars()
+        .next()
+        .unwrap_or(c)
 }
 
 /// `generate_trgm_only`: every trigram of every word, in order, with the word bounds when asked.
 fn trigrams_in_order(text: &str, mut bounds: Option<&mut Vec<u8>>) -> Vec<Trgm> {
     let mut out = Vec::new();
     for word in text
-        .split(|c: char| !c.is_alphanumeric())
+        .split(|c: char| !is_alnum_char(c))
         .filter(|w| !w.is_empty())
     {
         let mut padded = vec![' ', ' '];
@@ -124,6 +132,12 @@ fn trigram_set(text: &str) -> Vec<Trgm> {
     set
 }
 
+/// The sorted, unique raw trigrams of `text`, as `similarity` counts them (the keyword index's
+/// `R 0x03` postings).
+pub(crate) fn trigram_bytes(text: &str) -> Vec<[u8; 3]> {
+    trigram_set(text)
+}
+
 /// `show_trgm(text)`: the sorted, unique trigrams, printed as text when every byte is an ASCII
 /// alphanumeric or a space, else as `0x` and six hex digits.
 pub(crate) fn trigrams(text: &str) -> Vec<String> {
@@ -143,7 +157,7 @@ pub(crate) fn trigrams(text: &str) -> Vec<String> {
 }
 
 /// `CALCSML` with DIVUNION.
-fn calc_sml(count: usize, len1: usize, len2: usize) -> f32 {
+pub(crate) fn calc_sml(count: usize, len1: usize, len2: usize) -> f32 {
     count as f32 / (len1 + len2 - count) as f32
 }
 
@@ -316,6 +330,11 @@ mod tests {
         ("acme example", "acme-example inc", "0.7647059", "1", "1", &["  a", "  e", " ac", " ex", "acm", "amp", "cme", "exa", "le ", "me ", "mpl", "ple", "xam"]),
         ("acme", "acmeexample", "0.30769232", "0.8", "0.30769232", &["  a", " ac", "acm", "cme", "me "]),
         ("pg", "postgres pg trgm", "0.1875", "1", "1", &["  p", " pg", "pg "]),
+        // Characters the C.UTF-8 `iswalnum` treats as separators (superscript and fraction digits) or as letters.
+        ("x", "x\u{b2}", "1", "1", "1", &["  x", " x "]),
+        ("x", "x\u{bd}y", "0.5", "1", "1", &["  x", " x "]),
+        ("ab", "ab\u{663}", "0.4", "0.6666667", "0.4", &["  a", " ab", "ab "]),
+        ("x", "x\u{aa}", "0.25", "0.5", "0.25", &["  x", " x "]),
         ("abcabc", "abc", "0.6666667", "0.6666667", "0.6666667", &["  a", " ab", "abc", "bc ", "bca", "cab"]),
         ("trigram", "tri gram", "0.54545456", "0.54545456", "0.54545456", &["  t", " tr", "am ", "gra", "igr", "ram", "rig", "tri"]),
         ("tit", "title of it", "0.33333334", "0.75", "0.42857143", &["  t", " ti", "it ", "tit"]),

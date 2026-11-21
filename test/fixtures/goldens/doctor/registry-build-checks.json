@@ -463,6 +463,10 @@
       },
       {
         "category": "brain",
+        "name": "access_pages_read_by_nobody"
+      },
+      {
+        "category": "brain",
         "name": "attest_read_shared_scope"
       },
       {
@@ -484,6 +488,10 @@
       {
         "category": "ops",
         "name": "guard_ledger_checks"
+      },
+      {
+        "category": "ops",
+        "name": "owner_only_marks_triggers"
       },
       {
         "category": "ops",
@@ -1219,6 +1227,10 @@
       },
       {
         "category": "brain",
+        "name": "entity_duplicates"
+      },
+      {
+        "category": "brain",
         "name": "local_edit_adoptions"
       },
       {
@@ -1240,6 +1252,14 @@
       {
         "category": "brain",
         "name": "facts_undated_lines"
+      },
+      {
+        "category": "brain",
+        "name": "secret_store"
+      },
+      {
+        "category": "ops",
+        "name": "owner_identity"
       },
       {
         "category": "brain",

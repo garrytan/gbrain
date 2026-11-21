@@ -19,7 +19,7 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::page_columns::PageColumns;
@@ -180,14 +180,16 @@ pub struct SalienceScoresInput {
     pub suppress_flagged: bool,
 }
 
-/// Whether the read's `excludePrivate` policy hides `page`.
+/// Whether the read's `excludePrivate` policy hides `page`. `owner_only` holds the owner-only
+/// sources, read once per read on the first page it judges.
 fn private_hidden(
+    owner_only: &mut OwnerOnlyCache,
     read: &dyn KvRead,
     page: &PageRecord,
     policy: &Option<PrivacyPolicy>,
 ) -> Result<bool> {
     match policy {
-        Some(policy) => page_hidden(read, page, policy),
+        Some(policy) => owner_only.page_hidden(read, page, policy),
         None => Ok(false),
     }
 }
@@ -294,7 +296,7 @@ impl Store {
             let now = self.env.now_micros();
             let mut seen = HashSet::new();
             let mut changed = 0;
-            for (row, weight) in rows.iter().zip(weights) {
+            for (row, weight) in rows.iter().zip(weights.iter().cloned()) {
                 let Some(page) = read_page(tx, &row.source_id, &row.slug)? else {
                     continue;
                 };
@@ -334,6 +336,7 @@ impl Store {
             read: &*read,
             archived: HashMap::new(),
         };
+        let mut owner_only = OwnerOnlyCache::default();
         let mut rows: Vec<(f64, PageRecord, Value)> = Vec::new();
         for page in all_pages(&*read)? {
             if opts
@@ -343,7 +346,7 @@ impl Store {
                 || (opts.exclude_briefings && page.slug.starts_with("briefings/"))
                 || !listed(&opts.source_ids, &page.source_id)
                 || !live.passes(&page)?
-                || private_hidden(&*read, &page, &opts.exclude_private)?
+                || private_hidden(&mut owner_only, &*read, &page, &opts.exclude_private)?
             {
                 continue;
             }
@@ -404,6 +407,7 @@ impl Store {
             read: &*read,
             archived: HashMap::new(),
         };
+        let mut owner_only = OwnerOnlyCache::default();
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         for r in &input.refs {
@@ -413,7 +417,7 @@ impl Store {
             if !seen.insert(page.id)
                 || !listed(&input.source_ids, &page.source_id)
                 || (input.live && !live.passes(&page)?)
-                || private_hidden(&*read, &page, &input.exclude_private)?
+                || private_hidden(&mut owner_only, &*read, &page, &input.exclude_private)?
                 || !trust.admits(
                     &*read,
                     "pages",

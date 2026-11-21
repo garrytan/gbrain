@@ -1,6 +1,8 @@
 //! A port of PostgreSQL's `english_stem` text search dictionary (`ts_lexize('english_stem', word)`),
 //! PostgreSQL 18: `dict_snowball.c` around the generated Snowball 2.2.0 `stem_UTF_8_english.c`
 //! (with the runtime in `utilities.c` and `api.c`) and the `english.stop` stopword list.
+//! Derived from PostgreSQL 18.6; licence and notice: third-party/postgresql/NOTICE.md
+//! Also derived from Snowball 2.2.0; licence and notice: third-party/snowball/NOTICE.md
 //!
 //! `dsnowball_lexize` for a UTF-8 database:
 //!

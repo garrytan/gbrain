@@ -33,6 +33,8 @@ export interface SyncTailReport {
   links?: ManagedLinkExtraction;
   /** Pages this run imported that the tail's link extraction left underived (present when links ran); they stay stale. */
   underived?: number;
+  /** With `deferBacklog`: the page cap and time the tail left for the stale backlog, for `drainSyncTailBacklog` to spend later. */
+  backlog?: TailBacklogShare;
   notice?: Notice;
 }
 
@@ -41,7 +43,13 @@ export interface SyncTailReport {
  * `failed` status and its notice. The obligation is cleared (compare-and-swap) only when every step ran; a checkpoint
  * that committed meanwhile keeps its own.
  */
-export async function runSyncTail(engine: BrainEngine, sourceId: string, opts: { signal?: AbortSignal; deadlineAtMs?: number; budgetMs?: number } = {}): Promise<SyncTailReport | null> {
+export interface TailBacklogShare { maxPages: number; deadlineAtMs: number }
+
+/**
+ * With `deferBacklog` the link extraction derives only the pages the run imported; what is left of the tail's page cap and
+ * budget comes back as `backlog`, so a caller holding a lock can release it before spending that share on the stale backlog.
+ */
+export async function runSyncTail(engine: BrainEngine, sourceId: string, opts: { signal?: AbortSignal; deadlineAtMs?: number; budgetMs?: number; deferBacklog?: boolean } = {}): Promise<SyncTailReport | null> {
   let owed: TailObligation[] | null;
   try { owed = await readSyncTail(engine, sourceId); } catch (error) {
     const failure = `reading the scheduled step failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -65,7 +73,8 @@ export async function runSyncTail(engine: BrainEngine, sourceId: string, opts: {
           AND r.intent->>'passId'=p.run_id AND r.intent->>'kind'='managed_sync_import') imported LIMIT ${SYNC_TAIL_MAX_PAGES + 1}`,
       [owed.map(item => item.run_id), JSON.stringify(passes.map(item => ({ run_id: item.run_id, since: item.since, at: item.at }))), sourceId],
       { timeoutMs: Math.max(1, deadlineAt - Date.now()) })).map(row => row.slug);
-      if (deadlineAt > Date.now()) links = await extractManagedStaleLinks(engine, { sourceId, maxPages: SYNC_TAIL_MAX_PAGES, timeBudgetMs: deadlineAt - Date.now(), signal: opts.signal, mentions: false, slugs });
+      if (deadlineAt > Date.now()) links = await extractManagedStaleLinks(engine, { sourceId, maxPages: SYNC_TAIL_MAX_PAGES, timeBudgetMs: deadlineAt - Date.now(), signal: opts.signal, mentions: false, slugs,
+        ...(opts.deferBacklog ? { backlog: false } : {}) });
     }
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
@@ -77,7 +86,14 @@ export async function runSyncTail(engine: BrainEngine, sourceId: string, opts: {
   const underived = links ? Math.max(0, slugs.length - links.pages - links.skipped) : 0;
   const truncated = underived > 0 && (Date.now() >= deadlineAt || links!.pages + links!.skipped >= SYNC_TAIL_MAX_PAGES);
   const status: SyncTailReport['status'] = failure !== null ? 'failed' : !ran ? 'deferred' : truncated ? 'truncated' : statistics === 'failed' ? 'degraded' : 'done';
-  return { status, runs: owed.length, statistics, ...(links ? { links, underived } : {}), ...(status === 'done' ? {} : { notice: tailNotice(sourceId, status, { statistics, underived, failure }) }) };
+  const backlog = opts.deferBacklog && links ? { maxPages: SYNC_TAIL_MAX_PAGES - links.pages - links.skipped - (links.failed ?? 0), deadlineAtMs: deadlineAt } : null;
+  return { status, runs: owed.length, statistics, ...(links ? { links, underived } : {}), ...(backlog && backlog.maxPages > 0 && backlog.deadlineAtMs > Date.now() ? { backlog } : {}),
+    ...(status === 'done' ? {} : { notice: tailNotice(sourceId, status, { statistics, underived, failure }) }) };
+}
+
+/** The stale-link backlog share a deferred tail left (`runSyncTail` with `deferBacklog`): the tail's unspent page cap, until its deadline. */
+export function drainSyncTailBacklog(engine: BrainEngine, sourceId: string, share: TailBacklogShare, signal?: AbortSignal): Promise<ManagedLinkExtraction> {
+  return extractManagedStaleLinks(engine, { sourceId, maxPages: share.maxPages, timeBudgetMs: Math.max(1, share.deadlineAtMs - Date.now()), signal, mentions: false });
 }
 
 function tailNotice(sourceId: string, status: Exclude<SyncTailReport['status'], 'done'>, d: { statistics: SyncTailReport['statistics']; underived?: number; failure: string | null }): Notice {
@@ -103,7 +119,7 @@ function tailNotice(sourceId: string, status: Exclude<SyncTailReport['status'], 
  * links ran). A dry run, a run that never held the lease (a follower) and a call still inside a lease (its holder runs
  * the tail) run none.
  */
-export async function withSyncTail(engine: BrainEngine, sourceId: string, result: SyncResult, opts: { signal?: AbortSignal; deadlineAtMs?: number; budgetMs?: number } = {}): Promise<SyncResult> {
+export async function withSyncTail(engine: BrainEngine, sourceId: string, result: SyncResult, opts: { signal?: AbortSignal; deadlineAtMs?: number; budgetMs?: number; deferBacklog?: boolean } = {}): Promise<SyncResult> {
   if (result.status === 'dry_run' || result.leaseHeld || currentDrainLease(sourceId)) return result;
   const tail = await runSyncTail(engine, sourceId, opts);
   if (!tail) return result;

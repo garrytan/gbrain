@@ -122,7 +122,8 @@ export interface AgentEnvelope {
 export interface RenderContext {
   transport: Transport;
   surface?: Surface;
-  isCallable(opName: string): boolean;
+  /** With `args`, also whether this caller may pass every one of them (#9669: a surface confines parameters too). */
+  isCallable(opName: string, args?: Record<string, unknown>): boolean;
   preapproved(effects: Effect[], estUsd?: number | null): boolean;
   principal?: string;
   /** A1: the brain/source the failing call acted on; renderAction pins them into gbrain argv (src/core/fix-routing.ts). */
@@ -248,7 +249,7 @@ function warnInvalidRepoBase(value: string): void {
 /** The published decision table (first matching row wins). */
 export function deriveNext(a: Action, ctx: RenderContext): Next {
   if (a.ask_user) return 'ask_user';
-  const callableMcp = a.mcp !== undefined && ctx.isCallable(a.mcp.tool);
+  const callableMcp = a.mcp !== undefined && ctx.isCallable(a.mcp.tool, a.mcp.arguments);
   const mcpOnlyOnCli = ctx.transport === 'cli' && !a.argv?.length && a.mcp !== undefined && !callableMcp;
   if (!a.argv?.length && !callableMcp && !mcpOnlyOnCli) return 'report';
   if (a.actor === 'provider') return 'wait';
@@ -260,14 +261,14 @@ export function deriveNext(a: Action, ctx: RenderContext): Next {
 
 function renderVerify(v: Action['verify'], ctx: RenderContext): RenderedAction['verify'] {
   if (!v) return undefined;
-  const mcp = v.mcp && ctx.isCallable(v.mcp.tool) ? v.mcp : undefined;
+  const mcp = v.mcp && ctx.isCallable(v.mcp.tool, v.mcp.arguments) ? v.mcp : undefined;
   if (!v.argv && !mcp) return undefined;
   return { ...(v.argv ? { argv: pinRouting(v.argv, ctx.routing, { remote: ctx.transport === 'http' }) } : {}), ...(mcp ? { mcp } : {}) };
 }
 
 /** Render an Action for the caller's surface. Key order is part of the v1 goldens. */
 export function renderAction(a: Action, ctx: RenderContext): RenderedAction {
-  const callable = a.mcp && ctx.isCallable(a.mcp.tool) ? a.mcp : undefined;
+  const callable = a.mcp && ctx.isCallable(a.mcp.tool, a.mcp.arguments) ? a.mcp : undefined;
   const cliOnlyOnMcp = ctx.transport !== 'cli' && !callable && a.actor === 'agent' && !!a.argv?.length;
   // The mirror case: an MCP-only fix on the CLI (a remote server's fix on a thin client) is kept as
   // relay data, not dropped: the user (or their MCP client) calls the tool; the CLI cannot.
@@ -342,7 +343,8 @@ export function noticeBlock(n: RenderedNotice): string {
 
 const HTTP_DROP_KEYS = new Set(['pid', 'lock_owner', 'path', 'data_dir', 'database_path', 'asset']);
 const ABS_PATH_RE = /(?:^|(?<=[\s'"`(=]))(?:\/(?:home|Users|root|tmp|var|private|opt|srv|mnt|etc)\/[^\s'"`)]*|[A-Za-z]:\\[^\s'"`)]*|~\/[^\s'"`)]*)/g;
-const PID_RE = /\b(PID|pid)\s*[:=]?\s*\d+/g;
+// No letter or digit before it, so `owner_pid=123` in a detail is redacted too (`\b` does not break after `_`).
+const PID_RE = /(?<![A-Za-z0-9])(PID|pid)\s*[:=]?\s*\d+/g;
 const KEY_NAME_RE = /\b[A-Z][A-Z0-9]*_(?:API_KEY|TOKEN|SECRET)\b/g;
 
 function redactString(s: string): string {

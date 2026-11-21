@@ -514,7 +514,7 @@ export async function purgeExpiredSources(
   for (const candidate of candidates) {
     const { id } = candidate;
     try {
-      if (await deleteSourceRow(engine, id, { expiredArchiveOnly: true })) {
+      if (await (await import('./owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, {}, () => deleteSourceRow(engine, id, { expiredArchiveOnly: true }))) {
         purged.push(id);
         // github-kind mirrors are gbrain-owned only when created at the
         // default clone location. Never recursively delete an altered or

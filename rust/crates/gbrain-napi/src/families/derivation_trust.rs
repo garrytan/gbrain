@@ -41,12 +41,6 @@ impl Brain {
         })
     }
 
-    /// `countDerivedFactTaint()`: resolves `{ derived, external }` for the facts.
-    #[napi]
-    pub fn count_derived_fact_taint<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.count_derived_fact_taint())
-    }
-
     /// `stampPageFrontmatter(spec)`: applies one fixed frontmatter stamp.
     #[napi]
     pub fn stamp_page_frontmatter<'env>(

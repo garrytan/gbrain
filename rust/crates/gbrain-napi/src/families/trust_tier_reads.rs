@@ -13,7 +13,9 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::trust::tier_reads::{CorePageRowQuery, TrustScanQuery, VersionIdsQuery};
+use gbrain_store::trust::tier_reads::{
+    CorePageRowQuery, PageIdsQuery, TrustScanQuery, VersionIdsQuery,
+};
 use gbrain_store::trust::valid_time::{
     AmendmentsQuery, CursorEditionQuery, ValidTimeIdentityQuery, ValidTimePickQuery,
     VersionEditionQuery,
@@ -86,6 +88,19 @@ impl Brain {
         })
     }
 
+    /// `listPageRefsByIds({ ids })`: resolves the source, slug and type of each listed page.
+    #[napi]
+    pub fn list_page_refs_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageIdsQuery = required(args, "listPageRefsByIds args")?;
+            s.list_page_refs_by_ids(&a)
+        })
+    }
+
     /// `listValidTimeIdentities(spec)`: resolves the live pages with a slug a valid-time read may follow.
     #[napi]
     pub fn list_valid_time_identities<'env>(
@@ -99,7 +114,7 @@ impl Brain {
         })
     }
 
-    /// `pickValidTimeEdition(spec)`: resolves `{ row, history_unpruned }` for one page.
+    /// `pickValidTimeEdition(spec)`: resolves `{ row }` for one page.
     #[napi]
     pub fn pick_valid_time_edition<'env>(
         &self,

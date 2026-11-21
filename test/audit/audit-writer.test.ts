@@ -170,6 +170,27 @@ describe('createAuditWriter — log()', () => {
     });
   });
 
+  it('fileMode: a new file is created with it, a looser existing file is tightened, and no mode keeps the umask', async () => {
+    const dir = makeDir();
+    await withEnv({ GBRAIN_AUDIT_DIR: dir }, async () => {
+      const prev = process.umask(0o022);
+      try {
+        const tight = createAuditWriter<TestEvent>({ featureName: 'mode-new', fileMode: 0o600 });
+        tight.log({ message: 'first' });
+        expect(fs.statSync(path.join(dir, tight.computeFilename())).mode & 0o777).toBe(0o600);
+        const loose = path.join(dir, computeIsoWeekFilename('mode-old'));
+        fs.writeFileSync(loose, '');
+        fs.chmodSync(loose, 0o644);
+        createAuditWriter<TestEvent>({ featureName: 'mode-old', fileMode: 0o600 }).log({ message: 'second' });
+        expect(fs.statSync(loose).mode & 0o777).toBe(0o600);
+        expect(fs.readFileSync(loose, 'utf8')).toContain('"message":"second"');
+        const plain = createAuditWriter<TestEvent>({ featureName: 'mode-unset' });
+        plain.log({ message: 'third' });
+        expect(fs.statSync(path.join(dir, plain.computeFilename())).mode & 0o777).toBe(0o644);
+      } finally { process.umask(prev); }
+    });
+  });
+
   it('best-effort: write failure stderr-warns but does not throw', async () => {
     // Force a non-creatable path: use a file-as-dir trick. Create a regular
     // file at `${root}/blocker`, then point GBRAIN_AUDIT_DIR at

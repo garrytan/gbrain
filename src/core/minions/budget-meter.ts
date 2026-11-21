@@ -20,24 +20,12 @@
 
 import { randomUUIDv7 } from 'bun';
 import type { BrainEngine } from '../engine.ts';
-import { sqlQueryForEngine } from '../sql-query.ts';
+import { clientLockKey } from '../engine-sql/spend-log.ts';
 import { BudgetExceededError } from '../spend-log.ts';
 
 /** Reservation TTL — 10 minutes. Long enough for a normal provider call;
  *  an overdue hold stays charged until its outcome is known. */
 export const RESERVATION_TTL_MS = 10 * 60 * 1000;
-
-/** Generate an int hash of client_id for pg_advisory_xact_lock. */
-function clientLockKey(clientId: string): number {
-  // FNV-1a 32-bit hash (deterministic, no deps, fits in INT32 / BIGINT).
-  let h = 0x811c9dc5;
-  for (let i = 0; i < clientId.length; i++) {
-    h ^= clientId.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  // pg_advisory_xact_lock(BIGINT) — unsigned 32-bit value fits in BIGINT.
-  return h >>> 0;
-}
 
 export interface ReserveOpts {
   clientId: string;
@@ -83,55 +71,23 @@ export async function reserve(
   }
 
   const reservationId = randomUUIDv7();
-  const lockKey = clientLockKey(opts.clientId);
   const expiresAt = new Date(Date.now() + RESERVATION_TTL_MS);
-  const todayStart = todayStartIso();
+  const dayStart = todayStart();
 
   await engine.transaction(async (tx) => {
-    const sql = sqlQueryForEngine(tx);
-
-    // Postgres can run several MCP requests for one client concurrently.
-    // Hold a transaction-scoped lock across sweep + read + insert so two
-    // callers cannot both observe the same headroom. PGLite serializes its
-    // single connection and does not implement advisory locks.
-    if (tx.kind === 'postgres') {
-      // Lock-census (PR6 D5): INTENTIONALLY per-client, not per-source — the budget cap is an oauth_clients.budget_usd_per_day property; one client's concurrent requests must serialize regardless of which source each targets.
-      await sql`SELECT pg_advisory_xact_lock(${BigInt(lockKey)})`;
-    }
-    // A cap tightened after the caller's preflight applies to this attempt.
-    // The row lock also serializes this admission with in-place grant repair.
-    const clients = await sql`SELECT budget_usd_per_day::text AS cap FROM oauth_clients WHERE client_id = ${opts.clientId} FOR SHARE`;
+    // The member takes the per-client lock (Postgres), reads the configured cap under a row lock, sweeps, sums and
+    // inserts as one admission (engine-sql/spend-log.ts). The trusted recheck runs inside the same transaction, so a
+    // refusal of it rolls the whole admission back.
+    const admission = await tx.reserveClientSpend({
+      reservation_id: reservationId, client_id: opts.clientId, estimated_cents: opts.estimatedCents, cap_cents: opts.capCents,
+      estimate_known: opts.estimateKnown !== false, model: opts.model, provider: opts.provider, job_id: opts.jobId ?? null,
+      expires_at: expiresAt, day_start: dayStart,
+    });
     await opts.validateAdmission?.(tx);
-    const configuredCap = clients[0]?.cap == null ? null : Math.round(Number(clients[0].cap) * 100);
-    const cap = opts.capCents === null ? configuredCap : configuredCap === null ? opts.capCents : Math.min(opts.capCents, configuredCap);
-    if (cap !== null) assertFiniteNonNegative('configured cap', cap);
-
-    // Step 1: sweep expired reservations for this client.
-    await tx.expireSpendReservations({ clientId: opts.clientId });
-
-    // Step 2 + 3: SUM committed + pending, refuse if over cap.
-    const rows = await sql`
-      SELECT
-        COALESCE((
-          SELECT SUM(spend_cents)::text
-            FROM mcp_spend_log
-           WHERE client_id = ${opts.clientId}
-             AND created_at >= ${todayStart}
-        ), '0') AS committed_text,
-        COALESCE((
-          SELECT SUM(estimated_cents)::text
-            FROM mcp_spend_reservations
-           WHERE client_id = ${opts.clientId}
-             AND status IN ('pending', 'expired')
-        ), '0') AS pending_text,
-        (SELECT count(*) FROM mcp_spend_reservations
-          WHERE client_id = ${opts.clientId} AND status IN ('pending','expired')
-            AND estimate_known = false) AS unknown_count
-    `;
-    const committedCents = requiredFiniteTotal(rows[0]?.committed_text, 'committed spend');
-    const pendingCents = requiredFiniteTotal(rows[0]?.pending_text, 'pending spend');
-    const totalProjected = committedCents + pendingCents + opts.estimatedCents;
-    if (cap !== null && (opts.estimateKnown === false || Number(rows[0]?.unknown_count ?? 0) > 0 || totalProjected > cap)) {
+    if (admission.outcome === 'invalid_cap') assertFiniteNonNegative('configured cap', admission.cap_cents);
+    if (admission.outcome === 'invalid_total') throw new Error(`invalid ${admission.label} returned by spend ledger`);
+    if (admission.outcome === 'refused') {
+      const { committed_cents: committedCents, pending_cents: pendingCents, cap_cents: cap } = admission;
       throw new BudgetExceededError(
         `budget exceeded for client ${opts.clientId}: ` +
         `committed=${committedCents.toFixed(2)}¢, pending=${pendingCents.toFixed(2)}¢, ` +
@@ -140,13 +96,6 @@ export async function reserve(
         cap,
       );
     }
-
-    // Step 4: INSERT reservation before releasing the client lock.
-    await tx.insertSpendReservation({
-      reservation_id: reservationId, client_id: opts.clientId, budget_key: null, job_id: opts.jobId ?? null,
-      estimated_cents: opts.estimatedCents, model: opts.model, provider: opts.provider, expires_at: expiresAt,
-      estimate_known: opts.estimateKnown !== false, usage_unknown_reason: opts.estimateKnown === false ? 'pricing_or_bound_unknown' : null,
-    });
   });
 
   return {
@@ -190,20 +139,11 @@ export interface GroupSpend {
 /** Read-only group totals; a pending hold past its deadline reads as overdue. */
 export async function readGroupSpend(engine: BrainEngine, budgetKey: string): Promise<GroupSpend> {
   assertNonEmpty('budgetKey', budgetKey);
-  const sql = sqlQueryForEngine(engine);
-  const rows = await sql`
-    SELECT
-      COALESCE((SELECT SUM(spend_cents)::text FROM mcp_spend_log WHERE budget_key = ${budgetKey}), '0') AS committed_text,
-      COALESCE((SELECT SUM(estimated_cents)::text FROM mcp_spend_reservations
-                 WHERE budget_key = ${budgetKey}
-                   AND (status = 'expired' OR (status = 'pending' AND expires_at < now()))), '0') AS overdue_text,
-      COALESCE((SELECT SUM(estimated_cents)::text FROM mcp_spend_reservations
-                 WHERE budget_key = ${budgetKey} AND status = 'pending' AND expires_at >= now()), '0') AS live_text
-  `;
+  const totals = await engine.readGroupSpendTotals(budgetKey);
   return {
-    committedCents: requiredFiniteTotal(rows[0]?.committed_text, 'committed spend'),
-    overdueCents: requiredFiniteTotal(rows[0]?.overdue_text, 'overdue spend'),
-    liveCents: requiredFiniteTotal(rows[0]?.live_text, 'pending spend'),
+    committedCents: requiredFiniteTotal(totals.committed_cents, 'committed spend'),
+    overdueCents: requiredFiniteTotal(totals.overdue_cents, 'overdue spend'),
+    liveCents: requiredFiniteTotal(totals.live_cents, 'pending spend'),
   };
 }
 
@@ -239,29 +179,20 @@ export async function reserveGroup(engine: BrainEngine, opts: GroupReserveOpts):
   }
   const reservationId = randomUUIDv7();
   const expiresAt = new Date(Date.now() + RESERVATION_TTL_MS);
-  let estimated = opts.estimatedCents;
-  await engine.transaction(async (tx) => {
-    const sql = sqlQueryForEngine(tx);
-    if (tx.kind === 'postgres') {
-      // Lock-census (PR6 D5): INTENTIONALLY per budget key — every job of a group shares one total regardless of source.
-      await sql`SELECT pg_advisory_xact_lock(${BigInt(clientLockKey(key))})`;
-    }
-    await tx.expireSpendReservations({ budgetKey: key });
-    if (opts.capCents !== null) {
-      const spend = await readGroupSpend(tx, key);
-      const remaining = opts.capCents - spend.committedCents - spend.overdueCents;
-      const knownFree = estimated === 0 && opts.estimateKnown !== false;
-      if (remaining < 0 || remaining === 0 && !knownFree) throw new GroupBudgetRefusal('exhausted', key, spend, opts.capCents);
-      estimated = Math.min(estimated, remaining);
-      if (spend.liveCents > 0 && spend.liveCents + estimated > remaining) {
-        throw new GroupBudgetRefusal('pressure', key, spend, opts.capCents);
-      }
-    }
-    await tx.insertSpendReservation({
-      reservation_id: reservationId, client_id: null, budget_key: key, job_id: opts.jobId ?? null,
-      estimated_cents: estimated, model: opts.model, provider: opts.provider, expires_at: expiresAt,
-      estimate_known: opts.estimateKnown !== false, usage_unknown_reason: opts.estimateKnown === false ? 'pricing_or_bound_unknown' : null,
+  // Inside one transaction, so a refusal rolls back the sweep the admission ran (as the lock-and-insert always did).
+  const estimated = await engine.transaction(async (tx) => {
+    const admission = await tx.reserveGroupSpend({
+      reservation_id: reservationId, budget_key: key, estimated_cents: opts.estimatedCents, cap_cents: opts.capCents,
+      estimate_known: opts.estimateKnown !== false, model: opts.model, provider: opts.provider, job_id: opts.jobId ?? null,
+      expires_at: expiresAt,
     });
+    if (admission.outcome === 'invalid_total') throw new Error(`invalid ${admission.label} returned by spend ledger`);
+    if (admission.outcome === 'refused') {
+      throw new GroupBudgetRefusal(admission.kind, key, {
+        committedCents: admission.committed_cents, overdueCents: admission.overdue_cents, liveCents: admission.live_cents,
+      }, opts.capCents as number);
+    }
+    return admission.estimated_cents;
   });
   return { reservationId, estimatedCents: estimated, ttlMs: RESERVATION_TTL_MS };
 }
@@ -282,27 +213,11 @@ export async function settle(
   assertFiniteNonNegative('actualCents', actualCents);
   assertNonEmpty('operation', operation);
 
-  await engine.transaction(async (tx) => {
-    const sql = sqlQueryForEngine(tx);
-    // A late result may arrive after the TTL sweeper marked the hold expired.
-    // Settle that paid work too: truthfully recording a late overage is safer
-    // than dropping it. WHERE excludes 'settled', preserving idempotency. The
-    // log insert is in the same transaction, so accounting failure rolls the
-    // state transition back.
-    const settled = await tx.settleSpendReservation(reservationId, actualCents);
-    if (settled.outcome === 'already_settled') return;
-    if (settled.outcome === 'missing') throw new Error(`spend reservation not found: ${reservationId}`);
-    const row = settled;
-    // Mirror into mcp_spend_log so getTodaySpendCents/reserve sees it.
-    await sql`
-      INSERT INTO mcp_spend_log
-        (client_id, budget_key, token_name, operation, spend_cents, provider, model)
-      VALUES
-        (${row.client_id == null ? null : String(row.client_id)}, ${row.budget_key == null ? null : String(row.budget_key)},
-         ${tokenName}, ${operation}, ${actualCents},
-         ${String(row.provider)}, ${String(row.model)})
-    `;
-  });
+  // A late result may arrive after the TTL sweeper marked the hold expired. Settle that paid work too: truthfully
+  // recording a late overage is safer than dropping it. The ledger row (so getTodaySpendCents/reserve see it) is
+  // written with the state transition as one write, so an accounting failure rolls the transition back.
+  const settled = await engine.settleSpendWithLog(reservationId, actualCents, operation, tokenName);
+  if (settled.outcome === 'missing') throw new Error(`spend reservation not found: ${reservationId}`);
 }
 
 /**
@@ -323,14 +238,7 @@ export async function getClientDailyCapCents(
   clientId: string,
 ): Promise<number | null> {
   assertNonEmpty('clientId', clientId);
-  const sql = sqlQueryForEngine(engine);
-  const rows = await sql`
-    SELECT budget_usd_per_day::text AS cap
-      FROM oauth_clients
-     WHERE client_id = ${clientId}
-  `;
-  if (rows.length === 0) return null;
-  const raw = rows[0]?.cap;
+  const raw = await engine.readClientBudgetUsd(clientId);
   if (raw === null || raw === undefined) return null;
   const usd = Number(raw);
   if (!Number.isFinite(usd) || usd < 0) {
@@ -341,10 +249,10 @@ export async function getClientDailyCapCents(
   return Math.round(usd * 100);
 }
 
-function todayStartIso(): string {
+function todayStart(): Date {
   const d = new Date();
   d.setUTCHours(0, 0, 0, 0);
-  return d.toISOString();
+  return d;
 }
 
 function assertNonEmpty(name: string, value: string): void {
@@ -367,7 +275,7 @@ function requiredFiniteTotal(value: unknown, label: string): number {
   return total;
 }
 
-/** Use the lockKey helper in case future callers want it (e.g. integration tests). */
+/** The lock-key helper moved to engine-sql/spend-log.ts; kept exported here for existing callers and tests. */
 export { clientLockKey };
 
 /** Re-export BudgetExceededError for one-stop import. */

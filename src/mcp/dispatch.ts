@@ -40,7 +40,7 @@ import { emptyRead, hiddenTakesNotice, localTranscriptsNotice, recallInteropNoti
 import { degradedStampFor, degradedStampLine, type DegradedStamp } from '../core/degraded-stamp.ts';
 import { assertUnscopedReadReachesPages } from '../core/sources-not-readable.ts';
 import { accessPolicyNotices } from '../core/access/policy-notice.ts';
-import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, type ToolConnection } from './hidden-tool-hint.ts';
+import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, itemParamKeys, paramCallable, paramNotOnSurface, type ToolConnection } from './hidden-tool-hint.ts';
 import { opAllowedForBoundClient } from '../core/ops/context.ts';
 import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
 import { takeHttpBehaviorNotice, takeLocalBehaviorNotice } from '../core/behavior-change-notice.ts';
@@ -67,6 +67,7 @@ import { isEngineDegraded } from '../core/degraded-marker.ts';
 import { admittedPendingReceipt, isWriteReceipt, publicWriteReceipt, type WriteReceipt } from '../core/persistence/types.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withRequestIdentityMemo, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
 import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
+import { withRemoteCaller } from '../core/remote-caller.ts';
 import { isAIInvocationPolicyError } from '../core/ai/invocation-guard.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
@@ -246,7 +247,7 @@ export interface DispatchOpts {
    */
   localFederatedSourceIds?: string[];
   /** GBRA-585: the trusted local CLI named no source (OperationContext.localSourceImplicit); ignored unless remote is false. */
-  localSourceImplicit?: boolean;
+  localSourceImplicit?: boolean; localSourceFromCheckout?: boolean; // the implicit source came from the cwd checkout (OperationContext.localSourceFromCheckout)
   /**
    * #5081: explicit-read admission for a stdio connection bound by
    * GBRAIN_SOURCE or a .gbrain-source pin. Stdio transport only; see
@@ -668,11 +669,11 @@ export function dispatchRenderContext(opts: DispatchOpts): RenderContext {
     routing,
     transport,
     surface,
-    isCallable: (opName: string) => {
+    isCallable: (opName: string, args?: Record<string, unknown>) => {
       const op = byName.get(opName);
       return !!op && isCallable(op, {
         transport, surface, scopes: opts.auth?.scopes ?? [], publishGates: {}, allowedOps: opts.allowedOps,
-      }) && (transport === 'cli' || opAllowedForBoundClient(opts.auth, op));
+      }) && (transport === 'cli' || (opAllowedForBoundClient(opts.auth, op) && [...Object.keys(args ?? {}), ...itemParamKeys(op, args ?? {})].every(key => paramCallable(op, key, surface))));
     },
     preapproved: () => false,
     ...(opts.auth?.clientId ? { principal: opts.auth.clientId } : {}),
@@ -981,9 +982,9 @@ export function buildOperationContext(
     sourceId: opts.sourceId ?? 'default',
     ...(sessionId ? { sessionId } : {}),
     ...(opts.localFederatedSourceIds ? { localFederatedSourceIds: opts.localFederatedSourceIds } : {}),
-    ...(opts.localSourceImplicit && opts.remote === false ? { localSourceImplicit: true } : {}),
+    ...(opts.localSourceImplicit && opts.remote === false ? { localSourceImplicit: true, ...(opts.localSourceFromCheckout ? { localSourceFromCheckout: true } : {}) } : {}),
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
-    ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}),
+    ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}), ...(opts.surface ? { surface: opts.surface } : {}),
     ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
     ...(opts.stdioMember !== undefined && opts.transport === 'stdio' && !opts.auth ? { stdioMember: opts.stdioMember } : {}),
     ...(opts.guest && opts.remote !== false ? { guestChannels: opts.guest } : {}),
@@ -994,7 +995,7 @@ export function buildOperationContext(
     ...(opts.resultRows ? { resultRows: opts.resultRows } : {}),
     ...(opts.thinClient ? { thinClient: true } : {}),
     ...(opts.mcpCaller ? { mcpCaller: opts.mcpCaller } : {}),
-    isCallable: (opName: string) => (render ??= dispatchRenderContext(opts)).isCallable(opName),
+    isCallable: (opName: string, args?: Record<string, unknown>) => (render ??= dispatchRenderContext(opts)).isCallable(opName, args),
     auth: opts.auth,
   };
 }
@@ -1093,7 +1094,7 @@ export async function dispatchToolCall(
     }
     if (audience || attested?.actor) assertion('accepted');
     const callParams = attested ? attested.params : args;
-    return withCallerAccess({ ...access, privateFactSources: privateFactSources && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? privateFactSources : [] }, async () => {
+    return withCallerAccess({ ...access, privateFactSources: privateFactSources && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? privateFactSources : [], ...(access.owner && opts.auth && opts.transport !== 'stdio' && !roomDeclaration && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? { ownerReads: true } : {}) }, async () => {
       const out = await withRequestIdentityMemo(() => withReadMode(readMode, () => dispatchResolvedCall(engine, name, callParams, scoped)));
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
       try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, scoped.auth, [scoped.sourceId, ...(scoped.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
@@ -1285,6 +1286,7 @@ async function dispatchResolvedCall(
   }
 
   const safeParams = normalizeOptionalParams(op, params || {});
+  const offSurface = opts.remote === false ? null : paramNotOnSurface(op, safeParams, toolConnection(opts), isVerb ? MEMORY_VERBS_VERSION : undefined); if (offSurface) { logVerb(false); return errorResult(offSurface, opts, { op: name }); } // #9669
   const validationFailure = findInvalidParam(op, safeParams);
   if (validationFailure) {
     logVerb(false);
@@ -1404,7 +1406,7 @@ async function dispatchResolvedCall(
         if (!(error instanceof OperationError) || error.code !== 'writer_registration_required' || op.requiredScopes?.length) throw error;
       }
     }
-    const result = registration
+    const result = await withRemoteCaller(ctx.remote !== false, async () => registration
       ? await withVerifiedLocalRegistration(engine, registration, async verified => {
         if (!verified.remote) throw opError('permission_denied', 'This registration is not an agent-facing connection.',
           `${name} on this stdio connection needs the agent-facing stdio writer registration, which only the user can create in a terminal on the brain host.`,
@@ -1412,7 +1414,7 @@ async function dispatchResolvedCall(
             'Previews the agent-facing stdio registration; the user reruns it without --dry-run (with --replace and the complete grant when a registration exists).') });
         return op.handler(ctx, safeParams);
       })
-      : await op.handler(ctx, safeParams);
+      : await op.handler(ctx, safeParams));
     if (emptyRead(name, result)) await assertUnscopedReadReachesPages(name, safeParams, ctx);
     // Hot memory built before a write (forget, remember, …) is never served after it, on every transport;
     // #6696 (A4): the write's receipt carries the capacity notices (60 s snapshot, at most hourly per scope).

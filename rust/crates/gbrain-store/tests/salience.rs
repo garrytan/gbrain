@@ -387,7 +387,7 @@ fn exclude_private_drops_the_pages_the_page_policy_hides_from_both_salience_read
     );
     let policy = |honor_aliases: bool, entity_privacy: bool| {
         serde_json::to_value(
-            json!({"honorAliases": honor_aliases, "entityPrivacy": entity_privacy}),
+            json!({"honorAliases": honor_aliases, "entityPrivacy": entity_privacy, "ownerOnly": "fn"}),
         )
         .unwrap()
     };
@@ -453,5 +453,121 @@ fn exclude_private_drops_the_pages_the_page_policy_hides_from_both_salience_read
     assert_eq!(
         sorted(hidden.into_iter().map(|(k, _)| k).collect()),
         ["default::sal/alias-world", "default::sal/open"]
+    );
+}
+
+#[test]
+fn salience_scores_under_exclude_private_skip_the_pages_the_policy_hides() {
+    let dir = TempDir::new("salience-private-scores");
+    let (store, _) = open(&dir);
+    page(&store, "default", "notes/open", json!({}));
+    page(
+        &store,
+        "default",
+        "notes/private",
+        json!({"visibility": "private"}),
+    );
+    page(
+        &store,
+        "default",
+        "notes/alias",
+        json!({"access": "private"}),
+    );
+    let refs = json!([
+        {"slug": "notes/open", "source_id": "default"},
+        {"slug": "notes/private", "source_id": "default"},
+        {"slug": "notes/alias", "source_id": "default"},
+    ]);
+    let slugs = |extra: Value| -> Vec<String> {
+        let mut input = json!({"refs": refs, "live": true});
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        scores(&store, input).into_iter().map(|(k, _)| k).collect()
+    };
+    let all = [
+        "default::notes/open",
+        "default::notes/private",
+        "default::notes/alias",
+    ];
+    assert_eq!(slugs(json!({})), all, "no policy hides nothing private");
+    let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
+    assert_eq!(
+        slugs(json!({"exclude_private": policy})),
+        ["default::notes/open"]
+    );
+    let visibility_only = json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
+    assert_eq!(
+        slugs(json!({"exclude_private": visibility_only})),
+        ["default::notes/open", "default::notes/alias"],
+        "without the alias keys only `visibility` hides a page"
+    );
+}
+
+#[test]
+fn recent_salience_under_exclude_private_drops_the_pages_the_page_policy_hides() {
+    let dir = TempDir::new("salience-recent-private");
+    let (store, clock) = open(&dir);
+    page(&store, "default", "sal/open", json!({}));
+    page(
+        &store,
+        "default",
+        "sal/secret",
+        json!({"visibility": "private"}),
+    );
+    page(
+        &store,
+        "default",
+        "sal/readers",
+        json!({"readable_by": ["alice-example"]}),
+    );
+    page(
+        &store,
+        "default",
+        "sal/alias",
+        json!({"access": "restricted"}),
+    );
+    page(
+        &store,
+        "default",
+        "sal/alias-world",
+        json!({"access": "restricted", "visibility": "world"}),
+    );
+    weights(
+        &store,
+        json!([{"slug": "sal/secret", "source_id": "default", "weight": 1.0}]),
+    );
+    let sorted = |extra: Value| {
+        let mut v = ids(&recent(&store, &clock, extra));
+        v.sort();
+        v
+    };
+    assert_eq!(
+        ids(&recent(&store, &clock, json!({})))[0],
+        "default:sal/secret",
+        "no policy reads every page"
+    );
+    let policy = |honor_aliases: bool, entity_privacy: bool| json!({"exclude_private": {"honorAliases": honor_aliases, "entityPrivacy": entity_privacy, "ownerOnly": "fn"}});
+    assert_eq!(
+        sorted(policy(true, true)),
+        ["default:sal/alias-world", "default:sal/open"]
+    );
+    assert_eq!(
+        sorted(policy(false, true)),
+        [
+            "default:sal/alias",
+            "default:sal/alias-world",
+            "default:sal/open"
+        ]
+    );
+    assert_eq!(
+        sorted(policy(true, false)),
+        [
+            "default:sal/alias",
+            "default:sal/alias-world",
+            "default:sal/open",
+            "default:sal/secret"
+        ]
     );
 }

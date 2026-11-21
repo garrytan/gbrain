@@ -12,7 +12,7 @@ import type { TrustTier } from '../core/trust/tier.ts';
 import { bindCredential, type BindingPatch, type BindingResult } from '../core/access/members.ts';
 import { checkBindingTarget } from './auth-binding.ts';
 
-export interface MintTokenOpts { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; binding?: BindingPatch | null; sources?: GrantSources }
+export interface MintTokenOpts { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; binding?: BindingPatch | null; sources?: GrantSources; readShared?: boolean }
 export interface MintedToken { token: string; id: string; takesHolders: string[]; bound: BindingResult | null }
 
 export async function mintToken(engine: BrainEngine, name: string, opts: MintTokenOpts = {}): Promise<MintedToken> {
@@ -28,6 +28,7 @@ export async function mintToken(engine: BrainEngine, name: string, opts: MintTok
   const [row] = await insertUnifiedToken(engine, {
     name, tokenHash: hashToken(token), ...(opts.scopes !== undefined ? { scopes: opts.scopes } : {}),
     grant: { sources: opts.sources ?? { kind: 'default' }, takesHolders, allowedOperations: null },
+    readShared: opts.readShared === true,
   });
   // #5575 (CEO-18): the read floor; the CLI is the only writer of it.
   if (opts.minTrust) await setTokenMinTrust(engine, row!.id, opts.minTrust);

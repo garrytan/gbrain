@@ -8,7 +8,7 @@ import { storeCall, takeOptions, type StoreMember } from './common.ts';
 
 /** The live page types with their counts and the oldest pages of each, as the PGLite read answers them. */
 export const readFieldUsageSamples: StoreMember<[query: FieldUsageQuery], FieldUsageTypeSample[]> = async (brain, query) => {
-  const taken = takeOptions('readFieldUsageSamples', query, ['sourceId', 'maxTypes', 'samplePerType']);
+  const taken = takeOptions('readFieldUsageSamples', query, ['sourceId', 'maxTypes', 'samplePerType', 'type', 'countsOnly']);
   const out: Array<{ type: string; pages: number; rows: Array<{ frontmatter: Record<string, unknown> | null; compiled_truth: string | null }> }> =
     await storeCall({ member: 'readFieldUsageSamples' }, () => brain.readFieldUsageSamples(taken));
   return out.map((t) => ({

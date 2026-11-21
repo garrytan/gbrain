@@ -434,8 +434,7 @@ export async function prepareAppendMutation(engine: BrainEngine, row: WriteReque
   const appended = truth && truth.length > start && truth.subarray(0, start).equals(Buffer.from(before, 'utf8')) ? truth.subarray(start) : null;
   const result = { ...prepared, apply: async (tx, preimage) => {
     const outcome = await apply(tx, preimage);
-    const [row2] = await tx.executeRaw<{ bytes: string | null; truth: string | null }>(`SELECT COALESCE(body_bytes, octet_length(COALESCE(compiled_truth,'')) + octet_length(COALESCE(timeline,'')))::text AS bytes,
-      (CASE WHEN body_storage='segmented' THEN truth_bytes ELSE octet_length(COALESCE(compiled_truth,'')) END)::text AS truth FROM pages WHERE id=$1`, [stored.page.id]);
+    const row2 = await tx.readPageBodySizes(Number(stored.page.id));
     const bodyBytes = Number(row2?.bytes ?? 0);
     const truthEnd = Number(row2?.truth ?? 0);
     if (appended && truthEnd >= appended.length) result.mentionRange = { start: truthEnd - appended.length, end: truthEnd, sha256: sha256Hex(appended) };

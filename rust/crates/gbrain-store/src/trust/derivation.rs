@@ -93,7 +93,7 @@ impl Store {
         }
         self.write(|tx| {
             let mut lowered = Vec::new();
-            for id in ids {
+            for &id in &ids {
                 let Some(page) = read_page_by_id(&*tx, id)? else {
                     continue;
                 };
@@ -152,25 +152,6 @@ impl Store {
         }
     }
 
-    /// `countDerivedFactTaint()`: the facts whose write origin has `taint_inputs`, and how many of
-    /// those are stamped external_untrusted.
-    pub fn count_derived_fact_taint(&self) -> Result<Value> {
-        let read = self.read()?;
-        let facts = crate::facts::trust_reads::all_fact_rows(&*read)?;
-        // The fact's stored text is compared as stored (`trust_tier = 'external_untrusted'`).
-        Ok(taint_counts(facts.iter().map(|f| {
-            let external = f.trust_tier == TrustTier::ExternalUntrusted.as_str();
-            (
-                f.write_origin.as_ref(),
-                if external {
-                    TrustTier::ExternalUntrusted
-                } else {
-                    TrustTier::Unknown
-                },
-            )
-        })))
-    }
-
     /// `stampPageFrontmatter(spec)`: merges `entries` into the frontmatter of the named pages of
     /// the source: `retired` stamps soft-deleted pages, `atom_source_hash` live pages of type
     /// `atom`. A page whose frontmatter changes takes a new knowledge revision and its text
@@ -190,7 +171,7 @@ impl Store {
         no_nul(op, &[("sourceId", spec.source_id.as_str())])?;
         let slugs: BTreeSet<&str> = spec.slugs.iter().map(String::as_str).collect();
         self.write(|tx| {
-            for slug in slugs {
+            for &slug in &slugs {
                 let Some(mut page) = read_page(&*tx, &spec.source_id, slug)? else {
                     continue;
                 };

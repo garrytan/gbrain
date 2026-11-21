@@ -87,7 +87,6 @@ import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.t
 import { factsFenceView } from '../facts-fence.ts';
 import { fenceReadOf, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
 import { factsFenceHeld, moveKeptRows } from '../generations/fence-evidence.ts';
-import type { BodyStorage } from '../page-body/types.ts';
 import { factFenceItems, factPreimages, factRetireItem } from '../generations/adapters/fact-rows.ts';
 import { incrementalFactsFence, segmentedBodyMatchesFile } from '../page-body/segment-facts.ts';
 import {
@@ -102,6 +101,7 @@ import {
   type PhantomPassResult,
 } from './phantom-redirect.ts';
 import { embed, getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
+import { embeddingSendBlocked } from '../embedding-disabled.ts';
 import { isAborted } from '../abort-check.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
@@ -199,11 +199,7 @@ async function syncSupersession(
   chain: SupersessionChain,
   inserted: ReadonlySet<number>,
 ): Promise<{ warnings: string[]; changed: number[] }> {
-  const current = await tx.executeRaw<{ id: number | string; row_num: number | string; expired_at: Date | string | null; superseded_by: number | string | null }>(
-    `SELECT id, row_num, expired_at, superseded_by FROM facts
-      WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL`,
-    [sourceId, slug],
-  );
+  const current = await tx.listFenceRowSupersession(sourceId, slug);
   const rows = new Map(current.map(r => [Number(r.row_num), r]));
   const byRow = new Map([...rows].map(([row, r]) => [row, { id: Number(r.id), struck: r.expired_at != null }]));
   const warnings: string[] = [];
@@ -216,7 +212,7 @@ async function syncSupersession(
     if (warning && (differs || inserted.has(f.row_num))) warnings.push(warning);
     if (!differs) continue;
     changed.push(f.row_num);
-    await tx.executeRaw('UPDATE facts SET superseded_by = $1 WHERE id = $2 AND source_id = $3', [superseded_by, row.id, sourceId]);
+    await tx.setFactSupersededBy(sourceId, row.id, superseded_by);
   }
   return { warnings, changed };
 }
@@ -454,10 +450,7 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
     const fact = matched.get(f.row_num);
     return fact && fact.visibility !== 'world' && (f.visibility ?? 'private') === 'world' ? [Number(fact.id)] : [];
   });
-  const heldWidening = new Set(widening.length ? (await db.executeRaw<{ id: number }>(
-    `SELECT related_id AS id FROM trust_proposals WHERE source_id = $1 AND action IN ('supersede_fact', 'confirm') AND related_table = 'facts'
-      AND related_id = ANY($2::bigint[]) AND status IN ('pending', 'rejected', 'undone') AND before_state->'visibility' IS NOT NULL`,
-    [sourceId, widening])).map(r => Number(r.id)) : []);
+  const heldWidening = new Set(widening.length ? (await db.listHeldWideningFactIds(sourceId, widening)).map(r => Number(r.id)) : []);
   const updates = extracted.map((f): FenceExtractedFact => {
     const fact = matched.get(f.row_num);
     return fact && heldWidening.has(Number(fact.id)) ? { ...f, visibility: fact.visibility as FenceExtractedFact['visibility'] } : f;
@@ -523,29 +516,18 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
   const derivation = await deriveTrust(tx, [{ table: 'pages', sourceId, slug }], { channel: 'derive:facts_fence', projection: true });
   return withWriteTrust(tx, derivation.trust, async () => {
   for (const fact of writes.expireInPlace) {
-    await tx.executeRaw('UPDATE facts SET expired_at = COALESCE(expired_at, now()) WHERE id = $1 AND source_id = $2', [fact.id, sourceId]);
+    await tx.expireFactInPlace(sourceId, fact.id);
   }
   for (const fact of writes.detach) {
-    await tx.executeRaw(
-      `UPDATE facts SET expired_at = COALESCE(expired_at, now()), row_num = NULL
-        WHERE id = $1 AND source_id = $2`,
-      [fact.id, sourceId],
-    );
+    await tx.expireAndDetachFact(sourceId, fact.id);
   }
   for (const f of plan.updates) {
-    await tx.executeRaw(
-      `UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
-          valid_from = COALESCE($7::timestamptz, valid_from),
-          valid_until = CASE WHEN $8::boolean THEN $9::timestamptz ELSE valid_until END,
-          expired_at = CASE WHEN $10::timestamptz IS NULL THEN NULL ELSE COALESCE(expired_at, $10::timestamptz) END,
-          source = $11, confidence = $12,
-          claim_metric = $13, claim_value = $14, claim_unit = $15, claim_period = $16
-        WHERE id = $1 AND source_id = $2`,
-      [plan.matched.get(f.row_num)!.id, sourceId, f.kind ?? 'fact', f.visibility ?? 'private', f.notability ?? 'medium',
-        f.context ?? null, f.valid_from?.toISOString() ?? null, f.expired_at == null,
-        f.valid_until?.toISOString() ?? null, f.expired_at?.toISOString() ?? null, f.source, f.confidence ?? 1.0,
-        f.claim_metric ?? null, f.claim_value ?? null, f.claim_unit ?? null, f.claim_period ?? null],
-    );
+    await tx.updateFenceFactCells(sourceId, plan.matched.get(f.row_num)!.id, {
+      kind: f.kind ?? 'fact', visibility: f.visibility ?? 'private', notability: f.notability ?? 'medium', context: f.context ?? null,
+      validFrom: f.valid_from?.toISOString() ?? null, setValidUntil: f.expired_at == null,
+      validUntil: f.valid_until?.toISOString() ?? null, expiredAt: f.expired_at?.toISOString() ?? null, source: f.source, confidence: f.confidence ?? 1.0,
+      claimMetric: f.claim_metric ?? null, claimValue: f.claim_value ?? null, claimUnit: f.claim_unit ?? null, claimPeriod: f.claim_period ?? null,
+    });
   }
   await moveKeptRows(tx, sourceId, slug, plan.kept, writes.inserts.map(f => f.row_num));
   const { inserted, allowed } = await insertReconciledFacts(tx, sourceId, slug, writes.inserts, derivation, tally);
@@ -668,18 +650,13 @@ export async function prepareDeletedPageFactsExpiry(engine: BrainEngine, row: Wr
  * nothing. Each expired row's before-state is recorded on the ledger. Returns the expired ids.
  */
 async function expireDeletedPageFacts(tx: BrainEngine, sourceId: string, slug: string, pageId: number | null): Promise<number[]> {
-  const ids = (await tx.executeRaw<{ id: number }>(
-    `SELECT f.id FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
-        AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ($3::integer IS NULL OR p.id = $3::integer) AND p.deleted_at IS NOT NULL)`,
-    [sourceId, slug, pageId])).map(r => Number(r.id));
+  const ids = (await tx.listExpirableFactIdsOfDeletedPage(sourceId, slug, pageId)).map(r => Number(r.id));
   if (!ids.length) return [];
-  const [stored] = await tx.executeRaw<{ compiled_truth: string | null; timeline: string | null; body_storage: BodyStorage | null }>(
-    'SELECT compiled_truth, timeline, body_storage FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NOT NULL ORDER BY id DESC LIMIT 1', [sourceId, slug]);
+  const stored = await tx.readDeletedPageBody(sourceId, slug);
   const generation = await publishFenceGeneration(tx, { kind: FACT_FENCE_KIND, sourceId, slug, read: stored ? readFenceBlocks(stored, 'facts') : { state: 'absent' }, items: [], originGone: true,
     retire: (await factPreimages(tx, sourceId, ids)).map(factRetireItem), writer: 'deleted_page' });
   if (generation.state !== 'published') return [];
-  return (await tx.executeRaw<{ id: number }>('UPDATE facts SET expired_at = now() WHERE source_id = $1 AND id = ANY($2::bigint[]) AND expired_at IS NULL RETURNING id',
-    [sourceId, ids])).map(r => Number(r.id));
+  return (await tx.expireFactsByIds(sourceId, ids)).map(r => Number(r.id));
 }
 
 export interface ExtractFactsOpts {
@@ -895,10 +872,7 @@ export async function runExtractFacts(
   // observation's subject and expire it.
   let phantomResult: PhantomPassResult = emptyPhantomPassResult();
   if (opts.brainDir) {
-    const holdSlugs = new Set([...legacySlugs, ...(await engine.executeRaw<{ slug: string }>(
-      `SELECT DISTINCT source_markdown_slug AS slug FROM facts
-        WHERE source_id = $1 AND dimension IS NOT NULL AND expired_at IS NULL AND source_markdown_slug NOT LIKE '%/%'`,
-      [sourceId])).map(row => row.slug)]);
+    const holdSlugs = new Set([...legacySlugs, ...(await engine.listOntologyObservationSlugs(sourceId)).map(row => row.slug)]);
     try {
       phantomResult = await runPhantomRedirectPass(
         engine,
@@ -1020,7 +994,7 @@ export async function runExtractFacts(
     // them. Rows updated in place keep their vectors: the claim text is
     // unchanged. Falls open without an embedding provider, with a warning.
     if (toInsert.length > 0 && !opts.deferEmbedding) {
-      if (isAvailable('embedding')) {
+      if (isAvailable('embedding') && !await embeddingSendBlocked(engine)) {
         try {
           const texts = toInsert.map(e => e.fact);
           const embeddingModel = getEmbeddingModel();
@@ -1175,13 +1149,7 @@ export async function runExtractFacts(
  */
 /** The soft-deleted pages of `sourceId` that still have active fence rows. */
 async function deletedPagesWithActiveFacts(engine: BrainEngine, sourceId: string): Promise<string[]> {
-  return (await engine.executeRaw<{ slug: string }>(
-    `SELECT DISTINCT f.source_markdown_slug AS slug FROM facts f
-      WHERE f.source_id = $1 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
-        AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.deleted_at IS NOT NULL)
-      ORDER BY 1`,
-    [sourceId],
-  )).map(row => row.slug);
+  return (await engine.listDeletedPageSlugsWithActiveFacts(sourceId)).map(row => row.slug);
 }
 
 async function expireDeletedPagesManaged(engine: BrainEngine, sourceId: string,

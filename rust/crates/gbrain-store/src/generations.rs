@@ -53,8 +53,9 @@
 
 use crate::cli_reads::pg_jsonb;
 use crate::cli_reads::pg_text::{jsonb_text as jsonb_text_of, pg_lower};
-use crate::dream::{int4, jsonb, jsonb_check};
+use crate::dream::{int4, jsonb_check};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
+use crate::jsonb::ordered as jsonb;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
@@ -385,6 +386,15 @@ fn pointed(read: &dyn KvRead, key: &GenerationKey, state: &str) -> Result<Option
 
 fn read_record(read: &dyn KvRead, id: u64) -> Result<Option<GenerationRecord>> {
     get_json(read, &record_key(id))
+}
+
+/// Whether the held row of `key` is held for `reason` (`state='held' AND held_reason=…`; the gate of
+/// `listHeldFenceTakeRows`).
+pub(crate) fn held_for(read: &dyn KvRead, key: &GenerationKey, reason: &str) -> Result<bool> {
+    Ok(
+        pointed_record(read, key, "held")?
+            .is_some_and(|r| r.held_reason.as_deref() == Some(reason)),
+    )
 }
 
 /// The record a pointer names; a pointer to no record is corrupt.
@@ -1326,6 +1336,17 @@ mod tests {
     use crate::access_flag::RESTRICTIONS_PRESENT_KEY as FLAG;
     use crate::test_support::store;
 
+    /// A stored page with no readers (a real `put_page`), so a raw write can name its readers.
+    fn put_open_page(store: &Store, slug: &str) {
+        let input: crate::pages::PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": {"tags": ["a"]}
+        }))
+        .unwrap();
+        let opts: crate::pages::PutPageOptions =
+            serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+        store.put_page(slug, &input, &opts).unwrap();
+    }
+
     fn key() -> GenerationKey {
         GenerationKey {
             source_id: "default".into(),
@@ -1351,6 +1372,7 @@ mod tests {
     #[test]
     fn a_generation_write_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_open_page(&store, "notes/closed");
         assert_eq!(store.get_config(FLAG).unwrap(), None);
         store
             .write(|tx| {
@@ -1359,7 +1381,9 @@ mod tests {
                 tx.put(&pointer_key(&key(), "held"), &id.to_be_bytes())?;
                 tx.delete(&pointer_key(&key(), "held"))?;
                 let page = keys::page("default", "notes/closed");
-                let record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                let mut record: serde_json::Value =
+                    serde_json::from_slice(&tx.get(&page)?.unwrap())?;
+                record["frontmatter"]["readable_by"] = json!(["alice-example"]);
                 tx.put(&page, &serde_json::to_vec(&record)?)
             })
             .unwrap();
@@ -1548,6 +1572,7 @@ mod tests {
     #[test]
     fn an_attempt_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_open_page(&store, "notes/closed");
         store
             .write(|tx| {
                 let record = AttemptRecord {
@@ -1561,7 +1586,9 @@ mod tests {
                 put_json(tx, &attempt_key("a1"), &record)?;
                 tx.put(&attempt_index_key(&record, "a1"), &[])?;
                 let page = keys::page("default", "notes/closed");
-                let page_record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                let mut page_record: serde_json::Value =
+                    serde_json::from_slice(&tx.get(&page)?.unwrap())?;
+                page_record["frontmatter"]["readable_by"] = json!(["alice-example"]);
                 tx.put(&page, &serde_json::to_vec(&page_record)?)
             })
             .unwrap();

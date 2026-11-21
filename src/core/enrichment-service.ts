@@ -32,9 +32,11 @@ import { isAvailable } from './ai/gateway.ts';
 // gazetteer and drives the junk_entity_hubs doctor check.
 import { isJunkEntityName } from './entity-name-quality.ts';
 import { followRetirement } from './entities/resolve.ts';
+import { confirmedCoMembers } from './entity-identity.ts';
+import type { SearchResult } from './types.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
-import { remoteReadPolicySql, remoteTargetHidden } from './persistence/page-visibility.ts';
+import { remoteTargetHidden } from './persistence/page-visibility.ts';
 import { resolveExcludePrivatePages } from './search/private-visibility.ts';
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { deriveTrust, derivedMaintenanceTransaction, lowerDerivedPage, lowerDerivedPageIn, lowerToDerivedTier } from './trust/taint.ts';
@@ -237,8 +239,12 @@ async function planEntity(
   if (!managedBrain) await assertUnmanagedCanonicalWriter(engine, 'extract_entities', { sourceId });
   // 1. Count existing mentions for tier auto-escalation
   // GBRA-431: a remote caller's count covers only the pages it can read.
-  const { mentionCount, mentionSources } = await countMentions(engine, request.entityName, opts?.sourceId,
-    ctx && ctx.remote !== false && await resolveExcludePrivatePages(engine, ctx.remote));
+  // Count once: a trusted caller counts the mentions of every member of the entity's confirmed duplicate group, each page once.
+  const remoteCaller = ctx !== undefined && ctx.remote !== false;
+  const coMembers = remoteCaller ? [] : await confirmedCoMembers(engine, sourceId, slug).catch(() => []);
+  const { mentionCount, mentionSources } = await countMentions(engine,
+    [{ name: request.entityName, sourceId: opts?.sourceId }, ...coMembers.map(m => ({ name: m.title ?? '', sourceId: m.source_id }))],
+    remoteCaller && await resolveExcludePrivatePages(engine, ctx.remote));
 
   // 2. Determine tier (auto-escalate based on mentions)
   const suggestedTier = suggestTier(mentionCount, mentionSources, request.context);
@@ -295,8 +301,9 @@ async function planEntity(
     }
   }
   // B-9: a retired page (canonical: false, superseded_by) answers through its canonical page, as fact resolution does (#6898).
+  // A remote caller's hops read under remoteReadPolicySql's policy: the caller's page policy, else member access alone.
   if (existingPage) {
-    const live = await followRetirement(engine, sourceId, slug, ctx && ctx.remote !== false ? `AND ${await remoteReadPolicySql(engine, 'p')}` : '');
+    const live = await followRetirement(engine, sourceId, slug, ctx && ctx.remote !== false ? (await resolveExcludePrivatePages(engine, true) ? 'caller' : 'member_access') : 'none');
     if (!live) {
       return { slug, action: 'skipped', skipped_reason: 'retired_page_unfollowable', tier, backlinkCreated: false, timelineAdded: false,
         mentionCount, mentionSources, suggestedTier, tierEscalated };
@@ -571,15 +578,21 @@ export async function extractAndEnrich(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Count entity mentions across the brain using keyword search. */
+/** Count entity mentions using keyword search: each name in its source (or brain-wide), a page that mentions several once. */
 async function countMentions(
   engine: BrainEngine,
-  entityName: string,
-  sourceId?: string,
+  names: Array<{ name: string; sourceId?: string }>,
   excludePrivate = false,
 ): Promise<{ mentionCount: number; mentionSources: string[] }> {
   try {
-    const results = await engine.searchKeyword(entityName, { limit: 100, ...(sourceId ? { sourceId } : {}), ...(excludePrivate ? { excludePrivate } : {}) });
+    const byPage = new Map<number, SearchResult>();
+    const wanted = new Map(names.filter(n => n.name.trim()).map(n => [`${n.sourceId ?? ''}
+${n.name}`, n]));
+    for (const { name, sourceId } of wanted.values()) {
+      const hits = await engine.searchKeyword(name, { limit: 100, ...(sourceId ? { sourceId } : {}), ...(excludePrivate ? { excludePrivate } : {}) });
+      for (const hit of hits) if (!byPage.has(hit.page_id)) byPage.set(hit.page_id, hit);
+    }
+    const results = [...byPage.values()];
     // Derive sources from slug prefixes since SearchResult has no metadata.skill
     const sources = new Set<string>();
     for (const r of results) {

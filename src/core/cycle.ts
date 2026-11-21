@@ -55,7 +55,7 @@ import { timeContainedPhase } from './cycle/phase-containment.ts';
 import { isManagedBrain } from './cycle/phase-table.ts';
 import { packGateSkip, resolvePackPhaseGate } from './cycle/pack-phase-gate.ts';
 import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
-import { assertValidSourceId } from './source-id.ts';
+import { assertValidSourceId } from './source-id.ts'; import { isSyncDisabledConfig } from './sync-policy.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
@@ -1309,6 +1309,9 @@ async function runPhaseSync(
     // instead of the global config key. The global key can drift out of
     // git history (force push, GC) causing a full reimport of all files.
     const sourceId = await resolveSourceForDir(engine, brainDir);
+    // GST-3337: config.syncEnabled=false keeps every unattended sync (dream, the autopilot cycle) off the source; only an explicit gbrain sync --source runs it.
+    if (sourceId && isSyncDisabledConfig((await engine.getSource(sourceId))?.config)) return { phase: 'sync', status: 'skipped', duration_ms: 0, details: { reason: 'sync_disabled', source_id: sourceId },
+      summary: `automatic sync is off for source ${sourceId} (config.syncEnabled=false); only an explicit gbrain sync --source ${sourceId} syncs it` };
     // #7630: with no matching source, a relative default local_path would leave this sync on the global anchors; refuse like sync does.
     if (!sourceId) await (await import('./sync-applicability.ts')).assertSyncAnchorAbsolute(engine, { sourceId: 'default' });
     // #5255: managed sync refuses `git pull`; a cycle syncs local HEAD and reports it (explicit sync keeps refusing).
@@ -1792,7 +1795,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         details: { dry_run: true, purged_sources_count: 0, purged_pages_count: 0, purged_orphan_clones_count: 0 },
       };
     }
-    const [{ purgeExpiredSources }, { purgeDeletedPagesCoordinated, purgePhaseNote, purgePhaseStatus }, { readPurgeRetentionHours }] = await Promise.all([import('./destructive-guard.ts'), import('./persistence/purge-deleted.ts'), import('./sync-reconcile.ts')]);
+    const [{ purgeExpiredSources }, { purgeDeletedPagesCoordinated, purgePhaseNote, purgePhaseStatus }, { readPurgeRetentionHours }, { readHeldConcepts }, { isAvailable }] = await Promise.all([import('./destructive-guard.ts'), import('./persistence/purge-deleted.ts'), import('./sync-reconcile.ts'), import('./persistence/concept-rebuild.ts'), import('./ai/gateway.ts')]);
     // gbrain#4115: {purged, blocked} — a RESTRICT-FK-held source (revoked
     // oauth_client, v64) is reported and skipped instead of aborting the sweep.
     const purgeResult = await purgeExpiredSources(engine);
@@ -1801,6 +1804,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     // #5405: coordinated on managed brains; #7130: `automatic` keeps managed sync tombstones with no live twin.
     const purgedPages = await purgeDeletedPagesCoordinated(engine, retentionHours, { automatic: true });
     const purgedClones = await purgeOrphanClones(retentionHours);
+    const rebuild = await readHeldConcepts(engine, isAvailable('chat')); // #9653: kept for the next concept synthesis
     // #6770: request-log rows past cycle.purge.mcp_request_log_retention_days, when set (logic in mcp-request-log-retention.ts).
     let purgedMcpLog = 0;
     try { purgedMcpLog = (await (await import('./mcp-request-log-retention.ts')).runMcpLogRetention(engine))?.deleted ?? 0; } catch (e) { console.warn(`[cycle] request-log retention skipped: ${e instanceof Error ? e.message : String(e)}`); }
@@ -1812,7 +1816,8 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         `purged ${purgedSources.length} source(s)` +
         (purgeResult.blocked.length > 0 ? ` (${purgeResult.blocked.length} blocked, see details)` : '') +
         `, ${purgedPages.count} page(s)${purgePhaseNote(purgedPages)}, ` +
-        `and ${purgedClones.count} orphan clone temp dir(s)`,
+        `and ${purgedClones.count} orphan clone temp dir(s)` +
+        (rebuild.held.length ? `; ${rebuild.held.length} concept(s) hidden by an input purge kept for the next concept synthesis${rebuild.kept.length ? ` (${rebuild.kept.length} of them stay hidden, reasons in details)` : ''}` : ''),
       details: {
         purged_sources_count: purgedSources.length,
         purged_sources_blocked: purgeResult.blocked,
@@ -1821,6 +1826,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         purged_orphan_clone_names: purgedClones.names,
         purged_sources: purgedSources,
         purged_page_slugs: purgedPages.slugs,
+        ...(rebuild.held.length ? { purged_pages_kept_for_rebuild: rebuild.held, kept_hidden: rebuild.kept } : {}),
         ...(purgedMcpLog > 0 ? { purged_mcp_request_log_count: purgedMcpLog } : {}),
       },
     };

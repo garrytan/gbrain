@@ -7,9 +7,10 @@ import { describe, expect, test } from 'bun:test';
 import { checkRustArm, type RustCase, type RustTally } from './engine-parity/harness.ts';
 import { DIVERGENCE_NORMALIZERS, readDivergences, rustMemberCapability, rustRefusal } from './engine-parity/rust-arm.ts';
 
-// A member the store serves, and one it does not (its capability is what a refusal must name).
+// A member the store serves, and one it never serves: the Rust store runs no SQL, so executeRaw always refuses
+// (its capability is what a refusal must name). A member a lane may type later would make this test go stale.
 const SERVED = 'getPage';
-const REFUSED = 'searchVector';
+const REFUSED = 'executeRaw';
 
 function refusal(capability: string): Error {
   return Object.assign(new Error(`refused: ${capability}`), { code: 'engine_capability_missing', reason: capability });

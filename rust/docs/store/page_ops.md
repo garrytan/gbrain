@@ -1,7 +1,8 @@
 # The brain store: Page operations
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
-These methods work on the pages of [Pages](pages.md) and add no keys of their own (family tag `p`).
+These methods work on the pages of [Pages](pages.md). The one key they add is the retrieval record (family tag `p`, see
+"Retrieval records" below).
 
 Every date is an ISO string with microseconds (`2026-08-10T12:00:00.000123Z`) or `null`; the
 TypeScript members turn them into `Date` where PGLite returns one. Text sorts in byte order.
@@ -12,8 +13,13 @@ wins over a non-empty `sourceId`; with neither, every source. `live: true` also 
 pages whose frontmatter has a `quarantine` key and pages of a missing or archived source. The
 TypeScript members send `live: true` whenever the caller passes a scope object. `excludePrivate` applies the page
 policy of `facts/privacy.rs`, a caller's reader identity and private-readable grant included (`storePagePolicy`
-with `callerReaders`; it refuses a caller whose policy the store does not model).
-`minTrust` (the page's stamped tier at or above the floor) and `suppressFlagged` (no instruction-family write-gate receipt on an agent-written-or-lower page) apply `pageEligibleSql` through `trust::TrustPolicy` (`trust/eligibility.rs`); an unknown tier name is `invalid_argument`. `requireSafeChunks` is ignored, as these statements never read it.
+with `callerReaders`; it refuses a caller whose policy the store does not model): the policy is
+`{ honorAliases, entityPrivacy, ownerOnly }`, as `resolveAliases` takes it, and a page it hides is not read, an
+owner-only page (a page of an owner-only source, or under the closed form any page of a brain that holds one) included.
+The TypeScript members `getContentFlagsByPageIds`, `getUnverifiedExtractionPageIds` and `getEffectiveDates` also accept
+and ignore the other keys of hybrid search's option bag (its settings, callbacks and `takesHoldersAllowList`), because
+hybrid search hands them that whole bag as their policy; any other key still refuses.
+`minTrust` (the page's stamped tier at or above the floor) and `suppressFlagged` (no instruction-family write-gate receipt on an agent-written-or-lower page) apply `pageEligibleSql` through `trust::TrustPolicy` (`trust/eligibility.rs`); an unknown tier name is `invalid_argument`. `requireSafeChunks` and `takesHoldersAllowList` are ignored, as these statements never read them. Hybrid search passes its whole option object as the scope; the members take only the `PageReadPolicy` keys from it, so a paging or ranking key (`limit`, `offset`, `detail`, `type`) only turns on the live filter, as on PGLite.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -22,14 +28,15 @@ with `callerReaders`; it refuses a caller whose policy the store does not model)
 | `brain.findDuplicatePages(sourceId, queries)` | one `findDuplicatePage` answer per query | `findDuplicatePages` |
 | `brain.softDeletePages(slugs, { sourceId? }?)` | slugs that turned deleted now, once each, in page id order. `updated_at` stays; the knowledge revision changes | `softDeletePages` |
 | `brain.deletePages(slugs, { sourceId? }?)` | slugs removed (live or deleted), in page id order. In the same transaction it drops those slugs from captured eval candidates of the source (`eval_capture::remove_retrieved_slugs`), then their page aliases, the slug aliases that resolve to them and the rename history rows that end at them (`aliases::scrub_purged_slug_stores`, the `scrubPurgedSlugStores` order of `src/core/persistence/purge-slug-stores.ts:6`) | `deletePages` |
-| `brain.purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? }?)` | `{ slugs, count }` of pages deleted more than `olderThanHours` (negative counts as 0) ago, plus `pages: [{ slug, source_id, deleted_at }]` on a dry run | `purgeDeletedPages` (minus the pages a hold keeps, see below) |
+| `brain.purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? }?)` | `{ slugs, count }` of pages deleted more than `olderThanHours` (negative counts as 0) ago, plus `pages: [{ slug, source_id, deleted_at }]` on a dry run and a real run | `purgeDeletedPages` (minus the pages a hold keeps, see below) |
 | `brain.resolveSlugsByPaths(paths, { sourceId })` | `[{ slug, source_path, live }]` for every page of the source whose `source_path` is one of `paths`, sorted by path then slug; the TypeScript member keeps one slug per path (`pickCanonicalOrigin`) | `resolveSlugsByPaths` |
 | `brain.findPages({ pattern: { kind, like }, types?, limit, sourceId?, sourceIds?, excludeSlugPrefixes? })` | `{ rows, total }`. `like` is a Postgres `LIKE` pattern (`%`, `_`, `\` escape), case-folded. A `name` pattern matches the title, or the slug when its last segment matches too; `prefix` and `glob` match the slug or `source_path`. Live pages of unarchived sources only. Rows sort by slug, then source; `total` is every match, or 0 when no row is returned | `findPages` |
 | `brain.countPagesBy({ sourceId?, sourceIds?, since?, typeGroups? }?)` | `{ bySourceType, byTypeGroup, total }` over visible pages (live, source present and not archived) whose effective date (else `updated_at`) is at or after `since`, an ISO date or instant. `typeGroups` maps a type to its group; with it, only mapped types count in `byTypeGroup` and `total` | `countPagesBy` |
 | `brain.getAllSlugs({ sourceId? }?)` | every slug, deleted pages included, sorted and distinct; `''` means every source | `getAllSlugs` |
 | `brain.listAllPageRefs()` | `[{ source_id, slug, updated_at }]` of live pages, by source then slug | `listAllPageRefs` |
-| `brain.listPrefixSampledPages({ prefixes, excludeSlugs?, staleBias?, staleThresholdDays?, sourceId?, sourceIds? })` | one domain-bank row per prefix: the live inline page under it (segmented pages are left out) with the most inbound links, then the lowest slug | `listPrefixSampledPages` |
+| `brain.listPrefixSampledPages({ prefixes, excludeSlugs?, staleBias?, staleThresholdDays?, sourceId?, sourceIds? })` | one domain-bank row per prefix: the live inline page under it (segmented pages are left out) with the most inbound links, then the lowest slug. With `staleBias`, a page never retrieved ranks first, then one last retrieved before `staleThresholdDays` (default 90) ago, then the rest; links and slug break ties | `listPrefixSampledPages` |
 | `brain.listCorpusSample({ n, excludeSlugs?, seed?, sourceId?, sourceIds? })` | up to `n` domain-bank rows of live inline pages (segmented pages are left out), in a shuffle fixed by `seed` | `listCorpusSample` |
+| `brain.bumpPageRetrievals(ids)` | the number of records written. Records now as the last retrieval of each listed page that exists, once per id; it skips an id that is not a page, and a page whose record is less than 5 minutes old | `bumpPageRetrievals` (the throttled `page_retrievals` upsert of `src/core/engine-sql/pages.ts`) |
 | `brain.getContentFlagsByPageIds(ids, scope?)` | `[{ id, reason, detail }]` of pages whose frontmatter `content_flag.reason` is a non-empty string | `getContentFlagsByPageIds` |
 | `brain.getUnverifiedExtractionPageIds(ids, scope?)` | `[{ id, status, unverified }]` of pages with a frontmatter `status`; `unverified` is `status = 'unverified'` and `provenance = 'auto-extracted'` | `getUnverifiedExtractionPageIds` |
 | `brain.getPageTimestamps(slugs)` | `[{ slug, ts }]` (`ts` = `updated_at`) of every page with that slug, deleted included, in page id order | `getPageTimestamps` |
@@ -37,20 +44,32 @@ with `callerReaders`; it refuses a caller whose policy the store does not model)
 | `brain.revertToVersion(slug, versionId, { sourceId? }?)` | `null`. Copies the version's `compiled_truth` and `frontmatter` onto the page and sets `updated_at`; a missing page or version does nothing. When a page it would revert, or the version, is segmented, it refuses `page_body_segmented` and writes nothing; the TypeScript member throws PGLite's `segmentedRevertRefusal` | `revertToVersion` |
 
 A domain-bank row is `{ slug, prefix, connection_count, representative_chunk_id,
-last_retrieved_at }`.
+last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `null`. `representative_chunk_id` is the
+page's embedded chunk with the lowest `chunk_index`, or `null` when no chunk of the page has an embedding, as
+`src/core/engine-sql/pages.ts` picks it.
+
+## Retrieval records
+
+| Key | Value | Mirrors |
+| --- | --- | --- |
+| `p 0x01 page_id` (u64 big-endian) | microseconds since the epoch (JSON integer) | `page_retrievals.last_retrieved_at` |
+
+`gbrain search`, `query`, `get` and `fetch` call `bumpPageRetrievals` after they answer
+(`src/core/last-retrieved.ts`). A hard delete drops the page's record in the same transaction, as the
+`pages_forget_retrievals` trigger does on Postgres.
 
 ## Differences from Postgres
 
-- `representative_chunk_id` and `last_retrieved_at` are always `null`: the store keeps no
-  retrieval log yet, so `staleBias` ranks every page the same.
+- The store keeps no legacy `pages.last_retrieved_at` column, so the retrieval record is the only
+  source of `last_retrieved_at` (Postgres takes the later of the two).
 - `listCorpusSample` uses a SplitMix64 shuffle seeded from `seed`. A seed gives a fixed pick, but not
   the pick Postgres `setseed()` + `random()` gives. The parity cases compare the set, not the order.
 - `countPagesBy` refuses a `since` that is not an ISO date or instant (Postgres also takes other
   `timestamptz` text).
 - `revertToVersion` writes no new version, as PGLite. The interface spec says it snapshots first.
-- After a hard delete PGLite also scrubs retrieval logs, ratings, weights, the volunteer log, the
+- After a hard delete PGLite also scrubs ratings, weights, the volunteer log, the
   gazetteer, take proposals, open loops, core-edit notices and write-gate holds. The store keeps none
-  of those yet, so only eval candidates, page aliases, slug aliases and rename history change.
+  of those yet, so only eval candidates, retrieval records, page aliases, slug aliases and rename history change.
 
 ## The purgeDeletedPages holds
 
@@ -82,7 +101,8 @@ applies the two that read only the page row and `config`, and the other two neve
   never match: only `executeRaw` writes those rows, through `recordIdentityDowngrades`
   (`src/core/sync-identity-downgrades.ts`) and `parkDerivedOrigin` (`derived-origin-hold.ts`,
   called from `src/core/repair/origin-carry.ts`), and the Rust engine refuses `executeRaw`. The
-  family that serves `op_checkpoints` must add both holds.
+  store serves the resumable-op checkpoints (persistence.md, "Op checkpoints"), not these rows; the
+  family that serves these writers must add both holds.
 
 Each purged page goes through `remove_page`, the eval-candidate scrub and the alias and rename-history
 scrub, as `deletePages` does.
@@ -91,10 +111,14 @@ Other differences:
 - A real run returns its slugs ordered by `deleted_at`, then slug. PGLite returns them in the
   `DELETE ... RETURNING` order, which is the table's row order, so the parity cases compare a real
   run's slugs sorted. A dry run orders by `deleted_at`, then slug, on both.
-- PGLite also expires the facts of the purged pages (`expireGonePageFacts`). The Rust facts family
-  refuses every member, so the store holds no facts; that family must add the expiry when it lands.
-  PGLite also deletes the pages' body stagings and orphaned segment texts; the store keeps neither
-  yet, and the `page_body` family's `remove_page_rows` hook must remove them when it lands.
+- The purge expires the facts of the purged pages in the same write, as PGLite's
+  `expireGonePageFacts` (`src/core/facts/gone-page-facts.ts`) does: filed facts, the slot facts of a
+  filed conversation (dimension, value and status cleared), facts extracted from the page and facts
+  about the page whose entity no longer has a page. `deletePages` does not expire facts, on either
+  engine.
+- The purge also deletes the body stagings at each purged source and slug, and then each segment text
+  the purged pages named that no manifest row or live staging still needs, in the same write, as
+  PGLite does (see [page_body.md](page_body.md)).
 - The parity cases cannot stand a tombstone days in the past (the Rust arm reads the system clock),
   so every stamped page there is inside its window. The store unit tests in
   `crates/gbrain-store/src/page_ops.rs` set `deleted_at` directly and cover the windows closing,

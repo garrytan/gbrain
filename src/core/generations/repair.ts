@@ -206,7 +206,7 @@ function describeEntry(entry: Entry): string {
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, selection: GenerationsSelection, entries: Entry[]) {
-  const sources = await engine.listSourceIncarnations(scope.source_ids);
+  const sources = await engine.listGenerationSourceIncarnations(scope.source_ids);
   return { kind: 'generations-v1', brain_id: scope.brain_id, sources, selection, entries };
 }
 

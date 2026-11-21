@@ -28,6 +28,7 @@ import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import type { ClaimHeadSpec, TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
 import type { QueuedPublicationEffect } from '../../src/core/engine-sql/persistence-journal.ts';
 import { assertPageRequestIdentity, completeWrite, releaseUnpublishedClaim } from '../../src/core/persistence/journal.ts';
+import { countPendingProjections, countProjectionRebuild, type CoverageRelevance } from '../../src/core/search/retrieval-coverage.ts';
 import { CONSUMER_LIVE_MS, listHostConsumers, probeLiveFullConsumer, RESIDENT_CONSUMER_KINDS, startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -337,7 +338,7 @@ describe('engine parity: write journal', () => {
 
   parityTest('the repair generations reads select by run, time, key and id, and read the held proposal', {
     methods: ['transaction', 'activateGenerationRows', 'recordHeldGenerationRow', 'readGenerationItemsByIds', 'listUnmatchedGenerationRows',
-      'listRestorableGenerationRows', 'listHeldGenerationRows', 'readHeldGenerationProposal', 'listSourceIncarnations'],
+      'listRestorableGenerationRows', 'listHeldGenerationRows', 'readHeldGenerationProposal', 'listGenerationSourceIncarnations'],
   }, async (engine) => {
     const key = (ownerKey: string) => ({ sourceId: 'default', kind: 'repair_parity', ownerKey });
     const row = (generation: number, runId: string, completeness: string) => ({ generation, runId, operationId: `repair-parity-${runId}-${generation}`, inputPin: 'p',
@@ -363,7 +364,7 @@ describe('engine parity: write journal', () => {
       held: held.map(r => ({ id: name(r.id), owner_key: r.owner_key, held_reason: r.held_reason, items: Number(r.items) })),
       proposal: await engine.readHeldGenerationProposal(heldId),
       proposalOfLive: await engine.readHeldGenerationProposal(ids.live),
-      sources: (await engine.listSourceIncarnations(['default', 'elsewhere'])).map(r => r.id),
+      sources: (await engine.listGenerationSourceIncarnations(['default', 'elsewhere'])).map(r => r.id),
     };
     expect(answers).toEqual({
       items: [{ generation_id: 'live', item_key: 'notes/x', identity_hash: 'id-x', action: 'kept', preimage: { x: 1 } },
@@ -1314,6 +1315,53 @@ describe('engine parity: write-journal housekeeping', () => {
     return answers;
   });
 
+  parityTest('many writes to one page keep one projection job at its last revision, and sealing drains every job', {
+    methods: ['putPage', 'sealChunks', 'readPageSnapshot', 'readSourceMembership', 'listPendingSegmentedProjections',
+      'selectProjectionWindowJobs', 'countPendingProjectionPages', 'projectionRebuildProgress'],
+  }, async (engine) => {
+    const ALL: CoverageRelevance = { all: true, types: [], patterns: [], pageIds: [], exactTopPageId: null, imageArm: false };
+    const body = (slug: string, n: number) => `${slug} body ${n}`;
+    const many = Array.from({ length: 8 }, (_, i) => `notes/many-${i}`);
+    // Five changes to one page, the last one twice (the repeat keeps the revision), then one write to each of many pages.
+    for (let n = 0; n < 5; n++) await engine.putPage('notes/hot', { type: 'note', title: 'hot', compiled_truth: body('notes/hot', n) });
+    await engine.putPage('notes/hot', { type: 'note', title: 'hot', compiled_truth: body('notes/hot', 4) });
+    for (const slug of many) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body(slug, 0) });
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const slugs = ['notes/hot', ...many];
+    const revisions = new Map<string, string>();
+    for (const slug of slugs) revisions.set(slug, (await engine.readPageSnapshot(slug))!.revision);
+    const TS = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{1,6})?\+00$/;
+    const rows = (all: Awaited<ReturnType<BrainEngine['selectProjectionWindowJobs']>>) => all.map(r => ({
+      lane: r.lane, ord: r.ord === null ? null : Number(r.ord), slug: r.slug,
+      inc: r.source_incarnation === null ? null : r.source_incarnation === incarnation,
+      revision: r.revision === null ? null : r.revision === revisions.get(r.slug ?? ''), highWater: r.high_water === null ? null : TS.test(r.high_water),
+    })).sort((x, y) => (x.lane ?? '').localeCompare(y.lane ?? '') || (x.ord ?? 0) - (y.ord ?? 0) || (x.slug ?? '').localeCompare(y.slug ?? ''));
+    const start = { after: { source_incarnation: '00000000-0000-0000-0000-000000000000', slug: '' }, highWater: null };
+    const reads = async () => ({
+      window: rows(await engine.selectProjectionWindowJobs(start, true)),
+      anyWindow: rows(await engine.selectProjectionWindowJobs(start, false)),
+      pending: await engine.listPendingSegmentedProjections({ limit: 50, retryCooldown: false }),
+      count: await countPendingProjections(engine, {}, ALL),
+      rebuild: await countProjectionRebuild(engine, {}),
+    });
+    const queued = await reads();
+    // The drain: sealing each page at its current revision drops its job.
+    for (const slug of slugs) {
+      const n = slug === 'notes/hot' ? 4 : 0;
+      await installChunks(engine, slug, [chunk(0, body(slug, n))]);
+    }
+    const drained = await reads();
+    const answers = { queued, drained };
+    const sorted = [...slugs].sort();
+    const row = (lane: string, ord: number, slug: string) => ({ lane, ord, slug, inc: true, revision: true, highWater: true });
+    expect(answers.queued.window).toEqual([...sorted.map(slug => row('recent', 0, slug)), ...sorted.map((slug, i) => row('window', i + 1, slug))]);
+    expect(answers.queued.count).toMatchObject({ total: 9 });
+    const nulls = [{ lane: null, ord: null, slug: null, inc: null, revision: null, highWater: null }];
+    expect(answers.drained.window).toEqual(nulls);
+    expect(answers.drained.count).toMatchObject({ total: 0 });
+    return answers;
+  });
+
   parityTest('the window read walks the queue in byte order of slug from any cursor, whatever the server locale', {
     methods: ['putPage', 'readSourceMembership', 'selectProjectionWindowJobs'],
   }, async (engine) => {
@@ -1333,6 +1381,59 @@ describe('engine parity: write-journal housekeeping', () => {
     for (const [i, slug] of bytes.entries()) expected[slug] = [...bytes.slice(i + 1), ...bytes.slice(0, i + 1)];
     expect(walks).toEqual(expected);
     return walks;
+  });
+
+  parityTest('the projector claims, renews, releases, fails and deletes a queued job, one live claim at a time', {
+    methods: ['putPage', 'readPageSnapshot', 'readSourceMembership', 'selectProjectionWindowJobs', 'claimSegmentedProjection',
+      'renewSegmentedProjectionClaim', 'releaseSegmentedProjectionClaim', 'deleteProjectionJob', 'markProjectionRebuildFailed'],
+  }, async (engine) => {
+    await engine.putPage('notes/a', { type: 'note', title: 'a', compiled_truth: 'notes/a body' });
+    const ref = { sourceId: 'default', slug: 'notes/a' };
+    const job = { sourceIncarnation: (await engine.readSourceMembership('default'))!.incarnation, slug: 'notes/a',
+      revision: (await engine.readPageSnapshot('notes/a'))!.revision };
+    const other = { ...job, revision: '00000000-0000-4000-8000-000000000000' };
+    const start = { after: { source_incarnation: '00000000-0000-0000-0000-000000000000', slug: '' }, highWater: null };
+    // Whether the job is in the window: with the retry cooldown (hides claimed and freshly failed jobs) and without it (lists every job).
+    const seen = async () => ({
+      cooldown: (await engine.selectProjectionWindowJobs(start, true)).some(r => r.lane === 'window' && r.slug === 'notes/a'),
+      any: (await engine.selectProjectionWindowJobs(start, false)).some(r => r.lane === 'window' && r.slug === 'notes/a'),
+    });
+    const [a, b] = ['segmented_projecting:a', 'segmented_projecting:b'];
+    const answers: Record<string, unknown> = {};
+    answers.noPage = await engine.claimSegmentedProjection({ sourceId: 'default', slug: 'notes/none' }, a);
+    answers.noSource = await engine.claimSegmentedProjection({ sourceId: 'no-such-source', slug: 'notes/a' }, a);
+    answers.queued = await seen();
+    answers.claim = await engine.claimSegmentedProjection(ref, a);
+    answers.claimed = await seen();
+    answers.second = await engine.claimSegmentedProjection(ref, b);
+    answers.renewOther = await engine.renewSegmentedProjectionClaim(ref, b);
+    answers.renew = await engine.renewSegmentedProjectionClaim(ref, a);
+    answers.renewInTx = await engine.transaction(tx => tx.renewSegmentedProjectionClaim(ref, a));
+    await engine.releaseSegmentedProjectionClaim(ref, b);
+    answers.afterOtherRelease = await seen();
+    // A live claim keeps the failed mark off.
+    await engine.markProjectionRebuildFailed(job);
+    answers.failWhileClaimed = await seen();
+    await engine.releaseSegmentedProjectionClaim(ref, a);
+    answers.released = await seen();
+    await engine.markProjectionRebuildFailed(other);
+    answers.failOtherRevision = await seen();
+    await engine.markProjectionRebuildFailed(job);
+    answers.failed = await seen();
+    answers.reclaim = await engine.claimSegmentedProjection(ref, b);
+    await engine.releaseSegmentedProjectionClaim(ref, b);
+    await engine.deleteProjectionJob(other);
+    answers.deleteOtherRevision = await seen();
+    await engine.deleteProjectionJob(job);
+    answers.deleted = await seen();
+    answers.afterDelete = await engine.claimSegmentedProjection(ref, a);
+    const both = { cooldown: true, any: true }, held = { cooldown: false, any: true }, none = { cooldown: false, any: false };
+    expect(answers).toEqual({
+      noPage: 'absent', noSource: 'absent', queued: both, claim: 'claimed', claimed: held, second: 'held', renewOther: false, renew: true,
+      renewInTx: true, afterOtherRelease: held, failWhileClaimed: held, released: both, failOtherRevision: both,
+      failed: held, reclaim: 'claimed', deleteOtherRevision: both, deleted: none, afterDelete: 'absent',
+    });
+    return answers;
   });
 
   parityTest('the projection queue reads find no pending job on a brain whose pages are projected', {

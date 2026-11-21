@@ -43,6 +43,7 @@ import { isConnectionLoss } from '../retry-matcher.ts';
 import { INSPECT_OWNER_RETRY_MS } from './health.ts';
 import { lockOpenOsError } from './native-lock.ts';
 import { boundPublication, publicationLeaseMs, readPublicationCeilingMs, type PublicationBound } from './publication-deadline.ts';
+import { servesRawSql } from '../rust-engine/errors.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
@@ -127,6 +128,16 @@ export const LANE_BUSY = Symbol('gbrain.laneBusy');
 /** `clock` (#6278): the claim's phase clock, for `enterClaimStep` at the preparer's await boundaries. */
 export type PrepareMutation = (engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock) => Promise<PreparedMutation>;
 /** #6278: a consumer phase ended by its own deadline (server cancel or client-side discard), never a storage fault. */
+
+/**
+ * The oldest recovering write of each of this host's worktrees not in `excluded`, at most 16 (the consumer's
+ * recovery scan, engine member `listOwnerRecoveryHeads`). It takes the consumer's direct lane when the consumer's
+ * statements do. Recovery records live only on worktree-owned writes, so an engine without managed persistence
+ * answers none.
+ */
+export function readOwnerRecoveryHeads(engine: BrainEngine, hostId: string, excluded: string[], signal?: AbortSignal): Promise<WriteRequest[]> {
+  return engine.listOwnerRecoveryHeads<WriteRequest>(hostId, excluded, { signal, direct: consumerOnDirectLane(engine) });
+}
 export class PhaseDeadlineError extends Error {
   readonly code = 'deadline_exceeded';
   constructor(readonly phase: string, cause: unknown) {
@@ -406,6 +417,11 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     const excluded = [...this.activeRoots, ...this.barredRoots.keys(), ...[...this.rootRetryAfter].filter(([, at]) => at > now).map(([root]) => root)];
     for (const [id, at] of this.topologyRetryAfter) if (at <= now) this.topologyRetryAfter.delete(id);
     const retryingTopologies = [...this.topologyRetryAfter.keys()];
+    // An engine without raw SQL (the Rust engine) holds no worktree, recovery or projection window for the probe below to
+    // read. A claimable write is work; otherwise a full tick runs once the idle backoff reaches its cap, so lapsed claims
+    // and retried effects still drain on that cadence.
+    if (!servesRawSql(this.engine)) return await this.phase('idle_probe',
+      signal => hasClaimableWrite(this.engine, this.hostId, excluded, signal)) || this.idleDelayMs >= this.idleMaxMs;
     // On the direct route the probe needs no reserved pool lane: the direct pool is small and keeps its connections.
     const direct = consumerConnectionRoute(this.engine).lane === 'direct';
     // #6803: inline projection rows are probed through the resident's bounded window (projection-window.ts), which this
@@ -654,12 +670,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     for (const [root, retryAt] of this.rootRetryAfter) if (retryAt <= now) this.rootRetryAfter.delete(root);
     if (scan) {
       const excluded = [...this.activeRoots, ...this.rootRetryAfter.keys()];
-      const recovery = await this.phase('recovery_scan', signal => this.statements.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
-        JOIN persistence_worktrees w ON w.id=r.worktree_id
-        WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT(r.worktree_id::text=ANY($2::text[]))
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id
-          AND earlier.recovery IS NOT NULL AND earlier.sequence<r.sequence)
-        ORDER BY r.updated_at,r.sequence LIMIT 16`, [this.hostId, excluded], { signal }));
+      const recovery = await this.phase('recovery_scan', signal => readOwnerRecoveryHeads(this.engine, this.hostId, excluded, signal));
       for (const row of recovery) {
         const root = row.worktree_id!;
         // Always skip at least the next scheduled poll for an unresolved root.

@@ -163,14 +163,14 @@ private conversations never land in the shared repository.
 
 Pages archived while the brain was personal name no readers. Until they are kept to the owner, every member reads
 them. The command that makes the brain shared does that before it returns: `gbrain access member add` or
-`gbrain access member enable` when it makes two or more enabled members, `gbrain config set brain.audience shared`,
-and `gbrain access owner set` on a brain that is already shared. `member add` and `member enable` do it before the
-member is added, enabled or bound to a token, so its credentials never read those pages; if that step fails, the
-command changes nothing and exits non-zero. Each prints one line on stderr per archive source,
+`gbrain access member enable` when it makes two or more enabled members, the same add or enable from the admin page
+over HTTP, `gbrain access serves several --members <ids> --yes`, `gbrain config set brain.audience shared`, and
+`gbrain access owner set` on a brain that is already shared. Adding or enabling a member does it before the member is
+added, enabled or bound to a token, so its credentials never read those pages; if that step fails, nothing changes
+(the command exits non-zero, the admin request answers with the error). Each prints one line on stderr per archive source,
 saying the pages are now kept to the owner or why they still wait (the codes below); `--json` output is unchanged.
 When the brain turns shared some other way, the next archive run (`gbrain transcripts archive run`) or maintenance pass
-does it, also before it writes anything. That includes members added or enabled from the admin page over HTTP or by
-`gbrain access serves several --members <ids> --yes`. A command run while an archive run that started on the personal
+does it, also before it writes anything. A command run while an archive run that started on the personal
 brain is still writing the source keeps the pages archived so far to the owner at once; the pages that run still writes
 wait for the run after it (`archive_rescope_pending`). Either way, every folder that holds an archive page at that moment (one per
 harness and day, such as `conversations/codex/2026-10-01/`, plus `conversations/days/`) gets an access rule readable
@@ -204,8 +204,9 @@ paths above that wait for the next archive run,
 the same `rescope` object (`code` and `message`), and `gbrain doctor` warns on `transcript_archive_freshness` with that
 message, whether the archive is on or off:
 
-- **The audience flips from client usage, with no command.** With `brain.audience` unset, three or more people's MCP
-  clients active in 30 days make the brain read as shared. No command runs, so the code is `archive_rescope_pending`
+- **The audience flips from client usage, with no command.** With `brain.audience` unset, MCP clients active in 30 days
+  make the brain read as shared once they belong to 2 members or 3 people (clients bound to the same member count once,
+  a client bound to nobody counts by itself). No command runs, so the code is `archive_rescope_pending`
   until `gbrain transcripts archive run` or a maintenance pass runs; with automatic maintenance turned off
   (`maintenance.auto false`) no pass runs, so only the archive run does it. Declaring `gbrain config set brain.audience shared` also runs it at once.
 - **A shared brain with no owner.** The re-scope has no one to keep the pages to, so it waits with

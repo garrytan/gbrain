@@ -180,7 +180,7 @@ async function walk(engine: BrainEngine) {
   const proposal = await engine.readHeldGenerationProposal(seeded.heldK3);
   const proposalOfLive = await engine.readHeldGenerationProposal(seeded.liveK3);
   const proposalMissing = await engine.readHeldGenerationProposal(987654321);
-  const incarnations = (await engine.listSourceIncarnations([...SOURCES, SRC])).map(row => ({ id: row.id, incarnation: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.incarnation) ? 'UUID' : row.incarnation }));
+  const incarnations = (await engine.listGenerationSourceIncarnations([...SOURCES, SRC])).map(row => ({ id: row.id, incarnation: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.incarnation) ? 'UUID' : row.incarnation }));
   return { actual: { lists, items, proposal, proposalOfLive, proposalMissing, incarnations }, expected: { lists: expected, items: [
     { generation_id: 'k1.live', item_key: 'walk/k1-a', identity_hash: 'id-walk/k1-a', action: 'kept', preimage: { x: 1 } },
     { generation_id: 'k1.live', item_key: 'walk/k1-b', identity_hash: 'id-walk/k1-b', action: 'retired', preimage: null },
@@ -252,7 +252,7 @@ describe('generation repair reads on every engine', () => {
       const singles: Array<[() => Promise<unknown>, string, unknown[]]> = [
         [() => pg.readGenerationItemsByIds(seeded.pair), OLD.items, [seeded.pair]],
         [() => pg.readHeldGenerationProposal(seeded.heldK3), OLD.proposal, [seeded.heldK3]],
-        [() => pg.listSourceIncarnations(SOURCES), OLD.incarnations, [SOURCES]],
+        [() => pg.listGenerationSourceIncarnations(SOURCES), OLD.incarnations, [SOURCES]],
       ];
       for (const [call, sql, params] of singles) {
         const old = await pg.executeRaw(sql, params);

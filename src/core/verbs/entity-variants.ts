@@ -17,6 +17,7 @@ import type { BrainEngine } from '../engine.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 import { followRetirement, isIdentityEntity } from '../entities/resolve.ts';
+import type { RetirementPrivacy } from '../engine-sql/entity-reads.ts';
 import { NAME_MATCH_RANK, NAME_TITLE_TOKENS, WEAK_NAME_MATCHES, hasLeadingTitle, matchNameVariant, parsePersonName, probeWords, stripLeadingTitles, type NameMatchKind } from '../entities/name-variants.ts';
 
 /** Candidate rows read per source; a full read means another page may have matched, so nothing resolves. */
@@ -62,14 +63,14 @@ export function isTitleStub(name: string): boolean {
 /**
  * Variant candidates for `name` in one source. `selectColumns` is the
  * caller's row projection over `pages`; `privatePredicate` its read
- * predicate (` AND ...` or empty) on `pages`, `retirementPrivacy` the same on
- * alias `p` (followRetirement); `entityTypes` the pack's linkable types.
+ * predicate (` AND ...` or empty) on `pages`, `retirementPrivacy` the page
+ * policy followRetirement applies to each hop; `entityTypes` the pack's linkable types.
  */
 export async function resolveNameVariant<R extends VariantRow>(
   engine: BrainEngine,
   sourceId: string,
   name: string,
-  opts: { selectColumns: string; privatePredicate: string; retirementPrivacy: string; entityTypes: ReadonlySet<string>; omitQuarantined?: boolean; exclude?: readonly string[] },
+  opts: { selectColumns: string; privatePredicate: string; retirementPrivacy: RetirementPrivacy; entityTypes: ReadonlySet<string>; omitQuarantined?: boolean; exclude?: readonly string[] },
 ): Promise<VariantResult<R>> {
   const words = probeWords(name);
   if (!words.length || parsePersonName(name).core.length > MAX_NAME_WORDS || name.includes('/')) return { matches: [] };
@@ -134,7 +135,7 @@ export async function readPossibleDuplicates<R extends VariantRow>(
   engine: BrainEngine,
   sourceId: string,
   row: VariantRow,
-  opts: { selectColumns: string; privatePredicate: string; retirementPrivacy: string; entityTypes: ReadonlySet<string>; omitQuarantined?: boolean },
+  opts: { selectColumns: string; privatePredicate: string; retirementPrivacy: RetirementPrivacy; entityTypes: ReadonlySet<string>; omitQuarantined?: boolean },
 ): Promise<PossibleDuplicate[]> {
   if (!row.slug.startsWith('people/') && row.type !== 'person') return [];
   const basename = basenameName(row.slug);

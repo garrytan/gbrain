@@ -18,8 +18,8 @@ import { STORE_MEMBERS } from './store-members/index.ts';
  */
 export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {
   persistence_journal: [
-    'admitWrite (persistence/journal.ts): admission counts, inserts and counter updates',
     'segmentedGateEvidence (persistence/writer-versions.ts): the segmented-storage gate evidence answers no writer here',
+    'queuePublicationEffects (persistence/effect-journal.ts): the publication effects insert, where a forwarded put stops',
   ],
 };
 

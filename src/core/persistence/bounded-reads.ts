@@ -101,7 +101,17 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState',
   'readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceState', 'readAdmissionSource', 'listLinkEndpointPages', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots',
-  'readSourceMembership', 'getWorktreeBinding']);
+  'readSourceMembership', 'getWorktreeBinding', 'readLiveMember', 'readFolderAccess',
+  'listGuestSourceIds', 'readDatabaseClock', 'listStoredTimelineRowsOrdered', 'matchTakeRows',
+  'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
+  'getConfig', 'getAllConfig', 'listConfigKeys', 'readPageSnapshot', 'getPage',
+  'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
+  'readSegmentTexts', 'readManifest', 'hasLabelledOnlyMember', 'readSegmentedPageHead', 'readSourceIncarnation', 'readStoredPageTier']);
+
+/** Test seam (test/e2e/typed-preparation-reads-guard-postgres.test.ts): told of every engine method a bounded view hands out. */
+type PreparationMemberObserver = (member: string, typed: boolean, engineReads: boolean) => void;
+let memberObserver: PreparationMemberObserver | undefined;
+export function observePreparationMembers(observer: PreparationMemberObserver | undefined): void { memberObserver = observer; }
 
 /** The engine a preparer reads through: raw statements bounded by the clock's remaining budget, everything else untouched. */
 export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined, opts: { engineReads?: boolean } = {}): BrainEngine {
@@ -130,6 +140,7 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
     const value = Reflect.get(target, key, target);
     if (typeof value !== 'function') return value;
     const typedRead = typeof key === 'string' && TYPED_PREPARATION_READS.has(key);
+    if (memberObserver && typeof key === 'string') memberObserver(key, typedRead, opts.engineReads === true);
     if (!opts.engineReads && !typedRead) return value.bind(target);
     return (...args: unknown[]) => {
       if (typedRead) recordClaimSql(clock, `SELECT FROM ${String(key)}`);

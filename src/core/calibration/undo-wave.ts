@@ -161,19 +161,7 @@ export async function undoWave(
   }
 
   // Step 2: delete calibration_profiles rows.
-  if (dryRun) {
-    const counted = await engine.executeRaw<{ count: number }>(
-      `SELECT COUNT(*)::int AS count FROM calibration_profiles WHERE wave_version = $1`,
-      [waveVersion],
-    );
-    result.profiles_deleted = counted[0]?.count ?? 0;
-  } else {
-    const deleted = await engine.executeRaw<{ id: number }>(
-      `DELETE FROM calibration_profiles WHERE wave_version = $1 RETURNING id`,
-      [waveVersion],
-    );
-    result.profiles_deleted = deleted.length;
-  }
+  result.profiles_deleted = await engine.purgeCalibrationProfilesByWave({ waveVersion, dryRun });
 
   // Step 3: purge take_nudge_log rows.
   if (dryRun) {

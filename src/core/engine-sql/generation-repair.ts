@@ -142,6 +142,6 @@ export async function readHeldGenerationProposal(raw: EngineRawRead, id: number)
 }
 
 /** The incarnation of each known source of `sourceIds`, in id order. */
-export async function listSourceIncarnations(raw: EngineRawRead, sourceIds: readonly string[]): Promise<SourceIncarnationListRow[]> {
+export async function listGenerationSourceIncarnations(raw: EngineRawRead, sourceIds: readonly string[]): Promise<SourceIncarnationListRow[]> {
   return raw<SourceIncarnationListRow>(SOURCE_INCARNATIONS_SQL, [sourceIds]);
 }

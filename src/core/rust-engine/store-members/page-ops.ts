@@ -3,7 +3,7 @@
  *
  * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
  * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample,
- * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
+ * bumpPageRetrievals, getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
  * purgeDeletedPages (also served) keeps the pages PGLite's atom and derived retirement holds keep, reading the `retired_by`
  * stamp on the page row, and removes and scrubs the rest as deletePages does (rust/docs/store/page_ops.md).
@@ -19,16 +19,22 @@ import { pageSnapshotKey, type PageSnapshotBatch } from '../../page-snapshot-bat
 import type { PageSnapshot } from '../../page-state/types.ts';
 import { pickCanonicalOrigin } from '../../persistence/origin-guard.ts';
 import { segmentedRevertRefusal } from '../../page-state/versions.ts';
-import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadScope } from '../../types.ts';
+import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadPolicy, PageReadScope } from '../../types.ts';
 import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
-import { storePagePolicy } from './private-provenance.ts';
+import { HYBRID_BAG_KEYS, WHOKNOWS_KEYS, storePagePolicy } from './private-provenance.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
 function checkBatch(member: string, n: number): void {
   if (n > DELETE_BATCH_SIZE) throw new Error(`${member}: input size ${n} exceeds DELETE_BATCH_SIZE=${DELETE_BATCH_SIZE}. Caller must chunk.`);
 }
+
+/** The page read policy keys (`PageReadPolicy`); a key the type gains and this list misses fails to compile. */
+const READ_POLICY_KEYS = ['sourceId', 'sourceIds', 'excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged',
+  'takesHoldersAllowList'] as const satisfies ReadonlyArray<keyof PageReadPolicy>;
+const READ_POLICY_KEYS_COMPLETE: Exclude<keyof PageReadPolicy, (typeof READ_POLICY_KEYS)[number]> extends never ? true : never = true;
+void READ_POLICY_KEYS_COMPLETE;
 
 /**
  * A `PageReadScope` as the store reads it (`pageReadFilter`, search/read-policy-sql.ts). Any scope object turns on
@@ -36,11 +42,12 @@ function checkBatch(member: string, n: number): void {
  * `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), a caller's reader identity and
  * private-readable grant included; `minTrust` and `suppressFlagged`
  * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` changes
- * nothing on these reads.
+ * nothing on these reads. The marker reads (every member that uses this) are handed hybridSearch's whole option bag as
+ * their policy, so they also accept and ignore the bag's own keys (`HYBRID_BAG_KEYS`, and whoknows' `WHOKNOWS_KEYS`); any other key still refuses.
  */
-function readScope(member: string, opts: PageReadScope | undefined, unread: readonly string[] = []): Record<string, unknown> {
+function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
-  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...unread]);
+  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...HYBRID_BAG_KEYS, ...WHOKNOWS_KEYS]);
   return {
     sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
     excludePrivate: storePagePolicy(member, taken.excludePrivate, { callerReaders: true }) ?? null,
@@ -48,9 +55,6 @@ function readScope(member: string, opts: PageReadScope | undefined, unread: read
     suppressFlagged: taken.suppressFlagged === true,
   };
 }
-
-/** The `WhoknowsOpts` keys and the read-policy holder list that getEffectiveDates is handed but never reads. */
-const WHOKNOWS_UNREAD = ['topic', 'limit', 'explain', 'types', 'onMeta', 'takesHoldersAllowList'] as const;
 
 const reviveDate = (value: unknown): Date => new Date(String(value));
 
@@ -242,6 +246,12 @@ function pageIds(member: string, ids: number[]): number[] {
   return ids;
 }
 
+/** Records now as each page's retrieval time, 5-minute throttled (gbrain-store `page_ops/retrievals.rs`). */
+export const bumpPageRetrievals: StoreMember<[pageIds: number[]], void> = async (brain, ids) => {
+  if (!ids.length) return;
+  await storeCall({ member: 'bumpPageRetrievals' }, () => brain.bumpPageRetrievals(pageIds('bumpPageRetrievals', ids)));
+};
+
 export const getContentFlagsByPageIds: StoreMember<[pageIds: number[], opts?: PageReadScope], Map<number, { reason: string; detail: string }>> = async (
   brain,
   ids,
@@ -278,8 +288,7 @@ export const getEffectiveDates: StoreMember<[refs: Array<{ slug: string; source_
   opts,
 ) => {
   if (!refs.length) return new Map();
-  // whoknows passes its whole options object (src/commands/whoknows.ts); readEffectiveDates reads only the page scope.
-  const scope = readScope('getEffectiveDates', opts, WHOKNOWS_UNREAD);
+  const scope = readScope('getEffectiveDates', opts);
   const rows: Array<{ slug: string; source_id: string; ts: string }> = await storeCall({ member: 'getEffectiveDates' }, () =>
     brain.getEffectiveDates(refs.map((r) => ({ slug: r.slug, source_id: r.source_id })), scope));
   return new Map(rows.map((r) => [`${r.source_id}::${r.slug}`, reviveDate(r.ts)]));

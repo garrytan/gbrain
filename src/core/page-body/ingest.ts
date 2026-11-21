@@ -170,10 +170,10 @@ export function rowUnchanged(live: ManifestRow, next: ManifestRowInput): boolean
     && live.dateMin === next.dateMin && live.dateMax === next.dateMax;
 }
 
-async function sourceIncarnation(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<string> {
-  const [row] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+async function sourceIncarnation(engine: Pick<BrainEngine, 'readSourceIncarnation'>, sourceId: string): Promise<string> {
+  const row = await engine.readSourceIncarnation(sourceId);
   if (!row) throw new Error(`Source ${sourceId} not found.`);
-  return row.incarnation;
+  return String(row.incarnation);
 }
 
 /** Open the staging row every segmented write records (kind, principal, base); returns its id. */
@@ -444,7 +444,7 @@ export async function stageOccurrenceChunks(engine: BrainEngine, input: { pageId
         if (part.length) rows += await engine.transaction(async tx => {
           await tx.lockPageKeys([{ sourceId: input.sourceId, slug: input.slug }]);
           await faultPoint('segmented:projection_insert', { sourceId: input.sourceId, slug: input.slug });
-          const [page] = await tx.executeRaw<{ body_generation: number | string }>('SELECT body_generation FROM pages WHERE id=$1', [input.pageId]);
+          const page = await tx.readSegmentedPageHead(input.pageId);
           if (Number(page?.body_generation) !== input.generation) { moved = true; return 0; }
           if (input.renew && !await input.renew(tx)) { lost = true; return 0; }
           const open = await occurrencesWithoutChunks(tx, input.pageId, input.generation, part);

@@ -176,6 +176,22 @@ impl KvWrite for FlaggingWriter<'_> {
             "a store write handle commits with its write, not on its own",
         ))
     }
+
+    fn allocate(&mut self, key: &[u8], count: u64) -> Result<u64> {
+        self.0.allocate(key, count)
+    }
+
+    fn raise_counter(&mut self, key: &[u8], value: u64) -> Result<()> {
+        self.0.raise_counter(key, value)
+    }
+
+    fn add_i64(&mut self, key: &[u8], delta: i64) -> Result<()> {
+        self.0.add_i64(key, delta)
+    }
+
+    fn counter_below(&mut self, key: &[u8], cap: i64) -> Result<Option<i64>> {
+        self.0.counter_below(key, cap)
+    }
 }
 
 #[cfg(test)]
@@ -239,5 +255,174 @@ mod tests {
         name_readers_raw(&tx, "notes/closed");
         tx.rollback_transaction().unwrap();
         assert_eq!(store.get_config(FLAG).unwrap(), None);
+    }
+
+    // With concurrent writers on (`OpenOptions::concurrent_writes`, `OccKv`), `Store::write` runs
+    // `f` again after a conflict; every run writes through the flagging handle.
+
+    fn concurrent(name: &str) -> (std::sync::Arc<Store>, std::path::PathBuf) {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/test-tmp")
+            .join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let options = crate::OpenOptions {
+            concurrent_writes: true,
+            ..crate::OpenOptions::default()
+        };
+        let store = Store::open_dir(&dir.join("brain"), options).unwrap();
+        (std::sync::Arc::new(store), dir)
+    }
+
+    #[test]
+    fn with_concurrent_writes_a_reader_page_put_sets_the_flag_in_its_commit() {
+        let (store, dir) = concurrent("access-flag-occ");
+        put_open_page(&store, "notes/closed");
+        assert_eq!(store.get_config(FLAG).unwrap(), None);
+        name_readers_raw(&store, "notes/closed");
+        assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_concurrent_writes_a_reader_page_put_that_reruns_after_a_conflict_sets_the_flag() {
+        use std::sync::mpsc::channel;
+        let (store, dir) = concurrent("access-flag-occ-rerun");
+        put_open_page(&store, "notes/closed");
+        let (inside_tx, inside) = channel();
+        let (release_tx, release) = channel::<()>();
+        let runs = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let a = {
+            let (store, runs) = (store.clone(), runs.clone());
+            std::thread::spawn(move || {
+                store
+                    .write(|tx| {
+                        let key = keys::page("default", "notes/closed");
+                        let mut record: Value = serde_json::from_slice(&tx.get(&key)?.unwrap())?;
+                        record["frontmatter"]["readable_by"] = json!(["alice-example"]);
+                        tx.put(&key, &serde_json::to_vec(&record)?)?;
+                        if runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                            let _ = inside_tx.send(());
+                            let _ = release.recv_timeout(std::time::Duration::from_secs(30));
+                        }
+                        Ok(())
+                    })
+                    .unwrap()
+            })
+        };
+        inside.recv().unwrap();
+        // A read the page record; this commit changes it, so A's first run loses and runs again.
+        put_open_page(&store, "notes/closed");
+        release_tx.send(()).unwrap();
+        a.join().unwrap();
+        assert!(
+            runs.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+            "A did not run again"
+        );
+        assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_concurrent_writes_parallel_reader_page_puts_all_land_and_set_the_flag() {
+        let (store, dir) = concurrent("access-flag-occ-parallel");
+        for n in 0..8 {
+            put_open_page(&store, &format!("notes/p{n}"));
+        }
+        let threads: Vec<_> = (0..8)
+            .map(|n| {
+                let store = store.clone();
+                std::thread::spawn(move || name_readers_raw(&store, &format!("notes/p{n}")))
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(store.get_config(FLAG).unwrap().as_deref(), Some("1"));
+        for n in 0..8 {
+            let page =
+                crate::pages::read_page(&*store.read().unwrap(), "default", &format!("notes/p{n}"))
+                    .unwrap()
+                    .unwrap();
+            assert!(page.frontmatter.contains_key("readable_by"));
+        }
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An inner write handle that records which method it was called through, so a test can
+    /// tell a forwarded call from the trait default (which reads and puts instead).
+    #[derive(Default)]
+    struct Recording(Vec<&'static str>);
+
+    impl crate::kv::KvRead for Recording {
+        fn get(&self, _key: &[u8]) -> crate::error::Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+
+        fn scan(
+            &self,
+            _start: &[u8],
+            _end: &[u8],
+            _reverse: bool,
+            _f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+        ) -> crate::error::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::kv::KvWrite for Recording {
+        fn put(&mut self, _key: &[u8], _value: &[u8]) -> crate::error::Result<()> {
+            self.0.push("put");
+            Ok(())
+        }
+
+        fn delete(&mut self, _key: &[u8]) -> crate::error::Result<()> {
+            self.0.push("delete");
+            Ok(())
+        }
+
+        fn commit(self: Box<Self>) -> crate::error::Result<u64> {
+            Ok(0)
+        }
+
+        fn allocate(&mut self, _key: &[u8], _count: u64) -> crate::error::Result<u64> {
+            self.0.push("allocate");
+            Ok(41)
+        }
+
+        fn raise_counter(&mut self, _key: &[u8], _value: u64) -> crate::error::Result<()> {
+            self.0.push("raise_counter");
+            Ok(())
+        }
+
+        fn add_i64(&mut self, _key: &[u8], _delta: i64) -> crate::error::Result<()> {
+            self.0.push("add_i64");
+            Ok(())
+        }
+
+        fn counter_below(&mut self, _key: &[u8], _cap: i64) -> crate::error::Result<Option<i64>> {
+            self.0.push("counter_below");
+            Ok(Some(7))
+        }
+    }
+
+    /// The four counter calls reach the inner handle's own method, not the trait default: a
+    /// concurrent store (`occ_kv`) overrides them to add and raise without reading, so a wrapper
+    /// that falls back to get-then-put turns every counter bump into a read conflict.
+    #[test]
+    fn counter_calls_pass_through_to_the_inner_handle() {
+        use crate::kv::KvWrite;
+        let mut inner = Recording::default();
+        let mut writer = super::FlaggingWriter(&mut inner);
+        assert_eq!(writer.allocate(b"seq", 3).unwrap(), 41);
+        writer.raise_counter(b"seq", 9).unwrap();
+        writer.add_i64(b"n", 2).unwrap();
+        assert_eq!(writer.counter_below(b"n", 5).unwrap(), Some(7));
+        assert_eq!(
+            inner.0,
+            ["allocate", "raise_counter", "add_i64", "counter_below"]
+        );
     }
 }

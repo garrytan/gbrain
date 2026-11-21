@@ -1,6 +1,6 @@
 //! Effect scans: the statements of `src/core/engine-sql/persistence-effect-scans.ts` that the
-//! effect worker's pass sends before and when it claims effects (rust/docs/store/persistence.md,
-//! "Effect scans").
+//! effect worker's pass sends before and when it claims effects, and the read of the effects a
+//! write receipt lists (rust/docs/store/persistence.md, "Effect scans").
 //!
 //! Each scan joins `persistence_effects` to `persistence_worktrees` on the host that owns the
 //! worktree. This engine keeps no worktree, so every scan answers no row (the claim itself is
@@ -14,7 +14,7 @@ use crate::error::{Result, StoreError};
 use serde_json::Value;
 
 /// `$1::uuid`: the message Postgres gives for text that is not a uuid.
-fn host_uuid(text: &str) -> Result<()> {
+pub(super) fn host_uuid(text: &str) -> Result<()> {
     if is_uuid(text) {
         Ok(())
     } else {

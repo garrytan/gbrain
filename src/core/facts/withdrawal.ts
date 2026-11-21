@@ -5,12 +5,9 @@ import { fenceOperationError } from '../fence-repair/refusal.ts';
 import { withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
 import { ambiguousFenceClaims, discoverWithdrawalTargets, withdrawalDiscoveryFailure } from './withdrawal-discovery.ts';
 import { dropPurgedFenceRows } from './purge-overlay.ts';
-import { remoteProvenanceFloorSql } from '../search/private-visibility.ts';
-import { outcomeMarkerSql } from './audit-sources.ts';
 import { coverageActive, noteBelief, readLedgerSource, withBeliefBatch } from '../belief/ledger.ts';
 import { createPageVersion } from '../page-state/versions.ts';
 import { validateSlug } from '../utils.ts';
-import { factWithdrawalSubjectSql } from '../access/member-facts.ts';
 
 export interface WithdrawalCommit {
   withdrawn: boolean;
@@ -52,14 +49,6 @@ export function reviewWithdrawOn(raw: string | null | undefined): boolean {
 }
 
 /**
- * GST-359 D: the facts a withdrawal admits besides world facts for a remote caller: an attested person's own
- * member-page fact (`memberPage`, positional $4; the caller checked it). Positional $3 is worldOnly.
- */
-function withdrawalAdmitSql(excludePrivate?: boolean): string {
-  return `AND ($3::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=$4::text))${excludePrivate ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}`;
-}
-
-/**
  * What withdrawing fact `id` changes: its claim (visibility, fingerprint, subject), whether a withdrawal already
  * covers it, the pages discovery finds carrying the claim for that subject (`affected`), and every page key the
  * withdrawal holds (`slugs`: those pages and the belief streams of the facts it expires). Null when the fact is not
@@ -67,11 +56,9 @@ function withdrawalAdmitSql(excludePrivate?: boolean): string {
  * A fact on a member page is withdrawn for that page alone (its subject is the page's slug, GST-359 D).
  */
 export async function planFactWithdrawal(engine: BrainEngine, id: number, sourceId: string, worldOnly: boolean, excludePrivate?: boolean, memberPage?: string | null) {
-  const visible = await engine.executeRaw<{ visibility: 'private' | 'world'; fact: string; fact_hash: string; subject: string; expired: boolean }>(
-    `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash,${factWithdrawalSubjectSql('facts')} AS subject,expired_at IS NOT NULL AS expired FROM facts WHERE id=$1 AND source_id=$2
-      AND NOT ${outcomeMarkerSql('facts')} ${withdrawalAdmitSql(excludePrivate)}`, [id, sourceId, worldOnly, memberPage ?? null]);
-  if (!visible.length) return null;
-  const { visibility, fact, fact_hash, subject, expired } = visible[0];
+  const claim = await engine.readFactWithdrawalClaim({ id, sourceId, worldOnly, memberPage: memberPage ?? null, remoteFloor: excludePrivate === true });
+  if (!claim) return null;
+  const { visibility, fact, fact_hash, subject, expired } = claim;
   // Discovery is keyed on the claim and its subject: a subject-scoped
   // withdrawal changes only that entity's pages and its facts' provenance.
   // Only an existing withdrawal covering this subject makes it a no-op.
@@ -95,11 +82,10 @@ export async function recordFactWithdrawal(
      */
     publication?: { withdrawnAt: string; expectedSlugs: readonly string[] } } = {},
 ): Promise<WithdrawalCommit> {
-  const admit = withdrawalAdmitSql(opts.excludePrivate);
   return engine.transaction(async tx => {
     // A managed caller takes this EXCLUSIVE source lock before authority,
     // counters and request rows. Repeating an already-held lock is safe.
-    if (!opts.publication) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
+    if (!opts.publication) await tx.lockSourceRow(sourceId);
     const plan = await planFactWithdrawal(tx, id, sourceId, worldOnly, opts.excludePrivate, opts.memberPage);
     if (!plan) return { withdrawn: false, pages: [] };
     const { affected, slugs } = plan;
@@ -109,11 +95,9 @@ export async function recordFactWithdrawal(
           'Read the fact again and submit the forget with a new request_id; nothing was withdrawn.');
       }
     } else await tx.lockPageKeys(slugs.map(slug => ({ sourceId, slug })));
-    const rows = await tx.executeRaw<{ visibility: string; fact: string; subject: string }>(
-      `SELECT visibility,fact,${factWithdrawalSubjectSql('facts')} AS subject FROM facts WHERE id=$1 AND source_id=$2
-        ${admit} FOR UPDATE`, [id, sourceId, worldOnly, opts.memberPage ?? null]);
-    if (!rows.length) return { withdrawn: false, pages: [] };
-    const row = rows[0];
+    // The fact row, locked: its claim cannot change before the withdrawal commits.
+    const row = await tx.readFactWithdrawalClaim({ id, sourceId, worldOnly, memberPage: opts.memberPage ?? null, remoteFloor: opts.excludePrivate === true, lock: true });
+    if (!row) return { withdrawn: false, pages: [] };
     const ledger = affected.length ? await readLedgerSource(tx, sourceId) : null;
     // W1 (docs/designs/BELIEF_LEDGER.md section 10): the pre-withdrawal body stays readable at its revision.
     if (ledger && coverageActive(ledger.coverage)) {
@@ -137,24 +121,23 @@ export async function recordFactWithdrawal(
       // Overnight semantic review (decide review lane): queued with the ledger row so a late commit is never skipped.
       // Not queued when the caller opted out (`semantic_review: false`, also used by review-accepted withdrawals).
       if (opts.semanticReview !== false && reviewWithdrawOn(await tx.getConfig(REVIEW_WITHDRAW_KEY))) {
-        await tx.executeRaw(`INSERT INTO decide_review_queue(kind,source_id,a_ref) VALUES ('withdraw',$1,$2) ON CONFLICT DO NOTHING`, [sourceId, String(id)]);
+        await tx.applyDecideReviewQueue({ op: 'enqueue', kind: 'withdraw', source_id: sourceId, a_ref: String(id), b_ref: '*' });
       }
       // Wave B (spec 11): a segmented page's withdrawn rows are struck in the segment holding the fence, a new
       // generation whose flip retires only the chunks of the occurrences it rewrote.
-      const segmented = affected.length ? await tx.executeRaw<{ id: number; slug: string }>(`SELECT id,slug FROM pages
-        WHERE source_id=$1 AND slug=ANY($2::text[]) AND body_storage='segmented'`, [sourceId, affected.map(page => page.slug)]) : [];
+      const segmented = affected.length ? await tx.listSegmentedPages(sourceId, affected.map(page => page.slug)) : [];
       if (segmented.length) {
         const { rewriteLiveSegmentedFences } = await import('../page-body/segment-rewrite.ts');
         for (const page of segmented) await rewriteLiveSegmentedFences(tx, Number(page.id), fence => preserveWithdrawnFenceRows(tx, sourceId, fence, page.slug));
       }
       // Logical revision and projection invalidation commit with the withdrawal.
       // The revision trigger queues durable rebuild work even for unmanaged calls.
-      const inline = affected.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
-        `UPDATE pages SET knowledge_revision=gen_random_uuid(),text_projection_revision=NULL,embedding_signature=NULL
-          WHERE source_id=$1 AND slug=ANY($2::text[]) AND body_storage<>'segmented' RETURNING id,slug,knowledge_revision`, [sourceId, affected.map(page => page.slug)]) : [];
+      const inline = affected.length ? await tx.invalidateWithdrawnPages(sourceId, affected.map(page => page.slug)) : [];
       if (inline.length) await tx.deleteChunksForPages(inline.map(page => Number(page.id)));
-      const pages = [...inline, ...segmented.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
-        'SELECT id,slug,knowledge_revision FROM pages WHERE id=ANY($1::int[])', [segmented.map(page => page.id)]) : []];
+      const rewritten = segmented.length
+        ? await tx.readWithdrawalDiscovery({ kind: 'target_pages', sourceId, ids: segmented.map(page => Number(page.id)) })
+        : [];
+      const pages = [...inline, ...rewritten.map(page => ({ id: page.page_id, slug: page.slug, knowledge_revision: page.revision }))];
       if (opts.requestId && !opts.publication) {
         await tx.insertWithdrawalEffects({ requestId: opts.requestId, sourceId, targets: pages.map(page => ({ slug: page.slug, page_id: page.id, revision: page.knowledge_revision })) });
       }
@@ -165,24 +148,8 @@ export async function recordFactWithdrawal(
   });
 }
 
-// Fingerprint each incoming claim once. Inside the join condition the planner
-// re-evaluates both fingerprint functions for every (claim, withdrawal) pair,
-// so a 28-row fence against 400 withdrawals spent 4 s in this query.
-const FINGERPRINTED_CLAIMS = 'SELECT i.visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v1(i.claim) AS fp_v1';
-
 async function ambiguousFenceMatchesWithdrawal(engine: BrainEngine, sourceId: string, bodies: readonly string[], subject: string | null): Promise<boolean> {
-  const claims = bodies.flatMap(ambiguousFenceClaims);
-  if (!claims.length) return false;
-  const rows = await engine.executeRaw(`WITH incoming AS MATERIALIZED (${FINGERPRINTED_CLAIMS}
-      FROM jsonb_to_recordset($2::text::jsonb) i(claim text,visibility text))
-    SELECT 1 FROM incoming
-    JOIN (SELECT source_id,visibility,subject,fact_hash FROM fact_withdrawals WHERE source_id=$1
-      UNION ALL SELECT source_id,visibility,subject,fact_hash FROM fact_purges WHERE source_id=$1) w
-      ON w.source_id=$1 AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
-      AND (incoming.visibility IS NULL OR w.visibility=incoming.visibility)
-      AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text) LIMIT 1`,
-  [sourceId, JSON.stringify(claims), subject]);
-  return rows.length > 0;
+  return engine.hasWithdrawnFenceClaim(sourceId, bodies.flatMap(ambiguousFenceClaims), subject);
 }
 
 async function withdrawalDates(engine: BrainEngine, sourceId: string, facts: readonly ParsedFact[], subject: string | null): Promise<Map<number,string>> {
@@ -243,19 +210,12 @@ export async function isFactWithdrawn(
   engine: BrainEngine, sourceId: string, visibility: string | null, claim: string, entitySlug: string | null, memberPage: string | null = null,
 ): Promise<boolean> {
   // GST-359 D: `memberPage` (a claim saved on a member page) also matches that page's own withdrawals.
-  const rows = await engine.executeRaw(`SELECT 1 FROM fact_withdrawals
-    WHERE source_id=$1 AND ($2::text IS NULL OR visibility=$2) AND fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
-      AND (subject = '*' OR subject = $4::text OR subject = $5::text)
-    UNION ALL SELECT 1 FROM fact_purges WHERE source_id=$1 AND ($2::text IS NULL OR visibility=$2) AND fact_hash=gbrain_fact_fingerprint($3)
-      AND (subject = '*' OR subject = $4::text) LIMIT 1`, [sourceId,visibility,claim,entitySlug,memberPage]);
-  return rows.length > 0;
+  return engine.isFactWithdrawn(sourceId, visibility, claim, entitySlug, memberPage);
 }
 
 /** #5575: the claim matches a purge tombstone (the facts guard raises the same typed code on insert). */
 export async function isFactPurged(engine: BrainEngine, sourceId: string, visibility: string, claim: string, entitySlug: string | null): Promise<boolean> {
-  const rows = await engine.executeRaw(`SELECT 1 FROM fact_purges WHERE source_id=$1 AND visibility=$2 AND fact_hash=gbrain_fact_fingerprint($3)
-    AND (subject = '*' OR subject = $4::text) LIMIT 1`, [sourceId, visibility, claim, entitySlug]);
-  return rows.length > 0;
+  return engine.isFactPurged(sourceId, visibility, claim, entitySlug);
 }
 
 /** Writers check this before isFactWithdrawn so a purged claim refuses with typed purged_content, before any provider work. */

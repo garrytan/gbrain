@@ -9,7 +9,8 @@ import { annotateTemporalRow, isTemporalLinkType, type EdgeTemporalOpts, type Li
 import type { Link } from '../../types.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
-import { checkTemporalDates, linkRelationshipKeysTouching, refreshOnStore } from './link-refresh.ts';
+import { linkRelationshipKeysTouching, refreshOnStore } from './link-refresh.ts';
+import { checkTemporalDates } from './link-temporal-dates.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
 type EndpointSources = { fromSourceId?: string; toSourceId?: string; originSourceId?: string };

@@ -65,6 +65,62 @@ export async function sharedSkillPackTablePresent(exec: LegacyUnscopedRead): Pro
   return row?.present === true;
 }
 
+/**
+ * Whether a resident notifier has recorded coverage for any source (a `sync_notifier_sources` row with `observed_at`):
+ * one half of whether search carries the freshness notice (notifier/status.ts freshnessReported).
+ */
+export async function notifierCoverageRecorded(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ covered: unknown }>('SELECT EXISTS (SELECT 1 FROM sync_notifier_sources WHERE observed_at IS NOT NULL) AS covered');
+  const covered = row?.covered;
+  return covered === true || covered === 't' || covered === 1;
+}
+
+/**
+ * The completed keys of one resumable op's checkpoint (op-checkpoint.ts loadOpCheckpoint): the append-only child rows
+ * (`op_checkpoint_paths`) and the legacy `completed_keys` array, deduplicated in first-seen order. A non-array legacy
+ * value is skipped, so the child rows still load, and reported as `corruptParent`.
+ */
+export async function readOpCheckpointKeys(exec: LegacyUnscopedRead, op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }> {
+  // UNION ALL, not UNION: the Set below dedupes, so no server-side sort runs over a large checkpoint. The legacy arm is
+  // gated on jsonb_typeof = 'array' because jsonb_array_elements_text throws on a scalar and would kill the whole union.
+  const rows = await exec.executeRaw<{ ckey: unknown; corrupt: number }>(
+    `SELECT path AS ckey, 0 AS corrupt FROM op_checkpoint_paths
+       WHERE op = $1 AND fingerprint = $2
+     UNION ALL
+     SELECT jsonb_array_elements_text(completed_keys) AS ckey, 0 AS corrupt FROM op_checkpoints
+       WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) = 'array'
+     UNION ALL
+     SELECT NULL AS ckey, 1 AS corrupt FROM op_checkpoints
+       WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) <> 'array'`,
+    [op, fingerprint],
+  );
+  const keys = new Set<string>();
+  let corruptParent = false;
+  for (const r of rows) {
+    if (Number(r.corrupt) === 1) corruptParent = true;
+    else if (typeof r.ckey === 'string') keys.add(r.ckey);
+  }
+  return { keys: [...keys], corruptParent };
+}
+
+/**
+ * The page clock of the get_health memo (health-memo.ts): the brain id and `page_generation_clock_seq`, which every
+ * page insert, update or delete advances, as `<brain id>:<clock>`.
+ */
+export async function readHealthMemoClock(exec: LegacyUnscopedRead): Promise<string> {
+  const [row] = await exec.executeRaw<{ brain: string | null; clock: string | null }>(
+    `SELECT (SELECT brain_id::text FROM persistence_brain WHERE singleton = 1) AS brain,
+            COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::text AS clock`);
+  return `${row?.brain ?? ''}:${row?.clock ?? ''}`;
+}
+
+/** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
+export async function listSynopsisSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
+  const rows = await exec.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id`);
+  return rows.map(r => r.id);
+}
+
 /** Every shared skillpack bound to its source's current incarnation, with its roots on host `hostId`. */
 export function listSharedSkillPackRoots(exec: LegacyUnscopedRead, hostId: string): Promise<SharedSkillPackRoot[]> {
   return exec.executeRaw<SharedSkillPackRoot>(`SELECT p.source_id,p.source_incarnation,s.local_path AS source_root,
@@ -129,6 +185,31 @@ export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise
   return rows.map(row => row.id);
 }
 
+/**
+ * Whether any access member carries the labelled-only grant, disabled and removed members included (the one cheap test
+ * a write runs before resolving its writer, access/labelled-only.ts anyLabelledOnlyMember). A failed read is thrown;
+ * the caller counts it as yes.
+ */
+export async function hasLabelledOnlyMember(exec: LegacyUnscopedRead): Promise<boolean> {
+  return (await exec.executeRaw('SELECT 1 FROM access_members WHERE labelled_only LIMIT 1')).length > 0;
+}
+
+/**
+ * One `access_tokens` row as `gbrain auth list` reads it. The statement is `SELECT *` so every schema generation reads
+ * (`private_pages`, `private_facts` and `member_id` arrive with their migrations; absent reads as none), so further
+ * columns may be present.
+ */
+export interface AccessTokenRow {
+  id: string; name: string; scopes: string[] | null; created_at: Date | string | null; last_used_at: Date | string | null;
+  revoked_at: Date | string | null; private_pages?: unknown; private_facts?: unknown; member_id?: string | null;
+  [column: string]: unknown;
+}
+
+/** Every legacy access token, revoked ones too, newest first. */
+export async function listAccessTokens(exec: LegacyUnscopedRead): Promise<AccessTokenRow[]> {
+  return exec.executeRaw<AccessTokenRow>('SELECT * FROM access_tokens ORDER BY created_at DESC');
+}
+
 /** `attachSourcePath` options: a non-null `name` replaces the name; a non-null `federated` sets `config.federated`. */
 export interface AttachSourcePathOptions { name?: string | null; federated?: boolean | null }
 
@@ -161,6 +242,40 @@ export async function expireMemoryProposals(exec: SqlExecutor, reason: string): 
 export function listAwaitingMemoryProposals(exec: LegacyUnscopedRead, limit: number): Promise<Array<Record<string, unknown>>> {
   return exec.executeRaw<Record<string, unknown>>(`SELECT * FROM memory_proposals WHERE state='awaiting_owner'
     ORDER BY created_at LIMIT $1`, [limit]);
+}
+
+/** The memory proposal a principal holds under `requestId` (a uuid), as its stored row, or null. */
+export async function readMemoryProposal(exec: LegacyUnscopedRead, principalKind: string, principalId: string, requestId: string): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>(
+    'SELECT * FROM memory_proposals WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid', [principalKind, principalId, requestId]);
+  return row ?? null;
+}
+
+/** The pending-proposal count and the oldest pending proposal's age in hours (null with none), as Postgres returns them. */
+export interface PendingProposalRow { n: number | string; oldest: number | string | null }
+
+/** How many memory proposals still await their owner unexpired, and how old the oldest is (status and doctor). */
+export async function readPendingProposalSummary(exec: LegacyUnscopedRead): Promise<PendingProposalRow | null> {
+  const [row] = await exec.executeRaw<PendingProposalRow>(`SELECT count(*) AS n,
+      EXTRACT(EPOCH FROM now() - min(created_at)) / 3600 AS oldest FROM memory_proposals WHERE state='awaiting_owner' AND expires_at>now()`);
+  return row ?? null;
+}
+
+/** One page of the owner's proposal list: `afterAt`/`afterId` are the previous page's last creation time and request id. */
+export interface ProposalListQuery { sourceId: string | null; all: boolean; limit: number; afterAt: string | null; afterId: string | null }
+
+/** The owner's proposal list, oldest first (creation time to the millisecond, then request id), as stored rows. */
+export function listMemoryProposalRows(exec: LegacyUnscopedRead, q: ProposalListQuery): Promise<Array<Record<string, unknown>>> {
+  return exec.executeRaw<Record<string, unknown>>(`SELECT * FROM memory_proposals WHERE ($1::text IS NULL OR source_id=$1)
+    AND ($2::boolean OR state='awaiting_owner')
+    AND ($4::timestamptz IS NULL OR (date_trunc('milliseconds', created_at), request_id) > ($4::timestamptz, $5::uuid))
+    ORDER BY date_trunc('milliseconds', created_at), request_id LIMIT $3`,
+    [q.sourceId, q.all, q.limit, q.afterAt, q.afterId]);
+}
+
+/** The proposals of any credential that carry this request id (at most two, so a uuidv5 collision is seen, never guessed). */
+export function listOwnerProposalRows(exec: LegacyUnscopedRead, requestId: string): Promise<Array<Record<string, unknown>>> {
+  return exec.executeRaw<Record<string, unknown>>('SELECT * FROM memory_proposals WHERE request_id=$1::uuid LIMIT 2', [requestId]);
 }
 
 /** Deletes every closed memory proposal decided (or last updated) at least `retentionDays` days ago; returns how many. */

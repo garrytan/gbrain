@@ -16,6 +16,8 @@
  *     are NOT stripped here — the bunfig provider-keys preload already scrubs
  *     them from the test process, so children inherit the scrubbed set;
  *     strip per-call via opts.env when a test re-injects them.
+ *   - PATH entries holding a gbrain binary outside this repo are dropped, so a
+ *     global install cannot stand in for the CLI under test.
  *   - `opts.home` sets BOTH HOME and GBRAIN_HOME so the child cannot read or
  *     clobber the operator's real ~/.gbrain.
  *   - The DIRECT child is reaped: timeout sends SIGTERM, escalates to SIGKILL
@@ -74,6 +76,19 @@ export function _setSpawnTarget(cmd: readonly string[] | null): void {
   spawnTargetOverride = cmd;
 }
 
+/**
+ * Drop every PATH entry that holds a `gbrain` binary outside this repo. A
+ * globally installed gbrain (e.g. ~/.bun/bin/gbrain) otherwise reaches the
+ * child: `setup` finds it, succeeds and writes a brain, and later cases see
+ * that brain. Entries under the repo root stay. Test-only; no product change.
+ */
+function withoutForeignGbrain(path: string): string {
+  return path
+    .split(':')
+    .filter(entry => entry === '' || entry.startsWith(REPO_ROOT) || !existsSync(join(entry, 'gbrain')))
+    .join(':');
+}
+
 function buildEnv(opts?: CliSpawnOpts): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -83,6 +98,7 @@ function buildEnv(opts?: CliSpawnOpts): Record<string, string> {
   delete env.GBRAIN_DATABASE_URL;
   delete env.GBRAIN_REMOTE_CLIENT_SECRET;
   env.GBRAIN_SKIP_STARTUP_HOOKS = '1';
+  if (env.PATH !== undefined) env.PATH = withoutForeignGbrain(env.PATH);
   if (opts?.home !== undefined) {
     env.HOME = opts.home;
     env.GBRAIN_HOME = opts.home;

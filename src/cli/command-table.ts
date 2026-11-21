@@ -341,6 +341,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: gbrain repair prints REPAIR_HELP (kinds + dry-run/apply contract).
   // thin client: Wave 2 repair core: repairs publish coordinated writes on the brain host.
   { name: 'repair', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/repair.ts') },
+  // GST-2988: the secret store (reveal, restore, keys); trusted local CLI on the brain host.
+  { name: 'secrets', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/secrets.ts') },
   { name: 'diag', phase: 'post-connect', thinClient: 'refuse', json: 'document', read_only: true, slowRead: () => 'the diagnostic bundle', help: () => import('./help/diag.ts'), load: () => import('./commands/diag.ts') },
   { name: 'orphans', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, slowRead: () => 'orphan pages', load: () => import('./commands/orphans.ts') },
   // selfHelp: maintain (#3015) prints its own usage block (modes + not-auto-applied list).
@@ -348,6 +350,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'reindex', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/reindex.ts') },
   { name: 'salience', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/salience.ts') },
   { name: 'anomalies', phase: 'post-connect', thinClient: 'none', selfHelp: true, slowRead: () => 'anomalous cohorts', load: () => import('./commands/anomalies.ts') },
+  { name: 'dedupe', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, slowRead: () => 'duplicate person and company pages', load: () => import('./commands/dedupe.ts') },
   { name: 'feedback', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/feedback.ts') },
   { name: 'status', phase: 'post-connect', thinClient: 'none', slowRead: args => args.includes('--funnel') ? null : 'the brain status snapshot', help: () => import('./help/status.ts'), load: () => import('./commands/status.ts') },
   { name: 'advisor', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/advisor.ts') },
@@ -359,6 +362,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // handler dispatch.
   // selfHelp: whoknows honours --help first (runWhoknows HELP block, whoknows.ts).
   { name: 'whoknows', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/whoknows.ts') },
+  // selfHelp: GST-3216 identity prints its own HELP (commands/identity.ts); refuse on a thin client, whose identifiers live on the brain host.
+  { name: 'identity', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/identity.ts') },
   { name: 'brainstorm', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/brainstorm.ts') },
   { name: 'lsd', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/lsd.ts') },
   // selfHelp: v0.41.20.0 skillopt's detailed HELP constant lives in src/core/skillopt/help.ts;
@@ -408,6 +413,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: connectors ships its own printHelp (commands/connectors/index.ts) with the
   // per-subcommand usage; keep the generic short-circuit from hiding it.
   { name: 'connectors', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/connectors.ts') },
+  // selfHelp: Apple Contacts writes through GBrain Helper (commands/apple-contacts.ts HELP), docs/guides/apple-contacts.md. Thin client:
+  // refused, because the owner signing key and the helper route live on the brain host, never behind a remote brain.
+  { name: 'apple-contacts', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/apple-contacts.ts') },
   // selfHelp: Wakeshift report-back switch (commands/wakeshift.ts HELP), docs/guides/wakeshift.md. Thin client: only
   // `watch` routes (watch_job / watch_write_request / watch_cron over MCP); the rest writes the host file plane and key.
   { name: 'wakeshift', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/wakeshift.ts') },

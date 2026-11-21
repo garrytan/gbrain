@@ -39,6 +39,7 @@ pub(crate) struct EffectRecord {
     pub request_id: String,
     pub kind: String,
     pub revision: Option<String>,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub data: Value,
     pub state: String,
     pub execution_token: Option<String>,
@@ -50,9 +51,12 @@ pub(crate) struct EffectRecord {
     pub next_attempt_at_us: i64,
     pub attempts: i64,
     pub error_code: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub outcome: Option<Value>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub recovery: Option<Value>,
     pub recovery_bytes: i64,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub claim_owner: Option<Value>,
 }
 
@@ -64,7 +68,7 @@ impl EffectRecord {
             "request_id": self.request_id,
             "kind": self.kind,
             "revision": self.revision,
-            "data": self.data,
+            "data": crate::jsonb::order(self.data.clone()),
             "state": self.state,
             "execution_token": self.execution_token,
             "updated_at": iso(self.updated_at_us),
@@ -75,10 +79,10 @@ impl EffectRecord {
             "next_attempt_at": iso(self.next_attempt_at_us),
             "attempts": self.attempts,
             "error_code": self.error_code,
-            "outcome": self.outcome,
-            "recovery": self.recovery,
+            "outcome": self.outcome.clone().map(crate::jsonb::order),
+            "recovery": self.recovery.clone().map(crate::jsonb::order),
             "recovery_bytes": self.recovery_bytes.to_string(),
-            "claim_owner": self.claim_owner,
+            "claim_owner": self.claim_owner.clone().map(crate::jsonb::order),
         })
     }
 
@@ -111,9 +115,11 @@ pub struct PublicationEffectsSpec {
     pub effects: Vec<QueuedEffect>,
 }
 
+/// A uuid column reads back in lowercase whatever case it was written in, so every key holds the
+/// lowercase spelling of the request id.
 fn effect_prefix(request_id: &str) -> Vec<u8> {
     let mut key = vec![keys::PERSISTENCE, EFFECT];
-    key.extend_from_slice(request_id.as_bytes());
+    key.extend_from_slice(request_id.to_ascii_lowercase().as_bytes());
     key.push(0);
     key
 }
@@ -263,6 +269,7 @@ pub(crate) fn insert_publication_effects_in(
     spec: &PublicationEffectsSpec,
 ) -> Result<Vec<String>> {
     uuid_cast(&spec.request_id)?;
+    let request_id = spec.request_id.to_ascii_lowercase();
     if let Some(revision) = &spec.revision {
         uuid_cast(revision)?;
     }
@@ -310,23 +317,28 @@ pub(crate) fn insert_publication_effects_in(
             }
             Some(data) => data.clone(),
         };
-        let key = effect_key(&spec.request_id, &kind);
+        let key = effect_key(&request_id, &kind);
         if get_json::<EffectRecord>(&*tx, &key)?.is_some() {
             continue;
+        }
+        if spec.worktree_id.is_some() {
+            return Err(violation(
+                "insert or update on table \"persistence_effects\" violates foreign key constraint \"persistence_effects_worktree_id_fkey\": no persistence worktree exists on this engine",
+            ));
         }
         next_id += 1;
         let record = EffectRecord {
             id: next_id,
-            request_id: spec.request_id.clone(),
+            request_id: request_id.clone(),
             kind: kind.clone(),
-            revision: spec.revision.clone(),
+            revision: spec.revision.as_ref().map(|r| r.to_ascii_lowercase()),
             data,
             state: "queued".into(),
             execution_token: None,
             updated_at_us: now,
             source_id: Some(spec.source_id.clone()),
-            source_incarnation: Some(spec.source_incarnation.clone()),
-            worktree_id: spec.worktree_id.clone(),
+            source_incarnation: Some(spec.source_incarnation.to_ascii_lowercase()),
+            worktree_id: spec.worktree_id.as_ref().map(|w| w.to_ascii_lowercase()),
             claim_expires_at_us: None,
             next_attempt_at_us: now,
             attempts: 0,
@@ -341,7 +353,7 @@ pub(crate) fn insert_publication_effects_in(
             tx,
             &order_key(next_id),
             &OrderEntry {
-                request_id: spec.request_id.clone(),
+                request_id: request_id.clone(),
                 kind: kind.clone(),
             },
         )?;
@@ -467,7 +479,7 @@ impl crate::Store {
                     "kind": e.kind,
                     "state": e.state,
                     "error_code": e.error_code,
-                    "outcome": e.outcome,
+                    "outcome": e.outcome.clone().map(crate::jsonb::order),
                     "recovering": e.recovery.is_some(),
                 })
             })

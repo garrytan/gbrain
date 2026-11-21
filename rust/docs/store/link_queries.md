@@ -33,9 +33,12 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 | `countForeignEdges(slug, sourceId, direction)` | served |
 | `listLivePageSummaries(scope?)` | served |
 | `countInboundLinks(slug, sourceId, { excludePrivate, originSameSource })` | served |
+| `readEntityInboundEdges(slug, sourceId, { excludePrivate, originSameSource })` | served |
 | `listLinkEndpointPages(sourceId, slugs, crossSourceSlugs)` | served |
 | `listPagesTitledIn(queryLower, scope)` | served |
 | `wordLexemes(words)` | served under the English text search configuration |
+| `readLinkContextMatches(asks)` | served |
+| `readLinkContextOriginPages(ids)` | served |
 
 ### Refusals (`engine_capability_missing`)
 
@@ -43,9 +46,17 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
   them (`getBacklinkCounts`, `getAdjacencyBoosts`, `supersedingPageSlugs`, `relationalFanout`, `relationalChainHop`,
   `listLivePageSummaries`, `listPagesTitledIn`): `GraphScope` applies `trust::TrustPolicy` to the page's stamped tier
   and its write-gate receipts. `findOrphanPages` and `listLinkSources` still refuse them: their SQL does not read
-  them through `pageReadFilter`, and no caller passes them. `requireSafeChunks` and `takesHoldersAllowList` are accepted where `pageReadFilter`
-  does not read them: they only turn the live filter on in `relationalFanout`, and they are ignored by
-  `getBacklinkCounts`, `getAdjacencyBoosts` and `relationalChainHop`, as in the SQL engines.
+  them through `pageReadFilter`, and no caller passes them. `takesHoldersAllowList` is accepted: it turns the live
+  filter on in `relationalFanout` and is ignored by `getBacklinkCounts` and `getAdjacencyBoosts`, as in the SQL
+  engines. `requireSafeChunks` is accepted everywhere `pageReadFilter` does not read it, and the relational walks model
+  it: `relationalFanout` and `relationalChainHop` give a page a `canonical_chunk_id` only when it is sealed at the safe
+  fence (`chunker_version >= 4`; a page that records no version is not safe), and `relationalChainHop` applies
+  readChainHop's `textGate` to edge context. The TypeScript member reads the caller and sends `textGate: 'body'` (the
+  evidence page must be sealed and hold no facts / takes fence; a segmented page's `body_flags.has_protected` decides,
+  fail closed), `'takes'` (an owner call whose credential names a holders list: sealed and no takes fence) or none (the
+  owner's own direct call). An unknown `textGate` is an invalid argument. `getBacklinkCounts`, `getAdjacencyBoosts` and
+  `supersedingPageSlugs` also accept and ignore the other keys of hybrid search's option bag
+  (`HYBRID_BAG_KEYS`), because hybrid search hands them that whole bag as their policy; any other key still refuses.
 - A page id that is not a 32-bit integer (`getBacklinkCounts`, `getAdjacencyBoosts`, `relationalChainHop`): Postgres
   casts the ids into `int[]`. A non-safe-integer id in `getAdjacencyBoosts` throws the same `TypeError` the SQL engines
   throw, before any option is read.
@@ -75,7 +86,9 @@ from a hidden page or with a hidden origin (`privateLinkOriginFilterForCaller` t
 whether it is live). The origin clause (`originFilter`) passes a link with no origin, or one whose origin page passes the
 live filter. The policy carries a caller's reader identity and private-readable grant (the `callerReaders`
 opt-in), in these reads and in `listLivePageSummaries`, `listPagesTitledIn` and `countInboundLinks`; any other caller
-whose policy differs (folder grants, lineage, an owner read) refuses.
+whose policy differs (folder grants, lineage, an owner read) refuses. The owner-only part of the policy (`ownerOnly`: a
+page of an owner-only source, a concept synthesized from one, or every page under the closed form) applies to each page
+the read judges, with the owner-only sources read once per call, on the first page the call judges (`OwnerOnlyCache`).
 
 ## Derived-link replacement
 
@@ -111,7 +124,7 @@ error rolls back the whole batch.
   live filter; the trusted unscoped call counts every page.
 - `getAdjacencyBoosts`: in-set linkers per page over the subgraph the ids induce, with the cross-source subset.
 - `relationalFanout`: every simple path from the seeds up to `depth` hops, grouped per reached page; the best path is
-  the one with the lowest `(hop, path length, path text)`. `canonical_chunk_id` is the page's lowest-index chunk.
+  the one with the lowest `(hop, path length, path text)`. `canonical_chunk_id` is the lowest-index chunk of the page's live body (`chunkGenerationProbe`): a staged chunk, one whose occurrence a deferred retire closed and an inline chunk left on a segmented page are never named.
 - `relationalChainHop`: one oriented step from the frontier, collapsed per neighbor, ordered by frontier id and lowest
   link id; the degree saturates at 300 (`CHAIN_DEGREE_SATURATION`).
 - `hasSupersedeEdges`: true when any `supersedes` link exists, in any source, to any page.
@@ -144,6 +157,9 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
   `pageReadFilter(.., scope)`, in page id order.
 - `countInboundLinks`: inbound links from live pages of the same source, `mentions` left out. With `excludePrivate`
   the referrer and the link origin must be readable; with `originSameSource` an origin must be live and in the source.
+- `readEntityInboundEdges`: the links `countInboundLinks` counts, in link id order, with the referrer's slug and the
+  temporal columns of the link's relationship in the `world` scope with `excludePrivate`, else `all`; all null when
+  there is no relationship row. The shim turns the two timestamps into `Date`, as Postgres returns them.
 - `listLinkEndpointPages`: the live pages of `sourceId` named in `slugs` (by slug), then, for slugs in
   `crossSourceSlugs` or with no row in `sourceId`, the live pages of other sources (source order, then slug). The SQL
   leaves the row order to the plan.
@@ -151,6 +167,13 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
   `pageReadFilter(.., scope, live)`, by source then slug in byte order, at most 50.
 - `wordLexemes`: each word's `tsvector_to_array(to_tsvector('english', w))`, in tsvector order. The member returns a
   `Map` from word to lexemes.
+- `readLinkContextMatches`: for each ask (a returned link context and its stored edge: from page, to page, link type;
+  the pages deleted or not), the links of that edge whose context is the ask's text or, for a text that ends in `…`,
+  starts with the text before it (counted in characters). `page_id` is the link's origin page (its from page when it
+  has none) when that page is live, else null. Ask order, then link id order; the SQL leaves the order to the plan. A
+  stored context is never NULL here, so an ask of `…` alone matches an empty context the SQL engines can store as NULL.
+- `readLinkContextOriginPages`: `{ id, source_id, slug, compiled_truth, timeline }` of the pages named in `ids`
+  (deleted or not) that are not segmented shells, by id. The SQL leaves the order to the plan.
 
 ## Known differences
 

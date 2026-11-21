@@ -55,6 +55,16 @@ pub struct PurgeTakesInput {
     pub subject: String,
 }
 
+/// `listHeldFenceTakeRows` arguments.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeldFenceTakeSpec {
+    pub source_id: String,
+    pub kind: String,
+    pub owner_key: String,
+    pub page_id: i64,
+}
+
 /// `readTakePreimages` arguments. The TypeScript member checks every number first
 /// (`checkTakePreimageRead`), so the numbers arrive whole and in range.
 #[derive(Debug, Clone, Deserialize)]
@@ -185,6 +195,48 @@ impl Store {
         Ok(page_takes(&*self.read()?, page_id)?
             .into_iter()
             .map(|t| json!({ "row_num": t.row_num, "claim": t.claim }))
+            .collect())
+    }
+
+    /// `listHeldFenceTakeRows(spec)`: the page's takes by row number, resolution cells included,
+    /// while the `(sourceId, kind, ownerKey)` generation is held `fence_absent`; none otherwise.
+    pub fn list_held_fence_take_rows(&self, spec: &HeldFenceTakeSpec) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let key = crate::generations::GenerationKey {
+            source_id: spec.source_id.clone(),
+            kind: spec.kind.clone(),
+            owner_key: spec.owner_key.clone(),
+        };
+        if !crate::generations::held_for(&*read, &key, "fence_absent")? {
+            return Ok(Vec::new());
+        }
+        let Ok(page_id) = u64::try_from(spec.page_id) else {
+            return Ok(Vec::new());
+        };
+        let mut takes = page_takes(&*read, page_id)?;
+        takes.sort_by_key(|t| t.row_num);
+        Ok(takes
+            .iter()
+            .map(|t| {
+                json!({
+                    "row_num": t.row_num,
+                    "claim": t.claim,
+                    "kind": t.kind,
+                    "holder": t.holder,
+                    "weight": real_out(t.weight),
+                    "since_date": t.since_date,
+                    "until_date": t.until_date,
+                    "source": t.source,
+                    "active": t.active,
+                    "resolved_at": t.resolved_at_us.map(iso),
+                    "resolved_quality": t.resolved_quality,
+                    "resolved_outcome": t.resolved_outcome,
+                    "resolved_source": t.resolved_source,
+                    "resolved_value": t.resolved_value.map(real_out),
+                    "resolved_unit": t.resolved_unit,
+                    "resolved_by": t.resolved_by,
+                })
+            })
             .collect())
     }
 

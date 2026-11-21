@@ -33,6 +33,7 @@ const OPEN = `gbrain_seg_rls_open_${tag}`;
 const READER = `gbrain_seg_rls_reader_${tag}`;
 const LEGACY = `gbrain_seg_rls_legacy_${tag}`;
 const WRITER = `gbrain_seg_rls_writer_${tag}`;
+const KEYWORD = `gbrain_seg_rls_keyword_${tag}`;
 const SOURCES = { 'src-a': 'alphaneedle', 'src-b': 'bravoneedle' } as const;
 const slugOf = (id: string) => `notes/ledger-${id}`;
 const PAGE_BODY_RLS_TABLES = ['page_body_manifest', 'page_body_staging_parts', 'page_body_staging_texts', 'page_body_stagings', 'page_derivation_spend',
@@ -79,7 +80,7 @@ const sourcesOf = (hits: Array<{ source_id?: unknown }>) => [...new Set(hits.map
       await operations.find(o => o.name === 'get_page')!.handler(ctx, { slug: slugOf(id), source_id: id, body: 'none' });
     }
     expect(Number((await engine.executeRaw<{ n: number }>('SELECT count(DISTINCT page_id)::int AS n FROM page_view_digests'))[0]!.n)).toBe(2);
-    for (const role of [OPEN, READER, LEGACY]) {
+    for (const role of [OPEN, READER, LEGACY, KEYWORD]) {
       await engine.executeRaw(`CREATE ROLE ${role} NOLOGIN NOSUPERUSER NOBYPASSRLS`);
       await engine.executeRaw(`GRANT USAGE ON SCHEMA public TO ${role}`);
     }
@@ -89,7 +90,7 @@ const sourcesOf = (hits: Array<{ source_id?: unknown }>) => [...new Set(hits.map
     if (engine) {
       for (const p of policies) await engine.executeRaw(`DROP POLICY IF EXISTS ${p.name} ON ${p.table}`);
       for (const t of forced) await engine.executeRaw(`ALTER TABLE ${t} NO FORCE ROW LEVEL SECURITY`);
-      for (const role of [OPEN, READER, LEGACY, WRITER]) {
+      for (const role of [OPEN, READER, LEGACY, KEYWORD, WRITER]) {
         await engine.executeRaw(`DROP OWNED BY ${role}`).catch(() => undefined);
         await engine.executeRaw(`DROP ROLE IF EXISTS ${role}`);
       }
@@ -185,6 +186,43 @@ const sourcesOf = (hits: Array<{ source_id?: unknown }>) => [...new Set(hits.map
       const failure = await asRole(engine, LEGACY, tx => tx.searchTitles('ledger', { sourceId: 'src-a' })).then(() => null, (e: { code?: string }) => e.code);
       expect(failure).toBe('42501');
       expect(sourcesOf(await asRole(engine, LEGACY, tx => tx.searchKeyword(SOURCES['src-a'], { sourceId: 'src-a' })))).toEqual(['src-a']);
+    }, 120_000);
+
+    test('a role holding only the recipe grant (no timeline_entries) keeps Postgres keyword search, and its stale flag stays false', async () => {
+      // The recipe as master ships it grants no timeline_entries; take its GRANT and make sure that table stays closed.
+      const grant = /GRANT SELECT ON [\s\S]*?TO \w+;/.exec(docsRecipe(KEYWORD))?.[0];
+      expect(grant).toBeDefined();
+      await engine.executeRaw(grant!);
+      await engine.executeRaw(`REVOKE SELECT ON timeline_entries FROM ${KEYWORD}`);
+      // The recipe says config needs its own grant and policy; search reads it on master too.
+      await engine.executeRaw(`GRANT SELECT ON config TO ${KEYWORD}`);
+      await engine.executeRaw(`CREATE POLICY ${KEYWORD}_open ON config FOR SELECT TO ${KEYWORD} USING (true)`);
+      policies.push({ name: `${KEYWORD}_open`, table: 'config' });
+      const [priv] = await engine.executeRaw<{ te: boolean }>(`SELECT has_table_privilege('${KEYWORD}', 'timeline_entries', 'SELECT') AS te`);
+      expect(priv!.te).toBe(false);
+      // A timeline entry newer than the page: a stale probe on this path would read it.
+      const [entry] = await engine.executeRaw<{ id: number }>(
+        `INSERT INTO timeline_entries (page_id, date, summary, created_at) VALUES ($1, CURRENT_DATE, 'newer entry', now() + interval '1 day') RETURNING id`,
+        [pageIds['src-a']]);
+      try {
+        await withEnv({ GBRAIN_RLS_SCOPE_BINDING: undefined }, async () => {
+          const seen = await asRole(engine, KEYWORD, async tx => {
+            const pages = await tx.searchKeyword(SOURCES['src-a']);
+            const chunks = await tx.searchKeywordChunks(SOURCES['src-a']);
+            return { pages: sourcesOf(pages), chunks: sourcesOf(chunks), stale: [...pages, ...chunks].map(h => h.stale) };
+          }, 'src-a');
+          expect(seen.pages).toEqual(['src-a']);
+          expect(seen.chunks).toEqual(['src-a']);
+          expect(seen.stale.length).toBeGreaterThan(0);
+          expect(seen.stale.every(s => s === false)).toBe(true);
+        });
+        // The owner reads timeline_entries, and Postgres keyword output is still stale=false, as on master.
+        const owner = [...await engine.searchKeyword(SOURCES['src-a']), ...await engine.searchKeywordChunks(SOURCES['src-a'])];
+        expect(owner.length).toBeGreaterThan(0);
+        expect(owner.every(h => h.stale === false)).toBe(true);
+      } finally {
+        await engine.executeRaw('DELETE FROM timeline_entries WHERE id = $1', [entry!.id]);
+      }
     }, 120_000);
 
     test('N7: a non-owner write role under the recipe creates a segmented page, recording its staging holds, and sees only its source', async () => {

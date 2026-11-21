@@ -69,6 +69,7 @@ export const CONTRACT_GOLDENS = [
 export const POSTGRES_GOLDENS = [
   'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test --timeout=60000 test/e2e/schema-catalog-golden.test.ts',
   'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test --timeout=60000 test/e2e/doctor-json-golden.test.ts',
+  'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test --timeout=60000 test/e2e/doctor-hot-checks-golden.test.ts',
 ];
 
 export const goldenArgv = (file: string): string[] => [...BUN_TEST, file];

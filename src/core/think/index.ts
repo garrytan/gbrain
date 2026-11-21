@@ -37,7 +37,7 @@ import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { resolveThinkWindow, trajectoryPointsInWindow } from './temporal-window.ts';
 import { resolveThinkTemporalContext } from './temporal-context.ts';
-import { resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
+import { ownerWidened, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
 import { evidenceTitlesEnabled } from '../search/evidence-date.ts';
 import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './decide.ts';
@@ -674,7 +674,7 @@ export async function runThink(
     anchor: opts.anchor,
     questionEmbedding,
     ...(window ? { window } : {}),
-    takesHoldersAllowList: opts.remote === false ? opts.takesHoldersAllowList : opts.takesHoldersAllowList ?? ['world'],
+    takesHoldersAllowList: opts.remote === false ? opts.takesHoldersAllowList : opts.takesHoldersAllowList ?? (ownerWidened() ? undefined : ['world']),
     excludePrivate: opts.excludePrivate ?? await resolveExcludePrivatePages(engine, opts.remote),
     remote: opts.remote,
     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),

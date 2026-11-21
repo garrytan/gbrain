@@ -6,7 +6,9 @@ mod memory_env;
 use gbrain_store::error::INVALID_ARGUMENT;
 use gbrain_store::facts::InsertFactsArgs;
 use gbrain_store::sources::SourceInput;
-use gbrain_store::trust::tier_reads::{CorePageRowQuery, TrustScanQuery, VersionIdsQuery};
+use gbrain_store::trust::tier_reads::{
+    CorePageRowQuery, PageIdsQuery, TrustScanQuery, VersionIdsQuery,
+};
 use gbrain_store::trust::write_gate::ReceiptFields;
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
@@ -257,7 +259,7 @@ fn core_rows_list_the_live_always_load_pages_by_source_then_slug() {
     assert!(other.contains(&"other:core/elsewhere".to_string()));
     let private = keys(&core_rows(
         &b,
-        json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true } }),
+        json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" } }),
     ));
     assert_eq!(private.len(), 7);
     assert!(!private.contains(&"default:core/private".to_string()));
@@ -567,4 +569,38 @@ fn version_reads_answer_the_snapshot_tier_and_the_write_that_replaced_it() {
     let writers = b.list_version_reason_writers(&ids(&[b1])).unwrap();
     assert_eq!(writers.len(), 1);
     assert_eq!(writers[0]["type"], json!("company"));
+}
+
+fn put_ref(b: &Brain, source: &str, slug: &str, page_type: &str) -> i64 {
+    let input: gbrain_store::pages::PageInput = args(json!({
+        "type": page_type, "title": format!("T {slug}"), "compiled_truth": format!("body {slug}"),
+        "timeline": "" }));
+    b.put_page(slug, &input, &args(json!({ "sourceId": source })))
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap()
+}
+
+#[test]
+fn page_refs_by_id_name_each_listed_page_once_deleted_pages_and_other_sources_included() {
+    let b = brain("tier-reads-page-refs");
+    other_source(&b);
+    let chat = put_ref(&b, "default", "quote/chat", "chat");
+    let note = put_ref(&b, "default", "quote/note", "note");
+    let gone = put_ref(&b, "default", "quote/gone", "transcript");
+    let elsewhere = put_ref(&b, "other", "quote/elsewhere", "person");
+    b.soft_delete_page("quote/gone", Some("default")).unwrap();
+
+    let q: PageIdsQuery = args(json!({ "ids": [elsewhere, gone, note, chat, note, 987_654, -1] }));
+    assert_eq!(
+        b.list_page_refs_by_ids(&q).unwrap(),
+        [
+            json!({ "id": chat, "source_id": "default", "slug": "quote/chat", "type": "chat" }),
+            json!({ "id": note, "source_id": "default", "slug": "quote/note", "type": "note" }),
+            json!({ "id": gone, "source_id": "default", "slug": "quote/gone", "type": "transcript" }),
+            json!({ "id": elsewhere, "source_id": "other", "slug": "quote/elsewhere", "type": "person" }),
+        ]
+    );
+    let none: PageIdsQuery = args(json!({ "ids": [] }));
+    assert!(b.list_page_refs_by_ids(&none).unwrap().is_empty());
 }

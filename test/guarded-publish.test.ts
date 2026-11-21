@@ -18,7 +18,10 @@ import { join } from 'node:path';
 import { commitAndPush } from '../src/core/git/commit-push.ts';
 import { scanRange } from '../src/core/git/range-secret-scan.ts';
 import { SCAN_MAX_FILE_BYTES } from '../src/core/secret-scan.ts';
-import { withEnv } from './helpers/with-env.ts';
+import { withEnv, envForFile } from './helpers/with-env.ts';
+
+/** GST-2988: these tests pin the publish refusal, which secrets.on_push refuse keeps. */
+envForFile({ GBRAIN_SECRETS_ON_PUSH: 'refuse' });
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-guarded-publish-')));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

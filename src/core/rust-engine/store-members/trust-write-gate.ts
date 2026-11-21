@@ -3,7 +3,9 @@
  * deleteStalePageWriteGateReceipts, listWriteGateReceiptsFor, deleteStaleWriteGateReceipts, upsertWriteGateHold,
  * listWriteGateHoldRows, getWriteGateHoldRow, decideWriteGateHold), over
  * `rust/crates/gbrain-store/src/trust/write_gate.rs`. The store returns times as ISO text; these members turn them
- * into Dates, as the SQL engines return them (rust/docs/store/trust.md).
+ * into Dates, as the SQL engines return them (rust/docs/store/trust.md). `listTrustAllowRuleRows` reads the owner's allow
+ * rules, which the store does not keep: `trust allow` adds them through raw SQL, which this engine refuses, so no Rust
+ * brain holds one and the list is empty.
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { WriteGateHoldRow, WriteGateReceiptRow } from '../../engine-sql/trust-write-gate.ts';
@@ -52,3 +54,6 @@ export const getWriteGateHoldRow: Member<'getWriteGateHoldRow'> = async (brain, 
 
 export const decideWriteGateHold: Member<'decideWriteGateHold'> = (brain, id, status, decidedBy) =>
   storeCall({ member: 'decideWriteGateHold' }, () => brain.decideWriteGateHold(id, status, decidedBy));
+
+/** The store keeps no allow rules (`trust allow` writes them through raw SQL, refused here), so none is listed. */
+export const listTrustAllowRuleRows: Member<'listTrustAllowRuleRows'> = async () => [];

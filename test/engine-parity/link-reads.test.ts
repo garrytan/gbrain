@@ -8,7 +8,9 @@
  *    always; Postgres with DATABASE_URL; the Rust arm through
  *    test/engine-parity/harness.ts): coverage counts, junk hubs, entity
  *    counts, graph coverage, foreign edges, live page summaries, the entity
- *    card's backlink count, link endpoints, titled pages and word lexemes.
+ *    card's backlink count and incoming edges, link endpoints, titled pages,
+ *    word lexemes, and the link rows and origin bodies behind a world-only
+ *    caller's link contexts.
  *  - Regression: an engine whose read drifts gives a different doctor score,
  *    orphan ratio, graph-query note, backlink count, link target or search
  *    anchor per backend.
@@ -30,6 +32,7 @@ import { chunk, installChunks } from './chunk-fixtures.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
+import { storedEdge, worldLinkContexts } from '../../src/core/eligibility/fence-overlay.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -326,6 +329,22 @@ describe('engine parity: link reads', () => {
   );
 
   parityTest(
+    'listPagesTitledIn: sources and slugs sort byte by byte, punctuation included',
+    { methods: ['putPage', 'listPagesTitledIn'] },
+    async (engine, backend) => {
+      // A collation that skips punctuation puts ab before a-z; byte order puts '-' (0x2d) before letters.
+      await createSource(engine, backend, 'ab');
+      await createSource(engine, backend, 'a-z');
+      for (const sourceId of ['ab', 'a-z']) {
+        for (const slug of ['notes/ab', 'notes/a-z', 'notes/a_z', 'notes/a.z']) await put(engine, slug, 'note', {}, sourceId, 'Acme Example');
+      }
+      const listed = (await engine.listPagesTitledIn('notes on acme example', {})).map(r => `${r.source_id}:${r.slug}`);
+      expect(listed[0]).toBe('a-z:notes/a-z');
+      return { listed };
+    },
+  );
+
+  parityTest(
     'wordLexemes: each word maps to its English lexemes',
     { methods: ['wordLexemes'] },
     async (engine) => {
@@ -334,6 +353,53 @@ describe('engine parity: link reads', () => {
       expect(m.get('running')).toEqual(['run']);
       expect(m.get('the')).toEqual([]);
       return sorted([...m].map(([w, lexemes]) => `${w}=>${lexemes.join('|')}`));
+    },
+  );
+
+  parityTest(
+    'readEntityInboundEdges: the links countInboundLinks counts, by link id, with the scope relationship\'s temporal columns',
+    { methods: ['putPage', 'addLink', 'addLinksBatch', 'softDeletePage', 'countInboundLinks', 'readEntityInboundEdges'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      for (const slug of ['notes/a', 'notes/b', 'notes/origin-gone', 'notes/origin-open']) await put(engine, slug, 'note');
+      await put(engine, 'people/alice-example', 'person');
+      await put(engine, 'companies/acme-example', 'company');
+      await put(engine, 'notes/private', 'note', { visibility: 'private' });
+      await put(engine, 'notes/far', 'note', {}, 'other');
+      await put(engine, 'notes/far-origin', 'note', {}, 'other');
+      const ACME = 'companies/acme-example';
+      await engine.addLink('people/alice-example', ACME, 'works at Acme', 'works_at', 'manual');
+      await engine.addLink('notes/a', ACME, 'cites Acme', 'cites', 'manual');
+      await engine.addLink('notes/b', ACME, '', 'mentions', 'mentions');
+      await engine.addLink('notes/private', ACME, 'private note', 'cites', 'manual');
+      await engine.addLink('notes/far', ACME, '', 'cites', 'manual', undefined, undefined, { fromSourceId: 'other', toSourceId: 'default' });
+      await engine.addLinksBatch([
+        { from_slug: 'notes/b', to_slug: ACME, link_type: 'cites', link_source: 'frontmatter', origin_slug: 'notes/origin-gone', origin_field: 'refs' },
+        { from_slug: 'notes/b', to_slug: ACME, link_type: 'invested_in', link_source: 'frontmatter', origin_slug: 'notes/origin-open', origin_field: 'refs' },
+        { from_slug: 'notes/a', to_slug: ACME, link_type: 'advises', link_source: 'frontmatter', origin_slug: 'notes/far-origin', origin_source_id: 'other', origin_field: 'refs' },
+      ]);
+      await engine.softDeletePage('notes/origin-gone');
+      // recorded_at is the write time on each arm: compare whether it is set, not its value.
+      const view = (rs: Awaited<ReturnType<BrainEngine['readEntityInboundEdges']>>) =>
+        rs.map(r => ({ ...r, temporal_recorded_at: r.temporal_recorded_at == null ? null : 'set' }));
+      const out: Record<string, unknown> = {};
+      for (const excludePrivate of [false, true]) {
+        for (const originSameSource of [false, true]) {
+          const opts = { excludePrivate, originSameSource };
+          const rows = await engine.readEntityInboundEdges(ACME, 'default', opts);
+          expect(rows.length).toBe(await engine.countInboundLinks(ACME, 'default', opts));
+          out[`${excludePrivate}:${originSameSource}`] = view(rows);
+        }
+      }
+      out.other = view(await engine.readEntityInboundEdges(ACME, 'other', { excludePrivate: false, originSameSource: false }));
+      out.missing = await engine.readEntityInboundEdges('companies/missing', 'default', { excludePrivate: false, originSameSource: false });
+      const local = out['false:false'] as Array<{ from_slug: string; link_type: string; temporal_semantics: string | null }>;
+      expect(local.map(r => `${r.from_slug}:${r.link_type}`)).toEqual([
+        'people/alice-example:works_at', 'notes/a:cites', 'notes/private:cites', 'notes/b:invested_in', 'notes/a:advises',
+      ]);
+      expect(local[0]!.temporal_semantics).toBe('state');
+      expect((out['true:true'] as unknown[]).length).toBe(3);
+      return out;
     },
   );
 
@@ -399,6 +465,90 @@ describe('engine parity: link reads', () => {
       expect(closed).toEqual({ open: 0, chat: 0 });
       expect(fn).toEqual({ open: 2, chat: 0 });
       return { before, unfiltered, closed, fn };
+    },
+  );
+
+  const ORIGIN_BODY = 'Alpha met [[people/bob-example]] at the fair. Later prose follows here.';
+  const MET = 'Alpha met [[people/bob-example]] at the fair.';
+  async function seedContexts(engine: BrainEngine): Promise<Map<number, string>> {
+    const ids = new Map<number, string>();
+    for (const made of [
+      await put(engine, 'people/bob-example', 'person'),
+      await engine.putPage('notes/origin', page('notes/origin', { compiled_truth: ORIGIN_BODY, timeline: 'Timeline line.' })),
+      await put(engine, 'notes/gone-origin', 'note'),
+    ]) ids.set(Number(made.id), made.slug);
+    await engine.addLink('notes/origin', 'people/bob-example', MET, 'mentions', 'markdown');
+    await engine.addLink('notes/origin', 'people/bob-example', 'stale excerpt no longer in the body', 'works_with', 'markdown');
+    await engine.addLink('notes/origin', 'people/bob-example', 'a writer note', 'cites', 'manual');
+    await engine.addLink('notes/origin', 'people/bob-example', 'from a deleted origin', 'advises', 'manual', 'notes/gone-origin');
+    await engine.softDeletePage('notes/gone-origin');
+    return ids;
+  }
+  const edge = (linkType: string, context: string) =>
+    ({ from_source_id: 'default', from_slug: 'notes/origin', to_source_id: 'default', to_slug: 'people/bob-example', link_type: linkType, context });
+
+  parityTest(
+    'readLinkContextMatches and readLinkContextOriginPages read the same link rows and origin bodies',
+    { methods: ['putPage', 'addLink', 'softDeletePage', 'readLinkContextMatches', 'readLinkContextOriginPages'] },
+    async (engine) => {
+      const ids = await seedContexts(engine);
+      const ask = (i: number, linkType: string, context: string, toSlug = 'people/bob-example') =>
+        ({ i, fromSourceId: 'default', fromSlug: 'notes/origin', toSourceId: 'default', toSlug, linkType, context });
+      const matches = (await engine.readLinkContextMatches([
+        ask(0, 'mentions', MET),
+        ask(1, 'mentions', 'Alpha met [[people/bob…'),
+        ask(2, 'mentions', 'Alpha met someone else…'),
+        ask(3, 'works_with', 'stale excerpt no longer in the body'),
+        ask(4, 'cites', 'a writer note'),
+        ask(5, 'advises', 'from a deleted origin'),
+        ask(6, 'mentions', MET, 'people/nobody'),
+      ])).map(m => `${m.i}|${m.link_source}|${m.context}|${m.page_id == null ? 'null' : ids.get(m.page_id)}`);
+      const pageIds = [...ids.keys()];
+      const origins = (await engine.readLinkContextOriginPages(pageIds))
+        .map(p => `${ids.get(p.id)}|${p.source_id}|${p.slug === ids.get(p.id)}|${p.compiled_truth}|${p.timeline}`);
+      const empty = { matches: await engine.readLinkContextMatches([]), origins: await engine.readLinkContextOriginPages([]) };
+      expect(sorted(matches)).toEqual(sorted([
+        `0|markdown|${MET}|notes/origin`,
+        `1|markdown|${MET}|notes/origin`,
+        '3|markdown|stale excerpt no longer in the body|notes/origin',
+        '4|manual|a writer note|notes/origin',
+        '5|manual|from a deleted origin|null',
+      ]));
+      expect(sorted(origins)).toEqual(sorted([
+        `notes/origin|default|true|${ORIGIN_BODY}|Timeline line.`,
+        'notes/gone-origin|default|true|notes/gone-origin body|',
+        'people/bob-example|default|true|people/bob-example body|',
+      ]));
+      expect(empty).toEqual({ matches: [], origins: [] });
+      return { matches: sorted(matches), origins: sorted(origins), empty };
+    },
+  );
+
+  parityTest(
+    'worldLinkContexts keeps the same link contexts for a world-only caller',
+    { methods: ['putPage', 'addLink', 'softDeletePage', 'readLinkContextMatches', 'readLinkContextOriginPages'] },
+    async (engine) => {
+      await seedContexts(engine);
+      const rows = [
+        edge('mentions', MET),
+        edge('mentions', 'Alpha met [[people/bob…'),
+        edge('works_with', 'stale excerpt no longer in the body'),
+        edge('cites', 'a writer note'),
+        edge('advises', 'from a deleted origin'),
+        edge('mentions', ''),
+      ];
+      const world = (await worldLinkContexts(engine, true, rows, storedEdge)).map(r => `${r.link_type}|${r.context}`);
+      const local = (await worldLinkContexts(engine, false, rows, storedEdge)).map(r => `${r.link_type}|${r.context}`);
+      expect(world).toEqual([
+        `mentions|${MET}`,
+        'mentions|Alpha met [[people/bob…',
+        'works_with|',
+        'cites|a writer note',
+        'advises|from a deleted origin',
+        'mentions|',
+      ]);
+      expect(local).toEqual(rows.map(r => `${r.link_type}|${r.context}`));
+      return { world, local };
     },
   );
 });

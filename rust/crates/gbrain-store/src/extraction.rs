@@ -374,7 +374,7 @@ impl Store {
         }
         self.write(|tx| {
             let mut stamped: BTreeSet<u64> = BTreeSet::new();
-            for (r, stamp) in refs.iter().zip(stamps) {
+            for (r, stamp) in refs.iter().zip(stamps.iter().cloned()) {
                 let Some(page) = read_page(&*tx, &r.source_id, &r.slug)? else {
                     continue;
                 };
@@ -502,7 +502,7 @@ impl Store {
         let ids: BTreeSet<i64> = options.ids.iter().copied().collect();
         self.write(|tx| {
             let mut changed = 0u64;
-            for id in ids {
+            for id in ids.iter().copied() {
                 let Ok(id) = u64::try_from(id) else {
                     continue;
                 };

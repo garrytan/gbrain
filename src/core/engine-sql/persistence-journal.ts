@@ -14,6 +14,8 @@ import type { SqlExecutor, QueryOpts } from './executor.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { JOURNAL_LIMITS_SQL } from '../persistence/limits.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/receipt-bytes.ts';
+import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
+import { sqlFragment, trustedSql } from './fragment.ts';
 
 /** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
 export const GIT_HOLD_OP = 'sync-hold';
@@ -106,6 +108,17 @@ export interface WriteCompletion {
   retainedBytes: number; terminalReservation: number; probePurges: boolean;
 }
 
+/**
+ * A cancellation: the completion of a request that is still in `expectState` under `expectExecutionToken`, not
+ * terminal, not publishing and not in recovery. The engine checks that and completes the row in one step.
+ */
+export interface WriteCancellation extends Omit<WriteCompletion, 'state'> { state: 'cancelled'; expectState: string; expectExecutionToken: string | null }
+/**
+ * `cancelled`: the completed row. `kept`: the row was terminal, publishing, in recovery, or no longer the row the
+ * caller read, and nothing changed. `too_large`: the result exceeds the reservation, and nothing changed.
+ */
+export type WriteCancelResult = { status: 'cancelled'; row: CompletedWriteRow } | { status: 'kept' | 'too_large'; row: WriteRequest };
+
 /** The claimed row: the request as stamped, whether it passed a queued sync row, and the newest sequence for a sync row. */
 export type ClaimedWriteRow = WriteRequest & { passed_sync: boolean; seen_sequence: string | null };
 /** A completed row; the purge columns are present only when the completion probed purges. */
@@ -152,6 +165,39 @@ export async function readWriteRequest(exec: LegacyUnscopedRead, principalKind: 
   return row ?? null;
 }
 
+/**
+ * `listWriteRequestRows` filters. `before` is a sequence as decimal text; a null list skips its fence and an empty
+ * list matches nothing. `slugPrefixes` are lower-case (one ending in `/` matches under it, any other matches the slug
+ * or under it); `operations` match `authority.attestedOp`, else `operation`; `slugAllowList` holds exact slugs or
+ * `<prefix>/*`.
+ */
+export interface WriteRequestListFilter {
+  before: string | null; limit: number; slugPrefixes: string[] | null; operations: string[] | null; slugAllowList: string[] | null;
+}
+
+/**
+ * One candidate page of `list_write_requests` (persistence/control.ts): a principal's requests in one live source
+ * (the source has the request's incarnation and is not archived), newest sequence first, through the filter. The
+ * caller authorizes each row and pages.
+ */
+export function listWriteRequestRows(exec: LegacyUnscopedRead, principalKind: string, principalId: string, sourceId: string,
+  filter: WriteRequestListFilter): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
+      JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation AND NOT s.archived
+      WHERE r.principal_kind=$1 AND r.principal_id=$2 AND r.source_id=$3
+      AND ($4::bigint IS NULL OR r.sequence<$4::bigint)
+      AND ($6::text[] IS NULL OR EXISTS (SELECT 1 FROM unnest($6::text[]) AS p(prefix)
+        WHERE length(p.prefix)>0 AND (CASE WHEN right(p.prefix,1)='/'
+          THEN left(lower(r.slug),length(p.prefix))=p.prefix
+          ELSE lower(r.slug)=p.prefix OR left(lower(r.slug),length(p.prefix)+1)=p.prefix||'/' END)))
+      AND ($7::text[] IS NULL OR COALESCE(r.authority->>'attestedOp', r.operation)=ANY($7::text[]))
+      AND ($8::text[] IS NULL OR EXISTS (SELECT 1 FROM unnest($8::text[]) AS a(pattern)
+        WHERE CASE WHEN right(a.pattern,2)='/*' THEN left(r.slug,length(a.pattern)-1)=left(a.pattern,length(a.pattern)-1)
+          ELSE r.slug=a.pattern END))
+      ORDER BY r.sequence DESC LIMIT $5`,
+  [principalKind, principalId, sourceId, filter.before, filter.limit, filter.slugPrefixes, filter.operations, filter.slugAllowList]);
+}
+
 /** The request with journal id `id`, or null. */
 export async function readWriteRequestById(exec: LegacyUnscopedRead, id: string, opts?: QueryOpts): Promise<WriteRequest | null> {
   const [row] = await exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id], opts);
@@ -183,6 +229,54 @@ export const OWNS_SCHEMA_TABLES_SQL = `SELECT pg_has_role(current_user, c.relown
 export async function ownsSchemaTables(exec: LegacyUnscopedRead): Promise<boolean> {
   const [owner] = await exec.executeRaw<{ owns: boolean | null }>(OWNS_SCHEMA_TABLES_SQL);
   return owner?.owns !== false;
+}
+
+/**
+ * The live grant of the OAuth client that owns a write (persistence/authority.ts `authorizeWrite`): the columns the
+ * write re-check reads. Every value is the stored column as the driver returns it; the caller decides what it permits.
+ */
+export type OAuthClientWriteGrant = {
+  deleted_at: unknown; scope: unknown; source_id: unknown; source_grant: unknown; allowed_operations: unknown;
+  bound_slug_prefixes: unknown; bound_tools: unknown; delegated_namespace: unknown; delegated_slug_prefixes: unknown;
+};
+/** The live grant of the legacy token that owns a write: the token grant columns this brain has, and `revoked_at`. */
+export type AccessTokenWriteGrant = TokenGrantRow & { revoked_at: unknown };
+
+/** The OAuth client grant read `authorizeWrite` has always sent, plain and with `FOR SHARE` (written out: static text only). */
+export const OAUTH_CLIENT_GRANT_SQL = `SELECT deleted_at,scope,source_id,source_grant,allowed_operations,
+      bound_slug_prefixes,bound_tools,delegated_namespace,delegated_slug_prefixes FROM oauth_clients WHERE client_id=$1`;
+export const OAUTH_CLIENT_GRANT_SHARE_SQL = `SELECT deleted_at,scope,source_id,source_grant,allowed_operations,
+      bound_slug_prefixes,bound_tools,delegated_namespace,delegated_slug_prefixes FROM oauth_clients WHERE client_id=$1 FOR SHARE`;
+/** `readOAuthClientWriteGrant(clientId, { lock })`: the client's grant row or null; `lock` holds it `FOR SHARE` so a revocation waits. */
+export async function readOAuthClientWriteGrant(exec: LegacyUnscopedRead, clientId: string, opts: { lock?: boolean } = {}): Promise<OAuthClientWriteGrant | null> {
+  const [row] = await exec.executeRaw<OAuthClientWriteGrant>(opts.lock ? OAUTH_CLIENT_GRANT_SHARE_SQL : OAUTH_CLIENT_GRANT_SQL, [clientId]);
+  return row ?? null;
+}
+
+/** The access_tokens columns this brain has (a column a pending migration adds reads as absent). */
+export const ACCESS_TOKEN_COLUMNS_SQL = "SELECT attname FROM pg_attribute WHERE attrelid=to_regclass('access_tokens') AND attnum>0 AND NOT attisdropped";
+/** The select list of the token grant columns (grants/model.ts `TOKEN_GRANT_ROW_COLUMNS`, constant names) present in `present`. */
+export function tokenGrantSelectList(present: ReadonlySet<string>): string {
+  return TOKEN_GRANT_ROW_COLUMNS.filter(c => present.has(c)).join(',');
+}
+/**
+ * `readAccessTokenWriteGrant(tokenId, { lock })`: the token's grant row or null, named columns only (GST-2314: a
+ * prepared SELECT * cached before a migration added a column fails 0A000 inside the transaction); `lock` holds it
+ * `FOR SHARE`. The same two statements grants/model.ts `tokenGrantRowSelect` and authority.ts sent.
+ */
+export async function readAccessTokenWriteGrant(exec: LegacyUnscopedRead, tokenId: string, opts: { lock?: boolean } = {}): Promise<AccessTokenWriteGrant | null> {
+  const present = new Set((await exec.executeRaw<{ attname: string }>(ACCESS_TOKEN_COLUMNS_SQL)).map(c => c.attname));
+  const { rows: [row] } = await exec.run<AccessTokenWriteGrant>(
+    sqlFragment`SELECT ${trustedSql(tokenGrantSelectList(present))},revoked_at FROM access_tokens WHERE id=${tokenId}${opts.lock ? trustedSql(' FOR SHARE') : sqlFragment``}`);
+  return row ?? null;
+}
+
+/** The credential locks `authorizeWrite` takes before it re-reads an attest right (GST-1113). */
+export const LOCK_OAUTH_CLIENT_SHARE_SQL = 'SELECT 1 FROM oauth_clients WHERE client_id=$1 FOR SHARE';
+export const LOCK_ACCESS_TOKEN_SHARE_SQL = 'SELECT 1 FROM access_tokens WHERE id=$1 FOR SHARE';
+/** `shareLockWriteCredential(kind, id)`: holds the credential row `FOR SHARE` for the caller's transaction, so a concurrent removal commits before or after. */
+export async function shareLockWriteCredential(exec: LegacyUnscopedRead, kind: 'oauth_client' | 'legacy_token', id: string): Promise<void> {
+  await exec.executeRaw(kind === 'oauth_client' ? LOCK_OAUTH_CLIENT_SHARE_SQL : LOCK_ACCESS_TOKEN_SHARE_SQL, [id]);
 }
 
 /** The counter rows of `keys` that exist, unlocked (`readCounterRows`). */
@@ -338,4 +432,23 @@ export function withdrawalEffectsParams(spec: WithdrawalEffectsSpec): unknown[] 
 /** Queues a withdrawal's `withdrawal-mirror`, `git` and `embedding` effects (see `WITHDRAWAL_EFFECTS_SQL`). */
 export async function insertWithdrawalEffects(exec: SqlExecutor, spec: WithdrawalEffectsSpec): Promise<void> {
   await exec.executeRaw(WITHDRAWAL_EFFECTS_SQL, withdrawalEffectsParams(spec));
+}
+
+/** Whether a locked request may still be cancelled under the caller's expectation (the same test the Rust store runs). */
+function cancellable(row: WriteRequest, c: WriteCancellation): boolean {
+  return !['committed', 'conflict', 'failed', 'cancelled'].includes(row.state) && row.state === c.expectState
+    && (row.execution_token ?? null) === c.expectExecutionToken && !row.publication_started && row.recovery == null;
+}
+
+/**
+ * Cancels request `c.id`: durable commit on, the row locked FOR UPDATE, the check, then the completion statement.
+ * Null when the row does not exist.
+ */
+export async function cancelWriteRow(exec: SqlExecutor, c: WriteCancellation): Promise<WriteCancelResult | null> {
+  const current = await lockWriteRequest(exec, c.id);
+  if (!current) return null;
+  if (!cancellable(current, c)) return { status: 'kept', row: current };
+  await exec.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+  const done = await completeWriteRow(exec, c);
+  return done ? { status: 'cancelled', row: done } : { status: 'too_large', row: current };
 }

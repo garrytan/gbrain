@@ -4,9 +4,8 @@
  * SQL once for both engines, so a store that is not SQL serves the same members (rust/docs/store/jobs-spend.md).
  *
  * What is here: the spend tree `describeJobs` prints, a reservation's insert, the sweep that marks overdue holds
- * expired, the usage-unknown mark, and the lease-pressure insert, count and list. What is not: the reads and the
- * settle that need `mcp_spend_log` or `oauth_clients` (budget-meter.ts), which stay raw and which the Rust engine
- * refuses.
+ * expired, the usage-unknown mark, and the lease-pressure insert, count and list. The statements that need
+ * `mcp_spend_log` or `oauth_clients` (the admissions, the settle with its ledger row) are in spend-log.ts.
  *
  * Every function takes the transaction (or the engine, for a single statement) it runs on. Rows come back typed:
  * counts and sums as numbers, timestamps as `Date`s.

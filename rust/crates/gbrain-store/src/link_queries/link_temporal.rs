@@ -6,7 +6,7 @@
 //! Members: readLinkRelationshipEvidence, writeLinkRelationshipState,
 //! linkRelationshipKeysForPages, staleLinkRelationshipKeys, linkRelationshipKeysForOrigin,
 //! linkRelationshipKeysTouching, applyLinkTemporalRows, writeManualLinkTransitions,
-//! removeManualLinkTransitions, listRelationshipNoteRows, edgeValidityCounts,
+//! removeManualLinkTransitions, listRelationshipNoteRows, readEntityInboundEdges, edgeValidityCounts,
 //! listPageStatusByRef, listRecordMetadataRows, countSearchVectorRows.
 //!
 //! The state itself (stints, status, evidence hash) is built by the pure TypeScript builder in
@@ -26,7 +26,8 @@
 //! `ON DELETE CASCADE`). `valid_ranges` is kept in the canonical text form Postgres prints for a
 //! `datemultirange`.
 
-use super::{Pages, QUARANTINE_KEY, origin_links};
+use super::site_reads::kept_inbound_links;
+use super::{InboundCountInput, Pages, QUARANTINE_KEY, origin_links};
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
@@ -414,6 +415,22 @@ pub struct NoteRow {
     pub temporal_undated_past: i64,
     pub temporal_first_start: Option<String>,
     pub temporal_recorded_at: String,
+    pub temporal_retired_at: Option<String>,
+}
+
+/// One `readEntityInboundEdges` row: the referrer, the link, and the temporal columns of
+/// `TEMPORAL_LINK_SELECT_SQL`, all null when the link has no relationship row in the scope.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InboundEdgeRow {
+    pub from_slug: String,
+    pub link_type: String,
+    pub context: String,
+    pub temporal_ranges: Option<String>,
+    pub temporal_semantics: Option<String>,
+    pub temporal_disputed: Option<bool>,
+    pub temporal_undated_past: Option<i64>,
+    pub temporal_first_start: Option<String>,
+    pub temporal_recorded_at: Option<String>,
     pub temporal_retired_at: Option<String>,
 }
 
@@ -1567,6 +1584,39 @@ impl Store {
                     temporal_retired_at: state.retired_at_us.map(iso_ms),
                 });
             }
+        }
+        Ok(out)
+    }
+
+    /// `readEntityInboundEdges`: the links `countInboundLinks` counts, in link id order, each with
+    /// its referrer's slug and the temporal columns of its relationship in the `world` scope under
+    /// the policy, else `all` (`temporalLinkJoinSql`).
+    pub fn read_entity_inbound_edges(
+        &self,
+        input: &InboundCountInput,
+    ) -> Result<Vec<InboundEdgeRow>> {
+        let read = self.read()?;
+        let read = &*read;
+        let scope = if input.exclude_private.is_some() {
+            "world"
+        } else {
+            "all"
+        };
+        let mut out = Vec::new();
+        for (link, from_slug) in kept_inbound_links(read, input)? {
+            let state = relationship(read, &RelationshipKey::of_link(&link), scope)?;
+            out.push(InboundEdgeRow {
+                from_slug,
+                link_type: link.link_type.clone(),
+                context: link.context.clone(),
+                temporal_ranges: state.as_ref().map(|r| r.valid_ranges.clone()),
+                temporal_semantics: state.as_ref().map(|r| r.semantics.clone()),
+                temporal_disputed: state.as_ref().map(|r| r.disputed),
+                temporal_undated_past: state.as_ref().map(|r| r.undated_past),
+                temporal_first_start: state.as_ref().and_then(|r| r.first_start.clone()),
+                temporal_recorded_at: state.as_ref().map(|r| iso_ms(r.recorded_at_us)),
+                temporal_retired_at: state.as_ref().and_then(|r| r.retired_at_us.map(iso_ms)),
+            });
         }
         Ok(out)
     }

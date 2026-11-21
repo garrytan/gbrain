@@ -161,7 +161,7 @@ for (const kind of testBackends()) {
       await addMember(engine, 'bob-example');
       expect(await engine.getConfig('access.serves_derived')).toBe('several');
       const since = await engine.getConfig('access.serves_since');
-      expect(since).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+      expect(since).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/);
       expect((await brainServes(engine))).toMatchObject({ serves: 'several', from: 'members', since });
       await disableMember(engine, 'bob-example');
       expect(await engine.getConfig('access.serves_derived')).toBe('one');

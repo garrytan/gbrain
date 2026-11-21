@@ -92,6 +92,14 @@ describe('rendering', () => {
     const ordered = orderCorePages([mk('wiki', 'z', 1), mk('default', 'b'), mk('default', 'a', 5)]).map(p => `${p.source_id}:${p.slug}`);
     expect(ordered).toEqual(['default:a', 'default:b', 'wiki:z']);
   });
+  test('ordering: slugs and source ids in byte order, as COLLATE "C" sorts them on every engine', () => {
+    // Regression: localeCompare put 'a' before 'B' and 'é' before 'f', so the session order and the core revision
+    // depended on the process locale and disagreed with the byte order the SQL listing uses.
+    const mk = (source_id: string, slug: string) => toCorePage({ source_id, slug, title: slug, compiled_truth: '', frontmatter: { always_load: true } });
+    const ordered = orderCorePages([mk('default', 'notes/f'), mk('default', 'notes/é'), mk('default', 'notes/a'), mk('default', 'notes/B'),
+      mk('wiki', 'z'), mk('team-b', 'z'), mk('team_a', 'z')]).map(p => `${p.source_id}:${p.slug}`);
+    expect(ordered).toEqual(['default:notes/B', 'default:notes/a', 'default:notes/f', 'default:notes/é', 'team-b:z', 'team_a:z', 'wiki:z']);
+  });
   test('revision moves when rendered text, priority or the limit changes', () => {
     const a = toCorePage({ source_id: 'default', slug: 'a', title: 'A', compiled_truth: 'one' });
     const r1 = coreRevision([a], 4000);

@@ -32,7 +32,7 @@ import { INJECTION_PATTERNS, restoreNeutralized } from '../think/sanitize.ts';
 import { resolveModelDetailed, type ResolveSource } from '../model-config.ts';
 import { normalizeModelId, splitProviderModelId } from '../model-id.ts';
 import type { BrainEngine, NewFact, FactKind, FactAttribution } from '../engine.ts';
-import { normalizeMetricLabel } from './extract-from-fence.ts';
+import { normalizeExtractedMetricLabel } from './extract-from-fence.ts';
 import { isNullLikeEntity } from './write-single.ts';
 import { isAIInvocationPolicyError } from '../ai/invocation-guard.ts';
 
@@ -838,7 +838,7 @@ export async function extractFactsFromTurnWithOutcome(
     // here so all storage paths see canonical lowercase snake_case names.
     // Value is already a finite number from parseExtractorJson; unit and
     // period are stored verbatim.
-    const claimMetric = normalizeMetricLabel(candidate.metric ?? undefined) ?? null;
+    const claimMetric = normalizeExtractedMetricLabel(candidate.metric ?? undefined) ?? null;
     const claimValue  = candidate.value ?? null;
     const claimUnit   = candidate.unit ?? null;
     const claimPeriod = candidate.period ?? null;

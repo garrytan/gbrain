@@ -27,8 +27,8 @@ opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve 
 `--surface starter` lists the daily-driver tools: the seven memory verbs
 ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)), `search`, `query`,
 `get_page`, `put_page`, `capture`, graph reads and skills. It is the surface every
-new registration gbrain writes pins. A parameter it leaves out is still accepted,
-and `request_tools` returns full schemas or widens the session to a left-out tool. `--surface full` lists every
+new registration gbrain writes pins. A parameter it leaves out is refused (`param_not_on_surface`) apart from a short reviewed list,
+and `request_tools` returns the schemas this surface may pass or widens the session to a left-out tool. `--surface full` lists every
 operation (`put_pages`, admin and tuning ops) and is the opt-in; `--surface verbs`
 lists only the seven verbs.
 Three facts about `opencode mcp add`, all observed:

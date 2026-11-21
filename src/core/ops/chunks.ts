@@ -73,8 +73,8 @@ const get_chunks: Operation = {
     // #5575: a chunk's tier is its page's (lowered by a fence trust marker); rows below the floor read as missing.
     const { floor } = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
     // GST-2891: a held row is looked up under the source and slug of the page each chunk belongs to.
-    const owners = worldOnlyFacts(ctx.remote) && page.chunks.length ? new Map((await ctx.engine.executeRaw<{ id: number; slug: string; source_id: string }>(
-      'SELECT id, slug, source_id FROM pages WHERE id = ANY($1::int[])', [[...new Set(page.chunks.map(c => c.page_id))]])).map(o => [Number(o.id), o] as const)) : null;
+    const owners = worldOnlyFacts(ctx.remote) && page.chunks.length
+      ? new Map((await ctx.engine.listPageRefsByIds(page.chunks.map(c => c.page_id))).map(o => [o.id, o] as const)) : null;
     const kept = owners ? (await dropHeldFenceRows(ctx.engine, page.chunks.map(c => ({ ...c, slug: owners.get(c.page_id)?.slug ?? '', source_id: owners.get(c.page_id)?.source_id }))))
       .map(({ source_id: _source, slug: _slug, ...chunk }) => chunk) : page.chunks;
     const stamped = (await stampPageTrust(ctx.engine, kept.map(c => ({ ...c, slug: p.slug as string })), floor)).map(({ slug: _slug, ...chunk }) => chunk);

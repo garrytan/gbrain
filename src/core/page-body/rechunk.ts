@@ -228,7 +228,7 @@ async function rechunkPage(engine: BrainEngine, id: number, apply: boolean, reti
     }
     await scope(exec => exec.transaction(async tx => {
       const page = await lockedPage(tx, ref, generation);
-      await tx.executeRaw('UPDATE pages SET chunker_version=$2 WHERE id=$1', [page.id, SEGMENTED_CHUNKER_VERSION]);
+      await tx.setChunkerVersion(page.slug, SEGMENTED_CHUNKER_VERSION, { sourceId: page.source_id });
     }));
     return { ...out, state: out.segments_changed ? 'rechunked' : 'stamped', vectors_reused: reused };
   } catch (error) {

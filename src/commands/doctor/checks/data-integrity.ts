@@ -241,20 +241,8 @@ async function runCrossModal(ctx: DoctorContext): Promise<Check[]> {
     } else {
       // D21 source-aware: report per-source coverage so multi-source brains
       // can't hide 0% on one source behind a high global average.
-      const rows = await engine.executeRaw<{ source_id: string | null; total: string; covered: string }>(
-        `SELECT
-           COALESCE(p.source_id, 'default') AS source_id,
-           COUNT(*)::text AS total,
-           SUM(CASE WHEN cc.embedding_multimodal IS NOT NULL THEN 1 ELSE 0 END)::text AS covered
-         FROM content_chunks cc
-         JOIN pages p ON p.id = cc.page_id
-         GROUP BY p.source_id`,
-      );
-      const perSource = rows.map(r => ({
-        source: r.source_id || 'default',
-        total: parseInt(String(r.total), 10),
-        covered: parseInt(String(r.covered), 10),
-      }));
+      const perSource = (await engine.countChunkVectorCoverage('embedding_multimodal'))
+        .map(r => ({ source: r.source_id, total: r.total, covered: r.covered }));
       const lowestCoverage = perSource.reduce(
         (acc, r) => Math.min(acc, r.total > 0 ? r.covered / r.total : 1),
         1,

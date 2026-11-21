@@ -54,10 +54,11 @@ type Match = (e: { sql: string; params: unknown[] }) => boolean;
 const first = (at: 'start' | 'end', match: Match) => events.findIndex(e => e.at === at && match(e));
 const last = (at: 'start' | 'end', match: Match) => events.findLastIndex(e => e.at === at && match(e));
 const onPage = (prefix: string, id: number): Match => e => e.sql.startsWith(prefix) && Number(e.params[0]) === id;
+// The open and the pin confirm both read the page head (readSegmentedPageHead): the open is a page's first head read,
+// the confirm its last one, which comes after the open answered.
 const OPEN = 'SELECT id, source_id, slug, body_storage, body_generation';
 const ROWS = 'SELECT m.seq, m.occurrence_id';
 const META = 'SELECT occurrence_id, entry_state, protected_regions';
-const CONFIRM = 'SELECT slug, body_generation, knowledge_revision::text AS revision';
 const isText: Match = e => e.sql.includes('FROM page_segment_texts');
 const isLedger = (slug: string): Match => e => e.sql.startsWith('WITH chosen AS') && e.params[0] === slug;
 
@@ -82,7 +83,8 @@ describe('segmented evidence reads (PGLite)', () => {
     expect(first('start', onPage(META, id))).toBeGreaterThan(-1);
     expect(first('start', onPage(META, id))).toBeLessThan(first('end', isText));
     expect(first('start', isText)).toBeLessThan(first('end', onPage(META, id)));
-    const confirmStart = first('start', onPage(CONFIRM, id));
+    const confirmStart = last('start', onPage(OPEN, id));
+    expect(confirmStart).toBeGreaterThan(openEnd);
     expect(confirmStart).toBeGreaterThan(last('end', isText));
     expect(confirmStart).toBeGreaterThan(last('end', onPage(META, id)));
     expect(confirmStart).toBeGreaterThan(last('end', onPage(ROWS, id)));
@@ -96,7 +98,8 @@ describe('segmented evidence reads (PGLite)', () => {
     expect(results[1]!.chunk_text).toContain('zzpipelinebeta');
     const [a, b] = [pages['chat/pipeline-a']!.id, pages['chat/pipeline-b']!.id];
     const opened = (id: number) => first('start', onPage(OPEN, id));
-    const confirmed = (id: number) => first('end', onPage(CONFIRM, id));
+    const confirmed = (id: number) => last('end', onPage(OPEN, id));
+    for (const id of [a, b]) expect(last('start', onPage(OPEN, id))).toBeGreaterThan(first('end', onPage(OPEN, id)));
     expect(Math.min(opened(a), opened(b))).toBeGreaterThan(-1);
     expect(Math.max(opened(a), opened(b))).toBeLessThan(Math.min(confirmed(a), confirmed(b)));
   }, 120_000);

@@ -262,7 +262,7 @@ export const PROJECTION_RETRY_READY_TEXT = "(j.reason IS DISTINCT FROM 'rebuild_
   + ` AND NOT ${SEGMENTED_PROJECTION_CLAIMED_TEXT}`
   + " AND NOT (split_part(j.reason,':',1)='chunk_replacement_continuing' AND j.updated_at>=now()-interval '60 seconds')";
 /** A segmented row no other process holds (the filter when the retry cooldown is off). */
-const SEGMENTED_PROJECTION_UNCLAIMED_TEXT = `NOT ${SEGMENTED_PROJECTION_CLAIMED_TEXT}`;
+const SEGMENTED_PROJECTION_UNCLAIMED_TEXT = `NOT (split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')`;
 
 /** Which segmented queue rows `rebuildPendingSegmentedProjections` takes. */
 export interface SegmentedProjectionFilter {
@@ -336,4 +336,58 @@ export function residentWindowCtesFragment(cursor: Pick<ProjectionScanCursor, 'a
 /** Runs `projectionWindowFragment`; on an empty queue it returns one row of nulls that carries the high water. */
 export async function selectProjectionWindowJobs(exec: LegacyUnscopedRead, cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): Promise<ProjectionWindowRow[]> {
   return (await exec.run<ProjectionWindowRow>(projectionWindowFragment(cursor, retryCooldown))).rows;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The segmented projector's queue writes (page-body/projection.ts).
+
+/** `claimSegmentedProjection`: $1 source id, $2 slug, $3 the claim. No row when the page has no queued job. */
+export const CLAIM_SEGMENTED_PROJECTION_SQL = `WITH claimed AS (UPDATE page_projection_jobs SET reason=$3, updated_at=clock_timestamp()
+      WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2 AND NOT (split_part(reason,':',1)='segmented_projecting' AND updated_at>=now()-interval '60 seconds') RETURNING 1)
+    SELECT EXISTS (SELECT 1 FROM claimed) AS claimed WHERE EXISTS (SELECT 1 FROM claimed) OR EXISTS (SELECT 1 FROM page_projection_jobs WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2)`;
+
+/** `renewSegmentedProjectionClaim`: $1 source id, $2 slug, $3 the claim. */
+export const RENEW_SEGMENTED_PROJECTION_CLAIM_SQL = `UPDATE page_projection_jobs SET updated_at=clock_timestamp() WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2 AND reason=$3 RETURNING 1`;
+
+/** `releaseSegmentedProjectionClaim`: $1 source id, $2 slug, $3 the claim. */
+export const RELEASE_SEGMENTED_PROJECTION_CLAIM_SQL = `UPDATE page_projection_jobs SET reason='canonical_change', updated_at=clock_timestamp() WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2 AND reason=$3`;
+
+/** `deleteProjectionJob`: $1 source incarnation, $2 slug, $3 revision. */
+export const DELETE_PROJECTION_JOB_SQL = 'DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid';
+
+/** `markProjectionRebuildFailed`: $1 source incarnation, $2 slug, $3 revision. */
+export const MARK_PROJECTION_REBUILD_FAILED_SQL = `UPDATE page_projection_jobs j SET reason='rebuild_failed', updated_at=now()
+        WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT (split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')`;
+
+/** A page by source and slug, as the projector names it. */
+export interface ProjectionPageRef { sourceId: string; slug: string }
+/** A queued job by its key and the revision it was queued at. */
+export interface ProjectionJobRef { sourceIncarnation: string; slug: string; revision: string }
+/** What a claim found: the job is now this build's, another live claim holds it, or the page has no queued job. */
+export type SegmentedProjectionClaimOutcome = 'claimed' | 'held' | 'absent';
+
+/** Claims the page's queued job for `claim` (`segmented_projecting:<uuid>`) unless another live claim holds it. */
+export async function claimSegmentedProjection(exec: SqlExecutor, ref: ProjectionPageRef, claim: string): Promise<SegmentedProjectionClaimOutcome> {
+  const [row] = await exec.executeRaw<{ claimed: boolean }>(CLAIM_SEGMENTED_PROJECTION_SQL, [ref.sourceId, ref.slug, claim]);
+  return !row ? 'absent' : row.claimed ? 'claimed' : 'held';
+}
+
+/** Moves the claim's time to now; false when the job no longer carries `claim`, changing nothing. */
+export async function renewSegmentedProjectionClaim(exec: SqlExecutor, ref: ProjectionPageRef, claim: string): Promise<boolean> {
+  return (await exec.executeRaw(RENEW_SEGMENTED_PROJECTION_CLAIM_SQL, [ref.sourceId, ref.slug, claim])).length > 0;
+}
+
+/** Puts a job that still carries `claim` back to `canonical_change`. */
+export async function releaseSegmentedProjectionClaim(exec: SqlExecutor, ref: ProjectionPageRef, claim: string): Promise<void> {
+  await exec.executeRaw(RELEASE_SEGMENTED_PROJECTION_CLAIM_SQL, [ref.sourceId, ref.slug, claim]);
+}
+
+/** Deletes the job when it is still queued at `job.revision`. */
+export async function deleteProjectionJob(exec: SqlExecutor, job: ProjectionJobRef): Promise<void> {
+  await exec.executeRaw(DELETE_PROJECTION_JOB_SQL, [job.sourceIncarnation, job.slug, job.revision]);
+}
+
+/** Marks a job still queued at `job.revision` that no live claim holds `rebuild_failed`, starting its retry window. */
+export async function markProjectionRebuildFailed(exec: SqlExecutor, job: ProjectionJobRef): Promise<void> {
+  await exec.executeRaw(MARK_PROJECTION_REBUILD_FAILED_SQL, [job.sourceIncarnation, job.slug, job.revision]);
 }

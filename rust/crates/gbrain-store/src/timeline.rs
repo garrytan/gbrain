@@ -30,7 +30,7 @@ use sha2::{Digest, Sha256};
 
 mod receipt;
 mod tier;
-pub(crate) use receipt::TimelineReceipt;
+pub(crate) use crate::write_receipt::WriteReceipt as TimelineReceipt;
 pub(crate) use tier::TimelineTrust;
 
 const NEXT_TIMELINE_ID: &str = "next_timeline_id";
@@ -189,7 +189,7 @@ pub(crate) fn parse_date(text: &str) -> Result<String> {
 /// The id is taken before the dedup check, as `INSERT .. ON CONFLICT DO NOTHING` takes the
 /// serial's next value before it finds the conflict: a deduped add leaves the same gap in
 /// the ids PGLite leaves, so the ids `getTimeline` returns match.
-fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool> {
+pub(crate) fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool> {
     let dedup = record.dedup_key();
     record.id = next_id(tx, NEXT_TIMELINE_ID)?;
     if tx.get(&dedup)?.is_some() {
@@ -429,7 +429,7 @@ impl Store {
                 }
                 return Err(missing("addTimelineEntry", "page", slug, source_id));
             };
-            let Some(date) = date else {
+            let Some(date) = date.clone() else {
                 return Err(not_null("date"));
             };
             let Some(summary) = entry.summary.as_deref() else {
@@ -861,7 +861,7 @@ mod tests {
                 .map(|row| row["summary"].clone())
                 .collect()
         };
-        let policy = json!({"honorAliases": true, "entityPrivacy": true});
+        let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
         assert_eq!(summaries("people/a", json!({})).len(), 4);
         // The event page is judged by id: a read scoped to `default` still hides the private event
         // page in `alt`, and an entry whose event page is gone fails the EXISTS.

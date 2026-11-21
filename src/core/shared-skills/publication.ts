@@ -13,6 +13,7 @@ import { admitWrite, assertReplayIntent, getWriteRequest, intentDigest } from '.
 import { initializeLocalPersistence, pageMutationSource, requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { assertSharedSkillPersistence } from '../persistence/protocol.ts';
+import { requireManagedPersistence } from '../rust-engine/errors.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from '../persistence/service.ts';
 import { digest, requireUuid, sha256, stableJson } from '../persistence/digest.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
@@ -206,6 +207,7 @@ function rebuildDependentClosure(name: string, previous: StoredSkillFile[], repl
 }
 export async function submitSharedSkillMutation(ctx: OperationContext, operation: 'put_skill' | 'delete_skill', params: Record<string, unknown>, adoption?: HostAdoption): Promise<Record<string, unknown>> {
   assertPersistenceAccepting(ctx.engine);
+  requireManagedPersistence(ctx.engine, operation, 'a skill bundle write publishes to the protocol-2 canonical owner of a managed checkout');
   assertSkillCapability(ctx, 'skill_editor', operation);
   if (adoption && ctx.remote !== false) {
     throw opError('permission_denied', 'Pack adoption requires trusted host authority.',

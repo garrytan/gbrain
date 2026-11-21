@@ -20,6 +20,7 @@ import { isGuestWrite, skipsGuestNote } from '../guests/derived.ts';
 import { bodyUnread, isSegmentedPage } from '../page-body/page-shape.ts';
 import type { PersistenceEffect } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 
 export type FactsBackstopStatus = { queued: true } | { skipped: string };
 
@@ -32,7 +33,8 @@ export async function authorizeFactsBackstop(engine: BrainEngine, row: WriteRequ
   await authorizeWrite(engine, row.authority, 'extract_facts', row.slug, lock);
   // A grant may have become confined while the page itself remains in scope.
   if (row.principal_kind === 'oauth_client') {
-    const [current] = await engine.executeRaw<{ bound_slug_prefixes: unknown }>('SELECT bound_slug_prefixes FROM oauth_clients WHERE client_id=$1', [row.principal_id]);
+    const found = await engine.readOauthClient(row.principal_id);
+    const current = found && requireOauthClientColumns(found, ['bound_slug_prefixes']);
     if (current?.bound_slug_prefixes != null) throw opError('permission_denied', 'The current writer grant is confined.',
       `OAuth client ${row.principal_id} is now bound to slug prefixes, so facts from ${row.slug} are not extracted; the page itself is written. Widening the grant is the brain host operator's decision.`,
       { fix: readFix('Lists the OAuth clients with their bound slug prefixes, read-only.', { argv: ['gbrain', 'auth', 'clients', '--json'] }) });
@@ -161,6 +163,9 @@ export async function dispatchFactsBackstopEffect(engine: BrainEngine, effect: P
       notabilityFilter: connector ? 'high-only' : notabilityFilter,
       visibility: effect.data.visibility === 'world' ? 'world' : 'private',
       persistence_request_id: effect.request_id, page_id: effect.data.page_id, revision: effect.revision,
+      // A remote write's job runs as a remote caller (facts-absorb handler): the owner socket sends none of its writes. Set
+      // only to narrow, so a local write's job data stays as it was.
+      ...(row!.authority?.remote !== false ? { remote_write: true } : {}),
     }, { queue: 'default', idempotency_key: factsAbsorbWriteKey(effect.request_id), max_attempts: 5, backoff_delay: 60_000 });
     await completeEffect(tx, effect, { facts: 'queued', job_id: job.id });
   });

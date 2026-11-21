@@ -5,6 +5,7 @@
  *   gbrain access member set <id> --email <addr>|none
  *   gbrain access member link <id>|--email <addr> --qm <canonical id> | unlink --qm <canonical id> | links [--member <id>]
  *   gbrain access member source add|remove|list <member> [<source>]
+ *   gbrain access member handover <member> [--set <group>=<choice>]... [--yes --expect <hash>] [--undo <id>] [--status <id>]
  *   gbrain access group add|rm|list <group> [--members a,b]
  *   gbrain access who-can-read <slug> [--source <id>]
  *   gbrain access check --token <name>|--client <id> [--as a,b]
@@ -24,7 +25,9 @@ import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
 import { readClientGrant } from '../core/grants/service.ts';
 import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
-import { accessAllowedSql, folderRulesAllowedSql, isPrivacyPrivatePage, withCallerAccess } from '../core/search/private-visibility.ts';
+import { credentialReadSources } from '../core/grants/shared-exposure.ts';
+import { accessAllowedSql, folderRulesAllowedSql, isPrivacyPrivatePage, schemaVersionNow, withCallerAccess } from '../core/search/private-visibility.ts';
+import { ownerOnlyForm, ownerOnlyPageSql } from '../core/access/owner-only.ts';
 import { membersReadLineageOn, setMembersReadLineage } from '../core/access/lineage.ts';
 import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
 import { folderAccessFor } from '../core/access/caller.ts';
@@ -69,6 +72,13 @@ Members and groups:
                                              Preview first; removing the last binding makes it readable
                                              again to every attested person whose credential grants it
   gbrain access member source list [<id>]
+  gbrain access member handover <id> [--set <group>=<choice>]... [--yes --expect <hash>]
+                                             After disable or rm: gives pages the member kept to itself to the
+                                             owner (kept=, folder=owner|<member>|everyone|keep; shared=keep|drop;
+                                             source=keep|<member>). Preview first
+  gbrain access member handover <id> --undo <handover id> [--yes --expect <hash>]
+                                             Once the member is enabled again: restores what the handover moved
+  gbrain access member handover --status <handover id>
   gbrain access group add <group> [--members a,b]
   gbrain access group rm <group> [--members a,b] [--yes]
                                              With --members, removes those members; otherwise previews
@@ -165,8 +175,14 @@ export interface WhoCanReadEntry {
 
 /** Who may read `slug` remotely: its normalized readers, privacy and the enabled members those readers admit. */
 export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: string): Promise<WhoCanReadEntry[]> {
-  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown; folder_rule_ids: string[] | null }>(
-    `SELECT slug, source_id, type, frontmatter, folder_rule_ids FROM pages WHERE slug = $1${sourceId ? ' AND source_id = $2' : ''} ORDER BY source_id`,
+  // The brain's schema version, as a remote read carries it: without it the owner-only test takes its closed form, and
+  // on a brain that has (or once had) an owner-only source every page would read as owner-only, unlike real reads.
+  const schema = await schemaVersionNow(engine);
+  const remotePolicy = { privacyRelaxed: false, restricted: true, ...schema };
+  // owner_only: the page is in, or derived from, an owner-only source (imessage, apple-contacts, owner_only: true), so only the owner reads it.
+  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown; folder_rule_ids: string[] | null; owner_only: boolean }>(
+    `SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', ownerOnlyForm(schema.schemaVersion))} AS owner_only
+       FROM pages p WHERE p.slug = $1${sourceId ? ' AND p.source_id = $2' : ''} ORDER BY p.source_id`,
     sourceId ? [slug, sourceId] : [slug]);
   if (!rows.length) {
     throw opError('not_found', `No page "${slug}"${sourceId ? ` in source ${sourceId}` : ''}.`, 'Check the slug with gbrain list or gbrain search.');
@@ -188,10 +204,11 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
     const readers = normalizeReaders(fm);
     const priv = isPrivacyPrivatePage({ type: row.type, frontmatter: fm });
     const ruled = (row.folder_rule_ids?.length ?? 0) > 0;
+    const ownerOnly = row.owner_only === true;
     const allowed: string[] = [];
-    if (readers !== null || ruled) {
+    if (readers !== null || ruled || ownerOnly) {
       for (const { id, identity, folder } of members) {
-        const admitted = await withCallerAccess({ identity, ...folder, restricted: true }, () => engine.executeRaw(
+        const admitted = await withCallerAccess({ identity, ...folder, restricted: true, owner: id === ownerId, remotePolicy }, () => engine.executeRaw(
           `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${accessAllowedSql('p', identity)}`, [row.source_id, row.slug]));
         if (admitted.length) allowed.push(id);
       }
@@ -202,17 +219,20 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
     if (ownerOpened) allowed.push(optIn!);
     const ownerRecord = members.find(m => m.id === ownerId);
     const audienceOpened = audiencePage && !!ownerRecord && !allowed.includes(ownerRecord.id) && (readers !== null || ruled)
-      && (await withCallerAccess({ identity: ownerRecord.identity, ...ownerRecord.folder, restricted: true }, () => engine.executeRaw(
+      && (await withCallerAccess({ identity: ownerRecord.identity, ...ownerRecord.folder, restricted: true, owner: true, remotePolicy }, () => engine.executeRaw(
         `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${folderRulesAllowedSql('p', ownerRecord.folder.satisfiedRuleIds)}`, [row.source_id, row.slug]))).length > 0;
     if (audienceOpened) allowed.push(ownerRecord!.id);
     const lineageRules = ruled ? await engine.executeRaw<{ n: number }>(
       `SELECT count(*)::int AS n FROM unnest($1::text[]) AS x WHERE NOT EXISTS (SELECT 1 FROM access_rules r WHERE r.source_id = $2 AND x = $2 || ':' || r.rule_id AND NOT r.covers_derived)`,
       [row.folder_rule_ids, row.source_id]) : [{ n: 0 }];
     const closesLineage = readers !== null || Number(lineageRules[0]?.n ?? 0) > 0;
-    const nobody = readByNobodyNote({ slug: row.slug, source_id: row.source_id, readers }, ruled, allowed.length, known, ownerId);
+    const nobody = ownerOnly ? null : readByNobodyNote({ slug: row.slug, source_id: row.source_id, readers }, ruled, allowed.length, known, ownerId);
     const notes = [
       ...(nobody ? [nobody] : []),
-      readers === null ? (ruled ? 'No readable_by, but folder rules cover it: only members who meet every rule read it remotely.' : 'No readable_by: every caller entitled to the source reads it.')
+      ...(ownerOnly ? [ownerId
+        ? `It is in, or derived from, an owner-only source (imessage, apple-contacts or owner_only: true), so only the owner (${ownerId}) reads it remotely, when its readable_by and rules admit the owner; no other member and no unbound credential reads it.`
+        : 'It is in, or derived from, an owner-only source (imessage, apple-contacts or owner_only: true), and no owner is set, so no remote caller reads it (gbrain access owner set <member> names the owner).'] : []),
+      readers === null ? (ruled ? 'No readable_by, but folder rules cover it: only members who meet every rule read it remotely.' : ownerOnly ? 'No readable_by.' : 'No readable_by: every caller entitled to the source reads it.')
         : readers.includes('!nobody') ? 'readable_by is malformed, so no remote caller reads it; fix the frontmatter.'
         : 'Only credentials bound to these members (directly or through a group) read it remotely; unbound credentials and stdio do not.',
       ...(readers !== null && ruled ? ['Folder rules cover it too: a member must meet readable_by and every rule.'] : []),
@@ -224,7 +244,7 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
       ...(audienceOpened || (audiencePage && ownerOpened) ? [`It is the member page of an audience member (gbrain access member kind), so the owner (${ownerId}) reads it, its older versions, its derived pages and its facts as if it named the owner.`] : []),
       ...(labelledOnlyIds.length ? [`Labelled-only members (${labelledOnlyIds.join(', ')}) read it only when it names them: readable_by or a rule listing them or their groups${readers === null && !ruled ? ', so none of them reads it' : ''}; a derived page or fact that names nobody is hidden from them${memberLineage ? ' unless every origin names them' : ''}.`] : []),
     ];
-    entries.push({ slug: row.slug, source_id: row.source_id, readers, private: priv, members: readers === null && !ruled ? 'every_source_reader' : allowed, note: notes.join(' ') });
+    entries.push({ slug: row.slug, source_id: row.source_id, readers, private: priv, members: readers === null && !ruled && !ownerOnly ? 'every_source_reader' : allowed, note: notes.join(' ') });
   }
   return entries;
 }
@@ -248,6 +268,10 @@ export interface AccessCheckResult {
   labelled_only: boolean;
   explanation: string;
   audience?: Array<{ principal: string; covered_by_may_act_for: boolean }>;
+  /** GST-2898: the read-shared switch is on (also read every shared source, now and later). */
+  read_shared: boolean;
+  /** GST-2898: the sources it reads unqualified now, resolved through credentialReadSources (the switch included). */
+  reads_now: string[];
 }
 
 /** Every grant axis and the member identity of one credential, as the verifier and dispatch would see it. */
@@ -264,7 +288,7 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
   } else {
     const client = await readClientGrant(engine, target.client!);
     if (client.revoked) throw opError('client_not_found', `OAuth client "${target.client}" is revoked.`, 'List the clients with gbrain auth clients --json.');
-    [row] = await engine.executeRaw<Record<string, unknown>>('SELECT member_id, may_act_for, reads_unscoped FROM oauth_clients WHERE client_id = $1', [client.clientId]) as [Record<string, unknown>];
+    row = await engine.readOauthClient(client.clientId) as unknown as Record<string, unknown>;
     grant = grantFromClient(client);
     credential = { kind: 'client', id: client.clientId, name: client.clientName };
   }
@@ -298,7 +322,9 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
     grant: { scopes: grant.scopes, sources: grant.sources, takes_holders: grant.takesHolders, private_pages: grant.privatePages,
       operations: grant.allowedOperations ?? 'unrestricted', revision: grant.revision },
     member, identity, may_act_for: mayActFor, verdict, reads_unscoped: readsUnscoped, owner, owner_reads_restricted: ownerReadsRestricted, members_read_lineage: memberLineage, labelled_only: labelledOnly, explanation,
+    read_shared: grant.readShared === true, reads_now: await credentialReadSources(engine, grant, boundId),
   };
+ 
   if (target.as !== undefined) {
     const audience: NonNullable<AccessCheckResult['audience']> = [];
     for (const entry of target.as.split(',').map(s => s.trim()).filter(Boolean)) {
@@ -360,7 +386,8 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
       const stranded = sub === 'disable' && !json ? await disableReadByNobodyLines(engine, m.id).catch((e: unknown) =>
         [`Could not check which pages naming it no enabled member reads (${e instanceof Error ? e.message : String(e)}); the disable stands. gbrain access who-can-read <slug> shows who reads a page.`]) : [];
       return print(json, { member: m }, () => [`Member ${sub}d: ${m.id}`, memberLine(m),
-        sub === 'disable' ? 'Its credentials are refused on their next request; gbrain access member enable undoes this.' : 'Its credentials read again on their next request.', ...stranded]);
+        sub === 'disable' ? 'Its credentials are refused on their next request; gbrain access member enable undoes this.' : 'Its credentials read again on their next request.', ...stranded,
+        ...(sub === 'disable' ? [`Give the pages it kept to itself to the owner (preview first): gbrain access member handover ${m.id}`] : [])]);
     }
     case 'set': {
       const email = flagValue(args, '--email');
@@ -376,7 +403,7 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
         `  Bound credentials (${r.bound_credentials.length}): ${r.bound_credentials.map(c => `${c.kind} ${c.name}`).join(', ') || 'none'}`,
         `  Pages naming it (${r.pages.length}${r.pages_truncated ? '+' : ''}): ${r.pages.map(p => `${p.source_id}:${p.slug}`).join(', ') || 'none'}`,
         `  ${r.note}`,
-        ...(yes ? [] : [`Apply with: gbrain access member rm ${r.member.id} --yes`])]);
+        ...(yes ? [] : [`Hand its pages over first (removing drops its group memberships): gbrain access member handover ${r.member.id}`, `Apply with: gbrain access member rm ${r.member.id} --yes`])]);
     }
     case 'list': {
       const members = await listMembers(engine, { includeRemoved: args.includes('--all') });
@@ -388,8 +415,10 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
       return memberLinksCmd(engine, sub, args, json, id);
     case 'source':
       return memberSourceCmd(engine, args, json);
+    case 'handover':
+      return (await import('./access-handover.ts')).handoverCmd(engine, args, json);
     default:
-      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, set, kind, labelled-only, disable, enable, rm, list, link, unlink, links or source (gbrain access --help).');
+      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, set, kind, labelled-only, disable, enable, rm, list, link, unlink, links, source or handover (gbrain access --help).');
   }
 }
 
@@ -556,6 +585,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
           `  Sources: ${JSON.stringify(r.grant.sources)}`,
           `  Operations: ${r.grant.operations === 'unrestricted' ? 'every operation the scopes allow' : r.grant.operations.length}`,
           `  Private pages: ${r.grant.private_pages}`,
+          `  Reads now: ${r.reads_now.join(', ') || 'nothing'}${r.read_shared ? '  (read-shared on: sources shared later join automatically; guest sources and other members\' own sources never do)' : ''}`,
           `  Member: ${r.member ? `${r.member.id} (${r.member.status})` : 'none'}${r.member?.groups.length ? `  groups: ${r.member.groups.join(', ')}` : ''}${r.labelled_only ? '  labelled-only' : ''}`,
           `  May act for: ${r.may_act_for?.join(', ') ?? 'none'}`,
           ...(r.audience ? [`  Audience: ${r.audience.map(a => `${a.principal}${a.covered_by_may_act_for ? '' : ' (not in may_act_for)'}`).join(', ')}`] : []),

@@ -32,7 +32,8 @@
 //! `pages` either, and PGLite's single `deletePage` keeps its rows. The batch purges
 //! (`deletePages`, `purgeDeletedPages`) run `scrubPurgedSlugStores`, which drops the page aliases
 //! of a purged slug, the slug aliases that resolve to it and the rename rows that end at it;
-//! [`scrub_purged_slug_stores`] does that for them here.
+//! [`scrub_purged_slug_stores`] does that for them here, and [`scrub_purged_rename_history`] is its
+//! last step.
 //! All three tables cascade from `sources`: [`remove_source_rows`] removes every row of a deleted
 //! source.
 //!
@@ -42,19 +43,20 @@
 //! `updateSlug` writes slug aliases and rename history. The private-provenance policy
 //! (`facts/privacy.rs`) reads both through [`read_slug_alias`] and [`renamed_to`].
 
-use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, INVALID_STATE, Result, StoreError};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
 use crate::pages::{
-    PageRecord, all_pages, read_page, rename_page, scope_sources, snapshot_in, validate_slug,
-    write_page,
+    PageRecord, all_pages, read_page, read_page_by_id, rename_page, scope_sources, snapshot_in,
+    validate_slug, write_page,
 };
 use crate::sources::{read_source, require_source};
-use crate::trust::{TrustPolicy, TrustTier};
+use crate::trust::{TrustPolicy, TrustTable, TrustTier};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 const SLUG_ALIAS: u8 = 0x01;
@@ -116,6 +118,9 @@ pub(crate) struct DerivedAliasValue {
     #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
     pub alias_text: Option<String>,
 }
+
+/// The frontmatter key that marks a page whose chunks get no vectors.
+const EMBED_SKIP_KEY: &str = "embed_skip";
 
 /// The origins `page_aliases_origin_check` admits.
 const ORIGINS: [&str; 3] = [FRONTMATTER, "declared", "subject"];
@@ -714,9 +719,11 @@ impl Store {
         }
         let read = self.read()?;
         let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+        // The owner-only sources are read once per call, on the first page it judges.
+        let owner_only = RefCell::new(OwnerOnlyCache::default());
         let readable = |page: &PageRecord| -> Result<bool> {
             if let Some(policy) = &scope.exclude_private
-                && page_hidden(&*read, page, policy)?
+                && owner_only.borrow_mut().page_hidden(&*read, page, policy)?
             {
                 return Ok(false);
             }
@@ -797,6 +804,7 @@ impl Store {
     pub fn alias_canonical_refs(&self, query: &AliasCanonicalQuery) -> Result<Vec<Value>> {
         let read = self.read()?;
         let trust = TrustPolicy::parse(query.min_trust.as_deref(), query.suppress_flagged)?;
+        let mut owner_only = OwnerOnlyCache::default();
         let refs: BTreeSet<(&str, &str)> = query
             .refs
             .iter()
@@ -834,7 +842,7 @@ impl Store {
                 continue;
             }
             if let Some(policy) = &query.exclude_private
-                && page_hidden(&*read, &page, policy)?
+                && owner_only.page_hidden(&*read, &page, policy)?
             {
                 continue;
             }
@@ -878,9 +886,12 @@ impl Store {
 
     /// `updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration)`: stamps the
     /// live page at `(sourceId, slug)` and sets its `updated_at`; anything else is left alone. The
-    /// knowledge revision does not move (neither column is in the revision trigger's list). The
-    /// `none` tier's reset of `embedding_signature` and chunk vectors is a no-op here: this store
-    /// keeps neither.
+    /// knowledge revision does not move (neither column is in the revision trigger's list). Moving a
+    /// page from the `title` or `per_chunk_synopsis` tier to `none` resets what the tier embedded, as
+    /// the SQL engines do: the page's `embedding_signature` goes, and every chunk with a vector loses
+    /// it, its embed time and its text and input hashes and is stamped pending now
+    /// (`embeddings::reset_page_vectors`, which raises the vector generation). An `embed_skip` page
+    /// keeps both, as does a page that had no tier.
     pub fn update_page_contextual_retrieval_state(
         &self,
         slug: &str,
@@ -898,12 +909,20 @@ impl Store {
             else {
                 return Ok(());
             };
+            let now = self.env.now_micros();
+            let old_mode = read_cr(&*tx, page.id)?.map(|cr| cr.mode);
+            if mode == "none"
+                && matches!(old_mode.as_deref(), Some("title" | "per_chunk_synopsis"))
+                && !page.frontmatter.contains_key(EMBED_SKIP_KEY)
+            {
+                crate::embeddings::reset_page_vectors(tx, page.id, now)?;
+            }
             let state = CrState {
                 mode: mode.to_string(),
                 corpus_generation: corpus_generation.map(str::to_string),
             };
             put_json(tx, &cr_key(page.id), &state)?;
-            page.updated_at_us = self.env.now_micros();
+            page.updated_at_us = now;
             write_page(tx, &page)
         })
     }
@@ -913,7 +932,9 @@ impl Store {
     /// there is none). The page is versioned as it stood first, then moved by
     /// `pages::rename_page`; a real move records `old -> new` in the rename history and the slug aliases, moves the records
     /// other families key by slug (`cascade::rename_slug_rows`) and moves the page's alias rows. `invalid_slug` for a bad new slug, `constraint_violation` when the new
-    /// slug is taken; either keeps nothing.
+    /// slug is taken; either keeps nothing. A segmented page (NULL body) is refused with `invalid_state` before anything
+    /// is written, as `create_version` refuses it: PGLite versions it as a reference to its live body generation, and
+    /// this store keeps no such reference, so the version would hold no body.
     pub fn update_slug(
         &self,
         old_slug: &str,
@@ -922,12 +943,29 @@ impl Store {
     ) -> Result<u64> {
         let new_slug = validate_slug(new_slug)?;
         let source = source_id.unwrap_or(DEFAULT_SOURCE);
-        let trust = &self.write_trust()?;
+        // #9735: a move only re-keys the page and the facts that name it, so both keep their tier
+        // (`withTrustKeep(tx, ['pages', 'facts'])` in `engine-sql/pages.ts` `updateSlug`).
+        let mut trust = self.write_trust()?;
+        for table in [TrustTable::Pages, TrustTable::Facts] {
+            if !trust.keep.contains(&table) {
+                trust.keep.push(table);
+            }
+        }
+        let trust = &trust;
         self.write(|tx| {
+            let _keep = crate::write_trust::stamp_context::open(trust.clone());
             let Some(page) = read_page(&*tx, source, old_slug)? else {
                 return Ok(0);
             };
+            if page.compiled_truth.is_null() {
+                return Err(StoreError::new(
+                    INVALID_STATE,
+                    format!("updateSlug refuses segmented page {old_slug} (source={source})"),
+                ));
+            }
             snapshot_in(tx, &*self.env, &page)?;
+            // The snapshot's prune can record a history gap on the page: move the page as stored.
+            let page = read_page_by_id(&*tx, page.id)?.unwrap_or(page);
             let moved = rename_page(tx, &*self.env, &page, &new_slug)?;
             if moved.slug != page.slug {
                 record_rename_alias(tx, source, &page.slug, &moved.slug)?;
@@ -1141,6 +1179,96 @@ mod tests {
         assert_eq!(
             rows_with_values(&store, "b"),
             vec![("fm".into(), FRONTMATTER.into(), None)]
+        );
+    }
+
+    #[test]
+    fn a_slug_move_keeps_the_page_tier_whatever_the_mover_declares() {
+        let store = crate::test_support::store();
+        let declare = |tier: &str| {
+            let names =
+                ["gbrain.write_trust_tier", "gbrain.write_trust_promotion"].map(String::from);
+            store
+                .apply_write_trust(&names, &[tier.to_string(), tier.to_string()])
+                .unwrap();
+        };
+        let tier = |slug: &str| {
+            let read = store.read().unwrap();
+            read_page(&*read, "default", slug)
+                .unwrap()
+                .unwrap()
+                .trust_tier
+        };
+        let input = crate::pages::PageInput {
+            page_type: "note".into(),
+            title: "A".into(),
+            compiled_truth: "body".into(),
+            ..crate::pages::PageInput::default()
+        };
+        declare("agent_written");
+        store
+            .put_page("a", &input, &crate::pages::PutPageOptions::default())
+            .unwrap();
+        assert_eq!(tier("a").as_deref(), Some("agent_written"));
+        // An owner-tier mover does not raise the page; a mover with no declared tier does not lower it.
+        declare("operator_curated");
+        assert_eq!(store.update_slug("a", "b", None).unwrap(), 1);
+        assert_eq!(tier("b").as_deref(), Some("agent_written"));
+        store.clear_write_trust();
+        assert_eq!(store.update_slug("b", "c", None).unwrap(), 1);
+        assert_eq!(tier("c").as_deref(), Some("agent_written"));
+    }
+
+    /// A derived alias yields to a live page titled with it; under a privacy policy a page the policy
+    /// hides is not one (the `titleFilter` of `readAliases`).
+    #[test]
+    fn a_private_title_shadows_a_derived_alias_only_without_the_policy() {
+        use crate::pages::{PageInput, PutPageOptions};
+        let store = crate::test_support::store();
+        let put = |slug: &str, title: &str, frontmatter: serde_json::Value| {
+            let input: PageInput = serde_json::from_value(json!({
+                "type": "note", "title": title, "compiled_truth": "body", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store
+                .put_page(slug, &input, &PutPageOptions::default())
+                .unwrap();
+        };
+        put("companies/acme", "Acme Co", json!({}));
+        put(
+            "notes/acme-title",
+            "Acme",
+            json!({ "visibility": "private" }),
+        );
+        put("companies/beta", "Beta Co", json!({}));
+        put("notes/beta-title", "Beta", json!({}));
+        store
+            .write(|tx| {
+                put_page_alias(tx, "default", "acme", "companies/acme", "declared")?;
+                put_page_alias(tx, "default", "beta", "companies/beta", "declared")
+            })
+            .unwrap();
+        let names = ["acme".to_string(), "beta".to_string()];
+        let answer = |scope: serde_json::Value| {
+            let scope: AliasScope = serde_json::from_value(scope).unwrap();
+            store
+                .resolve_aliases(&names, &scope)
+                .unwrap()
+                .into_iter()
+                .map(|(alias, refs)| (alias, refs.into_iter().map(|r| r.slug).collect::<Vec<_>>()))
+                .collect::<Vec<_>>()
+        };
+        assert!(answer(json!({})).is_empty());
+        assert_eq!(
+            answer(
+                json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" } })
+            ),
+            vec![("acme".to_string(), vec!["companies/acme".to_string()])]
+        );
+        // With the privacy part of the policy off, nothing is hidden by `visibility`, so the title shadows again.
+        assert!(
+            answer(json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn" } }))
+                .is_empty()
         );
     }
 

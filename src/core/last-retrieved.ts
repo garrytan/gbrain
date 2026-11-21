@@ -181,18 +181,8 @@ export function _resetTrackRetrievalCacheForTests(): void {
   _trackRetrievalCache = new WeakMap();
 }
 
-/**
- * $1 page ids. Ids of pages that do not exist are skipped, as the UPDATE of
- * `pages` skipped them. The SELECT drops rows still inside the window before
- * the upsert, because ON CONFLICT locks (and so dirties) a conflicting row even
- * when its WHERE then skips it; the ON CONFLICT test keeps a concurrent bump
- * from moving a row twice.
- */
-export const BUMP_LAST_RETRIEVED_SQL = `INSERT INTO page_retrievals (page_id, last_retrieved_at)
-  SELECT p.id, NOW() FROM pages p LEFT JOIN page_retrievals r ON r.page_id = p.id
-   WHERE p.id = ANY($1::int[]) AND (r.page_id IS NULL OR r.last_retrieved_at < NOW() - INTERVAL '5 minutes')
-  ON CONFLICT (page_id) DO UPDATE SET last_retrieved_at = EXCLUDED.last_retrieved_at
-    WHERE page_retrievals.last_retrieved_at < NOW() - INTERVAL '5 minutes'`;
+/** The bump statement, $1 the page ids (engine-sql/pages.ts bumpPageRetrievals runs it). */
+export { BUMP_LAST_RETRIEVED_SQL } from './engine-sql/pages.ts';
 
 /**
  * Bump `last_retrieved_at` on the given page_ids. Fire-and-forget — caller
@@ -219,7 +209,7 @@ function startBump(engine: BrainEngine, pageIds: number[]): void {
       // 5-minute throttle (D2) + best-effort. The upsert is idempotent:
       // setting last_retrieved_at = NOW() multiple times in a row is the
       // same as setting it once (TIMESTAMPTZ comparison is monotonic).
-      await engine.executeRaw(BUMP_LAST_RETRIEVED_SQL, [pageIds]);
+      await engine.bumpPageRetrievals(pageIds);
     } catch (err) {
       // Pre-v224 brain (table missing) falls through silently — the search
       // op already returned, the LSD signal just stays NULL until upgrade.
