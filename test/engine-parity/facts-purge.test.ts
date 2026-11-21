@@ -616,7 +616,11 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
   parityTest('findActiveSingleFact under the remote provenance floor answers inside a caller record: a member, the owner, and a brain with no member-access restrictions', { methods: ['findActiveSingleFact'] }, async (engine, backend) => {
     const seed = new Seed(engine);
     await putCallerPages(engine);
-    const pages = ['notes/open', 'notes/private', 'notes/readers', 'memory/members/alice-example'];
+    // A page derived from a page that names readers: the full form's origin walk hides it, and the short form a brain
+    // with no member-access restrictions renders does not, even when the store's restriction flag is set (here by
+    // notes/readers), as for a caller whose flag read is stale.
+    await engine.putPage('notes/lineage', note('Lineage', '', { derived_from: ['notes/readers'] }));
+    const pages = ['notes/open', 'notes/private', 'notes/readers', 'notes/lineage', 'memory/members/alice-example'];
     for (const page of pages) await seed.fence([{ label: page, fact: 'Likes tea', row_num: 1, source_markdown_slug: page, entity_slug: 'people/a' }]);
     const records = {
       member: { identity: ['member:alice-example'] },
@@ -640,8 +644,9 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     };
     const byPage = await asRecords(readPages);
     // The floor judges every provenance page by the empty identity, so the caller's own member page stays hidden too.
-    const floor = { 'notes/open': 'notes/open', 'notes/private': null, 'notes/readers': null, 'memory/members/alice-example': null, none: 'notes/open' };
-    expect(byPage).toEqual({ none: floor, member: floor, owner: floor, open: floor, ownerOpen: floor });
+    const floor = { 'notes/open': 'notes/open', 'notes/private': null, 'notes/readers': null, 'notes/lineage': null, 'memory/members/alice-example': null, none: 'notes/open' };
+    const short = { ...floor, 'notes/lineage': 'notes/lineage' };
+    expect(byPage).toEqual({ none: floor, member: floor, owner: floor, open: short, ownerOpen: short });
     // An owner-only source: with no schema version the closed form hides every fact for any caller but the owner.
     await createSource(engine, backend, 'fact-chat', { kind: 'imessage' });
     await seed.one('chat-row', { fact: 'Likes tea', entity_slug: 'people/a' }, 'fact-chat');

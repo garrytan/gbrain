@@ -81,7 +81,8 @@ pub struct PrivacyPolicy {
     /// `page_readers IS NULL AND folder_rule_ids IS NULL`), so a page that names readers fails
     /// whatever the identity. The store's own flag (`access.restrictions_present`) decides the
     /// rest: unset, nothing else applies, as the short form says; set (the caller's flag read was
-    /// stale), the full form's origin walk applies too. See [`readers_allowed`].
+    /// stale), the full form's origin walk applies too. See [`readers_allowed`]. The remote floor
+    /// (`provenance_only`) is the exception: it judges the short form alone, as the SQL does.
     #[serde(default)]
     pub open: bool,
     /// The owner read rule (`ownerReadPolicyFragment`, the opt-in off): a derived page's origins are judged by
@@ -145,7 +146,10 @@ pub(crate) fn hidden_by_private_provenance(
     if policy.fact_owner_only(read, &row.source_id)? {
         return Ok(true);
     }
-    if hidden_by_provenance_page(read, row, policy, true)? {
+    // The remote floor (`provenance_only`) of a caller that renders the short member-access form
+    // (`open`) has no origin test, whatever the store's restriction flag says, as the forget floor.
+    let restricted = !(policy.provenance_only && policy.open);
+    if hidden_by_provenance_page(read, row, policy, restricted)? {
         return Ok(true);
     }
     if policy.provenance_only {

@@ -394,8 +394,13 @@ describe('engine parity: facts write-path and recall statements that left execut
   }, async (engine) => {
     await engine.putPage('memory/members/alice-example', note('Alice', { readable_by: ['alice-example'] }));
     await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    // A page derived from a page that names readers (which also sets the store's restriction flag): the full form's
+    // origin walk hides it; the short form of a brain with no member-access restrictions does not.
+    await engine.putPage('notes/readers', note('Readers', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/lineage', note('Lineage', { derived_from: ['notes/readers'] }));
     const ids = await fenced(engine, [
       { fact: 'open row', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'lineage row', entity_slug: 'people/a', source_markdown_slug: 'notes/lineage' },
       { fact: 'hidden row', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
       { fact: 'own page row', entity_slug: 'people/a', source_markdown_slug: 'memory/members/alice-example', visibility: 'private' },
       { fact: 'withdrawn row', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
@@ -435,8 +440,13 @@ describe('engine parity: facts write-path and recall statements that left execut
     methods: ['readReplacementTarget', 'readClaimWithdrawal', 'insertFacts', 'putPage', 'insertFactWithdrawal', 'expireFactsByWithdrawal'],
   }, async (engine) => {
     await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    // A page derived from a page that names readers (which also sets the store's restriction flag): the full form's
+    // origin walk hides it; the short form of a brain with no member-access restrictions does not.
+    await engine.putPage('notes/readers', note('Readers', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/lineage', note('Lineage', { derived_from: ['notes/readers'] }));
     const ids = await fenced(engine, [
       { fact: 'open row', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'lineage row', entity_slug: 'people/a', source_markdown_slug: 'notes/lineage' },
       { fact: 'hidden row', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
       { fact: 'open claim', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
       { fact: 'hidden claim', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
@@ -454,7 +464,7 @@ describe('engine parity: facts write-path and recall statements that left execut
         const got = await engine.readClaimWithdrawal({ sourceId: SRC, visibility, fact, entitySlug: 'people/a', ownPage: null, excludePrivate: true });
         return { hidden: got.hidden, subject: got.row?.subject ?? null };
       };
-      return { openRow: await target('open row'), hiddenRow: await target('hidden row'), openClaim: await claim('world', 'open claim'), hiddenClaim: await claim('private', 'hidden claim') };
+      return { openRow: await target('open row'), lineageRow: await target('lineage row'), hiddenRow: await target('hidden row'), openClaim: await claim('world', 'open claim'), hiddenClaim: await claim('private', 'hidden claim') };
     };
     const records = {
       member: { identity: ['member:alice-example'] },
@@ -464,8 +474,9 @@ describe('engine parity: facts write-path and recall statements that left execut
     } as const;
     const out: Record<string, unknown> = { none: await read() };
     for (const [name, record] of Object.entries(records)) out[name] = await withCallerAccess({ ...record, identity: [...record.identity] }, read);
-    const floor = { openRow: { fact: 'open row', visibility: 'world' }, hiddenRow: null, openClaim: { hidden: false, subject: '*' }, hiddenClaim: { hidden: true, subject: null } };
-    expect(out).toEqual({ none: floor, member: floor, owner: floor, open: floor, ownerOpen: floor });
+    const floor = { openRow: { fact: 'open row', visibility: 'world' }, lineageRow: null, hiddenRow: null, openClaim: { hidden: false, subject: '*' }, hiddenClaim: { hidden: true, subject: null } };
+    const short = { ...floor, lineageRow: { fact: 'lineage row', visibility: 'world' } };
+    expect(out).toEqual({ none: floor, member: floor, owner: floor, open: short, ownerOpen: short });
     return out;
   });
 
