@@ -186,6 +186,8 @@ import * as pagePurgeImpl from './engine-sql/page-purge.ts';
 import * as pagePurgeSweepImpl from './engine-sql/page-purge-sweep.ts';
 import * as pagePurgeJournalImpl from './engine-sql/page-purge-journal.ts';
 import * as purgeStoresImpl from './engine-sql/purge-stores.ts';
+import * as originHoldsImpl from './engine-sql/origin-holds.ts';
+import type { DerivedOriginPark } from './persistence/derived-origin-hold.ts';
 import * as headBlockerImpl from './engine-sql/head-blocker.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
@@ -1791,6 +1793,10 @@ export class PGLiteEngine implements BrainEngine {
   deletePurgedFeedbackRows(sourceId: string, slugs: readonly string[]) { return purgeStoresImpl.deletePurgedFeedbackRows(this, sourceId, slugs); }
   deletePurgedNameStoreRows(sourceId: string, slugs: readonly string[]) { return purgeStoresImpl.deletePurgedNameStoreRows(this, sourceId, slugs); }
   clearQueryCache() { return purgeStoresImpl.clearQueryCache(this); }
+  listPurgeOrigins(ids: readonly number[], recheckParked: boolean) { return originHoldsImpl.listPurgeOrigins(this, ids, recheckParked); }
+  upsertDerivedOriginPark(pageId: number, park: DerivedOriginPark) { return originHoldsImpl.upsertDerivedOriginPark(this, pageId, park); }
+  recordOwedPurgeRows(pageId: number, requestId: string) { return originHoldsImpl.recordOwedPurgeRows(this, pageId, requestId); }
+  deleteOriginHoldRows(op: 'derived-origin-park' | 'owed-page-purge', pageIds: readonly number[]) { return originHoldsImpl.deleteOriginHoldRows(this, op, pageIds); }
   readDeletePageRequest(sourceId: string, requestId: string) { return factsPurgeImpl.readDeletePageRequest(this.rawRead, sourceId, requestId); }
   listPurgeEffects(requestId: string) { return factsPurgeImpl.listPurgeEffects(this.rawRead, requestId); }
   countPurgeFingerprintResidue(sourceId: string, factHash: string, subject: string) { return factsPurgeImpl.countPurgeFingerprintResidue(this.rawRead, sourceId, factHash, subject); }

@@ -108,6 +108,8 @@ import type * as PagePurgeSql from './engine-sql/page-purge.ts';
 import type * as PagePurgeSweepSql from './engine-sql/page-purge-sweep.ts';
 import type * as PagePurgeJournalSql from './engine-sql/page-purge-journal.ts';
 import type * as PurgeStoresSql from './engine-sql/purge-stores.ts';
+import type * as OriginHoldsSql from './engine-sql/origin-holds.ts';
+import type { DerivedOriginPark } from './persistence/derived-origin-hold.ts';
 import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from './engine-sql/head-blocker.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
@@ -4137,6 +4139,15 @@ export interface BrainEngine {
   deletePurgedNameStoreRows(sourceId: string, slugs: readonly string[]): Promise<PurgeStoresSql.PurgedNameStoreRows>;
   /** Empties the query cache; the rows removed, or null when the brain has no such table. Writes query_cache; run it in the purge transaction. */
   clearQueryCache(): Promise<number | null>;
+  // The parks and owed-purge records of a derived-origin purge (engine-sql/origin-holds.ts).
+  /** The pages among `ids` that are privacy origins (an atom, or a page the privacy rules hide), by id; unless `recheckParked`, the ones an origin park holds are left out. Read the alias-honoring setting first (readHonorAliases). Reads pages and op_checkpoints. */
+  listPurgeOrigins(ids: readonly number[], recheckParked: boolean): Promise<OriginRefInput[]>;
+  /** Writes the park of a page; one that held an owner's purge keeps it when the new park names none. Writes op_checkpoints; run it in the purge transaction. */
+  upsertDerivedOriginPark(pageId: number, park: DerivedOriginPark): Promise<void>;
+  /** Records the owner's purge owed for a tombstone and binds the park that holds the request to it; rows written per record. Writes op_checkpoints; run it in the purge transaction. */
+  recordOwedPurgeRows(pageId: number, requestId: string): Promise<OriginHoldsSql.OwedPurgeRows>;
+  /** Removes the park or owed-purge records of these pages; how many. Writes op_checkpoints; run it in the purge transaction. */
+  deleteOriginHoldRows(op: 'derived-origin-park' | 'owed-page-purge', pageIds: readonly number[]): Promise<number>;
   /** The newest delete_page request of the source with this request id, null for none. Reads persistence_requests. */
   readDeletePageRequest(sourceId: string, requestId: string): Promise<FactsPurgeSql.DeletePageRequestRow | null>;
   /** The request's effects in kind order, each with whether any target is parked. Reads persistence_effects. */

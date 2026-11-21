@@ -31,6 +31,29 @@ cleared rows, and so without the links to them) is the `Without` read, which hid
   setting.
 - The origins of `listOriginDependents` map to `{ id, sourceId, slug }` (the store refuses unknown fields).
 
+## The purge's origin parks and owed-purge records
+
+The derived-origin purge (`repair/origin-carry.ts` `parkUncarriedInPurge`, `persistence/derived-origin-hold.ts`) parks an
+origin it cannot carry and records an owner's purge that is owed. Four more BrainEngine members carry those statements
+(`src/core/engine-sql/origin-holds.ts`); the store serves them from `persistence/origin_holds.rs` over the page records and
+the `op_checkpoints` parents of `persistence/op_checkpoint.rs`.
+
+- `listPurgeOrigins(ids, recheckParked)`: the pages among `ids` that are origins (`is_origin`, the same rule as
+  `readPrivacyOrigin`), by id. Unless `recheckParked`, a page whose park row (op `derived-origin-park`, fingerprint the page
+  id) exists is left out. The TypeScript member passes `honorAliases`, as the label door members do.
+- `upsertDerivedOriginPark(pageId, park)`: stores `[park]` as the park row, stamped now. A park that held an owner's purge
+  (`held_request_id`) keeps it and `held_deleted_us` when the new document has no `held_request_id`; a null field of the old
+  one is dropped (`jsonb_strip_nulls`). The document's keys are stored in jsonb order.
+- `recordOwedPurgeRows(pageId, requestId)`: answers `{ owed, held }`. The owed record (op `owed-page-purge`) is written only
+  for a tombstone and only when the stored `deleted_us` differs from the page's (`deleted_at` in microseconds, as text); the
+  park that holds `requestId` gets `held_deleted_us` set to the same text.
+- `deleteOriginHoldRows(op, pageIds)`: removes the rows of op `derived-origin-park` or `owed-page-purge` for the pages and
+  answers how many existed; any other op is refused, so the member cannot clear another op's checkpoints.
+
+All four run on the store handle the caller holds, so inside a purge transaction they are part of it. They read the
+alias-honoring setting and write nothing outside `op_checkpoints`. `releaseStaleHolds`, `readOwedPurges`, `pruneOwedPurges`,
+`readDerivedOriginParks` and `pruneDerivedOriginParks` still read and write through `executeRaw`.
+
 ## What still refuses
 
 - `delete_page --purge` parks and purges through raw SQL (repair/origin-carry.ts, persistence/page-purge.ts). On the

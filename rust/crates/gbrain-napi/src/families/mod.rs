@@ -79,6 +79,7 @@ mod page_body;
 mod page_embedding_budget;
 mod page_ops;
 mod page_purge;
+mod page_purge_holds;
 mod page_purge_journal;
 mod page_purge_sweep;
 mod purge_effects;

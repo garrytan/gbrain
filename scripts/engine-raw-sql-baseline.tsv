@@ -543,7 +543,7 @@ src/core/persistence/coordinator.ts	execute_raw	9
 src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
 src/core/persistence/deactivation.ts	execute_raw	19
-src/core/persistence/derived-origin-hold.ts	execute_raw	10
+src/core/persistence/derived-origin-hold.ts	execute_raw	5
 src/core/persistence/derived-retirement-hold.ts	execute_raw	1
 src/core/persistence/detached-pages.ts	execute_raw	4
 src/core/persistence/diagnostics.ts	execute_raw	1
@@ -758,7 +758,7 @@ src/core/repair/lost-fence-rows.ts	execute_raw	10
 src/core/repair/missing-tables.ts	execute_raw	2
 src/core/repair/moved-pages.ts	execute_raw	4
 src/core/repair/open-facts.ts	execute_raw	11
-src/core/repair/origin-carry.ts	execute_raw	2
+src/core/repair/origin-carry.ts	execute_raw	1
 src/core/repair/origin-twins-heal.ts	execute_raw	4
 src/core/repair/origin-twins.ts	execute_raw	11
 src/core/repair/orphan-children.ts	execute_raw	6

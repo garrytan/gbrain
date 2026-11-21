@@ -71,6 +71,7 @@ mod journal_redaction;
 mod noop_settle;
 mod notifier;
 mod op_checkpoint;
+mod origin_holds;
 mod owner_scans;
 pub(crate) mod projection_queue;
 mod projection_rebuild;
@@ -92,6 +93,7 @@ pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
     NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
 };
+pub use origin_holds::PurgeOrigin;
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };

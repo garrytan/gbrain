@@ -26,7 +26,7 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import { maintenancePreflight, publishMaintenancePages } from '../persistence/prepared-maintenance.ts';
-import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, derivedOriginPurgeHold, finishPurgeNote, parkDerivedOrigin, pruneDerivedOriginParks, readDerivedOriginParks, recordOwedPurge, type DerivedOriginPark } from '../persistence/derived-origin-hold.ts';
+import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, finishPurgeNote, parkDerivedOrigin, pruneDerivedOriginParks, readDerivedOriginParks, recordOwedPurge, type DerivedOriginPark } from '../persistence/derived-origin-hold.ts';
 import { privacyPartSql, readHonorAliases, withoutCallerAccess } from '../search/private-visibility.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import { capabilityMissing, rethrowCapabilityMissing, servesRawSql } from '../rust-engine/errors.ts';
@@ -272,9 +272,7 @@ export async function parkUncarriedInPurge(tx: BrainEngine, ids: readonly number
   if (!ids.length) return [];
   return withoutCallerAccess(async () => {
     await readHonorAliases(tx);
-    const origins = (await tx.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id, p.source_id, p.slug FROM pages p
-      WHERE p.id = ANY($1::int[]) AND ${originSql('p')}${opts.recheckParked ? '' : ` AND ${derivedOriginPurgeHold('p')}`} ORDER BY p.id`, [[...ids]], bounded))
-      .map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug }));
+    const origins = await tx.listPurgeOrigins(ids, !!opts.recheckParked);
     if (!origins.length) return [];
     const first = new Map<number, Dependent>();
     for (const page of await dependentsOf(tx, origins)) if (!first.has(page.origin_id)) first.set(page.origin_id, page);

@@ -64,7 +64,7 @@ async function seedOrigin(engine: BrainEngine): Promise<{ origin: number; depend
 
 describe('engine parity: the parks and owed-purge records of a derived-origin purge', () => {
   parityTest('parkUncarriedInPurge parks an origin that still has a dependent, skips a parked one unless told to recheck, and passes over a plain page', {
-    methods: ['putPage', 'readLivePageIdBySlug', 'readOpCheckpointDoc', 'transaction', 'executeRaw'],
+    methods: ['putPage', 'readLivePageIdBySlug', 'readOpCheckpointDoc', 'transaction', 'listPurgeOrigins', 'upsertDerivedOriginPark'],
   }, async (engine) => {
     const { origin, dependent, plain } = await seedOrigin(engine);
     const strip = (parks: Array<{ parked_at: unknown; page_id: unknown; slug: string }>) => parks.map(({ parked_at: _parked, page_id, ...rest }) => ({ ...rest, page_id: page_id === origin ? '<origin>' : page_id }));
@@ -81,7 +81,7 @@ describe('engine parity: the parks and owed-purge records of a derived-origin pu
   });
 
   parityTest('parkDerivedOrigin keeps the owner request an earlier park held when the new park names none, and replaces it when the new one does', {
-    methods: ['putPage', 'readLivePageIdBySlug', 'readOpCheckpointDoc', 'executeRaw'],
+    methods: ['putPage', 'readLivePageIdBySlug', 'readOpCheckpointDoc', 'upsertDerivedOriginPark', 'deleteOriginHoldRows'],
   }, async (engine) => {
     const { origin } = await seedOrigin(engine);
     const base = { source_id: SRC, slug: 'o/origin', page_id: origin, blocking_slug: 'o/dependent', code: 'revision_conflict', reason: 'changed' };
@@ -100,7 +100,7 @@ describe('engine parity: the parks and owed-purge records of a derived-origin pu
   });
 
   parityTest('recordOwedPurge writes one record per tombstone, binds the park that holds the request to it, and the clears remove the records named', {
-    methods: ['putPage', 'softDeletePage', 'readLivePageIdBySlug', 'readOpCheckpointDoc', 'executeRaw'],
+    methods: ['putPage', 'softDeletePage', 'readLivePageIdBySlug', 'readOpCheckpointDoc', 'upsertDerivedOriginPark', 'recordOwedPurgeRows', 'deleteOriginHoldRows'],
   }, async (engine, backend) => {
     await createSource(engine, backend, OTHER);
     await engine.putPage('o/live', note('Live', 'Still live.'));
@@ -127,5 +127,21 @@ describe('engine parity: the parks and owed-purge records of a derived-origin pu
     expect(liveRecord).toBeNull();
     expect(cleared).toBeNull();
     return { liveRecord, owed, sameTombstone, unboundPark, boundPark, cleared, parkKept };
+  });
+
+  parityTest('the members report the origins listed, the rows written for an owed purge and the records removed', {
+    methods: ['putPage', 'softDeletePage', 'readLivePageIdBySlug', 'listPurgeOrigins', 'upsertDerivedOriginPark', 'recordOwedPurgeRows', 'deleteOriginHoldRows'],
+  }, async engine => {
+    const { origin, dependent, plain } = await seedOrigin(engine);
+    const slugs = async (ids: number[], recheck: boolean) => (await engine.listPurgeOrigins(ids, recheck)).map(row => row.slug);
+    const listed = await slugs([plain, dependent, origin, origin], false);
+    await engine.upsertDerivedOriginPark(origin, { source_id: SRC, slug: 'o/origin', page_id: origin, blocking_slug: null, code: null, reason: 'held', parked_at: '2026-01-01T00:00:00.000Z' });
+    const parked = await slugs([origin], false);
+    const rechecked = await slugs([origin], true);
+    await engine.softDeletePage('o/origin');
+    const owed = [await engine.recordOwedPurgeRows(plain, 'req-1'), await engine.recordOwedPurgeRows(origin, 'req-1'), await engine.recordOwedPurgeRows(origin, 'req-2'), await engine.recordOwedPurgeRows(origin, 'req-1')];
+    const removed = [await engine.deleteOriginHoldRows(OWED_PURGE_OP, [plain, origin, origin]), await engine.deleteOriginHoldRows(DERIVED_ORIGIN_PARK_OP, [origin]), await engine.deleteOriginHoldRows(DERIVED_ORIGIN_PARK_OP, [origin])];
+    expect(listed).toEqual(['o/origin', 'o/dependent']);
+    return { listed, parked, rechecked, owed, removed };
   });
 });

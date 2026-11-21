@@ -100,7 +100,7 @@ impl KvRead for Without<'_> {
 }
 
 /// `originSql`: an atom, or a page the privacy rules hide.
-fn is_origin(read: &dyn KvRead, page: &PageRecord, honor_aliases: bool) -> Result<bool> {
+pub(crate) fn is_origin(read: &dyn KvRead, page: &PageRecord, honor_aliases: bool) -> Result<bool> {
     Ok(page.page_type == "atom" || !privacy_allows(read, page, honor_aliases)?)
 }
 
