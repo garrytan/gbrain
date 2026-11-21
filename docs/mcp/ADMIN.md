@@ -227,7 +227,8 @@ revision refuses the edit; inspect and preview again.
 Removed scopes and source/path/operation restrictions apply to subsequent
 requests. Added scopes require a fresh token; refresh cannot widen the original
 token's scope ceiling. Native OAuth clients must reconnect and obtain fresh
-owner approval. TTL changes affect future tokens only.
+owner approval; a self-registered connector that asks for its old scope again
+is granted its whole widened scope. TTL changes affect future tokens only.
 
 For one bot acting for several members of a shared brain, give each member a
 separate client or token restricted to that member's sources. The grant is the

@@ -395,10 +395,12 @@ gbrain search "concept title + first paragraph" --limit 10
 #    tree is the undo button.
 gbrain get concepts/absorbed-stub
 gbrain put concepts/_merged/cluster-name/absorbed-stub
+#    (a put that names no source is refused when the slug lives in another source;
+#    pass --source-id <the source the get read the page from>)
 
 # 3. Grow the canonical head: merge_count, independent_sources,
 #    backlinks, and the ## Facets section
-gbrain put concepts/canonical-slug
+gbrain put concepts/canonical-slug     # --source-id <the source you read it from>
 
 # 4. Soft-delete the absorbed original (restorable until purge)
 gbrain delete concepts/absorbed-stub
