@@ -10,6 +10,32 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.755.0] - 2026-11-21
+
+**`gbrain delete <slug> --purge=0` no longer hard-deletes: an inline boolean flag such as `--purge=0`, `--include-deleted=no` or `--dry-run=off` is refused instead of being read as on.**
+
+### Fixed
+- An inline `--flag=<value>` for a boolean flag on a gbrain command, including `--json` and `--dry-run`, now takes only `true` or `false`, the same as the space-separated form. Any other value is refused with `invalid_params` (exit 2), names the flag and runs nothing. Before, every value other than `false` turned the flag on, so `delete --purge=0` ran the irreversible hard delete and `get --include-deleted=0` showed a soft-deleted page. Spellings such as `--json=1` or `--dry-run=yes` that used to read as on now refuse too; write the flag on its own instead (#9918, reported by @Masashi-Ono0611).
+
+<!-- behavior-change: cli_inline_boolean_strict_9918 -->
+
+**`gbrain repair frontmatter` no longer brings back deleted or purged pages; restoring one now always goes through the file-drift step that asks the user first.**
+
+<!-- behavior-change: repair_frontmatter_routes_holds_lc2 -->
+
+### Fixed
+- `gbrain repair frontmatter` used to offer every held file whose frontmatter parses as `safe: Import <path> as it is now`, and its apply imported it. For a file held because its page was deleted or purged (`file_drift`, side `deleted`), that restored the soft-deleted page or re-created the purged one, past the `gbrain repair file-drift` step that asks the user first. Two spellings of one path (`page_identity_changed`) were offered the same way. Now a file held for anything other than its frontmatter is listed `needs_review` with its hold's own fix (for a deleted page, the `gbrain repair file-drift --held --side deleted --state <state>` preview), and the repair never imports it.
+- A file with no hold whose import would restore a soft-deleted page (`page_deleted`) or re-create a purged one (`page_purged`) is `needs_review` too, never a safe or interpretive change. An approval saved before this release is refused at apply for such a file.
+- Two files whose paths differ only by case and name one page (for example `notes/Max.md` and `notes/max.md`) are `needs_review` too, held or not, so the repair never picks one spelling.
+
+**A put that names no source no longer forks a page that lives in another source; it is refused and names the source to pass. This holds for `put-pages` and uploads too, and a put run inside a source's checkout counts as naming that source.**
+
+### Fixed
+- `gbrain put <slug>` with no `--source-id`, for a page that lives only in another source, is refused with the holding source and the exact retry (`gbrain put <slug> --source-id <source>`), with or without `--force`; `put-pages` refuses such a page in its receipt while writing the others, and uploads refuse a new page the same way. A put run from inside a source's checkout writes to that source and is not refused; an upload commit is the exception, since it writes to the source fixed at its begin, so it names the source again on the commit. Before, it wrote a second copy into `default` that an unscoped get preferred, while the original page and its file kept the old text.
+- An unsourced put that goes to `default` while the only other git source is federated now prints the documented routing notice instead of staying silent (`--quiet` silences it).
+
+<!-- behavior-change: put_keeps_page_source -->
+
 ## [0.60.754.0] - 2026-11-21
 
 **Undoing an Apple Contacts change now puts back every copy of a removed phone or email, and keeps non-Gregorian birthdays.**
