@@ -27,6 +27,7 @@ import {
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { N4_SOURCE_MEMBERS } from './helpers/n4-engine-members.ts';
 
 const ENV_KEYS = ['GBRAIN_HOME', 'GBRAIN_BACKUP_CHECK', 'GBRAIN_BACKUP_CHECK_DAYS'] as const;
 
@@ -93,6 +94,7 @@ function makeHealthyRepo(name: string): string {
 function makeEngine(sourcePaths: Array<{ id: string; local_path: string }>, pageCount = 0): BrainEngine {
   return {
     kind: 'pglite',
+    ...N4_SOURCE_MEMBERS,
     executeRaw: async (sql: string) => {
       if (/FROM sources/i.test(sql)) {
         return sourcePaths.map((s) => ({
@@ -214,6 +216,7 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
   test('degraded compute with no assets leads with the unreadable database', async () => {
     const engine = {
       kind: 'pglite',
+      ...N4_SOURCE_MEMBERS,
       executeRaw: async (sql: string) => {
         if (/FROM sources/i.test(sql)) return [];
         throw new Error('pages unreadable');
@@ -354,6 +357,7 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
     // to, getBackupStatus rethrows and the checker's try/catch owns it.
     const throwing = {
       kind: 'pglite',
+      ...N4_SOURCE_MEMBERS,
       executeRaw: async () => {
         throw new Error('engine down');
       },
@@ -385,6 +389,7 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
     saveBackupStatus(cache);
     const throwing = {
       kind: 'pglite',
+      ...N4_SOURCE_MEMBERS,
       executeRaw: async () => {
         throw new Error('engine down');
       },
@@ -408,6 +413,7 @@ function makeCountingEngine(kind: 'pglite' | 'postgres', sources: Array<{ id: st
   const listing = makeEngine(sources, pages);
   return {
     kind,
+    ...N4_SOURCE_MEMBERS,
     executeRaw: async (sql: string) => {
       if (/AS pages/i.test(sql)) return [{ pages, facts, since: new Date(Date.now() - 60_000).toISOString() }];
       return listing.executeRaw(sql);

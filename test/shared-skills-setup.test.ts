@@ -10,6 +10,7 @@ import { packagedSharedSkills } from '../src/core/shared-skills/setup-bundle.ts'
 import { inventorySkillpack, setupHash } from '../src/core/shared-skills/setup-files.ts';
 import { legacyPublication, migrationCheckpointKey, runSharedSkillsMigration } from '../src/core/shared-skills/migration.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { N4_SOURCE_MEMBERS } from './helpers/n4-engine-members.ts';
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -23,6 +24,7 @@ function fixture(root: string | null = null) {
   const engine = {
     getConfig: async (key: string) => config.get(key) ?? null,
     setConfig: async (key: string, value: string) => { config.set(key, value); },
+    ...N4_SOURCE_MEMBERS,
     executeRaw: async (sql: string) => {
       calls.push(sql);
       if (sql.includes('FROM persistence_brain')) return [{ brain_id: brainId, enabled: false, skill_bundles_enabled: false }];

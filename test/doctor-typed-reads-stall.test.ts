@@ -37,6 +37,8 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   countSegmentedTimelinePages: (e) => e.countSegmentedTimelinePages(['default'], 10),
   notifierCoverageRecorded: (e) => e.notifierCoverageRecorded(),
   getWorktreeBinding: (e) => e.getWorktreeBinding('default', null),
+  // The source list commit_notifier and federation_health read through loadAllSources (N4).
+  listSourceRecords: (e) => e.listSourceRecords(),
 };
 
 test('every bounded typed read has a stall case', () => {
@@ -46,7 +48,7 @@ test('every bounded typed read has a stall case', () => {
 for (const [member, call] of Object.entries(CALLS)) {
   test(`${member} stalled on its connection under the doctor deadline ends by the deadline and gives back its connection and gauge slot`, async () => {
     const counts = { discards: 0, releases: 0 };
-    const fake = makeFakeSql(stmt => (/decide_|decision_receipts|timeline_entries|worktree|notifier/i.test(stmt.text) ? never() : undefined));
+    const fake = makeFakeSql(stmt => (/decide_|decision_receipts|timeline_entries|worktree|notifier|FROM sources/i.test(stmt.text) ? never() : undefined));
     const reserve = fake.sql.reserve;
     fake.sql.reserve = async () => {
       const r = await reserve();
@@ -71,3 +73,20 @@ for (const [member, call] of Object.entries(CALLS)) {
     expect((engine as unknown as { checkoutGauge: { snapshot(): Record<string, number> } }).checkoutGauge.snapshot().reserved).toBe(0);
   }, 10_000);
 }
+
+test('listSourceRecords re-reads the minimal columns after an undefined-column error, each statement as its own bounded read', async () => {
+  const fake = makeFakeSql(stmt => {
+    if (!/FROM sources/i.test(stmt.text)) return undefined;
+    if (/archived/.test(stmt.text)) return Object.assign(new Error('column "archived" does not exist'), { code: '42703' });
+    return [{ id: 'default', name: 'default', local_path: null, last_commit: null, last_sync_at: null, config: {}, created_at: new Date(0) }];
+  });
+  const engine = new PostgresEngine();
+  (engine as unknown as { _sql: unknown })._sql = fake.sql;
+  const bound = deadlineBoundEngine(engine as unknown as BrainEngine);
+  const scope: StatementDeadline = { startedAt: Date.now(), deadlineAt: Date.now() + 30_000, expired: false };
+  const rows = await withStatementDeadline(scope, async () => bound.listSourceRecords());
+  expect(rows.map(r => r.id)).toEqual(['default']);
+  const sourceStatements = fake.statements().filter(s => /FROM sources/i.test(s.text));
+  expect(sourceStatements.map(s => /archived/.test(s.text))).toEqual([true, false]);
+  expect(scope.expired).toBe(false);
+});

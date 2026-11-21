@@ -28,6 +28,7 @@ import { join } from 'path';
 import { runInitBrainPack } from '../src/core/skillpack/init-brain-pack.ts';
 import { getResidentSkillDetail } from '../src/core/skillpack/brain-resident-locate.ts';
 import { OperationError, type OperationContext } from '../src/core/operations.ts';
+import { N4_SOURCE_MEMBERS } from './helpers/n4-engine-members.ts';
 
 let root: string;
 let packDir: string;
@@ -43,6 +44,7 @@ afterEach(() => {
 
 function engineFor(localPath: string): OperationContext['engine'] {
   return {
+    ...N4_SOURCE_MEMBERS,
     executeRaw: async () => [{
       id: 'default', name: 'default', local_path: localPath, last_commit: null, last_sync_at: null,
       config: {}, created_at: new Date(), archived: false,

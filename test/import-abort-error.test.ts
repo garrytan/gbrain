@@ -15,12 +15,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runImport, ImportAbortError } from '../src/commands/import.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { N4_SOURCE_MEMBERS } from './helpers/n4-engine-members.ts';
 
 // The abort sites fire before any WRITE; the preamble runs a couple of
 // read-only lookups (sources, config), so the stub answers those with
 // empty sets.
 const engineStub = {
   kind: 'pglite',
+  ...N4_SOURCE_MEMBERS,
   executeRaw: async (sql: string) => sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [], // #6482: the strict mode reader needs one well-formed unmanaged row.
   getConfig: async () => null,
 } as unknown as BrainEngine;
