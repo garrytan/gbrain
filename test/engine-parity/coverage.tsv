@@ -88,7 +88,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	145	no	yes	yes	serves
+transaction	lifecycle	yes	146	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -96,7 +96,7 @@ getPage	pages	yes	133	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	605	yes	yes	yes	serves
+putPage	pages	yes	606	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
@@ -327,11 +327,11 @@ countFilesRegisteredElsewhere	raw_files	yes	1	no	yes	yes	refuses:files
 registerFileRow	raw_files	yes	1	no	yes	yes	refuses:files
 readReadableFileForVerify	raw_files	yes	1	no	yes	yes	refuses:files
 listReadableFilePaths	raw_files	yes	1	no	yes	yes	refuses:files
-addTakesBatch	takes	yes	53	yes	yes	yes	serves
-updateTakeEmbeddings	takes	yes	3	no	yes	yes	serves
-listTakes	takes	yes	27	no	yes	yes	serves
+addTakesBatch	takes	yes	54	yes	yes	yes	serves
+updateTakeEmbeddings	takes	yes	4	no	yes	yes	serves
+listTakes	takes	yes	28	no	yes	yes	serves
 searchTakes	takes	yes	3	no	yes	yes	serves
-searchTakesVector	takes	yes	2	no	yes	yes	serves
+searchTakesVector	takes	yes	3	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
 countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
@@ -756,7 +756,7 @@ readFactTableCatalog	facts_doctor	yes	1	no	yes	yes	refuses:facts
 readChunkVectorColumn	embedding_catalog	yes	2	no	yes	yes	serves
 readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	serves
 listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	serves
-hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	serves
+hasStoredVectors	embedding_catalog	yes	2	no	yes	yes	serves
 countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	serves
 upsertFactRelinkAttempt	fact_relink_attempts	yes	8	no	yes	yes	serves
 listFactRelinkOutcomes	fact_relink_attempts	yes	3	no	yes	yes	serves
