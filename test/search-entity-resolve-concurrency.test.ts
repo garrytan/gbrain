@@ -32,6 +32,7 @@ function gatedEngine() {
     kind: 'postgres',
     resolveAliases: (norms: string[]) => gate('aliases', new Map([[norms.find(n => n === 'acme example')!, [{ slug: 'companies/acme-example', source_id: 'default' }]]])),
     findPagesByTitles: () => gate('titles', []),
+    resolveCaseSensitiveAliases: () => gate('case-sensitive aliases', []),
     executeRaw: (sql: string) => gate(sql.includes('page_aliases') ? 'case-sensitive aliases' : sql.includes('lower(title)') ? 'titles' : `other: ${sql.slice(0, 40)}`, []),
     getAllConfig: async () => { started.push('config (snapshot)'); return {}; },
     getConfig: async () => null,

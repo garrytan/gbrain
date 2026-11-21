@@ -64,6 +64,8 @@ const BACKUP_SOURCES_QUERY = /\bfrom\s+sources\b(?!\s+read_source)/i;
 const engineStub = {
   kind: 'pglite',
   getConfig: async () => null,
+  findPagesByTitles: async () => [],
+  resolveCaseSensitiveAliases: async () => [],
   executeRaw: async (sql: string) => {
     rawCalls.push(String(sql));
     // countLivePages treats an EMPTY rowset as UNESTABLISHED (null → degraded

@@ -32,6 +32,8 @@ function engineWithSources(ids: string[]): BrainEngine {
     },
     getConfig: async () => null,
     sql: async () => [],
+    findPagesByTitles: async () => [],
+    resolveCaseSensitiveAliases: async () => [],
   } as unknown as BrainEngine;
 }
 

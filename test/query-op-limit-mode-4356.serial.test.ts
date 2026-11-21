@@ -60,6 +60,8 @@ const { dispatchToolCall } = await import('../src/mcp/dispatch.ts');
 
 const engineStub = {
   getConfig: async () => null,
+  findPagesByTitles: async () => [],
+  resolveCaseSensitiveAliases: async () => [],
   executeRaw: async () => [],
 } as unknown as BrainEngine;
 

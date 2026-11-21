@@ -20,6 +20,8 @@ const { dispatchToolCall } = await import('../src/mcp/dispatch.ts');
 const engine = {
   getConfig: async () => null,
   countKeywordPages: async () => 0,
+  findPagesByTitles: async () => [],
+  resolveCaseSensitiveAliases: async () => [],
   executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
 } as unknown as BrainEngine;
 
