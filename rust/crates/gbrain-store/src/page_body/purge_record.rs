@@ -107,48 +107,65 @@ pub(super) fn records_of_source(read: &dyn KvRead, source_id: &str) -> Result<Ve
 const REPAIR_BATCH: usize = 256;
 
 /// The marker of a completed repair of the source index.
-fn repair_done_key() -> Vec<u8> {
+pub(super) fn repair_done_key() -> Vec<u8> {
     crate::keys::meta("derivation_purge_source_index")
 }
 
 /// Gives every sweep record its source index entry: records kept by the builds between the record's first commit and the index lack
-/// one, and so are never selected by a sweep, noted or consulted by the write guard. Runs at open; a read-only open finds none to
-/// repair or, when it does, leaves them for the next writable open.
+/// one, and so are never selected by a sweep, noted or consulted by the write guard. Runs at open, to completion before the open
+/// returns, so no write is admitted before every record is covered. A completed run leaves a marker, after which an open reads that
+/// one key. It works in write transactions of `REPAIR_BATCH` records each, discovering and writing inside the same transaction, and
+/// writes the marker in the one that reaches the end. A read-only open (its write is refused with `read_only_transaction`) does not
+/// scan and leaves the records for the next writable open; any other failure to write fails the open.
 pub(crate) fn backfill_source_index(kv: &dyn crate::kv::Kv) -> Result<()> {
-    let snapshot = kv.snapshot()?;
-    let mut missing: Vec<(String, String)> = Vec::new();
-    let mut failure = None;
-    scan_prefix(
-        &*snapshot,
-        &kind_key(DERIVATION_PURGE),
-        false,
-        &mut |_, v| {
+    let done = repair_done_key();
+    if kv.snapshot()?.get(&done)?.is_some() {
+        return Ok(());
+    }
+    let prefix = kind_key(DERIVATION_PURGE);
+    let end = crate::kv::prefix_end(&prefix).unwrap_or_else(|| vec![0xFF; 64]);
+    let mut from = prefix;
+    loop {
+        let mut tx = match kv.begin_write() {
+            Ok(tx) => tx,
+            Err(e) if e.code == crate::error::READ_ONLY_TRANSACTION => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        // Another handle may have finished the repair between the marker's read and this write.
+        if tx.get(&done)?.is_some() {
+            return Ok(());
+        }
+        let mut batch: Vec<(Vec<u8>, SweepRecord)> = Vec::new();
+        let mut failure = None;
+        tx.scan(&from, &end, false, &mut |k, v| {
             match serde_json::from_slice::<SweepRecord>(v) {
-                Ok(r) => match snapshot.get(&index_key(&r.source_id, &r.request_id)) {
-                    Ok(None) => missing.push((r.source_id, r.request_id)),
-                    Ok(Some(_)) => {}
-                    Err(e) => failure = Some(e),
-                },
+                Ok(record) => batch.push((k.to_vec(), record)),
                 Err(e) => failure = Some(StoreError::from(e)),
             }
-            failure.is_none()
-        },
-    )?;
-    if let Some(e) = failure {
-        return Err(e);
+            failure.is_none() && batch.len() < REPAIR_BATCH
+        })?;
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        for (_, record) in &batch {
+            let key = index_key(&record.source_id, &record.request_id);
+            if tx.get(&key)?.is_none() {
+                tx.put(&key, record.request_id.as_bytes())?;
+            }
+        }
+        let finished = batch.len() < REPAIR_BATCH;
+        if finished {
+            tx.put(&done, b"1")?;
+        } else if let Some((last, _)) = batch.last() {
+            // The smallest key after the last one the batch read.
+            from = last.clone();
+            from.push(0);
+        }
+        tx.commit()?;
+        if finished {
+            return Ok(());
+        }
     }
-    if missing.is_empty() {
-        return Ok(());
-    }
-    // A handle that cannot write (a read-only open) leaves the repair to the next writable one.
-    let Ok(mut tx) = kv.begin_write() else {
-        return Ok(());
-    };
-    for (source, request) in &missing {
-        tx.put(&index_key(source, request), request.as_bytes())?;
-    }
-    tx.commit()?;
-    Ok(())
 }
 
 pub(super) fn record_key(request_id: &str) -> Vec<u8> {

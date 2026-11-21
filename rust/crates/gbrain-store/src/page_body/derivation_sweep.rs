@@ -464,6 +464,9 @@ mod tests {
         let unindex = || {
             let mut tx = kv.begin_write().unwrap();
             tx.delete(&index_key("default", request)).unwrap();
+            // A brain an earlier build wrote: no completion marker of the repair either.
+            tx.delete(&super::super::purge_record::repair_done_key())
+                .unwrap();
             tx.commit().unwrap();
         };
         record("alice");

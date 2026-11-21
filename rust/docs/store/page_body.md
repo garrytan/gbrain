@@ -262,7 +262,9 @@ removing a row no generation or version names, and a page deleted for good). The
 walk takes the notes: it reads the first batch of the noted pages' rows and, when that is not all of them or a row in it holds the claim,
 walks only those pages again (`recheck`) before it deletes the record. A record keeps at most 1000 notes; past that its walk goes back to
 the start of a full verify walk. A record has a source index (`b 0x0A <source> 0x00 <request id>`), so a walk reads its own source's
-records and no other's; a record kept before the index existed gets its entry when the brain is opened writable (`backfill_source_index`)
+records and no other's; a record kept before the index existed gets its entry when the brain is opened writable (`backfill_source_index`: it
+runs to completion before the open returns, in write transactions of 256 records that discover and write together, and leaves a marker, so
+later opens read that one key; a read-only open does not scan, and a write error other than `read_only_transaction` fails the open)
 or when the same request is recorded again. The table probe shows a record's `recheck` as the page ids it holds (`{1,2,3}`, `int[]` text).
 
 The derivation keys are grouped by page, not by source, so a batch visits the physical keys in order and keeps those of the source's
