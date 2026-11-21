@@ -9,9 +9,10 @@
  * inside sql-ranking.ts). Defaults grounded in the composition of the
  * canonical brain at ~/git/brain/.
  *
- * Per brain: `gbrain config set search.source_boosts "wiki/:1.3,daily/:1.0"`
- * (`none` drops the defaults). Per process (wins over the brain):
+ * Per brain: `gbrain config set search.source_boosts "wiki/:1.3,daily/:1.0"`.
+ * Per process (wins over the brain per prefix):
  * GBRAIN_SOURCE_BOOST="originals/:1.8,openclaw/chat/:0.3"
+ * A bare `none` entry in either one drops the defaults.
  * Hard-exclude via env: GBRAIN_SEARCH_EXCLUDE="test/,scratch/"
  */
 
@@ -75,8 +76,9 @@ export const DEFAULT_HARD_EXCLUDES: string[] = [
  * Format: comma-separated prefix:factor pairs.
  * Example: "originals/:1.8,openclaw/chat/:0.3"
  *
- * Malformed entries are skipped silently. Returns empty object if env is
- * unset or unparseable in its entirety.
+ * Malformed entries are skipped silently. A bare `none` is not a pair;
+ * resolveBoostMap reads it. Returns empty object if env is unset or
+ * unparseable in its entirety.
  */
 export function parseSourceBoostEnv(env: string | undefined): Record<string, number> {
   if (!env) return {};
@@ -104,18 +106,24 @@ export function parseHardExcludesEnv(env: string | undefined): string[] {
   return env.split(',').map(s => s.trim()).filter(s => s.length > 0);
 }
 
+/** True when a boost list carries a bare `none` entry. */
+function hasNoneEntry(value: string | null | undefined): boolean {
+  return (value ?? '').split(',').some((entry) => entry.trim() === 'none');
+}
+
 /**
  * Resolve the effective boost map: defaults, then the brain's
- * `search.source_boosts` config (same `prefix:factor` format; a bare `none`
- * entry drops the defaults so a brain with a different layout starts from a
- * neutral map), then the GBRAIN_SOURCE_BOOST env override. Shallow merges;
- * later layers win per prefix.
+ * `search.source_boosts` config, then the GBRAIN_SOURCE_BOOST env override
+ * (same `prefix:factor` format). Shallow merges; later layers win per prefix.
+ * A bare `none` entry in the config or the env value drops the defaults, so a
+ * brain or a process with a different layout starts from a neutral map. It
+ * drops only the defaults: `none` in the env value keeps the brain's entries.
  */
 export function resolveBoostMap(
   envValue: string | undefined = process.env.GBRAIN_SOURCE_BOOST,
   configValue?: string | null,
 ): Record<string, number> {
-  const dropDefaults = (configValue ?? '').split(',').some((entry) => entry.trim() === 'none');
+  const dropDefaults = hasNoneEntry(configValue) || hasNoneEntry(envValue);
   return {
     ...(dropDefaults ? {} : DEFAULT_SOURCE_BOOSTS),
     ...parseSourceBoostEnv(configValue ?? undefined),

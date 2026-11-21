@@ -11,6 +11,7 @@ import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { installPageProjection, readProjectionSnapshot } from '../../src/core/page-state/projections.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { basisEmbedding } from '../../src/eval/deterministic-embed.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 describe('resolveBoostMap with a per-brain config value', () => {
   test('no config keeps the defaults', () => {
@@ -28,6 +29,26 @@ describe('resolveBoostMap with a per-brain config value', () => {
   });
   test('the env override still wins over the brain config', () => {
     expect(resolveBoostMap('wiki/:2', 'wiki/:1.3')['wiki/']).toBe(2);
+  });
+});
+
+describe('resolveBoostMap with a none entry in GBRAIN_SOURCE_BOOST', () => {
+  test('a none entry in the env value drops the defaults, like the brain config', () => {
+    expect(resolveBoostMap('none')).toEqual({});
+    expect(resolveBoostMap('none,wiki/:1.3')).toEqual({ 'wiki/': 1.3 });
+    expect(resolveBoostMap(' wiki/:1.3 , none ')).toEqual({ 'wiki/': 1.3 });
+    // A prefix that is named none is a boost entry, not the switch.
+    expect(resolveBoostMap('none/:1.2')).toEqual({ ...DEFAULT_SOURCE_BOOSTS, 'none/': 1.2 });
+  });
+  test('env none drops only the defaults: the brain map stays and env still wins per prefix', () => {
+    expect(resolveBoostMap('none', 'wiki/:1.3')).toEqual({ 'wiki/': 1.3 });
+    expect(resolveBoostMap('none,wiki/:2', 'wiki/:1.3,daily/:1.0')).toEqual({ 'wiki/': 2, 'daily/': 1.0 });
+  });
+  test('with no env argument, resolveBoostMap reads GBRAIN_SOURCE_BOOST', async () => {
+    await withEnv({ GBRAIN_SOURCE_BOOST: 'none,wiki/:1.3' }, () => {
+      expect(resolveBoostMap()).toEqual({ 'wiki/': 1.3 });
+      expect(resolveBoostMap(undefined, 'daily/:1.0')).toEqual({ 'daily/': 1.0, 'wiki/': 1.3 });
+    });
   });
 });
 
