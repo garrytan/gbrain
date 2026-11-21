@@ -59,10 +59,10 @@ test('a history read that is cut short keeps the versions it already read', asyn
   const read = await pathBlobHistories(root, head, ['notes/a.md', 'notes/missing.md'], 5, undefined, { partial });
   expect(read.get('notes/a.md')).toEqual([...blobs].reverse());
   expect(read.has('notes/missing.md')).toBe(false);
-  expect([...partial]).toEqual(['notes/a.md']);
+  expect([...partial].sort()).toEqual(['notes/a.md', 'notes/missing.md']);
   const full = new Set<string>();
   expect((await pathBlobHistories(root, head, ['notes/a.md', 'notes/missing.md'], 3, undefined, { partial: full })).get('notes/a.md')).toHaveLength(3);
-  expect(full.size).toBe(0);
+  expect([...full]).toEqual(['notes/missing.md']);
 });
 
 test('no history group starts once the deadline has passed, and a group read before it keeps its versions', async () => {
@@ -76,11 +76,15 @@ test('no history group starts once the deadline has passed, and a group read bef
     return result;
   });
   const paths = ['notes/a.md', ...Array.from({ length: 100 }, (_, i) => `notes/other-${i}.md`)];
-  const read = await pathBlobHistories(root, head, paths, 5, undefined, { deadline: Date.now() + 100 });
+  const unstarted = new Set<string>();
+  const read = await pathBlobHistories(root, head, paths, 5, undefined, { deadline: Date.now() + 100, unstarted });
   expect(groups).toHaveLength(1);
   expect(read.get('notes/a.md')).toEqual([...blobs].reverse());
   expect(read.has('notes/other-99.md')).toBe(false);
-  expect(await pathBlobHistories(root, head, paths, 5, undefined, { deadline: Date.now() - 1 })).toEqual(new Map());
+  expect([...unstarted]).toEqual(['notes/other-99.md']);
+  const none = new Set<string>();
+  expect(await pathBlobHistories(root, head, [...paths, 'notes/new\nline.md'], 5, undefined, { deadline: Date.now() - 1, unstarted: none })).toEqual(new Map());
+  expect(none.size).toBe(paths.length);
 });
 
 test('a long history read beats while it streams, not only when it ends', async () => {
