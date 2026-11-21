@@ -12,10 +12,8 @@
  *    would show wrong or missing records, and a release could act on a hold twice.
  *  - Why existing coverage misses it: the write gate tests drive these statements through `executeRaw` on PGLite
  *    alone; no case compares engines.
- *  - The allow-rule case: the owner's allow rules (`trust_allow_rules`) are written by `trust allow` (trust/allow-rules.ts),
- *    which is raw SQL. The SQL arms list and filter the rules it adds; the Rust arm must refuse that write (no Rust brain
- *    holds an allow rule) and list none, so `trust review` and the write gate's allow check read an empty set there
- *    instead of stopping on the raw read they used to run.
+ *  - The allow-rule case: the fresh-brain case lists no allow rule through `listTrustAllowRuleRows` on every arm. The case that adds
+ *    rules through `trust allow` (trust/allow-rules.ts) is not in this cut: its caller still runs its own SQL, so the member would not be called.
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18). Ids differ between arms, so each case
  *    returns ids as positions in the list of ids it created, and times only as their shape.
  */
@@ -84,6 +82,10 @@ describe('engine parity: write gate receipts and holds', () => {
       const list = (await engine.listWriteGateReceiptsFor('facts', '7', 10)).map(receiptView(label));
       const top = (await engine.listWriteGateReceiptsFor('facts', '7', 1)).map(receiptView(label));
       expect(again).toBe(a);
+      // Absolute answers, so an engine that is wrong the same way on every arm still fails: newest first, the updated row on top.
+      expect(list.map(r => r.id)).toEqual([a, c, b]);
+      expect(top.map(r => r.id)).toEqual([a]);
+      expect(list[0]).toMatchObject({ verdict: 'quarantine', tier: 'external_untrusted', reason_families: ['secret'] });
       return { a, b, c, again, list, top, other: (await engine.listWriteGateReceiptsFor('takes', '7', 10)).length };
     },
   );
@@ -116,6 +118,9 @@ describe('engine parity: write gate receipts and holds', () => {
       // A soft-deleted page still has its stale receipts cleared; a null hash clears every receipt.
       await engine.deleteStalePageWriteGateReceipts('default', 'notes/gone', null);
       await engine.deleteStalePageWriteGateReceipts('work', 'notes/live', null);
+      expect({ missing, otherSource, deleted }).toEqual({ missing: null, otherSource: null, deleted: null });
+      expect(before.map(r => r.id)).toEqual([first, second]);
+      expect(afterKeep.map(r => r.id)).toEqual([second]);
       return { first, second, repeat, missing, otherSource, deleted, before, afterKeep, gone: await rows(gone), liveAfter: await rows(live) };
     },
   );
@@ -134,10 +139,12 @@ describe('engine parity: write gate receipts and holds', () => {
       const count = async (table: string, id: string) => (await engine.listWriteGateReceiptsFor(table, id, 10)).length;
       const none = await engine.deleteStaleWriteGateReceipts(36500);
       const all = await engine.deleteStaleWriteGateReceipts(-1);
-      return {
+      const out = {
         none, all, again: await engine.deleteStaleWriteGateReceipts(-1),
         fact: await count('facts', '1'), held: await count('write_gate_holds', String(held)), dropped: await count('write_gate_holds', String(dropped)),
       };
+      expect(out).toEqual({ none: 0, all: 2, again: 0, fact: 0, held: 1, dropped: 0 });
+      return out;
     },
   );
 
@@ -166,7 +173,12 @@ describe('engine parity: write gate receipts and holds', () => {
       // Seen again after release: held again, decision cleared, seen three times.
       await engine.upsertWriteGateHold(hold({ request_id: 'req-3' }));
       const view = holdView(label);
+      expect(view(reopened!)).toMatchObject({ id: 0, seen_count: 2, status: 'held' });
+      expect(view((await engine.getWriteGateHoldRow(a))!)).toMatchObject({ id: 0, seen_count: 3, status: 'held', decided_at: null });
+      expect(await engine.getWriteGateHoldRow(Math.max(a, b, c, d) + 1000)).toBeNull();
       const list = async (opts: Parameters<typeof engine.listWriteGateHoldRows>[0]) => (await engine.listWriteGateHoldRows(opts)).map(h => label(h.id));
+      expect(await list({ status: 'all', limit: 100 })).toEqual([3, 2, 1, 0]); // newest id first
+      expect(await list({ status: 'held', limit: 100 })).toEqual([3, 2, 0]);
       return {
         same: label(a2) === label(a),
         reopened: reopened && view(reopened), released: released && view(released), after: view((await engine.getWriteGateHoldRow(a))!),

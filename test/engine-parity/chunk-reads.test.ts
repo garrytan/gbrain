@@ -164,6 +164,7 @@ describe('engine parity: chunk reads', () => {
       expect(after.skips).toEqual({ marked: 3, chunkless: 2 });
       expect(after.tight).toEqual({ marked: 2, chunkless: 1 });
       expect(after.code).toEqual({ chunks: 2, pages: 1 });
+      expect(after.orphans).toBe(0); // chunks of live pages and of deleted pages' children are never orphans: the page row is still there or the chunks went with it
       return { before, after };
     },
   );

@@ -228,11 +228,11 @@ async function seedWorld(e: BrainEngine, backend: 'pglite' | 'postgres'): Promis
     `INSERT INTO persistence_worktree_refreshes (id, worktree_id, source_ids, principal_id, owner_epoch, topology_generation, state, old_head, target_head, upstream_ref, created_at, updated_at)
      VALUES ($1::uuid, $2::uuid, $3::text[], gen_random_uuid(), 0, 1, $4, $5, 'target', 'origin/main', now() - ($6::integer * interval '1 second'), now() - ($7::integer * interval '1 second'))`,
     [REFRESH(n), WT(wt), sources, state, oldHead, ageSeconds, updatedAgeSeconds]);
-  await refresh(1, 1, 'draining', ['default'], 'x', 500);
+  await refresh(1, 1, 'draining', ['default'], 'x', 100); // newer than the syncing ones: draining still lists first
   await refresh(2, 2, 'syncing', ['other'], 'c-other', 400, 5); // syncing, fresh, a source still at the old head: lagging, not listed
   await refresh(3, 3, 'syncing', ['other', 'default'], 'old', 300, 5); // syncing, fresh, every source moved off the old head: listed
   await refresh(4, 4, 'syncing', ['other'], 'c-other', 200, 90_000); // syncing, a source at the old head but no movement for 90000 s: stale, listed
-  await refresh(5, 5, 'draining', ['default'], 'x', 100); // another host's worktree
+  await refresh(5, 5, 'draining', ['default'], 'x', 90); // another host's worktree
   await e.executeRaw(`UPDATE persistence_worktree_refreshes SET state = 'completed', completed_at = now() WHERE id = $1::uuid`, [REFRESH(5)]);
 }
 
@@ -458,6 +458,99 @@ for (const kind of testBackends()) {
       for (const ids of [['other', 'default'], ['default', 'other', 'no-such'], ['plain'], [], ['no-such']]) {
         await site(f, 'src/core/persistence/worktree-refresh.ts:1237', e => M.sourceLastCommitRows(e, ids), e => e.listSourceLastCommits(ids), { ordered: true, nonEmpty: ids.includes('other') || ids.includes('default') });
       }
+    });
+
+    // -------- carried connect-gate reads on seeded rows (no moved caller: absolute answers, so a wrong statement cannot hide behind equal arms)
+    test('connect gate reads: a custody row, and only the committed writer deactivations', async () => {
+      const e = f.after;
+      const RUN = 'a8000000-0000-4000-8000-0000000000e1';
+      await e.executeRaw(`INSERT INTO persistence_graduation (singleton, role, run_id, state) VALUES (1, 'source', $1::uuid, 'quiesced')`, [RUN]);
+      try {
+        expect(await e.readGraduationGateRow()).toEqual({ role: 'source', run_id: RUN, state: 'quiesced', source_data_dir: null });
+        expect(await e.readGraduationGateRow({ withRunSetting: true })).toEqual({ role: 'source', run_id: RUN, state: 'quiesced', source_data_dir: null, run: null });
+      } finally { await e.executeRaw('DELETE FROM persistence_graduation'); }
+      expect(await e.readGraduationGateRow()).toBeNull();
+      const change = (op: string, state: string, outcome: string | null) => e.executeRaw(
+        `INSERT INTO persistence_topology_changes (principal_id, request_id, digest, operation, source_id, state, outcome) VALUES (gen_random_uuid(), gen_random_uuid(), 'd', $1, 'default', $2, $3::text::jsonb)`, [op, state, outcome]);
+      await change('writer_deactivate', 'committed', '{"brain_id":"b1","retired_mode_epoch":3}');
+      await change('writer_deactivate', 'failed', '{"brain_id":"b2"}');
+      await change('writer_deactivate', 'recovering', null);
+      await change('topology_change', 'committed', '{"brain_id":"b3"}');
+      try {
+        expect(await e.listRetiredDeactivations()).toEqual([{ outcome: { brain_id: 'b1', retired_mode_epoch: 3 } }]);
+      } finally { await e.executeRaw('DELETE FROM persistence_topology_changes'); }
+      expect(await e.listRetiredDeactivations()).toEqual([]);
+    });
+
+    // -------- carried owner and effect scans on seeded rows (their callers are not in this cut: absolute answers, so a wrong statement cannot hide behind equal arms)
+    test('owner and effect scans: recovery heads, overdue holds, effect recoveries, the claimable effect, gated mirrors and a request\'s effects', async () => {
+      const e = f.after;
+      const REQ = (n: number) => `a8000000-0000-4000-8000-0000000003${String(n).padStart(2, '0')}`;
+      const req = (n: number, wt: number, state: string, o: { recovery?: boolean; refresh?: number; ageSeconds?: number; updatedSeconds?: number } = {}) => e.executeRaw(
+        `INSERT INTO persistence_requests (id, principal_kind, principal_id, request_id, operation, source_id, source_incarnation, slug, worktree_id, digest, authority, intent_bytes, terminal_reservation, state, recovery, deferred_refresh_id, created_at, updated_at)
+         VALUES ($1::uuid, 'local_cli', 'n8', gen_random_uuid(), 'put_page', 'default', gen_random_uuid(), $2, $3::uuid, 'd', '{}'::jsonb, 0, 0, $4, $5::text::jsonb, $6::uuid,
+           now() - ($7::integer * interval '1 second'), now() - ($8::integer * interval '1 second'))`,
+        [REQ(n), `n8/${n}`, WT(wt), state, o.recovery ? '{"x":1}' : null, o.refresh ? REFRESH(o.refresh) : null, o.ageSeconds ?? 10, o.updatedSeconds ?? o.ageSeconds ?? 10]);
+      const eff = (n: number, kind: string, wt: number, o: { state?: string; recovery?: boolean; errorCode?: string; data?: string; nextSecondsAgo?: number } = {}) => e.executeRaw(
+        `INSERT INTO persistence_effects (request_id, kind, data, state, worktree_id, source_id, error_code, recovery, next_attempt_at)
+         VALUES ($1::uuid, $2, $3::text::jsonb, $4, $5::uuid, 'default', $6, $7::text::jsonb, now() - ($8::integer * interval '1 second'))`,
+        [REQ(n), kind, o.data ?? '{}', o.state ?? 'queued', WT(wt), o.errorCode ?? null, o.recovery ? '{"x":1}' : null, o.nextSecondsAgo ?? 60]);
+      const effectId = async (n: number, kind: string) => Number((await e.executeRaw<{ id: number }>('SELECT id FROM persistence_effects WHERE request_id = $1::uuid AND kind = $2', [REQ(n), kind]))[0]!.id);
+      try {
+        // Recovery heads: the first recovering request of each worktree this host owns, oldest update first.
+        await req(1, 1, 'recovering', { recovery: true, updatedSeconds: 300 });
+        await req(2, 1, 'recovering', { recovery: true, updatedSeconds: 200 });
+        await req(3, 2, 'recovering', { recovery: true, updatedSeconds: 400 });
+        await req(4, 5, 'recovering', { recovery: true, updatedSeconds: 100 });
+        const heads = async (host: string, excluded: string[]) => (await e.listOwnerRecoveryHeads<{ id: string }>(host, excluded)).map(r => r.id);
+        expect(await heads(HOST, [])).toEqual([REQ(3), REQ(1)]);
+        expect(await heads(HOST, [WT(2)])).toEqual([REQ(1)]);
+        expect(await heads(OTHER_HOST, [])).toEqual([REQ(4)]);
+        // Overdue holds behind an unreleased refresh, in sequence order; a fresh hold and another host's are not listed.
+        await req(5, 3, 'deferred', { refresh: 1, ageSeconds: 1000 });
+        await req(6, 4, 'deferred', { refresh: 3, ageSeconds: 900 });
+        await req(7, 3, 'deferred', { refresh: 1, ageSeconds: 5 });
+        const overdue = async (host: string) => (await e.listOverdueHeldWrites<{ id: string }>(host, 60_000, 'refresh')).map(r => r.id);
+        expect(await overdue(HOST)).toEqual([REQ(5), REQ(6)]);
+        expect(await overdue(OTHER_HOST)).toEqual([]);
+        expect(await e.transaction(tx => tx.lockOverdueHold({ kind: 'refresh', refreshId: REFRESH(1) }))).toBe(true);
+        expect(await e.transaction(tx => tx.lockOverdueHold({ kind: 'refresh', refreshId: null }))).toBe(false);
+        // Effects: open recoveries after a cursor, a request's effects in byte order of kind, the next claimable effect, a gated mirror.
+        await eff(1, 'git', 1, { recovery: true });
+        await eff(3, 'git', 2, { recovery: true });
+        await eff(1, 'links', 1, { state: 'committed' });
+        await eff(1, 'embedding', 1, { state: 'committed' });
+        const a = await effectId(1, 'git'); const b = await effectId(3, 'git');
+        expect((await e.listEffectRecoveries<{ id: string | number }>(HOST, null, 10)).map(r => Number(r.id))).toEqual([a, b]);
+        expect((await e.listEffectRecoveries<{ id: string | number }>(HOST, String(a), 10)).map(r => Number(r.id))).toEqual([b]);
+        expect((await e.readRequestEffects(REQ(1))).map(r => r.kind)).toEqual(['embedding', 'git', 'links']);
+        await req(8, 4, 'queued'); await req(9, 4, 'queued');
+        await eff(8, 'git', 4); await eff(9, 'git', 4);
+        const first = await effectId(8, 'git');
+        expect(Number((await e.selectClaimableEffect<{ id: string | number }>(HOST, []))!.id)).toBe(first); // equal next_attempt_at: the lower id
+        await req(10, 3, 'queued');
+        await eff(10, 'withdrawal-mirror', 3, { state: 'failed', errorCode: 'targets_parked', data: '{"parked":[{"error_code":"code-x"}]}' });
+        expect((await e.listGatedMirrorRequests(HOST, 'code-x', ['code-x'])).map(r => r.id)).toEqual([REQ(10)]);
+        expect(await e.listGatedMirrorRequests(HOST, 'code-y', ['code-y'])).toEqual([]);
+        expect(await e.listGatedMirrorRequests(OTHER_HOST, 'code-x', ['code-x'])).toEqual([]);
+      } finally {
+        await e.executeRaw('DELETE FROM persistence_effects');
+        await e.executeRaw('DELETE FROM persistence_requests');
+      }
+    });
+
+    // -------- carried trust allow rules on seeded rows
+    test('trust allow rules list: active ones by id, removed ones on request, narrowed by source', async () => {
+      const e = f.after;
+      try {
+        await e.executeRaw(`INSERT INTO trust_allow_rules (source_id, uri_prefix, created_by) VALUES ('default', 'https://a.example/', 'owner'), ('plain', NULL, 'owner')`);
+        await e.executeRaw(`INSERT INTO trust_allow_rules (source_id, uri_prefix, created_by, removed_at, removed_by) VALUES ('default', 'https://b.example/', 'owner', now(), 'owner')`);
+        const ids = async (opts?: { sourceIds?: string[]; includeRemoved?: boolean }) => (await e.listTrustAllowRuleRows(opts)).map(r => `${r.source_id}:${r.uri_prefix ?? ''}`);
+        expect(await ids()).toEqual(['default:https://a.example/', 'plain:']);
+        expect(await ids({ includeRemoved: true })).toEqual(['default:https://a.example/', 'plain:', 'default:https://b.example/']);
+        expect(await ids({ sourceIds: ['plain'] })).toEqual(['plain:']);
+        expect(await ids({ sourceIds: ['default'], includeRemoved: true })).toEqual(['default:https://a.example/', 'default:https://b.example/']);
+      } finally { await e.executeRaw('DELETE FROM trust_allow_rules'); }
     });
 
     // -------- the moved files and the sites
