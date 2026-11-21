@@ -236,7 +236,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   // #7243: the applied-through commit, the job doing the work, and what the newest pass pinned against what a stamp backs.
   console.log(`  last synced commit: ${status.last_commit?.slice(0, 8) ?? 'none yet'}`);
   console.log(`  last converged: ${status.last_sync_at ?? 'never'}; last committed write: ${status.last_committed_at ?? 'none yet'}${status.last_committed_at && (!status.last_sync_at || status.last_committed_at > status.last_sync_at) ? ' (still importing since it last converged)' : ''}`);
-  if (!status.automatic_sync.enabled) console.log(`  automatic sync: OFF. ${status.automatic_sync.why} To turn it on: ${rendered.automatic_sync.fix?.command ?? rendered.automatic_sync.fix?.argv?.join(' ')}`);
+  if (!status.automatic_sync.enabled) console.log(`  automatic sync: OFF. ${status.automatic_sync.why} To turn it on: ${status.automatic_sync.fix?.argv?.join(' ')}`);
   const live = status.live;
   console.log(`  live: ${live ? `${live.kind}${live.job_id !== null ? ` job #${live.job_id}` : live.id ? ` ${live.id}` : ''}${live.pid ? ` (PID ${live.pid})` : ''} holds the drain lease since ${live.started_at ?? '?'}`
     + `${live.progress ? `, ${live.progress.committed} page(s) committed since` : ''}${live.stalled ? ', STALLED (no commit or save for the stall window)' : ''}` : 'nothing holds the drain lease'}`);
