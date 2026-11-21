@@ -34,7 +34,7 @@
  * 3. Existing coverage: the engine parity suite (test/engine-parity/) compares single members in process; nothing
  *    compares whole CLI commands, where several members and the operation layer combine.
  * 4. Seams: none. It runs the real CLI and needs the addon `bun run rust:build` writes; it skips without it
- *    (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing addon an error).
+ *    (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 makes a missing addon an error).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -48,8 +48,8 @@ const FIXTURE = join(ROOT, 'test', 'fixtures', 'rust-cli-parity-brain');
 const TARGET = detectAddonTarget();
 const ADDON = TARGET ? join(ROOT, 'rust', 'target', 'addon', `gbrain_engine.${TARGET}.node`) : '';
 const HAVE_ADDON = !!TARGET && existsSync(ADDON);
-if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
-  throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${ADDON || 'no addon target'} does not exist; run bun run rust:build`);
+if (!HAVE_ADDON && process.env.GBRAIN_TEST_REQUIRE_RUST_ADDON === '1') {
+  throw new Error(`GBRAIN_TEST_REQUIRE_RUST_ADDON=1 but ${ADDON || 'no addon target'} does not exist; run bun run rust:build`);
 }
 
 type Backend = 'pglite' | 'rust';

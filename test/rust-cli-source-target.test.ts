@@ -13,7 +13,7 @@
  * 3. Existing coverage: test/source-resolver*.test.ts covers the tiers on PGLite, where the lookup succeeds; the Rust
  *    CLI parity suite clears GBRAIN_SOURCE, so it never selects a source.
  * 4. Seams: none. It runs the real CLI and needs the addon `bun run rust:build` writes; it skips without it
- *    (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing addon an error).
+ *    (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 makes a missing addon an error).
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
@@ -28,8 +28,8 @@ const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 const TARGET = detectAddonTarget();
 const ADDON = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
 const HAVE_ADDON = TARGET !== null && existsSync(ADDON);
-if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
-  throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${ADDON} does not exist; run bun run rust:build`);
+if (!HAVE_ADDON && process.env.GBRAIN_TEST_REQUIRE_RUST_ADDON === '1') {
+  throw new Error(`GBRAIN_TEST_REQUIRE_RUST_ADDON=1 but ${ADDON} does not exist; run bun run rust:build`);
 }
 const withAddon = test.skipIf(!HAVE_ADDON);
 
