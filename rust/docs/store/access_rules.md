@@ -129,6 +129,9 @@ database collation, as the command did before; on such a server its order can di
 - Moving a source's rules between the database and git (`src/core/access/policy-migrate.ts`, `gbrain access rule migrate`)
   runs `executeRaw`, so it stops on the `raw_sql` refusal before any work (row 32h). `previewMigrate` reads no
   migration row on this engine, because none can exist.
+- `gbrain access rule add` (its preview and its write), `rule rm`, `rule revert` and `rule import`: the preview also
+  runs the held-fact move plan (`planHeldMoves`), whose reads this engine did not serve at ac7c6fdf42, so each refuses
+  before any write (row 32b-1; row 32b-2 serves them).
 - `gbrain access serves several` (row 32b-2).
 
 ## Tests
