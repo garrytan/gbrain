@@ -1279,19 +1279,6 @@ export interface SyncImportProvenance {
  * leading import counter to bump when the import's own parsing or canonical form changes. It deliberately leaves out the
  * release, so a parser fingerprint holds across releases that change no parsing.
  */
-/**
- * pages-03: SQL true when page row `page` stores a frontmatter id typed by the old YAML reading (`id: 007` stored as the
- * number 7): the stored id is a JSON number and the page's import record, at the page's current revision, names an
- * importer before import=2 (or none, on records from before the parser stamp). A page with no such record, or one a
- * later edit moved past the recorded revision, is not proven old, and its id compares as stored.
- */
-export function legacyTypedIdSql(page: string): string {
-  return `(jsonb_typeof(${page}.frontmatter->'id')='number' AND EXISTS (SELECT 1 FROM op_checkpoints lp JOIN sources ls ON ls.id=${page}.source_id
-    WHERE lp.op='${SYNC_IMPORT_PROVENANCE_OP}' AND lp.fingerprint=${page}.source_id||':'||ls.incarnation::text||':'||${page}.id::text
-      AND lp.completed_keys->0->>'revision'=${page}.knowledge_revision::text
-      AND COALESCE(lp.completed_keys->0->'parser'->>'parser_version','import=1;') LIKE 'import=1;%'))`;
-}
-
 // import=2 (pages-03): frontmatter values are kept as written, so every Markdown file is read once more after the upgrade.
 export const SYNC_IMPORT_PARSER_VERSION = `import=2;frontmatter=${RECOVERY_VERSION};fence=${FENCE_VERSION}`;
 

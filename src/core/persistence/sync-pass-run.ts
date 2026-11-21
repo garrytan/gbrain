@@ -14,7 +14,7 @@
  *   converging stop `resumable` (`not_converged`).
  */
 import { randomUUID } from 'node:crypto';
-import { confirmedSyncDelta, confirmRenameIdentities, explicitIdVeto } from '../sync-rename-identity.ts';
+import { confirmedSyncDelta, confirmRenameIdentities, explicitIdVeto, legacyTypedIdSql } from '../sync-rename-identity.ts';
 import { buildDetachedWorkingTreeManifest } from '../sync-delta.ts';
 import type { DowngradedRename, SyncManifest } from '../sync.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -44,7 +44,7 @@ import { idleClear, readIdleFacts } from './sync-idle-skips.ts';
 import { digest } from './digest.ts';
 import { readSyncTail } from './sync-tail-record.ts';
 import { movedDriftHolds } from './sync-prescreen.ts';
-import { CARRIED_SAMPLE, carriedHolds, clearGitHold, clearGitHoldRetryPaths, holdRescreenDue, legacyTypedIdSql, readGitHoldRetryPaths, readSyncHoldPolicy, readGitSourceHolds, readSyncImportProvenances, settledDeletionHolds, syncImportParserFor } from './sync-holds.ts';
+import { CARRIED_SAMPLE, carriedHolds, clearGitHold, clearGitHoldRetryPaths, holdRescreenDue, readGitHoldRetryPaths, readSyncHoldPolicy, readGitSourceHolds, readSyncImportProvenances, settledDeletionHolds, syncImportParserFor } from './sync-holds.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { loadConfig } from '../config.ts';
 import { startPersistenceConsumer } from './service.ts';

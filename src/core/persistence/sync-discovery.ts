@@ -10,7 +10,7 @@ import { managedForbiddenFlag, managedSyncFlagRefusal } from './managed-sync-fla
 import type { Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import { buildDetachedWorkingTreeManifest, computeSyncDelta } from '../sync-delta.ts';
-import { confirmedSyncDelta, confirmRenameIdentities, explicitIdVeto, fileIdAgainstStored, frontmatterIdentity, identityHeadDigest } from '../sync-rename-identity.ts';
+import { confirmedSyncDelta, confirmRenameIdentities, explicitIdVeto, fileIdAgainstStored, frontmatterIdentity, identityHeadDigest, legacyTypedIdSql } from '../sync-rename-identity.ts';
 import { isSyncable, isSyncMetafile, isCodeFilePath, isImageFilePath, matchesAnyGlob, readMetafilePagesMode, resolveSlugForPath, slugifyPath, type DowngradedRename, type SyncManifest } from '../sync.ts';
 import { diskMetafileHeads, firstMetafileHead, gitMetafileHeads, listMetafileNamedBlobs, metafilePagePredicate, type GitMetafileHeads } from '../sync-metafile-pages.ts';
 import { databaseOnlyPageSql } from './unbound-pages.ts';
@@ -32,7 +32,7 @@ import { assertDistinctSyncOrigins, legacySyncOrigin, sameSyncOrigin, selectOrig
 import { assertManagedSyncActive } from './sync-authority.ts';
 import { decideOriginTwins, readOriginClaimants, slugPathOccupied, type OriginConflict } from './origin-twins.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
-import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds, legacyTypedIdSql, readSyncImportProvenances } from './sync-holds.ts';
+import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds, readSyncImportProvenances } from './sync-holds.ts';
 import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
