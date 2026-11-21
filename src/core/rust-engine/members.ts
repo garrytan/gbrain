@@ -252,12 +252,6 @@ export const RUST_ENGINE_MEMBERS = {
   listFactsPageBodies: 'raw_sql',
   readFactTableCatalog: 'raw_sql',
 
-  readChunkVectorColumn: 'raw_sql',
-  readEmbeddingIdentity: 'raw_sql',
-  listEmbeddingStores: 'raw_sql',
-  hasStoredVectors: 'raw_sql',
-  countChunkVectorCoverage: 'raw_sql',
-
   // takes
   addTakesBatch: 'takes',
   updateTakeEmbeddings: 'takes',
@@ -359,6 +353,11 @@ export const RUST_ENGINE_MEMBERS = {
   readEmbedBackfillBySource: 'minion_queue',
   // Embedding catalog and held fence reads (engine-sql/embedding-catalog.ts, fence-holds.ts): refused as the raw SQL they replace
   // until the Rust store serves them, so the reported capabilities stay as before.
+  readChunkVectorColumn: 'raw_sql',
+  readEmbeddingIdentity: 'raw_sql',
+  listEmbeddingStores: 'raw_sql',
+  hasStoredVectors: 'raw_sql',
+  countChunkVectorCoverage: 'raw_sql',
   listFenceHoldRows: 'raw_sql',
   readPersistenceBrainId: 'persistence_journal',
   readLocalWriterRow: 'persistence_journal',
@@ -485,6 +484,19 @@ export const RUST_ENGINE_MEMBERS = {
   transitionDecideProposal: 'eval_capture',
   transitionDecideReviewProposal: 'eval_capture',
   upsertDecideState: 'eval_capture',
+  // memory-mutation-reads (engine-sql/memory-mutation-reads.ts): refused as the raw SQL they replace; their Rust adapter (a privacy-policy bridge) lands with its own cut
+  readSourceWriteRow: 'raw_sql',
+  readSourceLocalPath: 'raw_sql',
+  readFactEntitySlug: 'raw_sql',
+  hasLiveFileBackedPage: 'raw_sql',
+  factReadableUnder: 'raw_sql',
+  readRemoteForgetTier: 'raw_sql',
+  readForgetTarget: 'raw_sql',
+  isFactEntityUnbacked: 'raw_sql',
+  readLinkedFactCopies: 'raw_sql',
+  hasHiddenFactCopy: 'raw_sql',
+  ownerReachesFact: 'raw_sql',
+  readFactWithdrawalClaim: 'raw_sql',
   upsertOpenLoop: 'facts',
 } as const satisfies Record<keyof BrainEngine, MemberClass>;
 

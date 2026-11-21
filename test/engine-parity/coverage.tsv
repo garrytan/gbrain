@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 340/428
+# covered: 351/428
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
@@ -47,6 +47,9 @@
 # alias_fanout_reads: 4/4
 # cli_reads_export: 9/12
 # jobs_health: 8/8
+# minion_status: 11/11
+# embedding_catalog: 5/5
+# fence_holds: 1/1
 # trust_tier_reads: 1/3
 # withdrawal_discovery: 1/1
 # belief_reads: 0/1
@@ -55,10 +58,8 @@
 # wanted_links: 2/2
 # salience_enrich: 5/5
 # link_reads: 0/13
-# facts_doctor: 1/14
-# embedding_catalog: 5/5
-# persistence_journal: 0/4
-# minion_status: 0/11
+# facts_doctor: 0/14
+# writer_versions: 0/3
 # memory_mutation_reads: 7/12
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
@@ -416,6 +417,23 @@ listPrivateQueueHealth	jobs_health	yes	2	no	yes	yes	serves
 readWedgeSignals	jobs_health	yes	2	no	yes	yes	serves
 readOldestWaitingAge	jobs_health	yes	2	no	yes	yes	serves
 listStuckActiveJobsByName	jobs_health	yes	2	no	yes	yes	serves
+readLastAutopilotCycles	minion_status	yes	1	no	yes	yes	serves
+countJobsByStatus	minion_status	yes	1	no	yes	yes	serves
+readWaitingQueueDepths	minion_status	yes	1	no	yes	yes	serves
+readLastCompletedJobAt	minion_status	yes	1	no	yes	yes	serves
+countTtlCancelledByName	minion_status	yes	1	no	yes	yes	serves
+readWaitingScopeState	minion_status	yes	1	no	yes	yes	serves
+countRecentCompletedJobs	minion_status	yes	1	no	yes	yes	serves
+listRecentFailedJobErrors	minion_status	yes	1	no	yes	yes	serves
+readQueuedPageChars	minion_status	yes	1	no	yes	yes	serves
+readSourceJobCounts	minion_status	yes	1	no	yes	yes	serves
+readEmbedBackfillBySource	minion_status	yes	1	no	yes	yes	serves
+readChunkVectorColumn	embedding_catalog	yes	2	no	yes	yes	refuses:raw_sql
+readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
+listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
+hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
+countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
+listFenceHoldRows	fence_holds	yes	1	no	yes	yes	refuses:raw_sql
 listVersionTrustTiers	trust_tier_reads	no	0	no	-	-	-
 listVersionReasonWriters	trust_tier_reads	no	0	no	-	-	-
 listPageTypesByIds	trust_tier_reads	yes	1	no	yes	yes	refuses:raw_sql
@@ -453,30 +471,13 @@ countUnlinkedFactStats	facts_doctor	no	0	no	-	-	-
 countFactRelinkOutcomes	facts_doctor	no	0	no	-	-	-
 listUnlinkedConversationSlugs	facts_doctor	no	0	no	-	-	-
 countFactEmbeddingCoverage	facts_doctor	no	0	no	-	-	-
-countStaleFactEmbeddings	facts_doctor	yes	1	no	yes	yes	refuses:raw_sql
+countStaleFactEmbeddings	facts_doctor	no	0	no	-	-	-
 countSegmentedCensusPages	facts_doctor	no	0	no	-	-	-
 listFactsPageBodies	facts_doctor	no	0	no	-	-	-
 readFactTableCatalog	facts_doctor	no	0	no	-	-	-
-readChunkVectorColumn	embedding_catalog	yes	2	no	yes	yes	refuses:raw_sql
-readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
-listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
-hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
-countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
-listFenceHoldRows	persistence_journal	no	0	no	-	-	-
-readWriterVersionCutoff	persistence_journal	no	0	no	-	-	-
-listWriterVersions	persistence_journal	no	0	no	-	-	-
-recentWriterVersions	persistence_journal	no	0	no	-	-	-
-readLastAutopilotCycles	minion_status	no	0	no	-	-	-
-countJobsByStatus	minion_status	no	0	no	-	-	-
-readWaitingQueueDepths	minion_status	no	0	no	-	-	-
-readLastCompletedJobAt	minion_status	no	0	no	-	-	-
-countTtlCancelledByName	minion_status	no	0	no	-	-	-
-readWaitingScopeState	minion_status	no	0	no	-	-	-
-countRecentCompletedJobs	minion_status	no	0	no	-	-	-
-listRecentFailedJobErrors	minion_status	no	0	no	-	-	-
-readQueuedPageChars	minion_status	no	0	no	-	-	-
-readSourceJobCounts	minion_status	no	0	no	-	-	-
-readEmbedBackfillBySource	minion_status	no	0	no	-	-	-
+readWriterVersionCutoff	writer_versions	no	0	no	-	-	-
+listWriterVersions	writer_versions	no	0	no	-	-	-
+recentWriterVersions	writer_versions	no	0	no	-	-	-
 readSourceWriteRow	memory_mutation_reads	yes	1	no	yes	yes	refuses:raw_sql
 readSourceLocalPath	memory_mutation_reads	yes	1	no	yes	yes	refuses:raw_sql
 readFactEntitySlug	memory_mutation_reads	yes	1	no	yes	yes	refuses:raw_sql

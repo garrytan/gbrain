@@ -90,16 +90,18 @@ const INTERFACE_METHODS: readonly string[] = [
   // N4 reads (engine-sql/cli-reads-import.ts, cli-reads-ops.ts, entity-reads.ts, jobs-insight.ts; master text pinned by test/n4-sql-move-parity.test.ts)
   'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows',
   'filterPagesAtRevision', 'nextLivePageAfter', 'readMentionLastPass', 'findExactBasenameCandidates', 'readJobInsight',
-  // N6 reads and carried N5 reads (engine-sql/link-reads.ts, facts-doctor.ts, writer-versions.ts, embedding-catalog.ts, jobs-status.ts, memory-mutation-reads.ts; master text pinned by test/n6-sql-move-parity.test.ts)
-  'listConversationFactRows', 'countRedactedFacts', 'listOutsideContentFenceCounts', 'countAtomFacts', 'listUnpreviewedTrustFacts',
-  'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes', 'listUnlinkedConversationSlugs', 'countFactEmbeddingCoverage',
-  'countStaleFactEmbeddings', 'countSegmentedCensusPages', 'listFactsPageBodies', 'readFactTableCatalog', 'readChunkVectorColumn',
-  'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage', 'listFenceHoldRows', 'readWriterVersionCutoff',
-  'listWriterVersions', 'recentWriterVersions', 'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage',
-  'countForeignEdges', 'listLivePageSummaries', 'countInboundLinks', 'readEntityInboundEdges', 'listLinkEndpointPages', 'listPagesTitledIn',
-  'wordLexemes', 'readLinkContextMatches', 'readLinkContextOriginPages', 'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths',
-  'readLastCompletedJobAt', 'countTtlCancelledByName', 'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors',
-  'readQueuedPageChars', 'readSourceJobCounts', 'readEmbedBackfillBySource', 'readSourceWriteRow', 'readSourceLocalPath', 'readFactEntitySlug',
+  // N5 reads: the embedding catalog, held fence results and job status reads (engine-sql/embedding-catalog.ts, fence-holds.ts, jobs-status.ts). Not listed on the N5 head, where this test fails the same way.
+  'readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage', 'listFenceHoldRows',
+  'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+  'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
+  'readEmbedBackfillBySource',
+  // N6 reads and the carried memory-mutation reads (engine-sql/link-reads.ts, facts-doctor.ts, writer-versions.ts, memory-mutation-reads.ts; master text pinned by test/n6-sql-move-parity.test.ts)
+  'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges', 'listLivePageSummaries',
+  'countInboundLinks', 'readEntityInboundEdges', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes', 'readLinkContextMatches',
+  'readLinkContextOriginPages', 'listConversationFactRows', 'countRedactedFacts', 'listOutsideContentFenceCounts', 'countAtomFacts',
+  'listUnpreviewedTrustFacts', 'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes', 'listUnlinkedConversationSlugs',
+  'countFactEmbeddingCoverage', 'countStaleFactEmbeddings', 'countSegmentedCensusPages', 'listFactsPageBodies', 'readFactTableCatalog',
+  'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions', 'readSourceWriteRow', 'readSourceLocalPath', 'readFactEntitySlug',
   'hasLiveFileBackedPage', 'factReadableUnder', 'readRemoteForgetTier', 'readForgetTarget', 'isFactEntityUnbacked', 'readLinkedFactCopies',
   'hasHiddenFactCopy', 'ownerReachesFact', 'readFactWithdrawalClaim',
   // Search
@@ -253,14 +255,7 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
  *     (test/engine-parity/sync-aliases.test.ts) began calling it on every
  *     engine arm. Its PGLite smoke stays below as an ex-UNCALLED shape pin.
  */
-const UNCALLED: readonly string[] = [
-  // Carried from N5 until N5 lands: their parity suites (test/engine-parity/jobs-status.test.ts, which admits jobs through
-  // engine.admitJob, and test/engine-parity/persistence.test.ts) need members that live in other cuts, so nothing in
-  // this tree calls them yet. N5 brings the suites and shrinks this list.
-  'listFenceHoldRows', 'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt',
-  'countTtlCancelledByName', 'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars',
-  'readSourceJobCounts', 'readEmbedBackfillBySource',
-];
+const UNCALLED: readonly string[] = [];
 
 function methodNames(): string[] {
   return Object.getOwnPropertyNames(PGLiteEngine.prototype).filter((n) => n !== 'constructor');
@@ -415,51 +410,7 @@ const EX_UNCALLED_SHAPE_PINS: Record<string, () => Promise<void>> = {
   },
 };
 
-const SMOKES: Record<string, () => Promise<void>> = {
-  listFenceHoldRows: async () => {
-    // Carried from N5 until its parity suite lands: no held fence result on a seeded brain, with and without an owner key.
-    expect(await engine.listFenceHoldRows(['default'], ['fence'])).toEqual([]);
-    expect(await engine.listFenceHoldRows(['default'], ['fence'], 'page:wiki/vc/fund-a')).toEqual([]);
-  },
-  readLastAutopilotCycles: async () => {
-    const out = await engine.readLastAutopilotCycles();
-    expect(out).toEqual({ full: null, targeted: null });
-  },
-  countJobsByStatus: async () => {
-    expect(await engine.countJobsByStatus()).toEqual([]);
-    expect(await engine.countJobsByStatus({ statuses: ['waiting'] })).toEqual([]);
-  },
-  readWaitingQueueDepths: async () => {
-    expect(await engine.readWaitingQueueDepths()).toEqual([]);
-  },
-  readLastCompletedJobAt: async () => {
-    expect(await engine.readLastCompletedJobAt()).toBeNull();
-  },
-  countTtlCancelledByName: async () => {
-    expect(await engine.countTtlCancelledByName('%ttl%', 3600)).toEqual([]);
-  },
-  readWaitingScopeState: async () => {
-    const out = await engine.readWaitingScopeState({ name: 'smoke', queue: 'default', jobId: 1 });
-    expect(out).toEqual({ waiting: 0, live_id: null, age_min: null });
-  },
-  countRecentCompletedJobs: async () => {
-    expect(await engine.countRecentCompletedJobs('smoke', 3600)).toBe(0);
-  },
-  listRecentFailedJobErrors: async () => {
-    expect(await engine.listRecentFailedJobErrors(3600)).toEqual([]);
-  },
-  readQueuedPageChars: async () => {
-    const out = await engine.readQueuedPageChars({ name: 'smoke', queue: 'default', maxChars: 1000 });
-    expect(out === null || typeof out === 'number').toBe(true);
-  },
-  readSourceJobCounts: async () => {
-    expect(await engine.readSourceJobCounts(3600)).toEqual([]);
-  },
-  readEmbedBackfillBySource: async () => {
-    const out = await engine.readEmbedBackfillBySource(['default']);
-    expect(Array.isArray(out)).toBe(true);
-  },
-};
+const SMOKES: Record<string, () => Promise<void>> = {};
 
 describe('uncovered-method smokes (seeded PGLite)', () => {
   beforeAll(async () => {

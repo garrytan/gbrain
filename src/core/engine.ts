@@ -2,7 +2,6 @@ import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawal
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type { LinkPageMetadataRow, PageAtRevisionRef, SourceIncarnationRow, SourceRecordRow, StoredTimelineRow } from './engine-sql/cli-reads-import.ts';
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
-import type { FenceHoldRow } from './engine-sql/fence-holds.ts';
 export type { LinkPageMetadataRow, PageAtRevisionRef, SourceIncarnationRow, SourceRecordRow, StoredTimelineRow } from './engine-sql/cli-reads-import.ts';
 export type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
@@ -34,6 +33,7 @@ import type { PageBodySizes } from './engine-sql/large-page.ts';
 import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
+import type { FenceHoldRow } from './engine-sql/fence-holds.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
@@ -121,6 +121,36 @@ export interface SourceDetailRow {
   /** Per-source mount-frontmatter trust gate. */
   trust_frontmatter_overrides?: boolean;
 }
+/** The source row a memory write admits against (`readSourceWriteRow`): `kind` and `role` are `config->>'kind'` and `config->>'role'`. */
+export interface SourceWriteRow { incarnation: string; archived: boolean; local_path: string | null; kind: string | null; role: string | null }
+/** `factReadableUnder`: one fact, read with any visibility (the owner) or the caller's world rule, under a read eligibility. */
+export interface FactReadableSpec {
+  id: number; sourceId: string; anyVisibility: boolean;
+  eligibility: import('./eligibility/policy.ts').ReadEligibility | undefined; excludePrivate: boolean;
+}
+/**
+ * `readForgetTarget`: the fact a forget names. `ownPage` (a member's own member page) reads only a private fact on that
+ * page while the live page names the member; otherwise `worldOnly` keeps world facts and `remoteFloor` adds the remote
+ * provenance floor. `lock` takes the row FOR UPDATE.
+ */
+export interface ForgetTargetSpec { id: number; sourceId: string; worldOnly: boolean; remoteFloor: boolean; lock: boolean; ownPage: string | null }
+/** The fact row `readForgetTarget` answers. */
+export interface ForgetTargetRow { id: number; entity_slug: string | null; source_markdown_slug: string | null; row_num: number | null; expired_at: Date | null; trust_tier: string | null }
+/** `readLinkedFactCopies`: the copies of fact `id`'s claim on other entities; `worldOnly` keeps world ones, `remoteFloor` adds the remote provenance floor. */
+export interface LinkedFactCopiesSpec { id: number; sourceId: string; worldOnly: boolean; remoteFloor: boolean }
+/** One copy `readLinkedFactCopies` answers. */
+export interface LinkedFactCopy { id: number; entity_slug: string }
+/**
+ * `readFactWithdrawalClaim`: the fact a withdrawal admits, never an extraction outcome marker. `worldOnly` keeps world
+ * facts and a private fact on `memberPage` (a member's own page, checked by the caller); `remoteFloor` adds the remote
+ * provenance floor. `lock` reads the row FOR UPDATE inside the caller's transaction (the withdrawal itself); the Rust
+ * store serializes its writes, so it takes no row lock there.
+ */
+export interface FactWithdrawalClaimSpec { id: number; sourceId: string; worldOnly: boolean; memberPage: string | null; remoteFloor: boolean; lock?: boolean }
+/** The claim `readFactWithdrawalClaim` answers: its visibility, text, fingerprint, withdrawal subject and whether it expired. */
+export interface FactWithdrawalClaim { visibility: 'private' | 'world'; fact: string; fact_hash: string; subject: string; expired: boolean }
+/** `ownerReachesFact`: the owner's member identity and the folder rules it satisfies. */
+export interface OwnerReachSpec { id: number; sourceId: string; identity: readonly string[]; satisfied: readonly string[] }
 
 /**
  * One `gbrain_cycle_locks` row as `readCycleLocks` returns it: the lease the lock id names. Timestamps are the
@@ -3117,6 +3147,7 @@ export interface BrainEngine {
   /** unlinked_facts: the `facts` and `fact_relink_attempts` table names the brain has (null for one it lacks). */
   readFactTableCatalog(): Promise<{ facts: string | null; attempts: string | null } | null>;
 
+
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
   getSourceStrictness(sourceId: string): Promise<boolean>;
 
@@ -3129,6 +3160,8 @@ export interface BrainEngine {
   /** Registers a local writer unless its id or credential hash is already registered; true when this call inserted the row. */
   insertLocalWriterRow(row: LocalWriterInsert): Promise<boolean>;
 
+  /** The held fence results of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first (`listFenceHolds`, engine-sql/fence-holds.ts). */
+  listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string): Promise<FenceHoldRow[]>;
   /**
    * The current value of each named transaction-local setting (`current_setting(name, true)`), in `names` order, null
    * where unset. On a transaction engine it reads inside that transaction. Names are code constants (dotted lowercase).
@@ -3294,11 +3327,61 @@ export interface BrainEngine {
   /** Active jobs whose lock lapsed or whose stalled counter reached two, per name. */
   listStuckActiveJobsByName(): Promise<Array<{ name: string; n: number }>>;
 
+  // Minion job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts): `gbrain status`, `jobs stats`,
+  // the facts drain backlog, source health and the sync status report. Windows are seconds.
+  /** The newest completed `autopilot-cycle` job and the newest completed `autopilot-*` job (finished-at order), or null each. */
+  readLastAutopilotCycles(): Promise<LastAutopilotCycles>;
+  /** Job counts by status, in status order, over the jobs a filter (name, queue, statuses) matches; no filter counts all. */
+  countJobsByStatus(filter?: JobStatusFilter): Promise<JobStatusCount[]>;
+  /** Waiting depth and oldest-waiting age in seconds per queue with waiting work, deepest first. */
+  readWaitingQueueDepths(): Promise<QueueDepth[]>;
+  /** The freshest `updated_at` among completed jobs, or null. */
+  readLastCompletedJobAt(): Promise<Date | null>;
+  /** Cancelled jobs whose `error_text` matches the LIKE pattern and that finished in the last `withinSeconds`, counted by name. */
+  countTtlCancelledByName(reasonLike: string, withinSeconds: number): Promise<TtlCancelledCount[]>;
+  /** The waiting jobs sharing a returned job's source scope, plus its id and age in minutes while it is active with a live lease. */
+  readWaitingScopeState(spec: { name: string; queue: string; jobId: number }): Promise<WaitingScopeState>;
+  /** Jobs of a name that completed within the last `withinSeconds`. */
+  countRecentCompletedJobs(name: string, withinSeconds: number): Promise<number>;
+  /** The id and failure text of dead or failed jobs updated within the last `withinSeconds`, by id. */
+  listRecentFailedJobErrors(withinSeconds: number): Promise<FailedJobError[]>;
+  /** The average page text length (capped at `maxChars`) of the pages queued jobs of a name and queue point at, or null. */
+  readQueuedPageChars(spec: { name: string; queue: string; maxChars: number }): Promise<number | null>;
+  /** Per-source failure, queue and embed-backfill counts over the `sync` and `embed-backfill` jobs. */
+  readSourceJobCounts(failedWithinSeconds: number): Promise<SourceJobCounts[]>;
+  /** The embed-backfill jobs of each named source: queued, active and last completion. */
+  readEmbedBackfillBySource(sourceIds: readonly string[]): Promise<EmbedBackfillState[]>;
+
   // Group D (trust tier reads): the stamped-tier reads of page history and the quote path.
   /** The stored snapshot tier of each listed page version, by id. */
   listVersionTrustTiers(ids: readonly number[]): Promise<Array<{ id: number; trust_tier: string | null }>>;
   /** The type and tier of the write that replaced each listed version (the next snapshot, or the live page), by id. */
   listVersionReasonWriters(ids: readonly number[]): Promise<Array<{ id: number; type: string | null; tier: string | null }>>;
+  // Memory mutation reads (engine-sql/memory-mutation-reads.ts): the reads remember and forget make before admission.
+  /** The source row a memory write admits against; null for an unknown id. */
+  readSourceWriteRow(sourceId: string): Promise<SourceWriteRow | null>;
+  /** A source's checkout path; null for an unknown id or a source with none. */
+  readSourceLocalPath(sourceId: string): Promise<string | null>;
+  /** The entity slug of one fact of a source; null when there is no such fact or it names none. */
+  readFactEntitySlug(id: number, sourceId: string): Promise<string | null>;
+  /** Whether a live page of the source among the slugs has a source file. */
+  hasLiveFileBackedPage(sourceId: string, slugs: readonly string[]): Promise<boolean>;
+  /** Whether the caller reads one fact under its visibility rule, a read eligibility and optionally the private-provenance policy. */
+  factReadableUnder(spec: FactReadableSpec): Promise<boolean>;
+  /** The stored tier of a world fact of the source a remote forget targets, under the remote provenance floor with `remoteFloor`; null when none. */
+  readRemoteForgetTier(spec: { factId: number; sourceId: string; remoteFloor: boolean }): Promise<string | null>;
+  /** The fact a forget names under the caller's visibility (ForgetTargetSpec); null when the caller does not see it. */
+  readForgetTarget(spec: ForgetTargetSpec): Promise<ForgetTargetRow | null>;
+  /** Whether one fact of a source names an unbacked entity (a name key with no live page). */
+  isFactEntityUnbacked(id: number, sourceId: string): Promise<boolean>;
+  /** The active copies of a fact's claim on other entities a forget would also withdraw, by id, at most five (LinkedFactCopiesSpec). */
+  readLinkedFactCopies(spec: LinkedFactCopiesSpec): Promise<LinkedFactCopy[]>;
+  /** Whether an active copy of a fact's claim the forget would reach fails the remote provenance floor. */
+  hasHiddenFactCopy(spec: { id: number; sourceId: string }): Promise<boolean>;
+  /** Whether the brain owner's own credential reaches a fact: no owned memory page, and its pages pass the owner's read rule. */
+  ownerReachesFact(spec: OwnerReachSpec): Promise<boolean>;
+  /** The claim a withdrawal of a fact changes (FactWithdrawalClaimSpec); null when the caller may not withdraw it. */
+  readFactWithdrawalClaim(spec: FactWithdrawalClaimSpec): Promise<FactWithdrawalClaim | null>;
   /** The stored type of each listed page, deleted or not, by id (the quoting reads); unknown ids answer nothing. */
   listPageTypesByIds(ids: readonly number[]): Promise<PageTypeRef[]>;
   /** One read withdrawal discovery makes (WithdrawalDiscoveryRead: claim keys, fence and chunk matches, split fence slots, targets, sample slugs). */
