@@ -172,7 +172,9 @@ export const consolidationAdapter: GenerationAdapter<undefined> = {
   retiredBy: 'generation-restore',
   modelProduced: false,
   strictOrder: true,
-  lockKeys: () => [],
+  // A managed source restores through the writer (repair.ts submitManagedRestore), journaled on the cluster's entity page.
+  databaseOnly: true,
+  lockKeys: key => [{ sourceId: key.sourceId, slug: (key.ownerKey.split(':cluster:')[0] ?? '').replace(/^entity:/, '') }],
   async readInput(engine, key) {
     const ids = clusterIds(key.ownerKey);
     const rows = await factPreimages(engine, key.sourceId, ids);
