@@ -85,8 +85,8 @@ fn insert_creates_missing_groups_marks_the_brain_and_refuses_as_the_constraints_
         ids(&members(&store, json!({"includeRemoved": true}))),
         ["alice", "bob"]
     );
-    let bind = insert(&store, json!({"id": "carol", "bindTokenId": "t-1"})).unwrap_err();
-    assert_eq!(bind.code, "invalid_argument");
+    // A token id no token has binds nothing; the member is still added.
+    insert(&store, json!({"id": "carol", "bindTokenId": "t-1"})).unwrap();
     let rows = members(&store, json!({"id": "alice"}));
     assert_eq!(rows[0]["groups"], json!(["team-a", "team-b"]));
     assert_eq!(rows[0]["kind"], "person");

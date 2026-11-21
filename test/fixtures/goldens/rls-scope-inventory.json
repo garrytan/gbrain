@@ -3839,6 +3839,28 @@
         ],
         "flagOnScopes": []
       },
+      "readCredentialBindingForUpdate#client-unscoped": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readCredentialBindingForUpdate#token": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readCurrentWriteTrust#default": {
         "flagOffLanes": [
           "tx"
@@ -6655,6 +6677,7 @@
         "readConsolidationTakesMaxRowNum": "none",
         "readConversationSlotValueHash": "none",
         "readCounterRows": "none",
+        "readCredentialBindingForUpdate": "none",
         "readCurrentWriteTrust": "none",
         "readCursorEdition": "none",
         "readCycleLocks": "none",
@@ -7065,6 +7088,8 @@
         "withScopedReadTransaction": "none",
         "wordLexemes": "none",
         "writeContradictionsRun": "none",
+        "writeCredentialBinding": "none",
+        "writeCredentialReadsUnscoped": "none",
         "writeDreamMapConfigRow": "none",
         "writeLinkRelationshipState": "none",
         "writeManualLinkTransitions": "none",

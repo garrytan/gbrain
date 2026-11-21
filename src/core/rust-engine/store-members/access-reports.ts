@@ -2,7 +2,7 @@
  * The access report reads (BrainEngine readAccessStateUnreadable, countOpenPages, listWhoCanReadPages,
  * readPageAdmitsCaller, readPageFolderRulesAdmit, countLineageClosingRules; SQL in engine-sql/access-setup.ts and
  * engine-sql/access-policy.ts): what gbrain access serves, doctor open_shared_pages and gbrain access who-can-read read.
- * The store keeps no access members, no access rules and no folder rule ids, and its access state always reads. What
+ * The store keeps no access rules and no folder rule ids, and its access state always reads. What
  * each member answers and why: rust/docs/store/write_misc.md (listWhoCanReadPages: page-visibility.md).
  */
 import type { OpenPageCount, OpenPageExclusion, WhoCanReadPageRow } from '../../engine-sql/access-setup.ts';
@@ -73,13 +73,13 @@ export const listWhoCanReadPages: StoreMember<[slug: string, sourceId: string | 
       brain.listWhoCanReadPages(slug, sourceId ?? null, storeForm)) as Promise<WhoCanReadPageRow[]>;
   };
 
-/** The store keeps no access members, so no member identity reaches this read; it refuses rather than guess a floor. */
+/** The store does not judge one member's member-access floor yet (row 32), so it refuses rather than guess one. */
 export const readPageAdmitsCaller: StoreMember<[sourceId: string, slug: string, identity: readonly string[]], boolean> = async () =>
-  refuseMember('readPageAdmitsCaller', 'the store keeps no access members, so no member identity reaches it');
+  refuseMember('readPageAdmitsCaller', 'one member\'s member-access floor');
 
-/** The store keeps no access members and no folder rules, so no member's satisfied rules reach this read. */
+/** The store keeps no folder rules and does not judge one member's satisfied rules yet (row 32), so it refuses. */
 export const readPageFolderRulesAdmit: StoreMember<[sourceId: string, slug: string, satisfied: readonly string[]], boolean> = async () =>
-  refuseMember('readPageFolderRulesAdmit', 'the store keeps no access members, so no member identity reaches it');
+  refuseMember('readPageFolderRulesAdmit', 'one member\'s folder rules');
 
 /** The store keeps no access rules, so no id names an applied raw-only rule and every id counts. */
 export const countLineageClosingRules: StoreMember<[ruleIds: readonly string[], sourceId: string], number> = async (_brain, ruleIds) =>

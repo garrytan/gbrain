@@ -22,7 +22,6 @@
  *    since the store lists them in path order and the SQL engines in no stated order.
  */
 import { describe, expect } from 'bun:test';
-import { isCapabilityMissing } from '../../src/core/rust-engine/errors.ts';
 import type { FolderAccessRows } from '../../src/core/engine-sql/access-control.ts';
 import { archiveSource, createSource, parityArms, restrictFolder } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
@@ -444,7 +443,6 @@ describe('engine parity: write misc', () => {
     return { unset, stored, other };
   });
 
-  // Rust arm: a known stop until row 32a-2 serves the credential reads (pinned in access-members.test.ts).
   parityTest('readMayActFor permits nothing for a token or a client with no live row', { methods: ['readMayActFor'] }, async (engine) => {
     const token = await engine.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000aa');
     const client = await engine.readMayActFor('oauth_client', 'client-absent');
@@ -453,7 +451,7 @@ describe('engine parity: write misc', () => {
   });
 
   // Leak case: a revoked token or a deleted client must permit nothing, and one credential's list never answers for
-  // another. The Rust store refuses a token's or client's list (row 32a-2), and the token write stops on the raw_sql refusal.
+  // another. The raw-SQL token seed stops on the Rust arm; access-members.test.ts binds typed tokens and clients on every arm.
   parityTest('readMayActFor reads only the live row it names: a revoked token, a deleted client and another credential permit nothing', { methods: ['readMayActFor'] }, async (engine, backend) => {
     const write = await engine.executeRaw(
       `INSERT INTO access_tokens (id, name, token_hash, may_act_for, revoked_at) VALUES
@@ -462,7 +460,7 @@ describe('engine parity: write misc', () => {
          ('00000000-0000-4000-8000-0000000000a3', 'bare', 'h3', NULL, NULL)`).then(() => null, (e: unknown) => e);
     if (backend === 'rust') {
       expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(isCapabilityMissing(await engine.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1').catch((e: unknown) => e))).toBe(true);
+      expect(await engine.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')).toBeNull();
       throw write;
     }
     expect(write).toBeNull();
@@ -570,7 +568,6 @@ describe('engine parity: write misc', () => {
     return { live, all, byId, byEmail };
   });
 
-  // Rust arm: a known stop until row 32a-2 serves the credential reads (pinned in access-members.test.ts).
   parityTest('readAccessCredentials finds no token by name and no credential bound to a member on a brain with none', { methods: ['readAccessCredentials'] }, async (engine) => {
     const answers = {
       byName: await engine.readAccessCredentials({ tokenName: 'laptop' }),
@@ -582,7 +579,7 @@ describe('engine parity: write misc', () => {
 
   // Leak case: a revoked token and a deleted client never answer; a token name matches only tokens with exactly that
   // name (never a client's name, another case or an injected predicate); a member binding answers only that member's
-  // credentials. The Rust store refuses the credential reads (row 32a-2), and the token write stops on the raw_sql refusal.
+  // credentials. The raw-SQL token seed stops on the Rust arm; access-members.test.ts binds typed tokens and clients on every arm.
   parityTest('readAccessCredentials answers only live credentials with the exact token name or member binding', { methods: ['readAccessCredentials'] }, async (engine, backend) => {
     const write = await engine.executeRaw(
       `INSERT INTO access_tokens (id, name, token_hash, member_id, created_at, revoked_at) VALUES
@@ -593,7 +590,7 @@ describe('engine parity: write misc', () => {
          ('00000000-0000-4000-8000-0000000000b5', 'shared', 'h5', NULL, '2026-01-04T00:00:00Z', NULL)`).then(() => null, (e: unknown) => e);
     if (backend === 'rust') {
       expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(isCapabilityMissing(await engine.readAccessCredentials({ memberId: 'alice-example' }).catch((e: unknown) => e))).toBe(true);
+      expect(await engine.readAccessCredentials({ memberId: 'alice-example' })).toEqual([]);
       throw write;
     }
     expect(write).toBeNull();

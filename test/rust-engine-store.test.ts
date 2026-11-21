@@ -472,7 +472,7 @@ describe('access member reads on a Rust brain', () => {
     expect(raw).toEqual([]);
   });
 
-  withAddon('legacyTokenByName and boundCredentials read no raw SQL and refuse typed: the store keeps no token binding yet (row 32a-2)', async () => {
+  withAddon('legacyTokenByName and boundCredentials read no raw SQL and find no credential on a brain with none', async () => {
     const { engine } = await open();
     const raw: string[] = [];
     const executeRaw = engine.executeRaw.bind(engine);
@@ -480,9 +480,8 @@ describe('access member reads on a Rust brain', () => {
       raw.push(sql);
       return executeRaw(sql as never, params as never);
     }) as typeof executeRaw;
-    // Never an empty list: tokens may exist, so the read refuses until the store serves it.
-    expect(await code(() => legacyTokenByName(engine as never, 'laptop'))).toBe('engine_capability_missing');
-    expect(await code(() => boundCredentials(engine as never, 'alice-example'))).toBe('engine_capability_missing');
+    expect(await code(() => legacyTokenByName(engine as never, 'laptop'))).toBe('invalid_params');
+    expect(await boundCredentials(engine as never, 'alice-example')).toEqual([]);
     expect(raw).toEqual([]);
   });
 

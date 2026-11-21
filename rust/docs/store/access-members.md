@@ -7,7 +7,7 @@ filters its rows for the member reads that have no store method.
 
 | Member | Returns |
 | --- | --- |
-| `brain.insertAccessMember(spec)` | `{ groupsCreated }`: the groups this call created, in the order named. Inserts the member (`kind` `person` when unset), creates its missing groups and adds it to each, in one write. A `bindTokenId` refuses (`invalid_argument`): the store keeps no token binding yet |
+| `brain.insertAccessMember(spec)` | `{ groupsCreated }`: the groups this call created, in the order named. Inserts the member (`kind` `person` when unset), creates its missing groups, adds it to each and binds the token `bindTokenId` names, in one write |
 | `brain.setAccessMemberDisabled(id, disabled)` | null. A disable keeps an earlier disable time; an enable clears it |
 | `brain.setAccessMemberEmail(id, email)` | whether a member that is not removed changed |
 | `brain.setAccessMemberKind(id, kind)`, `brain.setAccessMemberLabelledOnly(id, on)` | null. A removed member is skipped |
@@ -21,19 +21,25 @@ filters its rows for the member reads that have no store method.
 The TypeScript member answers these from `readAccessMembers` and `readAccessGroups`, as the SQL filters them:
 `listActiveAccessMembers` (enabled, not removed), `hasLabelledOnlyMember` (any status), `listAudienceAccessMembers`
 (enabled audience members), `readAudiencePrincipals` (enabled members and existing groups among the ids) and
-`readLiveMember` by member id or by the stdio member config (its value trimmed of edge whitespace, as `edgeTrimSql`).
+`readLiveMember` by member id, by the stdio member config (its value trimmed of edge whitespace, as `edgeTrimSql`) or by
+the binding a live token or client carries (`readLiveCredential` below).
 
-## Not served yet (docs/designs/RUST_ENGINE.md, row 32a-2)
+## Credential binding
 
-The store keeps access tokens and OAuth clients but no member binding of a token. So these refuse with
-`engine_capability_missing`, and none answers a constant:
+The binding columns live on the token records of [access-tokens.md](access-tokens.md) and the client records of
+[oauth-clients.md](oauth-clients.md); `gbrain-store` `jobs/credential_binding.rs` reads and writes them.
 
-- `readAccessCredentials` (a token by name, the credentials bound to a member). `gbrain access member add --bind-token`,
-  `gbrain access owner set`, `gbrain access member rm` and doctor's labelled-only audit read it, so they stop before
-  they write anything.
-- `readMayActFor` for a token or a client.
-- `readLiveMember` for a token or a client once the brain has a member. With no member, no binding can name a live
-  member, so the answer is null, as the SQL join gives.
+| Member | Returns |
+| --- | --- |
+| `brain.readCredentialBinding(kind, id, readsUnscoped)` | `readCredentialBindingForUpdate`: `{ member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read }` of the token (id text, exactly) or client, with `grant_types` and `confidential` for a client and `reads_unscoped` (ISO text or null) when asked; null when no row has the id. The `FOR UPDATE` lock has nothing to wait for: the store runs one write transaction at a time |
+| `brain.writeCredentialBinding(kind, id, binding)` | null. Sets the six binding columns; nothing changes when no row has the id. A client write is held to the client table's constraints |
+| `brain.writeCredentialReadsUnscoped(kind, id, on)` | null. Sets `reads_unscoped` to the transaction's time, or clears it |
+| `brain.readLiveCredential(via, key)` | `{ member_id, may_act_for }` of the token not revoked (`legacy_token`, id text) or the client not deleted (`oauth_client`), or null: the token and client halves of `readLiveMember` and `readMayActFor` |
+| `brain.readAccessCredentials(by)` | `[{ kind, id, name }]`: the tokens not revoked with exactly `tokenName`, oldest first; or the tokens not revoked bound to exactly `memberId`, by name bytes, then the clients not deleted bound to it, by client id bytes |
+
+A member insert with `bindTokenId` binds the token whose id text is exactly that, in the same write; no token with the
+id binds nothing. `gbrain access member rm` still refuses on Rust before it writes (row 32f): its Wakeshift forget is
+raw SQL that swallows its own errors.
 
 ## Trigger halves
 

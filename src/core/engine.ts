@@ -4495,6 +4495,12 @@ export interface BrainEngine {
   removeAccessGroupMembers(groupId: string, memberIds: readonly string[]): Promise<void>;
   /** Deletes the group and its memberships. */
   deleteAccessGroup(id: string): Promise<void>;
+  /** A credential's binding columns locked FOR UPDATE (inside the binding's transaction), or undefined. */
+  readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }): Promise<AccessMembersSql.CredentialBindingRow | undefined>;
+  /** Writes a credential's member, may_act_for and attest columns. */
+  writeCredentialBinding(target: AccessMembersSql.CredentialTarget, binding: AccessMembersSql.CredentialBinding): Promise<void>;
+  /** Sets a credential's reads_unscoped to now() (true) or clears it (false). */
+  writeCredentialReadsUnscoped(target: AccessMembersSql.CredentialTarget, readsUnscoped: boolean): Promise<void>;
   /** Every access group with its member ids, by id; or the one group with exactly that id (null lists every group). */
   readAccessGroups(id: string | null): Promise<AccessGroupRow[]>;
   /** The pages, in every source and by (source, slug), whose readers name exactly `principal`; at most 51 of them. */

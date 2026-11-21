@@ -384,6 +384,11 @@ const PINS: Pin[] = [
     texts: ['INSERT INTO access_members (id, display_name, email, kind) VALUES ($1, $2, $3, $4)', 'INSERT INTO access_groups (id) VALUES ($1) ON CONFLICT (id) DO NOTHING RETURNING id',
       'INSERT INTO access_group_members (group_id, member_id) VALUES ($1, $2) ON CONFLICT DO NOTHING'],
   },
+  {
+    from: 'src/core/access/members.ts:227-230 addMember at 8d2e667543 (with --bind-token: the token bound in the same transaction)',
+    case: { method: 'insertAccessMember', variant: 'bind-token', run: e => e.insertAccessMember({ id: 'alice-example', displayName: null, email: null, kind: 'person', groups: [], bindTokenId: 'tok-1' }) },
+    texts: ['INSERT INTO access_members (id, display_name, email, kind) VALUES ($1, $2, $3, $4)', 'UPDATE access_tokens SET member_id = $2 WHERE id::text = $1'],
+  },
   ...([true, false] as const).map(disabled => ({
     from: `src/core/access/members.ts:238 setDisabled at 8d2e667543 (${disabled ? 'disable' : 'enable'})`,
     case: { method: 'setAccessMemberDisabled', variant: disabled ? 'disable' : 'enable', run: (e: Parameters<SqlCase['run']>[0]) => e.setAccessMemberDisabled('alice-example', disabled) },
@@ -425,6 +430,21 @@ const PINS: Pin[] = [
     case: { method: 'deleteAccessGroup', variant: 'default', run: e => e.deleteAccessGroup('team-a') },
     texts: ['DELETE FROM access_groups WHERE id = $1'],
   },
+  ...(['token', 'client'] as const).flatMap(kind => ([false, true] as const).map(unscoped => ({
+    from: `src/core/access/members.ts:432-433 bindCredential at 8d2e667543 (the ${kind} row FOR UPDATE${unscoped ? ', with reads_unscoped' : ''})`,
+    case: { method: 'readCredentialBindingForUpdate', variant: `${kind}${unscoped ? '-unscoped' : ''}`, run: (e: Parameters<SqlCase['run']>[0]) => e.readCredentialBindingForUpdate({ kind, id: 'cred-1' }, { readsUnscoped: unscoped }) },
+    texts: [`SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read${kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''}${unscoped ? ', reads_unscoped' : ''} FROM ${kind === 'token' ? 'access_tokens' : 'oauth_clients'} WHERE ${kind === 'token' ? 'id::text' : 'client_id'} = $1 FOR UPDATE`],
+  }))),
+  ...(['token', 'client'] as const).map(kind => ({
+    from: `src/core/access/members.ts:470-471 bindCredential at 8d2e667543 (the ${kind} binding columns)`,
+    case: { method: 'writeCredentialBinding', variant: kind, run: (e: Parameters<SqlCase['run']>[0]) => e.writeCredentialBinding({ kind, id: 'cred-1' }, { member: 'alice-example', mayActFor: null, attestActor: null, attestOps: null, attestSources: null, attestRead: null }) },
+    texts: [`UPDATE ${kind === 'token' ? 'access_tokens' : 'oauth_clients'} SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[], attest_sources = $6::text[], attest_read = $7 WHERE ${kind === 'token' ? 'id::text' : 'client_id'} = $1`],
+  })),
+  ...(['token', 'client'] as const).map(kind => ({
+    from: `src/core/access/members.ts:478 bindCredential at 8d2e667543 (the ${kind} reads_unscoped stamp)`,
+    case: { method: 'writeCredentialReadsUnscoped', variant: kind, run: (e: Parameters<SqlCase['run']>[0]) => e.writeCredentialReadsUnscoped({ kind, id: 'cred-1' }, true) },
+    texts: [`UPDATE ${kind === 'token' ? 'access_tokens' : 'oauth_clients'} SET reads_unscoped = CASE WHEN $2::boolean THEN now() ELSE NULL END WHERE ${kind === 'token' ? 'id::text' : 'client_id'} = $1`],
+  })),
   // Equivalent, not verbatim (the next four): the old-line statements add COLLATE "C" to every ORDER BY, so groups,
   // group members and pages come in byte order on every engine whatever the database collation.
   {

@@ -65,6 +65,7 @@
 mod access_tokens;
 mod attachments;
 mod checks;
+mod credential_binding;
 mod health;
 mod inbox;
 mod insight;
@@ -85,6 +86,8 @@ pub use attachments::AttachmentInput;
 pub use checks::{
     BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,
 };
+pub(crate) use credential_binding::bind_token_member;
+pub use credential_binding::{CredentialBinding, CredentialKind, CredentialLookup};
 pub use health::{DivergenceSpec, HealthSpec};
 pub use insight::InsightSpec;
 use mutations::add_token;

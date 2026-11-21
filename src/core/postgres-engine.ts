@@ -1691,6 +1691,9 @@ export class PostgresEngine implements BrainEngine {
   addAccessGroupMembers(groupId: string, memberIds: readonly string[]) { return accessMembersImpl.addAccessGroupMembers(this.engineSql, groupId, memberIds); }
   removeAccessGroupMembers(groupId: string, memberIds: readonly string[]) { return accessMembersImpl.removeAccessGroupMembers(this.engineSql, groupId, memberIds); }
   deleteAccessGroup(id: string) { return accessMembersImpl.deleteAccessGroup(this.engineSql, id); }
+  readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }) { return accessMembersImpl.readCredentialBindingForUpdate(this.engineSql, target, opts); }
+  writeCredentialBinding(target: AccessMembersSql.CredentialTarget, binding: AccessMembersSql.CredentialBinding) { return accessMembersImpl.writeCredentialBinding(this.engineSql, target, binding); }
+  writeCredentialReadsUnscoped(target: AccessMembersSql.CredentialTarget, readsUnscoped: boolean) { return accessMembersImpl.writeCredentialReadsUnscoped(this.engineSql, target, readsUnscoped); }
   readAccessGroups(id: string | null): Promise<AccessGroupRow[]> { return accessControlImpl.readAccessGroups(this, id); }
   listPagesNamingReader(principal: string, opts?: { live?: boolean }): Promise<PageNamingReaderRow[]> { return accessControlImpl.listPagesNamingReader(this, principal, opts); }
   readAccessStateUnreadable() { return accessPolicyImpl.readAccessStateUnreadable(this); }

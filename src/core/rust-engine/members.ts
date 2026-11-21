@@ -1039,6 +1039,9 @@ export const RUST_ENGINE_MEMBERS = {
   deleteAccessGroup: 'access_control',
   readAccessGroups: 'access_control',
   listPagesNamingReader: 'access_control',
+  readCredentialBindingForUpdate: 'access_control',
+  writeCredentialBinding: 'access_control',
+  writeCredentialReadsUnscoped: 'access_control',
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',
   countPagesDueForMentions: 'pages',

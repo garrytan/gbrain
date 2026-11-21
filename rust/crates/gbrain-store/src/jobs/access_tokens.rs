@@ -1,16 +1,18 @@
 //! Jobs: the `access_tokens` table, the columns the legacy-token mint and the read-floor command touch, as the members
 //! of `src/core/engine-sql/access-tokens.ts` run them (rust/docs/store/access-tokens.md).
 //!
-//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust.
+//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust. The credential binding members of
+//! `credential_binding.rs` read and write the member, may_act_for, attest and reads_unscoped columns of these records.
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2B (this file only):
 //! - `m 0x2B id -> TokenRecord`: one token row, keyed by its generated UUID.
 //!
-//! Kept: the columns those three members read or write (id, name, token_hash, scopes, permissions, the five grant
-//! columns, grant_revision, min_trust, revoked_at, created_at) and the table's constraints on them: the unique
+//! Kept: the columns those members read or write (id, name, token_hash, scopes, permissions, the five grant
+//! columns, grant_revision, min_trust, revoked_at, created_at, member_id, may_act_for, the four attest columns and
+//! reads_unscoped; a record written before the binding columns were kept reads them as NULL) and the table's constraints on them: the unique
 //! `token_hash` (`access_tokens_token_hash_key`, found by scanning the table, as the secondary indexes are not kept), the
 //! `source_grant` list and the `min_trust` list. A refusal is `constraint_violation` with the Postgres message.
-//! Not kept: `last_used_at`, the member, attest and private columns, and the `trust_generation_update` trigger. Setting
+//! Not kept: `last_used_at`, the private columns, and the `trust_generation_update` trigger. Setting
 //! the floor of an id no token has changes nothing (Postgres also refuses an id that is not a UUID with 22P02; the
 //! caller here always passes the id `findActiveAccessTokens` returned).
 
@@ -20,7 +22,7 @@ use crate::env::parse_iso;
 const TOKEN: u8 = 0x2B;
 const TABLE: &str = "access_tokens";
 
-fn token_key(id: &str) -> Vec<u8> {
+pub(super) fn token_key(id: &str) -> Vec<u8> {
     let mut k = prefix(TOKEN);
     k.extend_from_slice(id.as_bytes());
     k
@@ -38,9 +40,9 @@ const SOURCE_GRANTS: [&str; 4] = ["default", "scalar", "federated", "none"];
 
 /// One `access_tokens` row. Times are microseconds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct TokenRecord {
-    id: String,
-    name: String,
+pub(super) struct TokenRecord {
+    pub(super) id: String,
+    pub(super) name: String,
     token_hash: String,
     scopes: Option<Vec<String>>,
     permissions: Value,
@@ -54,8 +56,23 @@ struct TokenRecord {
     #[serde(default)]
     read_shared_revision: Option<i32>,
     min_trust: Option<String>,
-    revoked_at: Option<i64>,
-    created_at: i64,
+    pub(super) revoked_at: Option<i64>,
+    pub(super) created_at: i64,
+    /// The binding columns (`credential_binding.rs`); `reads_unscoped` is a time in microseconds.
+    #[serde(default)]
+    pub(super) member_id: Option<String>,
+    #[serde(default)]
+    pub(super) may_act_for: Option<Vec<String>>,
+    #[serde(default)]
+    pub(super) attest_actor: Option<String>,
+    #[serde(default)]
+    pub(super) attest_ops: Option<Vec<String>>,
+    #[serde(default)]
+    pub(super) attest_sources: Option<Vec<String>>,
+    #[serde(default)]
+    pub(super) attest_read: Option<String>,
+    #[serde(default)]
+    pub(super) reads_unscoped: Option<i64>,
 }
 
 fn refuse_check(constraint: &str) -> StoreError {
@@ -82,7 +99,7 @@ impl TokenRecord {
     }
 }
 
-fn all_tokens(read: &dyn KvRead) -> Result<Vec<TokenRecord>> {
+pub(super) fn all_tokens(read: &dyn KvRead) -> Result<Vec<TokenRecord>> {
     let mut rows = Vec::new();
     let mut bad = None;
     scan_prefix(read, &prefix(TOKEN), false, &mut |_, v| {
@@ -163,6 +180,13 @@ impl Store {
                 min_trust: row.min_trust.clone(),
                 revoked_at,
                 created_at: self.env.now_micros(),
+                member_id: None,
+                may_act_for: None,
+                attest_actor: None,
+                attest_ops: None,
+                attest_sources: None,
+                attest_read: None,
+                reads_unscoped: None,
             };
             record.check()?;
             if all_tokens(&*tx)?

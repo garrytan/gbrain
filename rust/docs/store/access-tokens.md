@@ -3,7 +3,9 @@
 Part of the Minion jobs family ([jobs.md](jobs.md), next to [oauth-clients.md](oauth-clients.md)); the rules in
 [rust/README.md](../../README.md) ("The brain store") apply.
 
-The store keeps only the `access_tokens` columns the legacy-token mint and the read-floor command touch. The SQL for the
+The store keeps only the `access_tokens` columns the legacy-token mint, the read-floor command and the credential
+binding ([access-members.md](access-members.md): `member_id`, `may_act_for`, the four attest columns, `reads_unscoped`)
+touch. The SQL for the
 PGLite and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts`; the store serves the same members. Every other
 reader and writer of the table (verify, list, revoke, rescope, rotate, the grant reads) is still raw SQL and stops on a Rust
 brain.

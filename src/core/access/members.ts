@@ -24,6 +24,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { AccessMemberRow } from '../engine-sql/access-control.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
 import { forgetWakePrincipal } from '../wakeshift/forget.ts';
+import { sqlEngineKind } from '../sql-engine-kind.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
@@ -302,6 +303,8 @@ export async function previewRemoveMember(engine: BrainEngine, rawId: unknown): 
 
 export async function removeMember(engine: BrainEngine, rawId: unknown): Promise<MemberRemovalPreview> {
   const preview = await previewRemoveMember(engine, rawId);
+  // The Wakeshift forget below is raw SQL that swallows its errors: an engine without it refuses before the tombstone.
+  sqlEngineKind(engine.kind, 'removeMember (the Wakeshift forget of the member)');
   if (preview.member.status === 'removed') {
     await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
     return preview;
@@ -396,14 +399,11 @@ function attestRefused(message: string, suggestion: string): OperationError {
  */
 export async function bindCredential(engine: BrainEngine, target: { kind: 'token' | 'client'; id: string }, patch: BindingPatch, opts: { dryRun?: boolean } = {}): Promise<BindingResult> {
   if (patch.member != null) await requireEnabledMember(engine, patch.member);
-  const table = target.kind === 'token' ? 'access_tokens' : 'oauth_clients';
-  const key = target.kind === 'token' ? 'id::text' : 'client_id';
   // GST-1113: lock the credential row first and read it under the lock (grant rescopes lock it first too), so a
   // concurrent rescope commits before or after this change, never between its checks and its write.
   return engine.transaction(async tx => {
     const unscopedPatch = patch.readsUnscoped !== undefined;
-    const [before] = await tx.executeRaw<{ member_id: string | null; may_act_for: string[] | null; attest_actor: string | null; attest_ops: string[] | null; attest_sources: string[] | null; attest_read: 'person' | 'scope' | null; grant_types?: string[] | null; confidential?: boolean; reads_unscoped?: unknown }>(
-      `SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read${target.kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''}${unscopedPatch ? ', reads_unscoped' : ''} FROM ${table} WHERE ${key} = $1 FOR UPDATE`, [target.id]);
+    const before = await tx.readCredentialBindingForUpdate(target, { readsUnscoped: unscopedPatch });
     if (!before) {
       throw opError('invalid_params', `No ${target.kind === 'token' ? 'token' : 'OAuth client'} "${target.id}" exists.`,
         target.kind === 'token' ? 'List tokens with gbrain auth list.' : 'List clients with gbrain auth clients --json.');
@@ -440,15 +440,14 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
       // marked sources' row locks. A restated list also re-marks a listed source that lost its mark.
       if (await applyAttestSources(tx, target, attestSources ?? null, before.attest_sources ?? null, opts)) changed = true;
       if (!opts.dryRun) {
-        await tx.executeRaw(`UPDATE ${table} SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[], attest_sources = $6::text[], attest_read = $7 WHERE ${key} = $1`,
-          [target.id, member, mayActFor, attestActor, attestOps, attestSources, attestRead ?? null]);
+        await tx.writeCredentialBinding(target, { member, mayActFor, attestActor, attestOps, attestSources, attestRead: attestRead ?? null });
       }
     }
     // GST-363: the opt-out records when it was granted; restating it keeps that time.
     const readsUnscoped = unscopedPatch ? patch.readsUnscoped! : undefined;
     if (unscopedPatch && readsUnscoped !== (before.reads_unscoped != null)) {
       changed = true;
-      if (!opts.dryRun) await tx.executeRaw(`UPDATE ${table} SET reads_unscoped = CASE WHEN $2::boolean THEN now() ELSE NULL END WHERE ${key} = $1`, [target.id, readsUnscoped]);
+      if (!opts.dryRun) await tx.writeCredentialReadsUnscoped(target, readsUnscoped!);
     }
     return { member, may_act_for: mayActFor ?? null, ...(attestActor ? { attest_actor: attestActor, attest_ops: attestOps ?? null, attest_sources: attestSources ?? null, attest_read: attestRead ?? null } : {}),
       ...(readsUnscoped !== undefined ? { reads_unscoped: readsUnscoped } : {}), changed };

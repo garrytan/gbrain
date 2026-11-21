@@ -1,7 +1,7 @@
 /**
  * Access member and group writes: one SQL implementation for both engines (rust/docs/store/access-members.md).
  *
- * The member commands (access/members.ts) write members and groups through these. The
+ * The member commands (access/members.ts) write members, groups and credential bindings through these. The
  * statements are the text the callers sent through `executeRaw` before, in the same order and the same transactions.
  * The callers keep every input check and every refusal; these only write.
  */
@@ -11,6 +11,18 @@ export type AccessMemberKind = 'person' | 'audience';
 
 /** One new member, the groups it joins and, optionally, the access token to bind to it in the same transaction. */
 export interface AccessMemberInsert { id: string; displayName: string | null; email: string | null; kind: AccessMemberKind; groups: readonly string[]; bindTokenId: string | null }
+
+/** A credential a binding names: an access token (by id text) or an OAuth client (by client_id). */
+export interface CredentialTarget { kind: 'token' | 'client'; id: string }
+
+/** The binding columns of a credential row, read under its row lock. */
+export interface CredentialBindingRow {
+  member_id: string | null; may_act_for: string[] | null; attest_actor: string | null; attest_ops: string[] | null; attest_sources: string[] | null;
+  attest_read: 'person' | 'scope' | null; grant_types?: string[] | null; confidential?: boolean; reads_unscoped?: unknown;
+}
+
+/** The binding columns a binding write sets. */
+export interface CredentialBinding { member: string | null; mayActFor: string[] | null; attestActor: string | null; attestOps: string[] | null; attestSources: string[] | null; attestRead: 'person' | 'scope' | null }
 
 /** Creates each missing group; the groups this call created, in the order named. */
 async function ensureGroups(exec: SqlExecutor, groups: readonly string[]): Promise<string[]> {
@@ -81,4 +93,38 @@ export async function removeAccessGroupMembers(exec: SqlExecutor, groupId: strin
 /** Deletes the group; its memberships go with it (ON DELETE CASCADE). */
 export async function deleteAccessGroup(exec: SqlExecutor, id: string): Promise<void> {
   await exec.executeRaw('DELETE FROM access_groups WHERE id = $1', [id]);
+}
+
+// Each credential statement is spelled once per table (access_tokens keyed by id::text, oauth_clients by client_id):
+// the check-engine-sql-dynamic guard accepts only whole literal statements here, so nothing is spliced.
+
+/**
+ * A credential's binding columns, locked FOR UPDATE (run it inside the binding's transaction), or undefined. A client
+ * row also carries grant_types and whether it is confidential; `readsUnscoped` adds reads_unscoped.
+ */
+export async function readCredentialBindingForUpdate(exec: SqlExecutor, target: CredentialTarget, opts: { readsUnscoped: boolean }): Promise<CredentialBindingRow | undefined> {
+  const sql = target.kind === 'token'
+    ? (opts.readsUnscoped
+      ? 'SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read, reads_unscoped FROM access_tokens WHERE id::text = $1 FOR UPDATE'
+      : 'SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read FROM access_tokens WHERE id::text = $1 FOR UPDATE')
+    : (opts.readsUnscoped
+      ? 'SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read, grant_types, client_secret_hash IS NOT NULL AS confidential, reads_unscoped FROM oauth_clients WHERE client_id = $1 FOR UPDATE'
+      : 'SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read, grant_types, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients WHERE client_id = $1 FOR UPDATE');
+  const [row] = await exec.executeRaw<CredentialBindingRow>(sql, [target.id]);
+  return row;
+}
+
+/** Writes a credential's member, may_act_for and attest columns. */
+export async function writeCredentialBinding(exec: SqlExecutor, target: CredentialTarget, binding: CredentialBinding): Promise<void> {
+  await exec.executeRaw(target.kind === 'token'
+    ? 'UPDATE access_tokens SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[], attest_sources = $6::text[], attest_read = $7 WHERE id::text = $1'
+    : 'UPDATE oauth_clients SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[], attest_sources = $6::text[], attest_read = $7 WHERE client_id = $1',
+    [target.id, binding.member, binding.mayActFor, binding.attestActor, binding.attestOps, binding.attestSources, binding.attestRead]);
+}
+
+/** Sets reads_unscoped to now() (true) or clears it (false). */
+export async function writeCredentialReadsUnscoped(exec: SqlExecutor, target: CredentialTarget, readsUnscoped: boolean): Promise<void> {
+  await exec.executeRaw(target.kind === 'token'
+    ? 'UPDATE access_tokens SET reads_unscoped = CASE WHEN $2::boolean THEN now() ELSE NULL END WHERE id::text = $1'
+    : 'UPDATE oauth_clients SET reads_unscoped = CASE WHEN $2::boolean THEN now() ELSE NULL END WHERE client_id = $1', [target.id, readsUnscoped]);
 }

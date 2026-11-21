@@ -26,9 +26,6 @@
 //!   `access.serves` or `access.serves_derived` refreshes them too (`config.rs`).
 //! - A group delete deletes its group members (`ON DELETE CASCADE`).
 //!
-//! Not kept yet: the token binding of a member insert (`bindTokenId`). The store refuses it with
-//! `invalid_argument`; the TypeScript member refuses it first (docs/designs/RUST_ENGINE.md, 32a-2).
-//!
 //! A refusal is `constraint_violation` with the Postgres message: the id check
 //! (`access_members_id_check`, `access_groups_id_check`), the kind check
 //! (`access_members_kind_check`), the primary key (`access_members_pkey`), the email index
@@ -38,7 +35,7 @@
 use crate::access_flag::RESTRICTIONS_PRESENT_KEY;
 use crate::config::read_config;
 use crate::env::{iso, transaction_clock};
-use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::facts::access_readers;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::all_pages;
@@ -91,7 +88,7 @@ struct GroupRecord {
     created_at_us: i64,
 }
 
-/// `insertAccessMember(spec)`: the member row and the groups it joins.
+/// `insertAccessMember(spec)`: the member row, the groups it joins and the token it binds.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AccessMemberInsert {
@@ -310,13 +307,10 @@ impl Store {
     }
 
     /// `insertAccessMember(spec)`: inserts the member (kind `person` when unset), creates the groups
-    /// it names that are missing and adds it to each, in one write. Resolves `{ groupsCreated }`, the
+    /// it names that are missing, adds it to each and binds the token `bindTokenId` names (no token
+    /// has the id: nothing is bound), in one write. Resolves `{ groupsCreated }`, the
     /// groups this call created, in the order named.
     pub fn insert_access_member(&self, spec: &AccessMemberInsert) -> Result<Value> {
-        if spec.bind_token_id.is_some() {
-            let what = "insertAccessMember: the store keeps no token binding yet (bindTokenId)";
-            return Err(StoreError::new(INVALID_ARGUMENT, what));
-        }
         let kind = spec.kind.as_deref().unwrap_or("person");
         check_id(&spec.id, "access_members")?;
         check_kind(kind)?;
@@ -351,6 +345,9 @@ impl Store {
             }
             for group in &spec.groups {
                 add_group_member(tx, group, &spec.id)?;
+            }
+            if let Some(token_id) = &spec.bind_token_id {
+                crate::jobs::bind_token_member(tx, token_id, &spec.id)?;
             }
             Ok(json!({ "groupsCreated": created }))
         })

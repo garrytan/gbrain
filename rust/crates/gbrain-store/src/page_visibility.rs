@@ -9,7 +9,7 @@
 //! `readCallerPageAccess` names it with `readable` false.
 //!
 //! `readWriteVisibilityProbe` is the one read a remote page write opens its visibility check with:
-//! whether any access member is labelled-only (never: the store keeps no access members), whether
+//! whether any access member, of any status, is labelled-only (`access_members.rs`), whether
 //! a reader identity could open the page the empty-identity policy hides (none when no row is
 //! hidden; else whether the row names readers, since the store keeps no folder rules), and whether
 //! the page's source or any source is owner-only (`config ->> 'kind'` is `imessage`, or

@@ -902,6 +902,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'deleteAccessGroup': OOS.callerRawSql,
   'readAccessGroups': OOS.callerRawSql,
   'listPagesNamingReader': OOS.callerRawSql,
+  'readCredentialBindingForUpdate': OOS.callerRawSql,
+  'writeCredentialBinding': OOS.callerRawSql,
+  'writeCredentialReadsUnscoped': OOS.callerRawSql,
   'readAccessStateUnreadable': OOS.callerRawSql,
   'listSourceIds': OOS.callerRawSql,
   'listWhoCanReadPages': OOS.callerRawSql,
@@ -1798,6 +1801,10 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('countOpenPages', [['default', (e) => e.countOpenPages(['default'], [{ source: 'default', prefix: 'x/' }])]]),
   ...variants('readAccessGroups', [['all', (e) => e.readAccessGroups(null)], ['by-id', (e) => e.readAccessGroups('team-a')]]),
   ...variants('listPagesNamingReader', [['default', (e) => e.listPagesNamingReader('member:alice-example')], ['live', (e) => e.listPagesNamingReader('member:alice-example', { live: true })]]),
+  ...variants('readCredentialBindingForUpdate', [
+    ['token', (e) => e.readCredentialBindingForUpdate({ kind: 'token', id: 'tok-1' }, { readsUnscoped: false })],
+    ['client-unscoped', (e) => e.readCredentialBindingForUpdate({ kind: 'client', id: 'client-1' }, { readsUnscoped: true })],
+  ]),
   ...variants('readAccessStateUnreadable', [['default', (e) => e.readAccessStateUnreadable()]]),
   ...variants('listSourceIds', [['default', (e) => e.listSourceIds()]]),
   ...variants('listWhoCanReadPages', [
