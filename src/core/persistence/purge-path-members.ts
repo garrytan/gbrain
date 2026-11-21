@@ -40,8 +40,8 @@ export const PURGE_OWNERS = {
   factContextProbe: 'lane 4',
   /** The origin-twin read: rust-engine/repair-rust b5945d814f (origin-twins.ts calls the readPageDatabaseOnlyReason member). */
   repairOriginTwin: 'lane 10 (repair-rust b5945d814f)',
-  /** The online-built request index read: rust-engine/doctor-checks-3 (536e0288f4) makes it a typed member whose Rust store answers every index as valid. */
-  requestIndexes: 'lane 14 (doctor-checks-3 536e0288f4)',
+  /** The online-built request index read: rust-engine/doctor-checks-3 (8d4d809039) makes it a typed member whose Rust store answers every index as valid. */
+  requestIndexes: 'lane 14 (doctor-checks-3 8d4d809039)',
 } as const;
 
 export type PurgeEntryPoint = 'delete_page' | 'retention';
