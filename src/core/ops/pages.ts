@@ -45,6 +45,7 @@ import { WHERE_PARAM, whereOpParam } from './where-param.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
 import { isDatetimeInputError } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
+import { guardUnsourcedPutEarly, noteSuppressedSourceFlip } from '../persistence/unsourced-put-fork.ts';
 import {
   assertExplicitSourceLive,
   enforceSubagentSlugFence,
@@ -377,6 +378,7 @@ const put_page: Operation = {
   handler: async (ctx, p) => {
     const { pageMutationSource, submitPageMutation } = await pageMutations();
     const sourceId = pageMutationSource(ctx, p, 'put_page');
+    await guardUnsourcedPutEarly(ctx, sourceId, p); // a real put is checked in admission (after the write authority and a request_id replay)
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
         validatePageSlug(p.slug);
@@ -388,7 +390,7 @@ const put_page: Operation = {
     }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
     (await import('../persistence/page-visibility.ts')).assertSubmittedReaders(ctx.remote, p.slug, p.content);
-    return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error)).then(result => withIgnoredPrivacyLabelNotice(ctx, sourceId, p, result)).then(result => withImplicitPlacement(ctx, sourceId, p, result));
+    return submitPageMutation(ctx, { operation: 'put_page', params: p, unsourcedForkGuard: true }).then(async result => (await noteSuppressedSourceFlip(ctx, sourceId, p), result)).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error)).then(result => withIgnoredPrivacyLabelNotice(ctx, sourceId, p, result)).then(result => withImplicitPlacement(ctx, sourceId, p, result));
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
