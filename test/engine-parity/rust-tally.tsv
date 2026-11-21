@@ -29,7 +29,7 @@ test/engine-parity/embedding-install.test.ts	3	0
 test/engine-parity/entity-anchor-reads.test.ts	2	0
 test/engine-parity/entity-basename.test.ts	3	0
 test/engine-parity/entity-fuzzy.test.ts	3	0
-test/engine-parity/entity-identities.test.ts	7	5
+test/engine-parity/entity-identities.test.ts	8	5
 test/engine-parity/entity-reads.test.ts	12	1
 test/engine-parity/extract-takes-reads.test.ts	9	0
 test/engine-parity/extract-takes.test.ts	0	2
