@@ -40,8 +40,8 @@ export const PURGE_OWNERS = {
   factContextProbe: 'lane 4',
   /** The origin-twin read: rust-engine/repair-rust b5945d814f (origin-twins.ts calls the readPageDatabaseOnlyReason member). */
   repairOriginTwin: 'lane 10 (repair-rust b5945d814f)',
-  /** The online-built request index read: rust-engine/repair-rust aa2f70ffe8 (a Rust brain reads every index as valid). */
-  repairRequestIndexes: 'lane 10 (repair-rust aa2f70ffe8)',
+  /** The online-built request index read: rust-engine/doctor-checks-3 makes it a typed member whose Rust store answers every index as valid. */
+  requestIndexes: 'lane 14 (doctor-checks-3, Rust member pending)',
 } as const;
 
 export type PurgeEntryPoint = 'delete_page' | 'retention';
@@ -53,7 +53,7 @@ export interface PurgePathMember extends Base { member: keyof BrainEngine & stri
 export interface PurgePathSite extends Base { site: string; guarded?: string; stop?: string }
 export type PurgePathEntry = PurgePathMember | PurgePathSite;
 
-const { ours, receipts, ledgerScrub, beliefProbe, factContextProbe, repairOriginTwin, repairRequestIndexes } = PURGE_OWNERS;
+const { ours, receipts, ledgerScrub, beliefProbe, factContextProbe, repairOriginTwin, requestIndexes } = PURGE_OWNERS;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
 /** Retention-only raw sites: the carry's parks and the candidate selection of purgeDeletedPagesCoordinated. */
@@ -116,7 +116,7 @@ const GUARDED_SITES: PurgePathSite[] = [
 export const PURGE_PATH: readonly PurgePathEntry[] = [
   ...RETENTION_STOPS,
   // preparePagePurge: the request-index state read, then the origin-twin read.
-  { site: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: repairRequestIndexes, stop: 'the online-built request index read runs through raw SQL' },
+  { site: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: requestIndexes, stop: 'the online-built request index read runs through raw SQL' },
   { site: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: repairOriginTwin, stop: 'the origin-twin read (page-prepare isOriginTwinPage, also :461 and :676) runs through raw SQL; member readPageDatabaseOnlyReason' },
   // The publication transaction: the exclusive source lock.
   { site: '<anonymous> (persistence/coordinator.ts)', owner: ours, stop: 'the exclusive source lock (SELECT ... FOR UPDATE on sources) runs through raw SQL' },
