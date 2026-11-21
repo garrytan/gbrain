@@ -71,7 +71,7 @@ export interface HybridRequest {
   ctBoost: boolean | number;
   searchOpts: SearchOpts;
   identityTierOpts: IdentityTierOpts;
-  aliasHopOpts: IdentityTierOpts & { tokenHop: boolean; qualified: boolean };
+  aliasHopOpts: IdentityTierOpts & { type?: string; types?: string[]; tokenHop: boolean; qualified: boolean };
   /** WP2/T3 degradation stamp, appended by every stage. */
   degraded: DegradedStageEntry[];
   /** v0.46.15: max-escalations searchVector exhaustion event, accumulated across vector calls. */
@@ -317,6 +317,8 @@ export async function resolveHybridRequest(
   };
   const aliasHopOpts = {
     ...identityTierOpts,
+    type: opts?.type,
+    types: opts?.types,
     tokenHop: opts?.aliasTokenHop ?? modeInput.aliasTokenHop === 'true',
     qualified: resolvedMode.qualified_aliases,
   };

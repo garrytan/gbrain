@@ -62,6 +62,9 @@ export interface IdentityTierOpts {
   excludeSlugPrefixes?: string[];
 }
 
+/** Identity opts plus the caller's type filters: a page of another type is never injected (same gate as exact-lookup). */
+type AliasGateOpts = IdentityTierOpts & { type?: string; types?: string[] };
+
 /** True when an identity injection must skip `slug` under the caller's excludes. */
 export function isExcludedIdentity(slug: string, opts: Pick<IdentityTierOpts, 'excludeSlugs' | 'excludeSlugPrefixes'>): boolean {
   if (opts.excludeSlugs?.includes(slug)) return true;
@@ -152,7 +155,7 @@ export async function applyAliasHopLookup(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   lookup: AliasHopLookup | null,
-  opts: IdentityTierOpts,
+  opts: AliasGateOpts,
 ): Promise<SearchResult[]> {
   if (!lookup) return results;
   const refs = lookup.fullQuery ? lookup.aliasMap.get(lookup.qNorm) : undefined;
@@ -218,7 +221,7 @@ async function applyQualifiedAliasHop(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   lookup: AliasHopLookup,
-  opts: IdentityTierOpts,
+  opts: AliasGateOpts,
 ): Promise<SearchResult[] | null> {
   const ref = qualifiedAliasCanonical(lookup, opts);
   if (!ref) return null;
@@ -249,7 +252,7 @@ async function applyAliasTokenHop(
   results: SearchResult[],
   tokens: string[],
   aliasMap: Map<string, Array<{ slug: string; source_id: string }>>,
-  opts: IdentityTierOpts,
+  opts: AliasGateOpts,
 ): Promise<SearchResult[]> {
   const out = [...results];
   let injectScore = topOrganicScore(out);
@@ -288,7 +291,7 @@ function topOrganicScore(results: SearchResult[]): number {
 async function fetchAliasCanonical(
   engine: import('../engine.ts').BrainEngine,
   ref: { slug: string; source_id: string },
-  opts: IdentityTierOpts,
+  opts: AliasGateOpts,
 ): Promise<import('../types.ts').Page | null> {
   let page;
   try {
@@ -301,6 +304,10 @@ async function fetchAliasCanonical(
   // clause (getPage, not search); re-apply the private predicate here so
   // an untrusted caller can't hop into a `visibility: private` page.
   if (opts.excludePrivate && isPrivatePageForCaller(page)) return null;
+  // The request layer passes the caller's type/types through the shared opts bag.
+  const { type, types } = opts;
+  if (type && page.type !== type) return null;
+  if (types && types.length > 0 && !types.includes(page.type)) return null;
   return page;
 }
 
