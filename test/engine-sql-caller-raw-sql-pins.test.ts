@@ -16,6 +16,8 @@ import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postg
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
 import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
+import { requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
+import { TIMELINE_SEPARATOR } from '../src/core/page-window/document.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { rankingLinkSql } from '../src/core/link-ranking-policy.ts';
@@ -1729,6 +1731,16 @@ const PINS: Pin[] = [
     texts: [`SELECT slug, source_id, title, type, frontmatter, COALESCE(effective_date, updated_at) AS date
        FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND slug = ANY($2::text[])`],
   },
+  {
+    from: 'src/core/search/evidence-delivery.ts:416 selectLongPages (the long-page size preflight with the timeline; at efeb078093)',
+    case: { method: 'readLongPageSizes', variant: 'timeline', run: e => e.readLongPageSizes([3, 5], { sourceId: 'default' }, { includeTimeline: true }) },
+    texts: () => [pinnedLongPageSizes({ sourceId: 'default' }, true)],
+  },
+  {
+    from: 'src/core/search/evidence-delivery.ts:416 selectLongPages (detail low, a remote caller under a trust floor; at efeb078093)',
+    case: { method: 'readLongPageSizes', variant: 'low', run: e => e.readLongPageSizes([3], { sourceIds: ['default', 'wiki'], excludePrivate: true, minTrust: 'operator_curated' }, { includeTimeline: false }) },
+    texts: () => [pinnedLongPageSizes({ sourceIds: ['default', 'wiki'], excludePrivate: true, minTrust: 'operator_curated' }, false)],
+  },
 ];
 
 /** search/entity-facts.ts newestFacts's statement at efeb078093, verbatim (`worldOnly` stands for `worldOnlyFacts(opts.remote)`). */
@@ -1757,6 +1769,16 @@ function pinnedTypeProbe(expanded: string[][], scope: { sourceId?: string; sourc
   return `SELECT probe.*, CASE WHEN ${probes.map(p => `probe.${p.name}`).join(' AND ')} THEN NULL
          ELSE ARRAY(SELECT DISTINCT p.type FROM pages p WHERE ${filter} LIMIT 500) END AS available
        FROM (SELECT ${probes.map(p => p.sql).join(', ')} OFFSET 0) probe`;
+}
+
+/** search/evidence-delivery.ts selectLongPages size preflight at efeb078093, verbatim; `timeline` is detail other than low. */
+function pinnedLongPageSizes(scope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier; excludePrivate?: boolean }, timeline: boolean): string {
+  const params: unknown[] = [[3]];
+  const filter = pageReadFilter('p', scope, params, true);
+  const tl = !timeline ? null : `CASE WHEN COALESCE(p.timeline, '') !~ '\\S' THEN 0 ELSE ${TIMELINE_SEPARATOR.length} + `;
+  return `SELECT p.id, char_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}char_length(p.timeline) END` : ''} AS chars,
+              octet_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}octet_length(p.timeline) END` : ''} AS bytes FROM pages p
+        WHERE p.id = ANY($1::int[]) AND ${filter} AND ${servedTextProjectionFilter('p')}${requiresSafeChunks(scope) ? ` AND ${safeChunksFilter('p')}` : ''}`;
 }
 
 /** mentions/referrers-sql.ts referrersCte at 97bf5544dd, verbatim, for the floored remote scope or the local one. */

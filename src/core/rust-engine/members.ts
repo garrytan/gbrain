@@ -287,6 +287,7 @@ export const RUST_ENGINE_MEMBERS = {
   listLinkEndpointPages: 'links',
   listPagesTitledIn: 'links',
   probePageTypes: 'links',
+  readLongPageSizes: 'links',
   wordLexemes: 'links',
   readLinkContextMatches: 'links',
   readLinkContextOriginPages: 'links',

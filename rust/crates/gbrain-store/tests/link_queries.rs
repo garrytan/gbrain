@@ -589,3 +589,73 @@ fn probe_page_types_reports_each_set_and_lists_types_only_when_one_has_none() {
         json!({ "present": [true], "available": null })
     );
 }
+
+#[test]
+fn long_page_sizes_count_served_bodies_in_characters_and_bytes() {
+    use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
+    let b = Brain::new("lq-long-page-sizes");
+    b.source("other");
+    let put = |slug: &str, source: &str, truth: &str, timeline: &str, seal: bool| -> u64 {
+        let input: PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": truth, "timeline": timeline,
+        }))
+        .unwrap();
+        let options: PutPageOptions =
+            serde_json::from_value(json!({"sourceId": source, "index": false})).unwrap();
+        let id = b.store.put_page(slug, &input, &options).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        if seal {
+            let chunk: ChunkInput = serde_json::from_value(json!({
+                "chunk_index": 0, "chunk_text": slug, "chunk_source": "compiled_truth",
+            }))
+            .unwrap();
+            let options: UpsertChunksOptions =
+                serde_json::from_value(json!({"seal": true, "sourceId": source})).unwrap();
+            b.store.upsert_chunks(slug, &[chunk], &options).unwrap();
+        }
+        id
+    };
+    // A timeline of [[:space:]] alone counts nothing; U+00A0 is not in the class, so it counts.
+    // The separator (TIMELINE_SEPARATOR) is 21 ASCII characters.
+    let spaces = put("notes/spaces", "default", "h\u{e9}llo", " \n\t", true);
+    let euro = put("notes/euro", "default", "ab", "x\u{20ac}", true);
+    let nbsp = put("notes/nbsp", "default", "", "\u{a0}", true);
+    let unsealed = put("notes/unsealed", "default", "body", "", false);
+    let elsewhere = put("notes/elsewhere", "other", "body", "", true);
+    let gone = put("notes/gone", "default", "body", "", true);
+    b.store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
+    let sizes = |timeline: bool, scope: Value| {
+        let ids = [euro, spaces, nbsp, unsealed, elsewhere, gone, euro];
+        let mut ids: Vec<i64> = ids.iter().map(|id| *id as i64).collect();
+        ids.push(-1);
+        let input = serde_json::from_value(json!({
+            "ids": ids, "scope": scope, "safeChunks": true, "includeTimeline": timeline,
+        }))
+        .unwrap();
+        Value::Array(b.store.read_long_page_sizes(&input).unwrap())
+    };
+    let default_scope = json!({ "sourceId": "default", "scoped": true });
+    assert_eq!(
+        sizes(true, default_scope.clone()),
+        json!([
+            { "id": euro, "chars": 2 + 21 + 2, "bytes": 2 + 21 + 4 },
+            { "id": spaces, "chars": 5, "bytes": 6 },
+            { "id": nbsp, "chars": 21 + 1, "bytes": 21 + 2 },
+        ])
+    );
+    assert_eq!(
+        sizes(false, default_scope),
+        json!([
+            { "id": euro, "chars": 2, "bytes": 2 },
+            { "id": spaces, "chars": 5, "bytes": 6 },
+            { "id": nbsp, "chars": 0, "bytes": 0 },
+        ])
+    );
+    // Without a source clause the other source's sealed page is read too.
+    let all = sizes(false, json!({ "scoped": true }));
+    assert_eq!(all.as_array().unwrap().len(), 4);
+    assert_eq!(all[3]["id"], json!(elsewhere));
+}

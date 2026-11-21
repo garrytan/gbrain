@@ -6,7 +6,7 @@
  * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
  * SQL is src/core/engine-sql/search-reads.ts), and the link reads of src/core/engine-sql/link-reads.ts (inboundLinkCoverage,
  * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
- * listLinkEndpointPages, listPagesTitledIn, probePageTypes, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
+ * listLinkEndpointPages, listPagesTitledIn, probePageTypes, readLongPageSizes, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -41,6 +41,8 @@ import type {
   TitledPage,
 } from '../../engine-sql/link-reads.ts';
 import type { PageTypeProbe } from '../../engine-sql/cli-reads-ops.ts';
+import type { LongPageSizeRow } from '../../search/long-page-sizes.ts';
+import { requiresSafeChunks } from '../../search/safe-chunks.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
@@ -495,6 +497,21 @@ export const probePageTypes: StoreMember<[sets: readonly (readonly string[])[], 
     const out: { present: boolean[]; available: string[] | null } = await storeCall({ member: 'probePageTypes' },
       () => brain.probePageTypes({ sets: sets.map(set => [...set]), scope: { ...scopeOf('probePageTypes', options), scoped: true } }));
     return { present: out.present.map(Boolean), available: out.available ?? null };
+  };
+
+/**
+ * The long-page size preflight: each page in `ids` that the scope serves (live, served projection, safe chunks when the
+ * scope requires them), with its stored body length. An id the SQL's int[] cast rejects is an error there, not a refusal.
+ */
+export const readLongPageSizes: StoreMember<[ids: readonly number[], scope: PageReadScope, opts: { includeTimeline: boolean }], LongPageSizeRow[]> =
+  async (brain, ids, scope, opts) => {
+    const options = takeOptions('readLongPageSizes', scope, [...READ_SCOPE_KEYS, 'requireSafeChunks'], ['takesHoldersAllowList']);
+    for (const id of ids) if (!Number.isInteger(id) || Math.abs(id) > INT32_MAX) throw new TypeError(`readLongPageSizes: page id ${String(id)} is not a 32-bit integer`);
+    const rows: LongPageSizeRow[] = await storeCall({ member: 'readLongPageSizes' }, () => brain.readLongPageSizes({
+      ids: [...ids], includeTimeline: opts.includeTimeline === true, safeChunks: requiresSafeChunks(options),
+      scope: { ...scopeOf('readLongPageSizes', options), scoped: true },
+    }));
+    return rows.map(r => ({ id: Number(r.id), chars: Number(r.chars), bytes: Number(r.bytes) }));
   };
 
 /** Each word to its English lexemes; another full-text configuration refuses (the store has only English). */

@@ -651,8 +651,8 @@ src/core/search-vector-backfill.ts	backfillPageVectors	field	LEAD
 src/core/search-vector-backfill.ts	backfillPageVectors	sql	LEAD	
 src/core/search/chunk-windows.ts	mapChunkWindowRows	field	STREAM	
 src/core/search/evidence-delivery.ts	deliverEvidence	field	STREAM	inline pages: the fence overlay over the whole body; a segmented page (no body) skips it and is planned from windows (search/segmented-evidence.ts)
-src/core/search/evidence-delivery.ts	selectLongPages	sql	META	sizes a segmented page from its NULL body (0), so it is never selected as a long page; moves to body_bytes
 src/core/search/exact-scan.ts	buildExactBatchStatement	sql	META	#7191: octet_length of the body columns (stored size, never the body) decides an unreadable page
+src/core/search/long-page-sizes.ts	longPageSizeStatement	sql	META	moved from search/evidence-delivery.ts selectLongPages: sizes a segmented page from its NULL body (0), so it is never selected as a long page; moves to body_bytes
 src/core/search/provenance-demotion.ts	applyGeneratedDemotion	field	LEAD	
 src/core/search/read-enrichment.ts	readAliases	sql	NONE	not the page body: SELECT * FROM pages used for identity columns
 src/core/search/read-enrichment.ts	readChainHop	sql	META	SELECT * FROM pages by id; protectedBodyFilter(ev) reads body_flags for a segmented page

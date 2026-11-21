@@ -26,6 +26,8 @@ import { applyEntityAnchoring } from '../../src/core/search/entity-anchor.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { readTextMentions } from '../../src/core/verbs/entity-text-mentions.ts';
+import { selectLongPages, type EvidencePlan } from '../../src/core/search/evidence-delivery.ts';
+import type { SearchResult } from '../../src/core/types.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -70,6 +72,26 @@ async function putMentionPages(engine: BrainEngine, backend: ParityBackend): Pro
   await put('notes/gone', 'Orla Example left.', 11);
   await put('notes/undated', 'Nobody here.', null);
   await engine.softDeletePage('notes/gone');
+}
+
+/** Pages for the long-page size read: a multibyte body, a timeline of spaces, one unsealed, one gone, one elsewhere. */
+async function putSizedPages(engine: BrainEngine, backend: ParityBackend): Promise<Map<string, number>> {
+  await createSource(engine, backend, 'second');
+  const ids = new Map<string, number>();
+  const put = async (slug: string, compiled_truth: string, timeline: string, opts: { sourceId?: string; seal?: boolean } = {}) => {
+    const sourceId = opts.sourceId ?? SRC;
+    const page = await engine.putPage(slug, { type: 'note', title: slug, compiled_truth, timeline, frontmatter: {} }, { sourceId });
+    if (opts.seal !== false) await installChunks(engine, slug, [chunk(0, compiled_truth || slug)], { sourceId });
+    ids.set(slug, page.id);
+  };
+  await put('notes/euro', 'Price \u20ac40 for the long renewal clause.', 'x\u20ac');
+  await put('notes/spaces', 'h\u00e9llo world', ' \n\t');
+  await put('notes/short', 'Short.', '');
+  await put('notes/unsealed', 'An unsealed body that is long enough.', '', { seal: false });
+  await put('notes/other', 'A body in the second source, long enough.', '', { sourceId: 'second' });
+  await put('notes/gone', 'A body that is gone but long enough.', '');
+  await engine.softDeletePage('notes/gone');
+  return ids;
 }
 
 describe('engine parity: fail-soft reads on the search, put and entity paths', () => {
@@ -250,5 +272,43 @@ describe('engine parity: fail-soft reads on the search, put and entity paths', (
       total: 2, capped: false,
     });
     return out;
+  });
+
+  parityTest('readLongPageSizes counts the served body in characters and bytes, with the timeline unless detail is low', {
+    methods: ['putPage', 'sealChunks', 'softDeletePage', 'readLongPageSizes'],
+  }, async (engine, backend) => {
+    const ids = await putSizedPages(engine, backend);
+    const slugOf = new Map([...ids].map(([slug, id]) => [id, slug]));
+    const asked = [...ids.values(), ids.get('notes/euro')!];
+    const read = async (timeline: boolean, sourceId?: string) => (await engine.readLongPageSizes(asked, { sourceId }, { includeTimeline: timeline }))
+      .map(r => [slugOf.get(Number(r.id)), Number(r.chars), Number(r.bytes)] as const)
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    const answer = { timeline: await read(true, SRC), low: await read(false, SRC), second: await read(false, 'second') };
+    expect(answer).toEqual({
+      timeline: [['notes/euro', 38 + 21 + 2, 40 + 21 + 4], ['notes/short', 6, 6], ['notes/spaces', 11, 12]],
+      low: [['notes/euro', 38, 40], ['notes/short', 6, 6], ['notes/spaces', 11, 12]],
+      second: [['notes/other', 41, 41]],
+    });
+    return answer;
+  });
+
+  parityTest('a long page over the threshold is delivered as a section, not cut to a snippet', {
+    methods: ['putPage', 'sealChunks', 'softDeletePage', 'readLongPageSizes'],
+  }, async (engine, backend) => {
+    const ids = await putSizedPages(engine, backend);
+    const plan = { requestedUnit: 'auto', unit: 'auto', window: 1, budgetTokens: 24000, explicitUnit: false, budgetExplicit: false,
+      packing: 'cap_only', longPage: { unit: 'section', minChars: 20 } } as EvidencePlan;
+    const hit = (slug: string): SearchResult => ({ slug, page_id: ids.get(slug)!, title: slug, type: 'note', chunk_text: 'x',
+      chunk_source: 'compiled_truth', chunk_id: 1, chunk_index: 0, score: 1, stale: false });
+    const sel = await selectLongPages(engine, plan, ['notes/euro', 'notes/short', 'notes/unsealed', 'notes/spaces'].map(hit), { sourceId: SRC, detail: 'low' });
+    const slugOf = new Map([...ids].map(([slug, id]) => [id, slug]));
+    const answer = {
+      plan: sel.plan === plan,
+      unit: sel.longPages?.unit ?? null,
+      pages: [...(sel.longPages?.pages ?? [])].map(id => slugOf.get(id)),
+      fallbacks: sel.longPages?.fallbacks ?? [],
+    };
+    expect(answer).toEqual({ plan: true, unit: 'section', pages: ['notes/euro'], fallbacks: [] });
+    return answer;
   });
 });

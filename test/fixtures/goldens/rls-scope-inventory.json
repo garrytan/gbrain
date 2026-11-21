@@ -7570,6 +7570,7 @@
         "readLiveSlugs": "none",
         "readLocalWriterMemberGrant": "none",
         "readLocalWriterRow": "none",
+        "readLongPageSizes": "none",
         "readManagedModeRows": "none",
         "readManifest": "none",
         "readMaxTimelineEntryId": "none",
