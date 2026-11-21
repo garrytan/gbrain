@@ -89,15 +89,15 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	173	no	yes	yes	serves
+transaction	lifecycle	yes	174	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	143	yes	yes	yes	serves
+getPage	pages	yes	144	yes	yes	yes	serves
 readPageSnapshot	pages	yes	37	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	660	yes	yes	yes	serves
+putPage	pages	yes	661	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	23	yes	yes	yes	serves
@@ -1114,7 +1114,7 @@ readWithdrawalDiscovery	withdrawal_discovery	yes	6	no	yes	yes	serves
 listSegmentedPages	withdrawal_pages	yes	1	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	1	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
-lowerTrustTier	derivation_trust	yes	2	no	yes	yes	serves
+lowerTrustTier	derivation_trust	yes	3	no	yes	yes	serves
 countDerivedRowTaint	derivation_trust	yes	1	no	yes	yes	serves
 stampPageFrontmatter	derivation_trust	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
@@ -1190,7 +1190,7 @@ hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
-readPageTrustRows	cli_reads_import	yes	17	no	yes	yes	serves
+readPageTrustRows	cli_reads_import	yes	18	no	yes	yes	serves
 readRowTrustRows	cli_reads_import	yes	7	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	1	no	yes	yes	serves
