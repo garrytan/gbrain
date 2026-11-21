@@ -93,6 +93,17 @@ export function legacyStoredFrontmatter(current: Record<string, unknown>, fileTe
 }
 
 /**
+ * The stored hash to carry the paid page phases' records from, or null: a page stored under the old frontmatter typing
+ * whose one-time re-read changes its hash and nothing it means (`hashWith` of the file's old typing is the stored hash).
+ */
+export function legacyHashToCarry(existing: { content_hash?: string | null; deleted_at?: unknown; frontmatter?: unknown } | null | undefined,
+  frontmatter: Record<string, unknown>, fileText: string, hash: string, hashWith: (frontmatter: Record<string, unknown>) => string): string | null {
+  if (!existing?.content_hash || existing.content_hash === hash || existing.deleted_at) return null;
+  const storedMeaning = legacyStoredFrontmatter(frontmatter, fileText, comparableFrontmatter(existing.frontmatter as Record<string, unknown> | null | undefined));
+  return storedMeaning && hashWith(storedMeaning) === existing.content_hash ? existing.content_hash : null;
+}
+
+/**
  * Carries the content_hash-keyed records of the paid page phases (extract_atoms' scan state, chronicle's ledger) from
  * a page's old hash to its new one, so a re-read that changes only how values are kept does not scan or judge the page
  * again. A page whose atoms carry the old hash (scanned before the scan-state table) gets a finished scan at the new

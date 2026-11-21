@@ -63,10 +63,14 @@ describe('engine parity: pages', () => {
     await engine.putPage('people/hal-example', { type: parsed.type, title: parsed.title, compiled_truth: parsed.compiled_truth, timeline: parsed.timeline, frontmatter: parsed.frontmatter });
     const read = (await engine.getPage('people/hal-example'))!;
     expect(read.frontmatter).toEqual({ born: '1990-05-01', last_met: '2024-03-01T10:00:00+02:00', zip: '02134', version: '1.10', count: 42, details: { since: '2020-01-01' } });
-    const rendered = serializePageToMarkdown(read, []).split('\n');
-    expect(lines.filter(line => rendered.includes(line))).toEqual(lines);
+    // A written file quotes each value another YAML reader would type, so every reader gets the same text back.
+    const written = ["born: '1990-05-01'", "last_met: '2024-03-01T10:00:00+02:00'", "zip: '02134'", "version: '1.10'", 'count: 42', 'details:', "  since: '2020-01-01'"];
+    const markdown = serializePageToMarkdown(read, []);
+    const rendered = markdown.split('\n');
+    expect(written.filter(line => rendered.includes(line))).toEqual(written);
+    expect(parseMarkdown(markdown, 'people/hal-example.md').frontmatter).toMatchObject(read.frontmatter);
     // Key order is not compared here: it is a separate finding (pages-04), and the arms order keys differently today.
-    return { frontmatter: read.frontmatter, valueLines: rendered.filter(line => lines.includes(line)).sort() };
+    return { frontmatter: read.frontmatter, valueLines: rendered.filter(line => written.includes(line)).sort() };
   });
 
   parityTest('putPage on an existing slug updates in place', { methods: ['putPage', 'getPage', 'listPages'] }, async (engine) => {

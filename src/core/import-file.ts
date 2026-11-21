@@ -12,8 +12,8 @@ import { readFileSync, statSync, lstatSync } from 'fs';
 import { basename, extname, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine, FileSpec } from './engine.ts';
-import { classifyImportHold, comparableFrontmatter, parseMarkdown, resolveParsedSubtype, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
-import { carryHashKeyedPageState, legacyStoredFrontmatter } from './frontmatter-legacy.ts';
+import { classifyImportHold, parseMarkdown, resolveParsedSubtype, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
+import { carryHashKeyedPageState, legacyHashToCarry } from './frontmatter-legacy.ts';
 import { hasCapability } from './engine-capabilities.ts';
 import { alignWithStored } from './persistence/align-stored.ts';
 import { CODE_FILE_MAX_BYTES, isLargePageBytes } from './page-size-policy.ts';
@@ -487,13 +487,7 @@ export async function importFromContent(
       tags: parsed.tags,
     });
 
-    // pages-03: the one-time re-read of a page stored under the old frontmatter typing changes its hash and nothing it
-    // means (the old typing of this file hashes to the stored hash), so the paid page phases keep their records.
-    const storedMeaning = existing?.content_hash && existing.content_hash !== hash && !existing.deleted_at
-      ? legacyStoredFrontmatter(parsed.frontmatter, content, comparableFrontmatter(existing.frontmatter)) : null;
-    const carryHashFrom = storedMeaning && contentHash({ title: parsed.title, type: parsed.type, compiled_truth: parsed.compiled_truth,
-      timeline: parsed.timeline, frontmatter: storedMeaning, tags: parsed.tags }) === existing!.content_hash ? existing!.content_hash : null;
-
+    const carryHashFrom = legacyHashToCarry(existing, parsed.frontmatter, content, hash, frontmatter => contentHash({ ...parsed, frontmatter })); // pages-03
     const parsedPage: ParsedPage = {
       type: parsed.type,
       title: parsed.title,
