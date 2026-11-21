@@ -179,7 +179,7 @@ describe('engine parity: owner-only sources under excludePrivate', () => {
       await chunkFixture(engine);
       noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
       const scoped = <T>(fn: () => Promise<T>) => withMasterWire(engine, backend, () => withEngineScope(engine, fn));
-      const hits = (rows: Array<{ source_id: string; slug: string }>) => sorted([...new Set(ids(rows))]);
+      const hits = (rows: Array<{ source_id?: string; slug: string }>) => sorted([...new Set(rows.map((r) => `${r.source_id}:${r.slug}`))]);
       const page = await scoped(async () => ids(await engine.listPages({ sort: 'slug', sourceIds: ['default', OWN], excludePrivate: true })));
       const fact = await scoped(async () =>
         sorted((await engine.listFactsSince('default', at('2020-01-01T00:00:00Z'), { limit: 50, excludePrivate: true })).map((f) => f.fact)));
