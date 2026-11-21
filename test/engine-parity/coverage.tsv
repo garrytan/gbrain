@@ -227,11 +227,11 @@ setChunkerVersion	chunks	yes	14	no	yes	yes	serves
 writeTextProjectionSeal	chunks	yes	2	no	yes	yes	serves
 moveChunkIndexes	chunks	yes	2	no	yes	yes	serves
 getChunkReuseRows	chunks	yes	4	no	yes	yes	serves
-readPageEmbeddingBudget	chunks	yes	4	no	yes	yes	serves
+readPageEmbeddingBudget	chunks	yes	5	no	yes	yes	serves
 recordPageEmbeddingHold	chunks	yes	1	no	yes	yes	serves
 openPageEmbeddingHold	chunks	yes	1	no	yes	yes	serves
-reservePageEmbedding	chunks	yes	4	no	yes	yes	serves
-settlePageEmbeddingReservation	chunks	yes	1	no	yes	yes	serves
+reservePageEmbedding	chunks	yes	5	no	yes	yes	serves
+settlePageEmbeddingReservation	chunks	yes	2	no	yes	yes	serves
 readEmbeddingCompletion	chunks	yes	2	no	yes	yes	serves
 lockEffectClaimRow	chunks	yes	1	no	yes	yes	serves
 lockEmbeddingSwitch	chunks	yes	1	no	yes	yes	serves
