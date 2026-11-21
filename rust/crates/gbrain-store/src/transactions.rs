@@ -341,8 +341,49 @@ impl State {
     }
 }
 
+/// Entries a scan copies out under the state lock before it hands them to the caller.
+const SCAN_BATCH: usize = 256;
+
+/// A merged scan that holds the state lock only while it copies a batch of entries, never while
+/// `f` runs, so `f` may read through the same transaction (a vector scan reads each take's row).
+/// The next batch starts after the last key handed out.
+fn scan_unlocked(
+    state: &Mutex<State>,
+    start: &[u8],
+    end: &[u8],
+    reverse: bool,
+    f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+) -> Result<()> {
+    let (mut lo, mut hi) = (start.to_vec(), end.to_vec());
+    loop {
+        let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        lock(state).scan(&lo, &hi, reverse, &mut |k, v| {
+            batch.push((k.to_vec(), v.to_vec()));
+            batch.len() < SCAN_BATCH
+        })?;
+        let full = batch.len() == SCAN_BATCH;
+        let Some((last, _)) = batch.last() else {
+            return Ok(());
+        };
+        if reverse {
+            hi = last.clone();
+        } else {
+            lo = last.clone();
+            lo.push(0);
+        }
+        for (k, v) in &batch {
+            if !f(k, v) {
+                return Ok(());
+            }
+        }
+        if !full {
+            return Ok(());
+        }
+    }
+}
+
 /// The view a bound store reads through: the transaction's merged state, read under its lock for
-/// each call.
+/// each call (a scan only while it copies a batch: `scan_unlocked`).
 struct TxReader(Arc<Transaction>);
 
 impl KvRead for TxReader {
@@ -356,7 +397,7 @@ impl KvRead for TxReader {
         reverse: bool,
         f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
     ) -> Result<()> {
-        lock(&self.0.state).scan(start, end, reverse, f)
+        scan_unlocked(&self.0.state, start, end, reverse, f)
     }
 }
 
@@ -375,7 +416,7 @@ impl KvRead for StatementWriter<'_> {
         reverse: bool,
         f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
     ) -> Result<()> {
-        lock(&self.0.state).scan(start, end, reverse, f)
+        scan_unlocked(&self.0.state, start, end, reverse, f)
     }
 }
 
@@ -534,6 +575,9 @@ impl Store {
         let mut state = lock(&tx.state);
         Self::top_savepoint(&state, depth)?;
         state.savepoints.pop();
+        // The dropped writes take the vector generation back with them; the cached index was
+        // built from them.
+        self.vectors.clear();
         state.restore_counters()
     }
 
@@ -571,6 +615,7 @@ impl Store {
                 return Ok(());
             };
             drop(base);
+            self.vectors.clear();
             state.savepoints.clear();
             state.statement = None;
             state.root_locks.clear();
@@ -606,19 +651,22 @@ impl Store {
         state.base()?;
         let mut ordered: Vec<&PageKeyHint> = keys.iter().collect();
         ordered.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
-        let mut checked: BTreeMap<&str, ()> = BTreeMap::new();
+        // Each source is read once; every key is checked against it, so a later hinted key of a
+        // source is held to the same incarnation check as the first.
+        let mut incarnations: BTreeMap<&str, String> = BTreeMap::new();
         for key in &ordered {
-            if checked.insert(&key.source_id, ()).is_some() {
-                continue;
+            if !incarnations.contains_key(key.source_id.as_str()) {
+                let record = sources::read_source(&StateRead(&state), &key.source_id)?;
+                let Some(record) = record else {
+                    return Err(StoreError::new(
+                        SOURCE_NOT_FOUND,
+                        format!("Page source does not exist: {}", key.source_id),
+                    ));
+                };
+                incarnations.insert(&key.source_id, record.incarnation);
             }
-            let record = sources::read_source(&StateRead(&state), &key.source_id)?;
-            let Some(record) = record else {
-                return Err(StoreError::new(
-                    SOURCE_NOT_FOUND,
-                    format!("Page source does not exist: {}", key.source_id),
-                ));
-            };
-            if hinted && key.incarnation.as_deref() != Some(record.incarnation.as_str()) {
+            let incarnation = &incarnations[key.source_id.as_str()];
+            if hinted && key.incarnation.as_deref() != Some(incarnation.as_str()) {
                 return Err(StoreError::new(
                     SOURCE_CHANGED,
                     format!("Page source was recreated: {}", key.source_id),

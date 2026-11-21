@@ -423,7 +423,8 @@ impl Store {
                 self.env.clone(),
             )),
             // The cache holds committed snapshots only; a transaction reads its own uncommitted
-            // writes, so its store starts with an empty cache of its own.
+            // writes, so its store starts with an empty cache of its own, which a savepoint or
+            // transaction rollback clears (`transactions.rs`).
             vectors: vectors::VectorCache::default(),
             // The write trust context belongs to the transaction's handle, not the shared store: it
             // starts empty and ends with the handle (`write_trust.rs`, "Lifetime").

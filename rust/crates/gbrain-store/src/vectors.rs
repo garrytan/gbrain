@@ -181,6 +181,13 @@ pub(crate) struct VectorCache {
 }
 
 impl VectorCache {
+    /// Drops the cached index. A transaction's store calls it when a savepoint or the transaction
+    /// rolls back: the vector generation goes back with the dropped writes, so the next write
+    /// would reach a cached generation number again with other vectors.
+    pub(crate) fn clear(&self) {
+        *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
     /// The index of `read`'s snapshot, from the cache when its generation matches.
     pub(crate) fn index(&self, read: &dyn KvRead) -> Result<Arc<VectorIndex>> {
         let generation = vector_generation(read)?;
