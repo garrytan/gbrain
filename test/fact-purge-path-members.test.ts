@@ -256,6 +256,23 @@ describe('the fact purge calls only what the list names', () => {
     }
   });
 
+  test('no stop is undecided: every owner and due date is named, and the segmented stops carry the ruled labels', () => {
+    expect(stopEntries.filter(entry => !entry.owner || !entry.due || /undecided/i.test(`${entry.owner} ${entry.due}`)).map(purgeEntryName)).toEqual([]);
+    const labelled = (names: string[]) => stopEntries.filter(entry => names.includes(purgeEntryName(entry))).map(entry => ({ name: purgeEntryName(entry), owner: entry.owner, due: entry.due }));
+    const all = (names: string[], owner: string, due: string) => expect(labelled(names)).toEqual(names.map(name => ({ name, owner, due })));
+    all(['applySegmentedBody (persistence/segmented-apply.ts)', 'deleteRewrittenDerivations (page-body/segment-derive.ts)', 'insertSegmentedVersion (page-state/versions.ts)',
+      'pruneSegmentedVersions (page-state/versions.ts)', '<anonymous> (page-state/versions.ts)', 'rewriteVersionBodies (facts/purge.ts)'],
+    'lane 1 (rust-engine/segmented-purge-writes)', '5 PM PST Nov 25');
+    all(['rewriteLiveSegmentedFences (page-body/segment-rewrite.ts)', 'occurrencesWithoutChunks (page-body/ingest.ts)', 'reuseSegmentChunkVectors (import-chunk-reuse.ts)',
+      'hasStaleChunks (page-body/projection.ts)', 'rewriteSegmentedGeneration (page-body/segment-rewrite.ts)'],
+    'trunk (segment-pending-stamp f71c844551, contains 34fa27c472)', '5 PM PST Nov 23');
+    all(['cancelRequestsHoldingStagings (persistence/intent-redaction.ts)', 'finishTerminal (persistence/journal.ts)'],
+      'lane 5 (rust-engine/journal-purge-terminal)', '5 PM PST Nov 25');
+    expect([PURGE_OWNERS.segmentedPurgeWrites, PURGE_OWNERS.segmentedRewrite, PURGE_OWNERS.purgeTerminal]).toEqual([
+      'lane 1 (rust-engine/segmented-purge-writes)', 'trunk (segment-pending-stamp f71c844551, contains 34fa27c472)', 'lane 5 (rust-engine/journal-purge-terminal)']);
+    expect([PURGE_DUE.nov23, PURGE_DUE.nov25]).toEqual(['5 PM PST Nov 23', '5 PM PST Nov 25']);
+  });
+
   test('every stop names its owner and its due date', () => {
     expect(stopEntries.filter(entry => !entry.owner || !entry.due).map(purgeEntryName)).toEqual([]);
   });
