@@ -94,9 +94,9 @@ The receipt of a fact purge (`verifyFactPurge`) counts the rows that still carry
   columns as Postgres prints `col::text` (a `bytea` as `\x` and hex, `jsonb` and text arrays as above); a column the store keeps no
   value of reads NULL (the ledger's held context and proposal, a trust proposal's principal, an item's identity hash). A table with a
   `source_id` is searched within the source, one without (`derived_generation_items`, `page_segment_derivations`) brain-wide.
-  Answered 0 in the member, because the store keeps no such rows: `page_body_staging_parts` (no raw upload part),
-  `page_segment_derivation_purges` (no derivation sweep record) and the retrieval event, link, feedback and weight stores;
-  `relationExists` answers false for them.
+  `page_segment_derivation_purges` (the sweep records of `recordDerivationPurgeRow`, page_body.md) is streamed like the other swept stores,
+  within its source. Answered 0 in the member, because the store keeps no such rows: `page_body_staging_parts` (no raw upload part)
+  and the retrieval event, link, feedback and weight stores; `relationExists` answers false for them.
 - `probePurgeDerivations` (`page_body/purge_probe.rs`): one batch of at most `rows` stored derivation results of the source after
   the (page, pipeline, occurrence) cursor, walked in key order from the cursor: the rows walked, those that pass the claim prefilter
   (`LIKE ANY` of the claim forms, on the folded lowercase JSON text), those that hold a claim as whole words of one string value or

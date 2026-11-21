@@ -630,6 +630,7 @@ export const RUST_ENGINE_MEMBERS = {
   // The reads a page purge's receipt and verification make on the brain's own tables (engine-sql/purge-receipt.ts).
   relationExists: 'pages',
   readDerivationPurgeState: 'pages',
+  recordDerivationPurgeRow: 'pages',
   listDerivationClaimForms: 'facts',
   // The parks and owed-purge records of a derived-origin purge (engine-sql/origin-holds.ts).
   listPurgeOrigins: 'pages',

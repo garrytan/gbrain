@@ -1,8 +1,9 @@
 /**
  * The reads a page purge's receipt and verification make on the brain's own tables (BrainEngine relationExists and
- * readDerivationPurgeState; SQL in engine-sql/purge-receipt.ts; rust/docs/store/pages.md, "The page purge's receipt reads").
+ * readDerivationPurgeState; SQL in engine-sql/purge-receipt.ts; rust/docs/store/pages.md, "The page purge's receipt reads"), and
+ * the fact purge's write of its derivation sweep record (recordDerivationPurgeRow).
  *
- * Answered here, without a store call, because the store keeps keyspaces, not SQL relations:
+ * `relationExists` is answered here, without a store call, because the store keeps keyspaces, not SQL relations:
  * - `relationExists` answers true for a relation the graduation inventory lists (a table or a view; an optional `public.` prefix
  *   and the unquoted capital spelling read as to_regclass reads them) that the store keeps, and false for any other name. The
  *   inventory lists relations the store has no storage for: those the purge-plan members name as holding no row
@@ -11,13 +12,13 @@
  *   one exception: it answers true though the store keeps none, the documented present-but-empty convention (`clearQueryCache`
  *   answers 0), so the purge receipt names no missing cache, as on a brain whose cache holds no row. A quoted or other-schema
  *   name answers false.
- * - `readDerivationPurgeState` answers null: the store records no derivation sweep (no `page_segment_derivation_purges` rows and no
- *   derivation edges for one to walk, as `listDerivedRows` answers an empty list), so a purge has none to report as pending or
- *   stalled.
+ * - `recordDerivationPurgeRow` and `readDerivationPurgeState` go to the store (page_body/purge_record.rs): the store keeps the sweep
+ *   record, `page_segment_derivation_purges` is a relation it keeps, and a recorded sweep reads `pending` (null for none). The store
+ *   walks no sweep, so a record is never stalled and is never deleted by the store (continueDerivationPurges runs through raw SQL).
  */
 import type { BrainEngine } from '../../engine.ts';
 import { GRADUATION_INVENTORY } from '../../persistence/graduation-inventory.ts';
-import type { StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 import { RECEIPT_ABSENT_SLUG_STORES, STORE_ABSENT_PROBE_TABLES } from './purge-plan.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -45,4 +46,12 @@ export const relationExists: Member<'relationExists'> = async (_brain, table) =>
   return name !== null && keptRelations().has(name);
 };
 
-export const readDerivationPurgeState: Member<'readDerivationPurgeState'> = async () => null;
+/** (store `readDerivationPurgeState`) `pending` for a recorded sweep, null for none: the store walks no sweep, so none is stalled. */
+export const readDerivationPurgeState: Member<'readDerivationPurgeState'> = (brain, requestId) =>
+  storeCall({ member: 'readDerivationPurgeState' }, () => brain.readDerivationPurgeState({ requestId })) as ReturnType<Member<'readDerivationPurgeState'>>;
+
+/** (store `recordDerivationPurgeRow`) The record is kept; a second one for the request is a no-op. */
+export const recordDerivationPurgeRow: Member<'recordDerivationPurgeRow'> = async (brain, row) => {
+  await storeCall({ member: 'recordDerivationPurgeRow' }, () => brain.recordDerivationPurgeRow({
+    requestId: row.requestId, sourceId: row.sourceId, needles: [...row.needles], patterns: [...row.patterns], pageIds: [...row.pageIds] }));
+};

@@ -10,6 +10,8 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
+use gbrain_store::page_body::purge_record::{DerivationPurgeRecordArgs, DerivationPurgeStateArgs};
+
 use crate::store_binding::{Brain, arg, required};
 
 #[napi]
@@ -239,7 +241,7 @@ impl Brain {
         })
     }
 
-    /// `upsertSegmentDerivations(rows)`: resolves `null`.
+    /// `upsertSegmentDerivations(rows)`: resolves how many rows a recorded fact purge sweep refused (they are not stored).
     #[napi]
     pub fn upsert_segment_derivations<'env>(
         &self,
@@ -250,6 +252,32 @@ impl Brain {
             let rows: Vec<gbrain_store::page_body::SegmentDerivationInput> =
                 required(rows, "upsertSegmentDerivations rows")?;
             s.upsert_segment_derivations(&rows)
+        })
+    }
+
+    /// `recordDerivationPurgeRow(args)`: resolves `null`.
+    #[napi]
+    pub fn record_derivation_purge_row<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DerivationPurgeRecordArgs = required(args, "recordDerivationPurgeRow args")?;
+            s.record_derivation_purge_row(&a)
+        })
+    }
+
+    /// `readDerivationPurgeState(args)`: resolves `{ state, reason }`, or `null` for no record.
+    #[napi]
+    pub fn read_derivation_purge_state<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DerivationPurgeStateArgs = required(args, "readDerivationPurgeState args")?;
+            s.read_derivation_purge_state(&a)
         })
     }
 

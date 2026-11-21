@@ -215,8 +215,8 @@ The TypeScript engine refuses these with `engine_capability_missing`:
 - A flip unseals the page's text projection on both engines, so `getChunks` answers `[]` for a
   segmented page after a flip until a text-projection seal exists (`sealSegmentedPage`). This is
   parity.
-- `upsertSegmentDerivations` never refuses `derivation_purge_pending`: the store has no fact-purge
-  sweep to hold rows.
+- `upsertSegmentDerivations` raises `derivation_purge_pending` as PGLite does, for the rows a recorded fact purge sweep drops (see
+  "The fact purge's derivation sweep record"); the store has no sweep that walks a record and ends it.
 - The sweep has no upload parts to delete and no upload byte reservations to release when it expires
   an upload staging: the store keeps neither.
 - A segmented version snapshot does not prune older segmented snapshots
@@ -224,3 +224,23 @@ The TypeScript engine refuses these with `engine_capability_missing`:
   `pruneSegmentedVersions`), so a Rust brain can pin more generations than PGLite keeps.
 - PGLite's text delete skips a text another writer has locked (`FOR UPDATE SKIP LOCKED`); the store
   serializes writes, so no text is ever skipped for that reason.
+
+## The fact purge's derivation sweep record (`page_body/purge_record.rs`)
+
+`recordDerivationPurgeRow(row)` keeps the record `recordDerivationPurge` (`src/core/page-body/segment-derive.ts`) wrote to
+`page_segment_derivation_purges`: the claim forms (`needles`, `patterns`) and the pages the purge rewrote (`page_ids`, in the order
+the purge gave them), keyed by the purge request under `b 0x09 <request uuid>`. A second record of the same request keeps nothing
+(`ON CONFLICT (request_id) DO NOTHING`, also when the uuid is spelled in capitals); a request id that is not a uuid, a page id outside
+`integer` and, for a new record, an unknown source refuse as Postgres does (the source's foreign key). `readDerivationPurgeState(requestId)`
+answers `{ state: 'pending', reason: null }` for a record and null for none. A claim that normalizes to nothing records nothing, in
+TypeScript before the call.
+
+While a record is there, `upsertSegmentDerivations` does what the trigger `gbrain_refuse_purging_derivation` does: a row of the record's
+source that its sweep would delete (its page one the purge rewrote or a deleted page, or no live manifest row of its page and occurrence
+with the row's segment hash backing it) and that holds the claim (the output or receipt holds a claim form as whole words of one string
+value or key) is not stored, the stored row stays, the other rows are stored, and the member raises `derivation_purge_pending` with the
+count dropped. The table probe counts the records within their source.
+
+What the store does not do: nothing walks or ends a record. `continueDerivationPurges` (the batches, the verify walks and the record's
+deletion) runs through raw SQL, which the Rust engine refuses, so a record stays `pending`, and the scope-entry trigger's page notes
+(`page_segment_derivation_purge_pages`) have no reader. The store has no source delete, so the foreign key's cascade has nothing to remove.

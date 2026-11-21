@@ -30,6 +30,15 @@ export async function readDerivationPurgeState(tx: Raw, requestId: string): Prom
   return row ? { state: row.stalled ? 'stalled' : 'pending', reason: row.stalled ? row.reason ?? 'statement_timeout' : row.pending ?? null } : null;
 }
 
+/** What a fact purge records of its derivation sweep: the purge request, the claim forms (derivationNeedles) and the pages it rewrote. */
+export interface DerivationPurgeRecord { requestId: string; sourceId: string; needles: readonly string[]; patterns: readonly string[]; pageIds: readonly number[] }
+
+/** Records a fact purge's derivation sweep, in the purge's transaction; a second record of the same request is a no-op. Writes page_segment_derivation_purges. */
+export async function recordDerivationPurgeRow(tx: Raw, row: DerivationPurgeRecord): Promise<void> {
+  await tx.executeRaw(`INSERT INTO page_segment_derivation_purges (request_id, source_id, needles, patterns, page_ids)
+    VALUES ($1::uuid, $2, $3::text[], $4::text[], $5::int[]) ON CONFLICT (request_id) DO NOTHING`, [row.requestId, row.sourceId, row.needles, row.patterns, [...row.pageIds]]);
+}
+
 /**
  * The claims in the form the derivation predicates take: normalized by the database (gbrain_fact_normalize, then foldSql), so a
  * needle and the stored rows it is matched with go through the same SQL. Distinct, in the database's order, and without a claim

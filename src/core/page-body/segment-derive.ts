@@ -418,12 +418,11 @@ export function recordDerivationStatement(entry: { phase: 'sweep' | 'verify' | '
  * page_segment_derivations refuses rows holding the claim on those pages (schema.ts), and continueDerivationPurges
  * deletes the rows already there. A claim that normalizes to nothing records nothing.
  */
-export async function recordDerivationPurge(engine: Pick<BrainEngine, 'executeRaw' | 'listDerivationClaimForms'>, requestId: string, sourceId: string, pageIds: readonly number[],
+export async function recordDerivationPurge(engine: Pick<BrainEngine, 'recordDerivationPurgeRow' | 'listDerivationClaimForms'>, requestId: string, sourceId: string, pageIds: readonly number[],
   claims: readonly string[]): Promise<void> {
   const { needles, patterns } = await derivationNeedles(engine, claims);
   if (!needles.length) return;
-  await engine.executeRaw(`INSERT INTO page_segment_derivation_purges (request_id, source_id, needles, patterns, page_ids)
-    VALUES ($1::uuid, $2, $3::text[], $4::text[], $5::int[]) ON CONFLICT (request_id) DO NOTHING`, [requestId, sourceId, needles, patterns, [...pageIds]]);
+  await engine.recordDerivationPurgeRow({ requestId, sourceId, needles, patterns, pageIds });
 }
 
 /** A recorded derivation sweep of a purge request: still walking (`pending`) or stopped on a row it could not sweep within its statement budget (`stalled`). */

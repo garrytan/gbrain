@@ -1474,6 +1474,7 @@ export class PostgresEngine implements BrainEngine {
   clearQueryCache() { return purgeStoresImpl.clearQueryCache(this); }
   relationExists(table: string) { return purgeReceiptImpl.relationExists(this, table); }
   readDerivationPurgeState(requestId: string) { return purgeReceiptImpl.readDerivationPurgeState(this, requestId); }
+  recordDerivationPurgeRow(row: purgeReceiptImpl.DerivationPurgeRecord) { return purgeReceiptImpl.recordDerivationPurgeRow(this, row); }
   listDerivationClaimForms(claims: readonly string[]) { return purgeReceiptImpl.listDerivationClaimForms(this, claims); }
   listPurgeOrigins(ids: readonly number[], recheckParked: boolean) { return originHoldsImpl.listPurgeOrigins(this, ids, recheckParked); }
   upsertDerivedOriginPark(pageId: number, park: DerivedOriginPark) { return originHoldsImpl.upsertDerivedOriginPark(this, pageId, park); }

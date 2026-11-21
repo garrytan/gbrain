@@ -28,6 +28,7 @@
 //!   client key; the value is the staging id.
 //! - `b 0x07 <staging id text> <sha256>`: a text a staging recorded; the value is the source id.
 //! - `b 0x08 <page id> <staging id text>`: stagings of a page, for the page-delete cascade.
+//! - `b 0x09 <request id: lowercase uuid text>`: a fact purge's derivation sweep record (`purge_record::SweepRecord`).
 //! - `M next_body_occurrence_id`: the occurrence id counter (big-endian u64 of the next id).
 //!
 //! Refusals Postgres raises from a CHECK, foreign key or unique index are `constraint_violation`
@@ -48,6 +49,7 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub mod purge_probe;
+pub mod purge_record;
 pub(crate) mod purge_scan;
 mod purge_sweep;
 
@@ -59,6 +61,7 @@ pub(crate) const BODY: u8 = 0x05;
 const STAGING_CLIENT: u8 = 0x06;
 const STAGING_TEXT: u8 = 0x07;
 const STAGING_BY_PAGE: u8 = 0x08;
+const DERIVATION_PURGE: u8 = 0x09;
 
 /// The page id counter of `pages.rs` (its `NEXT_PAGE_ID`, private there): a shell takes its id
 /// from the same sequence `putPage` does.
@@ -2042,7 +2045,7 @@ impl Store {
     /// `upsertSegmentDerivations(rows)`: inserts or replaces each row keyed (page, kind,
     /// occurrence); a replaced row keeps its `createdAt`. Refuses the batch on an unknown page,
     /// kind or state, a negative version, a hash that is not 32 bytes, or a key repeated in it.
-    pub fn upsert_segment_derivations(&self, rows: &[SegmentDerivationInput]) -> Result<()> {
+    pub fn upsert_segment_derivations(&self, rows: &[SegmentDerivationInput]) -> Result<u64> {
         let mut prepared = Vec::with_capacity(rows.len());
         for row in rows {
             let segment = from_hex(
@@ -2065,13 +2068,18 @@ impl Store {
             prepared.push((row, to_hex(&segment), to_hex(&context)));
         }
         if prepared.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
         let now = self.env.now_micros();
         self.write(|tx| {
             let mut seen = HashSet::new();
+            let mut refused = 0;
             for (row, segment, context) in &prepared {
-                let Some(page_id) = page_u64(row.page_id).filter(|id| matches!(read_page_by_id(&*tx, *id), Ok(Some(_)))) else {
+                let found = page_u64(row.page_id).and_then(|id| match read_page_by_id(&*tx, id) {
+                    Ok(Some(page)) => Some((id, page)),
+                    _ => None,
+                });
+                let Some((page_id, page)) = found else {
                     return Err(violation(format!(
                         "insert into \"page_segment_derivations\" violates foreign key: page {} does not exist",
                         row.page_id
@@ -2094,9 +2102,14 @@ impl Store {
                     created_at_us: created,
                     updated_at_us: now,
                 };
+                // The trigger on page_segment_derivations: a row a recorded sweep would delete and that holds its claim is not stored.
+                if purge_record::sweep_drops(&*tx, &record, &page, row.occurrence_id)? {
+                    refused += 1;
+                    continue;
+                }
                 put_json(tx, &key, &record)?;
             }
-            Ok(())
+            Ok(refused)
         })
     }
 

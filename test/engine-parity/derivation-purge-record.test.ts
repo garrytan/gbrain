@@ -62,7 +62,7 @@ describe('engine parity: the derivation sweep record of a fact purge', () => {
     const recorded = {
       state: await derivationPurgeState(engine, REQ), present: await relationExists(engine, TABLE), present_public: await relationExists(engine, `public.${TABLE}`),
       byNeedle: await count(engine, ['alice likes tea']), bySource: await count(engine, [SRC]), byOther: await count(engine, [SRC], OTHER),
-      byPages: await count(engine, ['{3,7}']), none: await count(engine, ['never stated anywhere']),
+      byPages: await count(engine, ['{7,3}']), none: await count(engine, ['never stated anywhere']),
     };
     // The same request again, with another claim: ON CONFLICT (request_id) DO NOTHING.
     await record(engine, REQ, [9], ['Zebra crossing']);
@@ -74,6 +74,7 @@ describe('engine parity: the derivation sweep record of a fact purge', () => {
     expect(before).toEqual({ state: null, present: true, probe: 0 });
     expect(recorded.state).toEqual({ state: 'pending', reason: null });
     expect(recorded.byNeedle).toBe(1);
+    expect(recorded.byPages).toBe(1);
     expect(recorded.byOther).toBe(0);
     expect(again).toEqual({ state: { state: 'pending', reason: null }, zebra: 0, bySource: 1 });
     expect(empty).toEqual({ state2: null, state3: null, bySource: 1 });

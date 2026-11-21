@@ -51,6 +51,14 @@ const PINS: Pin[] = [
     FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`],
   },
   {
+    // Moved after 7470c703ed: the statement is copied verbatim from segment-derive.ts recordDerivationPurge at 4e49050bff.
+    from: 'src/core/page-body/segment-derive.ts:421 recordDerivationPurge',
+    case: { method: 'recordDerivationPurgeRow', variant: 'default', run: e => e.recordDerivationPurgeRow({ requestId: '00000000-0000-4000-8000-0000000000a1', sourceId: 'src-a',
+      needles: [' alice likes tea '], patterns: ['%alice%likes%tea%'], pageIds: [1, 2] }) },
+    texts: [`INSERT INTO page_segment_derivation_purges (request_id, source_id, needles, patterns, page_ids)
+    VALUES ($1::uuid, $2, $3::text[], $4::text[], $5::int[]) ON CONFLICT (request_id) DO NOTHING`],
+  },
+  {
     from: 'src/core/access/caller.ts:376 appliedAccessSummary',
     case: { method: 'listAppliedPolicyRevisions', variant: 'default', run: e => e.listAppliedPolicyRevisions() },
     texts: [`SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL

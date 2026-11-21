@@ -1113,6 +1113,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'relationExists': OOS.purgeReceipt,
   'readDerivationPurgeState': OOS.purgeReceipt,
   'listDerivationClaimForms': OOS.callerRawSql,
+  'recordDerivationPurgeRow': OOS.callerRawSql,
   'listPurgeOrigins': OOS.pagePurgeHolds,
   'upsertDerivedOriginPark': OOS.pagePurgeHolds,
   'recordOwedPurgeRows': OOS.pagePurgeHolds,
@@ -1990,6 +1991,8 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('isFolderRestricted', [['default', (e) => e.isFolderRestricted(SRC, SLUG)]]),
   ...variants('listAppliedPolicyRevisions', [['default', (e) => e.listAppliedPolicyRevisions()]]),
   ...variants('listDerivationClaimForms', [['default', (e) => e.listDerivationClaimForms(['Alice likes tea'])]]),
+  ...variants('recordDerivationPurgeRow', [['default', (e) => e.recordDerivationPurgeRow({ requestId: '00000000-0000-4000-8000-0000000000a1', sourceId: SRC, needles: [' alice likes tea '],
+    patterns: ['%alice%likes%tea%'], pageIds: [1, 2] })]]),
   ...variants('readMayActFor', [
     ['legacy-token', (e) => e.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')],
     ['oauth-client', (e) => e.readMayActFor('oauth_client', 'client-a')],

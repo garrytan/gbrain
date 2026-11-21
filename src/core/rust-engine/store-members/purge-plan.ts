@@ -46,7 +46,7 @@ const STORE_PROBED_TABLES: ReadonlySet<string> = new Set([
   'subagent_messages', 'subagent_tool_executions',
   // The swept stores a fact purge's receipt probes (facts/purge_probe.rs `for_each_table_row`).
   'belief_events', 'derived_generations', 'derived_generation_items', 'files', 'open_loops', 'page_aliases', 'page_body_manifest', 'page_body_stagings',
-  'page_body_staging_texts', 'page_segment_texts', 'page_segment_derivations', 'persistence_effects', 'trust_proposals', 'write_gate_holds',
+  'page_body_staging_texts', 'page_segment_texts', 'page_segment_derivations', 'page_segment_derivation_purges', 'persistence_effects', 'trust_proposals', 'write_gate_holds',
 ]);
 
 /** Inventory tables the store keeps no rows of: a probe of one finds nothing. */
@@ -55,8 +55,8 @@ export const STORE_ABSENT_PROBE_TABLES: ReadonlySet<string> = new Set([
   'eval_takes_quality_runs', 'link_edge_proposals', 'memory_proposals', 'migration_impact_log', 'persistence_graduation',
   'persistence_worktree_refreshes', 'pinned_questions', 'session_context_state', 'shared_skill_revisions',
   'source_ingestion_receipts', 'sync_notifier_sources', 'take_grade_cache', 'think_ab_results',
-  // The store keeps no raw upload parts, no derivation sweep record and no retrieval event, feedback or weight record.
-  'page_body_staging_parts', 'page_segment_derivation_purges', 'retrieval_event_links', 'retrieval_event_pages', 'retrieval_feedback',
+  // The store keeps no raw upload parts and no retrieval event, feedback or weight record.
+  'page_body_staging_parts', 'retrieval_event_links', 'retrieval_event_pages', 'retrieval_feedback',
   'retrieval_weights',
 ]);
 

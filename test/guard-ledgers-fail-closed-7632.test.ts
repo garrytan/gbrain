@@ -22,7 +22,7 @@ import { LATEST_VERSION, MIGRATIONS, runMigrations } from '../src/core/migrate.t
 import { FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING } from '../src/core/facts/insert-guard-schema.ts';
 import { failClosedLedgerGuards } from '../src/core/guard-ledger-checks.ts';
 import { recordDerivationPurge } from '../src/core/page-body/segment-derive.ts';
-import { listDerivationClaimForms } from '../src/core/engine-sql/purge-receipt.ts';
+import { listDerivationClaimForms, recordDerivationPurgeRow } from '../src/core/engine-sql/purge-receipt.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { databaseRefusal } from '../src/core/persistence/publication-failure.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
@@ -62,9 +62,10 @@ afterAll(async () => {
 });
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
-/** The transaction as the engine presents it to the derivation record: with the claim-forms member its engines carry. */
-const withClaimForms = (tx: Exec): Pick<BrainEngine, 'executeRaw' | 'listDerivationClaimForms'> =>
-  ({ executeRaw: (sql: string, params?: unknown[]) => tx.executeRaw(sql, params), listDerivationClaimForms: (claims: readonly string[]) => listDerivationClaimForms(tx, claims) }) as never;
+/** The transaction as the engine presents it to the derivation record: with the claim-forms and record members its engines carry. */
+const withClaimForms = (tx: Exec): Pick<BrainEngine, 'recordDerivationPurgeRow' | 'listDerivationClaimForms'> =>
+  ({ listDerivationClaimForms: (claims: readonly string[]) => listDerivationClaimForms(tx, claims),
+    recordDerivationPurgeRow: (row: Parameters<typeof recordDerivationPurgeRow>[1]) => recordDerivationPurgeRow(tx, row) }) as never;
 interface Seed { pageId: number; claim: string; hash: string }
 /** A page in 'default', written as the owner and committed; each case gets its own claim. */
 async function seedPage(engine: BrainEngine): Promise<Seed> {

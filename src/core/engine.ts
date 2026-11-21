@@ -4144,6 +4144,8 @@ export interface BrainEngine {
   relationExists(table: string): Promise<boolean>;
   /** The state of a purge request's derivation sweep, null once its record is gone. Reads page_segment_derivation_purges. */
   readDerivationPurgeState(requestId: string): Promise<PurgeReceiptSql.DerivationPurgeState | null>;
+  /** Records a fact purge's derivation sweep in the purge's transaction (the claim forms, the pages it rewrote); a second record of the same request is a no-op. Writes page_segment_derivation_purges. */
+  recordDerivationPurgeRow(row: PurgeReceiptSql.DerivationPurgeRecord): Promise<void>;
   /** The claims' normalized, folded forms a fact purge's derivation probe and sweep search for: distinct, sorted, none empty (page-body/segment-derive.ts derivationNeedles). Reads no table. */
   listDerivationClaimForms(claims: readonly string[]): Promise<string[]>;
   // The parks and owed-purge records of a derived-origin purge (engine-sql/origin-holds.ts).

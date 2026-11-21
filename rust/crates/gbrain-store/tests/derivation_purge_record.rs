@@ -1,0 +1,209 @@
+//! A fact purge's derivation sweep record (`recordDerivationPurgeRow`, `readDerivationPurgeState`; page_body/purge_record.rs): the
+//! record is kept once per request, reads `pending`, is counted by the table probe within its source, and, while it is there,
+//! `upsertSegmentDerivations` drops a row the sweep would delete and that holds the claim and reports how many it dropped.
+
+mod common;
+
+use common::{TempDir, open};
+use gbrain_store::Store;
+use gbrain_store::error::*;
+use gbrain_store::facts::purge_plan::PurgeProbeArgs;
+use gbrain_store::page_body::purge_record::{DerivationPurgeRecordArgs, DerivationPurgeStateArgs};
+use gbrain_store::page_body::{DerivationReadOptions, SegmentDerivationInput, SegmentedPageMeta};
+use gbrain_store::sources::SourceInput;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+
+const REQ: &str = "c0000000-0000-4000-8000-0000000000c1";
+const REQ2: &str = "c0000000-0000-4000-8000-0000000000c2";
+
+fn args<T: serde::de::DeserializeOwned>(v: Value) -> T {
+    serde_json::from_value(v).unwrap()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn sha(text: &str) -> String {
+    hex(&Sha256::digest(text.as_bytes()))
+}
+
+fn brain(name: &str) -> (TempDir, Store) {
+    let dir = TempDir::new(name);
+    let store = open(&dir);
+    let other: SourceInput = args(json!({ "id": "other", "name": "other", "config": {} }));
+    store.upsert_source(&other).unwrap();
+    (dir, store)
+}
+
+fn record(
+    store: &Store,
+    request: &str,
+    source: &str,
+    pages: &[i64],
+    needle: &str,
+) -> gbrain_store::Result<()> {
+    let q: DerivationPurgeRecordArgs = args(json!({
+        "requestId": request, "sourceId": source, "needles": [format!(" {needle} ")],
+        "patterns": [format!("%{}%", needle.replace(' ', "%"))], "pageIds": pages,
+    }));
+    store.record_derivation_purge_row(&q)
+}
+
+fn state(store: &Store, request: &str) -> gbrain_store::Result<Value> {
+    store.read_derivation_purge_state(&args::<DerivationPurgeStateArgs>(
+        json!({ "requestId": request }),
+    ))
+}
+
+fn probe(store: &Store, source: &str, needle: &str) -> usize {
+    let q: PurgeProbeArgs = args(json!({
+        "table": "page_segment_derivation_purges", "sourceId": source, "scoped": true, "binary": false, "rows": 10,
+        "columns": ["source_id", "needles", "patterns", "page_ids", "phase", "recheck", "cursor_pipeline", "stalled_reason", "pending_reason"],
+        "needles": [{ "text": needle, "lower": needle, "escaped": needle }],
+    }));
+    store.count_purge_probe(&q).unwrap() as usize
+}
+
+fn shell(store: &Store, slug: &str) -> i64 {
+    let meta: SegmentedPageMeta = args(json!({ "type": "note", "title": slug }));
+    store
+        .create_segmented_page_shell(slug, &meta, &args(json!({ "sourceId": "default" })))
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap()
+}
+
+fn derivation(page: i64, occurrence: i64, output: Value) -> SegmentDerivationInput {
+    args(json!({
+        "pageId": page, "kind": "links", "occurrenceId": occurrence, "version": 1,
+        "segmentSha256": sha("segment"), "contextHash": sha("ctx"), "state": "done", "output": output,
+    }))
+}
+
+#[test]
+fn a_recorded_sweep_reads_pending_and_a_second_record_of_the_request_keeps_nothing() {
+    let (_dir, store) = brain("derivation-purge-record");
+    assert_eq!(state(&store, REQ).unwrap(), Value::Null);
+    record(&store, REQ, "default", &[7, 3], "alice likes tea").unwrap();
+    assert_eq!(
+        state(&store, REQ).unwrap(),
+        json!({ "state": "pending", "reason": null })
+    );
+    assert_eq!(state(&store, REQ2).unwrap(), Value::Null);
+    // ON CONFLICT (request_id) DO NOTHING, also under another spelling of the uuid.
+    record(
+        &store,
+        &REQ.to_uppercase(),
+        "default",
+        &[9],
+        "zebra crossing",
+    )
+    .unwrap();
+    assert_eq!(probe(&store, "default", "zebra crossing"), 0);
+    assert_eq!(probe(&store, "default", "alice likes tea"), 1);
+    assert_eq!(probe(&store, "default", "{7,3}"), 1);
+    assert_eq!(probe(&store, "other", "alice likes tea"), 0);
+}
+
+#[test]
+fn a_record_refuses_what_postgres_refuses() {
+    let (_dir, store) = brain("derivation-purge-record-refusals");
+    assert_eq!(
+        record(&store, "not-a-uuid", "default", &[], "x")
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        state(&store, "not-a-uuid").unwrap_err().code,
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        record(&store, REQ, "default", &[i64::from(i32::MAX) + 1], "x")
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+    assert_eq!(
+        record(&store, REQ, "nobody", &[], "x").unwrap_err().code,
+        CONSTRAINT_VIOLATION
+    );
+    assert_eq!(state(&store, REQ).unwrap(), Value::Null);
+    // A conflict never reaches the source check: the first record stays, whatever source the second names.
+    record(&store, REQ, "default", &[], "x").unwrap();
+    record(&store, REQ, "nobody", &[], "x").unwrap();
+}
+
+#[test]
+fn a_derivation_write_the_sweep_would_delete_and_that_holds_the_claim_is_dropped_and_counted() {
+    let (_dir, store) = brain("derivation-purge-record-guard");
+    let page = shell(&store, "notes/a");
+    let kept = shell(&store, "notes/b");
+    assert_eq!(
+        store
+            .upsert_segment_derivations(&[derivation(page, 1, json!({ "excerpt": "harmless" }))])
+            .unwrap(),
+        0
+    );
+    record(&store, REQ, "default", &[page], "alice likes tea").unwrap();
+    // The purge rewrote `page`: the row holding the claim is dropped (the stored one stays), the others are stored.
+    let refused = store
+        .upsert_segment_derivations(&[
+            derivation(
+                page,
+                1,
+                json!({ "excerpt": "Today ALICE likes   tea at noon" }),
+            ),
+            derivation(page, 2, json!({ "excerpt": "unrelated" })),
+        ])
+        .unwrap();
+    assert_eq!(refused, 1);
+    let rows = store
+        .read_segment_derivations(page, &DerivationReadOptions::default())
+        .unwrap();
+    let outputs: Vec<(i64, Value)> = rows
+        .iter()
+        .map(|r| (r["occurrenceId"].as_i64().unwrap(), r["output"].clone()))
+        .collect();
+    assert_eq!(
+        outputs,
+        vec![
+            (1, json!({ "excerpt": "harmless" })),
+            (2, json!({ "excerpt": "unrelated" }))
+        ]
+    );
+    // No sweep covers a page of another source: the same row is stored there.
+    let other = brain("derivation-purge-record-guard-other");
+    let there = shell(&other.1, "notes/a");
+    record(&other.1, REQ, "other", &[there], "alice likes tea").unwrap();
+    assert_eq!(
+        other
+            .1
+            .upsert_segment_derivations(&[derivation(
+                there,
+                1,
+                json!({ "excerpt": "alice likes tea" })
+            )])
+            .unwrap(),
+        0
+    );
+    // A shell page has no live segment, so no segment backs the row: it is in scope even on a page the purge did not rewrite.
+    assert_eq!(
+        store
+            .upsert_segment_derivations(&[derivation(
+                kept,
+                1,
+                json!({ "excerpt": "alice likes tea" })
+            )])
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .upsert_segment_derivations(&[derivation(kept, 1, json!({ "excerpt": "no claim" }))])
+            .unwrap(),
+        0
+    );
+}

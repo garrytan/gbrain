@@ -338,7 +338,7 @@ fn strings_of(value: &Value, out: &mut Vec<String>) {
 }
 
 /// `derivationHoldsClaimSql`: the row's output or receipt holds a claim as whole words of one string value or object key.
-fn holds_claim(d: &DerivationRecord, needles: &[String], patterns: &[String]) -> bool {
+pub(super) fn holds_claim(d: &DerivationRecord, needles: &[String], patterns: &[String]) -> bool {
     let mut strings = Vec::new();
     strings_of(&d.output, &mut strings);
     strings_of(&d.receipt, &mut strings);
@@ -352,7 +352,7 @@ fn holds_claim(d: &DerivationRecord, needles: &[String], patterns: &[String]) ->
 
 /// `derivationSweepScopeSql`: the row belongs to a page the purge rewrote or deleted, or no live segment backs it (a published
 /// manifest row of its page and occurrence with the row's segment hash).
-fn swept(
+pub(super) fn swept(
     read: &dyn KvRead,
     d: &DerivationRecord,
     page: &PageRecord,

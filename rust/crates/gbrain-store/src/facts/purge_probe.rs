@@ -192,6 +192,7 @@ pub(crate) fn for_each_table_row(
         "page_body_staging_texts" => crate::page_body::purge_probe::probe_staging_texts(read, f)?,
         "page_segment_texts" => crate::page_body::purge_probe::probe_texts(read, source_id, f)?,
         "page_segment_derivations" => crate::page_body::purge_probe::probe_derivations(read, f)?,
+        "page_segment_derivation_purges" => crate::page_body::purge_record::probe_records(read, f)?,
         "persistence_effects" => crate::persistence::effects::probe_effects(read, f)?,
         "belief_events" => crate::trust::belief_events::probe_events(read, source_id, f)?,
         "trust_proposals" => crate::trust::proposals::probe_proposals(read, f)?,

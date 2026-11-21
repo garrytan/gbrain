@@ -17,7 +17,7 @@
  */
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput,
   SegmentChunkInput, SegmentedEmbedPage, SegmentedEmbedRef, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from '../../page-body/types.ts';
-import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from '../../page-body/derivations.ts';
+import { DerivationWriteRefused, type SegmentDerivationInput, type SegmentDerivationKind, type SegmentDerivationRow } from '../../page-body/derivations.ts';
 import { bodyGenerationIncompleteError, bodyStagingGoneError } from '../../engine-sql/page-body.ts';
 import { opError } from '../../ops/contract.ts';
 import { readFix } from '../../ops/op-fix.ts';
@@ -238,7 +238,9 @@ export const upsertSegmentDerivations: StoreMember<[rows: readonly SegmentDeriva
   if (rows.length === 0) return;
   const sent = rows.map(row => ({ ...row, segmentSha256: hex(row.segmentSha256), contextHash: hex(row.contextHash),
     output: row.output ?? null, receipt: row.receipt ?? null }));
-  await storeCall({ member: 'upsertSegmentDerivations' }, () => brain.upsertSegmentDerivations(sent));
+  // The store drops a row a recorded fact purge sweep refuses (the trigger on page_segment_derivations) and stores the others.
+  const refused = await storeCall({ member: 'upsertSegmentDerivations' }, () => brain.upsertSegmentDerivations(sent)) as number;
+  if (refused > 0) throw new DerivationWriteRefused(refused);
 };
 
 export const retireSegmentDerivations: StoreMember<[pageId: number, live: readonly number[], opts?: { kind?: SegmentDerivationKind }], number> =

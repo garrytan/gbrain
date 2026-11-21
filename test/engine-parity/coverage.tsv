@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1434/1441
+# covered: 1434/1442
 # lifecycle: 12/12
 # pages: 60/60
 # search: 7/7
@@ -34,7 +34,7 @@
 # import_guards: 13/13
 # persistence_journal: 142/142
 # label_door: 5/5
-# page_purge: 45/45
+# page_purge: 45/46
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -735,6 +735,7 @@ deletePurgedNameStoreRows	page_purge	yes	2	no	yes	yes	serves
 clearQueryCache	page_purge	yes	2	no	yes	yes	serves
 relationExists	page_purge	yes	3	no	yes	yes	serves
 readDerivationPurgeState	page_purge	yes	4	no	yes	yes	serves
+recordDerivationPurgeRow	page_purge	no	0	no	-	-	-
 listDerivationClaimForms	page_purge	yes	3	no	yes	yes	serves
 listPurgeOrigins	page_purge	yes	2	no	yes	yes	serves
 upsertDerivedOriginPark	page_purge	yes	4	no	yes	yes	serves
