@@ -138,15 +138,18 @@ test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
+test/engine-parity/chunk-reads.test.ts
 test/engine-parity/chunk-safe-fence.test.ts
 test/engine-parity/chunk-vector-overflow.test.ts
 test/engine-parity/chunks.test.ts
 test/engine-parity/cli-reads-export.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
+test/engine-parity/connect-gate.test.ts
 test/engine-parity/cycle-locks.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
+test/engine-parity/effect-scans.test.ts
 test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
@@ -161,8 +164,10 @@ test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/links.test.ts
 test/engine-parity/memory-mutation-reads.test.ts
+test/engine-parity/oauth-clients.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-only-marks.test.ts
+test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
 test/engine-parity/pages.test.ts
@@ -186,6 +191,7 @@ test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
 test/engine-parity/traversal-cache.test.ts
 test/engine-parity/trust-tier-reads.test.ts
+test/engine-parity/trust-write-gate.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/withdrawal-discovery-reads.test.ts
@@ -474,6 +480,7 @@ test/n4-sql-move-parity.test.ts
 test/n5-sql-move-parity.test.ts
 test/n6-sql-move-parity.test.ts
 test/n7-sql-move-parity.test.ts
+test/n8-sql-move-parity.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts

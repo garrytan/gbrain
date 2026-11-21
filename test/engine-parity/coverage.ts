@@ -59,7 +59,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'setPageEmbeddingSignature', 'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
     'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'readEmbeddingStateCounts', 'listEmbeddingStateRows',
     'deleteChunks', 'getChunksWithEmbeddings', 'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal',
-    'moveChunkIndexes', 'getChunkReuseRows'],
+    'moveChunkIndexes', 'getChunkReuseRows',
+    'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'countOversizedEmbedSkips', 'countOrphanChunks', 'countCodeChunkPages',
+    'codeChunksExist', 'hasUnsealedPages', 'currentCodeChunksExist', 'listQualifiedSymbolNames', 'listWithdrawalChunks', 'deleteChunksForPages',
+    'listContextualModeCandidates', 'resolveFrozenHits'],
   extraction: ['countStalePagesForExtraction', 'listStalePagesForExtraction', 'markPagesExtractedBatch', 'markPagesAttendanceBlocked',
     'countStaleFrontmatterKeyPages', 'listStaleFrontmatterKeyPages', 'stripStaleFrontmatterKeys'],
   links: ['addLink', 'addLinksBatch', 'replaceDerivedLinks', 'replaceDerivedLinksBatch', 'removeLink', 'removeLinksByPagesAndSource',
@@ -69,7 +72,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   tags: ['addTag', 'removeTag', 'getTags', 'pruneFrontmatterTags', 'addPageTagsById'],
   timeline: ['addTimelineEntry', 'addTimelineEntriesBatch', 'getTimeline', 'getTimelineForDate', 'getSince', 'getOnThisDay',
     'getLastSeen', 'upsertEventProjection', 'removeTimelineRows', 'updateTimelineDetails',
-    'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'deleteTimelineRows', 'listStoredTimelineRowsOrdered', 'listTimelineOrphanPages', 'readMaxTimelineEntryId', 'sampleEffectiveDateSources', 'sampleEffectiveDates', 'storedTimelineRowsByPageIds'],
+    'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'deleteTimelineRows', 'listStoredTimelineRowsOrdered', 'listTimelineOrphanPages', 'readMaxTimelineEntryId', 'sampleEffectiveDateSources', 'sampleEffectiveDates', 'storedTimelineRowsByPageIds',
+    'insertCanonicalTimelineRows'],
   ontology: ['mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts'],
   raw_files: ['putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles'],
   takes: ['addTakesBatch', 'updateTakeEmbeddings', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
@@ -83,8 +87,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'findTrajectory', 'getFactsHealth'],
   segmented_body: ['allocateBodyOccurrenceIds', 'stageSegmentTexts', 'readSegmentTexts', 'stageManifestRows', 'readManifest',
     'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
-    'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations'],
-  versions: ['createVersion', 'getVersions', 'revertToVersion'],
+    'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations',
+    'readSegmentedEmbedPage'],
+  versions: ['createVersion', 'getVersions', 'revertToVersion',
+    'readLatestVersionId', 'readLatestVersionIdAtTier', 'stampVersionChangeReason',],
   stats_ingest: ['getStats', 'getHealth', 'countOnboardSignal', 'logIngest', 'getIngestLog'],
   sync_aliases: ['updateSlug', 'rewriteLinks', 'resolveSlugWithAlias', 'resolveSlugWithAliasDetailed', 'resolveAliases',
     'setPageAliases', 'replaceDerivedAliases', 'refreshPageBody', 'updatePageContextualRetrievalState', 'migrateFactsToCanonical'],
@@ -175,6 +181,26 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // memory_mutation_reads: the reads remember and forget make before admission
   memory_mutation_reads: ['readSourceWriteRow', 'readSourceLocalPath', 'readFactEntitySlug', 'hasLiveFileBackedPage', 'factReadableUnder', 'readRemoteForgetTier', 'readForgetTarget',
     'isFactEntityUnbacked', 'readLinkedFactCopies', 'hasHiddenFactCopy', 'ownerReachesFact', 'readFactWithdrawalClaim'],
+  persistence_journal: [
+    'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'readRequestEffects', 'stampEffectClaim', 'renewEffectClaim',
+    'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow', 'requeueEffectRow', 'parkEffectRow', 'failEffectRow',
+    'readMirrorGateRows', 'lockEffectGuard', 'hasRearmableTargets', 'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads',
+    'listResumableRefreshes', 'listSourceLastCommits',
+  ],
+  trust: [
+    'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt', 'deleteStalePageWriteGateReceipts', 'listWriteGateReceiptsFor',
+    'deleteStaleWriteGateReceipts', 'upsertWriteGateHold', 'listWriteGateHoldRows', 'getWriteGateHoldRow', 'decideWriteGateHold',
+    'listTrustAllowRuleRows',
+  ],
+  connect_gate: [
+    'hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations',
+  ],
+  minion_queue: [
+    'readOauthClient', 'listOauthClients', 'patchOauthClient',
+  ],
+  telemetry: [
+    'logChatUsage', 'readChatUsage',
+  ],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */

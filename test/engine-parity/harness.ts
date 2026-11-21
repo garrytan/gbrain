@@ -161,6 +161,15 @@ async function resetPostgres(engine: BrainEngine): Promise<void> {
   );
 }
 
+/**
+ * The v322 held flag is a table comment, so the row reset does not clear it: a case that made an owner-only source would
+ * leave `gbrain_owner_only_lineage()` true for every later case on the same database, while a reset Rust brain reads false.
+ * A reset brain holds no owner-only data, so the comment goes with the rows.
+ */
+async function clearOwnerOnlyHold(engine: BrainEngine): Promise<void> {
+  await engine.executeRaw(`COMMENT ON TABLE public.owner_only_marks IS NULL`);
+}
+
 /** Return the arm to an empty brain (default source only). Harness-only SQL: cases never use it. */
 export async function resetArm(arm: ParityArm): Promise<void> {
   switch (arm.backend) {
@@ -169,9 +178,11 @@ export async function resetArm(arm: ParityArm): Promise<void> {
       return;
     case 'pglite':
       await resetPgliteState(arm.engine as PGLiteEngine);
+      await clearOwnerOnlyHold(arm.engine);
       return;
     case 'postgres':
       await resetPostgres(arm.engine);
+      await clearOwnerOnlyHold(arm.engine);
       return;
     default:
       return assertNever(arm.backend);

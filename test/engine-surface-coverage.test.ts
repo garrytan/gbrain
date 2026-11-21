@@ -195,6 +195,18 @@ const INTERFACE_METHODS: readonly string[] = [
   'listOwnerProposalRows', 'listSharedSkillPackRoots', 'listSynopsisSourceIds', 'notifierCoverageRecorded',
   'purgeMemoryProposals', 'readAdmissionSource', 'readHealthMemoClock', 'readMemoryProposal', 'readOpCheckpointKeys',
   'readPendingProposalSummary', 'readSourceState', 'sharedSkillPackTablePresent',
+  // N8 members (engine-sql/{chat-usage,chunk-reads,connect-gate,oauth-clients,persistence-*,trust-write-gate,version-reasons,page-body,timeline}.ts)
+  'readOauthClient', 'listOauthClients', 'patchOauthClient', 'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks',
+  'countOversizedEmbedSkips', 'countOrphanChunks', 'countCodeChunkPages', 'codeChunksExist', 'hasUnsealedPages', 'currentCodeChunksExist',
+  'listQualifiedSymbolNames', 'listWithdrawalChunks', 'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits', 'logChatUsage',
+  'readChatUsage', 'hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations',
+  'insertCanonicalTimelineRows', 'readLatestVersionId', 'readLatestVersionIdAtTier', 'stampVersionChangeReason', 'listGatedMirrorRequests',
+  'listEffectRecoveries', 'selectClaimableEffect', 'readRequestEffects', 'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads',
+  'listResumableRefreshes', 'listSourceLastCommits', 'stampEffectClaim', 'renewEffectClaim', 'advanceEffectRow', 'completeEffectRow',
+  'retryEffectRow', 'retryBusyEffectRow', 'requeueEffectRow', 'parkEffectRow', 'failEffectRow', 'readMirrorGateRows', 'lockEffectGuard',
+  'hasRearmableTargets', 'readSegmentedEmbedPage', 'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt', 'deleteStalePageWriteGateReceipts',
+  'listWriteGateReceiptsFor', 'deleteStaleWriteGateReceipts', 'upsertWriteGateHold', 'listWriteGateHoldRows', 'getWriteGateHoldRow',
+  'decideWriteGateHold', 'listTrustAllowRuleRows',
 ];
 
 /**
@@ -231,6 +243,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'holdsDatastoreLock',
   // The unscoped engine-sql executors the timeline reads and the write-side reads run through.
   'timelineRead', 'writeMiscReads',
+  // N8: the unscoped engine-sql executors the chunk reads and the chat usage telemetry run through.
+  'chunkRead', 'telemetryRead',
 ];
 
 /**

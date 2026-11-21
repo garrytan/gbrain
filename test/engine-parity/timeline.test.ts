@@ -247,6 +247,43 @@ describe('engine parity: timeline entries', () => {
       return answers;
     },
   );
+
+  parityTest(
+    'insertCanonicalTimelineRows inserts a page body bullets in order as its own rows and skips one equal on date, summary and source',
+    { methods: ['insertCanonicalTimelineRows', 'listStoredTimelineRowsOrdered', 'getTimeline', 'addTimelineEntry', 'putPage', 'getPage', 'softDeletePage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/canonical');
+      await putPlain(engine, 'people/canonical-gone');
+      const pageId = Number((await engine.getPage('people/canonical'))!.id);
+      const goneId = Number((await engine.getPage('people/canonical-gone'))!.id);
+      await engine.addTimelineEntry('people/canonical', { date: '2026-01-05', source: 'cal', summary: 'already there', detail: 'stored' });
+      const row = (date: string, summary: string, detail = '', source = '') => ({ date, source, summary, detail });
+      await engine.insertCanonicalTimelineRows(pageId, [
+        row('2026-03-01', 'third bullet'), row('2026-01-02', 'first bullet', 'with detail'),
+        // Equal to the stored row on (date, summary, source): skipped, the stored detail stays.
+        row('2026-01-05', 'already there', 'new detail', 'cal'),
+        // A twin inside the call is skipped too; a different source is a new row.
+        row('2026-01-02', 'first bullet', 'twin'), row('2026-01-02', 'first bullet', '', 'mail'),
+      ]);
+      await engine.insertCanonicalTimelineRows(pageId, []);
+      // A soft-deleted page still takes rows (the projection writes by page id).
+      await engine.softDeletePage('people/canonical-gone');
+      await engine.insertCanonicalTimelineRows(goneId, [row('2026-02-02', 'after delete')]);
+      const missing = await engine.insertCanonicalTimelineRows(987654321, [row('2026-02-02', 'no page')])
+        .then(() => 'inserted', (e: unknown) => /foreign key/.test(String((e as Error)?.message ?? e)) ? 'foreign key' : 'other');
+      const stored = (await engine.listStoredTimelineRowsOrdered(pageId))
+        .map((r) => `${r.date}|${r.source}|${r.summary}|${r.detail}`);
+      // Ids follow the call order: newest first by date then id.
+      const order = (await engine.getTimeline('people/canonical')).map((e) => e.summary);
+      const gone = (await engine.getTimeline('people/canonical-gone')).map((e) => e.summary);
+      const answers = { stored: [...stored].sort(), order, gone, missing };
+      expect(answers.stored).toContain('2026-01-05|cal|already there|stored');
+      expect(answers.stored).toContain('2026-01-02||first bullet|with detail');
+      expect(answers.stored.filter((r) => r.includes('first bullet'))).toHaveLength(2);
+      expect(answers.missing).toBe('foreign key');
+      return answers;
+    },
+  );
 });
 
 describe('engine parity: chronicle reads and event projection', () => {

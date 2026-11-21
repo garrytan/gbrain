@@ -496,6 +496,82 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
   );
 
   parityTest(
+    'a sweep without an outer transaction keeps texts in grace, expires stale stagings and stays inside its page scope',
+    { methods: ['sweepSegments', 'stageSegmentTexts', 'readSegmentTexts', 'openBodyStaging', 'stageManifestRows', 'readManifest'] },
+    async (engine) => {
+      const a = await publishApart(engine, 'notes/sweep-apart-a');
+      const b = await publishApart(engine, 'notes/sweep-apart-b');
+      const orphan = segmentText('orphan text no manifest row references, swept apart\n');
+      await engine.stageSegmentTexts('default', [orphan]);
+      const inGrace = await engine.sweepSegments({ sourceId: 'default' });
+      const graceKept = (await engine.readSegmentTexts('default', [orphan.sha256])).size;
+      const swept = await engine.sweepSegments({ sourceId: 'default', graceMs: 0 });
+      const orphanGone = (await engine.readSegmentTexts('default', [orphan.sha256])).size;
+      const liveKept = (await engine.readSegmentTexts('default', [ONE.sha256, TWO.sha256, THREE.sha256])).size;
+      // An open staging of page A past its deadlines: a sweep of page B leaves it, a sweep of page A expires it.
+      const [occ] = await engine.allocateBodyOccurrenceIds(1);
+      const { stagingId } = await stageApart(engine, { pageId: a.pageId, slug: 'notes/sweep-apart-a', genFrom: 2, texts: [FOUR], occurrences: [occ!],
+        firstSeq: 3, byteStart: 999 });
+      const stagedBefore = (await engine.readManifest(a.pageId, { stagingId })).length;
+      const later = new Date(Date.now() + 30 * 86_400_000);
+      const notExpired = await engine.sweepSegments({ sourceId: 'default', expireStagings: true });
+      const otherPage = await engine.sweepSegments({ pageId: b.pageId, expireStagings: true, now: later });
+      const stagedAfterOther = (await engine.readManifest(a.pageId, { stagingId })).length;
+      const wrongSource = await engine.sweepSegments({ pageId: a.pageId, sourceId: 'no-such-source', expireStagings: true, now: later });
+      const expired = await engine.sweepSegments({ pageId: a.pageId, expireStagings: true, now: later });
+      const stagedAfter = (await engine.readManifest(a.pageId, { stagingId })).length;
+      const reopen = await thrown(() => engine.setBodyStagingState(stagingId, 'prepared'));
+      const live = {
+        a: manifestView(await engine.readManifest(a.pageId), a.occurrences).map((r) => r.occurrence),
+        b: manifestView(await engine.readManifest(b.pageId), b.occurrences).map((r) => r.occurrence),
+      };
+      const fourKept = (await engine.readSegmentTexts('default', [FOUR.sha256])).size;
+      const again = await engine.sweepSegments({ expireStagings: true, now: later, graceMs: 0 });
+      const fourAfter = (await engine.readSegmentTexts('default', [FOUR.sha256])).size;
+      return { inGrace, graceKept, swept, orphanGone, liveKept, stagedBefore, notExpired, otherPage, stagedAfterOther, wrongSource, expired,
+        stagedAfter, reopen, live, fourKept, again, fourAfter };
+    },
+  );
+
+  parityTest(
+    'a sweep keeps the closed generation a segmented version references and drops chunks staged by an aborted staging',
+    { methods: ['sweepSegments', 'createVersion', 'getVersions', 'stageSegmentChunks', 'flipBodyGeneration', 'setBodyStagingState', 'readManifest',
+      'readSegmentTexts'] },
+    async (engine) => {
+      const versionView = (row: Record<string, unknown>) => ({
+        body_storage: row.body_storage, body_generation: Number(row.body_generation), body_bytes: Number(row.body_bytes), content_hash: row.content_hash,
+        compiled_truth: row.compiled_truth ?? null, timeline: row.timeline ?? null, title: row.title,
+      });
+      const pinned = await publishApart(engine, 'notes/sweep-pinned');
+      const free = await publishApart(engine, 'notes/sweep-free');
+      const created = versionView(await engine.createVersion('notes/sweep-pinned') as unknown as Record<string, unknown>);
+      // Both pages replace THREE with FOUR at generation 2; only the pinned page has a version of generation 1.
+      for (const page of [pinned, free]) {
+        const slug = page === pinned ? 'notes/sweep-pinned' : 'notes/sweep-free';
+        const [occ] = await engine.allocateBodyOccurrenceIds(1);
+        const { stagingId } = await stageApart(engine, { pageId: page.pageId, slug, genFrom: 2, texts: [FOUR], occurrences: [occ!], firstSeq: 2,
+          byteStart: ONE.body.byteLength + TWO.body.byteLength });
+        await engine.flipBodyGeneration(flipInput(page.pageId, 1, stagingId, [ONE, TWO, FOUR], { closeOccurrences: [page.occurrences[2]!] }));
+        await engine.setBodyStagingState(stagingId, 'committed');
+      }
+      const versions = (await engine.getVersions('notes/sweep-pinned')).map((v) => versionView(v as unknown as Record<string, unknown>));
+      // A staging of generation 3 stages a row and a chunk, then aborts: the chunk waits for no one.
+      const [next] = await engine.allocateBodyOccurrenceIds(1);
+      const third = await stageApart(engine, { pageId: pinned.pageId, slug: 'notes/sweep-pinned', genFrom: 3, texts: [ONE], occurrences: [next!] });
+      await engine.stageSegmentChunks(pinned.pageId, 3, [chunk(next!, 0, 'staged for generation three')]);
+      const whileOpen = await engine.sweepSegments({ pageId: pinned.pageId, graceMs: 0 });
+      await engine.setBodyStagingState(third.stagingId, 'aborted');
+      const pinnedSweep = await engine.sweepSegments({ pageId: pinned.pageId, graceMs: 0 });
+      const pinnedGen1 = manifestView(await engine.readManifest(pinned.pageId, { generation: 1 }), pinned.occurrences).map((r) => r.occurrence);
+      const freeSweep = await engine.sweepSegments({ pageId: free.pageId, graceMs: 0 });
+      const freeGen1 = manifestView(await engine.readManifest(free.pageId, { generation: 1 }), free.occurrences).map((r) => r.occurrence);
+      const threeKept = (await engine.readSegmentTexts('default', [THREE.sha256])).size;
+      const repeat = await engine.sweepSegments({ graceMs: 0 });
+      return { created, versions, whileOpen, pinnedSweep, pinnedGen1, freeSweep, freeGen1, threeKept, repeat };
+    },
+  );
+
+  parityTest(
     'a sealed segmented page is found by its title and timeline lead',
     { methods: ['sealSegmentedPage', 'searchTitles'] },
     async (engine) => {
@@ -578,6 +654,30 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
         page: page ? { slug: page.slug, title: page.title } : null,
         versions: versions.map((v) => ({ title: v.title, compiled_truth: v.compiled_truth, timeline: v.timeline, content_hash: v.content_hash ?? null })),
       };
+    },
+  );
+
+  parityTest(
+    'the segmented embed read finds a sealed live segmented page by id and by slug, and nothing else',
+    { methods: ['readSegmentedEmbedPage', 'sealSegmentedPage', 'softDeletePage'] },
+    async (engine) => {
+      const { pageId } = await publishApart(engine, 'notes/embed-read');
+      const view = (page: Awaited<ReturnType<BrainEngine['readSegmentedEmbedPage']>>) =>
+        page === null ? null : { ...page, id: page.id === pageId ? 'the page' : page.id };
+      const unsealed = await engine.readSegmentedEmbedPage({ id: pageId });
+      await engine.sealSegmentedPage(pageId);
+      const byId = view(await engine.readSegmentedEmbedPage({ id: pageId }));
+      const bySlug = view(await engine.readSegmentedEmbedPage({ sourceId: 'default', slug: 'notes/embed-read' }));
+      const otherSource = await engine.readSegmentedEmbedPage({ sourceId: 'no-such-source', slug: 'notes/embed-read' });
+      const missing = await engine.readSegmentedEmbedPage({ id: 987_654_321 });
+      await engine.putPage('notes/embed-inline', { type: 'note', title: 'Inline', compiled_truth: 'an inline body' });
+      const inline = await engine.readSegmentedEmbedPage({ sourceId: 'default', slug: 'notes/embed-inline' });
+      await engine.softDeletePage('notes/embed-read');
+      const deleted = await engine.readSegmentedEmbedPage({ id: pageId });
+      expect(unsealed).toBeNull();
+      expect(byId).toMatchObject({ id: 'the page', slug: 'notes/embed-read', source_id: 'default', body_storage: 'segmented' });
+      expect(bySlug).toEqual(byId);
+      return { unsealed, byId, bySlug, otherSource, missing, inline, deleted };
     },
   );
 });
