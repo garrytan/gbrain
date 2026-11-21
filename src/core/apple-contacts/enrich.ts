@@ -176,8 +176,8 @@ export interface EnrichDeps { send?: typeof sendContactsBatch; now?: () => numbe
 /** One enrichment run after a clean pull: nothing when `apple_contacts.enrich` is off; the record of what it did otherwise. */
 export async function runAppleContactsEnrichment(engine: BrainEngine, sourceId: string, cfg: Pick<AppleContactsSourceConfig, 'helperHost' | 'helperPort' | 'proxy'>,
   countryCode: string, deps: EnrichDeps = {}): Promise<EnrichRecord | null> {
-  const setting = async (key: string) => String(await engine.getConfig(key).catch(() => null) ?? '').trim().toLowerCase();
-  const mode = await setting(ENRICH_CONFIG_KEY);
+  const norm = (value: string | null) => String(value ?? '').trim().toLowerCase();
+  const mode = norm(await engine.getConfig(ENRICH_CONFIG_KEY).catch(() => null));
   if (mode !== 'on' && mode !== 'dry_run') return null;
   const proposals = await proposeEnrichment(engine, sourceId, countryCode);
   const batch = proposals.length ? 'enr-' + sha(proposals.map(p => p.change.key), 24) : null;
@@ -187,7 +187,7 @@ export async function runAppleContactsEnrichment(engine: BrainEngine, sourceId: 
   });
   const record: EnrichRecord = { at: new Date((deps.now ?? Date.now)()).toISOString(), mode, sent: false, note: null, batch, changes: proposals.map(p => row(p, 'proposed', null)) };
   if (mode === 'on' && proposals.length) {
-    const write = await setting(WRITE_CONFIG_KEY);
+    const write = norm(await engine.getConfig(WRITE_CONFIG_KEY).catch(() => null));
     if (write !== 'on') record.note = WRITE_CONFIG_KEY + ' is ' + (write || 'off') + ', so nothing was sent';
     else {
       try {
