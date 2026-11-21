@@ -55,6 +55,9 @@ struct ReviewRecord {
     origin: String,
     home_source_id: Option<String>,
     git_blob: Option<String>,
+    /// A "different" decision's member fingerprints when recorded; absent on a record written before it existed.
+    #[serde(default)]
+    evidence: Option<Vec<String>>,
 }
 
 impl ReviewRecord {
@@ -102,6 +105,9 @@ pub struct DecisionInput {
     pub origin: String,
     pub home_source_id: Option<String>,
     pub git_blob: Option<String>,
+    /// Stored as given; an empty list is kept as null, as the SQL engines write it.
+    #[serde(default)]
+    pub evidence: Option<Vec<String>>,
 }
 
 /// `applyIdentityDecisions(input)`.
@@ -282,7 +288,7 @@ impl Store {
                     "decision_id": id, "verdict": r.verdict, "members": r.members, "group_id": r.group_id,
                     "entity_id": r.entity_id, "canonical": canonical, "decided_by": r.decided_by,
                     "decided_at": timestamptz_text(r.decided_at_us), "origin": r.origin,
-                    "home_source_id": r.home_source_id, "git_blob": r.git_blob,
+                    "home_source_id": r.home_source_id, "git_blob": r.git_blob, "evidence": r.evidence,
                 })
             })
             .collect();
@@ -337,7 +343,8 @@ impl Store {
                     d.origin.as_str(),
                 ]
                 .into_iter()
-                .chain(texts.iter().filter_map(|t| t.as_deref())),
+                .chain(texts.iter().filter_map(|t| t.as_deref()))
+                .chain(d.evidence.iter().flatten().map(String::as_str)),
             )?;
             if !matches!(d.verdict.as_str(), "same" | "different") {
                 return Err(StoreError::invalid(format!(
@@ -386,6 +393,7 @@ impl Store {
                     origin: d.origin.clone(),
                     home_source_id: d.home_source_id.clone(),
                     git_blob: d.git_blob.clone(),
+                    evidence: d.evidence.clone().filter(|e| !e.is_empty()),
                 };
                 put_json(tx, &review_key(&d.decision_id), &rec)?;
             }
@@ -500,6 +508,7 @@ mod tests {
             origin: "database".into(),
             home_source_id: None,
             git_blob: None,
+            evidence: None,
         };
         let rows = vec![
             ("a".to_string(), rec("same", Some("e"))),

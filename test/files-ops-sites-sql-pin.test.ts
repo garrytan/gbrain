@@ -88,16 +88,6 @@ interface Pin {
 
 const PINS: Pin[] = [
   {
-    from: 'src/commands/files.ts:156 listFiles',
-    run: e => e.listFileRowsForSlug('notes/plan'),
-    sent: [{ text: 'SELECT * FROM files WHERE page_slug = $1 ORDER BY filename LIMIT 100', params: ['notes/plan'] }],
-  },
-  {
-    from: 'src/commands/files.ts:158 listFiles',
-    run: e => e.listAllFileRows(),
-    sent: [{ text: 'SELECT * FROM files ORDER BY page_slug, filename LIMIT 100', params: [] }],
-  },
-  {
     from: 'src/commands/files.ts:197 uploadFile and :467 syncFiles',
     run: e => e.hasFileWithHash('h1', 'notes/plan/report.pdf'),
     sent: [{ text: 'SELECT id FROM files WHERE content_hash = $1 AND storage_path = $2', params: ['h1', 'notes/plan/report.pdf'] }],

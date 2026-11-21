@@ -15,7 +15,9 @@ adding or changing a format.
 3. Re-score the full body when the head score is inconclusive, or when a broad
    pattern explicitly requires full-body scoring.
 4. Reject the winner when its acceptance score is below the false-positive
-   floor.
+   floor or its structure gate reads the page as a list of labels. A rejected
+   winner hands over to the next pattern, by full-body score, that clears both;
+   the page is `no_match` only when none does.
 5. Apply the winning pattern to every line and attach supported continuation
    lines to the preceding message. Speaker-object transcripts instead reject
    unsupported candidate regions rather than attributing their text to a speaker.

@@ -904,8 +904,6 @@ export const DOMAIN_OF: Record<string, string> = {
   'advanceSourceCommit': 'sources', 'listSourcePathPages': 'sources', 'listQuarantinedSlugs': 'sources', 'readRenameIdentityRows': 'sources', 'readLiveIdentityHolders': 'sources', 'readPageSizeRows': 'sources', 'holdPageEmbedding': 'sources', 'readReasonPurgeTombstones': 'sources', 'writeReasonPurgeTombstones': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files', 'listFiles': 'files',
-  'listFileRowsForSlug': OOS.filesOps,
-  'listAllFileRows': OOS.filesOps,
   'hasFileWithHash': OOS.filesOps,
   'listFileRowsForVerify': OOS.filesOps,
   'readSourceLocalPathForVerify': OOS.filesOps,

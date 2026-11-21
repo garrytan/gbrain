@@ -2677,10 +2677,6 @@ export interface BrainEngine {
   listFiles(opts: ListFilesOptions): Promise<FileRow[]>;
 
   // The files commands' and file operations' statements (engine-sql/files-ops.ts).
-  /** `gbrain files list <slug>`: the files of one page by name, at most 100. Reads files. */
-  listFileRowsForSlug(slug: string): Promise<FilesOpsSql.FileRecord[]>;
-  /** `gbrain files list`: every file by page then name, at most 100. Reads files. */
-  listAllFileRows(): Promise<FilesOpsSql.FileRecord[]>;
   /** Whether a files row already holds this hash at this storage path (`gbrain files upload` and `sync` skip it). Reads files. */
   hasFileWithHash(contentHash: string, storagePath: string): Promise<boolean>;
   /** `gbrain files verify`: every file by storage path, at most 1000. Reads files. */
@@ -4343,9 +4339,9 @@ export interface BrainEngine {
   expireDerivedFacts(ids: number[], sourceId: string): Promise<number>;
   /** Deactivates these takes on pages of the source; returns how many rows it touched. */
   deactivateDerivedTakes(ids: number[], sourceId: string): Promise<number>;
-  /** Soft-deletes these pages of the source; one row per page, `now` true when this call hid it, false when it was already deleted. */
+  /** Soft-deletes these pages of the source; returns one row per page now hidden, `now` true when this call hid it (#9653). */
   softDeleteDerivedPages(ids: number[], sourceId: string): Promise<Array<{ id: number; now: boolean }>>;
-  /** Marks each derived row of `table` as needing re-derivation; a page in `hiddenNow` keeps its delete moment as the mark (#9653). */
+  /** Marks each derived row of `table` as needing re-derivation; `hiddenNow` names the pages this call just hid (#9653). */
   markNeedsRederive(table: string, ids: string[], sourceId: string, requestId: string | null, reason: string, hiddenNow: string[]): Promise<void>;
   /** The withdrawal a remote save onto a member page meets, or null (GST-2346). */
   readMemberPageWithdrawal(q: FactsTrustSql.MemberPageWithdrawalQuery): Promise<FactsTrustSql.WithdrawalRow | null>;

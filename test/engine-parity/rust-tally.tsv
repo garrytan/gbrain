@@ -110,7 +110,7 @@ test/engine-parity/page-snapshot-alias.test.ts	2	0
 test/engine-parity/page-vector-flip.test.ts	1	0
 test/engine-parity/page-vector-overflow.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
-test/engine-parity/pages.test.ts	40	0
+test/engine-parity/pages.test.ts	39	1
 test/engine-parity/persistence-declaration.test.ts	7	3
 test/engine-parity/persistence.test.ts	51	1
 test/engine-parity/private-page-reads.test.ts	23	0
@@ -146,7 +146,7 @@ test/engine-parity/stats-vectors.test.ts	3	0
 test/engine-parity/stats.test.ts	9	0
 test/engine-parity/sync-aliases.test.ts	11	0
 test/engine-parity/sync-route.test.ts	6	0
-test/engine-parity/sync-status-reads.test.ts	2	1
+test/engine-parity/sync-status-reads.test.ts	3	1
 test/engine-parity/take-purge-ledger.test.ts	4	0
 test/engine-parity/take-purge-overlay.test.ts	2	0
 test/engine-parity/takes.test.ts	28	0

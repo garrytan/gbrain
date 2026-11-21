@@ -93,7 +93,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'restoreOntologyFact'],
   raw_files: [
     'putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage',
-    'listFileRowsForSlug', 'listAllFileRows', 'hasFileWithHash', 'listFileRowsForVerify',
+    'hasFileWithHash', 'listFileRowsForVerify',
     'readSourceLocalPathForVerify', 'upsertCliFileRow', 'upsertRawFileRow', 'upsertSyncFileRow',
     'sourceIdExists', 'readPageIdInSource', 'readFileOwner', 'claimFilePage',
     'upsertOpFileRow', 'listReadableFileRows', 'readReadableFileForUrl', 'readReadablePageId',

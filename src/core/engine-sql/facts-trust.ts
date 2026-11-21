@@ -14,6 +14,7 @@ import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
 import { ownerReadPolicyFragment, privateFactFilterForCaller, privateFactFilterForReader, privateProvenanceFilterUnderPolicy, readPolicyFragment, remoteProvenanceFloorSql, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { factVisibilitySql, grantedPrivateFactSql, onOwnedMemoryPageSql, withdrawalCoversFactSql, withdrawalReachedFactSql } from '../access/member-facts.ts';
 import { retiredPageSql } from '../entities/resolve.ts';
+import { MARK_NEEDS_REDERIVE_SQL } from '../facts/derivation-inputs.ts';
 import { eligibleFactEmbedding, OVERSIZED_SCAN_CAP, staleFactEmbedding } from '../facts/embedding-identity.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import type { FactCandidate as ReplacementFact } from '../facts/single-prepare.ts';
@@ -232,7 +233,7 @@ export interface SavedFactsMatchQuery {
 }
 
 export type SavedFactMatchRow = SavedFactMatch & CollapseColumns
-  & { at: unknown; matched: unknown[]; need: unknown; cue: boolean; trust_rank: unknown; pool_rank: unknown };
+  & { at: unknown; matched: unknown[]; need: unknown; cue: boolean; trust_rank: unknown; pool_rank: unknown; dimension: string | null };
 
 /**
  * The keyword scan behind a `search` / `query` saved-facts block: active facts that share the query's words, matched as
@@ -263,7 +264,7 @@ export async function matchSavedFacts(raw: EngineRawRead, q: SavedFactsMatchQuer
          FROM w
        )
        SELECT * FROM (SELECT m.*, row_number() OVER (PARTITION BY m.cue AND cardinality(m.matched) < m.need ORDER BY cardinality(m.matched) DESC, m.at DESC, m.id DESC) AS pool_rank FROM (
-         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, ${trustedSql(savedFactCollapseColumns())},
+         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, f.dimension, ${trustedSql(savedFactCollapseColumns())},
            ARRAY(SELECT w.i FROM w, (SELECT ${doc} AS d OFFSET 0) x WHERE CASE WHEN w.pat IS NOT NULL THEN lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE w.pat
              ELSE x.d @@ w.tq END ORDER BY w.i) AS matched,
            LEAST(4, GREATEST(LEAST(2, k.n), ceil(k.n * 0.75)::int)) AS need,
@@ -616,8 +617,8 @@ export async function deactivateDerivedTakes(raw: EngineRawRead, ids: number[], 
 }
 
 /**
- * Soft-deletes these pages of the source: each row is a page it hid now (`now` true) or one already deleted (`now`
- * false). #9653: a page hidden now keeps `deleted_at` equal to its `needs_rederive.marked_at`. Runs in the caller's transaction.
+ * Soft-deletes these pages of the source (#9653: only a page not already deleted keeps a fresh `deleted_at`); returns one row per page of
+ * the source that is now hidden, `now` true when this call hid it. Runs in the caller's transaction.
  */
 export async function softDeleteDerivedPages(raw: EngineRawRead, ids: number[], sourceId: string): Promise<Array<{ id: number; now: boolean }>> {
   return raw<{ id: number; now: boolean }>(`WITH gone AS (SELECT id FROM pages WHERE id=ANY($1::integer[]) AND source_id=$2 AND deleted_at IS NOT NULL),
@@ -626,18 +627,12 @@ export async function softDeleteDerivedPages(raw: EngineRawRead, ids: number[], 
 }
 
 /**
- * Marks each derived row of `table` as needing re-derivation (a later mark replaces the reason and request). A page in
- * `hiddenNow` takes its `deleted_at` as `marked_at`; any other row keeps a held moment (the text of KEEP_HIDDEN_AT in
- * facts/derivation-inputs.ts, #9653; test/facts-rest-sites-sql-pin.test.ts pins the two equal) or is
- * stamped now. Runs in the caller's transaction.
+ * Marks each derived row of `table` as needing re-derivation (a later mark replaces the reason and request). `hiddenNow` names the pages
+ * this transaction just hid: their `marked_at` is their `deleted_at`; any other mark keeps that moment or is stamped now (MARK_NEEDS_REDERIVE_SQL,
+ * #9653). Runs in the caller's transaction.
  */
 export async function markNeedsRederive(raw: EngineRawRead, table: string, ids: string[], sourceId: string, requestId: string | null, reason: string, hiddenNow: string[]): Promise<void> {
-  await raw(`INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason,marked_at)
-      SELECT $1,d.id,$3,$4::uuid,$5,COALESCE((SELECT p.deleted_at FROM pages p WHERE d.id=ANY($6::text[]) AND p.id::text=d.id),now()) FROM unnest($2::text[]) AS d(id)
-      ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,
-        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE CASE WHEN needs_rederive.derived_table='pages' AND EXISTS (SELECT 1 FROM pages hp
-  WHERE hp.id::text=needs_rederive.derived_id AND hp.deleted_at=needs_rederive.marked_at) THEN needs_rederive.marked_at ELSE now() END END`,
-  [table, ids, sourceId, requestId, reason, hiddenNow]);
+  await raw(MARK_NEEDS_REDERIVE_SQL, [table, ids, sourceId, requestId, reason, hiddenNow]);
 }
 
 export interface MemberPageWithdrawalQuery {

@@ -315,7 +315,10 @@ declares it and makes the same link `link ID` makes, and an unknown email is
 (text fenced, one request id per decision, `decided_by: admin-api`; an approve whose write did
 not commit reports `outcome: failed` and exits 1). They call `/admin/api/access/attest`,
 `/admin/api/access/members`, `/admin/api/access/member-links` and
-`/admin/api/memory-proposals`. These routes accept only the owner session:
+`/admin/api/memory-proposals`. A leaver's handover runs over
+`/admin/api/access/handover` (preview, apply, undo) and
+`/admin/api/access/handover/<id>` (status); see
+[member handover](../guides/member-handover.md#from-the-admin-page-no-shell-on-the-server). These routes accept only the owner session:
 no OAuth token and no MCP tool reaches them. They refuse exactly what the
 local commands refuse, and each applied change is logged as `access_admin` in
 the request log. Removing a member stays a brain-host command

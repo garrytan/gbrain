@@ -138,7 +138,9 @@ const PINS: Pin[] = [
     label: "excludePrivate",
     run: e => e.readLiveFactEntityPage('s1', 'people/x', true),
     statements: [{ text: `SELECT p.slug, p.type FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL AND ((((p.page_readers IS NULL AND NOT (p.frontmatter ? 'readable_by'))) AND (p.folder_rule_ids IS NULL) AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = p.source_id AND (starts_with(p.slug, pc.prefix) AND (pc.prefix = '' OR right(pc.prefix, 1) = '/' OR p.slug = pc.prefix))) AND NOT (SELECT gbrain_access_state_unreadable()) AND ((p.type NOT IN ('atom', 'question', 'concept', 'event') AND NOT (p.frontmatter ? 'derived_from'))
-    OR NOT gbrain_access_origin_restricted(p.id, p.source_id, p.type, p.frontmatter)) AND NOT EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id >= '' AND (read_source.config->>'kind' IN ('imessage') OR read_source.config->>'owner_only' = 'true'))) AND ((COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type IN ('atom', 'question') OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private'
+    OR NOT gbrain_access_origin_restricted(p.id, p.source_id, p.type, p.frontmatter)) AND NOT (EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id >= '' AND (read_source.config->>'kind' IN ('imessage') OR read_source.config->>'owner_only' = 'true')) OR EXISTS (SELECT 1 FROM pg_catalog.pg_description held
+  WHERE held.objoid = pg_catalog.to_regclass('public.owner_only_marks') AND held.classoid = 'pg_catalog.pg_class'::pg_catalog.regclass
+    AND held.objsubid = 0 AND held.description = 'gbrain:owner_only_held (GST-3032): this brain has held owner-only data, so owner-only lineage stays guarded'))) AND ((COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type IN ('atom', 'question') OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private'
     AND NOT COALESCE(p.frontmatter ? 'pinned_question', false)
     AND NOT (p.frontmatter->>'visibility' IS NULL AND (COALESCE(translate(btrim(p.frontmatter->>'access', (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') IN ('private','restricted','confidential'), false) OR COALESCE(translate(btrim(p.frontmatter->>'confidentiality', (E'\\u0020\\u0009\\u000a\\u000b\\u000c\\u000d' || CASE WHEN current_setting('server_encoding') = 'UTF8' THEN convert_from(decode('c2a0e19a80e28080e28081e28082e28083e28084e28085e28086e28087e28088e28089e2808ae280a8e280a9e280afe2819fe38080efbbbf', 'hex'), 'UTF8') ELSE '' END)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') IN ('confidential','secret','private','restricted'), false))))
     AND NOT (CASE WHEN p.type = 'atom' THEN (EXISTS (SELECT 1 FROM pages derived_origin WHERE derived_origin.source_id = p.source_id
@@ -214,7 +216,7 @@ const PINS: Pin[] = [
     member: 'listContestedProposalPairs',
     label: "remote, private hidden",
     run: e => e.listContestedProposalPairs([1, 2], { remote: true, excludePrivate: true }),
-    statements: [{ digest: { length: 47550, sha256: '67c554205a39bc23051b6838e76d8c1f30ee3f80c1772328192be5048d72cdbf' }, params: [[1, 2]] }],
+    statements: [{ digest: { length: 50374, sha256: 'a3a91758257ac11f8dcf466f56b6dc20cab5423399a4e9e11bf58076479a422f' }, params: [[1, 2]] }],
   },
   {
     from: "src/core/facts/contested-claims.ts:36 withDecideContested",
@@ -292,7 +294,7 @@ const PINS: Pin[] = [
     from: "src/core/facts/single-prepare.ts:97 memberPageWithdrawal",
     member: 'readMemberPageWithdrawal',
     run: e => e.readMemberPageWithdrawal({ sourceId: 's1', visibility: 'world', fact: 'F', entitySlug: 'people/x', page: 'memory/members/m1', owner: false, identity: [], satisfied: [] }),
-    statements: [{ digest: { length: 15378, sha256: 'e36ebea84c4bfc18088fe886a1d49ac46121f12619fdc03d371b6a5903265531' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] }],
+    statements: [{ digest: { length: 16084, sha256: 'c8b42eacf1f3b3db6638a34fa8ab1c73273a2cd98e2c09631a08e279c1c6d335' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:215 replacementVisibility",
@@ -318,14 +320,14 @@ const PINS: Pin[] = [
     member: 'readReplacementTarget',
     label: "excludePrivate",
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: null }),
-    statements: [{ digest: { length: 8348, sha256: 'a1fbbf1863ec4354a5ac3360674b4d22c377397307dc0d3e3376144558fe18cf' }, params: [7, 's1'] }],
+    statements: [{ digest: { length: 9054, sha256: '9e5efe7e8e12cc32aa211a21fc0bd969d5058f3b9d90d5cf5b4fb4551d2097dc' }, params: [7, 's1'] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:231 decideReplacement",
     member: 'readReplacementTarget',
     label: "excludePrivate, own member page",
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: 'p1' }),
-    statements: [{ digest: { length: 8381, sha256: '3c9cc532ca388c2f40cb4e37b572f989453f5ae07ffdb9416d52889089579422' }, params: [7, 's1', 'p1'] }],
+    statements: [{ digest: { length: 9087, sha256: '9c5231313ee534ac46f7b620ec4c5ee69af98c40d88b9439cf82b285c46d0a5c' }, params: [7, 's1', 'p1'] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:231 decideReplacement",
@@ -345,7 +347,7 @@ const PINS: Pin[] = [
     member: 'readReplacementTarget',
     label: "excludePrivate, own member page, row lock",
     run: e => e.readReplacementTarget({ targetId: 7, sourceId: 's1', excludePrivate: true, ownPage: 'p1', lock: true }),
-    statements: [{ digest: { length: 8397, sha256: 'a7a2195ef738eeb174974d438fef89183d86ecc90fe231c6f276bd18ae315c45' }, params: [7, 's1', 'p1'] }],
+    statements: [{ digest: { length: 9103, sha256: '7fd54d799d924fc8f4bd5e00fb42f487e5f2431976014baa4633808ea8393a90' }, params: [7, 's1', 'p1'] }],
   },
   {
     from: "src/core/facts/proposal-supersede.ts:107 loadPairFact",
@@ -466,7 +468,7 @@ const PINS: Pin[] = [
     member: 'listSlotRows',
     label: "remote, trust floor, two sources",
     run: e => e.listSlotRows(scopeB, [{ source_id: 's1', entity_slug: 'people/x', dimension: 'role' }, { source_id: 's1', entity_slug: 'people/y', dimension: 'city' }]),
-    statements: [{ digest: { length: 24886, sha256: '579c0b0473445651ff951471ca2e9173b32067a273f2a9858232d64662aac816' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1', 's1'], ['people/x', 'people/y'], ['role', 'city']] }],
+    statements: [{ digest: { length: 26298, sha256: '6d68e6a114dc145fd9f13043e3b7c4366df945810c7028234506a8c713b86985' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1', 's1'], ['people/x', 'people/y'], ['role', 'city']] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:293 poolUnbackedKeys",
@@ -484,14 +486,14 @@ const PINS: Pin[] = [
     member: 'listPoolUnbackedKeys',
     label: "remote, trust floor, two sources",
     run: e => e.listPoolUnbackedKeys(scopeB, ['people/x'], 3),
-    statements: [{ digest: { length: 24653, sha256: '6f7fae9afcfcd429acfa7b19f67898e5e16c6e1d71f6d12beadd0eb3385518a4' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['people/x'], 3] }],
+    statements: [{ digest: { length: 26065, sha256: '532d317d198af42cd491314b04df4a72f1e683b41da8bb29366018f48601ee5b' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['people/x'], 3] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:324 laterRetractions",
     member: 'listCallOffCueFacts',
     label: "one source",
     run: e => e.listCallOffCueFacts(scopeA, [{ source_id: 's1', entity_slug: 'people/x' }, { source_id: 's1', entity_slug: 'people/y' }, { source_id: 's2', entity_slug: 'people/x' }]),
-    statements: [{ text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY f.valid_from DESC, f.id DESC) AS call_off_rank
+    statements: [{ text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
        FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
       AND elig_dp.slug = ANY(ARRAY[f.source_markdown_slug, f.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = f.source_id AND elig_qp.slug = f.source_markdown_slug
       AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.fact ~* $3
@@ -503,7 +505,7 @@ const PINS: Pin[] = [
     member: 'listCallOffCueFacts',
     label: "remote, trust floor, two sources",
     run: e => e.listCallOffCueFacts(scopeB, [{ source_id: 's1', entity_slug: 'people/x' }]),
-    statements: [{ digest: { length: 24902, sha256: '60a6240b932bf607cc743f86e522db8747d6fc122d683959317a1d6b0c8bdf83' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], CALL_OFF_REGEX, ['s1'], ['people/x'], 50] }],
+    statements: [{ digest: { length: 26374, sha256: '64060f4f6ef93975d217e653706a146d76d809441bb1607f5452bc598f546738' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], CALL_OFF_REGEX, ['s1'], ['people/x'], 50] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:355 poolEntityPairs",
@@ -519,7 +521,7 @@ const PINS: Pin[] = [
     member: 'listPoolEntityPairs',
     label: "remote, trust floor, every filter",
     run: e => e.listPoolEntityPairs(scopeB, { entities: [{ sourceId: 's1', slug: 'people/x' }], sessionId: 'sess', since: new Date('2026-01-02T03:04:05Z'), grep: 'a_b', includeExpired: true }),
-    statements: [{ digest: { length: 24603, sha256: '287ccb4d542d8cdddbc18b6df8dbf3f8883f44e5d69a81c9092a406cf30231ef' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1'], ['people/x'], 'sess', '2026-01-02T03:04:05.000Z', '%a\\_b%'] }],
+    statements: [{ digest: { length: 26015, sha256: '21597cce64ebd800e933e5a565325e751dd8c5740fa4995e7b5b9a95d336d133' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1'], ['people/x'], 'sess', '2026-01-02T03:04:05.000Z', '%a\\_b%'] }],
   },
   {
     from: 'src/core/search/fact-relevance.ts:224 collectFactCandidates (nearest); the text is the NEW renumbered one, see the header',

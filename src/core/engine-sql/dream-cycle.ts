@@ -268,7 +268,7 @@ export interface DreamAtomPage {
   slug: string;
   title: string;
   compiled_truth: string;
-  /** `knowledge_revision` as text: the synthesis records it as the input's revision. */
+  /** #9653: the page's knowledge_revision when it was read (a held concept's rebuild refuses if it moved). */
   revision: string;
   frontmatter: { concepts?: string[]; imported_from?: string };
   private: boolean;

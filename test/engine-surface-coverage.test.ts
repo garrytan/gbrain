@@ -283,7 +283,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Raw data + files
   'putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage',
   // files commands and file operations (engine-sql/files-ops.ts)
-  'listFileRowsForSlug', 'listAllFileRows', 'hasFileWithHash', 'listFileRowsForVerify',
+  'hasFileWithHash', 'listFileRowsForVerify',
   'readSourceLocalPathForVerify', 'upsertCliFileRow', 'upsertRawFileRow', 'upsertSyncFileRow',
   'sourceIdExists', 'readPageIdInSource', 'readFileOwner', 'claimFilePage',
   'upsertOpFileRow', 'listReadableFileRows', 'readReadableFileForUrl', 'readReadablePageId',

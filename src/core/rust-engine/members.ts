@@ -744,8 +744,6 @@ export const RUST_ENGINE_MEMBERS = {
   listFiles: 'files',
 
   // files: the files commands and file operations (engine-sql/files-ops.ts)
-  listFileRowsForSlug: 'files',
-  listAllFileRows: 'files',
   hasFileWithHash: 'files',
   listFileRowsForVerify: 'files',
   readSourceLocalPathForVerify: 'sources',

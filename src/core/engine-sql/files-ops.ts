@@ -32,16 +32,6 @@ const jsonbOn = (raw: EngineRawRead) => ({ executeRaw: raw as never });
 // src/commands/files.ts
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** `gbrain files list <slug>`: the page's files by name, at most 100. */
-export async function listFileRowsForSlug(raw: EngineRawRead, slug: string): Promise<FileRecord[]> {
-  return raw<FileRecord>('SELECT * FROM files WHERE page_slug = $1 ORDER BY filename LIMIT 100', [slug]);
-}
-
-/** `gbrain files list`: every file by page then name, at most 100. */
-export async function listAllFileRows(raw: EngineRawRead): Promise<FileRecord[]> {
-  return raw<FileRecord>('SELECT * FROM files ORDER BY page_slug, filename LIMIT 100');
-}
-
 /** Whether a row already holds this hash at this storage path (`gbrain files upload` and `sync` skip it). */
 export async function hasFileWithHash(raw: EngineRawRead, contentHash: string, storagePath: string): Promise<boolean> {
   const rows = await raw('SELECT id FROM files WHERE content_hash = $1 AND storage_path = $2', [contentHash, storagePath]);

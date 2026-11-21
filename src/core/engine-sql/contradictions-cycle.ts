@@ -211,7 +211,7 @@ export async function listLiveChunksByIds(raw: EngineRawRead, ids: number[], pol
   return raw<LiveChunkRow>(`${LIVE_CHUNKS_HEAD}${pageSql} AND ${chunkVisibleFilter('p', 'cc')}${safe}`, params);
 }
 
-/** The active takes with these ids that the caller's read policy admits: page policy, holder allow-list and the trust floor. */
+/** The active takes with these ids that the caller's read policy admits: page policy, holder allow-list, the owner-only take rule (#9704) and the trust floor. */
 export async function listLiveTakesByIds(raw: EngineRawRead, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined): Promise<LiveTakeRow[]> {
   const params: unknown[] = [ids];
   const pageSql = pageReadFilter('p', policy, params, true);

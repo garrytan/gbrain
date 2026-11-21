@@ -26,7 +26,7 @@ none until its next `putRawData`, which gives it one; until then naming it refus
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.putRawData(slug, source, dataJson, { sourceId? }?)` | `null`. Inserts or replaces the row of (page, source) and stamps `fetched_at`. With a `sourceId` (not empty) only that source's page; without one, every page by that slug in any source. Soft-deleted pages count. No page: `page_not_found` with PGLite's message (`putRawData failed: page "<slug>" not found`, or `... (source=<id>) not found`). A null `source` or `dataJson` on a found page: `constraint_violation`. A NUL byte in text or a `\u0000` in the JSON: `invalid_argument` | `putRawData` |
-| `brain.getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted? }?)` | `{ source, data, fetched_at }[]` of every page by that slug in scope (`sourceIds` when not empty, else `sourceId` when not empty, else every source), only `source` when it is given and not empty. Soft-deleted pages are skipped unless `includeDeleted` | `getRawData` |
+| `brain.getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted? }?)` | `{ source, data, fetched_at }[]` of every page by that slug in scope (`sourceIds` when not empty, else `sourceId` when not empty, else every source), only `source` when it is given and not empty. Soft-deleted pages are skipped unless `includeDeleted`. Rows come in SQL's order, page source then raw-data source, both byte-wise; a repeated `sourceIds` entry reads once | `getRawData` |
 | `brain.upsertFile(spec)` | `{ id, created }`. `spec` is a `FileSpec` with `metadata` as JSON text; `source_id` is `default` when absent. When a file already has that `storage_path` (in any source) every column but `id`, `source_id` and `created_at` is replaced and `created` is false. A new row needs its source and page to exist; an update checks the page only when `page_id` changes. `constraint_violation` for a null `filename`, `storage_path`, `content_hash` or `metadata`, or a missing source (`files_source_id_fkey`) or page (`files_page_id_fkey`); `invalid_argument` for a NUL byte, a `page_id` that is not a whole `integer`, or a `size_bytes` that is not a whole `bigint` | `upsertFile` |
 | `brain.getFile(sourceId, storagePath)` | the `FileRow` at that path when it belongs to `sourceId`, else `null` | `getFile` |
 | `brain.listFiles(pageSlug, limit)` | `FileRow[]`: with a `pageSlug` (not `null`), the files of that slug in any source by `filename`; with `null`, every file by `page_slug` (files with no slug last), then `filename`. Ties go by id. At most `limit`, which must be a whole `integer` and not negative (`invalid_argument` otherwise); a NUL byte in `pageSlug` is `invalid_argument` | `listFiles` |
@@ -46,8 +46,6 @@ Cascades:
 
 Differences from PGLite:
 
-- `getRawData`: PGLite gives no order. The store returns scope order (the `sourceIds` order as given; with no
-  scope, `default` first, then by source id), then source name.
 - `listFilesForPage`: equal `created_at` stamps come in no fixed order on PGLite; the store breaks ties by
   id.
 - `listFiles`: the store sorts `page_slug` and `filename` by bytes, as PGLite's C collation does; a Postgres
@@ -61,7 +59,7 @@ Differences from PGLite:
 
 ## Files commands and file operations (`src/core/engine-sql/files-ops.ts`)
 
-Twenty-one members for the statements `gbrain files` (`src/commands/files.ts`) and the file operations (`src/core/ops/files.ts`)
+Nineteen members for the statements `gbrain files` (`src/commands/files.ts`) and the file operations (`src/core/ops/files.ts`)
 ran as raw SQL. None is served on Rust today: each is absent from `store-members/*`, so it refuses with
 `engine_capability_missing` naming the member (the capability in `members.ts` is `files`, or `sources` or `pages` for the
 three that read only those tables). The caller sees the refusal; no member changes behaviour. What the store would need to
@@ -69,7 +67,7 @@ serve them:
 
 | Members | Reads or writes | The store would need |
 | --- | --- | --- |
-| `listFileRowsForSlug`, `listAllFileRows`, `listFileRowsForVerify` | every `files` column, 100, 100 and 1000 rows | a scan of the `r 0x02` records ordered by `filename`, by `page_slug` then `filename` (nulls last), and by `storage_path`; `size_bytes` as a number, `metadata` as the object |
+| `listFileRowsForVerify` | every `files` column, 1000 rows | a scan of the `r 0x02` records ordered by `storage_path`; `size_bytes` as a number, `metadata` as the object (`files list` is the served `listFiles`) |
 | `hasFileWithHash` | `files` by hash and path | the record at the path (the key) and a compare of its `content_hash` |
 | `readSourceLocalPathForVerify` | `sources.local_path` | the source record's checkout path, null when absent |
 | `upsertCliFileRow`, `upsertRawFileRow`, `upsertSyncFileRow` | insert, or on the path update `content_hash`, `size_bytes`, `mime_type` and merge `metadata` | `upsertFile`'s write plus the metadata merge: the new keys over the old object, a stored value that is not an object read as `{}`; the raw lane also sets `source_id`, the others take `default` |

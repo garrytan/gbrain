@@ -99,6 +99,7 @@ test/concept-rename-history-gst2687.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts
 test/contact-rows-drift-8109.test.ts
+test/conversation-facts-keep-quiet-gst3170.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
@@ -334,6 +335,7 @@ test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/entity-company-auto-link.test.ts
 test/entity-dedupe-decisions.test.ts
 test/entity-dedupe-person-confirm.test.ts
 test/entity-duplicates-finder.test.ts
@@ -423,6 +425,7 @@ test/held-fence-readers-gst2492.test.ts
 test/held-move-plan-gst2497.test.ts
 test/held-private-replies-2900.test.ts
 test/held-read-signals.test.ts
+test/held-row-fact-reads-2979.test.ts
 test/held-row-page-reads-2891.test.ts
 test/held-row-review-2891.test.ts
 test/held-row-writeback-2891.test.ts
@@ -432,6 +435,7 @@ test/holding-page-saves-gst2497.test.ts
 test/holding-read-transient-gst2667.test.ts
 test/hosted-repo-g7b2.test.ts
 test/ignored-privacy-labels.test.ts
+test/imessage-owned-folder.test.ts
 test/import-file-result-callback-gbra130.test.ts
 test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
@@ -442,6 +446,7 @@ test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts
 test/keyword-timeout-rerun-7082.test.ts
+test/known-as-of-owner-r94.test.ts
 test/label-only-repairs.test.ts
 test/label-repair-derived-stamps-gst2603.test.ts
 test/lane-apply-pipelining.test.ts
@@ -624,6 +629,7 @@ test/origin-twin-sequence-7150.test.ts
 test/origin-twins-6948.test.ts
 test/orphan-effect-diagnostics-7985.test.ts
 test/overwritten-edits-6712.test.ts
+test/owned-folder-guards.test.ts
 test/owner-facts-d1-gst2346.test.ts
 test/owner-identity.test.ts
 test/owner-label-guard.test.ts
@@ -898,6 +904,7 @@ test/secret-store.test.ts
 test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
 test/serve-http-access.test.ts
+test/serve-http-member-handover.test.ts
 test/serve-http-memory-proposals.test.ts
 test/setup-company-access.test.ts
 test/setup-serves-several.test.ts
@@ -915,6 +922,9 @@ test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
 test/sources-git-reconcile.test.ts
 test/sources-resolve-path.test.ts
+test/speaker-owner-connectors.test.ts
+test/speaker-owner-transcripts.test.ts
+test/speaker-owner-trust.test.ts
 test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts

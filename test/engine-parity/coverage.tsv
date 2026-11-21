@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1357/1365
+# covered: 1355/1363
 # lifecycle: 9/9
 # pages: 59/59
 # search: 7/7
@@ -21,7 +21,7 @@
 # tags: 5/5
 # timeline: 20/20
 # ontology: 10/10
-# raw_files: 27/27
+# raw_files: 25/25
 # takes: 28/28
 # dream: 37/37
 # contradictions: 22/22
@@ -326,9 +326,7 @@ getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	4	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
-listFiles	raw_files	yes	1	no	yes	yes	serves
-listFileRowsForSlug	raw_files	yes	1	no	yes	yes	refuses:files
-listAllFileRows	raw_files	yes	2	no	yes	yes	refuses:files
+listFiles	raw_files	yes	3	no	yes	yes	serves
 hasFileWithHash	raw_files	yes	1	no	yes	yes	refuses:files
 listFileRowsForVerify	raw_files	yes	1	no	yes	yes	refuses:files
 readSourceLocalPathForVerify	raw_files	yes	2	no	yes	yes	serves
@@ -554,7 +552,7 @@ readSyncConversionRows	persistence_journal	yes	2	no	yes	yes	serves
 readSyncPassRow	persistence_journal	yes	1	no	yes	yes	serves
 readLiveSyncPassRows	persistence_journal	yes	1	no	yes	yes	serves
 writeSyncPassRow	persistence_journal	yes	2	no	yes	yes	serves
-readSyncStatusSourceRow	persistence_journal	yes	2	no	yes	yes	serves
+readSyncStatusSourceRow	persistence_journal	yes	3	no	yes	yes	serves
 readSyncStatusCommittedRow	persistence_journal	yes	1	no	yes	yes	serves
 readManagedSyncCursorHeader	persistence_journal	yes	2	no	yes	yes	serves
 readRetiredManagedSyncCursor	persistence_journal	yes	2	no	yes	yes	serves
@@ -1278,7 +1276,7 @@ listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	1	no	yes	yes	serves
 listAccessTokens	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointKeys	write_misc	yes	4	no	yes	yes	serves
-writeOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
+writeOpCheckpointKeys	write_misc	yes	4	no	yes	yes	serves
 appendOpCheckpointPaths	write_misc	yes	3	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
