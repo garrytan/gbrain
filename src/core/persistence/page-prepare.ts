@@ -1179,9 +1179,12 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     if (materialized) content = serializePageToMarkdown({...snapshot.page,...parsed,timeline,type:parsed.typeExplicit ? parsed.type : snapshot.page.type},parsed.tags);
   }
   const storedTier = snapshot ? await storedPageTier(engine, row.source_id, row.slug) : null;
+  // pages-03: a page stored under the old typing whose file holds the written values is never a no-op: publishing the
+  // stored page would write the old typing over the file, so the write puts the written values back instead.
+  const written = await legacyFileValues(engine, row, snapshot, content, activePack);
   // Detect an exact canonical no-op before ingestion can invoke any provider.
   // Revision/identity checks above still apply to stale identical replacements.
-  if (snapshot && (snapshot.page.deleted_at != null) === targetDeleted && typeof content === 'string') {
+  if (snapshot && (snapshot.page.deleted_at != null) === targetDeleted && typeof content === 'string' && written.size === 0) {
     const incoming = parseMarkdown(content,row.slug,{ activePack });
     resolveParsedSubtype(incoming, snapshot.page);
     const tags = versionTags ?? [...new Set([...snapshot.tags,...incoming.tags])].sort();
@@ -1205,7 +1208,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const defaultSourceWriter = row.operation === 'restore_page' || row.operation === 'revert_version' ? null : await defaultSourceMemberWriter(engine, row.authority), defaultSourceOwner = await defaultSourceWriterIsOwner(engine, defaultSourceWriter), ownerRewrite = ['put_page', 'edit_page', 'append_page'].includes(row.operation) ? await ownerRewriteOf(engine, row.authority, row.source_id, row.slug, row.operation === 'put_page') : null;
   // The apply diet: the publisher's locked read of row.slug is the import base, and one read after the
   // last page write serves the read-back check, the seal, the core notice and the receipt (as sync does).
-  const lean = options.coordinated === true && !targetDeleted && row.operation !== 'restore_page' && !versionTags, written = await legacyFileValues(engine, row, snapshot, content, activePack);
+  const lean = options.coordinated === true && !targetDeleted && row.operation !== 'restore_page' && !versionTags;
   enterClaimStep(clock, 'import_content', undefined, 'db');
   const result = await importFromContent(engine, row.slug, content, {
     ...source, noEmbed: true, remote: row.authority.remote || p.keep_hidden_rows === true, restoreHeldRows: p.keep_hidden_rows === true || !await storedWriterReadsHeld(engine, row.authority), activePack, fences: projected ? 'coordinated' : 'lenient', coordinated: lean, boundedChunkWrites: options.boundedChunkWrites,

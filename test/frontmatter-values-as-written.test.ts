@@ -185,6 +185,30 @@ describe('pages-03: frontmatter values as written', () => {
     expect(parseMarkdown(file).frontmatter).toMatchObject(AS_WRITTEN);
   }, { setup: userFileSetup }), 120_000);
 
+  test('an unchanged put of an older page\'s values does not overwrite the written values in its file', () => managedBrain(async ({ engine, ctx, root }) => {
+    await importedUnderOldTyping(engine);
+    // The caller reads the page as an older gbrain renders it (the old typing) and puts it back unchanged.
+    const read = serializePageToMarkdown((await engine.getPage('people/hal-example'))!, []);
+    const rev = (await engine.readPageSnapshot('people/hal-example', { sourceId: 'default' }))!.revision;
+    await call(ctx, 'put_page', { slug: 'people/hal-example', expected_revision: rev, content: read });
+    await settleManagedGitEffects(engine);
+    const file = readFileSync(join(root, 'people/hal-example.md'), 'utf8');
+    expect(parseMarkdown(file).frontmatter).toMatchObject(AS_WRITTEN);
+    expect((await engine.getPage('people/hal-example'))!.frontmatter).toMatchObject(AS_WRITTEN);
+  }, { setup: userFileSetup }), 120_000);
+
+  test('an older database-only page never takes values from a file at its slug path', () => managedBrain(async ({ engine, ctx }) => {
+    await importedUnderOldTyping(engine);
+    // The page is database-only (written while its source was unbound); the file at its slug path is not its file.
+    await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw(
+      "UPDATE pages SET source_path=NULL, source_uri=NULL, database_only_reason='unbound_source' WHERE slug='people/hal-example'"));
+    const rev = (await engine.readPageSnapshot('people/hal-example', { sourceId: 'default' }))!.revision;
+    await call(ctx, 'edit_page', { slug: 'people/hal-example', expected_revision: rev, edits: [{ old_text: 'likes tea', new_text: 'likes coffee' }] });
+    const page = (await engine.getPage('people/hal-example'))!;
+    expect(page.compiled_truth).toContain('likes coffee');
+    expect(page.frontmatter).toMatchObject({ zip: 2134, version: 1.1 });
+  }, { setup: userFileSetup }), 120_000);
+
   test('on an older page\'s first write, a value the caller changed keeps the new value and the others get their written text back', () => managedBrain(async ({ engine, ctx, root }) => {
     await importedUnderOldTyping(engine);
     // The caller reads the page as an older gbrain renders it (the old typing) and changes two of those values.
