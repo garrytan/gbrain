@@ -28,17 +28,27 @@ function refKey(ref: DerivationRef): { table: string; id: string } {
 /**
  * Record every input of one derived row. Idempotent; call it inside the
  * transaction that writes `row`. `sourceId` scopes the edges for cleanup when
- * a source is purged.
+ * a source is purged. `replace`: the inputs are the row's complete current set
+ * (a re-publication), so edges to inputs no longer in its context are dropped.
  */
-export async function recordDerivationInputs(tx: BrainEngine, row: DerivationRef & { sourceId?: string | null },
+export async function recordDerivationInputs(tx: BrainEngine, row: DerivationRef & { sourceId?: string | null; replace?: boolean },
   inputs: readonly DerivationRef[]): Promise<void> {
-  if (!inputs.length) return;
   const derived = refKey(row);
+  if (!inputs.length) {
+    if (row.replace) await tx.executeRaw('DELETE FROM derivation_inputs WHERE derived_table=$1 AND derived_id=$2', [derived.table, derived.id]);
+    return;
+  }
   if (inputs.length > DERIVATION_EDGE_LIMIT) throw new RangeError(`A derivation records at most ${DERIVATION_EDGE_LIMIT} inputs.`);
   const edges = inputs.map(refKey);
+  const edgeJson = JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })));
+  if (row.replace) {
+    await tx.executeRaw(`DELETE FROM derivation_inputs WHERE derived_table=$1 AND derived_id=$2 AND NOT EXISTS (
+      SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS e(input_table text,input_id text)
+      WHERE e.input_table=derivation_inputs.input_table AND e.input_id=derivation_inputs.input_id)`, [derived.table, derived.id, edgeJson]);
+  }
   await tx.executeRaw(`INSERT INTO derivation_inputs(derived_table,derived_id,input_table,input_id,source_id)
     SELECT $1,$2,e.input_table,e.input_id,$3 FROM jsonb_to_recordset($4::text::jsonb) AS e(input_table text,input_id text)
-    ON CONFLICT DO NOTHING`, [derived.table, derived.id, row.sourceId ?? null, JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })))]);
+    ON CONFLICT DO NOTHING`, [derived.table, derived.id, row.sourceId ?? null, edgeJson]);
 }
 
 export interface DerivedRow { table: string; id: string; depth: number }
