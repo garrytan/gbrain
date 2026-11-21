@@ -11,7 +11,9 @@
  * config.yaml as plain YAML, which drops comments, so gbrain's marked hook
  * block is set aside around each call and put back unchanged. An
  * `mcp_servers.<name>` entry gbrain did not write is left alone. Without a
- * hermes command, setup prints the one command to run.
+ * hermes command, setup prints the one command to run. When an update fails,
+ * the entry gbrain had before is put back with `hermes config set`, and a run
+ * without GBRAIN_HOME keeps the brain the entry already points at.
  */
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -36,7 +38,8 @@ export interface HermesMcpOptions {
   gbrainBin: string;
   surface: McpSurface | null;
   advertise: McpSurface | null;
-  gbrainHome: string;
+  /** The brain Hermes serves; null keeps the existing entry's, else HOME. */
+  gbrainHome: string | null;
   dryRun: boolean;
   bin?: string | null;
   run?: HermesRun;
@@ -73,8 +76,8 @@ function ours(entry: Record<string, unknown>): boolean {
   return typeof entry.command === 'string' && (basename(entry.command) === 'gbrain' || basename(entry.command) === HOOK_LAUNCHER_NAME);
 }
 
-function addArgv(bin: string, o: HermesMcpOptions): string[] {
-  return [bin, 'mcp', 'add', o.name, '--env', `GBRAIN_HOME=${o.gbrainHome}`, '--connect-timeout', '60', '--command', o.command,
+function addArgv(bin: string, o: HermesMcpOptions, gbrainHome: string): string[] {
+  return [bin, 'mcp', 'add', o.name, '--env', `GBRAIN_HOME=${gbrainHome}`, '--connect-timeout', '60', '--command', o.command,
     '--args', ...stdioServeArgv(o.gbrainBin, o.surface, o.advertise)];
 }
 
@@ -84,28 +87,35 @@ const tail = (s: string) => s.split('\n').filter(Boolean).slice(-3).join(' / ');
 export function syncHermesMcp(o: HermesMcpOptions): HermesMcpOutcome {
   const path = join(o.hermesHome, 'config.yaml');
   const bin = o.bin !== undefined ? o.bin : findHermesBin(o.hermesHome);
-  const argv = addArgv(bin ?? 'hermes', o);
-  const command = `printf 'y\\ny\\n' | ${argv.map(quote).join(' ')}`;
+  let command: string | undefined;
   try {
     const entry = readEntry(path, o.name);
     if (entry && !ours(entry)) {
       return { action: 'skip', path, detail: `mcp_servers.${o.name} in ${path} is not gbrain's (${String(entry.url ?? entry.command)}), so setup left it; pass --name <other> to register gbrain beside it` };
     }
-    const wanted = { command: o.command, args: argv.slice(argv.indexOf('--args') + 1) };
     const env = entry?.env as Record<string, unknown> | undefined;
-    if (entry && entry.command === wanted.command && JSON.stringify(entry.args) === JSON.stringify(wanted.args) && env?.GBRAIN_HOME === o.gbrainHome && entry.enabled !== false) {
+    const gbrainHome = o.gbrainHome ?? (typeof env?.GBRAIN_HOME === 'string' ? env.GBRAIN_HOME : process.env.HOME?.trim() || homedir());
+    const argv = addArgv(bin ?? 'hermes', o, gbrainHome);
+    command = `printf 'y\\ny\\n' | ${argv.map(quote).join(' ')}`;
+    const wanted = { command: o.command, args: argv.slice(argv.indexOf('--args') + 1) };
+    if (entry && entry.command === wanted.command && JSON.stringify(entry.args) === JSON.stringify(wanted.args) && env?.GBRAIN_HOME === gbrainHome && entry.enabled !== false) {
       return { action: 'keep', path, detail: `MCP server ${o.name} in ${path}` };
     }
     if (!bin) return { action: 'print', path, detail: `no hermes command found, so the MCP server was not registered; run this where Hermes is installed`, command };
     if (o.dryRun) return { action: 'write', path, detail: `would register MCP server ${o.name} with Hermes's own CLI: ${command}`, command };
     const run = o.run ?? defaultRun;
+    const fail = (detail: string): HermesMcpOutcome => {
+      if (!entry || entry.enabled === false || o.name.includes('.')) return { action: 'error', path, detail, command };
+      const back = withHermesHookBlockSetAside(o.hermesHome, () => run([bin, 'config', 'set', `mcp_servers.${o.name}`, JSON.stringify(entry)], ''));
+      return { action: 'error', path, detail: `${detail}; ${back.ok ? 'the previous entry was put back' : `putting the previous entry back failed too (${tail(back.output) || 'no output'})`}`, command };
+    };
     const added = withHermesHookBlockSetAside(o.hermesHome, () => run(argv, 'y\ny\n'));
     const saved = readEntry(path, o.name);
     if (!saved || saved.enabled === false || saved.command !== wanted.command) {
-      return { action: 'error', path, detail: `hermes mcp add did not save an enabled ${o.name} entry (${tail(added.output) || 'no output'}); run \`hermes mcp test ${o.name}\` to see why`, command };
+      return fail(`hermes mcp add did not save an enabled ${o.name} entry (${tail(added.output) || 'no output'}); run \`hermes mcp test ${o.name}\` to see why`);
     }
     const test = run([bin, 'mcp', 'test', o.name], '');
-    if (!test.ok) return { action: 'error', path, detail: `registered ${o.name}, but hermes mcp test ${o.name} failed (${tail(test.output) || 'no output'})`, command };
+    if (!test.ok) return fail(`registered ${o.name}, but hermes mcp test ${o.name} failed (${tail(test.output) || 'no output'})`);
     return { action: 'write', path, detail: `MCP server ${o.name} registered with hermes mcp add; hermes mcp test ${o.name} connected` };
   } catch (e) {
     return { action: 'error', path, detail: `the MCP server was not registered (${(e as Error).message})`, command };
@@ -126,7 +136,7 @@ export function hermesMcpStep(o: { hermesHome: string; name: string; surface?: M
     return { action: 'error', path, detail: `the MCP server was not registered (${(e as Error).message})` };
   }
   return syncHermesMcp({ hermesHome: o.hermesHome, name: o.name, command, gbrainBin: o.gbrainBin, surface: o.surface ?? REGISTRATION_SURFACE,
-    advertise: o.surface ? null : REGISTRATION_ADVERTISE, gbrainHome: process.env.GBRAIN_HOME?.trim() || process.env.HOME?.trim() || homedir(), dryRun: o.dryRun });
+    advertise: o.surface ? null : REGISTRATION_ADVERTISE, gbrainHome: process.env.GBRAIN_HOME?.trim() || null, dryRun: o.dryRun });
 }
 
 /** Remove gbrain's entry with `hermes mcp remove`. Never throws. */

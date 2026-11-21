@@ -3,13 +3,15 @@
  * (`hermes mcp add`), so no agent has to edit Hermes's protected config.yaml.
  * A fake hermes stands in for the CLI: it answers `mcp add/test/remove` the
  * way Hermes v2026.9.24 does, including rewriting config.yaml as plain YAML
- * (comments dropped), and logs every call with its stdin.
+ * (comments dropped), and logs every call with its stdin. FAKE_HERMES_MODE makes
+ * it fail the way Hermes can: save-nothing (add exits 0 and writes nothing),
+ * test-fails (the handshake fails), hooks (the rewrite adds its own hooks: key).
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { load } from 'js-yaml';
+import { dirname, join, resolve } from 'node:path';
+import { dump, load } from 'js-yaml';
 import { runCli } from './helpers/cli-spawn.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
@@ -28,7 +30,11 @@ const doc = existsSync(path) ? (load(readFileSync(path, 'utf8')) || {}) : {};
 const servers = doc.mcp_servers || {};
 const answers = stdin.split('\\n');
 const name = argv[2];
-if (argv[1] === 'add') {
+const mode = process.env.FAKE_HERMES_MODE || '';
+if (argv[0] === 'config' && argv[1] === 'set') {
+  servers[argv[2].replace(/^mcp_servers\./, '')] = JSON.parse(argv[3]);
+  writeFileSync(path, dump({ ...doc, mcp_servers: servers }));
+} else if (argv[1] === 'add') {
   if (servers[name] && answers.shift() !== 'y') process.exit(0);
   const env = {}; let i = 3; const entry = {};
   for (; i < argv.length; i++) {
@@ -38,15 +44,16 @@ if (argv[1] === 'add') {
     else if (argv[i] === '--args') { entry.args = argv.slice(i + 1); break; }
   }
   if (answers.shift() !== 'y') { console.log('Cancelled.'); process.exit(0); }
+  if (mode === 'save-nothing') process.exit(0);
   servers[name] = { command: entry.command, args: entry.args, env, connect_timeout: entry.connect_timeout, enabled: true };
-  writeFileSync(path, dump({ ...doc, mcp_servers: servers }));
+  writeFileSync(path, dump({ ...doc, ...(mode === 'hooks' ? { hooks: {} } : {}), mcp_servers: servers }));
 } else if (argv[1] === 'remove') {
   delete servers[name];
   const next = { ...doc, mcp_servers: servers };
   if (!Object.keys(servers).length) delete next.mcp_servers;
   writeFileSync(path, dump(next));
 } else if (argv[1] === 'test') {
-  process.exit(servers[name]?.enabled ? 0 : 1);
+  process.exit(servers[name]?.enabled && mode !== 'test-fails' ? 0 : 1);
 }
 `;
 
@@ -73,13 +80,15 @@ function box(opts: { hermes: boolean }): Box {
     chmodSync(hermes, 0o755);
   }
   return { root, home, bin, log, env: {
-    HOME: home, GBRAIN_HOME: home, HERMES_HOME: undefined, FAKE_HERMES_LOG: log,
+    HOME: home, GBRAIN_HOME: home, HERMES_HOME: undefined, FAKE_HERMES_LOG: log, FAKE_HERMES_MODE: undefined,
+    // No host hermes: only the fake under HOME, which setup must find off PATH.
+    PATH: [dirname(process.execPath), '/usr/bin', '/bin'].join(':'),
     GBRAIN_AGENT_INSTRUCTIONS: undefined, GBRAIN_SURFACE: undefined, GBRAIN_SOURCE: undefined, GBRAIN_HOOKS: '0',
   } };
 }
 
-async function setup(b: Box, args: string[]) {
-  const r = await runCli(['setup', 'hermes', '--gbrain-bin', b.bin, ...args, '--json'], { env: b.env, cwd: b.root });
+async function setup(b: Box, args: string[], gbrainBin = b.bin) {
+  const r = await runCli(['setup', 'hermes', '--gbrain-bin', gbrainBin, ...args, '--json'], { env: b.env, cwd: b.root });
   let doc: any = null;
   try { doc = JSON.parse(r.stdout); } catch { doc = null; }
   return { ...r, doc };
@@ -145,5 +154,75 @@ describe('gbrain setup hermes registers MCP through hermes mcp add', () => {
     expect(r.doc.mcp.setup).toBe('remove');
     expect(calls(b).some((c) => c.argv[1] === 'remove')).toBe(true);
     expect((load(config(b)) as any)?.mcp_servers).toBeUndefined();
+  });
+  test('an add that saves nothing fails setup with exit 1', async () => {
+    const b = box({ hermes: true });
+    b.env.FAKE_HERMES_MODE = 'save-nothing';
+    const r = await setup(b, []);
+    expect(r.exitCode).toBe(1);
+    expect(r.doc.mcp.setup).toBe('error');
+    expect(r.doc.mcp.detail).toContain('did not save an enabled gbrain entry');
+    expect((load(config(b)) as any).mcp_servers).toBeUndefined();
+  });
+
+  test('an update whose handshake fails puts the working entry back and exits 1', async () => {
+    const b = box({ hermes: true });
+    await setup(b, []);
+    const before = (load(config(b)) as any).mcp_servers.gbrain;
+    b.env.FAKE_HERMES_MODE = 'test-fails';
+    const r = await setup(b, ['--surface', 'full']);
+    expect(r.exitCode).toBe(1);
+    expect(r.doc.mcp.setup).toBe('error');
+    expect(r.doc.mcp.detail).toContain('the previous entry was put back');
+    expect(calls(b).some((c) => c.argv[0] === 'config' && c.argv[1] === 'set')).toBe(true);
+    expect((load(config(b)) as any).mcp_servers.gbrain).toEqual(before);
+    expect(config(b).split('\n').filter((l) => l === '# gbrain:turn-rule:begin')).toHaveLength(1);
+  });
+
+  test('a run without GBRAIN_HOME keeps the brain the entry already points at', async () => {
+    const b = box({ hermes: true });
+    await setup(b, []);
+    const doc = load(config(b)) as any;
+    doc.mcp_servers.gbrain.env.GBRAIN_HOME = '/srv/brain-example';
+    writeFileSync(join(b.home, '.hermes', 'config.yaml'), dump(doc));
+    b.env.GBRAIN_HOME = undefined;
+    const r = await setup(b, []);
+    expect(r.doc.mcp.setup).toBe('keep');
+    expect(calls(b).filter((c) => c.argv[1] === 'add')).toHaveLength(1);
+    expect((load(config(b)) as any).mcp_servers.gbrain.env.GBRAIN_HOME).toBe('/srv/brain-example');
+  });
+
+  test('when Hermes writes its own hooks: key, the hook block stays out instead of becoming a duplicate key', async () => {
+    const b = box({ hermes: true });
+    await setup(b, []);
+    b.env.FAKE_HERMES_MODE = 'hooks';
+    const r = await setup(b, ['--surface', 'full']);
+    expect(r.doc.mcp.setup).toBe('write');
+    expect(config(b).split('\n').filter((l) => /^hooks\s*:/.test(l))).toHaveLength(1);
+    expect(() => load(config(b))).not.toThrow();
+  });
+
+  test('--dry-run names the command and calls nothing', async () => {
+    const b = box({ hermes: true });
+    const r = await setup(b, ['--dry-run']);
+    expect(r.doc.mcp.setup).toBe('write');
+    expect(r.doc.mcp.detail).toContain('would register MCP server gbrain');
+    expect(calls(b)).toHaveLength(0);
+    expect((load(config(b)) as any).mcp_servers).toBeUndefined();
+  });
+
+  test('a relative --gbrain-bin is never registered', async () => {
+    const b = box({ hermes: true });
+    const r = await setup(b, [], 'gbrain');
+    expect(r.doc.mcp.setup).toBe('print');
+    expect(calls(b)).toHaveLength(0);
+  });
+
+  test('--instructions-only leaves Hermes\'s MCP config alone', async () => {
+    const b = box({ hermes: true });
+    const r = await setup(b, ['--instructions-only']);
+    expect(r.doc.mcp.setup).toBe('unchanged');
+    expect(calls(b)).toHaveLength(0);
+    expect((load(config(b)) as any).mcp_servers).toBeUndefined();
   });
 });
