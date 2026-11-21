@@ -509,6 +509,7 @@ mod tests {
                 "notes/kept",
                 &ChunkPageOptions {
                     source_id: "default".into(),
+                    source_ids: Vec::new(),
                     from_index: 0.0,
                     limit: 10.0,
                     exclude_private: None,
