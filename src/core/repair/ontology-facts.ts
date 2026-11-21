@@ -37,9 +37,8 @@
  * restores exactly that set.
  */
 import type { BrainEngine } from '../engine.ts';
-import { NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
+import type { OntologyFactCandidateRow as CandidateRow } from '../engine-sql/ontology-repair.ts';
 import { OperationError } from '../ops/contract.ts';
-import { DUPLICATE_SQL, EXPIRY_TEXT } from '../engine-sql/facts-repair.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { coordinatedDatabaseWrite } from '../persistence/database-write.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
@@ -65,7 +64,7 @@ export interface OntologyFactCandidate {
 
 /** Every candidate of these sources, classified, in id order. Read-only; also the doctor check's count. */
 export async function classifyOntologyFacts(db: BrainEngine, sourceIds: string[]): Promise<OntologyFactCandidate[]> {
-  const rows = await db.listOntologyFactCandidates(sourceIds);
+  const rows: CandidateRow[] = await db.listOntologyFactCandidates(sourceIds);
   return rows.map(row => {
     const [klass, reason] = row.withdrawn ? ['excluded', 'withdrawn'] as const
       : row.consolidated ? ['excluded', 'consolidated'] as const
@@ -130,15 +129,9 @@ export const ontologyFactsRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { fact, hash, last } = entry as FactItem;
-    // The restore rewrites the fact row through raw SQL, so a Rust brain stops here by name, before its first write.
-    if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair ontology-facts fact write');
-    const restore = (tx: BrainEngine) => tx.executeRaw<{ id: number | string; expired: boolean }>(
-      `UPDATE facts f SET row_num=NULL, source_markdown_slug=f.source, expired_at=NULL
-        WHERE f.id=$1 AND f.source_id=$2 AND f.dimension IS NOT NULL AND ${NOT_CONVERSATION_SLOT_SQL}
-          AND f.row_num IS NOT DISTINCT FROM $3::integer AND f.source_markdown_slug IS NOT DISTINCT FROM $4::text
-          AND ${EXPIRY_TEXT('f.expired_at')} IS NOT DISTINCT FROM $5::text AND NOT ${DUPLICATE_SQL('f')}
-        RETURNING f.id, f.expired_at IS NOT NULL AS expired`,
-      [fact.id, fact.source_id, fact.row_num, fact.page, fact.expired_at]);
+    // The Rust engine refuses restoreOntologyFact, so a Rust brain stops here by name, before the managed write records intent.
+    if (lacksRawSql(ctx.engine)) throw capabilityMissing('facts', 'repair ontology-facts fact write');
+    const restore = (tx: BrainEngine) => tx.restoreOntologyFact({ id: fact.id, source_id: fact.source_id, row_num: fact.row_num, page: fact.page, expired_at: fact.expired_at });
     const keys = [...new Set([fact.entity_slug, ...(fact.page ? [fact.page] : [])])];
     const managed = await coordinatedDatabaseWrite(ctx, 'ontology_propose', fact.entity_slug, keys, restore);
     const [row] = managed ? managed.value : await maintenanceTransaction(ctx.engine, restore);

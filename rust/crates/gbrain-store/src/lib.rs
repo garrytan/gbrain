@@ -49,6 +49,7 @@ pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
 pub mod dream;
+pub mod dream_config;
 pub mod drift_conflicts;
 pub mod embedding_catalog;
 pub mod embedding_holds;

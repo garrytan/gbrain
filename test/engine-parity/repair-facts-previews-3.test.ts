@@ -9,8 +9,8 @@
  *    Postgres (DATABASE_URL) and the Rust engine (GBRAIN_TEST_RUST_ARM=1). The members behind them (listFactsHomeCandidates,
  *    listHeldHomeRows, listOrphanedFenceRows, readFactSnapshots) answer the same rows on every arm.
  *  - Named stops, all on the Rust engine only (the SQL arms run the same call and list items): a fact of an entity with no
- *    page reaches the folder-access read (gbrain_access_* SQL functions, not ported), and the refusal surfaces as
- *    `engine_capability_missing` (raw_sql), never as an `access_unreadable` classification; visibility's events, aliases,
+ *    page reaches the folder-access read (readHeldAccessState, a facts member the Rust engine does not serve), and the
+ *    refusal surfaces as `engine_capability_missing` (facts), never as an `access_unreadable` classification; visibility's events, aliases,
  *    lineage and named-page classes stop at "repair visibility privacy scan" before any read; open-facts stops at "repair
  *    open-facts privacy scan" before its window and counts; the applies of facts-home and visibility stop at "repair
  *    facts-home page write" and "repair visibility page write" before their first write.
@@ -181,27 +181,27 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     return byOrder(out, ids);
   }));
 
-  /** An entity with no page reaches holdingPageFor, whose folder-access read is SQL functions (gbrain_access_*) the Rust engine does not carry. */
+  /** An entity with no page reaches holdingPageFor, whose folder-access read (readHeldAccessState) the Rust engine does not serve. */
   async function seedEntityWithoutPage(engine: BrainEngine) {
     return insert(engine, [{ fact: 'A fact of an entity with no page', entity_slug: 'people/nobody-example' }]);
   }
 
   parityTest('facts-home stops on Rust at the folder-access read of a fact whose entity has no page, instead of calling it access_unreadable', {
-    methods: ['insertFacts', 'getWorktreeBinding', 'updateSourceConfig', 'attachSourcePath'], requires: 'raw_sql', timeout: 90_000,
+    methods: ['insertFacts', 'getWorktreeBinding', 'updateSourceConfig', 'attachSourcePath', 'readHeldAccessState'], requires: 'raw_sql', timeout: 90_000,
   }, async (engine, backend) => strictBrain(engine, async root => {
     const ids = await seedEntityWithoutPage(engine);
-    const { shaped } = await previewOrStop(engine, backend, 'facts-home', 'raw_sql', {}, root);
+    const { shaped } = await previewOrStop(engine, backend, 'facts-home', 'readHeldAccessState', {}, root);
     expect(shaped.listing.map((row: { class: string }) => row.class)).toEqual(['entity_page_missing']);
     return byOrder(shaped, ids);
   }));
 
   parityTest('facts-home with write-through off still stops on Rust at the folder-access read, and does not call the fact access_unreadable', {
-    methods: ['insertFacts', 'getWorktreeBinding', 'updateSourceConfig', 'attachSourcePath', 'setConfig'], requires: 'raw_sql', timeout: 90_000,
+    methods: ['insertFacts', 'getWorktreeBinding', 'updateSourceConfig', 'attachSourcePath', 'setConfig', 'readHeldAccessState'], requires: 'raw_sql', timeout: 90_000,
   }, async (engine, backend) => strictBrain(engine, async root => {
     // holdingHome returns null at once with write-through off, so the scan asks holdingPageFor directly: the path whose catch swallowed the refusal.
     await engine.setConfig('sync.write_through', 'false');
     const ids = await seedEntityWithoutPage(engine);
-    const { shaped } = await previewOrStop(engine, backend, 'facts-home', 'raw_sql', {}, root);
+    const { shaped } = await previewOrStop(engine, backend, 'facts-home', 'readHeldAccessState', {}, root);
     expect(shaped.listing.map((row: { class: string }) => row.class)).toEqual(['entity_page_missing']);
     return byOrder(shaped, ids);
   }));

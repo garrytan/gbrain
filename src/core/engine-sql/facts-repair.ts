@@ -532,3 +532,127 @@ export async function listNamedVisibilityRows(raw: EngineRawRead, sourceIds: str
       EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = p.id) AS guarded
     FROM pages p WHERE p.deleted_at IS NULL AND p.source_id=ANY($1::text[]) AND p.slug=ANY($2::text[]) ORDER BY p.id`, [sourceIds, slugs], { timeoutMs });
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Repair command statements (src/core/repair/agent-session-facts.ts, captured-facts.ts, facts-rehome.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The ids of the sources that are not archived, in id order (the repair preview command names `--source` when more than one). */
+export async function listActiveSourceIds(raw: EngineRawRead): Promise<Array<{ id: string }>> {
+  return raw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id');
+}
+
+/** The brain id a repair preview hashes, or null when the brain has no `persistence_brain` row (the callers fall back to `host`). */
+export async function readRepairBrainId(raw: EngineRawRead): Promise<string | null> {
+  const [brain] = await raw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  return brain?.brain_id ?? null;
+}
+
+export interface AgentSessionTakeCandidateRow {
+  id: number | string; source_id: string; slug: string; row_num: number | string; claim: string;
+  fact_ids: Array<number | string>; user_fact_ids: Array<number | string>; noted: boolean;
+}
+
+/**
+ * Active, unresolved `kind: fact` / `holder: self` takes of these sources with every fact consolidated into each, grouped in one
+ * pass over the sources' facts (never one pass per take): `user_fact_ids` are the contributors attributed to the user or unset,
+ * `noted` says a non-user contributor already carries `noteMark`. `ids` null is every take; the caller keeps the takes whose
+ * user facts are all re-attributed.
+ */
+export async function listAgentSessionTakeCandidates(raw: EngineRawRead, sourceIds: string[], ids: number[] | null, noteMark: string): Promise<AgentSessionTakeCandidateRow[]> {
+  return raw<AgentSessionTakeCandidateRow>(`
+    WITH contributing AS (
+      SELECT f.consolidated_into AS take_id, array_agg(f.id ORDER BY f.id) AS fact_ids,
+             COALESCE(array_agg(f.id ORDER BY f.id) FILTER (WHERE f.attributed_to IS NULL OR f.attributed_to='user'), '{}'::bigint[]) AS user_fact_ids,
+             COALESCE(bool_or(f.attributed_to='other' AND position($3::text in COALESCE(f.context,''))>0), false) AS noted,
+             min(f.consolidated_at) AS first_consolidated_at
+        FROM facts f
+       WHERE f.source_id=ANY($1::text[]) AND f.consolidated_into IS NOT NULL AND ($2::bigint[] IS NULL OR f.consolidated_into=ANY($2::bigint[]))
+       GROUP BY f.consolidated_into)
+    SELECT t.id, p.source_id, p.slug, t.row_num, t.claim, c.fact_ids, c.user_fact_ids, c.noted
+      FROM contributing c JOIN takes t ON t.id=c.take_id JOIN pages p ON p.id=t.page_id
+     WHERE p.source_id=ANY($1::text[]) AND t.kind='fact' AND t.holder='self' AND t.active AND t.resolved_at IS NULL
+       AND t.created_at >= c.first_consolidated_at - interval '1 second'
+     ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C", t.id`, [sourceIds, ids, noteMark]);
+}
+
+/** The named facts of the source that already read back as `other` and unexpired, unsuperseded, with their context (a re-attribution that settled). */
+export async function listSettledSessionFacts(raw: EngineRawRead, sourceId: string, ids: number[]): Promise<Array<{ id: number | string; context: string | null }>> {
+  return raw<{ id: number | string; context: string | null }>(
+    "SELECT id, context FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND attributed_to='other' AND expired_at IS NULL AND superseded_by IS NULL", [sourceId, ids]);
+}
+
+/**
+ * Re-attributes each named database-only fact still user-attributed and active to `other`, appending its note once after
+ * `separator`; the checks run in the UPDATE, under the row locks. Returns the changed ids.
+ */
+export async function reattributeSessionFacts(raw: EngineRawRead, sourceId: string, facts: Array<{ id: number; note: string }>, separator: string): Promise<Array<{ id: number | string }>> {
+  return raw<{ id: number | string }>(`UPDATE facts f
+      SET attributed_to='other',
+          context=CASE WHEN position(r.note in COALESCE(f.context,''))>0 THEN f.context ELSE concat_ws($3::text, NULLIF(f.context,''), r.note) END
+     FROM jsonb_to_recordset($2::text::jsonb) AS r(id bigint, note text)
+    WHERE f.source_id=$1 AND f.id=r.id AND (f.attributed_to IS NULL OR f.attributed_to='user') AND f.expired_at IS NULL AND f.superseded_by IS NULL
+      AND f.row_num IS NULL
+    RETURNING f.id`, [sourceId, JSON.stringify(facts), separator]);
+}
+
+/**
+ * Retires each named take still active, unresolved, `kind: fact` / `holder: self` on a page of the source whose every
+ * contributing fact is non-user; the checks run in the UPDATE, under the row locks. Returns the retired ids.
+ */
+export async function retireSessionTakes(raw: EngineRawRead, sourceId: string, takeIds: number[]): Promise<Array<{ id: number | string }>> {
+  return raw<{ id: number | string }>(`UPDATE takes t SET active=false, updated_at=now()
+     FROM pages p
+    WHERE p.id=t.page_id AND p.source_id=$1 AND t.id=ANY($2::bigint[]) AND t.active AND t.resolved_at IS NULL AND t.kind='fact' AND t.holder='self'
+      AND t.created_at >= (SELECT min(f.consolidated_at) FROM facts f WHERE f.consolidated_into=t.id) - interval '1 second'
+      AND NOT EXISTS (SELECT 1 FROM facts f WHERE f.consolidated_into=t.id AND (f.attributed_to IS NULL OR f.attributed_to='user'))
+    RETURNING t.id`, [sourceId, takeIds]);
+}
+
+/** The named unexpired facts of the source with the claim and fence row number a fenced rewrite matches against the page body. */
+export async function listFenceRewriteRows(raw: EngineRawRead, sourceId: string, ids: number[]): Promise<Array<{ id: number | string; fact: string; row_num: number }>> {
+  return raw<{ id: number | string; fact: string; row_num: number }>(
+    'SELECT id, fact, row_num FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NULL', [sourceId, ids]);
+}
+
+/** The named facts of the source attributed to `other` (the ones a fenced re-attribution reads back as done). */
+export async function listOtherAttributedFactIds(raw: EngineRawRead, sourceId: string, ids: number[]): Promise<Array<{ id: number | string }>> {
+  return raw<{ id: number | string }>("SELECT id FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND attributed_to='other'", [sourceId, ids]);
+}
+
+/** The named takes that read back inactive (the ones a fenced retirement struck). */
+export async function listInactiveTakeIds(raw: EngineRawRead, ids: number[]): Promise<Array<{ id: number | string }>> {
+  return raw<{ id: number | string }>('SELECT id FROM takes WHERE id=ANY($1::bigint[]) AND active=false', [ids]);
+}
+
+/** Expires each named active database-only fact of the source, putting `context` before its own; returns the expired ids. */
+export async function expireCapturedFacts(raw: EngineRawRead, sourceId: string, ids: number[], context: string): Promise<Array<{ id: number | string }>> {
+  return raw<{ id: number | string }>(`UPDATE facts
+    SET expired_at=now(), context=concat_ws(' | ', $3::text, NULLIF(context,''))
+  WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NULL AND row_num IS NULL RETURNING id`, [sourceId, ids, context]);
+}
+
+/** The named facts of the source that read back expired (the ones a fenced strike expired). */
+export async function listExpiredFactIds(raw: EngineRawRead, sourceId: string, ids: number[]): Promise<Array<{ id: number | string }>> {
+  return raw<{ id: number | string }>('SELECT id FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NOT NULL', [sourceId, ids]);
+}
+
+/** The same row as `PagelessEntityRow` (main's name); `listPagelessEntityFacts` above serves both callers. */
+export type PagelessEntityFactRow = PagelessEntityRow;
+
+export interface EntityRehomeState { from_live: boolean; to_live: boolean; ids: Array<number | string> | null }
+
+/** Whether the `from` and `to` pages are live in the source, and the database-only fact ids keyed under `from`, in id order; null when no row answers. */
+export async function readEntityRehomeState(raw: EngineRawRead, sourceId: string, fromSlug: string, toSlug: string): Promise<EntityRehomeState | null> {
+  const [state] = await raw<EntityRehomeState>(`
+        SELECT EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL) AS from_live,
+               EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $3 AND deleted_at IS NULL) AS to_live,
+               (SELECT array_agg(id ORDER BY id) FROM facts WHERE source_id = $1 AND entity_slug = $2 AND row_num IS NULL) AS ids`,
+    [sourceId, fromSlug, toSlug]);
+  return state ?? null;
+}
+
+/** Re-keys the database-only facts of the source from `fromSlug` to `toSlug`; fence-held facts stay. */
+export async function rehomeEntityFacts(raw: EngineRawRead, sourceId: string, fromSlug: string, toSlug: string): Promise<void> {
+  await raw('UPDATE facts SET entity_slug = $3 WHERE source_id = $1 AND entity_slug = $2 AND row_num IS NULL', [sourceId, fromSlug, toSlug]);
+}

@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 import { openclawCatalogName } from '../src/core/setup/openclaw-skill-plugin.ts';
+import { runOpenclawCli } from '../src/core/setup/openclaw-turn-plugin.ts';
 
 setDefaultTimeout(120_000);
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -221,6 +222,13 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     expect(r.resolver.error.message).toContain('boom: plugins enable failed');
     expect(r.resolver.error.commands).toEqual(['openclaw plugins enable gbrain-skill-resolver', 'openclaw config set plugins.entries.gbrain-skill-resolver.hooks.allowConversationAccess true'].map((c) => join(b.root, 'bin') + '/' + c));
     expect(r.resolver.error.recovery).toContain('1 of 3 commands ran');
+  });
+
+  test('an openclaw call killed at its timeout says so, so the refusal names the stall', () => {
+    const hung = runOpenclawCli(['sh', '-c', 'echo started; exec sleep 5'], 500);
+    expect(hung).toMatchObject({ ok: false, stdout: 'started\n' });
+    expect(hung.output.split('\n').at(-1)).toBe('timed out after 0.5 s');
+    expect(runOpenclawCli(['sh', '-c', 'echo done'], 5_000)).toEqual({ ok: true, output: 'done', stdout: 'done\n' });
   });
 
   test('plugins inspect not showing it loaded: exit 3, never success', async () => {

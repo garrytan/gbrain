@@ -23,8 +23,8 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/engine-sql/managed-sync-orphans.ts': { count: 4, why: 'managed sync' },
   'src/core/engine-sql/sync-status-reads.ts': { count: 1, why: 'managed sync: the drain stall probe head-request read moved here from sync-drain.ts' },
   'src/core/engine-sql/persistence-housekeeping.ts': { count: 2, why: 'the compaction listing writes out terminal-classify.ts supersessionSql (test/persistence-journal-statements.test.ts pins the copy): the same two lists and the same decision' },
-  'src/core/cycle/synthesize-postprocess.ts': { count: 1, why: 'cycle producer, never deferred' },
-  'src/core/facts/absorb-log.ts': { count: 1, why: 'facts producer, never deferred' },
+  'src/core/engine-sql/dream-cycle.ts': { count: 1, why: 'cycle producer, never deferred (listLaterPersistenceRequests, moved from cycle/synthesize-postprocess.ts)' },
+  'src/core/engine-sql/facts-trust.ts': { count: 1, why: 'facts producer, never deferred (readPendingWriteReceipt, moved from facts/absorb-log.ts)' },
   'src/core/generations/managed-retire.ts': { count: 1, why: 'maintenance producer, never deferred' },
   'src/core/minions/handlers/subagent-oneshot.ts': { count: 1, why: 'receipt state' },
   'src/core/minions/tool-write-identity.ts': { count: 1, why: 'receipt state' },
@@ -52,6 +52,7 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/persistence/types.ts': { count: 1, why: 'the public receipt states, where deferred reads as queued' },
   'src/core/persistence/worktree-refresh.ts': { count: 1, why: 'the drain counts released deferred rows through RELEASED_DEFERRED' },
   'src/core/rust-engine/store-members/managed-sync-orphans.ts': { count: 1, why: 'managed sync (the Rust members mirror engine-sql/managed-sync-orphans.ts)' },
+  'src/core/rust-engine/store-members/dream-journal.ts': { count: 1, why: 'cycle producer, never deferred (the Rust listLaterPersistenceRequests mirrors engine-sql/dream-cycle.ts)' },
   'src/core/shared-skills/retention.ts': { count: 1, why: 'skill bundles are never deferred' },
 };
 

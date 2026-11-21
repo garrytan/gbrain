@@ -22,6 +22,7 @@ import {
   applyPattern,
   scorePattern,
   scorePatternFull,
+  createPatternDetector,
 } from '../../src/core/conversation-parser/parse.ts';
 import {
   BUILTIN_PATTERNS,
@@ -778,6 +779,32 @@ describe('bold-name-no-time pattern (Circleback/Granola/Zoom, no timestamp)', ()
     const r = parseConversation(body, { noFallback: true, noPolish: true, page: { frontmatter: { date: '2026-04-01' } } } as any);
     expect(r.phase).toBe('no_match');
     expect(r.messages).toEqual([]);
+  });
+
+  // GST-3251: a documented `**Speaker** (YYYY-MM-DD h:mm AM): text` transcript whose
+  // first answer lists `**Label:** text` lines. bold-name-no-time wins the head
+  // pass, the label-list gate rejects it, and the page used to end no_match
+  // (counted as pages_skipped_unparsed) though imessage-slack clears the floor.
+  test('REGRESSION (GST-3251): a gated label list hands over to the transcript format', () => {
+    const body = [
+      '**User** (2024-03-15 9:00 AM): compare the options',
+      '**Assistant** (2024-03-15 9:01 AM): Here they are:',
+      ...['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((x) => `**Option ${x}:** detail ${x}`),
+      '**User** (2024-03-15 9:02 AM): thanks',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2024-03-15' });
+    expect(r.matched_pattern_id).toBe('imessage-slack');
+    expect(r.messages.map((m) => m.speaker)).toEqual(['User', 'Assistant', 'User']);
+    const detector = createPatternDetector();
+    detector.push(body);
+    expect(detector.finish()).toBe('imessage-slack');
+  });
+
+  test('GST-3251: a no_match names why and the best pattern', () => {
+    const body = ['A', 'B', 'C', 'D'].map((x) => `**Option ${x}:** detail ${x}`).join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-04-01' });
+    expect(r.no_match).toEqual({ reason: 'label_list', pattern_id: 'bold-name-no-time', score: expect.any(Number) });
+    expect(parseConversation('Plain prose only.\nNothing else here.', {}).no_match?.reason).toBe('below_floor');
   });
 
   test('N12-1 control: a three-person exchange where someone speaks twice still parses', () => {

@@ -132,7 +132,7 @@ function replay(events: PageEventRow[]): Draft[] {
  * `history` returns every interval known at T (get_versions); otherwise only
  * the one current at T.
  */
-export async function readPageAtTime(engine: BrainEngine, q: { sourceId: string; slug: string; at: Date; history?: boolean; withBodies?: boolean }): Promise<PageAtTime> {
+export async function readPageAtTime(engine: BrainEngine, q: { sourceId: string; slug: string; at: Date; history?: boolean; withBodies?: boolean | 'frontmatter' }): Promise<PageAtTime> {
   const t = q.at.getTime();
   const [{ now }] = await engine.executeRaw<{ now: string }>('SELECT clock_timestamp() AS now');
   if (t > Date.parse(iso(now)!)) {
@@ -170,7 +170,7 @@ export async function readPageAtTime(engine: BrainEngine, q: { sourceId: string;
     .filter((x): x is { l: typeof x.l; head: Draft } => !!x.head && x.head.slug === q.slug && x.head.gone == null)
     .sort((a, b) => Number(a.head.deleted) - Number(b.head.deleted) || b.head.event.id - a.head.event.id)[0];
   const keep = q.history ? lifetimes.flatMap(l => l.known.filter(d => d.slug === q.slug)) : current ? [current.head] : [];
-  const intervals = (await withBodies(engine, lifetimes, keep, q.withBodies !== false))
+  const intervals = (await withBodies(engine, lifetimes, keep, q.withBodies ?? true))
     .sort((a, b) => Date.parse(a.event.recorded_at) - Date.parse(b.event.recorded_at) || a.event.id - b.event.id);
   const head = current ? intervals.find(i => i.event.id === current.head.event.id) ?? null : null;
   const [lt] = current ? await engine.executeRaw<{ page_id: number | null }>('SELECT page_id FROM belief_page_lifetimes WHERE page_lifetime = $1::uuid', [current.l.lifetime]) : [];
@@ -183,7 +183,9 @@ export async function readPageAtTime(engine: BrainEngine, q: { sourceId: string;
  * intervals of one revision pair with that revision's versions in id order, newest with newest. The lifetime's open
  * content interval reads the live page while the page still stands at that revision.
  */
-async function withBodies(engine: BrainEngine, lifetimes: Array<{ lifetime: string; all: Draft[]; known: Draft[] }>, keep: Draft[], bodies: boolean): Promise<PageInterval[]> {
+/** `bodies` 'frontmatter' pairs editions and loads their metadata without their text (compiled_truth and timeline read as null). */
+async function withBodies(engine: BrainEngine, lifetimes: Array<{ lifetime: string; all: Draft[]; known: Draft[] }>, keep: Draft[], bodies: boolean | 'frontmatter'): Promise<PageInterval[]> {
+  const text = bodies === 'frontmatter' ? 'NULL::text AS compiled_truth, NULL::text AS timeline' : 'compiled_truth, timeline';
   const ids = [...new Set(keep.map(d => d.lifetime))];
   if (!ids.length) return [];
   const rows = await engine.executeRaw<{ page_lifetime: string; page_id: number | null; ended_at: string | null; revision: string | null; body_storage: string | null; body_bytes: number | null }>(
@@ -200,7 +202,7 @@ async function withBodies(engine: BrainEngine, lifetimes: Array<{ lifetime: stri
     const liveHead = openHead && openHead.revision === row!.revision ? openHead : null;
     const revisions = [...new Set(content.map(d => d.revision).filter((r): r is string => !!r))];
     const versions = pageId != null && bodies && revisions.length ? await engine.executeRaw<Record<string, unknown>>(`SELECT id, knowledge_revision::text AS revision,
-        compiled_truth, timeline, title, type, frontmatter, tags, body_storage, trust_tier,
+        ${text}, title, type, frontmatter, tags, body_storage, trust_tier,
         COALESCE(body_bytes, octet_length(COALESCE(compiled_truth, '')) + octet_length(COALESCE(timeline, ''))) AS body_bytes
       FROM page_versions WHERE page_id = $1 AND knowledge_revision = ANY($2::uuid[]) ORDER BY id`, [pageId, revisions]) : [];
     const pairing = new Map<number, Record<string, unknown>>();
@@ -218,7 +220,7 @@ async function withBodies(engine: BrainEngine, lifetimes: Array<{ lifetime: stri
       if (d.gone) { out.push({ ...base, body_reason: d.gone }); continue; }
       if (owner && owner === liveHead) {
         if (!bodies) { out.push({ ...base, body: 'live' }); continue; }
-        const page = await livePage(engine, pageId!);
+        const page = await livePage(engine, pageId!, bodies !== 'frontmatter');
         out.push({ ...base, body: page.segmented ? 'segmented' : 'live', page: page.view });
         continue;
       }
@@ -236,8 +238,8 @@ async function withBodies(engine: BrainEngine, lifetimes: Array<{ lifetime: stri
   return out;
 }
 
-async function livePage(engine: BrainEngine, pageId: number) {
-  const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT p.title, p.type, p.frontmatter, p.body_storage, p.compiled_truth, p.timeline, p.trust_tier,
+async function livePage(engine: BrainEngine, pageId: number, withText: boolean) {
+  const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT p.title, p.type, p.frontmatter, p.body_storage, ${withText ? 'p.compiled_truth, p.timeline' : 'NULL::text AS compiled_truth, NULL::text AS timeline'}, p.trust_tier,
       COALESCE(p.body_bytes, octet_length(COALESCE(p.compiled_truth, '')) + octet_length(COALESCE(p.timeline, ''))) AS body_bytes,
       COALESCE((SELECT json_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::json) AS tags
     FROM pages p WHERE p.id = $1`, [pageId]);

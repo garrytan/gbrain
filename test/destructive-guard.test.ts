@@ -571,6 +571,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
     readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
     listUnverifiedArchivedSourceIds: async () => [], // #5452 unverified-archive listing: none here
     listExpiredArchivedSources: async () => [{ id: 'boom', incarnation: 'i', config: {}, local_path: null }],
+    readSourceIncarnation: async () => ({ config: {}, incarnation: 'i' }), // the removal's source-kind read: a plain source
   }) as never;
 
   test('gbrain#4115 — a NON-FK error re-raises instead of reading as blocked (review gap G8)', async () => {
@@ -594,6 +595,7 @@ describe('soft-delete + restore lifecycle (column-based v0.26.5)', () => {
       readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
       listUnverifiedArchivedSourceIds: async () => [], // #5452 unverified-archive listing: none here
       listExpiredArchivedSources: async () => [{ id: 'restored-mid-sweep', incarnation: 'i', config: {}, local_path: null }],
+      readSourceIncarnation: async () => ({ config: {}, incarnation: 'i' }), // the removal's source-kind read: a plain source
     } as never;
     const { purged, blocked } = await purgeExpiredSources(stub);
     expect(purged).toEqual([]);
@@ -911,6 +913,7 @@ describe('purgeExpiredSources — clone cleanup containment', () => {
       readManagedModeRows: async () => [{ enabled: false }], // the typed guard read: the same unmanaged row
       listUnverifiedArchivedSourceIds: async () => [],
       listExpiredArchivedSources: async () => [{ id, incarnation: 'i', config: { kind: 'github', gh_managed: true }, local_path: localPath }],
+      readSourceIncarnation: async () => ({ config: { kind: 'github', gh_managed: true }, incarnation: 'i' }), // the removal's source-kind read
     } as never;
   }
 

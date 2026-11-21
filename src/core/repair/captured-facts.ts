@@ -321,9 +321,7 @@ export const capturedFactsRepair: RepairHandler = {
 
 export const CAPTURED_FACTS_INTENT = 'managed_maintenance_expire_captured_facts';
 
-const expireRows = (tx: BrainEngine, sourceId: string, ids: number[]) => tx.executeRaw<{ id: number | string }>(`UPDATE facts
-    SET expired_at=now(), context=concat_ws(' | ', $3::text, NULLIF(context,''))
-  WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NULL AND row_num IS NULL RETURNING id`, [sourceId, ids, EXPIRY_CONTEXT]);
+const expireRows = (tx: BrainEngine, sourceId: string, ids: number[]) => tx.expireCapturedFacts(sourceId, ids, EXPIRY_CONTEXT);
 
 /**
  * Database-only rows: on a managed brain one database-only maintenance
@@ -365,8 +363,7 @@ async function strikeFencedRows(ctx: Parameters<RepairHandler['apply']>[0], item
   const engine = ctx.engine;
   const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
   if (!snapshot) return [];
-  const rows = await engine.executeRaw<{ id: number | string; fact: string; row_num: number }>(
-    'SELECT id, fact, row_num FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NULL', [page.source_id, facts.map(f => f.id)]);
+  const rows = await engine.listFenceRewriteRows(page.source_id, facts.map(f => f.id));
   const today = new Date().toISOString().slice(0, 10);
   const strike = (fact: ParsedFact): ParsedFact => ({ ...fact, active: false, forgotten: false, validUntil: fact.validUntil && fact.validUntil < today ? fact.validUntil : today,
     context: [EXPIRY_CONTEXT, fact.context?.trim()].filter(Boolean).join(' | ') });
@@ -384,6 +381,5 @@ async function strikeFencedRows(ctx: Parameters<RepairHandler['apply']>[0], item
   await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id,
     content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags), expected_revision: snapshot.revision,
     request_id: await repairRequestId(ctx, 'captured-facts', item, snapshot.revision) } });
-  return (await engine.executeRaw<{ id: number | string }>('SELECT id FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NOT NULL',
-    [page.source_id, struck])).map(row => Number(row.id));
+  return (await engine.listExpiredFactIds(page.source_id, struck)).map(row => Number(row.id));
 }

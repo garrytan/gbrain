@@ -24,6 +24,7 @@ import * as ontology from './ontology.ts';
 import * as takes from './takes.ts';
 import * as contradictions from './contradictions.ts';
 import * as dream from './dream.ts';
+import * as dreamJournal from './dream-journal.ts';
 import * as evalCapture from './eval-capture.ts';
 import * as codeEdges from './code-edges.ts';
 import * as salience from './salience.ts';
@@ -43,6 +44,9 @@ import * as loopMutes from './loop-mutes.ts';
 import * as sourceArchive from './source-archive.ts';
 import * as trustWriteGate from './trust-write-gate.ts';
 import * as cliSources from './cli-sources.ts';
+import * as filesSources from './files-sources.ts';
+import * as dreamConfig from './dream-config.ts';
+import * as factsHoldingPurges from './facts-holding-purges.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
 import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
@@ -123,14 +127,14 @@ export const STORE_MEMBERS = {
   getPage: pages.getPage, readPageSnapshot: pages.readPageSnapshot, putPage: pages.putPage, deletePage: pages.deletePage,
   softDeletePage: pages.softDeletePage, restorePage: pages.restorePage, listPages: pages.listPages, resolveSlugs: pages.resolveSlugs,
   // Planned families: a member is served once its family file exports it.
-  ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
+  ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream, ...dreamJournal,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
   ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops, ...loopMutes,
   ...sourceArchive,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
-  ...cliSources,
+  ...cliSources, ...filesSources, ...dreamConfig, ...factsHoldingPurges,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).

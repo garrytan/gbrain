@@ -123,7 +123,7 @@ async function heldUnmovable(engine: BrainEngine, sourceId: string, slug: string
   const filed = new Set<string>();
   if (!await pageHasFile(engine, sourceId, slug, planned.snapshot.page)) {
     for (const from of new Set(group.map(row => row.from_slug))) {
-      const [page] = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>('SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, from]);
+      const page = await engine.readPageFileOrigin(sourceId, from);
       if (page && await pageHasFile(engine, sourceId, from, page)) filed.add(from);
     }
   }

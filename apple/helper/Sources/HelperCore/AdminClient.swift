@@ -1,8 +1,8 @@
 import Foundation
 
 public enum AdminClient {
-    public static func post(port: UInt16, fields: [String: String], timeout: TimeInterval) -> AdminReply {
-        guard let url = URL(string: "http://127.0.0.1:\(port)\(SendService.adminRoute)") else { return .noReply }
+    public static func post(port: UInt16, route: String = SendService.adminRoute, fields: [String: String], timeout: TimeInterval) -> AdminReply {
+        guard let url = URL(string: "http://127.0.0.1:\(port)\(route)") else { return .noReply }
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

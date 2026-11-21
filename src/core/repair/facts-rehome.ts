@@ -126,15 +126,11 @@ export const factsRehomeRepair: RepairHandler = {
     if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair facts-rehome fact write');
     const target = entity.target!;
     const move = async (tx: BrainEngine): Promise<boolean> => {
-      const [state] = await tx.executeRaw<{ from_live: boolean; to_live: boolean; ids: Array<number | string> | null }>(`
-        SELECT EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL) AS from_live,
-               EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $3 AND deleted_at IS NULL) AS to_live,
-               (SELECT array_agg(id ORDER BY id) FROM facts WHERE source_id = $1 AND entity_slug = $2 AND row_num IS NULL) AS ids`,
-        [entity.source_id, entity.slug, target]);
+      const state = await tx.readEntityRehomeState(entity.source_id, entity.slug, target);
       if (!state || state.from_live || !state.to_live || JSON.stringify((state.ids ?? []).map(Number)) !== JSON.stringify(entity.ids)) return false;
       await dropRekeyDuplicates(tx, entity.source_id, { where: 'f.entity_slug = $2 AND f.row_num IS NULL', entity: '$3::text', sms: 'f.source_markdown_slug',
         params: [entity.slug, target] });
-      await tx.executeRaw('UPDATE facts SET entity_slug = $3 WHERE source_id = $1 AND entity_slug = $2 AND row_num IS NULL', [entity.source_id, entity.slug, target]);
+      await tx.rehomeEntityFacts(entity.source_id, entity.slug, target);
       return true;
     };
     const managed = await coordinatedDatabaseWrite({ ...ctx, sourceId: entity.source_id }, RELINK_OPERATION, target, [entity.slug, target], tx => move(tx));

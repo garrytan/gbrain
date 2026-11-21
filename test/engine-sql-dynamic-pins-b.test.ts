@@ -140,7 +140,7 @@ describe('repair-bookkeeping.ts rendered SQL', () => {
     expect(calls).toEqual([{ text: "SELECT b.source_id, b.source_incarnation::text AS source_incarnation, b.worktree_id::text AS worktree_id, CASE WHEN s.id IS NULL THEN 'source_removed' ELSE 'incarnation_replaced' END AS reason, (SELECT COUNT(*)::int FROM persistence_requests r WHERE r.source_id = b.source_id AND r.source_incarnation = b.source_incarnation AND r.state IN ('queued','deferred','running','recovering')) AS pending_requests FROM persistence_source_bindings b LEFT JOIN sources s ON s.id = b.source_id WHERE s.id IS NULL OR s.incarnation <> b.source_incarnation ORDER BY b.source_id LIMIT $1", params: [7] }]);
   });
 
-  const KINDS = ["google","github","meetings","slack","imessage"];
+  const KINDS = ["google","github","meetings","slack","imessage","apple-contacts"];
 
   test('listConnectorSources matches the connector kinds with one bound array', async () => {
     const { calls, exec } = recorder();

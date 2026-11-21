@@ -52,6 +52,9 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   ANY_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant any-owner-only-source EXISTS over sources read_source; the kinds and flag key are module constants (no input)',
   OWNER_ONLY_LINEAGE_PRESENT_SQL: 'src/core/access/owner-only.ts: the constant v320 lineage function call `gbrain_owner_only_lineage()` (no input)',
   READ_SOURCE_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant owner-only row test of the sources alias read_source; the kinds and flag key are module constants (no input)',
+  UNBACKED_FACT_SQL: 'src/core/engine-sql/fact-relink-writes.ts: constant live-row-on-an-unbacked-name-key predicate over the facts alias f (unbackedEntitySql plus LIVE_FACT_SQL); no input',
+  ACTIVE_UNLINKED_FACT_SQL: 'src/core/engine-sql/fact-relink-writes.ts: constant live-row-with-no-entity predicate over the facts alias f; no input',
+  FACT_POOL_COLUMNS: 'src/core/engine-sql/facts-trust.ts: constant select list of the facts pool columns (no input)',
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
   EXPIRED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant archive-window-elapsed predicate over sources (no input)',
   UNVERIFIED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant missing-or-epoch archive-time predicate over sources (no input)',
@@ -60,6 +63,13 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
+  // facts-rest-sites builders (facts-trust.ts, facts-recall.ts)
+  oversizedEligibleSql: 'src/core/engine-sql/facts-trust.ts: returns the constant eligibleFactEmbedding predicate (embedding-identity.ts, placeholder $2 audit sources bound by the caller); no values',
+  oversizedStaleSql: 'src/core/engine-sql/facts-trust.ts: returns the constant staleFactEmbedding predicate (embedding-identity.ts, placeholders $3 model and $4 width bound by the caller); no values',
+  oversizedScanCapSql: 'src/core/engine-sql/facts-trust.ts: the OVERSIZED_SCAN_CAP module constant as text (a fixed integer, no input)',
+  contestedReadableSql: 'src/core/engine-sql/facts-trust.ts: constant active and readable predicate over a caller-given constant facts alias; the policy picks among constant fragments (privateFactFilterForCaller, projectionEligibleSql) and binds no value',
+  memberReadsSql: 'src/core/engine-sql/facts-trust.ts: ownerReadPolicyFragment or readPolicyFragment over a constant page alias; identities and rule ids are checked by validIdentity and validQualifiedRuleId before they are quoted in (see those entries)',
+  withdrawalReachedFactSql: 'src/core/access/member-facts.ts: constant withdrawal-reached-fact predicate over caller withdrawal and fact aliases; no values',
   // facts-doctor.ts builders
   entityLinkableSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant ENTITY_LINKABLE_SQL predicate (attribution.ts) over the facts alias f; no values',
   relinkTriedSql: 'src/core/engine-sql/facts-doctor.ts: the constant conversationTriedSql EXISTS predicate (conversation-memo.ts; code-constant outcome and reason codes) or the literal false; no values',
@@ -79,6 +89,14 @@ const VETTED_BUILDERS: Record<string, string> = {
   unbackedEntitySql: 'src/core/facts/withdrawal-schema.ts: constant unbacked-name-key predicate over a caller facts alias; the callers pass constant aliases',
   ownedMemorySubjectSql: 'src/core/facts/withdrawal-schema.ts: constant owned-memory-subject predicate over a caller column expression; engine-sql passes only the constant column q.subject',
   remoteProvenanceFloorSql: 'src/core/search/private-visibility.ts: constant remote provenance floor (private-provenance filter plus labelled-only) over a caller facts alias',
+  liveStagingSql: 'src/core/page-body/schema.ts: constant live-staging predicate over the staging alias s; no values',
+  carriesClaimSql: 'src/core/facts/purge-verify.ts: constant carries-claim predicate over a caller alias; the caller passes the placeholder number, no values',
+  holdingSlugSql: 'src/core/facts-fence.ts: constant holding-page slug predicate over a caller column expression; the callers pass constant aliases (hp.slug, f.entity_slug); no values',
+  extractedFromPageSql: 'src/core/facts/gone-page-facts.ts: constant extracted-from-page predicate over a caller facts alias and slug expression; the source list is a module constant; engine-sql passes f and g.slug; no values',
+  derivationSweepScopeSql: 'src/core/page-body/schema.ts: constant sweep-scope predicate over caller aliases d and p with a hand-numbered page-id placeholder bound by the caller; no values',
+  derivationAfterSql: 'src/core/page-body/segment-derive.ts: constant key-after predicate over the caller alias d with three hand-numbered cursor placeholders bound by the caller; no values',
+  derivationHoldsClaimSql: 'src/core/page-body/schema.ts: constant holds-claim predicate over the caller alias d with hand-numbered needle and pattern placeholders bound by the caller; no values',
+  derivationClaimCandidateSql: 'src/core/page-body/schema.ts: constant claim-candidate predicate over the caller alias d with a hand-numbered pattern placeholder bound by the caller; no values',
 
   // memory-mutation-reads.ts builders (ownerReachesFact)
   ownerReadPolicyFragment: 'src/core/search/private-visibility.ts: the owner read rule over a caller page alias; it splices an identity only after validIdentity and rule ids only after validQualifiedRuleId (each a quoted literal of a checked shape), else FALSE',
@@ -99,6 +117,18 @@ const VETTED_BUILDERS: Record<string, string> = {
   DUPLICATE_SQL: 'src/core/engine-sql/facts-repair.ts: constant same-dedup-key EXISTS over a caller facts alias (code-provided); no values',
   syncDeleteOrigin: 'src/core/persistence/sync-delete-tombstones.ts: constant managed-sync-deletion EXISTS predicate over a caller pages alias (code-provided); the op, intent kind and state are module constants; no values',
 
+  // files-ops.ts builders
+  fileReadableSql: 'src/core/engine-sql/files-ops.ts: the literal TRUE, or the constant files-readable NOT EXISTS predicate over the files alias f with the vetted caller private-pages filter spliced in; the choice is a boolean; no values',
+  pageReadableSql: 'src/core/engine-sql/files-ops.ts: the literal TRUE, or the vetted caller private-pages filter over the pages alias fp; the choice is a boolean; no values',
+  fileListFilterSql: 'src/core/engine-sql/files-ops.ts: the literal TRUE or the constant page filter with the hand-numbered $2 slug bound by the caller; the choice is whether a slug was given; no values',
+  fileListOrderSql: 'src/core/engine-sql/files-ops.ts: one of two constant ORDER BY column lists chosen by whether a slug was given; no values',
+
+  // contradictions-cycle.ts, ontology-repair.ts builders
+  takeHolderSql: 'src/core/engine-sql/contradictions-cycle.ts: the constant holder allow-list conjunct with one positive integer position (checked by Number.isSafeInteger) spliced as its hand-numbered placeholder; no values',
+  rekeyMoveSql: 'src/core/engine-sql/ontology-repair.ts: a re-key move text, returned only when it is a member of a closed constant list of shapes (anything else throws); no values',
+  rekeyConversationSlotSql: 'src/core/engine-sql/ontology-repair.ts: CONVERSATION_SLOT_SQL, the constant conversation-source prefix test; no values',
+  ontologyConversationSlotSql: 'src/core/engine-sql/ontology-repair.ts: NOT_CONVERSATION_SLOT_SQL, the constant not-a-conversation-source prefix test; no values',
+
   // facts-trust.ts builders
   quarantinedProvenanceFilterFragment: 'src/core/quarantine.ts: constant fact-provenance quarantine predicate over a caller alias; no values',
   factsFtsDocument: 'src/core/fts-language.ts: constant facts full-text document expression over a caller alias; the language passes VALID_CONFIG_NAME or falls back to the default',
@@ -108,6 +138,10 @@ const VETTED_BUILDERS: Record<string, string> = {
   claimPendingSql: 'src/core/trust/claim-state.ts: constant claim-pending predicate over a caller sources alias; config keys are module constants',
   conversationSlotSql: 'src/core/engine-sql/facts-trust.ts: CONVERSATION_SLOT_SQL, the constant conversation-source prefix test; no values',
   savedFactCollapseColumns: 'src/core/engine-sql/facts-trust.ts: SAVED_FACT_COLLAPSE_COLUMNS, the constant select list the capture-dedup collapse reads; no values',
+  claimBucketSql: 'src/core/facts/typed-claim.ts: constant CASE bucketing a caller facts alias\'s claim_period and valid_from from the constant cadence tables; no values',
+
+  // facts-conversation.ts builders
+  folderRestrictedSql: 'src/core/search/private-visibility.ts: constant folder-restriction predicate over a caller page alias; no values',
 
   tokenGrantSelectList: 'src/core/engine-sql/persistence-journal.ts: the constant TOKEN_GRANT_ROW_COLUMNS names (grants/model.ts) this brain\'s access_tokens has, joined by commas; no values',
   openedFactRowSql: 'src/core/persistence/context.ts: constant opened-row predicate over caller-given constant aliases; the setting name is a module constant, the opened ids are read by the statement itself',

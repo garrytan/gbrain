@@ -10,6 +10,9 @@
  *
  * Identity decisions (listEntityKeyRows, listIdentityDecisions, listRestrictedIdentityMembers, applyIdentityDecisions;
  * SQL in engine-sql/entity-keys.ts and engine-sql/identity-decisions.ts) live in gbrain-store `identity_reviews`.
+ * The store keeps no decision evidence and no automatic company groups yet, and its key rows carry no page id,
+ * generation, creation time or group: listEntityKeyRows refuses, listIdentityDecisions reads every decision's evidence
+ * as null (none kept), and applyIdentityDecisions refuses an upsert that carries evidence or a company sweep's plan.
  */
 import { identityPageNotFound, type CanonicalTwinRow, type EntityIdentityFilter, type EntityIdentityLinkInput, type EntityIdentityPageRow, type EntityIdentityRow, type EntityIdentityUnlinkInput } from '../../engine-sql/entity-identities.ts';
 import type { SourceRoutingRow } from '../../engine-sql/sources.ts';
@@ -67,16 +70,18 @@ export const readEntityIdentityIdsForPages: StoreMember<[pages: ReadonlyArray<{ 
 export const readCanonicalTwin: StoreMember<[sourceId: string, slug: string], CanonicalTwinRow[]> = (brain, sourceId, slug) =>
   storeCall({ member: 'readCanonicalTwin', slug, sourceId }, () => brain.readCanonicalTwin(sourceId, slug)) as Promise<CanonicalTwinRow[]>;
 
-/** Duplicate finder read: live, unretired pages of the types in unarchived sources, the named keys only, keyset-paged. */
-export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKeyRow[]> = (brain, opts) =>
-  storeCall({ member: 'listEntityKeyRows' }, () => brain.listEntityKeyRows({
-    types: [...opts.types], keys: [...opts.keys], after: opts.after ? { source_id: opts.after.source_id, slug: opts.after.slug } : null,
-    limit: opts.limit,
-  }));
+/**
+ * Duplicate finder read. Refused: the store's key rows carry no page id, generation, creation time or identity group,
+ * and it applies no `members` or `tokens` narrowing, all of which the finder and the company sweep read.
+ */
+export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKeyRow[]> = async () =>
+  refuseMember('listEntityKeyRows', 'the page id, generation, creation time and identity group of each row, and the members and tokens filters');
 
-/** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. */
-export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = (brain) =>
-  storeCall({ member: 'listIdentityDecisions' }, () => brain.listIdentityDecisions());
+/** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. No evidence is kept. */
+export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = async (brain) => {
+  const read = await storeCall({ member: 'listIdentityDecisions' }, () => brain.listIdentityDecisions()) as IdentityDecisionsRead;
+  return { ...read, decisions: read.decisions.map(d => ({ ...d, evidence: d.evidence ?? null })) };
+};
 
 /** The members whose page the no-caller page policy (`privatePagesFilterFragment`) hides. */
 export const listRestrictedIdentityMembers: StoreMember<[members: ReadonlyArray<IdentityMemberRef>], IdentityMemberRef[]> = async (brain, members) => {
@@ -86,8 +91,12 @@ export const listRestrictedIdentityMembers: StoreMember<[members: ReadonlyArray<
 };
 
 /** Writes and removes decisions and reconciles the 'dedupe:confirm' identity rows in one store write. */
-export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsInput], ApplyIdentityDecisionsResult> = (brain, input) =>
-  storeCall({ member: 'applyIdentityDecisions' }, () => brain.applyIdentityDecisions({
+export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsInput], ApplyIdentityDecisionsResult> = async (brain, input) => {
+  if ((input.upsert ?? []).some(d => d.evidence?.length)) refuseMember('applyIdentityDecisions', 'a decision that carries member fingerprints (evidence)');
+  if (input.auto && (input.auto.link.length || input.auto.unlink.length)) refuseMember('applyIdentityDecisions', "the company sweep's automatic groups");
+  // An empty sweep plan writes nothing, and the store holds no automatic group to remove.
+  const auto = input.auto ? { auto: { linked: 0, unlinked: 0, skipped: 0 } } : {};
+  const result: ApplyIdentityDecisionsResult = await storeCall({ member: 'applyIdentityDecisions' }, () => brain.applyIdentityDecisions({
     upsert: (input.upsert ?? []).map(d => ({
       decision_id: d.decision_id, verdict: d.verdict, members: d.members, group_id: d.group_id ?? null, entity_id: d.entity_id ?? null,
       canonical: d.canonical ? { source_id: d.canonical.source_id, slug: d.canonical.slug } : null, decided_by: d.decided_by,
@@ -96,3 +105,5 @@ export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsI
     remove: [...(input.remove ?? [])],
     expect_revision: input.expectRevision ?? null,
   }));
+  return result.stale ? result : { ...result, ...auto };
+};
