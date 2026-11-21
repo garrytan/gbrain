@@ -341,17 +341,20 @@ describe('engine parity: the store probes of a page purge receipt', () => {
   parityTest('the effect probe lists the first 20 of more than 20 matches in byte order, whatever the database collation, so ids of different widths keep their place', {
     methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'transactionDirect', 'declarePersistence', 'insertPublicationEffects', 'transaction',
       'countPurgeProbe', 'listPurgeProbeItems', 'setPurgeProbeTimeout'],
-  }, async (engine) => {
-    // One Git effect per request, so ids 1..25 reach two digits on an engine whose ids start at 1.
+  }, async (engine, backend) => {
+    // Effect ids 1..25 (two widths, `effect:1 ` against `effect:10`): a Postgres sequence a shared database already ran starts the ids
+    // higher, so restart it. The Rust store numbers its effects from 1.
+    if (backend !== 'rust') await engine.executeRaw("SELECT setval(pg_get_serial_sequence('persistence_effects', 'id'), 1, false)");
+    // One Git effect per request.
     for (let n = 1; n <= 25; n++) {
-      const id = `b0000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-      await queueEffects(engine, await journal(engine, id, 'put_page', SLUG), SRC, [{ kind: 'git', data: { slug: SLUG, commit_line: 'Fix the Harbor Ledger claim' } }]);
+      const request = `b0000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+      await queueEffects(engine, await journal(engine, request, 'put_page', SLUG), SRC, [{ kind: 'git', data: { slug: SLUG, commit_line: 'Fix the Harbor Ledger claim' } }]);
     }
     const probe = { kind: 'effect_payload' as const, sourceId: SRC, forms: ['harbor ledger'] };
     const items = await engine.listPurgeProbeItems(probe);
     // The contract: the 20 smallest items by byte order. A collation that ignores the space (en_US) puts `effect:10` before `effect:1 `.
-    expect(items).toHaveLength(20);
-    expect(items).toEqual([...items].sort());
+    const expected = Array.from({ length: 25 }, (_, i) => `effect:${i + 1} git queued`).sort().slice(0, 20);
+    expect(items).toEqual(expected);
     expect(await count(engine, probe)).toBe(25);
     expect(await engine.countPurgeProbe(probe, 5)).toBe(6);
     return { items };
