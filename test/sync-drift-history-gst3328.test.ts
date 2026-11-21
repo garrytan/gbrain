@@ -18,6 +18,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { retryHeld } from '../src/commands/sources-retry-held.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
+import { liveFileDrift } from '../src/core/persistence/drift-conflicts.ts';
 import { holdRepairSteps } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
@@ -90,6 +91,16 @@ for (const backend of testBackends()) {
     await performManagedSync(engine, OPTS);
     expect(await body(engine, 'notes/a')).toContain('A first Git edit of notes/a.');
     expect(await held(engine)).toEqual(['notes/b.md']);
+  }, { databaseUrl, setup }), 240_000);
+
+  test(`[${backend}] a drift check that cannot read the file keeps the refusal's message, not only its code`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    // A page stored database-only by a read-only mirror whose source is no longer one reads its file at the slug path.
+    await coordinated(engine, "UPDATE pages SET source_path=NULL, database_only_reason='mirror_read_only' WHERE source_id='default' AND slug='notes/a'");
+    writeFileSync(join(root, 'notes/a.md'), Buffer.concat([Buffer.from(note('notes/a', 'Bytes that are not ')), Buffer.from([0xff, 0xfe])]));
+    const live = await liveFileDrift(engine, 'default', 'notes/a');
+    expect(live).toMatchObject({ still_present: null, reason: 'invalid_params' });
+    expect(live.message).toContain('valid UTF-8');
   }, { databaseUrl, setup }), 240_000);
 }
 

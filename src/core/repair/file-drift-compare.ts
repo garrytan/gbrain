@@ -203,7 +203,7 @@ export async function comparePage(engine: BrainEngine, sourceId: string, target:
           : `the page and its file agree; gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file previews the release` };
     }
     const mirrorHeld = !!hold && side !== 'deleted' && target.mirror === true;
-    if (live.still_present !== true) return { item, slug, ...held, would: live.still_present === false ? 'no_drift' : 'unknown', why: live.reason };
+    if (live.still_present !== true) return { item, slug, ...held, would: live.still_present === false ? 'no_drift' : 'unknown', why: live.message ? `${live.reason}: ${live.message}` : live.reason };
     const { path, ...evidence } = await readDriftEvidence(engine, sourceId, slug, assessmentAt);
     const base = { item, slug, ...held, path, evidence };
     if (evidence.differs === 'none') return { ...base, would: hold ? 'release_hold' : 'no_drift', why: 'nothing differs once gbrain\'s own normalisation is read' };
