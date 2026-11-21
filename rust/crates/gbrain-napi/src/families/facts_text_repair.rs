@@ -8,8 +8,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::text_repair::{
-    ExpireWithNote, FactIdsQuery, FactTextRestoreArgs, PageFactsArgs, ProjectedFenceQuery,
-    RedactedFactQuery,
+    ExpireWithNote, FactIdsQuery, FactRowQuery, FactTextQuery, FactTextRestoreArgs, PageFactsArgs,
+    ProjectedFenceQuery, RedactedFactQuery,
 };
 
 #[napi]
@@ -102,6 +102,55 @@ impl Brain {
         self.run(env, move |s| {
             let a: PageFactsArgs = required(args, "readMaxFactRowNum args")?;
             s.read_max_fact_row_num(&a)
+        })
+    }
+
+    /// `hasActiveFactText({ sourceId, slug, fact, visibility })`: resolves whether the page holds that unexpired fact.
+    #[napi]
+    pub fn has_active_fact_text<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: FactTextQuery = required(query, "hasActiveFactText query")?;
+            s.has_active_fact_text(&a)
+        })
+    }
+
+    /// `readFactTrustTier(id)`: resolves the stored trust tier of the fact, or null.
+    #[napi]
+    pub fn read_fact_trust_tier<'env>(
+        &self,
+        env: &'env Env,
+        id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_fact_trust_tier(id))
+    }
+
+    /// `listFenceFactRowNums({ sourceId, slug })`: resolves the row numbers of the page's facts, ascending.
+    #[napi]
+    pub fn list_fence_fact_row_nums<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageFactsArgs = required(args, "listFenceFactRowNums args")?;
+            s.list_fence_fact_row_nums(&a)
+        })
+    }
+
+    /// `readLiveFactRowTier({ sourceId, slug, rowNum, fact })`: resolves `{ id, trust_tier }`, or null.
+    #[napi]
+    pub fn read_live_fact_row_tier<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: FactRowQuery = required(query, "readLiveFactRowTier query")?;
+            s.read_live_fact_row_tier(&a)
         })
     }
 }

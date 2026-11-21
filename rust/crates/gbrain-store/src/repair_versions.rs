@@ -346,6 +346,23 @@ impl Store {
             }))
     }
 
+    /// `listInlineVersionTexts(pageId)`: `[{ id, compiled_truth, timeline }]` of the page's versions with an inline
+    /// body, by id (`gbrain repair lost-fence-rows`).
+    pub fn list_inline_version_texts(&self, page_id: i64) -> Result<Vec<Value>> {
+        let Ok(page_id) = u64::try_from(page_id) else {
+            return Ok(Vec::new());
+        };
+        let read = self.read()?;
+        Ok(versions_of(&*read, page_id)?
+            .into_iter()
+            .filter_map(|v| {
+                v.compiled_truth.as_deref().map(|body| {
+                    json!({ "id": v.id, "compiled_truth": body, "timeline": v.timeline.as_deref() })
+                })
+            })
+            .collect())
+    }
+
     /// The content of version `versionId` of page `pageId`, or none.
     pub fn read_version_content(&self, q: &VersionContentQuery) -> Result<Option<Value>> {
         let (Ok(page_id), Ok(version_id)) = (u64::try_from(q.page_id), u64::try_from(q.version_id))

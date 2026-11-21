@@ -745,7 +745,6 @@ src/core/repair/fences.ts	execute_raw	2
 src/core/repair/file-drift-class.ts	execute_raw	10	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
 src/core/repair/file-drift.ts	execute_raw	3
 src/core/repair/label-write.ts	execute_raw	1
-src/core/repair/lost-fence-rows.ts	execute_raw	10
 src/core/repair/missing-tables.ts	execute_raw	2
 src/core/repair/moved-pages.ts	execute_raw	1
 src/core/repair/open-facts.ts	execute_raw	11

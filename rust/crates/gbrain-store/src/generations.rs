@@ -67,6 +67,7 @@ mod activations;
 mod atom_reads;
 mod fence_evidence;
 mod fence_restore;
+mod lost_fence;
 mod page_rows;
 mod repair;
 pub use activations::ActivationRecordInput;

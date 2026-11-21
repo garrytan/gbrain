@@ -361,6 +361,39 @@ impl Store {
             .map(|t| json!({ "id": t.id, "trust_tier": t.trust.tier().as_str() })))
     }
 
+    /// `hasTakeClaim(pageId, claim)`: whether page `pageId` holds a take with that claim.
+    pub fn has_take_claim(&self, page_id: u64, claim: &str) -> Result<bool> {
+        let read = self.read()?;
+        Ok(page_takes(&*read, page_id)?
+            .iter()
+            .any(|t| t.claim == claim))
+    }
+
+    /// `listTakeRowNums(pageId)`: the row number of every take of the page, ascending.
+    pub fn list_take_row_nums(&self, page_id: u64) -> Result<Vec<i32>> {
+        let read = self.read()?;
+        let mut out: Vec<i32> = page_takes(&*read, page_id)?
+            .iter()
+            .map(|t| t.row_num)
+            .collect();
+        out.sort_unstable();
+        Ok(out)
+    }
+
+    /// `readTakeRowTierByClaim(pageId, rowNum, claim)`: `{ id, trust_tier }` of the take at that row of the page with
+    /// that claim, or null.
+    pub fn read_take_row_tier_by_claim(
+        &self,
+        page_id: u64,
+        row_num: i32,
+        claim: &str,
+    ) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(take_at(&*read, page_id, row_num)?
+            .filter(|t| t.claim == claim)
+            .map(|t| json!({ "id": t.id, "trust_tier": t.trust.tier().as_str() })))
+    }
+
     /// `setTakeSupersededBy(pageId, rowNum, supersededBy)`: stores the take's `superseded_by`
     /// (null clears it). The `UPDATE` sets no other column, so `updated_at` and the trust stamp stay.
     pub fn set_take_superseded_by(

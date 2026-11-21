@@ -15,6 +15,7 @@ use crate::Store;
 use crate::error::Result;
 use crate::links::no_nul;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeSet;
 
 /// The marker SQL's `LIKE '%[redacted%'` matches.
@@ -315,4 +316,94 @@ impl Store {
             .filter_map(|f| f.row_num)
             .max())
     }
+
+    /// `hasActiveFactText({ sourceId, slug, fact, visibility })`: whether the page holds an unexpired fact with that
+    /// text and visibility (`gbrain repair lost-fence-rows`).
+    pub fn has_active_fact_text(&self, a: &FactTextQuery) -> Result<bool> {
+        no_nul(
+            "hasActiveFactText",
+            &[
+                ("sourceId", &a.source_id),
+                ("slug", &a.slug),
+                ("fact", &a.fact),
+                ("visibility", &a.visibility),
+            ],
+        )?;
+        let read = self.read()?;
+        Ok(source_rows(&*read, &a.source_id)?.iter().any(|f| {
+            f.expired_at_us.is_none()
+                && f.source_markdown_slug.as_deref() == Some(a.slug.as_str())
+                && f.fact == a.fact
+                && f.visibility == a.visibility
+        }))
+    }
+
+    /// `readFactTrustTier(id)`: the stored trust tier of fact `id`, or none.
+    pub fn read_fact_trust_tier(&self, id: i64) -> Result<Option<String>> {
+        let Ok(id) = u64::try_from(id) else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        Ok(read_fact(&*read, id)?.map(|f| f.tier().as_str().to_string()))
+    }
+
+    /// `listFenceFactRowNums({ sourceId, slug })`: the row numbers of every fact (expired or not) the page holds.
+    pub fn list_fence_fact_row_nums(&self, a: &PageFactsArgs) -> Result<Vec<i32>> {
+        no_nul(
+            "listFenceFactRowNums",
+            &[("sourceId", &a.source_id), ("slug", &a.slug)],
+        )?;
+        let read = self.read()?;
+        let mut out: Vec<i32> = source_rows(&*read, &a.source_id)?
+            .into_iter()
+            .filter(|f| f.source_markdown_slug.as_deref() == Some(a.slug.as_str()))
+            .filter_map(|f| f.row_num)
+            .collect();
+        out.sort_unstable();
+        Ok(out)
+    }
+
+    /// `readLiveFactRowTier({ sourceId, slug, rowNum, fact })`: `{ id, trust_tier }` of the unexpired fact at that row
+    /// number of the page with that text, or none.
+    pub fn read_live_fact_row_tier(&self, a: &FactRowQuery) -> Result<Option<Value>> {
+        no_nul(
+            "readLiveFactRowTier",
+            &[
+                ("sourceId", &a.source_id),
+                ("slug", &a.slug),
+                ("fact", &a.fact),
+            ],
+        )?;
+        let read = self.read()?;
+        Ok(source_rows(&*read, &a.source_id)?
+            .into_iter()
+            .filter(|f| {
+                f.expired_at_us.is_none()
+                    && f.source_markdown_slug.as_deref() == Some(a.slug.as_str())
+                    && f.row_num == Some(a.row_num)
+                    && f.fact == a.fact
+            })
+            .min_by_key(|f| f.id)
+            .map(|f| serde_json::json!({ "id": f.id, "trust_tier": f.tier().as_str() })))
+    }
+}
+
+/// `hasActiveFactText({ sourceId, slug, fact, visibility })`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactTextQuery {
+    pub source_id: String,
+    pub slug: String,
+    pub fact: String,
+    pub visibility: String,
+}
+
+/// `readLiveFactRowTier({ sourceId, slug, rowNum, fact })`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactRowQuery {
+    pub source_id: String,
+    pub slug: String,
+    pub row_num: i32,
+    pub fact: String,
 }

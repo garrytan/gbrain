@@ -129,6 +129,48 @@ impl Brain {
         })
     }
 
+    /// `hasTakeClaim(pageId, claim)`: resolves whether the page holds a take with that claim.
+    #[napi]
+    pub fn has_take_claim<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.has_take_claim(page, &claim),
+            Err(_) => Ok(false),
+        })
+    }
+
+    /// `listTakeRowNums(pageId)`: resolves the row numbers of the page's takes, ascending.
+    #[napi]
+    pub fn list_take_row_nums<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.list_take_row_nums(page),
+            Err(_) => Ok(Vec::new()),
+        })
+    }
+
+    /// `readTakeRowTierByClaim(pageId, rowNum, claim)`: resolves `{ id, trust_tier }`, or null.
+    #[napi]
+    pub fn read_take_row_tier_by_claim<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        row_num: i32,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.read_take_row_tier_by_claim(page, row_num, &claim),
+            Err(_) => Ok(None),
+        })
+    }
+
     /// `setTakeSupersededBy(pageId, rowNum, supersededBy)`: resolves when the row is written.
     #[napi]
     pub fn set_take_superseded_by<'env>(

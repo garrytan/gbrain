@@ -242,6 +242,7 @@ import * as factTextRepair from './engine-sql/fact-text-repair.ts';
 import * as overwriteReads from './engine-sql/overwrite-reads.ts';
 import * as atomRestoreReads from './engine-sql/atom-restore-reads.ts';
 import * as movedPageReads from './engine-sql/moved-page-reads.ts';
+import * as lostFenceReads from './engine-sql/lost-fence-reads.ts';
 import * as filesOpsImpl from './engine-sql/files-ops.ts';
 import * as contradictionsCycleImpl from './engine-sql/contradictions-cycle.ts';
 import * as ontologyRepairImpl from './engine-sql/ontology-repair.ts';
@@ -2147,6 +2148,15 @@ export class PostgresEngine implements BrainEngine {
   listLivePagesSharingFrontmatterId(sourceId: string, pageId: number) { return movedPageReads.listLivePagesSharingFrontmatterId(this, sourceId, pageId); }
   hasSegmentedHistory(pageId: number) { return movedPageReads.hasSegmentedHistory(this, pageId); }
   readLivePagesByIds(sourceId: string, ids: readonly number[]) { return movedPageReads.readLivePagesByIds(this, sourceId, ids); }
+  listRetiredFenceItems(sourceIds: readonly string[], only: { source_id: string; slug: string } | null) { return lostFenceReads.listRetiredFenceItems(this, sourceIds, only); }
+  listInlineVersionTexts(pageId: number) { return lostFenceReads.listInlineVersionTexts(this, pageId); }
+  hasActiveFactText(sourceId: string, slug: string, fact: string, visibility: string) { return lostFenceReads.hasActiveFactText(this, sourceId, slug, fact, visibility); }
+  hasTakeClaim(pageId: number, claim: string) { return lostFenceReads.hasTakeClaim(this, pageId, claim); }
+  readFactTrustTier(id: number) { return lostFenceReads.readFactTrustTier(this, id); }
+  listFenceFactRowNums(sourceId: string, slug: string) { return lostFenceReads.listFenceFactRowNums(this, sourceId, slug); }
+  listTakeRowNums(pageId: number) { return lostFenceReads.listTakeRowNums(this, pageId); }
+  readLiveFactRowTier(sourceId: string, slug: string, rowNum: number, fact: string) { return lostFenceReads.readLiveFactRowTier(this, sourceId, slug, rowNum, fact); }
+  readTakeRowTierByClaim(pageId: number, rowNum: number, claim: string) { return lostFenceReads.readTakeRowTierByClaim(this, pageId, rowNum, claim); }
 
   async resolveSlugs(partial: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<string[]> {
     return pagesImpl.resolveSlugs(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'), partial, opts);

@@ -1872,6 +1872,24 @@ export interface BrainEngine {
   hasSegmentedHistory(pageId: number): Promise<boolean>;
   /** The named live pages of a source with their revision and recorded path. */
   readLivePagesByIds(sourceId: string, ids: readonly number[]): Promise<import('./engine-sql/moved-page-reads.ts').MovedPageRow[]>;
+  /** repair lost-fence-rows: the retired fence items of unproven, unheld page fence generations (engine-sql/lost-fence-reads.ts). */
+  listRetiredFenceItems(sourceIds: readonly string[], only: { source_id: string; slug: string } | null): Promise<import('./engine-sql/lost-fence-reads.ts').RetiredFenceItem[]>;
+  /** The page's inline version bodies and timelines, by id. */
+  listInlineVersionTexts(pageId: number): Promise<Array<{ id: number; compiled_truth: string; timeline: string | null }>>;
+  /** Whether the page holds an unexpired fact with this text and visibility. */
+  hasActiveFactText(sourceId: string, slug: string, fact: string, visibility: string): Promise<boolean>;
+  /** Whether the page holds a take with this claim. */
+  hasTakeClaim(pageId: number, claim: string): Promise<boolean>;
+  /** The stored trust tier of a fact, or null. */
+  readFactTrustTier(id: number): Promise<string | null>;
+  /** The row numbers of every fact the page holds, ascending. */
+  listFenceFactRowNums(sourceId: string, slug: string): Promise<number[]>;
+  /** The row numbers of every take of the page, ascending. */
+  listTakeRowNums(pageId: number): Promise<number[]>;
+  /** The id and tier of the page's unexpired fact at a row number with this text, or null. */
+  readLiveFactRowTier(sourceId: string, slug: string, rowNum: number, fact: string): Promise<{ id: number; trust_tier: string | null } | null>;
+  /** The id and tier of the take at a row number of the page with this claim, or null. */
+  readTakeRowTierByClaim(pageId: number, rowNum: number, claim: string): Promise<{ id: number; trust_tier: string | null } | null>;
 
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;

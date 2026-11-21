@@ -210,4 +210,14 @@ impl Brain {
             s.read_archived_version_body(&q)
         })
     }
+
+    /// `listInlineVersionTexts(pageId)`: resolves the page's inline version bodies and timelines, by id.
+    #[napi]
+    pub fn list_inline_version_texts<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_inline_version_texts(page_id))
+    }
 }
