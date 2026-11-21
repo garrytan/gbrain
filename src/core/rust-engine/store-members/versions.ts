@@ -21,9 +21,9 @@ function requireInteger(member: string, name: string, value: number): void {
  * `reason` is served (a null one is none), and so is `historyGap` (the page records `version_history_gap_at` first). A
  * Git-sourced reason (`reasonSource`) is served: the store drops a non-empty reason whose (commit, path) a purge
  * tombstoned for the source, in the same write, as stampableReason does. `preimage` is refused. The store prunes the page's history after the snapshot as
- * `createPageVersion` does (rust/crates/gbrain-store/src/version_prune.rs). A segmented page is refused (the store
- * answers `invalid_state` before it writes): PGLite versions it as a reference to its live body generation, which the
- * Rust store does not keep.
+ * `createPageVersion` does (rust/crates/gbrain-store/src/version_prune.rs). A segmented page is versioned as a reference
+ * to its live body generation, as PGLite's insertSegmentedVersion does (the store's `snapshot_in`). The store answers no
+ * `invalid_state` for createVersion today; one would still surface as the named refusal below.
  */
 export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string } & VersionHistory], PageVersion> = async (brain, slug, opts) => {
   const scope = takeOptions('createVersion', opts && opts.reason === null ? { ...opts, reason: undefined } : opts, ['sourceId', 'reason', 'reasonSource', 'historyGap']);

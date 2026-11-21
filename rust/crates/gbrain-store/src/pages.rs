@@ -1836,9 +1836,9 @@ impl Store {
     }
 
     /// `createVersion(slug, {sourceId})`: snapshots the page as it is. A segmented page (NULL body)
-    /// is refused with `invalid_state` before anything is written: PGLite versions it as a reference
-    /// to its live body generation, which pins that generation's manifest rows against the segment
-    /// sweep, and this store keeps no such reference.
+    /// is versioned as a reference to its live body generation (`snapshot_in`,
+    /// `page_body::segmented_reference`), as PGLite's `insertSegmentedVersion` does, so the snapshot
+    /// keeps that generation's manifest rows from the segment sweep.
     pub fn create_version(&self, slug: &str, source_id: Option<&str>) -> Result<Value> {
         self.create_version_with(slug, source_id, None)
     }

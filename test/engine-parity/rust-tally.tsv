@@ -9,7 +9,7 @@ test/engine-parity/backup-readiness-callers.test.ts	3	0
 test/engine-parity/belief-ledger.test.ts	11	0
 test/engine-parity/belief-purge-probes.test.ts	6	0
 test/engine-parity/calibration-profiles.test.ts	5	0
-test/engine-parity/caller-typed-reads.test.ts	8	0
+test/engine-parity/caller-typed-reads.test.ts	7	1
 test/engine-parity/checkpoint-validation.test.ts	2	3
 test/engine-parity/chunk-page-segmented.test.ts	7	0
 test/engine-parity/chunk-reads.test.ts	12	0
@@ -150,6 +150,7 @@ test/engine-parity/search-private-fence.test.ts	5	0
 test/engine-parity/search-reads.test.ts	18	0
 test/engine-parity/search.test.ts	23	0
 test/engine-parity/segmented-body.test.ts	20	1
+test/engine-parity/slot-ends-refusal.test.ts	1	1
 test/engine-parity/source-resolver-reads.test.ts	15	0
 test/engine-parity/source-verify-reads.test.ts	2	0
 test/engine-parity/spend-log.test.ts	11	0
