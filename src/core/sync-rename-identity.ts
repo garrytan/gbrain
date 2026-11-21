@@ -30,8 +30,7 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, openSync, readSync, closeSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
-import { JSON_SCHEMA } from 'js-yaml';
-import { loadBoundedYaml as yamlLoad } from './data-frontmatter.ts';
+import { FRONTMATTER_SCHEMA, loadBoundedYaml as yamlLoad } from './data-frontmatter.ts';
 import type { BrainEngine } from './engine.ts';
 import { spawn } from './spawn.ts';
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
@@ -74,7 +73,8 @@ export function frontmatterIdentity(head: Buffer | string | null): FrontmatterId
   const block = /^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(text);
   if (!block) return { ...NO_IDENTITY, title, digest };
   let data: unknown;
-  try { data = yamlLoad(block[1]!, { schema: JSON_SCHEMA }); } catch { return { ...NO_IDENTITY, title, digest }; }
+  // pages-03: the scalars a page stores, so `id: 007` reads as the "007" its page row holds.
+  try { data = yamlLoad(block[1]!, { schema: FRONTMATTER_SCHEMA }); } catch { return { ...NO_IDENTITY, title, digest }; }
   if (!data || typeof data !== 'object' || Array.isArray(data)) return { ...NO_IDENTITY, title, digest };
   const rawTitle = (data as Record<string, unknown>).title;
   if (typeof rawTitle === 'string' && rawTitle.includes('\0')) title = null;

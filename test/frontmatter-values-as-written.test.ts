@@ -15,6 +15,7 @@
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_SCHEMA, dump, load } from 'js-yaml';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dumpFrontmatterYaml, parseDataFrontmatter } from '../src/core/data-frontmatter.ts';
@@ -31,6 +32,7 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
 import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
+import { frontmatterIdentity } from '../src/core/sync-rename-identity.ts';
 
 const BLOCK = [
   'company: acme-example',
@@ -239,4 +241,26 @@ describe('pages-03: frontmatter values as written', () => {
     expect(file).toContain("born: '1991-06-02'");
     for (const line of WRITTEN_BACK.filter(line => !/^(zip|born):/.test(line))) expect(file.split('\n')).toContain(line);
   }, { setup: userFileSetup }), 120_000);
+
+  const ITEM = '---\ntitle: Item\ntype: note\nid: 007\n---\n# Item\n\nBody text.\n';
+  test('the rename identity reader reads an id as the page stores it (id: 007 is "007")', () => {
+    expect(frontmatterIdentity(ITEM).id).toBe('007');
+    expect(parseMarkdown(ITEM).frontmatter.id).toBe('007');
+  });
+
+  test('a case-only rename of an id: 007 page syncs as a rename, not a page identity refusal', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
+    const before = (await engine.getPage('notes/item'))!;
+    expect(before.frontmatter.id).toBe('007');
+    const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', ...args]);
+    git('mv', 'notes/Item.md', 'notes/item.md'); git('commit', '-qm', 'case rename');
+    const result = await performManagedSync(engine, { sourceId: 'default', noPull: true });
+    expect(JSON.stringify(result)).not.toContain('page_identity_changed');
+    expect(result.fileRefusals ?? []).toEqual([]);
+    const after = (await engine.getPage('notes/item'))!;
+    expect({ id: after.id, path: after.source_path }).toEqual({ id: before.id, path: 'notes/item.md' });
+  }, { setup: ({ root }: { root: string }) => {
+    mkdirSync(join(root, 'notes'), { recursive: true }); writeFileSync(join(root, 'notes/Item.md'), ITEM);
+    writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore', 'notes/Item.md']);
+  } }), 120_000);
 });
