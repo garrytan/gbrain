@@ -9,6 +9,7 @@ a page here links them instead of copying them.
 
 | Date | What we tried | Outcome |
 |---|---|---|
+| 2026-11-21 | [Rust engine parity test audit](rust-test-audit.md) | Research only; no code changed. The parity tests caught 23 of 29 reachable injected bugs. Recommends gating pushes to the Rust trunk on checks that already exist, failing a positive case on a refused or empty answer, and letting a case declare its expected value. |
 | 2026-11-20 | [Retrieval playbooks: a search recipe served on the turn](2026-11-20-retrieval-playbooks.md) | Cut candidate; nothing built. On 14 list-or-count questions the recipe got 9 right against plain's 6, one short of the +4 bar. gbrain's served "call context_pack at session start" line fixed GPT-6.2 Sol's first call whatever the recipe said. |
 | 2026-11-20 | [Finding duplicate people and companies: head-to-head](2026-11-20-entity-dedupe-head-to-head.md) | The automatic tier stays empty for people: it joined 36 of 488 different-person pairs (7.38%) on hard cases, 0 of 188 companies. Tuned Splink beat the proposed tier (+8.26 recall, −7.54 false-merge points), so a native version of that method is planned. |
 | 2026-11-20 | [A "no evidence found" line from memory](2026-11-20-no-evidence-line.md) | No build. Even a perfect line cut made-up answers on BEAM-500K by 2.0 points (−0.5 to 5.1) against a 13-point bar; particle-1 made up more answers with it. |
