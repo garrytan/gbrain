@@ -410,7 +410,12 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
       } else {
         const file = flag(args, '--file');
         if (!file) throw usageError('rule import needs --file <access.yml>.', 'gbrain access rule import --file access.yml --source <id>');
-        const parsed = parsePolicyYaml(readFileSync(file, 'utf8'));
+        let text: string;
+        try { text = readFileSync(file, 'utf8'); } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+          throw usageError(`rule import: ${file} does not exist.`, 'Nothing was written. Pass --file the path of an existing access.yml (gbrain access rule export writes one).');
+        }
+        const parsed = parsePolicyYaml(text);
         if (!parsed.ok) throw opError('access_policy_invalid', `${file} does not validate: ${parsed.problems.map(p => `${p.line ? `line ${p.line}: ` : ''}${p.message}`).join('; ')}.`, 'Nothing was written. Fix the file and run the import again.');
         desired = parsed.rules;
         message = `access: import folder rules`;

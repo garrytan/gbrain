@@ -77,7 +77,7 @@ src/commands/doctor/checks/frontmatter-keys.ts	execute_raw	1
 src/commands/doctor/checks/function-search-path.ts	execute_raw	1
 src/commands/doctor/checks/generations.ts	execute_raw	3
 src/commands/doctor/checks/git-convergence.ts	execute_raw	3
-src/commands/doctor/checks/git-holds.ts	execute_raw	4
+src/commands/doctor/checks/git-holds.ts	execute_raw	6	readNoncanonicalReaders: the read-only misspelled readers key count, the same shape as readNoncanonicalPrivate
 src/commands/doctor/checks/git-index-lag.ts	execute_raw	1
 src/commands/doctor/checks/global-maintenance-timeouts.ts	execute_raw	2
 src/commands/doctor/checks/google-api-access.ts	execute_raw	1
@@ -302,9 +302,8 @@ src/core/agent-install/setup.ts	execute_raw	2
 src/core/agent-install/shared-skills.ts	execute_raw	1
 src/core/ai/chat-usage.ts	execute_raw	1
 src/core/ai/decide/egress.ts	execute_raw	1
-src/core/ai/decide/proposals-store.ts	execute_raw	16
-src/core/ai/decide/review-lane.ts	execute_raw	17
-src/core/ai/decide/store.ts	execute_raw	19
+src/core/ai/decide/proposals-store.ts	execute_raw	6
+src/core/ai/decide/review-lane.ts	execute_raw	6
 src/core/analyze-lock.ts	execute_raw	1
 src/core/apple-contacts/apple-contacts-source.ts	execute_raw	5	GST-3256, pre-ratchet like imessage-source.ts (#9634): reads the source row, finds the page a contact id owns and the ids the source owns, rereads a contact page for its review, stamps sources.last_sync_at; no typed engine method exists yet
 src/core/apple-contacts/identity-match.ts	execute_raw	5	GST-3256, pre-ratchet like imessage-source.ts (#9634): lists the candidate sources, runs the exactIdentityStatement candidate read (engine-sql/exact-identity.ts, the whois read), and reads/writes/clears the identity-review op_checkpoints row; no typed engine method exists yet
@@ -1246,7 +1245,6 @@ src/eval/brainbench/metrics/write-back.ts	execute_raw	1
 src/eval/brainbench/seed.ts	execute_raw	1
 src/eval/brainbench/trust-scenario.ts	execute_raw	13
 src/eval/brainbench/trust-suites.ts	execute_raw	1
-src/eval/decide-eval-flags.ts	execute_raw	1
 src/eval/longmemeval/harness.ts	execute_raw	2
 src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4
