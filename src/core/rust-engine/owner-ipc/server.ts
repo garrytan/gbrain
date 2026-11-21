@@ -26,7 +26,7 @@
  *   once, waiting or running (`inflight_bytes`), or more than `maxConnections` open connections (`connections`, a
  *   `refused` frame, then the connection closes). A call's bytes and its queue slot come back exactly once: when its
  *   engine call settles, or when it leaves the queue without running (cancel, deadline, closed connection, close()).
- * - Peer identity: the owner reads each connecting process's uid from the kernel (cli-socket/peer-cred.ts) and refuses
+ * - Peer identity: the owner reads each connecting process's uid from the kernel (src/core/peer-cred.ts) and refuses
  *   any other uid, or one it cannot read, with a `refused` frame carrying `owner_ipc_peer_refused` (`peer_uid`); no
  *   frame of that connection is read. Where the platform cannot read peer uids (Windows, other Unixes), the private
  *   0700 directory and the 0600 socket are the only guard.
@@ -48,7 +48,7 @@ import { withRequestSignal } from '../../request-signal.ts';
 import { withReadDeadline } from '../../read-deadline.ts';
 import { withCallerAccess, withoutCallerAccess, type CallerAccess } from '../../search/private-visibility.ts';
 import { claimLocalIpcBinding, isWindowsIpcPipe } from '../../context/ipc-path.ts';
-import { peerCredSupport, peerUid, type PeerCredSupport } from '../../cli-socket/peer-cred.ts';
+import { peerCredSupport, peerUid, type PeerCredSupport } from '../../peer-cred.ts';
 import { decodeValue, encodeError, encodeValue, type Wire } from './codec.ts';
 import {
   OWNER_IPC_DEFAULT_PERMITS, OWNER_IPC_MAX_CONNECTIONS, OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_MAX_INFLIGHT_BYTES, OWNER_IPC_MAX_QUEUED, OWNER_IPC_REFUSED_DRAIN_MS, OWNER_IPC_REFUSED_LIMIT,

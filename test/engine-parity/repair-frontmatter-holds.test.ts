@@ -28,7 +28,6 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
-import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
 import { localHostId } from '../../src/core/persistence/identity.ts';
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
@@ -66,54 +65,52 @@ describe('engine parity: repair frontmatter over deleted-page holds', () => {
       const home = mkdtempSync(join(tmpdir(), 'gbrain-parity-lc2-'));
       try {
         return await withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
-          try {
-            const root = join(home, SOURCE);
-            mkdirSync(join(root, 'notes'), { recursive: true });
-            git(root, 'init', '-q');
-            git(root, 'config', 'user.name', 'Example'); git(root, 'config', 'user.email', 'example@example.invalid');
-            writeFileSync(join(root, '.git', 'hooks', 'post-commit'), '#!/bin/sh\n# gbrain brain-durability post-commit hook (v0.42.44+)\n');
-            chmodSync(join(root, '.git', 'hooks', 'post-commit'), 0o755);
-            writeFileSync(join(root, 'notes', 'ivy.md'), note('Ivy', 'Ivy private note. Okapi keyword.'));
-            writeFileSync(join(root, 'notes', 'jon.md'), note('Jon', 'Jon note.'));
-            commit(root, 'fixture');
-            // Rust stops here: raw_sql (see the header).
-            await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-            await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [SOURCE, root]);
-            await claimWorktree(engine, SOURCE, root);
-            await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-            const sync = () => performManagedSync(engine, { sourceId: SOURCE, noPull: true, noEmbed: true, noExtract: true });
-            await sync();
-            const ctx = { engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote: false, sourceId: SOURCE } as unknown as OperationContext;
-            for (const [slug, purge] of [['notes/ivy', true], ['notes/jon', false]] as const) {
-              const snapshot = (await engine.readPageSnapshot(slug, { sourceId: SOURCE, includeDeleted: true }))!;
-              await submitPageMutation(ctx, { operation: 'delete_page',
-                params: { slug, source_id: SOURCE, request_id: randomUUID(), expected_revision: snapshot.revision, ...(purge ? { purge: true } : {}) }, waitMs: 30_000 });
-              await gitEffectsSettled(engine);
-            }
-            writeFileSync(join(root, 'notes', 'ivy.md'), note('Ivy', 'Ivy private note. Okapi keyword.\none more line'));
-            writeFileSync(join(root, 'notes', 'jon.md'), note('Jon', 'Jon note.\none more line'));
-            commit(root, 'restore with an edit');
-            await sync();
-            const holds = ((await readGitSourceHolds(engine, { sourceIds: [SOURCE] }))[0]?.holds ?? []).map(hold => [hold.path, hold.code, hold.meta.state ?? null]).sort();
-            const runner = await repairRunner(engine, { apply: false, noEmbed: true, logger: quiet });
-            const preview = await runner.run('frontmatter', await resolveRepairScope(engine, SOURCE), { explicit: true, sourceFlag: SOURCE, includeAmbiguous: true });
-            const details = preview.details as unknown as FrontmatterPreviewDetails;
-            const result = {
-              holds,
-              counts: details.counts,
-              review: details.needs_review.map(entry => ({ path: entry.path, code: entry.code,
-                routed: entry.resolution.includes(`gbrain repair file-drift --source ${SOURCE} --held --side deleted --state ${entry.path === 'notes/ivy.md' ? 'purged_differs' : 'tombstone_edited'} --only ${entry.path}`) })),
-              ivy: await engine.readPageSnapshot('notes/ivy', { sourceId: SOURCE, includeDeleted: true }),
-              jonDeleted: !!(await engine.readPageSnapshot('notes/jon', { sourceId: SOURCE, includeDeleted: true }))?.page.deleted_at,
-            };
-            expect(result).toEqual({
-              holds: [['notes/ivy.md', 'file_drift', 'purged_differs'], ['notes/jon.md', 'file_drift', 'tombstone_edited']],
-              counts: { safe: 0, interpretive: 0, interpretive_pending: 0, needs_review: 2 },
-              review: [{ path: 'notes/ivy.md', code: 'file_drift', routed: true }, { path: 'notes/jon.md', code: 'file_drift', routed: true }],
-              ivy: null, jonDeleted: true,
-            });
-            return result;
-          } finally { await disposePersistenceConsumer(engine); }
+          const root = join(home, SOURCE);
+          mkdirSync(join(root, 'notes'), { recursive: true });
+          git(root, 'init', '-q');
+          git(root, 'config', 'user.name', 'Example'); git(root, 'config', 'user.email', 'example@example.invalid');
+          writeFileSync(join(root, '.git', 'hooks', 'post-commit'), '#!/bin/sh\n# gbrain brain-durability post-commit hook (v0.42.44+)\n');
+          chmodSync(join(root, '.git', 'hooks', 'post-commit'), 0o755);
+          writeFileSync(join(root, 'notes', 'ivy.md'), note('Ivy', 'Ivy private note. Okapi keyword.'));
+          writeFileSync(join(root, 'notes', 'jon.md'), note('Jon', 'Jon note.'));
+          commit(root, 'fixture');
+          // Rust stops here: raw_sql (see the header).
+          await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+          await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [SOURCE, root]);
+          await claimWorktree(engine, SOURCE, root);
+          await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+          const sync = () => performManagedSync(engine, { sourceId: SOURCE, noPull: true, noEmbed: true, noExtract: true });
+          await sync();
+          const ctx = { engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote: false, sourceId: SOURCE } as unknown as OperationContext;
+          for (const [slug, purge] of [['notes/ivy', true], ['notes/jon', false]] as const) {
+            const snapshot = (await engine.readPageSnapshot(slug, { sourceId: SOURCE, includeDeleted: true }))!;
+            await submitPageMutation(ctx, { operation: 'delete_page',
+              params: { slug, source_id: SOURCE, request_id: randomUUID(), expected_revision: snapshot.revision, ...(purge ? { purge: true } : {}) }, waitMs: 30_000 });
+            await gitEffectsSettled(engine);
+          }
+          writeFileSync(join(root, 'notes', 'ivy.md'), note('Ivy', 'Ivy private note. Okapi keyword.\none more line'));
+          writeFileSync(join(root, 'notes', 'jon.md'), note('Jon', 'Jon note.\none more line'));
+          commit(root, 'restore with an edit');
+          await sync();
+          const holds = ((await readGitSourceHolds(engine, { sourceIds: [SOURCE] }))[0]?.holds ?? []).map(hold => [hold.path, hold.code, hold.meta.state ?? null]).sort();
+          const runner = await repairRunner(engine, { apply: false, noEmbed: true, logger: quiet });
+          const preview = await runner.run('frontmatter', await resolveRepairScope(engine, SOURCE), { explicit: true, sourceFlag: SOURCE, includeAmbiguous: true });
+          const details = preview.details as unknown as FrontmatterPreviewDetails;
+          const result = {
+            holds,
+            counts: details.counts,
+            review: details.needs_review.map(entry => ({ path: entry.path, code: entry.code,
+              routed: entry.resolution.includes(`gbrain repair file-drift --source ${SOURCE} --held --side deleted --state ${entry.path === 'notes/ivy.md' ? 'purged_differs' : 'tombstone_edited'} --only ${entry.path}`) })),
+            ivy: await engine.readPageSnapshot('notes/ivy', { sourceId: SOURCE, includeDeleted: true }),
+            jonDeleted: !!(await engine.readPageSnapshot('notes/jon', { sourceId: SOURCE, includeDeleted: true }))?.page.deleted_at,
+          };
+          expect(result).toEqual({
+            holds: [['notes/ivy.md', 'file_drift', 'purged_differs'], ['notes/jon.md', 'file_drift', 'tombstone_edited']],
+            counts: { safe: 0, interpretive: 0, interpretive_pending: 0, needs_review: 2 },
+            review: [{ path: 'notes/ivy.md', code: 'file_drift', routed: true }, { path: 'notes/jon.md', code: 'file_drift', routed: true }],
+            ivy: null, jonDeleted: true,
+          });
+          return result;
         });
       } finally { rmSync(home, { recursive: true, force: true }); }
     },

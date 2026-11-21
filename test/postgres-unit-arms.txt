@@ -214,6 +214,7 @@ test/engine-parity/forget-remember.test.ts
 test/engine-parity/generation-output-parity.test.ts
 test/engine-parity/generation-page-rows-order.test.ts
 test/engine-parity/generation-write-parity.test.ts
+test/engine-parity/harness-consumer-stop.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/holding-page-purges.test.ts
 test/engine-parity/hot-memory-watermark.test.ts

@@ -396,6 +396,22 @@ function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unkn
   });
 }
 
+/**
+ * Stop the persistence write queue a case started, before the next reset or the arm's close. A write operation starts a
+ * consumer keyed on the engine object the case receives (the recording wrapper `given`, which no arm lifecycle or reset
+ * knows), and the reset does not stop it: its projection and effect work ran into the next case's reset, a Postgres
+ * deadlock on `DELETE FROM sources` in 1 of 10 stress runs of the slug parity file before it stopped the queue by hand.
+ * So every case, on every arm, stops the consumer of the wrapper and of the arm's own engine here, in a finally block.
+ * Disposing an engine with no consumer does nothing.
+ */
+async function stopWriteQueue(...engines: BrainEngine[]): Promise<void> {
+  let failure: unknown;
+  for (const engine of engines) {
+    try { await disposePersistenceConsumer(engine); } catch (error) { failure ??= error; }
+  }
+  if (failure !== undefined) throw failure;
+}
+
 export interface ParitySuite {
   /** Run `scenario` on every arm from a reset brain; compare the returned observables. */
   parityTest<T>(name: string, opts: ParityCaseOpts, scenario: ParityScenario<T>): void;
@@ -463,36 +479,48 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
           if (arm.backend === 'rust') skipped++;
           continue;
         }
-        if (arm.backend === 'rust') {
-          const divergence = readDivergences().find((row) => row.file === testFile && row.name === name);
-          try {
-            await checkRustArm({ name, opts, run: () => scenario(recordingEngine(arm.engine, calls, refusals), arm.backend, ctx), calls, refusals,
-              reference: results[0], divergence }, tally);
-          } finally {
-            for (const engine of extra) await engine.disconnect().catch(() => undefined);
-          }
-          continue;
-        }
-        let value: T;
+        // The engine object the scenario receives. Write operations key their persistence consumer on it, so it is the
+        // one the harness stops when the case ends (stopWriteQueue).
+        const given = recordingEngine(arm.engine, calls, refusals);
+        let scenarioFailed = false;
         try {
-          if (!runs) {
-            // The arm lacks a `refuses` capability: the scenario must stop on the typed refusal.
-            const refusal = await scenario(recordingEngine(arm.engine, calls), arm.backend, ctx).then(() => null, (e: unknown) => e);
-            expect({ backend: arm.backend, refused: isCapabilityRefusal(refusal, opts.requires!) })
-              .toEqual({ backend: arm.backend, refused: true });
+          if (arm.backend === 'rust') {
+            const divergence = readDivergences().find((row) => row.file === testFile && row.name === name);
+            try {
+              await checkRustArm({ name, opts, run: () => scenario(given, arm.backend, ctx), calls, refusals,
+                reference: results[0], divergence }, tally);
+            } finally {
+              for (const engine of extra) await engine.disconnect().catch(() => undefined);
+            }
             continue;
           }
-          value = await scenario(recordingEngine(arm.engine, calls), arm.backend, ctx);
+          let value: T;
+          try {
+            if (!runs) {
+              // The arm lacks a `refuses` capability: the scenario must stop on the typed refusal.
+              const refusal = await scenario(given, arm.backend, ctx).then(() => null, (e: unknown) => e);
+              expect({ backend: arm.backend, refused: isCapabilityRefusal(refusal, opts.requires!) })
+                .toEqual({ backend: arm.backend, refused: true });
+              continue;
+            }
+            value = await scenario(given, arm.backend, ctx);
+          } catch (error) {
+            if (error instanceof Error) error.message = `[${arm.backend}] ${error.message}`;
+            throw error;
+          } finally {
+            // A case may already have disconnected it; a second disconnect is harmless or refused.
+            for (const engine of extra) await engine.disconnect().catch(() => undefined);
+          }
+          const missing = opts.methods.filter((m) => !calls.has(m));
+          expect({ backend: arm.backend, declaredButNotCalled: missing }).toEqual({ backend: arm.backend, declaredButNotCalled: [] });
+          results.push({ backend: arm.backend, value });
         } catch (error) {
-          if (error instanceof Error) error.message = `[${arm.backend}] ${error.message}`;
+          scenarioFailed = true;
           throw error;
         } finally {
-          // A case may already have disconnected it; a second disconnect is harmless or refused.
-          for (const engine of extra) await engine.disconnect().catch(() => undefined);
+          // A failed stop must not hide the case's own failure; on its own it fails the case.
+          await stopWriteQueue(given, arm.engine).catch((error: unknown) => { if (!scenarioFailed) throw error; });
         }
-        const missing = opts.methods.filter((m) => !calls.has(m));
-        expect({ backend: arm.backend, declaredButNotCalled: missing }).toEqual({ backend: arm.backend, declaredButNotCalled: [] });
-        results.push({ backend: arm.backend, value });
       }
       const [first, ...rest] = results;
       for (const other of rest) {
