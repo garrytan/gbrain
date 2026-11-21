@@ -1879,12 +1879,12 @@ impl Store {
     }
 
     /// `getVersions(slug, opts)`, newest first; under `excludePrivate`, only the versions the page
-    /// and version policies keep.
+    /// and version policies keep, each with its reason only when its successor does not withhold it.
     pub fn get_versions(&self, slug: &str, options: &VersionsOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
         let include_body = options.include_body.unwrap_or(true);
-        let mut rows: Vec<VersionRecord> = Vec::new();
+        let mut rows: Vec<(VersionRecord, Option<String>)> = Vec::new();
         let sources = scope_sources(&*read, &options.source_id, &options.source_ids)?;
         for id in sources {
             if let Some(page) = read_page(&*read, &id, &slug)? {
@@ -1894,38 +1894,69 @@ impl Store {
                 {
                     continue;
                 }
+                let mut versions: Vec<VersionRecord> = Vec::new();
                 scan_prefix(
                     &*read,
                     &keys::version_prefix(page.id),
                     false,
                     &mut |_, v| {
-                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v)
-                            && !policy.is_some_and(|policy| {
-                                crate::facts::caller_version_hidden(
-                                    &page,
-                                    &row.page_type,
-                                    &row.frontmatter,
-                                    policy,
-                                )
-                            })
-                        {
-                            rows.push(row);
+                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v) {
+                            versions.push(row);
                         }
                         true
                     },
                 )?;
+                versions.sort_by_key(|v| v.id);
+                // A policy reader sees a version's reason only when its successor (the next
+                // version over every version of the page, never only the visible ones; the live
+                // page, which the page check above covers, for the newest) does not withhold it,
+                // and no prune deleted that successor (`replacedBecauseSql`).
+                let reasons: Vec<Option<String>> = versions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, row)| {
+                        let withheld = policy.is_some_and(|policy| {
+                            row.successor_pruned
+                                || versions.get(i + 1).is_some_and(|next| {
+                                    crate::facts::successor_withholds_reason(
+                                        &next.page_type,
+                                        &next.frontmatter,
+                                        policy,
+                                    )
+                                })
+                        });
+                        if withheld {
+                            None
+                        } else {
+                            row.change_reason.clone()
+                        }
+                    })
+                    .collect();
+                for (row, reason) in versions.into_iter().zip(reasons) {
+                    if !policy.is_some_and(|policy| {
+                        crate::facts::caller_version_hidden(
+                            &page,
+                            &row.page_type,
+                            &row.frontmatter,
+                            policy,
+                        )
+                    }) {
+                        rows.push((row, reason));
+                    }
+                }
             }
         }
-        rows.sort_by_key(|a| std::cmp::Reverse(a.id));
+        rows.sort_by_key(|(a, _)| std::cmp::Reverse(a.id));
         if let Some(limit) = options.limit {
             rows.truncate(limit);
         }
         Ok(rows
             .iter()
-            .map(|r| {
+            .map(|(r, reason)| {
                 let mut v = r.to_json(include_body);
-                // The trusted read's `replaced_because` is the stored reason (`replacedBecauseSql`).
-                v["replaced_because"] = json!(r.change_reason);
+                // `replacedBecauseSql`: the stored reason for a trusted read, the successor-checked
+                // one for a policy reader.
+                v["replaced_because"] = json!(reason);
                 v
             })
             .collect())
