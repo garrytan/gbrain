@@ -17,7 +17,7 @@ import { parseAppleContactsSourceConfig } from '../core/apple-contacts/source-co
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { appleContactsError } from '../core/apple/contacts-client.ts';
 import { DESTRUCTIVE_CONFIG_KEY, OWNER_KEY_FILE_CONFIG_KEY, readOwnerKey, sendContactsBatch, WRITE_CONFIG_KEY, type ContactsWriteChange } from '../core/apple/contacts-write-client.ts';
-import { ENRICH_CONFIG_KEY, proposeEnrichment, readEnrichRecord, WRITE_TOKEN_FILE_CONFIG_KEY } from '../core/apple-contacts/enrich.ts';
+import { CREATE_CARDS_CONFIG_KEY, ENRICH_CONFIG_KEY, proposeEnrichment, readEnrichRecord, WRITE_TOKEN_FILE_CONFIG_KEY } from '../core/apple-contacts/enrich.ts';
 import { listSources } from '../core/sources-ops.ts';
 import { parsePhoneCountryCode, PHONE_COUNTRY_CODE_CONFIG_KEY } from '../core/phone-key.ts';
 
@@ -45,6 +45,7 @@ const HELP = [
   '',
   'Enrichment after each pull fills empty companies and job titles and adds confirmed emails and phones from the brain:',
   '  gbrain config set ' + ENRICH_CONFIG_KEY + ' dry_run|on (off by default); on also needs ' + WRITE_CONFIG_KEY + ' on and ' + WRITE_TOKEN_FILE_CONFIG_KEY + '.',
+  '  New cards from Google Contacts also need: gbrain config set ' + CREATE_CARDS_CONFIG_KEY + ' true (off by default).',
   '  enrich status shows the last run; enrich dry-run lists what the next run would send and sends nothing.',
 ].join('\n');
 

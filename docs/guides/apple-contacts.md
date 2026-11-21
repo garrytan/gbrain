@@ -111,9 +111,9 @@ an outside service.
 - **Emails and phones you confirmed:** added beside the card's own, when they come from your Google Contacts entry that
   shares an email or phone with that card alone, or from a fact on the linked person page that you stated, confirmed
   or curated. Never a value another card already has, or one an extractor guessed from mail or the web.
-- **New cards:** at most 10 a run (the helper allows 50 a day), for a Google Contacts entry that no card shares a value
-  with and whose email or phone matches exactly one person page. The helper puts each one in the group "Added by
-  GBrain".
+- **New cards, only if you switch them on** (`gbrain config set apple_contacts.enrich.create_cards true`; off by
+  default): at most 10 a run (the helper allows 50 a day), for a Google Contacts entry that no card shares a value with
+  and whose email or phone matches exactly one person page. The helper puts each one in the group "Added by GBrain".
 - A card linked to two or more people gets nothing until you settle who it is.
 
 Switches, all off by default:

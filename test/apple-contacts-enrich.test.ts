@@ -3,7 +3,7 @@
  * fake write route: off by default; dry_run records the proposals and sends nothing; on sends one enrich-token batch
  * only when writes are on. It fills only empty company and job title fields from the one linked person page, adds only
  * confirmed emails and phones (the owner's Google Contacts row for that card alone, or a fact the owner stated), creates
- * a card only for a Google Contacts entry matching one person page, never touches a card linked to two people, and its
+ * a card only when switched on and only for a Google Contacts entry matching one person page, never touches a card linked to two people, and its
  * record holds no email or phone. Every name and address is a placeholder; nothing talks to a real Mac.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
@@ -91,20 +91,23 @@ describe('apple contacts enrichment (repo-less brain)', () => {
     expect(sent).toHaveLength(0);
   });
 
-  test('dry_run records only adds and fills from confirmed values, and sends nothing', async () => {
+  test('dry_run records only adds and fills from confirmed values, and sends nothing; new cards only once switched on', async () => {
     await engine.setConfig('apple_contacts.enrich', 'dry_run');
+    await run();
+    const existing = [
+      'add_value c-alice emails  google-a:contacts/alice',
+      'add_value c-alice phones  default:people/alice-example',
+      'fill c-alice job_title Engineer default:people/alice-example',
+      'fill c-alice organization Acme Example default:people/alice-example',
+      'fill c-bob job_title Designer default:people/bob-example',
+    ];
+    expect(shape((await readEnrichRecord(engine, sourceId))!.changes)).toEqual(existing);
+    await engine.setConfig('apple_contacts.enrich.create_cards', 'true');
     await run();
     const record = (await readEnrichRecord(engine, sourceId))!;
     expect(record.mode).toBe('dry_run');
     expect(record.sent).toBe(false);
-    expect(shape(record.changes)).toEqual([
-      'add_value c-alice emails  google-a:contacts/alice',
-      'add_value c-alice phones  default:people/alice-example',
-      'create new   google-a:contacts/carol',
-      'fill c-alice job_title Engineer default:people/alice-example',
-      'fill c-alice organization Acme Example default:people/alice-example',
-      'fill c-bob job_title Designer default:people/bob-example',
-    ]);
+    expect(shape(record.changes)).toEqual([...existing, 'create new   google-a:contacts/carol'].sort());
     const stored = JSON.stringify(record);
     for (const value of ['alice.work@example.invalid', '0123', 'carol@example.invalid', '0177', 'alice.old']) expect(stored).not.toContain(value);
     expect(sent).toHaveLength(0);

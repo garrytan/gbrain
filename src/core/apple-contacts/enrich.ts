@@ -9,8 +9,9 @@
  *   - a confirmed email or phone is added beside the card's own: one from a Google Contacts page that shares an exact
  *     email or phone with that card alone, or from a fact on the linked person page the owner confirmed, curated or
  *     stated themselves (`content_origin user_said`); never a value another card holds;
- *   - a new card, at most 10 a run (the helper allows 50 a day), for a Google Contacts entry no card shares a
- *     value with whose email or phone matches exactly one person page; the helper files it in "Added by GBrain".
+ *   - only with `apple_contacts.enrich.create_cards` = true (default false: the owner is shrinking the address book),
+ *     a new card, at most 10 a run (the helper allows 50 a day), for a Google Contacts entry no card shares a value with
+ *     whose email or phone matches exactly one person page; the helper files it in "Added by GBrain".
  *
  * Nothing here changes or removes a value already on a card; the helper refuses a fill on a field that is not empty.
  * Values come from the brain only, never an outside service. `apple_contacts.enrich` = dry_run records what would be
@@ -31,6 +32,7 @@ import { readWriteToken, sendContactsBatch, WRITE_CONFIG_KEY, type ContactsWrite
 
 export const ENRICH_CONFIG_KEY = 'apple_contacts.enrich';
 export const WRITE_TOKEN_FILE_CONFIG_KEY = 'apple_contacts.write_token_file';
+export const CREATE_CARDS_CONFIG_KEY = 'apple_contacts.enrich.create_cards';
 /** op_checkpoints row (fingerprint = source id): the last enrichment run, as the one element of completed_keys. */
 export const APPLE_CONTACTS_ENRICH_OP = 'apple-contacts-enrich';
 export const ENRICH_MAX_CHANGES = 200;
@@ -60,6 +62,7 @@ const PHONE_RE = /\+?\d[\d ().-]{5,}\d/g;
 
 /** Every enrichment change for this source, in send order (fills, then added values, then new cards), within the caps. */
 export async function proposeEnrichment(engine: BrainEngine, sourceId: string, countryCode: string): Promise<EnrichProposal[]> {
+  const createCards = ['true', 'on'].includes(String(await engine.getConfig(CREATE_CARDS_CONFIG_KEY).catch(() => null) ?? '').trim().toLowerCase());
   const cards = (await engine.executeRaw<{ id: number; slug: string; frontmatter: unknown }>(
     `SELECT id, slug, frontmatter FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND frontmatter ? '${APPLE_CONTACT_ID_KEY}' ORDER BY slug`, [sourceId]))
     .map(row => { const fm = json(row.frontmatter); return { pageId: row.id, slug: row.slug, id: String(fm[APPLE_CONTACT_ID_KEY]), emails: list(fm.emails), phones: list(fm.phones),
@@ -132,7 +135,7 @@ export async function proposeEnrichment(engine: BrainEngine, sourceId: string, c
       for (const p of phones) addValue(card!, 'phones', p, ref);
       continue;
     }
-    if (owners.size > 1 || creates.length >= ENRICH_MAX_CREATES) continue;
+    if (!createCards || owners.size > 1 || creates.length >= ENRICH_MAX_CREATES) continue;
     const keys = keysOf(emails, phones);
     const name = text(g.title);
     if (!keys.length || keys.some(k => added.has(k)) || !name || name.includes('@') || /^[+\d\s().-]+$/.test(name)) continue;
