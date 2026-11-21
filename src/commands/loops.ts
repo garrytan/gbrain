@@ -86,6 +86,7 @@ interface WaitingResult {
       due_at: string | null;
       quote?: string;
       deep_link?: string;
+      thread_id?: string;
       page_slug: string | null;
     }>;
     context?: { summary?: string; last_touched?: { last_timeline_date?: string | null } };

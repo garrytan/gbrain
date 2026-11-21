@@ -1,0 +1,4 @@
+**`gbrain waiting`/`open_loops` now expose `thread_id` for trusted local callers.**
+
+### Added
+- `thread_id` on each loop in `open_loops`'s grouped output (and the CLI's `gbrain waiting --json`), gated the same as `deep_link`/`quote` (trusted local only; redacted for remote callers). LLM-extracted commitment loops are the majority of loops without a `deep_link` (docs/guides/open-loops.md), so until now a caller building its own commitment tracking on top of `gbrain waiting` had no stable way to recognize "this loop is the same Gmail thread as one I already resolved" once the loop's own numeric `id` changes (a loop can close and reopen on new thread activity, per `open-loops.md`'s close semantics). `thread_id` was already stored on every `open_loops` row (`loops-store.ts`); it just never reached a caller.
