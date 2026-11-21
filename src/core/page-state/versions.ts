@@ -26,8 +26,7 @@ export interface VersionHistory { reason?: string | null; reasonSource?: { commi
  */
 async function stampableReason(tx: BrainEngine, sourceId: string, history: VersionHistory): Promise<string | null> {
   if (!history.reason || !history.reasonSource) return history.reason ?? null;
-  const purged = await tx.executeRaw('SELECT 1 FROM reason_purge_tombstones WHERE source_id = $1 AND commit_sha = $2 AND path = $3',
-    [sourceId, history.reasonSource.commit, history.reasonSource.path]);
+  const purged = await tx.readReasonPurgeTombstones(sourceId, { commit_sha: history.reasonSource.commit, path: history.reasonSource.path });
   return purged.length ? null : history.reason;
 }
 

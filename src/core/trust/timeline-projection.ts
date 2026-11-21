@@ -19,11 +19,8 @@ import { PageMissingError } from '../engine-errors.ts';
 const CHANNEL = 'derive:timeline';
 
 async function pageInputs(engine: BrainEngine, refs: Array<{ source_id: string; slug: string }>): Promise<Map<string, TaintInput>> {
-  const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string; trust_tier: string | null }>(
-    `SELECT p.id,p.source_id,p.slug,p.trust_tier FROM pages p
-      JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug`,
-    [JSON.stringify(refs)]);
-  return new Map(rows.map(row => [`${row.source_id}:${row.slug}`, { table: 'pages', id: Number(row.id), tier: storedTrustTier(row.trust_tier) }]));
+  const rows = await engine.listPageTrustTiersByKey(refs);
+  return new Map(rows.map(row => [`${row.source_id}:${row.slug}`, { table: 'pages', id: row.id, tier: storedTrustTier(row.trust_tier) }]));
 }
 
 /**
@@ -56,9 +53,7 @@ export async function addProjectedTimelineBatch(engine: BrainEngine, rows: Timel
     inserted += await maintenanceTransaction(engine, async tx => {
       if (requirePages) {
         const pages = [...new Map(kept.map(({ row }) => [key(row), { source_id: row.source_id ?? 'default', slug: row.slug }])).values()];
-        const live = new Set((await tx.executeRaw<{ source_id: string; slug: string }>(`SELECT p.source_id,p.slug FROM pages p
-          JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug
-          WHERE p.deleted_at IS NULL FOR SHARE OF p`, [JSON.stringify(pages)])).map(page => `${page.source_id}:${page.slug}`));
+        const live = new Set((await tx.lockLivePagesByKey(pages)).map(page => `${page.source_id}:${page.slug}`));
         const missing = pages.find(page => !live.has(`${page.source_id}:${page.slug}`));
         if (missing) throw new PageMissingError('addTimelineEntry', 'page', missing.slug, missing.source_id);
       }

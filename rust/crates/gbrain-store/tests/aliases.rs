@@ -754,3 +754,47 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
         ]
     );
 }
+
+#[test]
+fn list_slug_aliases_reads_one_source_in_alias_order_and_survives_a_reopen() {
+    let dir = TempDir::new("aliases-list");
+    {
+        let store = open(&dir);
+        source(&store, "other");
+        put(&store, "notes/m");
+        put(&store, "notes/a");
+        put_in(&store, "notes/a", "notes/a", json!({}), Some("other"));
+        store.update_slug("notes/m", "notes/n", None).unwrap();
+        store.update_slug("notes/a", "notes/b", None).unwrap();
+        store.update_slug("notes/b", "notes/c", None).unwrap();
+        store
+            .update_slug("notes/a", "notes/z", Some("other"))
+            .unwrap();
+    }
+    let store = open(&dir);
+    let rows = |source: &str| -> Vec<(String, String)> {
+        store
+            .list_slug_aliases(source)
+            .unwrap()
+            .into_iter()
+            .map(|r| {
+                (
+                    r["alias_slug"].as_str().unwrap().to_string(),
+                    r["canonical_slug"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    let pair = |a: &str, c: &str| (a.to_string(), c.to_string());
+    assert_eq!(
+        rows("default"),
+        vec![
+            pair("notes/a", "notes/c"),
+            pair("notes/b", "notes/c"),
+            pair("notes/m", "notes/n"),
+        ]
+    );
+    assert_eq!(rows("other"), vec![pair("notes/a", "notes/z")]);
+    assert!(rows("missing").is_empty());
+    assert!(rows("bad\0id").is_empty());
+}

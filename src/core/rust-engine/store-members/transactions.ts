@@ -11,8 +11,8 @@
  *
  * Transaction-local settings (`set_config(name, value, true)`): the six write trust settings go to the store's write
  * trust context on the transaction's handle (`applyWriteTrust` / `readWriteTrust`), which the trust fence reads and
- * the stamp will read; the attribution and source-scope settings stay on the transaction (`RustTransactionScope
- * .settings`). Both end with the transaction; a savepoint rollback restores both. Any other name refuses.
+ * the stamp will read; the attribution, source-scope and quiescence settings stay on the transaction
+ * (`RustTransactionScope.settings`). Both end with the transaction; a savepoint rollback restores both. Any other name refuses.
  *
  * Export only BrainEngine members from this file: index.ts spreads the whole module into STORE_MEMBERS.
  */
@@ -39,9 +39,12 @@ const TRUST_SETTINGS: ReadonlySet<string> = new Set([
   'gbrain.write_trust_backfill', 'gbrain.write_trust_keep', 'gbrain.write_open_facts',
   'gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id',
 ]);
-/** The settings the transaction keeps in TypeScript (`RustTransactionScope.settings`): source scope and protocols. */
+/**
+ * The settings the transaction keeps in TypeScript (`RustTransactionScope.settings`): source scope, protocols and the
+ * writer quiescence declaration skill activation sets (`gbrain.writer_quiesced`).
+ */
 const SCOPE_SETTINGS: ReadonlySet<string> = new Set([
-  'gbrain.write_sources', 'gbrain.git_protocol', 'gbrain.persistence_protocol',
+  'gbrain.write_sources', 'gbrain.git_protocol', 'gbrain.persistence_protocol', 'gbrain.writer_quiesced',
 ]);
 /** engine-sql/transaction-settings.ts `SETTING_NAME`: the same check and the same error, before any work. */
 const SETTING_NAME = /^[a-z_][a-z0-9_.]*$/;

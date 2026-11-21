@@ -53,6 +53,16 @@ async function runEntry(engine: BrainEngine, entry: DoctorEntry): Promise<Check[
   return (await entry.run(ctxFor(engine))) as Check[];
 }
 
+/** The explicit fixture for an engine that does not report `drop`: the same engine, its capability list without them. */
+function withoutCapabilities<E extends BrainEngine>(engine: E, drop: readonly string[]): E {
+  const without = new Set([...engine.capabilities].filter((c) => !drop.includes(c)));
+  return new Proxy(engine, { get: (target, prop) => {
+    if (prop === 'capabilities') return without;
+    const value = Reflect.get(target, prop, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+}
+
 /** What every arm shares: the check answered, and under which name. The per-arm answer is asserted beside it. */
 async function answered(probe: () => Promise<Check | Check[]>): Promise<{ answered: true; checks: Check[] } | { answered: false; error: string }> {
   try {
@@ -145,6 +155,18 @@ describe('engine parity: catalog probes', () => {
     const result = await answered(() => runEntry(engine, ownerHostStaleEntry));
     if (!result.answered) return result;
     const [check] = result.checks;
+    // The released state: the Rust store keeps the journal, so the check reaches the owner-host read and skips it by name.
+    if (backend === 'rust') expect({ status: check?.status, outcome: (check?.details as { outcome?: unknown } | undefined)?.outcome, reason: (check?.details as { reason?: unknown } | undefined)?.reason })
+      .toEqual({ status: 'ok', outcome: 'skipped', reason: 'raw_sql' });
+    return { answered: true, names: result.checks.map((c) => c.name), status: check?.status };
+  });
+
+  parityTest('tableExists: an engine without the journal capabilities keeps no managed write journal', { methods: [] }, async (engine, backend) => {
+    // The explicit no-capabilities fixture: this engine seen without persistence_journal and managed_persistence.
+    const bare = withoutCapabilities(engine, ['persistence_journal', 'managed_persistence']);
+    const result = await answered(() => runEntry(bare, ownerHostStaleEntry));
+    if (!result.answered) return result;
+    const [check] = result.checks;
     if (backend === 'rust') expect({ status: check?.status, message: check?.message }).toEqual({ status: 'ok', message: 'This brain keeps no managed write journal.' });
     return { answered: true, names: result.checks.map((c) => c.name), status: check?.status };
   });
@@ -163,11 +185,23 @@ describe('engine parity: catalog probes', () => {
     if (!result.answered) return result;
     const [check] = result.checks;
     if (backend === 'rust') {
-      // The Rust store does not report vector_search yet: skipped, naming the capability.
-      expect({ skipped: skipped(check), capability: (check?.details as { capability?: unknown })?.capability }).toEqual({ skipped: true, capability: 'vector_search' });
+      // The Rust store reports vector_search (this expectation was stale before the journal flip: it failed on the unflipped head too).
+      expect({ status: check?.status, message: check?.message }).toEqual({ status: 'ok', message: 'Vector search is served by the engine store (no pgvector extension)' });
     } else {
       expect(skipped(check)).toBe(false);
     }
     return { answered: true, name: check?.name, status: check?.status };
+  });
+
+  parityTest('pgvector: an engine store without vector_search skips the check, naming the capability', { methods: [] }, async (engine, backend) => {
+    const result = await answered(() => pgvectorCheck(withoutCapabilities(engine, ['vector_search'])));
+    if (!result.answered) return result;
+    const [check] = result.checks;
+    if (backend === 'rust') {
+      expect({ skipped: skipped(check), capability: (check?.details as { capability?: unknown })?.capability }).toEqual({ skipped: true, capability: 'vector_search' });
+    } else {
+      expect(skipped(check)).toBe(false);
+    }
+    return { answered: true, name: check?.name };
   });
 });

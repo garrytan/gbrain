@@ -13,21 +13,13 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from './engine.ts';
-import { MANAGED_MODE_SQL, managedModeFromRows } from './persistence/managed-mode.ts';
+import { managedModeFromRows } from './persistence/managed-mode.ts';
+import { readSyncDispatchRow, type SyncDispatchRow } from './engine-sql/sync-dispatch.ts';
 
-export interface SyncDispatchRow {
-  /** Null when no source has the id. */
-  id: string | null; archived: boolean | null; config: unknown; incarnation: string | null; local_path: string | null;
-  claimed: boolean; company_receipt: boolean;
-  /** `enabled` of every row `MANAGED_MODE_SQL` returns. */
-  modes: unknown[];
-}
+export type { SyncDispatchRow };
 
-const SQL = `SELECT s.id, s.archived, s.config, s.incarnation::text AS incarnation, s.local_path,
-  EXISTS(SELECT 1 FROM persistence_source_bindings b WHERE b.source_id=s.id AND b.source_incarnation=s.incarnation) AS claimed,
-  EXISTS(SELECT 1 FROM source_ingestion_receipts r WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.profile='company-brain') AS company_receipt,
-  (SELECT COALESCE(jsonb_agg(m.enabled), '[]'::jsonb) FROM (${MANAGED_MODE_SQL}) m) AS modes
-  FROM (SELECT $1::text AS want) w LEFT JOIN sources s ON s.id=w.want`;
+/** An engine (its typed readSyncDispatchRow, as a Rust brain has) or an executeRaw-only view of one. */
+type DispatchReader = Pick<BrainEngine, 'readSyncDispatchRow'> | Pick<BrainEngine, 'executeRaw'>;
 
 const scope = new AsyncLocalStorage<{ engine: object; reads: Map<string, Promise<SyncDispatchRow | undefined>>; ended: boolean }>();
 
@@ -43,12 +35,12 @@ export function endSyncDispatchRead(): void {
 }
 
 /** The source's routing row inside the scope (read once, then shared); undefined outside it or when the read failed. */
-export function syncDispatchRow(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<SyncDispatchRow | undefined> | undefined {
+export function syncDispatchRow(engine: DispatchReader, sourceId: string): Promise<SyncDispatchRow | undefined> | undefined {
   const store = scope.getStore();
   if (!store || store.ended || store.engine !== engine) return undefined;
   let read = store.reads.get(sourceId);
   if (!read) {
-    read = engine.executeRaw<SyncDispatchRow>(SQL, [sourceId]).then(rows => rows[0], () => undefined);
+    read = ('readSyncDispatchRow' in engine ? engine.readSyncDispatchRow(sourceId) : readSyncDispatchRow(engine, sourceId)).then(row => row, () => undefined);
     store.reads.set(sourceId, read);
   }
   return read;

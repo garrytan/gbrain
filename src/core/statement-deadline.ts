@@ -89,8 +89,8 @@ function refuse(scope: StatementDeadline): never {
   throw new StatementDeadlineError(Date.now() - scope.startedAt);
 }
 
-/** The write-journal reads (engine-sql/persistence-journal.ts, persistence-claims.ts, persistence-housekeeping.ts, config.ts) that replaced statements this wrapper bounded through executeRaw. */
-const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readCounterRows', 'readAdmissionRate', 'readHeldPageRows', 'readHeldCoverageRows',
+/** The write-journal reads (engine-sql/persistence-journal.ts, persistence-claims.ts, persistence-housekeeping.ts, persistence-admission.ts, config.ts) that replaced statements this wrapper bounded through executeRaw. */
+const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'hasDeferralRoom', 'readRefreshTiming', 'countHeldBehindImport', 'ownsSchemaTables', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readCounterRows', 'readAdmissionRate', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceMembership', 'getConfigValues', 'readReceiptBudget', 'readCapacityForecastInputs', 'listHostConsumerRows', 'probeLiveConsumerRows']);
 /** The typed reads (engine-sql/decide-store.ts) that replaced statements this wrapper bounded through executeRaw: decide_health. */
 export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations']);

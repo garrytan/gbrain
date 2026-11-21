@@ -52,7 +52,7 @@ async function changedSlugs(engine: BrainEngine, sourceId: string, result: SyncR
 
 /** GST-2462: the database clock when a sync starts; a managed sync lists no pages, so its notice reads the pages updated since. */
 async function syncStartedAt(engine: BrainEngine): Promise<string | null> {
-  try { return (await engine.executeRaw<{ at: string }>('SELECT clock_timestamp()::text AS at'))[0]?.at ?? null; } catch { return null; }
+  try { return await engine.readDatabaseClock(); } catch { return null; }
 }
 
 async function routeSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {

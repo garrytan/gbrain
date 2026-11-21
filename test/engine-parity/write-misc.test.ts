@@ -3,38 +3,50 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readSourceState, readAdmissionSource, sharedSkillPackTablePresent,
- *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers, notifierCoverageRecorded,
+ *    listSharedSkillPackRoots, getWorktreeBinding, isSourceClaimed, hasExtractedEvents, listActiveAccessMembers,
  *    listAccessTokens, isFolderRestricted, listAppliedPolicyRevisions, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials,
  *    listAudienceAccessMembers, readLiveMember, hasLabelledOnlyMember, readFolderAccess, expireMemoryProposals,
  *    readOpCheckpointKeys, writeOpCheckpointKeys, appendOpCheckpointPaths, deleteOpCheckpoint, deleteOpCheckpointPaths,
- *    readHealthMemoClock, listSynopsisSourceIds,
+ *    purgeStaleCheckpoints,
+ *    readHealthMemoClock, listSynopsisSourceIds, readSynopsisTierSources, setSourceContextualMode,
  *    listAwaitingMemoryProposals and purgeMemoryProposals return the same observable result on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: a source-state read that differs changes whether page admission, the mirror read-only guard and
- *    link policy accept a write; the rest decide the shared-skillpack screen, chronicle retirement, `access serves`
- *    and proposal upkeep.
+ *    link policy accept a write; the rest decide the shared-skillpack screen, chronicle retirement, `access serves`,
+ *    the folder rules a caller satisfies (a reader the rule does not name must stay refused) and proposal upkeep.
  *  - Why existing coverage misses it: the call sites ran these statements through `executeRaw`, which the parity cases
  *    cannot call (D18), so no case compared them across engines (docs/research/rust-put-write-path.md).
- *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. The
- *    Rust store keeps no skillpacks, chronicle state, access members, access tokens, notifier state, source synopsis modes, folder rules, writer bindings or memory proposals, so those cases
- *    compare the empty answer every arm gives on a fresh brain (rust/docs/store/write_misc.md). It keeps op checkpoints
+ *  - Seam: none. Generated values (incarnation uuids) are compared by shape, never by value. Folder rules,
+ *    pending prefixes and policy revisions come from the restrictFolder and seedAccessPolicy fixtures (the policy writes
+ *    themselves are compared in access-policy.test.ts). The Rust store keeps no skillpacks, chronicle state, access
+ *    members, access tokens or memory proposals, so those cases compare the empty answer every arm gives on a fresh brain
+ *    (rust/docs/store/write_misc.md, rust/docs/store/access_rules.md). Writer bindings are seeded through the claim's store
+ *    (worktreeClaimStore), which every arm serves (rust/docs/store/persistence.md, "Worktree bindings"). The store keeps op checkpoints
  *    (rust/docs/store/persistence.md, "Op checkpoints"), so a resumable op stopped on it resumes; keys compare sorted,
  *    since the store lists them in path order and the SQL engines in no stated order.
  */
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
-import type { FolderAccessRows } from '../../src/core/engine-sql/access-control.ts';
-import { archiveSource, createSource, parityArms, restrictFolder } from './harness.ts';
+import { archiveSource, createSource, parityArms, restrictFolder, seedAccessPolicy, sorted } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
+import { appliedAccessSummary, folderAccessFor, folderAccessForAll, memberIdentityFor, stdioMemberIdentity } from '../../src/core/access/caller.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { claimWorktreeBinding } from '../../src/core/engine-sql/worktree-claim.ts';
 import { clearHealthMemo, memoizedHealth } from '../../src/core/health-memo.ts';
 import {
-  appendCompleted, appendCompletedOnce, clearOpCheckpoint, loadOpCheckpoint, recordCompleted, resumeFilter,
+  appendCompleted, appendCompletedOnce, clearOpCheckpoint, loadOpCheckpoint, purgeStaleCheckpoints, recordCompleted, resumeFilter,
 } from '../../src/core/op-checkpoint.ts';
 import { readSynopsisTierConfig } from '../../src/core/synopsis-sweep.ts';
-import { folderAccessFor, folderAccessForAll, memberIdentityFor, stdioMemberIdentity } from '../../src/core/access/caller.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { proposeRevision } from '../../src/core/access/policy.ts';
 import type { SourceStateRow, WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
+import { readSharedSkillsSourceView } from '../../src/core/shared-skills/source-opt-out.ts';
+import { sharedSkillSourcePolicy } from '../../src/core/shared-skills/setup-source-policy.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -67,18 +79,19 @@ async function note(engine: BrainEngine, slug: string, sourceId = 'default', typ
 const HOST_A = '00000000-0000-4000-8000-00000000000a';
 const HOST_B = '00000000-0000-4000-8000-00000000000b';
 
-/** A claimed writer binding for `sourceId`: its worktree owned by HOST_A at epoch 7, with HOST_A's paths. */
-async function bindWorktree(engine: BrainEngine, sourceId: string): Promise<void> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id = $1', [sourceId]);
-  const [worktree] = await engine.executeRaw<{ id: string }>(
-    `INSERT INTO persistence_worktrees (owner_host_id, owner_epoch, topology_generation, state, manifest)
-     VALUES ($1::uuid, 7, 3, 'draining', '{"prepared_at":"2026-01-02T03:04:05Z"}'::jsonb) RETURNING id`, [HOST_A]);
-  await engine.executeRaw(
-    'INSERT INTO persistence_source_bindings (source_id, source_incarnation, worktree_id, relative_path, topology_generation) VALUES ($1, $2::uuid, $3::uuid, $4, 3)',
-    [sourceId, source!.incarnation, worktree!.id, 'notes']);
-  await engine.executeRaw(
-    "INSERT INTO persistence_host_bindings (worktree_id, host_id, local_path, coordination_path, git_durability) VALUES ($1::uuid, $2::uuid, $3, $4, 'enabled')",
-    [worktree!.id, HOST_A, '/var/tmp/work-root', '/var/tmp/work-coord']);
+/**
+ * A claimed writer binding for `sourceId`: its worktree owned by HOST_A at epoch 7, with HOST_A's paths, written
+ * through the claim's store (worktreeClaimStore) so every arm seeds it the same way. `incarnation` binds the source at
+ * another incarnation than its current one (a claim the source has since moved past).
+ */
+async function bindWorktree(engine: BrainEngine, sourceId: string, incarnation?: string): Promise<void> {
+  await claimWorktreeBinding(engine, async store => {
+    const source = await store.lockSource(sourceId);
+    const id = randomUUID();
+    await store.insertWorktree({ id, ownerHostId: HOST_A, ownerEpoch: 7, topologyGeneration: 3, state: 'draining', manifest: { prepared_at: '2026-01-02T03:04:05Z' } });
+    await store.insertSourceBinding({ sourceId, incarnation: incarnation ?? source!.incarnation, worktreeId: id, relativePath: 'notes', topologyGeneration: 3 });
+    await store.insertHostBinding({ worktreeId: id, hostId: HOST_A, localPath: '/var/tmp/work-root', coordinationPath: '/var/tmp/work-coord', gitDurability: 'enabled' });
+  });
 }
 
 /** A binding with its generated ids replaced by their shape (the harness never restarts generators between cases). */
@@ -102,6 +115,34 @@ describe('engine parity: write misc', () => {
     expect(missing).toBeNull();
     return { alpha: stateView(alpha), beta: stateView(beta), missing };
   });
+
+  parityTest('the shared-skills source view and policy read a live source through readSourceState; an archived or unknown source reads as missing',
+    { methods: ['readSourceState'] }, async (engine, backend) => {
+      await createSource(engine, backend, 'repo', {}, '/var/tmp/repo-root');
+      await createSource(engine, backend, 'off', { shared_skills: false }, '/var/tmp/off-root');
+      await createSource(engine, backend, 'feed', { kind: 'rss' });
+      await createSource(engine, backend, 'gone', {}, '/var/tmp/gone-root');
+      await archiveSource(engine, backend, 'gone');
+      const code = (error: unknown) => (error as { code?: string }).code ?? String(error);
+      const view = (id: string) => readSharedSkillsSourceView(engine, id).then(v => ({ mode: v.mode, configured: v.configured, reason_code: v.reason_code, parked: v.parked }), code);
+      const policy = (id: string) => sharedSkillSourcePolicy(engine, id).then(p => p.mode, code);
+      const result = {
+        views: { repo: await view('repo'), off: await view('off'), feed: await view('feed'), gone: await view('gone'), missing: await view('missing') },
+        policies: { repo: await policy('repo'), off: await policy('off'), gone: await policy('gone'), missing: await policy('missing') },
+      };
+      expect(result).toEqual({
+        views: {
+          repo: { mode: 'content', configured: null, reason_code: null, parked: null },
+          off: { mode: 'preserve_files', configured: false, reason_code: 'source_shared_skills_disabled', parked: null },
+          feed: { mode: 'preserve_files', configured: null, reason_code: 'source_skill_adoption_required', parked: null },
+          gone: result.views.gone, missing: result.views.missing,
+        },
+        policies: { repo: 'content', off: 'preserve_files', gone: 'source_changed', missing: 'source_changed' },
+      });
+      expect(result.views.gone).toBe(result.views.missing);
+      expect(typeof result.views.missing).toBe('string');
+      return result;
+    });
 
   parityTest('readAdmissionSource reads config kind and role as text; no guest row joins an ordinary source', { methods: ['readAdmissionSource'] }, async (engine, backend) => {
     await createSource(engine, backend, 'alpha', { kind: 'notes', role: 7 }, '/var/tmp/alpha-root');
@@ -188,31 +229,6 @@ describe('engine parity: write misc', () => {
     return { tokens };
   });
 
-  parityTest('notifierCoverageRecorded answers false on a fresh brain', { methods: ['notifierCoverageRecorded'] }, async (engine) => {
-    const covered = await engine.notifierCoverageRecorded();
-    expect(covered).toBe(false);
-    return { covered };
-  });
-
-  // A notifier row is raw SQL here (the resident writes it); on Rust the seed refuses, because no Rust brain keeps
-  // notifier state, and the member answers false, as the fresh-brain case.
-  parityTest('notifierCoverageRecorded answers true once a source has an observed head', { methods: ['notifierCoverageRecorded'] }, async (engine) => {
-    let seeded: unknown = null;
-    try {
-      await engine.executeRaw("INSERT INTO sync_notifier_sources (source_id, state) VALUES ('default', 'idle')");
-    } catch (error) { seeded = error; }
-    if (seeded) {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.notifierCoverageRecorded()).toBe(false);
-      throw seeded;
-    }
-    const unobserved = await engine.notifierCoverageRecorded();
-    await engine.executeRaw("UPDATE sync_notifier_sources SET observed_head = 'abc', observed_at = now() WHERE source_id = 'default'");
-    const observed = await engine.notifierCoverageRecorded();
-    expect({ unobserved, observed }).toEqual({ unobserved: false, observed: true });
-    return { unobserved, observed };
-  });
-
   // loadOpCheckpoint catches a failed read, logs it and answers [], so its answer alone cannot tell a refused read from an
   // empty checkpoint: the case also asserts the load logged nothing.
   parityTest('loadOpCheckpoint loads an empty checkpoint without a failed read', { methods: ['readOpCheckpointKeys'] }, async (engine) => {
@@ -281,6 +297,30 @@ describe('engine parity: write misc', () => {
     return value;
   });
 
+  // The cycle's purge phase (handlers/purge.ts, cycle/bookkeeping-gc.ts) through op-checkpoint.ts's caller, which logs a
+  // failed purge and answers 0: the case asserts it logged nothing. A checkpoint stamped before the TTL goes with its
+  // paths; one stamped after it stays. The TTL is one second, as no arm can move its clock back seven days.
+  parityTest('purgeStaleCheckpoints deletes a stale checkpoint with its paths and keeps a fresh one', { methods: ['purgeStaleCheckpoints', 'readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths'] }, async (engine) => {
+    const stale = { op: 'embed', fingerprint: 'parity-stale' };
+    const fresh = { op: 'embed', fingerprint: 'parity-fresh' };
+    const { value, errors } = await quietErrors(async () => {
+      expect(await recordCompleted(engine, stale, ['k'])).toBe(true);
+      expect(await appendCompleted(engine, stale, ['a.md', 'b.md'])).toBe(true);
+      const sevenDays = await purgeStaleCheckpoints(engine);
+      await Bun.sleep(1600);
+      expect(await appendCompleted(engine, fresh, ['c.md'])).toBe(true);
+      const purged = await purgeStaleCheckpoints(engine, 1 / 86_400);
+      const staleKeys = await engine.readOpCheckpointKeys(stale.op, stale.fingerprint);
+      const freshKeys = await engine.readOpCheckpointKeys(fresh.op, fresh.fingerprint);
+      return { sevenDays, purged, staleKeys, freshKeys };
+    });
+    expect({ ...value, errors }).toEqual({
+      sevenDays: 0, purged: 1, staleKeys: { keys: [], corruptParent: false },
+      freshKeys: { keys: ['c.md'], corruptParent: false }, errors: [],
+    });
+    return value;
+  });
+
   // clearOpCheckpoint's second sweep deletes the paths and keeps the parent's keys; other checkpoints stay.
   parityTest('deleteOpCheckpointPaths keeps the parent keys and other checkpoints', { methods: ['deleteOpCheckpointPaths', 'deleteOpCheckpoint'] }, async (engine) => {
     const mine = { op: 'extract', fingerprint: 'parity-mine' };
@@ -324,34 +364,104 @@ describe('engine parity: write misc', () => {
     return view;
   });
 
-  parityTest('readSynopsisTierConfig lists no synopsis source on a fresh brain', { methods: ['listSynopsisSourceIds'] }, async (engine) => {
+  parityTest('readSynopsisTierConfig lists no synopsis source on a fresh brain', { methods: ['listSynopsisSourceIds', 'readSynopsisTierSources'] }, async (engine) => {
     const config = await readSynopsisTierConfig(engine);
     expect(config.synopsis_sources).toEqual([]);
     return { config, direct: await engine.listSynopsisSourceIds() };
   });
 
-  // A source's own contextual-retrieval mode is written by `sources` admin raw SQL; on Rust the seed refuses, because no
-  // Rust brain keeps one, and the member answers none, as the fresh-brain case.
-  parityTest('listSynopsisSourceIds lists live synopsis sources by id, not archived ones', { methods: ['listSynopsisSourceIds'] }, async (engine, backend) => {
-    for (const id of ['work', 'alt', 'old']) await createSource(engine, backend, id);
-    await archiveSource(engine, backend, 'old');
-    let seeded: unknown = null;
-    try {
-      await engine.executeRaw(`UPDATE sources SET contextual_retrieval_mode = 'per_chunk_synopsis' WHERE id IN ('work', 'alt', 'old')`);
-    } catch (error) { seeded = error; }
-    if (seeded) {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.listSynopsisSourceIds()).toEqual([]);
-      throw seeded;
+  // #9683: trusted page frontmatter picks the synopsis tier. Only a live markdown page on the host source counts (no
+  // seeded source trusts frontmatter overrides); a page on another source, a soft-deleted page and another tier value
+  // do not, and the skip flag (kill switch or synopsis global tier) skips the page check.
+  parityTest('readSynopsisTierSources reports a trusted page frontmatter pick and readSynopsisTierConfig counts it as configured', { methods: ['readSynopsisTierSources'] }, async (engine, backend) => {
+    const FM = { contextual_retrieval: 'per_chunk_synopsis' };
+    const note = (slug: string) => ({ type: 'note' as const, title: slug, compiled_truth: `body of ${slug}`, timeline: '' });
+    const before = await readSynopsisTierConfig(engine);
+    expect(before.global_tier).not.toBe('per_chunk_synopsis');
+    await createSource(engine, backend, 'work');
+    await engine.putPage('notes/elsewhere', { ...note('notes/elsewhere'), frontmatter: FM }, { sourceId: 'work' });
+    await engine.putPage('notes/titled', { ...note('notes/titled'), frontmatter: { contextual_retrieval: 'title' } });
+    await engine.putPage('notes/gone', { ...note('notes/gone'), frontmatter: FM });
+    await engine.softDeletePage('notes/gone');
+    const untrusted = { config: (await readSynopsisTierConfig(engine)).configured, direct: await engine.readSynopsisTierSources(false) };
+    await engine.putPage('notes/picked', { ...note('notes/picked'), frontmatter: FM });
+    const view = {
+      before: before.configured,
+      untrusted,
+      picked: await readSynopsisTierConfig(engine),
+      direct: await engine.readSynopsisTierSources(false),
+      skipped: await engine.readSynopsisTierSources(true),
+    };
+    expect(view).toEqual({
+      before: false,
+      untrusted: { config: false, direct: { sourceIds: [], frontmatterPicks: false } },
+      picked: { global_tier: before.global_tier, kill_switch: false, synopsis_sources: [], configured: true },
+      direct: { sourceIds: [], frontmatterPicks: true },
+      skipped: { sourceIds: [], frontmatterPicks: false },
+    });
+    return view;
+  });
+
+  // The synopsis sources order by bytes on every engine: a hyphenated id sorts before its letters even on a Postgres
+  // database with a linguistic collation (en_US ignores the hyphen).
+  parityTest('readSynopsisTierSources orders the synopsis sources by bytes, whatever the database collation', { methods: ['readSynopsisTierSources', 'setSourceContextualMode'] }, async (engine, backend) => {
+    for (const id of ['coop', 'cob', 'co-op']) {
+      await createSource(engine, backend, id);
+      expect(await engine.setSourceContextualMode(id, 'per_chunk_synopsis')).toBe(true);
     }
+    const tier = await engine.readSynopsisTierSources(true);
+    expect(tier).toEqual({ sourceIds: ['co-op', 'cob', 'coop'], frontmatterPicks: false });
+    const config = await readSynopsisTierConfig(engine);
+    expect(config.synopsis_sources).toEqual(['co-op', 'cob', 'coop']);
+    return { tier, configured: config.configured };
+  });
+
+  parityTest('listSynopsisSourceIds lists live synopsis sources by id, not archived ones', { methods: ['listSynopsisSourceIds', 'setSourceContextualMode'] }, async (engine, backend) => {
+    for (const id of ['work', 'alt', 'old']) {
+      await createSource(engine, backend, id);
+      expect(await engine.setSourceContextualMode(id, 'per_chunk_synopsis')).toBe(true);
+    }
+    await archiveSource(engine, backend, 'old');
     const ids = await engine.listSynopsisSourceIds();
     expect(ids).toEqual(['alt', 'work']);
     return { ids, configured: (await readSynopsisTierConfig(engine)).configured };
   });
 
-  // The restricted half (true under a folder rule or a pending prefix) is import-path.test.ts's case: the SQL arms answer
-  // true there; on Rust its folder-rule fixture is raw SQL and stops on the typed refusal, because no Rust brain can hold
-  // a folder rule.
+  // `gbrain sources set-cr-mode` writes through setSourceContextualMode: an unknown source writes nothing and answers
+  // false (the command exits 4); a set mode reads back through getSource, archived sources included; null clears it, and
+  // only per_chunk_synopsis puts a source in the synopsis tier.
+  parityTest('setSourceContextualMode sets and clears a source mode that getSource and the synopsis tier read back', { methods: ['setSourceContextualMode', 'getSource', 'listSynopsisSourceIds'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await createSource(engine, backend, 'alt');
+    const mode = async (id: string) => (await engine.getSource(id))?.contextual_retrieval_mode ?? null;
+    const view = {
+      missing: await engine.setSourceContextualMode('no-such-source', 'title'),
+      fresh: await mode('work'),
+      set: await engine.setSourceContextualMode('work', 'per_chunk_synopsis'),
+      setAlt: await engine.setSourceContextualMode('alt', 'title'),
+      modes: [await mode('work'), await mode('alt')],
+      tier: await engine.listSynopsisSourceIds(),
+      archived: await (async () => { await archiveSource(engine, backend, 'work'); return [await mode('work'), await engine.listSynopsisSourceIds()]; })(),
+      cleared: await engine.setSourceContextualMode('work', null),
+      afterClear: await mode('work'),
+      unknownRow: await engine.getSource('no-such-source'),
+    };
+    expect(view).toEqual({
+      missing: false,
+      fresh: null,
+      set: true,
+      setAlt: true,
+      modes: ['per_chunk_synopsis', 'title'],
+      tier: ['work'],
+      archived: ['per_chunk_synopsis', []],
+      cleared: true,
+      afterClear: null,
+      unknownRow: null,
+    });
+    return view;
+  });
+
+  // The restricted half (true under a folder rule or a pending prefix, on every arm) is import-path.test.ts's case.
   parityTest('isFolderRestricted answers false for every folder of a brain with no folder rules or pending covers', { methods: ['isFolderRestricted'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     const answers = {
@@ -364,37 +474,26 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  // isFolderRestricted is constant false on Rust only because no Rust brain can hold access state: the access-rule write
-  // (the restrictFolder fixture's raw SQL) must stop on the typed raw_sql refusal there and leave the folder open.
-  parityTest('restrictFolder, the access-rule write, refuses on Rust and restricts the folder on the SQL engines', { methods: ['isFolderRestricted'] }, async (engine, backend) => {
+  parityTest('isFolderRestricted is true under a folder rule only in the rule\'s source and below its prefix', { methods: ['isFolderRestricted'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
-    const write = await restrictFolder(engine, backend, 'work', 'private/', 'rule').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.isFolderRestricted('work', 'private/diary')).toBe(false);
-      throw write;
-    }
-    expect(write).toBeNull();
-    const underRule = await engine.isFolderRestricted('work', 'private/diary');
-    expect(underRule).toBe(true);
-    return { underRule };
+    await restrictFolder(engine, backend, 'work', 'private/', 'rule');
+    const answers = {
+      underRule: await engine.isFolderRestricted('work', 'private/diary'),
+      prefixOnly: await engine.isFolderRestricted('work', 'private'),
+      sibling: await engine.isFolderRestricted('work', 'privateer/log'),
+      otherSource: await engine.isFolderRestricted('default', 'private/diary'),
+    };
+    expect(answers).toEqual({ underRule: true, prefixOnly: false, sibling: false, otherSource: false });
+    return answers;
   });
 
-  // readFolderAccess answers no rules and no coverage on Rust (folder access opens) only because no Rust brain can hold a
-  // folder rule: the production rule write (`gbrain access rule add` runs proposeRevision) must stop on a typed refusal
-  // there, never record nothing and report success, and the caller's folder access must stay empty afterwards.
-  parityTest('the folder-rule write (proposeRevision) refuses typed on Rust and applies the rule on the SQL engines',
+  // The production rule write (`gbrain access rule add` runs proposeRevision) applies the rule on every arm, Rust
+  // included (access-policy.test.ts compares the policy writes themselves), and the caller's folder access then names it.
+  parityTest('the folder-rule write (proposeRevision) applies the rule, and readFolderAccess and isFolderRestricted see it',
     { methods: ['readFolderAccess', 'isFolderRestricted'] }, async (engine, backend) => {
       await createSource(engine, backend, 'work');
-      const write = await proposeRevision(engine, 'work', [{ id: 'team', prefix: 'drafts/', readable_by: ['group:team-a'] }],
-        { origin: 'cli', store: 'database' }).then(() => null, (e: unknown) => e);
-      if (backend === 'rust') {
-        expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-        expect(await engine.readFolderAccess(['group:team-a'])).toEqual({ rules: [], coverage: [] });
-        expect(await engine.isFolderRestricted('work', 'drafts/plan')).toBe(false);
-        throw write;
-      }
-      expect(write).toBeNull();
+      await proposeRevision(engine, 'work', [{ id: 'team', prefix: 'drafts/', readable_by: ['group:team-a'] }],
+        { origin: 'cli', store: 'database' });
       const rules = (await engine.readFolderAccess(['group:team-a'])).rules.map(r => ({ source_id: r.source_id, rule_id: r.rule_id }));
       expect(rules).toEqual([{ source_id: 'work', rule_id: 'team' }]);
       const restricted = await engine.isFolderRestricted('work', 'drafts/plan');
@@ -409,26 +508,11 @@ describe('engine parity: write misc', () => {
     return { revisions };
   });
 
-  // listAppliedPolicyRevisions is constant empty on Rust only because no Rust brain can hold access state: the policy
-  // state write (raw SQL here, the access commands' statements in production) must stop on the typed raw_sql refusal.
   parityTest('listAppliedPolicyRevisions gives each source with access state its newest applied revision, null when none is applied', { methods: ['listAppliedPolicyRevisions'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     await createSource(engine, backend, 'quiet');
-    const write = await restrictFolder(engine, backend, 'work', 'private/', 'rule').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.listAppliedPolicyRevisions()).toEqual([]);
-      throw write;
-    }
-    expect(write).toBeNull();
-    await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1)', ['quiet']);
-    const revision = (source: string, rev: number, applied: boolean) => engine.executeRaw(
-      `INSERT INTO access_policy_revisions (source_id, revision, rules, digest, change_kind, origin, applied_at)
-       VALUES ($1, $2, '[]'::jsonb, 'd', 'narrowing', 'parity', ${applied ? 'now()' : 'NULL'})`, [source, rev]);
-    await revision('work', 1, true);
-    await revision('work', 2, true);
-    await revision('work', 3, false);
-    await revision('quiet', 1, false);
+    await seedAccessPolicy(engine, backend, 'work', [{ revision: 1, applied: true }, { revision: 2, applied: true }, { revision: 3, applied: false }]);
+    await seedAccessPolicy(engine, backend, 'quiet', [{ revision: 1, applied: false }]);
     const revisions = await engine.listAppliedPolicyRevisions();
     expect(revisions).toEqual([{ source_id: 'quiet', rev: null }, { source_id: 'work', rev: 2 }]);
     return { revisions };
@@ -763,36 +847,71 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  parityTest('readFolderAccess reads the rules the readers meet and every pending prefix, and folderAccessForAll keeps the rules every identity meets', { methods: ['readFolderAccess'] }, async (engine, backend) => {
-    const seeded = await engine.executeRaw("INSERT INTO access_policy_state (source_id) VALUES ('default') ON CONFLICT (source_id) DO NOTHING").then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.readFolderAccess(['member:alice-example'])).toEqual({ rules: [], coverage: [] });
-      throw seeded;
-    }
-    expect(seeded).toBeNull();
-    await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES
-      ('default', 'team', 'team/', ARRAY['member:alice-example', 'group:team-a'], 1), ('default', 'bob', 'bob/', ARRAY['member:bob-example'], 1)`);
-    await engine.executeRaw("INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ('default', 'drafts/', 'pending'), ('default', 'drafts/', 'invalid')");
-    const byRule = (r: FolderAccessRows): FolderAccessRows => ({ ...r, rules: [...r.rules].sort((a, b) => a.rule_id.localeCompare(b.rule_id)) });
-    const answers = {
-      alice: byRule(await engine.readFolderAccess(['member:alice-example'])),
-      both: byRule(await engine.readFolderAccess(['member:alice-example', 'member:bob-example'])),
-      noReaders: await engine.readFolderAccess([]),
-      audience: await folderAccessForAll(engine, [['member:alice-example'], ['member:bob-example', 'group:team-a']]),
-      bob: await folderAccessFor(engine, ['member:bob-example']),
-    };
-    const team = { source_id: 'default', rule_id: 'team', readable_by: ['member:alice-example', 'group:team-a'] };
-    const bob = { source_id: 'default', rule_id: 'bob', readable_by: ['member:bob-example'] };
-    const coverage = [{ source_id: 'default', prefix: 'drafts/' }];
-    expect(answers).toEqual({
-      alice: { rules: [team], coverage },
-      both: { rules: [bob, team], coverage },
-      noReaders: { rules: [], coverage },
-      audience: { satisfiedRuleIds: ['default:team'], folderCoverage: coverage },
-      bob: { satisfiedRuleIds: ['default:bob'], folderCoverage: coverage },
+  // caller.ts:376: `access serves` and whoami report the newest applied revision of each source the caller can see.
+  parityTest('appliedAccessSummary reports the newest applied policy revision of each visible source', { methods: ['listAppliedPolicyRevisions'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await createSource(engine, backend, 'quiet');
+    await seedAccessPolicy(engine, backend, 'work', [{ revision: 1, applied: true }, { revision: 2, applied: true }, { revision: 3, applied: false }]);
+    await seedAccessPolicy(engine, backend, 'quiet', [{ revision: 1, applied: false }]);
+    const summary = await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, () => appliedAccessSummary(engine));
+    expect(summary.policy_rev).toEqual({ work: 2 });
+    expect(summary.member).toBe('alice-example');
+    return { policyRev: summary.policy_rev, member: summary.member };
+  });
+
+  parityTest('readFolderAccess reads the folder rules naming any reader and every distinct pending prefix', { methods: ['readFolderAccess'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await restrictFolder(engine, backend, 'work', 'team/', 'rule', { ruleId: 'team', readers: ['group:team-a'] });
+    await restrictFolder(engine, backend, 'work', 'alice/', 'rule', { ruleId: 'alice', readers: ['member:alice-example', 'member:bob-example'] });
+    await restrictFolder(engine, backend, 'work', 'bob/', 'rule', { ruleId: 'bob', readers: ['member:bob-example'] });
+    await restrictFolder(engine, backend, 'work', 'queued/', 'pending');
+    await restrictFolder(engine, backend, 'default', 'later/', 'pending');
+    const view = (rows: Awaited<ReturnType<BrainEngine['readFolderAccess']>>) => ({
+      rules: sorted(rows.rules.map(r => `${r.source_id}:${r.rule_id}:${[...r.readable_by].join(',')}`)),
+      coverage: rows.coverage.map(c => `${c.source_id}:${c.prefix}`),
     });
-    return answers;
+    const readers = view(await engine.readFolderAccess(['member:alice-example', 'group:team-a']));
+    const none = view(await engine.readFolderAccess([]));
+    const stranger = view(await engine.readFolderAccess(['member:carol-example']));
+    expect(readers).toEqual({
+      rules: ['work:alice:member:alice-example,member:bob-example', 'work:team:group:team-a'],
+      coverage: ['default:later/', 'work:queued/'],
+    });
+    expect(none).toEqual({ rules: [], coverage: ['default:later/', 'work:queued/'] });
+    expect(stranger).toEqual({ rules: [], coverage: ['default:later/', 'work:queued/'] });
+    return { readers, none, stranger };
+  });
+
+  // caller.ts:170: an audience satisfies a rule only when every identity meets its readers.
+  parityTest('folderAccessForAll satisfies a rule for a member reader, intersects an audience and lists pending coverage', { methods: ['readFolderAccess'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await restrictFolder(engine, backend, 'work', 'team/', 'rule', { ruleId: 'team', readers: ['group:team-a'] });
+    await restrictFolder(engine, backend, 'work', 'alice/', 'rule', { ruleId: 'alice', readers: ['member:alice-example'] });
+    await restrictFolder(engine, backend, 'work', 'queued/', 'pending');
+    const alice = await folderAccessFor(engine, ['member:alice-example', 'group:team-a']);
+    const audience = await folderAccessForAll(engine, [['member:alice-example', 'group:team-a'], ['member:bob-example', 'group:team-a']]);
+    const withGuest = await folderAccessForAll(engine, [['member:alice-example', 'group:team-a'], []]);
+    expect(alice).toEqual({ satisfiedRuleIds: ['work:alice', 'work:team'], folderCoverage: [{ source_id: 'work', prefix: 'queued/' }] });
+    expect(audience.satisfiedRuleIds).toEqual(['work:team']);
+    expect(withGuest.satisfiedRuleIds).toEqual([]);
+    return { alice, audience, withGuest };
+  });
+
+  // Leak case: a caller the folder's readers do not name satisfies no rule, and the folder's pages stay hidden from it.
+  parityTest('a private folder refuses a caller its rule does not name: no rule is satisfied and its pages stay hidden', { methods: ['readFolderAccess', 'putPage', 'findPagesByTitles'] }, async (engine, backend) => {
+    await restrictFolder(engine, backend, 'default', 'private/', 'rule', { ruleId: 'diary', readers: ['member:alice-example'] });
+    for (const slug of ['private/acme-diary', 'people/acme-open']) {
+      await engine.putPage(slug, { type: 'person', title: 'Acme Example', compiled_truth: `body of ${slug}`, timeline: '' });
+    }
+    const outsider = await folderAccessFor(engine, ['member:carol-example']);
+    expect(outsider).toEqual({ satisfiedRuleIds: [], folderCoverage: [] });
+    const read = (excludePrivate: boolean) => withCallerAccess({ identity: ['member:carol-example'], hidePrivate: true, ...outsider }, async () =>
+      (await engine.findPagesByTitles(['acme example'], ['default'], ['person'], { excludePrivate })).map(r => r.slug).sort());
+    const served = await read(true);
+    const unfiltered = await read(false);
+    expect(served).toEqual(['people/acme-open']);
+    expect(unfiltered).toEqual(['people/acme-open', 'private/acme-diary']);
+    return { outsider, served, unfiltered };
   });
 
   parityTest('getWorktreeBinding is null for a source with no writer binding, on any host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {
@@ -806,18 +925,10 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  // getWorktreeBinding is constant null on Rust only because no Rust brain can hold a binding: the claim's rows (raw SQL
-  // here, claimWorktree's statements in production) must stop on the typed raw_sql refusal there and leave it unbound.
-  parityTest('getWorktreeBinding reads the claimed binding with this host\'s paths, and null host columns for another host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {
+  parityTest('getWorktreeBinding reads the claimed binding with this host\'s paths, and null host columns for another host', { methods: ['getWorktreeBinding', 'worktreeClaimStore'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work', { canonical: 'git' }, '/var/tmp/work-root');
     await createSource(engine, backend, 'loose');
-    const seeded = await bindWorktree(engine, 'work').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.getWorktreeBinding('work', HOST_A)).toBeNull();
-      throw seeded;
-    }
-    expect(seeded).toBeNull();
+    await bindWorktree(engine, 'work');
     const answers = {
       owner: bindingView(await engine.getWorktreeBinding('work', HOST_A)),
       otherHost: bindingView(await engine.getWorktreeBinding('work', HOST_B)),
@@ -845,23 +956,52 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  // As getWorktreeBinding: false is constant on Rust only because no Rust brain can hold a binding, so the claim's rows
-  // must stop on the typed raw_sql refusal there and leave the source unclaimed.
-  parityTest('isSourceClaimed is true for a source claimed at its current incarnation, false once the incarnation moves', { methods: ['isSourceClaimed'] }, async (engine, backend) => {
+  parityTest('isSourceClaimed is true for a source claimed at its current incarnation, false for one claimed at another', { methods: ['isSourceClaimed', 'worktreeClaimStore'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work', { canonical: 'git' }, '/var/tmp/work-root');
+    await createSource(engine, backend, 'stale', { canonical: 'git' });
     await createSource(engine, backend, 'loose');
-    const seeded = await bindWorktree(engine, 'work').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.isSourceClaimed('work')).toBe(false);
-      throw seeded;
-    }
-    expect(seeded).toBeNull();
+    await bindWorktree(engine, 'work');
+    await bindWorktree(engine, 'stale', randomUUID());
     const claimed = { work: await engine.isSourceClaimed('work'), loose: await engine.isSourceClaimed('loose') };
-    await engine.executeRaw('UPDATE sources SET incarnation = gen_random_uuid() WHERE id = $1', ['work']);
-    const answers = { ...claimed, afterIncarnation: await engine.isSourceClaimed('work') };
-    expect(answers).toEqual({ work: true, loose: false, afterIncarnation: false });
+    const answers = { ...claimed, stale: await engine.isSourceClaimed('stale') };
+    expect(answers).toEqual({ work: true, loose: false, stale: false });
     return answers;
+  });
+
+  // The unmanaged claim itself (persistence/ownership.ts claimWorktree) runs through worktreeClaimStore on every arm:
+  // the first claim records the worktree, its host binding and the source binding; a repeat claim returns it; a source
+  // inside the root joins the same worktree. Each arm claims its own scratch root, compared by shape.
+  parityTest('claimWorktree binds a source, keeps the binding on a repeat claim, and joins a nested source to it', {
+    methods: ['worktreeClaimStore', 'getWorktreeBinding', 'isSourceClaimed'],
+  }, async (engine, backend) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-claim-parity-')));
+    try {
+      mkdirSync(join(root, 'inner'));
+      await createSource(engine, backend, 'work', {}, root);
+      await createSource(engine, backend, 'inner', {}, join(root, 'inner'));
+      const first = await claimWorktree(engine, 'work', root, HOST_A);
+      const again = await claimWorktree(engine, 'work', root, HOST_A);
+      const inner = await claimWorktree(engine, 'inner', join(root, 'inner'), HOST_A);
+      const view = (row: WorktreeBinding) => ({
+        ...bindingView(row), local_path: row.local_path === root ? 'root' : row.local_path,
+        coordination_path: typeof row.coordination_path === 'string' && row.coordination_path !== '' ? 'path' : row.coordination_path,
+      });
+      const answers = {
+        first: view(first), sameWorktree: again.worktree_id === first.worktree_id && inner.worktree_id === first.worktree_id,
+        inner: view(inner), claimed: [await engine.isSourceClaimed('work'), await engine.isSourceClaimed('inner')],
+      };
+      const bound = {
+        source_incarnation: 'uuid', worktree_id: 'uuid', topology_generation: '1', owner_host_id: HOST_A, owner_epoch: '1',
+        state: 'active' as const, prepared_at: null, canonical_git: false, local_path: 'root', coordination_path: 'path', git_durability: null,
+      };
+      expect(answers).toEqual({
+        first: { ...bound, source_id: 'work', relative_path: '' }, sameWorktree: true,
+        inner: { ...bound, source_id: 'inner', relative_path: 'inner' }, claimed: [true, true],
+      });
+      return answers;
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   parityTest('attachSourcePath sets the path, applies a passed name and federated flag, and keeps everything else', { methods: ['attachSourcePath', 'readSourceState', 'getSource'] }, async (engine, backend) => {

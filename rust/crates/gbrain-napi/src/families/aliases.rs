@@ -42,6 +42,17 @@ impl Brain {
         })
     }
 
+    /// `listSlugAliases(sourceId)`: resolves every `{ alias_slug, canonical_slug }` row of the
+    /// source, in alias byte order.
+    #[napi]
+    pub fn list_slug_aliases<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_slug_aliases(&source_id))
+    }
+
     /// `resolveAliases(aliasNorms, { sourceId?, sourceIds?, excludePrivate?, minTrust?,
     /// suppressFlagged? }?)` (`AliasScope`): resolves `[aliasNorm, [{ slug, source_id }]]` pairs,
     /// aliases in order.
