@@ -72,7 +72,8 @@ gbrain setup openclaw
 
 The second line is not optional. Without it the tools are registered but
 nothing tells the agent to use them, and a new session answers from OpenClaw's
-own memory and chat history instead (install eval: 11 of 30 hand-wired runs).
+own memory and chat history instead (in the [install eval](https://github.com/garrytan/harness-evals/blob/master/docs/benchmarks/2026-11-17-gbrain-install/results/README.md),
+11 of the 30 OpenClaw runs without gbrain's install block missed this way).
 See [Brain-first instructions](#brain-first-instructions).
 
 Use an absolute `--command` path: the launchd-started gateway's `PATH` does
