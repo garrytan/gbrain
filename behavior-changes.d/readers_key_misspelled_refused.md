@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+A page whose frontmatter names its readers with a key spelled any way but exactly `readable_by` (`Readable_By`, `readable-by`, `READABLE_BY`, `readable by`, `readableBy`) is no longer stored as a page every member can read. `put_page`, `edit_page` and `capture` refuse it with `readers_noncanonical` and write nothing, and `ingest_capture`, `brainstorm --save` and `sources reconcile` refuse it the same way. Git sync (classic and managed) and `gbrain import` hold such a file as `readers_noncanonical`: the rest of the source syncs and an existing page keeps its last imported version. A page that also carries the exact `readable_by` key is refused too, because it is not clear which spelling was meant. Write the key as `readable_by` (lowercase, with an underscore) on its own frontmatter line and save, sync or import again. Pages already stored with a misspelled key are not rewritten.
