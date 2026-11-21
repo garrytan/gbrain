@@ -73,7 +73,7 @@ import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingRes
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
-import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, LivePageTypeRow, ResolverPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
+import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, LivePageTypeRow, ResolverPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
@@ -4174,6 +4174,10 @@ export interface BrainEngine {
     opts?: { limit?: number; timeoutMs?: number }): Promise<IgnoredLabelPageRow[]>;
   /** The type and frontmatter of the live page at `slug` in the source, or null; `timeoutMs` bounds Postgres (default 1 s). */
   readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }): Promise<IgnoredLabelPageRow | null>;
+  /** The live entity page, then up to 10 newest live pages that name it as a word or link to it (search/entity-anchor.ts). */
+  readEntityAnchoredPages(sourceId: string, entitySlug: string): Promise<EntityAnchoredPages>;
+  /** The title of each page id, deleted or not, in no set order. */
+  readPageTitlesById(ids: readonly number[]): Promise<Array<{ id: number; title: string }>>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;

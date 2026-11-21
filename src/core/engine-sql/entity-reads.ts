@@ -282,6 +282,40 @@ export async function readLivePageFrontmatter(exec: TimedRawRead, sourceId: stri
   return page ?? null;
 }
 
+/** The pages `entityAnchoredPages` reads per entity, besides the entity page (MAX_ANCHORED, search/entity-anchor.ts). */
+export const ENTITY_ANCHORED_LIMIT = 10;
+
+export interface EntityAnchoredPages { entity: { id: number; title: string | null } | null; pages: Array<{ id: number; slug: string }> }
+
+const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The live entity page at `entitySlug` in the source, then up to ENTITY_ANCHORED_LIMIT other live pages (no question,
+ * synthesis or pinned-question page) whose compiled truth names it as a word (its last slug segment or its title, each
+ * of three characters or more, case-insensitively) or that link to it by a ranking link, newest first, then by id.
+ * The pinned-question marker and the ranking link types are written out: the dynamic-SQL guard allows `$4` twice
+ * only in a static statement, and the caller raw-SQL pins rebuild both texts from their constants.
+ */
+export async function readEntityAnchoredPages(exec: TimedRawRead, sourceId: string, entitySlug: string): Promise<EntityAnchoredPages> {
+  const [entity] = await exec.executeRaw<{ id: number; title: string | null }>(
+    'SELECT id, title FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, entitySlug]);
+  const names = [...new Set([entitySlug.split('/').pop()!, ...(entity?.title ? [entity.title] : [])].filter(n => n.length >= 3))];
+  const pattern = `\\m(${names.map(escapeRegex).join('|')})\\M`;
+  const rows = await exec.executeRaw<{ id: number; slug: string }>(
+    `SELECT p.id, p.slug FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug <> $2
+       AND p.type NOT IN ('question', 'synthesis') AND NOT (p.frontmatter ? 'pinned_question')
+       AND (p.compiled_truth ~* $3 OR ($4::integer IS NOT NULL AND EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id AND l.to_page_id = $4::integer AND l.link_type <> ALL(ARRAY['amends']::text[]))))
+     ORDER BY COALESCE(p.effective_date, p.updated_at) DESC, p.id DESC LIMIT 10`,
+    [sourceId, entitySlug, pattern, entity?.id ?? null]);
+  return { entity: entity ? { id: Number(entity.id), title: entity.title } : null, pages: rows.map(r => ({ id: Number(r.id), slug: r.slug })) };
+}
+
+/** The title of each page id, deleted or not, in no set order; the anchored rows were authorized by getChunkWindows first. */
+export async function readPageTitlesById(exec: TimedRawRead, ids: readonly number[]): Promise<Array<{ id: number; title: string }>> {
+  const rows = await exec.executeRaw<{ id: number; title: string }>('SELECT id, title FROM pages WHERE id = ANY($1::int[])', [[...ids]]);
+  return rows.map(r => ({ id: Number(r.id), title: r.title }));
+}
+
 /**
  * The slugs among `slugs` at which a live page sits in the source, retired or not, each once, in no set order
  * (entities/resolve.ts `tryOrgDirVariant`); `limit: 2` stops at two (`findExactBasenameCandidates`).

@@ -190,6 +190,7 @@ src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	field	STREAM	lane 1e
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
 src/core/engine-sql/entity-reads.ts	ENTITY_CARD_COLUMNS_SQL	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
+src/core/engine-sql/entity-reads.ts	readEntityAnchoredPages	sql	STREAM	moved from search/entity-anchor.ts entityAnchoredPages (the anchored-page name match over compiled_truth)
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
 src/core/engine-sql/facts-repair.ts	countLabelFacts	sql	STREAM	group 5 facts sites: moved from repair/conversation-labels.ts countLabelFacts unchanged
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
@@ -649,7 +650,6 @@ src/core/schema-pack/page-to-link.ts	runPageToLinkCore	sql	LEAD
 src/core/search-vector-backfill.ts	backfillPageVectors	field	LEAD	
 src/core/search-vector-backfill.ts	backfillPageVectors	sql	LEAD	
 src/core/search/chunk-windows.ts	mapChunkWindowRows	field	STREAM	
-src/core/search/entity-anchor.ts	entityAnchoredPages	sql	STREAM	
 src/core/search/evidence-delivery.ts	deliverEvidence	field	STREAM	inline pages: the fence overlay over the whole body; a segmented page (no body) skips it and is planned from windows (search/segmented-evidence.ts)
 src/core/search/evidence-delivery.ts	selectLongPages	sql	META	sizes a segmented page from its NULL body (0), so it is never selected as a long page; moves to body_bytes
 src/core/search/exact-scan.ts	buildExactBatchStatement	sql	META	#7191: octet_length of the body columns (stored size, never the body) decides an unreadable page

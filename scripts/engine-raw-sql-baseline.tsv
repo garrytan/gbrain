@@ -906,7 +906,7 @@ src/core/schema-pack/unify-types-handler.ts	execute_raw	1
 src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
 src/core/search/dedup.ts	execute_raw	1
-src/core/search/entity-anchor.ts	execute_raw	4
+src/core/search/entity-anchor.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
 src/core/search/evidence-delivery.ts	execute_raw	1
 src/core/search/fact-relevance.ts	execute_raw	9	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut; GBRA-574 F #9674 (opened before this ratchet): +1 poolUnbackedKeys, the name-tag lookup for the slot-history arm

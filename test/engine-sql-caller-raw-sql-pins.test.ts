@@ -43,6 +43,8 @@ import type { TrustTier } from '../src/core/trust/tier.ts';
 import { privateFactFilterForReader } from '../src/core/search/private-visibility.ts';
 import { projectionEligibleSql } from '../src/core/eligibility/sql.ts';
 import { SAVED_FACT_COLLAPSE_COLUMNS } from '../src/core/search/saved-fact-collapse.ts';
+import { PINNED_QUESTION_MARKER } from '../src/core/questions/identity.ts';
+import { MAX_ANCHORED } from '../src/core/search/entity-anchor.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed unless it names another commit. */
@@ -1704,6 +1706,22 @@ const PINS: Pin[] = [
     from: 'src/core/search/entity-facts.ts:53 newestFacts (a remote caller with private facts allowed; at efeb078093)',
     case: { method: 'readEntityNewestFacts', variant: 'remotePrivate', run: e => e.readEntityNewestFacts({ sourceId: 'default', slugs: ['people/alice-example'], remote: true, worldOnly: false }) },
     texts: () => [pinnedNewestFacts(true, false)],
+  },
+  {
+    from: 'src/core/search/entity-anchor.ts:38 and :42 entityAnchoredPages (the entity page, then the anchored pages; at efeb078093)',
+    case: { method: 'readEntityAnchoredPages', variant: 'default', run: e => e.readEntityAnchoredPages('default', 'people/alice-example') },
+    // The second statement is written out in engine-sql (the dynamic-SQL guard allows `$4` twice only in a static
+    // statement); the caller's interpolations are rebuilt here from their constants, so a drift in either fails.
+    texts: () => ['SELECT id, title FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL',
+      `SELECT p.id, p.slug FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug <> $2
+       AND p.type NOT IN ('question', 'synthesis') AND NOT (p.frontmatter ? '${PINNED_QUESTION_MARKER}')
+       AND (p.compiled_truth ~* $3 OR ($4::integer IS NOT NULL AND EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id AND l.to_page_id = $4::integer AND ${rankingLinkSql('l')})))
+     ORDER BY COALESCE(p.effective_date, p.updated_at) DESC, p.id DESC LIMIT ${MAX_ANCHORED}`],
+  },
+  {
+    from: 'src/core/search/entity-anchor.ts:116 applyEntityAnchoring (the anchored page titles; at efeb078093)',
+    case: { method: 'readPageTitlesById', variant: 'default', run: e => e.readPageTitlesById([1, 2]) },
+    texts: ['SELECT id, title FROM pages WHERE id = ANY($1::int[])'],
   },
 ];
 

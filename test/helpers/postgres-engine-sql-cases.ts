@@ -737,6 +737,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readPageReferenceDate': OOS.callerRawSql,
   'matchHeadStems': OOS.callerRawSql,
   'readLivePageFrontmatter': OOS.callerRawSql,
+  'readEntityAnchoredPages': OOS.callerRawSql,
+  'readPageTitlesById': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
   'notifierCoverageRecorded': OOS.writeMisc,

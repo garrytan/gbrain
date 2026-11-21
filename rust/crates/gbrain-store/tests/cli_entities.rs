@@ -10,6 +10,7 @@ use gbrain_store::cli_reads::entities::{
     SiblingCandidateQuery,
 };
 use gbrain_store::facts::PrivacyPolicy;
+use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
 use serde_json::{Value, json};
@@ -360,6 +361,116 @@ fn live_page_frontmatter_reads_the_stored_page_or_none() {
             .read_live_page_frontmatter("other", "notes/readers")
             .unwrap()
             .is_none()
+    );
+}
+
+#[test]
+fn entity_anchored_pages_name_or_link_the_entity_newest_first() {
+    let dir = TempDir::new("cli-anchored");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "other".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let page = |t: &str, body: &str, fm: Value| json!({"type": t, "title": "T", "compiled_truth": body, "frontmatter": fm});
+    put(
+        &store,
+        "default",
+        "people/nova-example",
+        json!({"type": "person", "title": "Nova Example", "compiled_truth": "Nova Example", "frontmatter": {}}),
+    );
+    put(
+        &store,
+        "default",
+        "notes/title",
+        page("note", "Met NOVA EXAMPLE today.", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/tail",
+        page("note", "see nova-example.", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/longer",
+        page("note", "Nova Examples met.", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/linked",
+        page("note", "no name here", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/amends",
+        page("note", "no name here", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/question",
+        page("question", "Nova Example?", json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/pinned",
+        page("note", "Nova Example", json!({"pinned_question": "q"})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/gone",
+        page("note", "Nova Example", json!({})),
+    );
+    store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
+    put(
+        &store,
+        "other",
+        "notes/elsewhere",
+        page("note", "Nova Example", json!({})),
+    );
+    let link = |from: &str, link_type: &str| {
+        let options: AddLinkOptions =
+            serde_json::from_value(json!({"linkType": link_type, "context": "c"})).unwrap();
+        store
+            .add_link(from, "people/nova-example", &options)
+            .unwrap();
+    };
+    link("notes/linked", "works_at");
+    link("notes/amends", "amends");
+    let anchored = store
+        .read_entity_anchored_pages("default", "people/nova-example")
+        .unwrap();
+    let entity = anchored.entity.unwrap();
+    assert_eq!(entity.title, "Nova Example");
+    let slugs: Vec<&str> = anchored.pages.iter().map(|p| p.slug.as_str()).collect();
+    assert_eq!(slugs, ["notes/linked", "notes/tail", "notes/title"]);
+    // No live entity page: only the slug tail names it, and no link counts.
+    let missing = store
+        .read_entity_anchored_pages("default", "people/missing")
+        .unwrap();
+    assert!(missing.entity.is_none() && missing.pages.is_empty());
+    // Titles read each page id once; an id outside integer is refused.
+    let gone = store.read_page_titles_by_id(&[entity.id as i64]).unwrap();
+    assert_eq!(gone[0].title, "Nova Example");
+    let ids: Vec<i64> = anchored.pages.iter().map(|p| p.id as i64).collect();
+    let titles = store
+        .read_page_titles_by_id(&[ids[0], ids[0], 0, 999_999])
+        .unwrap();
+    assert_eq!(titles.len(), 1);
+    assert!(
+        store
+            .read_page_titles_by_id(&[i64::from(i32::MAX) + 1])
+            .is_err()
     );
 }
 

@@ -22,6 +22,9 @@ import { reconcileTypeFilter } from '../../src/core/ops/search-type-filter.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { entitySavedFacts } from '../../src/core/search/entity-facts.ts';
 import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
+import { applyEntityAnchoring } from '../../src/core/search/entity-anchor.ts';
+import { chunk, installChunks } from './chunk-fixtures.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -29,6 +32,27 @@ const SRC = 'default';
 const note = (title: string, frontmatter: Record<string, unknown> = {}, body = `${title}.`) => ({
   type: 'note' as const, title, compiled_truth: body, timeline: '', frontmatter,
 });
+
+/** An entity page, pages that name it or link to it, and pages the anchor must skip; each page has one chunk. */
+async function putAnchorPages(engine: BrainEngine): Promise<void> {
+  const put = async (slug: string, type: string, body: string, day: number, frontmatter: Record<string, unknown> = {}) => {
+    await engine.putPage(slug, { type: type as 'note', title: slug === 'people/nova-example' ? 'Nova Example' : slug, compiled_truth: body,
+      timeline: '', frontmatter, effective_date: new Date(Date.UTC(2026, 2, day)), effective_date_source: 'date' });
+    await installChunks(engine, slug, [chunk(0, body)]);
+  };
+  await put('people/nova-example', 'person', 'Nova Example builds widgets.', 1);
+  await put('notes/title', 'note', 'Met NOVA EXAMPLE in Lisbon.', 2);
+  await put('notes/tail', 'note', 'The nova-example repo moved.', 3);
+  await put('notes/linked', 'note', 'A quiet note.', 4);
+  await put('notes/amends', 'note', 'An amending note.', 5);
+  await put('notes/longer', 'note', 'Nova Examples are many.', 6);
+  await put('notes/question', 'question', 'Where is Nova Example now?', 7);
+  await put('notes/pinned', 'note', 'Nova Example pinned.', 8, { pinned_question: 'where' });
+  await put('notes/gone', 'note', 'Nova Example left.', 9);
+  await engine.softDeletePage('notes/gone');
+  await engine.addLink('notes/linked', 'people/nova-example', '', 'works_with', 'manual');
+  await engine.addLink('notes/amends', 'people/nova-example', '', 'amends', 'manual');
+}
 
 describe('engine parity: fail-soft reads on the search, put and entity paths', () => {
   parityTest('readLivePageFrontmatter answers the live page type and frontmatter, and null for a gone or missing page', {
@@ -140,6 +164,41 @@ describe('engine parity: fail-soft reads on the search, put and entity paths', (
     const facts = await entitySavedFacts(engine, entity, { remote: false, excludePrivate: false });
     const answer = facts.map(f => ({ fact: f.fact, entity: f.entity_slug, linked: f.linked_from ?? null }));
     expect(answer.map(a => a.fact)).toEqual(['Nova fact number 6', 'Nova fact number 5', 'Nova fact number 4', 'Nova fact number 3', 'Nova fact number 2']);
+    return answer;
+  });
+
+  parityTest('readEntityAnchoredPages reads the live entity page and the pages that name it as a word or link to it, newest first', {
+    methods: ['putPage', 'sealChunks', 'softDeletePage', 'addLink', 'readEntityAnchoredPages', 'readPageTitlesById'],
+  }, async (engine) => {
+    await putAnchorPages(engine);
+    const read = await engine.readEntityAnchoredPages(SRC, 'people/nova-example');
+    const missing = await engine.readEntityAnchoredPages(SRC, 'people/never-written');
+    const titles = await engine.readPageTitlesById([...read.pages.map(p => p.id), read.entity!.id, read.pages[0]!.id]);
+    const answer = {
+      entity: read.entity?.title ?? null,
+      pages: read.pages.map(p => p.slug),
+      missing: { entity: missing.entity, pages: missing.pages.length },
+      titles: titles.map(t => t.title).sort(),
+      idsMatch: read.pages.every(p => titles.some(t => t.id === p.id)),
+    };
+    expect(answer).toEqual({
+      entity: 'Nova Example', pages: ['notes/linked', 'notes/tail', 'notes/title'], missing: { entity: null, pages: 0 },
+      titles: ['Nova Example', 'notes/linked', 'notes/tail', 'notes/title'], idsMatch: true,
+    });
+    return answer;
+  });
+
+  parityTest('a current-state question about an entity puts the entity page and the pages anchored to it first', {
+    methods: ['putPage', 'sealChunks', 'addLink', 'listPagesTitledIn', 'readEntityAnchoredPages', 'getChunkWindows', 'readPageTitlesById'],
+  }, async (engine) => {
+    await putAnchorPages(engine);
+    const out = await applyEntityAnchoring(engine, 'Where does Nova Example work now?', [], { sourceId: SRC });
+    const answer = { entity: out.entity, anchored: out.anchored, rows: out.results.map(r => [r.slug, r.title, r.entity_anchored]) };
+    expect(answer).toEqual({
+      entity: 'default:people/nova-example', anchored: 4,
+      rows: [['people/nova-example', 'Nova Example', 'entity'], ['notes/linked', 'notes/linked', 'linked'],
+        ['notes/tail', 'notes/tail', 'linked'], ['notes/title', 'notes/title', 'linked']],
+    });
     return answer;
   });
 });

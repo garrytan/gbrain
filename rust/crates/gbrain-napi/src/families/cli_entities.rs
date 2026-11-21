@@ -299,4 +299,29 @@ impl Brain {
             s.read_live_page_frontmatter(&source_id, &slug)
         })
     }
+
+    /// `readEntityAnchoredPages(sourceId, entitySlug)`: the live entity page and its anchored pages.
+    #[napi]
+    pub fn read_entity_anchored_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        entity_slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_entity_anchored_pages(&source_id, &entity_slug)
+        })
+    }
+
+    /// `readPageTitlesById(ids)`: the title of each page id, deleted or not.
+    #[napi]
+    pub fn read_page_titles_by_id<'env>(
+        &self,
+        env: &'env Env,
+        ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_titles_by_id(&required::<Vec<i64>>(ids, "readPageTitlesById ids")?)
+        })
+    }
 }

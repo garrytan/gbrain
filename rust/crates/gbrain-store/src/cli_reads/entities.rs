@@ -5,11 +5,13 @@
 //! Frontmatter values are read as PostgreSQL's `->>` reads them (see [`arrow_text`]).
 
 use crate::Store;
-use crate::cli_reads::pg_text::pg_lower;
+use crate::cli_reads::pg_text::{pg_lower, regex_char_matches};
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, like, page_hidden};
-use crate::pages::{PageRecord, all_pages};
+use crate::link_queries::ranks;
+use crate::links::out_links;
+use crate::pages::{PageRecord, all_pages, read_page_by_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
@@ -142,6 +144,39 @@ const CARD_PREFIX_CHARS: usize = 64 * 1024;
 pub enum LabelScope {
     Slugs { slugs: Vec<String> },
     Since { since: String },
+}
+
+/// The pages `readEntityAnchoredPages` answers besides the entity page (`ENTITY_ANCHORED_LIMIT`).
+const ENTITY_ANCHORED_LIMIT: usize = 10;
+/// The frontmatter key of a pinned question page (`PINNED_QUESTION_MARKER`).
+const PINNED_QUESTION_KEY: &str = "pinned_question";
+
+/// The live entity page `readEntityAnchoredPages` found: its id and title.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AnchorEntity {
+    pub id: u64,
+    pub title: String,
+}
+
+/// One anchored page: its id and slug.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AnchoredPageRow {
+    pub id: u64,
+    pub slug: String,
+}
+
+/// `readEntityAnchoredPages(sourceId, entitySlug)`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EntityAnchoredPages {
+    pub entity: Option<AnchorEntity>,
+    pub pages: Vec<AnchoredPageRow>,
+}
+
+/// One `readPageTitlesById` row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PageTitleRow {
+    pub id: u64,
+    pub title: String,
 }
 
 /// One labelled page: its type and frontmatter.
@@ -417,6 +452,100 @@ impl Store {
                 frontmatter: p.frontmatter,
             }))
     }
+
+    /// `readEntityAnchoredPages(sourceId, entitySlug)`: the live entity page at the slug, then up to
+    /// ten other live pages of the source (no question, synthesis or pinned-question page) whose
+    /// compiled truth names the entity as a word (`~* '\m(name|...)\M'`, see [`names_as_word`]) or
+    /// that link to the entity page by a ranking link, by `COALESCE(effective_date, updated_at)`
+    /// newest first, then by id descending.
+    pub fn read_entity_anchored_pages(
+        &self,
+        source_id: &str,
+        entity_slug: &str,
+    ) -> Result<EntityAnchoredPages> {
+        let read = self.read()?;
+        let pages = all_pages(&*read)?;
+        let entity = pages.iter().find(|p| {
+            p.source_id == source_id && p.slug == entity_slug && p.deleted_at_us.is_none()
+        });
+        let mut names: Vec<Vec<char>> = Vec::new();
+        let tail = entity_slug.rsplit('/').next().unwrap_or(entity_slug);
+        let title = entity.map(|e| e.title.as_str()).filter(|t| !t.is_empty());
+        for name in std::iter::once(tail).chain(title) {
+            let chars: Vec<char> = name.chars().collect();
+            if name.encode_utf16().count() >= 3 && !names.contains(&chars) {
+                names.push(chars);
+            }
+        }
+        let mut hits: Vec<&PageRecord> = Vec::new();
+        for p in &pages {
+            if p.source_id != source_id
+                || p.deleted_at_us.is_some()
+                || p.slug == entity_slug
+                || p.page_type == "question"
+                || p.page_type == "synthesis"
+                || p.frontmatter.contains_key(PINNED_QUESTION_KEY)
+            {
+                continue;
+            }
+            let named = p
+                .compiled_truth
+                .as_deref()
+                .is_some_and(|text| names_as_word(text, &names));
+            let linked = match entity {
+                Some(e) if !named => out_links(&*read, p.id)?
+                    .iter()
+                    .any(|l| l.to_page_id == e.id && ranks(l)),
+                _ => false,
+            };
+            if named || linked {
+                hits.push(p);
+            }
+        }
+        hits.sort_by(|a, b| {
+            let date = |p: &PageRecord| p.effective_date_us.unwrap_or(p.updated_at_us);
+            date(b).cmp(&date(a)).then(b.id.cmp(&a.id))
+        });
+        Ok(EntityAnchoredPages {
+            entity: entity.map(|e| AnchorEntity {
+                id: e.id,
+                title: e.title.clone(),
+            }),
+            pages: hits
+                .into_iter()
+                .take(ENTITY_ANCHORED_LIMIT)
+                .map(|p| AnchoredPageRow {
+                    id: p.id,
+                    slug: p.slug.clone(),
+                })
+                .collect(),
+        })
+    }
+
+    /// `readPageTitlesById(ids)`: the title of each page id, deleted or not, each once. An id
+    /// outside `integer` is refused, as the `$1::int[]` cast refuses it.
+    pub fn read_page_titles_by_id(&self, ids: &[i64]) -> Result<Vec<PageTitleRow>> {
+        let mut wanted = BTreeSet::new();
+        for &id in ids {
+            if i32::try_from(id).is_err() {
+                return Err(StoreError::invalid(format!(
+                    "readPageTitlesById id {id} is out of range for type integer"
+                )));
+            }
+            // Page ids start at 1, so a zero or negative id names no page.
+            if id > 0 {
+                wanted.insert(id as u64);
+            }
+        }
+        let read = self.read()?;
+        let mut rows = Vec::new();
+        for id in wanted {
+            if let Some(p) = read_page_by_id(&*read, id)? {
+                rows.push(PageTitleRow { id, title: p.title });
+            }
+        }
+        Ok(rows)
+    }
 }
 
 /// `retiredPageSql`: `canonical` is false or no, `superseded_by` or `merged_into` names a page, or
@@ -481,6 +610,36 @@ fn jsonb_text(value: &Value) -> String {
         }
         other => other.to_string(),
     }
+}
+
+/// A word character of a Postgres regular expression (`\w`): a letter, a digit or `_`.
+fn word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// `text ~* '\m(name|...)\M'` with each name escaped to a literal: some name matches
+/// case-insensitively (each pattern character by its lower and upper forms) where a word starts
+/// and a word ends. `\m` needs a word character after it and none before, `\M` the reverse, so a
+/// name that starts or ends with a non-word character never matches, and no names never match.
+fn names_as_word(text: &str, names: &[Vec<char>]) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    names.iter().any(|name| {
+        let (Some(first), Some(last)) = (name.first(), name.last()) else {
+            return false;
+        };
+        if !word_char(*first) || !word_char(*last) || name.len() > chars.len() {
+            return false;
+        }
+        (0..=chars.len() - name.len()).any(|start| {
+            let end = start + name.len();
+            (start == 0 || !word_char(chars[start - 1]))
+                && chars.get(end).is_none_or(|c| !word_char(*c))
+                && name
+                    .iter()
+                    .zip(&chars[start..end])
+                    .all(|(p, t)| regex_char_matches(*p, *t, false))
+        })
+    })
 }
 
 #[cfg(test)]
