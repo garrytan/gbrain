@@ -25,10 +25,11 @@
  *    write access_tokens and oauth_clients rows; the Rust store keeps them on its token and client records, so every
  *    arm compares the binding, the refusals and the reads back (readAccessCredentials, readLiveMember, readMayActFor).
  *  - Seam: none. Timestamps are reduced to their shape; the credential rows are seeded through the typed
- *    insertAccessToken and insertOauthClient.
+ *    insertAccessToken and insertOauthClient. A client binding with the attest-sources marks runs on every arm too
+ *    (the last case), its sources written through the harness helpers.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { archiveSource, createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AccessMemberInsert, CredentialBindingRow } from '../../src/core/engine-sql/access-members.ts';
@@ -39,6 +40,8 @@ import { addMember, bindCredential, disableMember, enableMember, getMember, list
 const { parityTest } = parityArms(testBackends());
 
 const SINCE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+const TOKEN_GRANT = { source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
 
 function member(id: string, extra: Partial<AccessMemberInsert> = {}): AccessMemberInsert {
   return { id, displayName: null, email: null, kind: 'person', groups: [], bindTokenId: null, ...extra };
@@ -233,6 +236,7 @@ describe('access member writes', () => {
         tokenNarrow: await tx.readCredentialBindingForUpdate(tokenTarget, { readsUnscoped: false }),
         client: await tx.readCredentialBindingForUpdate(clientTarget, { readsUnscoped: false }),
         missing: await tx.readCredentialBindingForUpdate({ kind: 'client', id: 'client-none' }, { readsUnscoped: false }),
+        missingToken: await tx.readCredentialBindingForUpdate({ kind: 'token', id: '00000000-0000-4000-8000-00000000dead' }, { readsUnscoped: false }),
       };
     });
     const bound = { member_id: 'alice-example', may_act_for: ['alice-example'], attest_actor: 'alice-example', attest_ops: ['query'], attest_sources: ['default'], attest_read: 'scope' };
@@ -243,6 +247,7 @@ describe('access member writes', () => {
       tokenNarrow: bound,
       client: { ...none, member_id: 'alice-example', grant_types: ['authorization_code'], confidential: false },
       missing: undefined,
+      missingToken: undefined,
     });
     return out;
   });
@@ -310,6 +315,65 @@ describe('access member writes', () => {
       clientMayActFor: ['member:bob-example'],
     });
     return { ...out, ...reads };
+  });
+
+  parityTest('bind a client to a member and list scope sources (--attest-sources): the checks, the marks and the binding commit together, and a refusal or a dry run changes nothing', {
+    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'insertOauthClient', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped',
+      'readScopeSourceConfigs', 'readSourceAttestState', 'replaceSourceConfig', 'readLiveMember', 'deleteOAuthClient'],
+  }, async (engine, backend: ParityBackend) => {
+    await engine.insertAccessMember(member('alice-example', { groups: ['team-a'] }));
+    await engine.insertAccessMember(member('bob-example'));
+    await engine.setAccessMemberDisabled('bob-example', true);
+    await createSource(engine, backend, 'scope-a');
+    await createSource(engine, backend, 'scope-b', { note: 'kept' });
+    await createSource(engine, backend, 'scope-shared', { federated: true });
+    await createSource(engine, backend, 'scope-old');
+    await archiveSource(engine, backend, 'scope-old');
+    const trusted = { client_id: 'trusted', client_name: 'trusted', client_secret_hash: 'hash-trusted', grant_types: ['client_credentials'], scope: 'read write', source_id: 'default' };
+    await engine.insertOauthClient(trusted);
+    await engine.insertOauthClient({ client_id: 'person-client', client_name: 'person-client', grant_types: ['authorization_code'], scope: 'read' });
+    const target = { kind: 'client' as const, id: 'trusted' };
+    const binding = async (id: string) => {
+      const row = await engine.transaction(tx => tx.readCredentialBindingForUpdate({ kind: 'client', id }, { readsUnscoped: true }));
+      return row && { ...row, reads_unscoped: row.reads_unscoped == null ? null : 'set' };
+    };
+    const config = async (id: string) => (await engine.readScopeSourceConfigs([id]))[0]?.config;
+    const failure = async (run: () => Promise<unknown>) => {
+      try { await run(); return 'ok'; } catch (error) { const e = error as { code?: unknown; message?: unknown }; return { code: e.code, message: e.message }; }
+    };
+    const out: Record<string, unknown> = {};
+    out.preview = await bindCredential(engine, target, { attestActor: 'qm', attestOps: ['memory_write'], attestSources: ['scope-b'] }, { dryRun: true });
+    out.previewKept = { binding: await binding('trusted'), scopeB: await config('scope-b') };
+    out.bound = await bindCredential(engine, target, { attestActor: 'qm', attestOps: ['memory_write'], attestSources: ['scope-b', 'scope-a', 'scope-a'], readsUnscoped: true });
+    out.afterBind = { binding: await binding('trusted'), scopeA: await config('scope-a'), scopeB: await config('scope-b') };
+    out.restated = await bindCredential(engine, target, { attestSources: ['scope-a', 'scope-b'] });
+    out.refused = {
+      unknown: await failure(() => bindCredential(engine, target, { attestSources: ['scope-none'] })),
+      archived: await failure(() => bindCredential(engine, target, { attestSources: ['scope-old'] })),
+      federated: await failure(() => bindCredential(engine, target, { attestSources: ['scope-shared'] })),
+      default: await failure(() => bindCredential(engine, target, { attestSources: ['default'] })),
+      noActor: await failure(() => bindCredential(engine, { kind: 'client', id: 'person-client' }, { attestSources: ['scope-a'] })),
+      notConfidential: await failure(() => bindCredential(engine, { kind: 'client', id: 'person-client' }, { attestActor: 'qm' })),
+      noClient: await failure(() => bindCredential(engine, { kind: 'client', id: 'nobody' }, { member: 'alice-example' })),
+      disabledMember: await failure(() => bindCredential(engine, { kind: 'client', id: 'person-client' }, { member: 'bob-example' })),
+    };
+    out.afterRefusals = { trusted: await binding('trusted'), person: await binding('person-client'), scopeOld: await config('scope-old'), scopeShared: await config('scope-shared') };
+    out.cleared = await bindCredential(engine, target, { attestActor: null, readsUnscoped: false });
+    out.afterClear = await binding('trusted');
+    out.memberBound = await bindCredential(engine, { kind: 'client', id: 'person-client' }, { member: 'alice-example', mayActFor: ['alice-example'] });
+    out.identity = {
+      live: await engine.readLiveMember('oauth_client', 'person-client'),
+      unbound: await engine.readLiveMember('oauth_client', 'trusted'),
+      unknown: await engine.readLiveMember('oauth_client', 'nobody'),
+    };
+    await engine.setAccessMemberDisabled('alice-example', true);
+    const disabled = await engine.readLiveMember('oauth_client', 'person-client');
+    await engine.setAccessMemberDisabled('alice-example', false);
+    const reenabled = await engine.readLiveMember('oauth_client', 'person-client');
+    await engine.deleteOAuthClient('person-client');
+    out.identityAfter = { disabled, reenabled, deleted: await engine.readLiveMember('oauth_client', 'person-client') };
+    out.sourceState = { present: await engine.readSourceAttestState('scope-a'), archived: (await engine.readSourceAttestState('scope-old'))?.archived, missing: await engine.readSourceAttestState('scope-none') };
+    return out;
   });
 });
 
@@ -478,12 +542,25 @@ describe('access member and group reads after the typed writes', () => {
     return out;
   });
 
-  parityTest('readLiveMember finds a live member by id or by the trimmed stdio config value, and nothing else', {
-    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'setConfig', 'readLiveMember'],
+  parityTest('readLiveMember finds a live member by id, by the trimmed stdio config value, or through a token not revoked or a client not deleted bound to it, and nothing else', {
+    methods: ['insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'setConfig', 'readLiveMember', 'insertAccessToken', 'insertOauthClient', 'revokeAccessToken', 'writeCredentialBinding'],
   }, async (engine) => {
     await seedMembers(engine);
     await engine.setConfig('mcp.stdio_member', ' zed-example ');
     await engine.setConfig('other.key', 'bob-example');
+    const tokenFor = async (name: string, memberId: string | null, revoked = false) => {
+      const { id } = await engine.insertAccessToken({ name, token_hash: `hash-${name}`, scopes: ['read'], permissions: {}, ...TOKEN_GRANT });
+      if (memberId) await engine.transaction(tx => tx.writeCredentialBinding({ kind: 'token', id }, { member: memberId, mayActFor: null, attestActor: null, attestOps: null, attestSources: null, attestRead: null }));
+      if (revoked) await engine.revokeAccessToken(id);
+      return id;
+    };
+    const tokens = {
+      live: await tokenFor('t-live', 'zed-example'), unbound: await tokenFor('t-unbound', null), disabled: await tokenFor('t-disabled', 'bob-example'),
+      removed: await tokenFor('t-removed', 'carol-example'), revoked: await tokenFor('t-revoked', 'zed-example', true),
+    };
+    await engine.insertOauthClient({ client_id: 'client-live', client_name: 'client-live', member_id: 'zed-example' });
+    await engine.insertOauthClient({ client_id: 'client-disabled', client_name: 'client-disabled', member_id: 'bob-example' });
+    await engine.insertOauthClient({ client_id: 'client-deleted', client_name: 'client-deleted', member_id: 'zed-example', deleted_at: new Date('2026-01-01T00:00:00Z') });
     const out = {
       zed: await engine.readLiveMember('member', 'zed-example'),
       disabled: await engine.readLiveMember('member', 'bob-example'),
@@ -494,10 +571,20 @@ describe('access member and group reads after the typed writes', () => {
       stdioUnset: await engine.readLiveMember('stdio_config', 'no.such.key'),
       token: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-0000000000c1'),
       client: await engine.readLiveMember('oauth_client', 'client-alice'),
+      tokenLive: await engine.readLiveMember('legacy_token', tokens.live),
+      tokenUnbound: await engine.readLiveMember('legacy_token', tokens.unbound),
+      tokenDisabled: await engine.readLiveMember('legacy_token', tokens.disabled),
+      tokenRemoved: await engine.readLiveMember('legacy_token', tokens.removed),
+      tokenRevoked: await engine.readLiveMember('legacy_token', tokens.revoked),
+      clientLive: await engine.readLiveMember('oauth_client', 'client-live'),
+      clientDisabled: await engine.readLiveMember('oauth_client', 'client-disabled'),
+      clientDeleted: await engine.readLiveMember('oauth_client', 'client-deleted'),
     };
     expect(out).toEqual({
       zed: { id: 'zed-example', groups: ['team-a', 'team-b'] }, disabled: null, removed: null, group: null,
       stdioTrimmed: { id: 'zed-example', groups: ['team-a', 'team-b'] }, stdioDisabled: null, stdioUnset: null, token: null, client: null,
+      tokenLive: { id: 'zed-example', groups: ['team-a', 'team-b'] }, tokenUnbound: null, tokenDisabled: null, tokenRemoved: null, tokenRevoked: null,
+      clientLive: { id: 'zed-example', groups: ['team-a', 'team-b'] }, clientDisabled: null, clientDeleted: null,
     });
     return out;
   });

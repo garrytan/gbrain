@@ -5,7 +5,7 @@
  * these members turn it into a Date, as PGLite's driver reads a `timestamptz`.
  */
 import type {
-  McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket,
+  McpLifetimeUsageRow, McpRequestCountKind, McpTokenRequestCount, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket,
   SearchTelemetryRow,
 } from '../../engine-sql/telemetry.ts';
 import type { ChatUsageAggregateRow, ChatUsageLogRow, ChatUsageWindow } from '../../engine-sql/chat-usage.ts';
@@ -81,3 +81,11 @@ export const readChatUsage: StoreMember<[days: number], ChatUsageWindow> = async
   }));
   return { rows, logged_since: out.logged_since ?? null };
 };
+
+/** Request log rows of the last 24 hours: all, the traffic (no surface audit rows) or the failed traffic. */
+export const countMcpRequestsLastDay: StoreMember<[kind: McpRequestCountKind], number> = async (brain, kind) =>
+  Number(await storeCall({ member: 'countMcpRequestsLastDay' }, () => brain.countMcpRequestsLastDay(kind)));
+
+/** Requests of the last 24 hours per asked token, in token byte order; a token with none has no row. */
+export const countMcpRequestsLastDayByToken: StoreMember<[tokenNames: readonly string[]], McpTokenRequestCount[]> = async (brain, tokenNames) =>
+  await storeCall({ member: 'countMcpRequestsLastDayByToken' }, () => brain.countMcpRequestsLastDayByToken([...tokenNames])) as McpTokenRequestCount[];

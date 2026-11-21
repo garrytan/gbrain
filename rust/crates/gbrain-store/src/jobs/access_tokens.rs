@@ -27,6 +27,7 @@
 
 use super::*;
 use crate::env::{iso, parse_iso};
+use crate::kv::KvWrite;
 
 const TOKEN: u8 = 0x2B;
 const TABLE: &str = "access_tokens";
@@ -677,6 +678,23 @@ impl Store {
             rows.into_iter()
                 .map(|t| json!({ "name": t.name, "member_id": t.member_id, "federated_read": t.federated_read }))
                 .collect(),
+        ))
+    }
+}
+
+impl Store {
+    /// `readLiveAccessTokenRows()`: the whole row (`SELECT *`, no hash) of every token not revoked, by id, for the
+    /// grant checks that read every credential's source grant. Shaped as `read_active_access_token_by_hash` shapes it
+    /// (`last_used_at` and the binding columns as stored).
+    pub fn read_live_access_token_rows(&self) -> Result<Value> {
+        let read = self.read()?;
+        let mut tokens: Vec<TokenRecord> = all_tokens(&*read)?
+            .into_iter()
+            .filter(|t| t.revoked_at.is_none())
+            .collect();
+        tokens.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(Value::Array(
+            tokens.into_iter().map(|t| t.whole_row()).collect(),
         ))
     }
 }

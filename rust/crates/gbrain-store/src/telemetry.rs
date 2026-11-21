@@ -41,6 +41,8 @@ const OP_CUTOFF: &str = "readMcpLogPruneCutoff";
 const OP_PRUNE: &str = "pruneMcpRequestLogBatch";
 const OP_USAGE: &str = "readClientOpUsage";
 const OP_LIFETIME: &str = "readMcpLifetimeUsage";
+const OP_COUNT: &str = "countMcpRequestsLastDay";
+const OP_COUNT_BY_TOKEN: &str = "countMcpRequestsLastDayByToken";
 const LOG_ID_COUNTER: &str = "next_mcp_request_id";
 const DAY_US: i128 = 86_400_000_000;
 /// The `timestamptz` range in Unix microseconds: 4714-11-24 BC 00:00:00 UTC up to (not including)
@@ -696,6 +698,70 @@ impl Store {
             .collect())
     }
 
+    /// `countMcpRequestsLastDay(kind)`: the request log rows created after `now - 24 hours`: `all` counts every row,
+    /// `traffic` leaves out the `surface_change` audit rows, `errors` is the traffic whose status is not a success or an
+    /// admitted pending write. Any other kind refuses with `invalid_argument`.
+    pub fn count_mcp_requests_last_day(&self, kind: &str) -> Result<i64> {
+        if !["all", "traffic", "errors"].contains(&kind) {
+            return Err(StoreError::new(
+                INVALID_ARGUMENT,
+                format!("{OP_COUNT}: unknown kind \"{kind}\""),
+            ));
+        }
+        let cutoff = self.env.now_micros() - DAY_US as i64;
+        let read = self.read()?;
+        let mut count = 0_i64;
+        for (_, row) in read_log(&*read)? {
+            if row.created_us <= cutoff {
+                continue;
+            }
+            if kind != "all" && row.operation == "surface_change" {
+                continue;
+            }
+            if kind == "errors" && SUCCESS_STATUSES.contains(&row.status.as_str()) {
+                continue;
+            }
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// `countMcpRequestsLastDayByToken(tokenNames)`: `{ token_name, requests }` per asked token that has a request
+    /// created after `now - 24 hours`, in token byte order. A NULL-token row never matches; a NUL in a name refuses with
+    /// `invalid_argument`.
+    pub fn count_mcp_requests_last_day_by_token(
+        &self,
+        token_names: Option<&[Option<String>]>,
+    ) -> Result<Vec<Value>> {
+        let asked: BTreeSet<&str> = token_names
+            .unwrap_or_default()
+            .iter()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        for name in &asked {
+            no_nul(OP_COUNT_BY_TOKEN, &[("tokenNames", name)])?;
+        }
+        if asked.is_empty() {
+            return Ok(Vec::new());
+        }
+        let cutoff = self.env.now_micros() - DAY_US as i64;
+        let read = self.read()?;
+        let mut counts: BTreeMap<String, i64> = BTreeMap::new();
+        for (_, row) in read_log(&*read)? {
+            let Some(token) = row.token_name else {
+                continue;
+            };
+            if row.created_us > cutoff && asked.contains(token.as_str()) {
+                *counts.entry(token).or_insert(0) += 1;
+            }
+        }
+        Ok(counts
+            .into_iter()
+            .map(|(token_name, requests)| json!({ "token_name": token_name, "requests": requests }))
+            .collect())
+    }
+
     /// `readMcpRollupPrunedBefore()`: the newest `pruned_through` of the tally (null when nothing
     /// was pruned) and the store clock, as ISO text.
     pub fn read_mcp_rollup_pruned_before(&self) -> Result<Value> {
@@ -937,6 +1003,56 @@ mod tests {
         );
         assert_eq!(
             s.prune_mcp_request_log_batch(Some(&cutoff), Some(&keep), Some(-1.0))
+                .unwrap_err()
+                .code,
+            INVALID_ARGUMENT
+        );
+    }
+
+    #[test]
+    fn counts_the_last_day_by_kind_and_by_token() {
+        let s = store();
+        for (token, op, status, age) in [
+            (Some("token-a"), "search", "success", 0.5),
+            (Some("token-a"), "search", "error", 0.25),
+            (Some("token-a"), "search", "accepted_pending", 0.1),
+            (Some("token-b"), "get_page", "auth_failed", 0.5),
+            (None, "search", "error", 0.5),
+            (Some("token-a"), "surface_change", "success", 0.5),
+            (Some("token-a"), "search", "error", 2.0),
+            (Some("token-b"), "get_page", "success", 30.0),
+        ] {
+            s.log_mcp_request(&request(token, op, status, age)).unwrap();
+        }
+        assert_eq!(s.count_mcp_requests_last_day("all").unwrap(), 6);
+        assert_eq!(s.count_mcp_requests_last_day("traffic").unwrap(), 5);
+        assert_eq!(s.count_mcp_requests_last_day("errors").unwrap(), 3);
+        assert_eq!(
+            s.count_mcp_requests_last_day("nope").unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+        let ask = vec![
+            Some("token-b".to_string()),
+            None,
+            Some("token-a".to_string()),
+            Some("nobody".to_string()),
+        ];
+        let rows = s.count_mcp_requests_last_day_by_token(Some(&ask)).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                json!({ "token_name": "token-a", "requests": 4 }),
+                json!({ "token_name": "token-b", "requests": 1 })
+            ]
+        );
+        assert!(
+            s.count_mcp_requests_last_day_by_token(None)
+                .unwrap()
+                .is_empty()
+        );
+        let nul = vec![Some("a\0b".to_string())];
+        assert_eq!(
+            s.count_mcp_requests_last_day_by_token(Some(&nul))
                 .unwrap_err()
                 .code,
             INVALID_ARGUMENT

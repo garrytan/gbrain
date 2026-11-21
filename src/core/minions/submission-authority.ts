@@ -112,8 +112,7 @@ export function assertSameAuthority(actual: unknown, expected: SubmissionAuthori
 }
 
 async function sourceBoundary(engine: BrainEngine, sourceId: string, jobName: RemoteJobName) {
-  const [source] = await engine.executeRaw<Record<string, unknown>>(
-    'SELECT id, local_path, config, archived, created_at FROM sources WHERE id = $1', [sourceId]);
+  const source = await engine.readJobSourceState(sourceId);
   if (!source || source.archived !== false || typeof source.local_path !== 'string' || !source.local_path) {
     deny('an active source with a registered filesystem root is required',
       `Source ${sourceId} must be active and registered with a directory on the brain host. The brain host operator checks it with gbrain sources list --json.`);
@@ -135,7 +134,7 @@ async function sourceBoundary(engine: BrainEngine, sourceId: string, jobName: Re
   try { worktreeRoot = realpathSync(discoverGitRoot(canonicalRoot)); }
   catch { if (jobName === 'sync') deny('remote sync requires an existing Git working tree; initialize or restore it locally',
     `Source ${sourceId}'s root is not inside a Git working tree, so sync has nothing to diff. Submit import for it instead, or have the brain host operator restore the checkout.`); }
-  return { canonicalRoot, worktreeRoot, sourceCreatedAt: new Date(source.created_at as string).toISOString() };
+  return { canonicalRoot, worktreeRoot, sourceCreatedAt: source.created_at.toISOString() };
 }
 
 /**

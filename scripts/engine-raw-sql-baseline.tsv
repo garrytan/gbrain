@@ -131,7 +131,7 @@ src/commands/repair-jsonb.ts	driver_call	4
 src/commands/repair-propose.ts	execute_raw	1
 src/commands/serve-health.ts	execute_raw	1
 src/commands/serve-http-admin-api.ts	execute_raw	4
-src/commands/serve-http-admin-api.ts	sql_template	11
+src/commands/serve-http-admin-api.ts	sql_template	2
 src/commands/serve-http-api-keys.ts	execute_raw	2
 src/commands/serve-http-clients.ts	execute_raw	1
 src/commands/serve-http-metrics.ts	execute_raw	2
@@ -169,7 +169,7 @@ src/commands/takes.ts	execute_raw	2
 src/commands/trust.ts	execute_raw	1
 src/commands/upgrade.ts	execute_raw	1
 src/core/access/actor.ts	execute_raw	7
-src/core/access/attest-sources.ts	sql_template	8
+src/core/access/attest-sources.ts	sql_template	7
 src/core/access/federation-exposure.ts	execute_raw	1
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/labelled-only.ts	execute_raw	2
@@ -396,12 +396,11 @@ src/core/google/people-calendar-sweep.ts	execute_raw	3
 src/core/google/sweep-shared.ts	execute_raw	2
 src/core/grants/legacy-token.ts	execute_raw	2
 src/core/grants/legacy-token.ts	sql_template	3
-src/core/grants/lifecycle.ts	sql_template	7
 src/core/grants/migration.ts	execute_raw	1
 src/core/grants/migration.ts	sql_template	5
 src/core/grants/model.ts	execute_raw	1
 src/core/grants/rescope.ts	sql_template	7
-src/core/grants/service.ts	sql_template	11
+src/core/grants/service.ts	sql_template	10
 src/core/grants/shared-exposure.ts	execute_raw	1
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	3
@@ -447,7 +446,6 @@ src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2
 src/core/minions/rate-leases.ts	execute_raw	6
 src/core/minions/spend-authorization.ts	execute_raw	3
-src/core/minions/submission-authority.ts	execute_raw	1
 src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/terminal-hook.ts	execute_raw	1

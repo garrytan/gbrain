@@ -15,15 +15,26 @@ serves the same members, and the spend ledger reads the same record ([spend-log.
 | `brain.listOauthClients()` | every client's whole row, as `SELECT * FROM oauth_clients ORDER BY client_name COLLATE "C", client_id COLLATE "C"` returns them (byte order on every engine; the store sorts the bytes of the name, then of the id) |
 | `brain.patchOauthClient(clientId, patch, guard)` | `{ row, before }` or null. `patch.set` names the columns to set (`client_secret_hash`, `token_ttl`, `min_trust`, `surface`, `surface_set_by`) and the field of that name is the value, absent meaning NULL; `row` is the whole row after (checked again), `before` the five columns before. Null when the client is missing or the guard excludes it: `live` skips a deleted client, `unless_surface_set_by` skips a client with that pin (a NULL pin is not equal to it), `client_secret_hash_is` skips a client whose secret hash is not that value (compare-and-set, so of two callers that read the same hash exactly one writes). The write is one store write, so on this store it is the lock |
 | `brain.updateOauthClientBudget(clientId, usd)` | whether the client exists; `usd` null clears the cap. The rewritten row is checked again |
-| `brain.deleteOauthClient(clientId)` | `{ client_id, client_name }` of the row it removed in one write, or null (the engine member is `deleteOAuthClient`). It also removes the client's OAuth tokens in the same write ([oauth-tokens.md](oauth-tokens.md)), as the foreign key does on PostgreSQL; the store keeps no codes, so nothing cascades to them |
+| `brain.deleteOauthClient(clientId)` | `{ client_id, client_name }` of the row it removed in one write, or null (the engine member is `deleteOAuthClient`). It also removes the client's authorization codes ([oauth-codes.md](oauth-codes.md)) and its OAuth tokens in the same write ([oauth-tokens.md](oauth-tokens.md)), as the foreign key does on PostgreSQL |
 | `brain.oauthClientLive(clientId)` | whether a client not deleted (`deleted_at IS NULL`) has this id |
 | `brain.listUnboundClientIds()` | the ids of the clients not deleted and bound to no member (`member_id` NULL), in byte order (`ORDER BY client_id COLLATE "C"`); `gbrain access serves --owner` offers to bind each |
 | `brain.setOauthClientTokenTtl(clientId, ttl)` | whether the client exists after setting its `token_ttl`; the row is checked again |
 
 TypeScript-only members (`src/core/rust-engine/store-members/jobs-oauth-clients.ts`): `readOauthClientColumns(probe)`
 names every column of the probe (the store keeps every column); `insertOauthClientGrant(row)` writes the client row through
-`insertOauthClient` and drops the register audit row (the store keeps no `oauth_grant_audit`);
-`readTokenLifetimeClampedClients()` is `[]` (no audit, so no upgrade clamped a client).
+`insertOauthClient` and the register audit row in one write (`brain.insertOauthClientGrant(row, audit)`);
+`readTokenLifetimeClampedClients()` is `[]` (the store runs no migrations, so none clamped a client).
+
+Grant members (`src/jobs/client_grants.rs`, NAPI `families/jobs/grants.rs`; the grant audit is `oauth_grant_audit`):
+
+| Member | What it does |
+| --- | --- |
+| `brain.persistOauthClientGrant(grant)` | one write: the client row's grant columns (every constraint above applies), the `__delegation_grant` of this client's open subagent jobs that have none, the audit row, and the private-pages and private-facts follow-ups. False, writing nothing, for no client or a revision other than the expected one |
+| `brain.listOauthGrantAudit(clientId)` | the client's audit rows by id, with the documents in `jsonb` key order |
+| `brain.readLatestCatalogProvenanceAudit(clientId)` | the newest audit row's `after_grant` that has a `catalogProvenance` key (a JSON null counts as present) |
+| `brain.readLiveOauthClients()` | every client not deleted, by id |
+| `brain.readSourceGrantState(id)` / `brain.replaceSourceConfig(id, config)` | a source's `{archived, config}` and a whole-config replace (the engine members `readSourceAttestState` and `replaceSourceConfig` are these two, for the `--attest-sources` check and mark) |
+| `brain.oauthClientHoldsAuthorization(clientId)` | whether the client holds an OAuth token or an authorization code, expired ones included (first consent's check, the `EXISTS` pair of `CLIENT_GRANT_SQL.holds_authorization`) |
 
 The member binding of a client (`member_id`, `may_act_for`, the four attest columns and `reads_unscoped`, columns of the
 whole row) is read and written by the credential binding members (gbrain-store `jobs::credential_binding`), as for a
@@ -78,12 +89,13 @@ A complete agent grant (src/core/grants/schema.ts, `GRANT_CONSTRAINTS_SQL`) has 
 Postgres matches `(^|[[:space:]])agent([[:space:]]|$)`: a space, tab, newline, vertical tab, form feed or carriage
 return around it. A refused write leaves no row.
 
-Keys: `m 0x2A client_id -> record` (the whole row as JSON; times in microseconds, the cap in hundredths of a dollar).
+Keys: `m 0x2A client_id -> record` (the whole row as JSON; times in microseconds, the cap in hundredths of a dollar);
+`m 0x2E id -> audit row` (the sequence `oauth_grant_audit`).
 
 Differences from PGLite and PostgreSQL:
 
 - The error's `detail` (`Failing row contains ...`) is not produced; the message, code and constraint name are.
-- A registration writes no `oauth_grant_audit` row.
+- The audit table has no foreign key to the client: a client's audit rows stay when the client is deleted, as on SQL.
 - Not kept: the `trust_generation_update` trigger, the two secondary indexes (`idx_oauth_clients_source_id`,
   `idx_oauth_clients_federated_read`) and the `ON DELETE RESTRICT` of `sources` (the foreign key is checked on a client write
   only, so removing a source a client names is not refused here).

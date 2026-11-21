@@ -113,7 +113,7 @@ export async function provisionHarnessGrant(engine: BrainEngine, input: Provisio
         boundBrainId: prospective.boundBrainId ?? undefined, boundSlugPrefixes: prospective.boundSlugPrefixes ?? undefined,
         boundMaxConcurrent: prospective.boundMaxConcurrent, budgetUsdPerDay: prospective.budgetUsdPerDay ?? undefined,
         delegatedSlugPrefixes: prospective.delegatedSlugPrefixes ?? undefined, delegatedNamespace: prospective.delegatedNamespace,
-      }, { grant: resolved });
+      }, { grant: resolved, engine: tx });
     if (!registered.clientSecret) throw new Error('credential_delivery_incomplete: confidential client returned no secret');
     const tokens = await provider.exchangeClientCredentials(registered.clientId, registered.clientSecret);
     const credentials: HarnessCredentials = { version: 1, mcp_url: normalized.url, issuer_url: normalized.url.replace(/\/mcp$/, ''),

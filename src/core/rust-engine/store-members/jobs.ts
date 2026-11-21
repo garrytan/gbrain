@@ -142,6 +142,10 @@ export * from './jobs-spend.ts';
 export * from './jobs-spend-log.ts';
 // The oauth_clients table (engine-sql/oauth-clients.ts).
 export * from './jobs-oauth-clients.ts';
+// The client grant writes and audit reads (engine-sql/client-grants.ts).
+export * from './jobs-client-grants.ts';
+// The revoke deletes of a token and a client (engine-sql/oauth-revocation.ts).
+export * from './jobs-oauth-revocation.ts';
 // The access_tokens members (engine-sql/access-tokens.ts).
 export * from './jobs-access-tokens.ts';
 // The subagent transcript and tool ledger (engine-sql/jobs-subagent.ts).

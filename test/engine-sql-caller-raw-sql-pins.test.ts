@@ -24,7 +24,9 @@ import { accessAllowedSql, privacyPartSql } from '../src/core/search/private-vis
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterFastForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 import { planManualClient } from '../src/core/oauth-provider.ts';
 import { clientGrantInsert, grantValidationContext, insertClientGrant } from '../src/core/grants/service.ts';
-import { CREDENTIAL_SQL } from '../src/core/engine-sql/access-credentials.ts';
+import { CREDENTIAL_SQL, OAUTH_CODE_SQL } from '../src/core/engine-sql/access-credentials.ts';
+import { CLIENT_GRANT_SQL } from '../src/core/engine-sql/client-grants.ts';
+import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { markedScopeSources } from '../src/core/access/attest-sources.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
@@ -965,6 +967,79 @@ const PINS: Pin[] = [
       `],
   },
   {
+    from: 'src/core/oauth-grants.ts revokeToken (at d8d9956871; the template, as $N text)',
+    case: { method: 'deleteOauthTokenByHash', variant: 'default', run: e => e.deleteOauthTokenByHash('hash-x', 'client-a') },
+    texts: ['DELETE FROM oauth_tokens WHERE token_hash = $1 AND client_id = $2'],
+  },
+  {
+    from: 'src/core/oauth-grants.ts revokeClient soft delete (at d8d9956871)',
+    case: { method: 'softDeleteOauthClient', variant: 'default', run: e => e.softDeleteOauthClient('client-a') },
+    texts: ['UPDATE oauth_clients SET deleted_at = now() WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/oauth-grants.ts revokeClient codes (at d8d9956871)',
+    case: { method: 'deleteOauthClientCodes', variant: 'default', run: e => e.deleteOauthClientCodes('client-a') },
+    texts: ['DELETE FROM oauth_codes WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/oauth-grants.ts revokeClient tokens (at d8d9956871)',
+    case: { method: 'deleteOauthClientTokens', variant: 'default', run: e => e.deleteOauthClientTokens('client-a') },
+    texts: ['DELETE FROM oauth_tokens WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/grants/lifecycle.ts delete (at d8d9956871)',
+    case: { method: 'deleteOauthClientRow', variant: 'default', run: e => e.deleteOauthClientRow('client-a') },
+    texts: ['DELETE FROM oauth_clients WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/grants/lifecycle.ts revoke (at d8d9956871)',
+    case: { method: 'setOauthClientRevision', variant: 'revoke', run: e => e.setOauthClientRevision('client-a', 2, true) },
+    texts: ['UPDATE oauth_clients SET deleted_at = COALESCE(deleted_at, now()), grant_revision = $1 WHERE client_id = $2'],
+  },
+  {
+    from: 'src/core/grants/lifecycle.ts invalidate-tokens (at d8d9956871)',
+    case: { method: 'setOauthClientRevision', variant: 'invalidate', run: e => e.setOauthClientRevision('client-a', 2, false) },
+    texts: ['UPDATE oauth_clients SET grant_revision = $1 WHERE client_id = $2'],
+  },
+  {
+    from: 'src/core/grants/lifecycle.ts audit (at d8d9956871)',
+    case: { method: 'insertOauthGrantAudit', variant: 'default', run: e => e.insertOauthGrantAudit({ client_id: 'client-a', actor: 'admin', action: 'revoke', revision: 2, before_grant: '{}', after_grant: '{}' }) },
+    texts: [`INSERT INTO oauth_grant_audit (client_id, actor, action, revision, before_grant, after_grant)
+      VALUES ($1, $2, $3, $4, $5::text::jsonb, $6::text::jsonb)`],
+  },
+  {
+    from: 'src/commands/serve-http-admin-api.ts health-indicators expiring_soon (at dca1a50918)',
+    case: { method: 'countOauthAccessTokens', variant: 'between', run: e => e.countOauthAccessTokens(1, 2) },
+    texts: ["SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at BETWEEN $1 AND $2"],
+  },
+  {
+    from: 'src/commands/serve-http-admin-api.ts stats active_tokens (at dca1a50918)',
+    case: { method: 'countOauthAccessTokens', variant: 'after', run: e => e.countOauthAccessTokens(1, null) },
+    texts: ["SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at > $1"],
+  },
+  {
+    from: 'src/commands/serve-http-admin-api.ts stats requests_today (at dca1a50918)',
+    case: { method: 'countMcpRequestsLastDay', variant: 'all', run: e => e.countMcpRequestsLastDay('all') },
+    texts: ["SELECT count(*)::int as count FROM mcp_request_log WHERE created_at > now() - interval '24 hours'"],
+  },
+  {
+    from: 'src/commands/serve-http-admin-api.ts health-indicators total (at dca1a50918)',
+    case: { method: 'countMcpRequestsLastDay', variant: 'traffic', run: e => e.countMcpRequestsLastDay('traffic') },
+    texts: ["SELECT count(*)::int as count FROM mcp_request_log WHERE operation != 'surface_change' AND created_at > now() - interval '24 hours'"],
+  },
+  {
+    from: 'src/commands/serve-http-admin-api.ts health-indicators errors (at dca1a50918)',
+    case: { method: 'countMcpRequestsLastDay', variant: 'errors', run: e => e.countMcpRequestsLastDay('errors') },
+    texts: ["SELECT count(*)::int as count FROM mcp_request_log WHERE status NOT IN ('success', 'success_with_warnings', 'accepted_pending') AND operation != 'surface_change' AND created_at > now() - interval '24 hours'"],
+  },
+  {
+    // New text: the agents list's per-row correlated subselects became one grouped read over the asked names.
+    from: 'src/commands/serve-http-admin-api.ts agents requests_today (grouped, new at dca1a50918)',
+    case: { method: 'countMcpRequestsLastDayByToken', variant: 'default', run: e => e.countMcpRequestsLastDayByToken(['client-a']) },
+    texts: [`SELECT token_name, count(*)::int AS requests FROM mcp_request_log
+    WHERE token_name = ANY($1::text[]) AND created_at > now() - interval '24 hours' GROUP BY token_name ORDER BY token_name COLLATE "C"`],
+  },
+  {
     from: 'src/commands/auth.ts:180 list (at 837c389e52)',
     case: { method: 'listAccessTokens', variant: 'default', run: e => e.listAccessTokens() },
     texts: [`
@@ -1379,10 +1454,11 @@ const PINS: Pin[] = [
   FROM (SELECT $1::text AS want) w LEFT JOIN sources s ON s.id=w.want`],
   },
   {
-    // An equivalent statement: the caller read `created_at` alone; the member also reads `archived`, which the check ignores.
+    // An equivalent statement: the caller read `created_at` alone; the member also reads `archived`, `local_path` and
+    // `config` (the generic job source boundary reads them), which this check ignores.
     from: 'src/core/persistence/sync-authority.ts:122 validateSyncAuthority (SELECT created_at FROM sources WHERE id=$1)',
     case: { method: 'readJobSourceState', variant: 'default', run: e => e.readJobSourceState('default') },
-    texts: ['SELECT archived, created_at FROM sources WHERE id = $1'],
+    texts: ['SELECT archived, created_at, local_path, config FROM sources WHERE id = $1'],
   },
   {
     from: 'src/core/persistence/sync-holds.ts:1186 readGitHoldRetryPaths',
@@ -2141,9 +2217,9 @@ describe('the expired-credential sweep sends the same statements through an engi
 });
 
 describe('insertOauthToken sends what OAuthGrants.issue sends', () => {
-  // The drift pin: issue() stays on the grant transaction's SqlQuery (it runs under the client row lock, so an engine
-  // write on another connection would wait on the foreign key and deadlock), so the member's constant text and
-  // parameter order must keep matching the templates it was captured from. The refresh token is the second INSERT.
+  // The drift pin for a grant built without the transaction handle (mcp-provision, auth.ts): issue() sends the templates
+  // through the grant transaction's SqlQuery, so the member's constant text and parameter order must keep matching them.
+  // The next describe pins the handle route (what serve --http runs) against the same statements.
   const NOW = 1_700_000_000_000;
   const CLIENT = { client_id: 'pin-oauth', client_name: 'pin', grant_types: ['client_credentials'], scope: 'read write', client_secret_hash: hashToken('secret'),
     client_secret_expires_at: 0, deleted_at: null };
@@ -2171,4 +2247,68 @@ describe('insertOauthToken sends what OAuthGrants.issue sends', () => {
       expect(member.trace.flatMap(t => (t.kind === 'query' ? [{ text: t.text, params: t.params }] : []))).toEqual(template);
     });
   }
+});
+
+describe('the OAuth code flow and the token grant send the same statements through the transaction handle as through the SqlQuery', () => {
+  // serve --http hands the grant transaction's engine handle to OAuthGrants (`fn(sql, tx)`): the client lock, the code
+  // and the token INSERTs then run as members (a store with no raw SQL runs them in one write). A grant built without
+  // the handle keeps the templates. Both routes must send the same text and params, in the same order.
+  const NOW = 1_700_000_000_000;
+  const VERIFIER = 'v'.repeat(43);
+  const CHALLENGE = createHash('sha256').update(VERIFIER).digest('base64url');
+  const REDIRECT = 'https://client.example/callback';
+  const CLIENT = { client_id: 'pin-code', client_name: 'pin', grant_types: ['authorization_code', 'client_credentials'], redirect_uris: [REDIRECT], scope: 'read write',
+    client_secret_hash: hashToken('secret'), client_secret_expires_at: 0, deleted_at: null, grant_revision: 0, registered_via: 'manual', attest_actor: false };
+  const CODE_ROW = { code_hash: 'x', client_id: 'pin-code', scopes: ['read'], code_challenge: CHALLENGE, code_challenge_method: 'S256', redirect_uri: REDIRECT,
+    state: null, resource: null, expires_at: NOW / 1000 + 300, created_at: new Date(NOW) };
+  const sentBy = async (variant: string, run: (e: any) => Promise<unknown>) => {
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'issue', variant, run: async e => { await run(e); },
+      rows: [[/FROM oauth_clients WHERE client_id = \$1/, [CLIENT]], [/FROM oauth_codes WHERE code_hash/, [CODE_ROW]], [/SELECT code_challenge FROM oauth_codes/, [{ code_challenge: CHALLENGE }]]] }));
+    expect(capture.error).toBeUndefined();
+    // The random code and token hashes differ per run; every other parameter must match.
+    return capture.trace.filter(s => s.kind === 'query').map(s => ({ text: s.text, params: (s.params as unknown[]).map(p => typeof p === 'string' && /^[a-f0-9]{64}$/.test(p) ? 'hash' : p) }));
+  };
+  const grants = (e: any, handle: boolean) => new OAuthGrants({ sql: sqlQueryForEngine(e), ...(handle ? { engine: e } : {}),
+    transaction: fn => (handle ? fn(sqlQueryForEngine(e), e) : fn(sqlQueryForEngine(e))) as never, tokenTtl: 3600, refreshTtl: 86400, now: () => NOW });
+  const flow = (handle: boolean) => async (e: any) => {
+    const g = grants(e, handle);
+    const id = await g.begin('pin-code', { redirectUri: REDIRECT, codeChallenge: CHALLENGE, scopes: ['read'], state: undefined } as never);
+    const code = new URL(await g.decide(id, true)).searchParams.get('code')!;
+    await g.exchangeCode('pin-code', code, VERIFIER, REDIRECT, undefined, hashToken('secret'));
+    await g.clientCredentials('pin-code', 'secret');
+    await new GBrainOAuthProvider({ sql: sqlQueryForEngine(e), ...(handle ? { engine: e } : {}) }).challengeForAuthorizationCode({ client_id: 'pin-code' } as never, code);
+  };
+  test('begin, decide, the code lookup, exchangeCode and clientCredentials', async () => {
+    const template = await sentBy('flow-template', flow(false));
+    const member = await sentBy('flow-member', flow(true));
+    expect(template.map(s => s.text.trim().split(/\s+/).slice(0, 3).join(' '))).toEqual([
+      'SELECT * FROM', 'SELECT * FROM', 'INSERT INTO oauth_codes', 'SELECT * FROM', 'SELECT * FROM',
+      'DELETE FROM oauth_codes', 'INSERT INTO oauth_tokens', 'INSERT INTO oauth_tokens', 'SELECT * FROM', 'INSERT INTO oauth_tokens', 'SELECT code_challenge FROM']);
+    expect(member).toEqual(template);
+  });
+  test('the member texts are the constants the templates were captured into', async () => {
+    const sent = await sentBy('flow-constants', flow(true));
+    const texts = new Set(sent.map(s => s.text));
+    for (const text of [CLIENT_GRANT_SQL.client_for_update, OAUTH_CODE_SQL.insert, OAUTH_CODE_SQL.for_update, OAUTH_CODE_SQL.delete, OAUTH_CODE_SQL.challenge, OAUTH_TOKEN_SQL.insert_grant]) {
+      expect(texts.has(text)).toBe(true);
+    }
+  });
+  test('issueOauthTokens runs on the transaction handle, never on the pool', async () => {
+    // The client row is locked by the grant's transaction: a token INSERT on another connection waits on its foreign key.
+    const used: string[] = [];
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'issue', variant: 'handle', rows: [[/FROM oauth_clients WHERE client_id = \$1/, [CLIENT]]],
+      run: async pool => {
+        const names = ['readOauthClientForUpdate', 'issueOauthTokens'];
+        const originals = Object.fromEntries(names.map(name => [name, (pool as any)[name].bind(pool)]));
+        const tx = Object.create(pool);
+        for (const name of names) {
+          (pool as any)[name] = (...args: unknown[]) => { used.push(`pool.${name}`); return originals[name](...args); };
+          tx[name] = (...args: unknown[]) => { used.push(`tx.${name}`); return originals[name](...args); };
+        }
+        const g = new OAuthGrants({ sql: sqlQueryForEngine(pool), engine: pool, transaction: fn => fn(sqlQueryForEngine(tx), tx) as never, tokenTtl: 3600, refreshTtl: 86400, now: () => NOW });
+        await g.clientCredentials('pin-code', 'secret');
+      } }));
+    expect(capture.error).toBeUndefined();
+    expect(used).toEqual(['tx.readOauthClientForUpdate', 'tx.issueOauthTokens']);
+  });
 });

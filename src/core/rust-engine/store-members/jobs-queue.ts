@@ -175,7 +175,7 @@ export const getFailedJobForRetry: StoreMember<[id: number], { name: string; dat
 export const countOpenJobsByOwner: StoreMember<[clientId: string], number> = (brain, clientId) =>
   call('countOpenJobsByOwner', () => brain.countOpenJobsByOwner(clientId));
 
-/** An agent job's source (archived, created_at), or null; the store reads the source record. */
+/** A remote job's source (archived, created_at, local_path, config), or null; the store reads the source record. */
 export const readJobSourceState: StoreMember<[sourceId: string], JobSourceState | null> = async (brain, sourceId) => {
   const row: JobSourceState | null = await call('readJobSourceState', () => brain.readJobSourceState(sourceId));
   return row ? withDates(row, ['created_at']) : null;

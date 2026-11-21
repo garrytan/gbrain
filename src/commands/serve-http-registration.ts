@@ -222,7 +222,7 @@ export function mountAdminRegistration(app: Express, requireAdmin: RequestHandle
           boundMaxConcurrent: undefined,
           budgetUsdPerDay: undefined,
           tokenTtlSeconds: undefined,
-        }, { tokenTtlSeconds: preview.tokenTtlSeconds ?? ttlNum, columns, grant: grantRequest.patch });
+        }, { tokenTtlSeconds: preview.tokenTtlSeconds ?? ttlNum, columns, grant: grantRequest.patch, engine: tx });
         if (registered.clientSecret) {
           // Preserve delivery before COMMIT so a lost browser response is
           // recoverable without rotating or duplicating the registered client.

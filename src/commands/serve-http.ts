@@ -674,7 +674,7 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
   const oauthProvider = new GBrainOAuthProvider({
     sql,
     engine,
-    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
+    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx), tx)),
     tokenTtl,
     dcrDisabled: !enableDcr,
     allowClientCredentialsDcr: enableDcrInsecure === true,

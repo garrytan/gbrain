@@ -89,7 +89,7 @@ said.
 | `brain.readJobStats(since, queue)` / `readQueueFamilyStats(since, prefix)` | `{ by_status, types, drained, depth, stalled, wedge }`; one row per queue family, by family name |
 | `brain.hasOverdueWatchdogSuspect({ queue, names, mark, waitMs })` | true when a `waiting` row with an authority is marked and untouched for `waitMs` |
 | `brain.listUnreviewedJobs()` / `getFailedJobForRetry(id)` | `{ id, submission_authority }` of live rows whose authority is not exactly the application one (NULL included); `{ name, data }` of a `failed`/`dead` row |
-| `brain.readJobSourceState(sourceId)` | `{ archived, created_at }` (`created_at` ISO) of the source an agent job was accepted against, or null for an unknown id; the job authority check (`assertCurrentAgent`) denies the job when the source is gone, archived or created again after acceptance |
+| `brain.readJobSourceState(sourceId)` | `{ archived, created_at, local_path, config }` (`created_at` ISO) of the source a remote job was accepted against, or null for an unknown id; the agent job check (`assertCurrentAgent`) denies the job when the source is gone, archived or created again after acceptance, and a generic remote job (`sourceBoundary`: sync, import, lint) reads its registered root and config from it |
 | `brain.countOpenJobsByOwner(clientId)` | how many `subagent` rows in a non-terminal status (`waiting`, `active`, `delayed`, `waiting-children`, `paused`), in any queue, have `data->>'__owner_client_id'` equal to `clientId` (a number owner matches its text; a null owner matches nothing) |
 | `brain.readJobInsight(spec)` | the six reads behind `describeJobs`: submitter, queue position, slot holders, live children, live leases with their beacon, foreign-owner tokens; see [jobs-insight.md](jobs-insight.md) |
 | `brain.readJobSpendTree(spec)`, `insertSpendReservation`, `expireSpendReservations`, `settleSpendReservation`, `markSpendUsageUnknown`, `insertLeasePressure`, `countLeasePressure`, `listRecentLeasePressure` | the spend reservations and the lease-pressure log; see [jobs-spend.md](jobs-spend.md) |
@@ -114,6 +114,8 @@ store's single writer already holds what the row lock holds, and outside one Pos
 `MinionQueue.retryJob` runs the job authority check first. An application job needs no read. An agent job
 (`remote_agent`) reads its source with `readJobSourceState`, so a source that is gone, archived or created again
 is denied on the store as on PGLite; a current source goes on to the owner's `oauth_clients` read, which the store serves.
+A generic remote job (sync, import, lint) reads its source registration with the same member, at submit and when it
+runs, so an OAuth client's remote submit is accepted or refused on the store as on PGLite.
 The archived-source branch is pinned by cargo only (`job_source_state_reads_archived_and_the_creation_stamp` in
 `tests/jobs_slice2.rs`). The parity suite cannot reach it: no member the Rust engine serves archives a source, so
 a mutant that always reads `archived` as false passes parity and fails cargo.

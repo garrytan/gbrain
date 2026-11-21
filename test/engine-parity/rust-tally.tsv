@@ -1,11 +1,12 @@
 file	equal	stopped	stop_reason
 test/engine-parity/access-flag.test.ts	1	0
 test/engine-parity/access-grants.test.ts	5	2	Rust keeps no singleton row, by design (the no trust_policy_state row and no shared_skill_state row cases)
-test/engine-parity/access-members.test.ts	15	1
+test/engine-parity/access-members.test.ts	16	1
 test/engine-parity/access-policy.test.ts	14	0
 test/engine-parity/access-setup.test.ts	7	0
 test/engine-parity/access-sort-order.test.ts	5	1
-test/engine-parity/access-tokens.test.ts	17	0
+test/engine-parity/access-tokens.test.ts	23	0
+test/engine-parity/admin-counts.test.ts	2	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
@@ -90,7 +91,7 @@ test/engine-parity/import-writes.test.ts	11	0
 test/engine-parity/jobs-checks.test.ts	9	0
 test/engine-parity/jobs-health.test.ts	8	0
 test/engine-parity/jobs-insight.test.ts	2	0
-test/engine-parity/jobs-queue.test.ts	37	0
+test/engine-parity/jobs-queue.test.ts	38	0
 test/engine-parity/jobs-spend.test.ts	4	0
 test/engine-parity/jobs-status.test.ts	11	0
 test/engine-parity/jobs-subagent.test.ts	16	0
@@ -108,7 +109,9 @@ test/engine-parity/mention-coverage.test.ts	7	0
 test/engine-parity/notifier-freshness.test.ts	3	0
 test/engine-parity/notifier-resident.test.ts	3	0
 test/engine-parity/notifier.test.ts	4	0
-test/engine-parity/oauth-clients.test.ts	10	0
+test/engine-parity/oauth-clients.test.ts	17	0
+test/engine-parity/oauth-lifecycle.test.ts	4	0
+test/engine-parity/oauth-revocation.test.ts	4	0
 test/engine-parity/open-loops.test.ts	6	0
 test/engine-parity/open-pages.test.ts	3	1
 test/engine-parity/owner-only-reads.test.ts	3	0
@@ -179,7 +182,7 @@ test/engine-parity/wanted-markers.test.ts	3	0
 test/engine-parity/whoami-embedding-fix.test.ts	1	0
 test/engine-parity/write-attribution.test.ts	4	2
 test/engine-parity/write-guards.test.ts	10	0
-test/engine-parity/write-misc.test.ts	64	4
+test/engine-parity/write-misc.test.ts	65	3
 test/engine-parity/write-request-cancel.test.ts	2	0
 test/engine-parity/write-request-reads.test.ts	3	0
 test/engine-parity/writer-registration.test.ts	2	0

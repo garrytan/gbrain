@@ -21,7 +21,7 @@ there is no reverse index.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `insertAccessMember({ id, displayName, email, kind, groups })` | `{ groupsCreated }`: the groups this call created, in the order named | the `addMember` transaction: the member `INSERT`, `INSERT INTO access_groups ... ON CONFLICT DO NOTHING RETURNING id` per group, `INSERT INTO access_group_members ... ON CONFLICT DO NOTHING` per group |
+| `insertAccessMember({ id, displayName, email, kind, groups, bindTokenId })` | `{ groupsCreated }`: the groups this call created, in the order named | the `addMember` transaction: the member `INSERT`, `INSERT INTO access_groups ... ON CONFLICT DO NOTHING RETURNING id` per group, `INSERT INTO access_group_members ... ON CONFLICT DO NOTHING` per group |
 | `setAccessMemberDisabled(id, disabled)` | null | `UPDATE access_members SET disabled_at = COALESCE(disabled_at, now())` (or `NULL`), `updated_at = now()` |
 | `setAccessMemberEmail(id, email)` | true when a member that is not removed changed | `UPDATE ... SET email = $2 ... WHERE id = $1 AND tombstoned_at IS NULL RETURNING id` |
 | `setAccessMemberKind(id, kind)` | null | `UPDATE ... SET kind = $2 ... WHERE id = $1 AND tombstoned_at IS NULL` |

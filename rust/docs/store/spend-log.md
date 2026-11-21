@@ -70,7 +70,7 @@ Differences from PGLite and PostgreSQL:
   archives a source.
 
 Not served (still raw SQL, so refused on a Rust brain): every other statement on `oauth_clients`, and `oauth_grant_audit`,
-`oauth_tokens` and `oauth_codes`, which belong to the OAuth family. No writer call site of `insertOauthClient` or
+`oauth_tokens` and `oauth_codes` (both now served for the grant flow, see [oauth-codes.md](oauth-codes.md)), which belong to the OAuth family. No writer call site of `insertOauthClient` or
 `updateOauthClientBudget` is switched, because each existing writer also writes one of those tables or goes through the
 provider's own connection: `grants/service.ts`, `grants/lifecycle.ts`, `grants/rescope.ts`, `grants/migration.ts`,
 `oauth-grants.ts`, `oauth-provider.ts` (client registration, the token TTL update), `agent-register.ts`, `commands/auth.ts`,

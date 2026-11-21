@@ -784,10 +784,9 @@ describe('engine parity: write misc', () => {
     return seen;
   });
 
-  // The submit path end to end: prepareRemoteJob reads the source registration, then the principal. PGLite and Postgres
-  // accept a live legacy admin token's lint job. The source read is still caller raw SQL (rust/docs/store/jobs.md), so a
-  // Rust brain stops there, before the principal check, for every principal kind.
-  parityTest('a remote lint job submitted with a live legacy admin token is accepted, with the token as its principal', { methods: ['readJobPrincipal', 'insertAccessToken'] }, async (engine, backend) => {
+  // The submit path end to end: prepareRemoteJob reads the source registration (readJobSourceState), then the principal.
+  // Every arm accepts a live legacy admin token's lint job; a Rust brain answers the source read from its store.
+  parityTest('a remote lint job submitted with a live legacy admin token is accepted, with the token as its principal', { methods: ['readJobPrincipal', 'readJobSourceState', 'insertAccessToken'] }, async (engine, backend) => {
     const root = mkdtempSync(join(tmpdir(), 'gbrain-legacy-job-'));
     try {
       execFileSync('git', ['init', '-q', root]);
@@ -801,12 +800,7 @@ describe('engine parity: write misc', () => {
         logger: { info() {}, warn() {}, error() {} },
         auth: { token: 'test-only', clientId: 'legacy-jobs', principal: { kind: 'legacy_token', id }, scopes: ['admin'], sourceId: 'jobs' },
       };
-      const submitted = await prepareRemoteJob(ctx, 'lint', {}).then(r => r, (e: unknown) => e);
-      if (backend === 'rust') {
-        expect(isCapabilityRefusal(submitted, 'raw_sql')).toBe(true);
-        throw submitted;
-      }
-      const accepted = submitted as Awaited<ReturnType<typeof prepareRemoteJob>>;
+      const accepted = await prepareRemoteJob(ctx, 'lint', {});
       const seen = { principal: accepted.authority.principal, sourceId: accepted.data.sourceId, jobName: accepted.authority.grant.jobName };
       expect(seen).toEqual({ principal: { kind: 'legacy_token', id }, sourceId: 'jobs', jobName: 'lint' });
       return { ...seen, principal: { kind: 'legacy_token' } };

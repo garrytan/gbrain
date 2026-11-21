@@ -32,7 +32,10 @@ import { setMinTrust } from '../../src/core/trust/min-trust.ts';
 import { mintLegacyToken, readActiveTokenPermissions, readActiveTokenPrivatePages, revokeLegacyTokenById } from '../../src/core/token-mint.ts';
 import { hashToken } from '../../src/core/utils.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
+import { OAuthGrants } from '../../src/core/oauth-grants.ts';
+import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
+import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { createSource, parityArms } from './harness.ts';
 import { migrateLegacyTokens, rescopeLegacyToken, type RescopeTokenArgs } from '../../src/core/grants/legacy-token.ts';
 import type { Server } from 'node:http';
@@ -459,6 +462,49 @@ describe('engine parity: access_tokens members', () => {
       return out;
     });
 
+  parityTest('bearer check, OAuth rung, in a session set to America/Los_Angeles: the client grant timestamps read as the same UTC text and the token authenticates the same',
+    { methods: ['insertOauthClient', 'insertOauthToken', 'readOauthAccessTokenRows'] }, async (engine, backend, ctx) => {
+      const now = Math.floor(Date.now() / 1000);
+      await engine.insertOauthClient({
+        client_id: 'oc-tz', client_name: 'Client oc-tz', scope: 'read write', source_id: 'default', federated_read: ['default'], client_id_issued_at: 1_700_000_000,
+        token_ttl: 600, surface: 'full', surface_set_by: 'operator',
+        // A summer and a winter instant (PDT and PST offsets), each with a fraction.
+        created_at: new Date('2026-07-04T15:16:17.123Z'), reads_unscoped: new Date('2026-01-02T03:04:05.5Z'),
+      });
+      await engine.insertOauthToken({ token_hash: hashToken('ot-tz'), token_type: 'access', client_id: 'oc-tz', scopes: ['read'], expires_at: now + 3600,
+        resource: null, created_at: now, grant_type: 'client_credentials' });
+      // The session time zone a Postgres server or PGLite can carry; the Rust store has no session.
+      let reader: BrainEngine = engine;
+      let restore = async () => {};
+      if (backend === 'pglite') {
+        await engine.executeRaw(`SET TIME ZONE 'America/Los_Angeles'`);
+        restore = async () => { await engine.executeRaw('RESET TIME ZONE'); };
+      } else if (backend === 'postgres') {
+        const [{ db }] = await engine.executeRaw<{ db: string }>('SELECT current_database() AS db');
+        const quoted = `"${db.replace(/"/g, '""')}"`;
+        await engine.executeRaw(`ALTER DATABASE ${quoted} SET timezone TO 'America/Los_Angeles'`);
+        const fresh = ctx.unconnectedEngine();
+        await fresh.engine.connect(fresh.config);
+        reader = fresh.engine;
+        restore = async () => { await engine.executeRaw(`ALTER DATABASE ${quoted} RESET timezone`); };
+      }
+      try {
+        // Not vacuous: the session really is on Pacific time where there is one.
+        const zone = backend === 'rust' ? 'America/Los_Angeles'
+          : (await reader.executeRaw<{ tz: string }>(`SELECT current_setting('TimeZone') AS tz`))[0]!.tz;
+        const [row] = await reader.readOauthAccessTokenRows(hashToken('ot-tz'), 0);
+        const grant = (row?.current_grant ?? {}) as Record<string, unknown>;
+        const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(reader), engine: reader });
+        return {
+          zone,
+          created_at: grant.created_at, reads_unscoped: grant.reads_unscoped, deleted_at: grant.deleted_at,
+          auth: await bearer(reader, provider, 'ot-tz'),
+        };
+      } finally {
+        await restore();
+      }
+    });
+
   parityTest('the expired-credential sweep serve --http runs at startup deletes the expired OAuth tokens of any type and keeps the live ones',
     { methods: ['insertOauthClient', 'insertOauthToken', 'deleteExpiredOauthCredentials', 'readOauthAccessTokenRows'] }, async (engine) => {
       const now = Math.floor(Date.now() / 1000);
@@ -475,6 +521,109 @@ describe('engine parity: access_tokens members', () => {
       const out = { swept, live: await kept('ot-sweep-live'), again: await engine.deleteExpiredOauthCredentials(now) };
       // Not vacuous: two expired tokens go, the live one stays, and a second sweep finds nothing.
       if (out.swept !== 2 || out.live !== 1 || out.again !== 0) throw new Error(`sweep: ${JSON.stringify(out)}`);
+      return out;
+    });
+
+  /** The grants serve --http builds: the client lock, the code and the tokens run as members on the engine's transaction. */
+  const grantsFor = (engine: BrainEngine) => new OAuthGrants({ sql: sqlQueryForEngine(engine), engine,
+    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx), tx)), tokenTtl: 3600, refreshTtl: 86400 });
+  const REDIRECT = 'https://client.example/callback';
+  const VERIFIER = 'v'.repeat(43);
+  const CHALLENGE = createHash('sha256').update(VERIFIER).digest('base64url');
+  const authorize = (grants: OAuthGrants, clientId: string) => grants.begin(clientId, { redirectUri: REDIRECT, codeChallenge: CHALLENGE, scopes: ['read'], state: 'st-1' } as never);
+  const failure = async (run: () => Promise<unknown>) => { try { await run(); return null; } catch (e) { return `${(e as Error).constructor.name}: ${(e as Error).message}`; } };
+
+  parityTest('an authorization code is issued, exchanged for tokens once, and a second exchange is refused (OAuthGrants over the engine transaction)',
+    { methods: ['insertOauthClient', 'readOauthClient', 'readOauthClientForUpdate', 'insertOauthCode', 'readOauthCodeChallenge', 'readOauthCodeForUpdate', 'deleteOauthCode', 'issueOauthTokens', 'readOauthAccessTokenRows'] }, async (engine) => {
+      await engine.insertOauthClient({ client_id: 'oc-code', client_name: 'Client oc-code', scope: 'read', grant_types: ['authorization_code', 'refresh_token'],
+        redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none', client_id_issued_at: 1_700_000_000 });
+      const grants = grantsFor(engine);
+      const out: Record<string, unknown> = {};
+      const consent = await authorize(grants, 'oc-code');
+      const redirect = new URL(await grants.decide(consent, true));
+      const code = redirect.searchParams.get('code')!;
+      out.redirect = { origin: redirect.origin, path: redirect.pathname, state: redirect.searchParams.get('state'), codeShape: /^gbrain_code_[A-Za-z0-9_-]+$/.test(code) };
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });
+      const client = { client_id: 'oc-code' } as never;
+      out.challenge = await provider.challengeForAuthorizationCode(client, code);
+      out.otherClient = await failure(() => provider.challengeForAuthorizationCode({ client_id: 'nobody' } as never, code));
+      out.wrongRedirect = await failure(() => grants.exchangeCode('oc-code', code, VERIFIER, 'https://client.example/other'));
+      out.wrongVerifier = await failure(() => grants.exchangeCode('oc-code', code, 'w'.repeat(43), REDIRECT));
+      const tokens = await grants.exchangeCode('oc-code', code, VERIFIER, REDIRECT);
+      out.tokens = { type: tokens.token_type, expiresIn: tokens.expires_in, scope: tokens.scope, refresh: /^gbrain_rt_/.test(tokens.refresh_token ?? '') };
+      const rows = await engine.readOauthAccessTokenRows(hashToken(tokens.access_token), 0);
+      out.accessRow = rows.map(r => ({ client_id: r.client_id, scopes: r.scopes, token_type: r.token_type }));
+      out.second = await failure(() => grants.exchangeCode('oc-code', code, VERIFIER, REDIRECT));
+      out.afterExchange = await failure(() => provider.challengeForAuthorizationCode(client, code));
+      out.refused = await failure(() => grants.exchangeCode('oc-code', 'gbrain_code_never-issued', VERIFIER, REDIRECT));
+      // Not vacuous: the first exchange issued the pair and the repeat and the stranger were refused with the same error.
+      if (rows.length !== 1 || !String(out.second).startsWith('InvalidGrantError') || !String(out.refused).startsWith('InvalidGrantError')) throw new Error(`code flow: ${JSON.stringify(out)}`);
+      return out;
+    });
+
+  parityTest('the startup sweep deletes an expired authorization code with the expired tokens and keeps a live code; deleting a client deletes its codes',
+    { methods: ['insertOauthClient', 'insertOauthCode', 'readOauthCodeChallenge', 'deleteExpiredOauthCredentials', 'deleteOAuthClient'] }, async (engine) => {
+      const now = Math.floor(Date.now() / 1000);
+      for (const id of ['oc-sw-a', 'oc-sw-b']) await engine.insertOauthClient({ client_id: id, client_name: id, scope: 'read', client_id_issued_at: 1_700_000_000 });
+      const code = (name: string, client: string, expires: number) => engine.insertOauthCode({ code_hash: hashToken(name), client_id: client, scopes: ['read'],
+        code_challenge: CHALLENGE, code_challenge_method: 'S256', redirect_uri: REDIRECT, state: null, resource: null, expires_at: expires });
+      await code('code-live', 'oc-sw-a', now + 600);
+      await code('code-old', 'oc-sw-a', now - 10);
+      await code('code-b', 'oc-sw-b', now + 600);
+      const read = async (name: string, client: string) => engine.readOauthCodeChallenge(hashToken(name), client, now);
+      const out: Record<string, unknown> = {};
+      out.before = { live: await read('code-live', 'oc-sw-a'), old: await read('code-old', 'oc-sw-a'), other: await read('code-live', 'oc-sw-b') };
+      out.repeated = await refusal(() => code('code-live', 'oc-sw-a', now + 600));
+      out.noClient = await refusal(() => code('code-nobody', 'nobody', now + 600));
+      out.swept = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine }).sweepExpiredTokens();
+      out.again = await engine.deleteExpiredOauthCredentials(now);
+      await engine.deleteOAuthClient('oc-sw-a');
+      out.afterDelete = { live: await read('code-live', 'oc-sw-a'), b: await read('code-b', 'oc-sw-b') };
+      if (out.swept !== 1 || out.again !== 0) throw new Error(`sweep: ${JSON.stringify(out)}`);
+      return out;
+    });
+
+  parityTest('the grant members on one transaction: the client lock read, a code read and deleted by its own client only, a token pair written all or none',
+    { methods: ['insertOauthClient', 'readOauthClientForUpdate', 'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'issueOauthTokens', 'readOauthAccessTokenRows', 'transaction'] }, async (engine) => {
+      const now = Math.floor(Date.now() / 1000);
+      for (const id of ['oc-tx', 'oc-tx-other']) await engine.insertOauthClient({ client_id: id, client_name: id, scope: 'read', client_id_issued_at: 1_700_000_000 });
+      const token = (name: string, type: 'access' | 'refresh') => ({ token_hash: hashToken(name), token_type: type, client_id: 'oc-tx', scopes: ['read'], expires_at: now + 60, resource: null, created_at: now });
+      const out: Record<string, unknown> = {};
+      out.inside = await engine.transaction(async tx => {
+        const locked = await tx.readOauthClientForUpdate('oc-tx');
+        const none = await tx.readOauthClientForUpdate('nobody');
+        await tx.insertOauthCode({ code_hash: hashToken('code-tx'), client_id: 'oc-tx', scopes: ['read', 'write'], code_challenge: CHALLENGE, code_challenge_method: 'S256',
+          redirect_uri: REDIRECT, state: 'st', resource: 'https://r.example/', expires_at: now + 600 });
+        const row = await tx.readOauthCodeForUpdate(hashToken('code-tx'), 'oc-tx');
+        const stranger = await tx.readOauthCodeForUpdate(hashToken('code-tx'), 'oc-tx-other');
+        await tx.deleteOauthCode(hashToken('code-tx'), 'oc-tx-other');
+        const kept = await tx.readOauthCodeForUpdate(hashToken('code-tx'), 'oc-tx');
+        await tx.deleteOauthCode(hashToken('code-tx'), 'oc-tx');
+        const gone = await tx.readOauthCodeForUpdate(hashToken('code-tx'), 'oc-tx');
+        await tx.issueOauthTokens([token('tx-access', 'access'), token('tx-refresh', 'refresh')]);
+        return { client: locked?.client_id, none, row: row && { client_id: row.client_id, scopes: row.scopes, method: row.code_challenge_method, redirect: row.redirect_uri,
+          state: row.state, resource: row.resource, expiresAt: row.expires_at - now, created: row.created_at instanceof Date }, stranger, kept: kept !== null, gone };
+      });
+      const rows = async (name: string) => (await engine.readOauthAccessTokenRows(hashToken(name), 0)).length;
+      out.written = { access: await rows('tx-access'), refresh: await rows('tx-refresh') };
+      out.repeated = await refusal(() => engine.transaction(tx => tx.issueOauthTokens([token('tx-new', 'access'), token('tx-access', 'refresh')])));
+      out.noClient = await refusal(() => engine.transaction(tx => tx.issueOauthTokens([token('tx-new2', 'access'), { ...token('tx-new3', 'access'), client_id: 'nobody' }])));
+      // All or none: the first row of each refused pair is not left behind.
+      out.left = { new: await rows('tx-new'), new2: await rows('tx-new2') };
+      if (out.written && (out.written as { access: number }).access !== 1) throw new Error(`issueOauthTokens wrote nothing: ${JSON.stringify(out)}`);
+      return out;
+    });
+
+  parityTest('two grants for one client at the same time both finish and both tokens exist',
+    { methods: ['insertOauthClient', 'readOauthClientForUpdate', 'issueOauthTokens', 'readOauthAccessTokenRows'] }, async (engine) => {
+      await engine.insertOauthClient({ client_id: 'oc-two', client_name: 'two', scope: 'read', grant_types: ['client_credentials'],
+        client_secret_hash: hashToken('secret'), client_secret_expires_at: 0, client_id_issued_at: 1_700_000_000 });
+      const grants = grantsFor(engine);
+      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('two concurrent grants did not finish in 20s')), 20_000).unref());
+      const [a, b] = await Promise.race([Promise.all([grants.clientCredentials('oc-two', 'secret'), grants.clientCredentials('oc-two', 'secret')]), timeout]);
+      const rows = async (t: { access_token: string }) => (await engine.readOauthAccessTokenRows(hashToken(t.access_token), 0)).length;
+      const out = { distinct: a.access_token !== b.access_token, a: await rows(a), b: await rows(b), scope: a.scope };
+      if (!out.distinct || out.a !== 1 || out.b !== 1) throw new Error(`concurrent grants: ${JSON.stringify(out)}`);
       return out;
     });
 
@@ -527,6 +676,76 @@ describe('engine parity: access_tokens members', () => {
         }
       }
       if (JSON.stringify(out.firstPlain) !== JSON.stringify(out.secondPlain)) throw new Error('the converted row authorizes differently');
+      return out;
+    });
+  parityTest('a token bound to a member: the bearer check carries the live member and its groups, and refuses a token whose member is disabled or removed; a binding is read, written and cleared by id, revoked or not',
+    { methods: ['insertAccessToken', 'insertAccessMember', 'setAccessMemberDisabled', 'tombstoneAccessMember', 'readCredentialBindingForUpdate', 'writeCredentialBinding',
+      'writeCredentialReadsUnscoped', 'readAccessMembers', 'readLiveMember', 'readActiveAccessTokenByHash', 'revokeAccessToken', 'readScopeSourceConfigs'] }, async (engine, backend) => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine });
+      await engine.insertAccessMember({ id: 'alice-example', displayName: null, email: null, kind: 'person', groups: ['team-a'], bindTokenId: null });
+      await engine.insertAccessMember({ id: 'bob-example', displayName: null, email: null, kind: 'person', groups: [], bindTokenId: null });
+      await createSource(engine, backend, 'scope-a');
+      const alice = await insert(engine, 'alice-tok', 'tok-alice');
+      const bob = await insert(engine, 'bob-tok', 'tok-bob');
+      const plain = await insert(engine, 'plain-tok', 'tok-plain');
+      const retired = await insert(engine, 'retired-tok', 'tok-retired');
+      const names = new Map([[alice.id, 'alice-tok'], [bob.id, 'bob-tok'], [plain.id, 'plain-tok'], [retired.id, 'retired-tok']]);
+      const verify = async (token: string) => {
+        try {
+          const { expiresAt, createdAt, principal, ...rest } = await provider.verifyAccessToken(token) as unknown as Record<string, unknown>;
+          const p = principal as { kind: string; id: string };
+          return { ...rest, principal: { kind: p.kind, id: names.get(p.id) ?? p.id } };
+        } catch (error) {
+          if ((error as { code?: unknown }).code === 'engine_capability_missing') throw error;
+          return { refused: (error as Error).constructor.name, message: (error as Error).message };
+        }
+      };
+      const binding = async (id: string, readsUnscoped = true) => {
+        const row = await engine.transaction(tx => tx.readCredentialBindingForUpdate({ kind: 'token', id }, { readsUnscoped }));
+        return row && { ...row, ...(readsUnscoped ? { reads_unscoped: row.reads_unscoped == null ? null : 'set' } : {}) };
+      };
+      const out: Record<string, unknown> = {};
+      out.missing = { binding: await binding('00000000-0000-4000-8000-00000000dead'), live: await engine.readLiveMember('legacy_token', '00000000-0000-4000-8000-00000000dead') };
+      out.before = { alice: await binding(alice.id), bearer: await verify('tok-alice') };
+      out.bound = {
+        alice: await bindCredential(engine, { kind: 'token', id: alice.id }, { member: 'alice-example', mayActFor: ['alice-example'], readsUnscoped: true }),
+        bob: await bindCredential(engine, { kind: 'token', id: bob.id }, { member: 'bob-example' }),
+        retired: await bindCredential(engine, { kind: 'token', id: retired.id }, { member: 'alice-example' }),
+      };
+      out.afterBind = { alice: await binding(alice.id), bob: await binding(bob.id, false), plain: await binding(plain.id) };
+      out.bearerLive = { alice: await verify('tok-alice'), bob: await verify('tok-bob'), plain: await verify('tok-plain') };
+      out.row = await (async () => {
+        const r = (await engine.readActiveAccessTokenByHash(hashToken('tok-alice'), 'provider'))!;
+        return { member_id: r.member_id, may_act_for: r.may_act_for, reads_unscoped: r.reads_unscoped ? 'set' : null };
+      })();
+      out.listed = (await engine.listAccessTokens()).map(t => [names.get(t.id), t.member_id]).sort();
+      out.live = { alice: await engine.readLiveMember('legacy_token', alice.id), plain: await engine.readLiveMember('legacy_token', plain.id) };
+      await engine.setAccessMemberDisabled('bob-example', true);
+      out.bobDisabled = { bearer: await verify('tok-bob'), live: await engine.readLiveMember('legacy_token', bob.id), bobsTokenStillBound: (await binding(bob.id, false))?.member_id };
+      await engine.setAccessMemberDisabled('bob-example', false);
+      out.bobBack = await verify('tok-bob');
+      await revokeLegacyTokenById(engine, retired.id);
+      out.retired = { bearer: await verify('tok-retired'), live: await engine.readLiveMember('legacy_token', retired.id), binding: (await binding(retired.id, false))?.member_id };
+      out.rebound = await bindCredential(engine, { kind: 'token', id: retired.id }, { member: null });
+      await engine.tombstoneAccessMember('alice-example');
+      out.aliceRemoved = { bearer: await verify('tok-alice'), live: await engine.readLiveMember('legacy_token', alice.id) };
+      out.cleared = {
+        alice: await bindCredential(engine, { kind: 'token', id: alice.id }, { member: null, mayActFor: null, readsUnscoped: false }),
+        binding: await binding(alice.id), bearer: await verify('tok-alice'),
+      };
+      // The attest right: a token with no member lists the scope sources it may write, and the mark commits with the binding.
+      out.attest = await bindCredential(engine, { kind: 'token', id: plain.id }, { attestActor: 'qm', attestOps: ['memory_write'], attestSources: ['scope-a'] });
+      out.attested = { binding: await binding(plain.id), scope: (await engine.readScopeSourceConfigs(['scope-a']))[0]?.config, bearer: await verify('tok-plain') };
+      // `gbrain access member add --bind-token` binds the token in the member's own write; an id no token has binds nothing.
+      const carol = await insert(engine, 'carol-tok', 'tok-carol');
+      names.set(carol.id, 'carol-tok');
+      await addMember(engine, 'carol-example', { bindToken: 'carol-tok' });
+      await engine.insertAccessMember({ id: 'dave-example', displayName: null, email: null, kind: 'person', groups: [], bindTokenId: '00000000-0000-4000-8000-00000000dead' });
+      out.memberAdd = { carol: (await binding(carol.id, false))?.member_id, bearer: await verify('tok-carol'), dave: (await engine.readAccessMembers({ id: 'dave-example' })).length };
+      // Not vacuous: the live member authenticates with its identity, and the disabled and removed members' tokens are refused.
+      const live = out.bearerLive as Record<string, Record<string, unknown>>;
+      if ('refused' in live.alice! || !live.alice!.member) throw new Error(`the bound token carries no member: ${JSON.stringify(live.alice)}`);
+      if (!('refused' in (out.bobDisabled as { bearer: object }).bearer) || !('refused' in (out.aliceRemoved as { bearer: object }).bearer)) throw new Error('a token of a disabled or removed member authenticated');
       return out;
     });
   parityTest('bearer check stamps last_used_at: null before, set after, unchanged by a second check inside 60 seconds; the unified stamp leaves a row with no source_grant alone',

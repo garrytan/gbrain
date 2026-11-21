@@ -13,6 +13,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { pgArray } from '../grants/encoding.ts';
 import { executeRawJsonb } from '../sql-query.ts';
+import { normalizeOauthClientRow, type OauthClientRow } from './oauth-clients.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -351,8 +352,38 @@ export type OauthTokenRung = 0 | 1 | 2 | 3 | 4;
 export type TokenByHashCaller = 'provider' | 'transport';
 
 /** The OAuth access token with this hash joined to its live client, at one rung of the degrade ladder. */
-export function readOauthAccessTokenRows(tx: Raw, hash: string, rung: OauthTokenRung): Promise<Record<string, unknown>[]> {
-  return tx.executeRaw<Record<string, unknown>>(BEARER_SQL.oauth_rungs[rung], [hash]);
+export async function readOauthAccessTokenRows(tx: Raw, hash: string, rung: OauthTokenRung): Promise<Record<string, unknown>[]> {
+  return (await tx.executeRaw<Record<string, unknown>>(BEARER_SQL.oauth_rungs[rung], [hash])).map(utcCurrentGrant);
+}
+
+/** The `oauth_clients` timestamp columns `current_grant` (to_jsonb of the client row) carries. */
+const GRANT_TIME_KEYS = ['created_at', 'deleted_at', 'reads_unscoped'] as const;
+const JSONB_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?([+-])(\d{2})(?::(\d{2}))?(?::(\d{2}))?$/;
+
+/**
+ * A to_jsonb timestamptz text as the same instant on UTC (`2026-01-02T03:04:05.5+00:00`): to_jsonb prints it in the
+ * session TimeZone, so one row reads differently per server or session; the fraction digits are kept as stored.
+ * Text of another shape (a year past 9999, BC, infinity) is returned unchanged.
+ */
+export function utcJsonbTime(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const m = JSONB_TIME.exec(value);
+  if (!m) return value;
+  const offset = (Number(m[9]) * 3600 + Number(m[10] ?? 0) * 60 + Number(m[11] ?? 0)) * (m[8] === '-' ? -1 : 1);
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])) - offset * 1000;
+  const utc = new Date(ms).toISOString();
+  return /^\d{4}-/.test(utc) ? `${utc.slice(0, 19)}${m[7] ?? ''}+00:00` : value;
+}
+
+/** A bearer OAuth token row with its `current_grant` timestamps on UTC (utcJsonbTime), the text the Rust store returns. */
+export function utcCurrentGrant(row: Record<string, unknown>): Record<string, unknown> {
+  const grant = row.current_grant;
+  if (grant == null || typeof grant !== 'object' || Array.isArray(grant)) return row;
+  const g = grant as Record<string, unknown>;
+  if (!GRANT_TIME_KEYS.some((k) => typeof g[k] === 'string')) return row;
+  const next: Record<string, unknown> = { ...g };
+  for (const k of GRANT_TIME_KEYS) if (k in next) next[k] = utcJsonbTime(next[k]);
+  return { ...row, current_grant: next };
 }
 
 /** The statements `auth rescope` ran through executeRaw to lock the active tokens it names, by id or by exact name. */
@@ -420,6 +451,21 @@ export const OAUTH_TOKEN_SQL = {
   insert_plain: `INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at)
           VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7))`,
 } as const;
+
+const OAUTH_TOKEN_COUNT_SQL = {
+  between: "SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at BETWEEN $1 AND $2",
+  after: "SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at > $1",
+} as const;
+
+/**
+ * How many OAuth access tokens expire from `from` (epoch seconds, inclusive) to `to` (inclusive), or with no `to` any time
+ * after `from` (exclusive): the admin dashboard's "expiring soon" and "active tokens" counts. A refresh token and a token
+ * with no expiry never count.
+ */
+export async function countOauthAccessTokens(tx: Raw, from: number, to: number | null): Promise<number> {
+  const rows = await tx.executeRaw<{ count: number | string }>(to === null ? OAUTH_TOKEN_COUNT_SQL.after : OAUTH_TOKEN_COUNT_SQL.between, to === null ? [from] : [from, to]);
+  return Number(rows[0]?.count ?? 0);
+}
 
 /** One `oauth_tokens` row as `OAuthGrants.issue` writes it. `grant_type` left out is the INSERT for a schema without that column. */
 export interface OauthTokenInsert {
@@ -519,4 +565,98 @@ export async function writeAccessTokenPrivateGrant(tx: Raw, id: string, axis: Ac
 /** The whole rows of the active tokens still on the legacy shape (no `source_grant`), oldest first, locked FOR UPDATE. */
 export function lockLegacyAccessTokens(tx: Raw): Promise<Record<string, unknown>[]> {
   return tx.executeRaw<Record<string, unknown>>(TOKEN_GRANT_WRITE_SQL.lock_legacy);
+}
+
+/**
+ * The `oauth_codes` and grant-transaction statements of `OAuthGrants` (oauth-grants.ts) and the provider's code lookup
+ * (oauth-provider.ts challengeForAuthorizationCode), byte for byte as the SqlQuery tag sent them at d8d9956871: each `${}`
+ * is the next `$n`. The grant transaction's client lock is `readOauthClientForUpdate`
+ * (client-grants.ts `CLIENT_GRANT_SQL.client_for_update`); `issueOauthTokens` runs after it on the same transaction.
+ */
+export const OAUTH_CODE_SQL = {
+  insert: `
+          INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
+            code_challenge_method, redirect_uri, state, resource, expires_at)
+          VALUES ($1, $2, $3,
+            $4, $5, $6,
+            $7, $8, $9)
+        `,
+  for_update: 'SELECT * FROM oauth_codes WHERE code_hash = $1 AND client_id = $2 FOR UPDATE',
+  delete: 'DELETE FROM oauth_codes WHERE code_hash = $1 AND client_id = $2',
+  challenge: `
+      SELECT code_challenge FROM oauth_codes
+      JOIN oauth_clients ON oauth_clients.client_id = oauth_codes.client_id
+      WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL
+        AND code_hash = $1
+        AND oauth_codes.client_id = $2
+        AND oauth_codes.expires_at > $3
+    `,
+} as const;
+
+/** One `oauth_codes` row as `OAuthGrants.decide` writes it (`expires_at` is epoch seconds; `scopes` is the TEXT[] value). */
+export interface OauthCodeInsert {
+  code_hash: string;
+  client_id: string;
+  scopes: readonly string[];
+  code_challenge: string;
+  code_challenge_method: 'S256';
+  redirect_uri: string;
+  state: string | null;
+  resource: string | null;
+  expires_at: number;
+}
+
+/** An `oauth_codes` row as `SELECT *` returns it, `expires_at` a number and `created_at` a Date on every engine. */
+export interface OauthCodeRow {
+  code_hash: string;
+  client_id: string;
+  scopes: string[] | null;
+  code_challenge: string;
+  code_challenge_method: string;
+  redirect_uri: string;
+  state: string | null;
+  resource: string | null;
+  expires_at: number;
+  created_at: Date;
+}
+
+/** The row with each engine's `timestamptz` and `bigint` spelling brought to one: a `Date` and a number. */
+export function normalizeOauthCodeRow(raw: Record<string, unknown>): OauthCodeRow {
+  const row = { ...raw };
+  if (row.created_at != null && !(row.created_at instanceof Date)) row.created_at = new Date(String(row.created_at));
+  if (row.expires_at != null) row.expires_at = Number(row.expires_at);
+  return row as unknown as OauthCodeRow;
+}
+
+/** Insert one authorization code. A repeated hash is 23505 (`oauth_codes_pkey`), a client with no row 23503 (`oauth_codes_client_id_fkey`). */
+export async function insertOauthCode(tx: Raw, row: OauthCodeInsert): Promise<void> {
+  await tx.executeRaw(OAUTH_CODE_SQL.insert, [row.code_hash, row.client_id, oauthPgArray(row.scopes), row.code_challenge,
+    row.code_challenge_method, row.redirect_uri, row.state, row.resource, row.expires_at]);
+}
+
+/** The code row of this hash and client, taken FOR UPDATE (a single-writer store takes no lock), or null. Expiry is the caller's check. */
+export async function readOauthCodeForUpdate(tx: Raw, codeHash: string, clientId: string): Promise<OauthCodeRow | null> {
+  const [row] = await tx.executeRaw<Record<string, unknown>>(OAUTH_CODE_SQL.for_update, [codeHash, clientId]);
+  return row ? normalizeOauthCodeRow(row) : null;
+}
+
+/** Delete the code of this hash and client (a code is single use: the exchange deletes it before it issues). */
+export async function deleteOauthCode(tx: Raw, codeHash: string, clientId: string): Promise<void> {
+  await tx.executeRaw(OAUTH_CODE_SQL.delete, [codeHash, clientId]);
+}
+
+/** The PKCE challenge of an unexpired code of this client whose client is not soft-deleted, or null (any other client's code reads null). */
+export async function readOauthCodeChallenge(tx: Raw, codeHash: string, clientId: string, nowEpochSeconds: number): Promise<string | null> {
+  const [row] = await tx.executeRaw<{ code_challenge: string }>(OAUTH_CODE_SQL.challenge, [codeHash, clientId, nowEpochSeconds]);
+  return row ? row.code_challenge : null;
+}
+
+/**
+ * Insert the tokens of one grant (the access token and, for a code or refresh exchange, its refresh token) on the grant
+ * transaction's executor, after `readOauthClientForUpdate` took the client row: the same INSERTs `insertOauthToken` runs, in
+ * order, and all or none. Pass the transaction, never the pool: a second connection would wait on the client row lock
+ * through the foreign key while the transaction waits for it.
+ */
+export async function issueOauthTokens(tx: Raw, rows: readonly OauthTokenInsert[]): Promise<void> {
+  for (const row of rows) await insertOauthToken(tx, row);
 }

@@ -237,3 +237,37 @@ export async function readMcpLifetimeUsage(exec: LegacyUnscopedRead, tokenNames:
   );
   return rows.map((r) => ({ token_name: r.token_name, requests: Number(r.requests), last_used_at: r.last_used_at ?? null }));
 }
+
+/** Which request log rows `countMcpRequestsLastDay` counts: every row, the traffic (no surface audit rows), or the failed traffic. */
+export type McpRequestCountKind = 'all' | 'traffic' | 'errors';
+
+const REQUEST_COUNT_SQL: Record<McpRequestCountKind, string> = {
+  all: "SELECT count(*)::int as count FROM mcp_request_log WHERE created_at > now() - interval '24 hours'",
+  traffic: "SELECT count(*)::int as count FROM mcp_request_log WHERE operation != 'surface_change' AND created_at > now() - interval '24 hours'",
+  errors: "SELECT count(*)::int as count FROM mcp_request_log WHERE status NOT IN ('success', 'success_with_warnings', 'accepted_pending') AND operation != 'surface_change' AND created_at > now() - interval '24 hours'",
+};
+
+/**
+ * The admin dashboard's request counts over the last 24 hours (`/admin/api/stats`, `/admin/api/health-indicators`): `all`
+ * counts every row, `traffic` leaves out the surface audit rows (operator actions, not traffic), `errors` is the traffic
+ * whose status is not a success or an admitted pending write.
+ */
+export async function countMcpRequestsLastDay(exec: LegacyUnscopedRead, kind: McpRequestCountKind): Promise<number> {
+  const rows = await exec.executeRaw<{ count: number | string }>(REQUEST_COUNT_SQL[kind]);
+  return Number(rows[0]?.count ?? 0);
+}
+
+/** One asked token's request count of the last 24 hours. */
+export interface McpTokenRequestCount {
+  token_name: string;
+  requests: number;
+}
+
+const REQUESTS_BY_TOKEN_SQL = `SELECT token_name, count(*)::int AS requests FROM mcp_request_log
+    WHERE token_name = ANY($1::text[]) AND created_at > now() - interval '24 hours' GROUP BY token_name ORDER BY token_name COLLATE "C"`;
+
+/** Requests of the last 24 hours per asked token (the agents list's "requests today"); a token with none has no row. */
+export async function countMcpRequestsLastDayByToken(exec: LegacyUnscopedRead, tokenNames: readonly string[]): Promise<McpTokenRequestCount[]> {
+  const rows = await exec.executeRaw<{ token_name: string; requests: number | string }>(REQUESTS_BY_TOKEN_SQL, [[...tokenNames]]);
+  return rows.map(r => ({ token_name: r.token_name, requests: Number(r.requests) }));
+}

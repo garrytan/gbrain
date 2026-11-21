@@ -15,9 +15,10 @@
 //! check constraint "..."`); the TypeScript member gives it the SQLSTATE and constraint name PGLite and Postgres raise.
 //! Not kept: the `trust_generation_update` trigger, the secondary indexes (a read scans the table) and the
 //! `ON DELETE RESTRICT` of `sources` (deleting a source a client names is not refused here). The store keeps the
-//! client's `oauth_tokens` (`oauth_tokens.rs`) and removes them with the client, as the `ON DELETE CASCADE` does; it keeps
-//! no `oauth_codes`, so that cascade has nothing to remove there.
+//! client's `oauth_tokens` (`oauth_tokens.rs`) and removes them with the client, as the `ON DELETE CASCADE` does, and so it does
+//! the client's `oauth_codes` (`oauth_codes.rs`).
 
+use super::oauth_codes::delete_client_codes;
 use super::oauth_tokens::delete_client_tokens;
 use super::spend::numeric_fixed;
 use super::*;
@@ -226,7 +227,7 @@ impl ClientRecord {
     }
 
     /// The row as `SELECT *` returns it on the SQL engines: times as ISO text, the cap as `NUMERIC` text.
-    fn to_row(&self) -> Value {
+    pub(super) fn to_row(&self) -> Value {
         let t = |m: Option<i64>| m.map(iso);
         json!({
             "client_id": self.client_id,
@@ -437,7 +438,7 @@ fn budget_text(hundredths: i64) -> String {
     format!("{sign}{}.{:02}", abs / 100, abs % 100)
 }
 
-fn budget_hundredths(usd: f64) -> Result<i64> {
+pub(super) fn budget_hundredths(usd: f64) -> Result<i64> {
     numeric_fixed(usd, 2, 8, "budget_usd_per_day")
 }
 
@@ -544,62 +545,66 @@ impl Store {
     /// `NUMERIC(10,2)`, a row that breaks a CHECK of the table (the agent-grant check first among them) and a
     /// `source_id` no source has; `invalid_argument` for a time that is not ISO text.
     pub fn insert_oauth_client(&self, row: &ClientInsert) -> Result<()> {
+        self.write(|tx| self.insert_client_in(tx, row))
+    }
+
+    /// The insert inside a write the caller holds: `insert_oauth_client`, and the scoped-client insert that writes its
+    /// register audit row beside the client (`client_grants.rs`).
+    pub(super) fn insert_client_in(&self, tx: &mut dyn KvWrite, row: &ClientInsert) -> Result<()> {
         let budget = row.budget_usd_per_day.map(budget_hundredths).transpose()?;
         let deleted_at = iso_micros(&row.deleted_at, "deleted_at")?;
         let reads_unscoped = iso_micros(&row.reads_unscoped, "reads_unscoped")?;
         let created_at = iso_micros(&row.created_at, "created_at")?;
-        self.write(|tx| {
-            if load_client(tx, &row.client_id)?.is_some() {
-                return Err(StoreError::new(
-                    CONSTRAINT_VIOLATION,
-                    "duplicate key value violates unique constraint \"oauth_clients_pkey\"",
-                ));
-            }
-            let record = ClientRecord {
-                client_id: row.client_id.clone(),
-                client_secret_hash: row.client_secret_hash.clone(),
-                client_name: row.client_name.clone(),
-                redirect_uris: row.redirect_uris.clone(),
-                grant_types: row.grant_types.clone(),
-                scope: row.scope.clone(),
-                token_endpoint_auth_method: row.token_endpoint_auth_method.clone(),
-                client_id_issued_at: row.client_id_issued_at,
-                client_secret_expires_at: row.client_secret_expires_at,
-                token_ttl: row.token_ttl,
-                deleted_at,
-                source_id: row.source_id.clone(),
-                federated_read: row.federated_read.clone(),
-                budget,
-                bound_tools: row.bound_tools.clone(),
-                bound_source_id: row.bound_source_id.clone(),
-                bound_brain_id: row.bound_brain_id.clone(),
-                bound_slug_prefixes: row.bound_slug_prefixes.clone(),
-                bound_max_concurrent: row.bound_max_concurrent,
-                surface: row.surface.clone(),
-                surface_set_by: row.surface_set_by.clone(),
-                allowed_operations: row.allowed_operations.clone(),
-                delegated_slug_prefixes: row.delegated_slug_prefixes.clone(),
-                delegated_namespace: row.delegated_namespace.clone(),
-                grant_profile: row.grant_profile.clone(),
-                grant_revision: row.grant_revision,
-                grant_repair_reasons: row.grant_repair_reasons.clone(),
-                created_at: created_at.unwrap_or_else(|| self.env.now_micros()),
-                source_grant: row.source_grant.clone(),
-                takes_holders: row.takes_holders.clone(),
-                min_trust: row.min_trust.clone(),
-                registered_via: row.registered_via.clone(),
-                private_pages: row.private_pages.clone(),
-                member_id: row.member_id.clone(),
-                may_act_for: row.may_act_for.clone(),
-                attest_actor: row.attest_actor.clone(),
-                attest_ops: row.attest_ops.clone(),
-                attest_sources: row.attest_sources.clone(),
-                attest_read: row.attest_read.clone(),
-                reads_unscoped,
-                private_facts: row.private_facts.clone(),
-            };
-            put_client(tx, &record)
-        })
+        if load_client(tx, &row.client_id)?.is_some() {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                "duplicate key value violates unique constraint \"oauth_clients_pkey\"",
+            ));
+        }
+        let record = ClientRecord {
+            client_id: row.client_id.clone(),
+            client_secret_hash: row.client_secret_hash.clone(),
+            client_name: row.client_name.clone(),
+            redirect_uris: row.redirect_uris.clone(),
+            grant_types: row.grant_types.clone(),
+            scope: row.scope.clone(),
+            token_endpoint_auth_method: row.token_endpoint_auth_method.clone(),
+            client_id_issued_at: row.client_id_issued_at,
+            client_secret_expires_at: row.client_secret_expires_at,
+            token_ttl: row.token_ttl,
+            deleted_at,
+            source_id: row.source_id.clone(),
+            federated_read: row.federated_read.clone(),
+            budget,
+            bound_tools: row.bound_tools.clone(),
+            bound_source_id: row.bound_source_id.clone(),
+            bound_brain_id: row.bound_brain_id.clone(),
+            bound_slug_prefixes: row.bound_slug_prefixes.clone(),
+            bound_max_concurrent: row.bound_max_concurrent,
+            surface: row.surface.clone(),
+            surface_set_by: row.surface_set_by.clone(),
+            allowed_operations: row.allowed_operations.clone(),
+            delegated_slug_prefixes: row.delegated_slug_prefixes.clone(),
+            delegated_namespace: row.delegated_namespace.clone(),
+            grant_profile: row.grant_profile.clone(),
+            grant_revision: row.grant_revision,
+            grant_repair_reasons: row.grant_repair_reasons.clone(),
+            created_at: created_at.unwrap_or_else(|| self.env.now_micros()),
+            source_grant: row.source_grant.clone(),
+            takes_holders: row.takes_holders.clone(),
+            min_trust: row.min_trust.clone(),
+            registered_via: row.registered_via.clone(),
+            private_pages: row.private_pages.clone(),
+            member_id: row.member_id.clone(),
+            may_act_for: row.may_act_for.clone(),
+            attest_actor: row.attest_actor.clone(),
+            attest_ops: row.attest_ops.clone(),
+            attest_sources: row.attest_sources.clone(),
+            attest_read: row.attest_read.clone(),
+            reads_unscoped,
+            private_facts: row.private_facts.clone(),
+        };
+        put_client(tx, &record)
     }
 
     /// `updateOauthClientBudget(clientId, usd)`: sets (or clears, with None) the daily cap; whether the client exists.
@@ -653,6 +658,7 @@ impl Store {
             };
             tx.delete(&client_key(client_id))?;
             delete_client_tokens(tx, client_id)?;
+            delete_client_codes(tx, client_id)?;
             Ok(Some((record.client_id, record.client_name)))
         })
     }

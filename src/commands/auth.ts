@@ -33,6 +33,7 @@ import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import type { OAuthTransaction } from '../core/oauth-grants.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
+import { rescopeOAuthClient } from '../core/grants/rescope.ts';
 import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type RescopeGrantArgs } from '../core/grants/cli.ts';
 import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, type ClientGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
 import { PRIVATE_FACTS_HELP, privateFactsRescopeLines, privateFactsWarning, renderPrivateFacts } from './auth-private-facts.ts';
@@ -715,7 +716,8 @@ export async function registerScopedClient(
     if (opts.columns && !opts.columns.has('surface')) {
       surfaceSkipped = true;
     } else {
-      const rescoped = await provider().rescopeClient(clientId, { surface: opts.surface, surfaceSetBy: opts.surfaceSetBy });
+      // An engine rescopes through typed members (the surface write is a grant write); a bare SqlQuery keeps the raw path.
+      const rescoped = await rescopeOAuthClient(engine ?? sql, clientId, { surface: opts.surface, surfaceSetBy: opts.surfaceSetBy });
       surfaceApplied = opts.surface;
       surfaceOld = rescoped.surfaceOld ?? null;
     }

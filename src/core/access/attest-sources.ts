@@ -18,7 +18,7 @@ import type { OperationContext } from '../ops/contract.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import type { WriteAuthority } from '../persistence/model.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
-import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
+import type { SqlQuery } from '../sql-query.ts';
 import { GrantError, grantFromRow, grantFromTokenRow, type ClientGrant, type GrantSources } from '../grants/model.ts';
 import { isScopeSourceConfig, normalizeSourceConfig, parseSourceConfig } from '../sources-load.ts';
 import { SCOPE_PAGE_SLUG } from './principals.ts';
@@ -51,7 +51,6 @@ export function sourceNotAttested(sourceId: string): OperationError {
 }
 
 type Db = BrainEngine | SqlQuery;
-const sqlOf = (db: Db): SqlQuery => typeof db === 'function' ? db : sqlQueryForEngine(db);
 
 /**
  * The marked scope sources among `ids`. `lock` takes their rows in id order inside the caller's transaction: a grant
@@ -94,10 +93,15 @@ export function sourcesOf(s: GrantSources): { reads: string[]; write: string | n
   return { reads: [], write: null };
 }
 
-/** Every live credential's read sources, write source and attest_sources, read through the canonical grant model. */
-async function credentialSources(sql: SqlQuery): Promise<CredentialSources[]> {
-  const clients = await sql`SELECT * FROM oauth_clients WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`;
-  const tokens = await sql`SELECT * FROM access_tokens WHERE revoked_at IS NULL`;
+/**
+ * Every live credential's read sources, write source and attest_sources, read through the canonical grant model. An engine
+ * reads the two tables through the typed `readLiveOauthClients` and `readLiveAccessTokenRows` members; a bare `SqlQuery`
+ * (a transaction handle the grant writes hold) keeps the two statements.
+ */
+async function credentialSources(db: Db): Promise<CredentialSources[]> {
+  const [clients, tokens]: [Record<string, unknown>[], Record<string, unknown>[]] = typeof db === 'function'
+    ? [await db`SELECT * FROM oauth_clients WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`, await db`SELECT * FROM access_tokens WHERE revoked_at IS NULL`]
+    : [await db.readLiveOauthClients() as unknown as Record<string, unknown>[], await db.readLiveAccessTokenRows()];
   return [
     ...clients.map(row => {
       const g = grantFromRow(row);
@@ -117,7 +121,7 @@ async function selfAttest(db: Db, self: CredentialRef): Promise<string[]> {
   if (typeof db !== 'function' && self.kind === 'token') {
     return strings((await db.readCredentialBindingForUpdate({ kind: 'token', id: self.id }, { readsUnscoped: false }))?.attest_sources);
   }
-  return (await credentialSources(sqlOf(db))).find(c => same(c.ref, self))?.attest ?? [];
+  return (await credentialSources(db)).find(c => same(c.ref, self))?.attest ?? [];
 }
 
 /**
@@ -161,14 +165,13 @@ function attestInvalid(message: string, suggestion: string): OperationError {
  * cleared here. Returns whether anything was checked.
  */
 export async function applyAttestSources(db: Db, self: CredentialRef, next: readonly string[] | null, before: readonly string[] | null, opts: { dryRun?: boolean } = {}): Promise<boolean> {
-  const sql = sqlOf(db);
-  const marked = await markedScopeSources(sql, next ?? []);
+  const marked = await markedScopeSources(db, next ?? []);
   const added = (next ?? []).filter(s => !(before ?? []).includes(s) || !marked.has(s));
   const dropped = (before ?? []).filter(s => !(next ?? []).includes(s));
   if (!added.length && !dropped.length) return false;
   // The caller holds this credential's row FOR UPDATE; the sources it marks are locked before the other grants are read.
-  await markedScopeSources(sql, added, 'update');
-  const all = await credentialSources(sql);
+  await markedScopeSources(db, added, 'update');
+  const all = await credentialSources(db);
   const mine = all.find(c => same(c.ref, self));
   const stillRead = dropped.filter(s => mine?.reads.includes(s));
   if (stillRead.length) {
@@ -181,9 +184,11 @@ export async function applyAttestSources(db: Db, self: CredentialRef, next: read
   if (added.length && mine?.privateFacts) {
     throw attestInvalid('This credential holds the private-facts grant, so it cannot list scope sources; nothing changed.', 'Clear it first (gbrain auth rescope ... --private-facts none): a scope credential reads only shared memory.');
   }
+  const configs = new Map<string, unknown>();
   for (const s of added) {
-    const [row] = await sql`SELECT archived, config FROM sources WHERE id = ${s}`;
+    const row = await sourceAttestState(db, s);
     if (!row || row.archived === true) throw attestInvalid(`--attest-sources names ${s}, which is not an active source.`, 'Add a dedicated source for the scope first (gbrain sources add <id>: with a path on a repo brain, without one on a repo-less brain), then list it.');
+    configs.set(s, row.config);
     if (s === 'default' || parseSourceConfig(row.config).federated === true) throw attestInvalid(`--attest-sources names ${s}, which every connection without a source grant reads (${s === 'default' ? 'the default source' : 'a federated source'}).`, 'Use a dedicated, unfederated source per scope.');
     if (mine?.write === s) throw attestInvalid(`--attest-sources names ${s}, this credential's own write source (where member pages live).`, 'Keep member pages and each scope in separate sources: list only scope sources.');
     const readers = all.filter(c => !same(c.ref, self) && c.reads.includes(s) && !c.attest.includes(s));
@@ -193,11 +198,22 @@ export async function applyAttestSources(db: Db, self: CredentialRef, next: read
     }
   }
   if (opts.dryRun) return true;
-  for (const s of added) {
-    const [row] = await sql`SELECT config FROM sources WHERE id = ${s}`;
-    await sql`UPDATE sources SET config = ${JSON.stringify({ ...normalizeSourceConfig(row!.config), qm_scope: true, federated: false })}::text::jsonb WHERE id = ${s}`;
-  }
+  // The sources are locked since markedScopeSources(..., 'update'), so the configs read above are still current.
+  for (const s of added) await replaceSourceConfig(db, s, { ...normalizeSourceConfig(configs.get(s)), qm_scope: true, federated: false });
   return true;
+}
+
+/** A source's archived flag and config, or null: the typed member on an engine, the statement on a bare `SqlQuery`. */
+async function sourceAttestState(db: Db, id: string): Promise<{ archived: boolean; config: unknown } | null> {
+  if (typeof db !== 'function') return db.readSourceAttestState(id);
+  const [row] = await db`SELECT archived, config FROM sources WHERE id = ${id}`;
+  return row ? { archived: row.archived as boolean, config: row.config } : null;
+}
+
+/** Sets a source's whole config: the typed member on an engine, the statement on a bare `SqlQuery`. */
+async function replaceSourceConfig(db: Db, id: string, config: Record<string, unknown>): Promise<void> {
+  if (typeof db !== 'function') return db.replaceSourceConfig(id, config);
+  await db`UPDATE sources SET config = ${JSON.stringify(config)}::text::jsonb WHERE id = ${id}`;
 }
 
 /** A remote memory_recall that names no source reads no scope source: a scope is read only by naming it. */

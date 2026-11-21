@@ -32,6 +32,7 @@ below; rotate is still raw SQL and stops on a Rust brain.
 | `brain.writeAccessTokenGrant(id, columns, scopes, permissions)` | the new `grant_revision`, or null when no token has this id (a UUID, so any case). It serves `writeAccessTokenGrant(id, { columns, scopes, permissions })`, the grant write of `gbrain auth rescope --token`: the five grant columns, the scopes when given (null keeps them), the `permissions` mirror and one more revision, in one write. Like the statement, it has no revoked filter |
 | `brain.writeAccessTokenPrivateGrant(id, axis, value)` | null. Sets `private_pages` or `private_facts` (`axis`) of the token with this id to `value` (`none` or `granted_sources`); an id no token has changes nothing. Another axis is `invalid_argument` |
 | `brain.lockLegacyAccessTokens()` | the whole rows, without `token_hash`, of the tokens not revoked and with no `source_grant`, oldest first (a tie by id). It serves `lockLegacyAccessTokens()`, the read `gbrain auth rescope --migrate-legacy` runs before it converts each token (`SELECT * ... FOR UPDATE`); the TypeScript member makes the times Dates |
+| `brain.readLiveAccessTokenRows()` | the same row shape (`last_used_at` and the binding columns as stored) for every token not revoked, by id, without `token_hash` (the grant checks that read every credential's source grant use no hash) |
 
 ## Callers
 

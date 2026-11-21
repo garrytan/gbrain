@@ -13,7 +13,9 @@ import type { StoredSkillRevision } from './shared-skills/model.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
 import type * as JobsWake from './engine-sql/jobs-wake.ts';
-import type { AccessTokenGrantWrite, AccessTokenListRow, AccessTokenPrivateAxis, ActiveTokenGrantField, ActiveTokenTarget, DeletedOAuthClient, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller } from './engine-sql/access-credentials.ts';
+import type { OauthClientGrantPersist, OauthGrantAuditRow } from './engine-sql/client-grants.ts';
+import type { OauthGrantAuditInsert } from './engine-sql/oauth-revocation.ts';
+import type { AccessTokenGrantWrite, AccessTokenListRow, AccessTokenPrivateAxis, ActiveTokenGrantField, ActiveTokenTarget, DeletedOAuthClient, LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller, OauthCodeInsert, OauthCodeRow } from './engine-sql/access-credentials.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
@@ -157,7 +159,7 @@ import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContex
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
-import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
+import type { McpLifetimeUsageRow, McpRequestCountKind, McpTokenRequestCount, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
 import type { ChatUsageLogRow, ChatUsageWindow } from './engine-sql/chat-usage.ts';
 import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
@@ -1854,6 +1856,10 @@ export interface BrainEngine {
   readMcpLogPruneCutoff(days: number): Promise<McpLogPruneCutoff>;
   pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number): Promise<McpLogPruneBatch>;
   readMcpLifetimeUsage(tokenNames: readonly string[]): Promise<McpLifetimeUsageRow[]>;
+  /** The request log rows of the last 24 hours: all of them, the traffic, or the failed traffic (the admin dashboard counts). */
+  countMcpRequestsLastDay(kind: McpRequestCountKind): Promise<number>;
+  /** Requests of the last 24 hours per asked token; a token with none has no row. */
+  countMcpRequestsLastDayByToken(tokenNames: readonly string[]): Promise<McpTokenRequestCount[]>;
   /** The chat usage ledger insert and the get_usage window read (SQL and contracts in engine-sql/chat-usage.ts). */
   logChatUsage(row: ChatUsageLogRow): Promise<void>;
   readChatUsage(days: number): Promise<ChatUsageWindow>;
@@ -4268,6 +4274,40 @@ export interface BrainEngine {
   readTokenLifetimeClampedClients(): Promise<string[]>;
   /** The id and config of each source among `ids`; `lock` takes the rows in id order FOR SHARE or FOR UPDATE (a single-writer store takes none). */
   readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock): Promise<{ id: string; config: unknown }[]>;
+  /** The client's whole row read FOR UPDATE inside the caller's transaction (a single-writer store takes no lock), or null. */
+  readOauthClientForUpdate(clientId: string): Promise<OauthClientRow | null>;
+  /** Every OAuth client not deleted, whole rows (the grant checks read every credential's grant). */
+  readLiveOauthClients(): Promise<OauthClientRow[]>;
+  /** Every access token not revoked, whole rows (a store that keeps no attest or private columns reads their defaults). */
+  readLiveAccessTokenRows(): Promise<Record<string, unknown>[]>;
+  /** Whether the client holds an OAuth token or an authorization code (a store that keeps neither answers false). */
+  oauthClientHoldsAuthorization(clientId: string): Promise<boolean>;
+  /** Whether the source is archived, read FOR SHARE inside the caller's transaction; null for no such source. */
+  readSourceArchivedForShare(id: string): Promise<boolean | null>;
+  /** The source's archived flag and config, or null for no such source (the `--attest-sources` check). */
+  readSourceAttestState(id: string): Promise<{ archived: boolean; config: unknown } | null>;
+  /** Set the source's whole config (the `--attest-sources` mark). */
+  replaceSourceConfig(id: string, config: Record<string, unknown>): Promise<void>;
+  /** Write a client's grant while it still holds the expected revision, rewrite its legacy open jobs and append the audit row; false (nothing written) when the revision moved. */
+  persistOauthClientGrant(grant: OauthClientGrantPersist): Promise<boolean>;
+  /** The `after_grant` document of the client's newest audit row that records a catalog provenance, or null; a brain with no audit table raises its error. */
+  readLatestCatalogProvenanceAudit(clientId: string): Promise<unknown | null>;
+  /** The client's grant audit rows, oldest first. */
+  listOauthGrantAudit(clientId: string): Promise<OauthGrantAuditRow[]>;
+  /** Delete the OAuth token with this hash when this client owns it (a revoke naming another client deletes nothing). */
+  deleteOauthTokenByHash(hash: string, clientId: string): Promise<void>;
+  /** Stamp an OAuth client `deleted_at` now (a revoke); its tokens and codes are separate deletes. */
+  softDeleteOauthClient(clientId: string): Promise<void>;
+  /** Delete every OAuth token, access and refresh, of the client. */
+  deleteOauthClientTokens(clientId: string): Promise<void>;
+  /** Delete every authorization code of the client (a store that keeps none deletes none). */
+  deleteOauthClientCodes(clientId: string): Promise<void>;
+  /** Delete the OAuth client row (the lifecycle `delete`); its tokens and codes are separate deletes. */
+  deleteOauthClientRow(clientId: string): Promise<void>;
+  /** Set the client's grant revision; `revoke` also stamps `deleted_at` when the client is not already revoked. */
+  setOauthClientRevision(clientId: string, revision: number, revoke: boolean): Promise<void>;
+  /** Append one row to the OAuth grant audit (the grant documents are JSON text). */
+  insertOauthGrantAudit(row: OauthGrantAuditInsert): Promise<void>;
   /** The bearer check's OAuth token read at one rung of its degrade ladder. */
   readOauthAccessTokenRows(hash: string, rung: OauthTokenRung): Promise<Record<string, unknown>[]>;
   /** `auth rescope`'s whole rows (`SELECT *`) of the active tokens one id or an exact name names, locked FOR UPDATE. */
@@ -4282,10 +4322,22 @@ export interface BrainEngine {
   touchAccessTokenLastUsed(id: string, unified: boolean): Promise<void>;
   /** Delete the OAuth tokens and codes that expired before `nowEpochSeconds`; the count of both (a store that keeps none deletes none). */
   deleteExpiredOauthCredentials(nowEpochSeconds: number): Promise<number>;
+  /** OAuth access tokens expiring from `from` to `to` (epoch seconds, inclusive), or after `from` when `to` is null. */
+  countOauthAccessTokens(from: number, to: number | null): Promise<number>;
   /** Convert an access token still on the legacy shape to its grant columns on first read; the converted row, or null when none converted. */
   convertLegacyAccessTokenGrant(id: string, columns: LegacyTokenGrantColumns): Promise<Record<string, unknown> | null>;
   /** Insert one OAuth token (the INSERTs of `OAuthGrants.issue`); a repeated hash is 23505, a client with no row 23503. */
   insertOauthToken(row: OauthTokenInsert): Promise<void>;
+  /** Insert one authorization code (OAuthGrants.decide); a repeated hash is 23505, a client with no row 23503. */
+  insertOauthCode(row: OauthCodeInsert): Promise<void>;
+  /** The code of this hash and client taken FOR UPDATE, or null (the caller checks expiry). */
+  readOauthCodeForUpdate(codeHash: string, clientId: string): Promise<OauthCodeRow | null>;
+  /** Delete the code of this hash and client. */
+  deleteOauthCode(codeHash: string, clientId: string): Promise<void>;
+  /** The PKCE challenge of an unexpired code of this client (its client not soft-deleted), or null. */
+  readOauthCodeChallenge(codeHash: string, clientId: string, nowEpochSeconds: number): Promise<string | null>;
+  /** Insert the tokens of one grant on the grant transaction, all or none, after the client lock (OAuthGrants.issue); run it on the transaction handle, never the pool. */
+  issueOauthTokens(rows: readonly OauthTokenInsert[]): Promise<void>;
 
   /** The ids of the enabled, untombstoned audience-kind members, by id. */
   listAudienceAccessMembers(): Promise<string[]>;

@@ -32,8 +32,10 @@ import { rotateClientSecret } from '../../src/commands/agent-register.ts';
 import { parseRegisterClientArgs, preflightOauthClientColumns, registerScopedClient } from '../../src/commands/auth.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { listClientRows } from '../../src/commands/auth-client-rows.ts';
+import { rescopeOAuthClient } from '../../src/core/grants/rescope.ts';
+import { readClientCatalogProvenance, recordFirstConsentInTransaction, rescopeClientGrant, rescopeClientGrantInTransaction } from '../../src/core/grants/service.ts';
 import { hashToken } from '../../src/core/utils.ts';
-import { createSource, parityArms, type ParityBackend } from './harness.ts';
+import { archiveSource, createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -270,12 +272,161 @@ describe('engine parity: oauth_clients rows and constraints', () => {
     });
 
   // The audit rows a lifetime migration writes exist only on a brain that had clients before it; a fresh brain has none,
-  // and the Rust store keeps no grant audit table, so this pins the empty answer on every arm.
+  // and the Rust store does not run those migrations, so this pins the empty answer on every arm.
   parityTest('lifetime clamp: a fresh brain names no client its migrations clamped, before and after a registration',
     { methods: ['readTokenLifetimeClampedClients'] }, async (engine) => {
       const before = await engine.readTokenLifetimeClampedClients();
       await registerThroughCli(engine, ['--grant-types', 'client_credentials', '--scopes', 'read', '--token-ttl', '600']);
       return { before, after: await engine.readTokenLifetimeClampedClients() };
+    });
+
+  /** What a caller sees of a grant change: the revision it reached and the grant before and after, minus the clock. */
+  const changed = (r: Awaited<ReturnType<typeof rescopeClientGrant>>) => ({
+    revision: r.revision, dryRun: r.dryRun,
+    before: { scopes: r.before.scopes, sourceId: r.before.sourceId, federatedRead: r.before.federatedRead, revision: r.before.revision },
+    after: { scopes: r.after.scopes, sourceId: r.after.sourceId, federatedRead: r.after.federatedRead, revision: r.after.revision },
+  });
+  const audit = async (engine: BrainEngine, id: string) => (await engine.listOauthGrantAudit(id)).map(a => ({
+    actor: a.actor, action: a.action, revision: a.revision, hasBefore: a.before_grant !== null, afterSources: (a.after_grant as { sourceId?: unknown } | null)?.sourceId,
+    afterScopes: (a.after_grant as { scopes?: unknown } | null)?.scopes, createdAtPresent: a.created_at instanceof Date,
+  }));
+
+  parityTest('rescope a client: the grant moves to the new scope and sources, the revision counts up, a stale revision changes nothing, and each change leaves an audit row',
+    { methods: ['insertOauthClientGrant', 'readOauthClientForUpdate', 'persistOauthClientGrant', 'listOauthGrantAudit', 'readOauthClient'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      const registered = await registerThroughCli(engine, ['--grant-types', 'client_credentials', '--scopes', 'read', '--source', 'src-a']);
+      const id = (await engine.listOauthClients()).find(c => c.client_name === 'census-like')!.client_id;
+      const afterRegister = await audit(engine, id);
+      const preview = await rescopeClientGrant(engine, id, { scopes: ['read', 'write'] }, { actor: 'operator', dryRun: true });
+      const rowAfterPreview = await engine.readOauthClient(id);
+      const first = await rescopeClientGrant(engine, id, { scopes: ['read', 'write'], sourceId: 'src-b', federatedRead: ['src-a', 'src-b'] }, { actor: 'operator', expectedRevision: 1 });
+      const stale = await refusal(() => rescopeClientGrant(engine, id, { scopes: ['read'] }, { actor: 'operator', expectedRevision: 1 }));
+      const row = await engine.readOauthClient(id);
+      const missing = await refusal(() => rescopeClientGrant(engine, 'gbrain_cl_nobody', { scopes: ['read'] }, { actor: 'operator' }));
+      return {
+        registered: registered.row?.grant_revision, afterRegister, preview: changed(preview), previewKept: rowAfterPreview?.scope,
+        first: changed(first), stale: stale && { code: stale.code, message: stale.message },
+        row: { scope: row?.scope, source_id: row?.source_id, federated_read: row?.federated_read, grant_revision: row?.grant_revision },
+        missing: missing && { code: missing.code }, audit: await audit(engine, id),
+      };
+    });
+
+  parityTest('rescope several clients in one transaction: a failure after the first write rolls both back, audit rows included',
+    { methods: ['insertOauthClient', 'readOauthClientForUpdate', 'persistOauthClientGrant', 'listOauthGrantAudit', 'readOauthClient'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      for (const id of ['one', 'two']) await engine.insertOauthClient({ client_id: id, client_name: id, grant_types: ['client_credentials'], scope: 'read', source_id: 'src-a', federated_read: ['src-a'], grant_revision: 1 });
+      const failure = await refusal(() => engine.transaction(async tx => {
+        await rescopeClientGrantInTransaction(tx, 'one', { scopes: ['read', 'write'] }, { actor: 'operator' });
+        await rescopeClientGrantInTransaction(tx, 'two', { scopes: ['read', 'write'] }, { actor: 'operator' });
+        throw Object.assign(new Error('stop'), { code: 'test_stop' });
+      }));
+      const rolledBack = { one: (await engine.readOauthClient('one'))?.scope, audit: await audit(engine, 'one') };
+      await engine.transaction(async tx => {
+        await rescopeClientGrantInTransaction(tx, 'one', { scopes: ['read', 'write'] }, { actor: 'operator' });
+        await rescopeClientGrantInTransaction(tx, 'two', { scopes: ['read', 'write'] }, { actor: 'operator' });
+      });
+      return {
+        failure: failure && failure.code, rolledBack,
+        kept: { one: (await engine.readOauthClient('one'))?.scope, two: (await engine.readOauthClient('two'))?.grant_revision, audit: await audit(engine, 'two') },
+      };
+    });
+
+  parityTest('first consent: a client at revision 0 takes its source and moves to revision 1 with an audit row; a second consent is a conflict; an archived source is refused',
+    { methods: ['insertOauthClient', 'readOauthClientForUpdate', 'oauthClientHoldsAuthorization', 'readSourceArchivedForShare', 'persistOauthClientGrant', 'listOauthGrantAudit', 'readOauthClient'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      await createSource(engine, backend, 'src-archived');
+      await archiveSource(engine, backend, 'src-archived');
+      for (const id of ['fresh', 'fresh-archived']) await engine.insertOauthClient({ client_id: id, client_name: id, grant_types: ['authorization_code'], scope: 'read', grant_revision: 0 });
+      const consent = await engine.transaction(tx => recordFirstConsentInTransaction(tx, 'fresh', 'src-a', 'owner'));
+      const again = await refusal(() => engine.transaction(tx => recordFirstConsentInTransaction(tx, 'fresh', 'src-b', 'owner')));
+      const archived = await refusal(() => engine.transaction(tx => recordFirstConsentInTransaction(tx, 'fresh-archived', 'src-archived', 'owner')));
+      const row = await engine.readOauthClient('fresh');
+      return {
+        consent: changed(consent), again: again && { code: again.code }, archived: archived && { code: archived.code },
+        row: { source_id: row?.source_id, federated_read: row?.federated_read, grant_revision: row?.grant_revision },
+        archivedRow: (await engine.readOauthClient('fresh-archived'))?.grant_revision, audit: await audit(engine, 'fresh'),
+      };
+    });
+
+  parityTest('the catalog an operation snapshot was written against is read back from its audit row, and only for the same operation set',
+    { methods: ['insertOauthClient', 'readOauthClientForUpdate', 'persistOauthClientGrant', 'readLatestCatalogProvenanceAudit', 'listOauthGrantAudit'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      await engine.insertOauthClient({ client_id: 'snap', client_name: 'snap', grant_types: ['client_credentials'], scope: 'read', source_id: 'src-a', federated_read: ['src-a'], grant_revision: 1 });
+      const none = await readClientCatalogProvenance(engine, 'snap', ['get_page']);
+      await rescopeClientGrant(engine, 'snap', { allowedOperations: ['get_page', 'search'] }, { actor: 'operator' });
+      const same = await readClientCatalogProvenance(engine, 'snap', ['search', 'get_page']);
+      const other = await readClientCatalogProvenance(engine, 'snap', ['get_page']);
+      // A later write that leaves the snapshot alone adds an audit row with no provenance: the earlier row still answers.
+      await rescopeClientGrant(engine, 'snap', { scopes: ['read', 'write'] }, { actor: 'operator' });
+      const later = await readClientCatalogProvenance(engine, 'snap', ['get_page', 'search']);
+      return { none, sameVersion: same?.version, sameOps: same?.operations.length === later?.operations.length, other, laterVersion: later?.version, audit: await audit(engine, 'snap') };
+    });
+
+  parityTest('the live clients and live tokens a source-grant check reads leave out a revoked client and a revoked token',
+    { methods: ['insertOauthClient', 'deleteOAuthClient', 'insertAccessToken', 'readLiveOauthClients', 'readLiveAccessTokenRows'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      await engine.insertOauthClient({ client_id: 'b-live', client_name: 'b', grant_types: ['client_credentials'], scope: 'read', source_id: 'src-a', federated_read: ['src-a'] });
+      await engine.insertOauthClient({ client_id: 'a-live', client_name: 'a', grant_types: ['client_credentials'], scope: 'read' });
+      await engine.insertOauthClient({ client_id: 'gone', client_name: 'gone', grant_types: ['client_credentials'], scope: 'read' });
+      await engine.deleteOAuthClient('gone');
+      await engine.insertAccessToken({ name: 'live', token_hash: 'h1', scopes: ['read'], permissions: {}, source_grant: 'federated', source_id: 'src-a', federated_read: ['src-a'], allowed_operations: null, takes_holders: null });
+      await engine.insertAccessToken({ name: 'revoked', token_hash: 'h2', scopes: ['read'], permissions: {}, source_grant: null, source_id: null, federated_read: null, allowed_operations: null, takes_holders: null, revoked_at: new Date('2026-01-02T03:04:05Z') });
+      const clients = await engine.readLiveOauthClients();
+      const tokens = await engine.readLiveAccessTokenRows();
+      return {
+        clients: clients.map(c => ({ id: c.client_id, source: c.source_id, readable: c.federated_read, hasHash: 'client_secret_hash' in c })).sort((a, b) => String(a.id).localeCompare(String(b.id))),
+        tokens: tokens.map(t => ({ name: t.name, source_grant: t.source_grant, source_id: t.source_id, federated_read: t.federated_read })),
+        // The Rust store returns no token hash from any member (access-tokens.md), so the hash column is not compared; no caller of this read uses it.
+      };
+    });
+
+  parityTest('persistOauthClientGrant writes nothing, and returns false, for a revision the client no longer holds or a client that does not exist',
+    { methods: ['insertOauthClient', 'persistOauthClientGrant', 'readOauthClient', 'listOauthGrantAudit'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      await engine.insertOauthClient({ client_id: 'cas', client_name: 'cas', grant_types: ['client_credentials'], scope: 'read', source_id: 'src-a', federated_read: ['src-a'], grant_revision: 3 });
+      const grant = (clientId: string, expected: number) => ({
+        client_id: clientId, expected_revision: expected, scope: 'read write', source_id: 'src-b', federated_read: ['src-b'], source_grant: null as 'none' | null,
+        takes_holders: null, bound_slug_prefixes: null, allowed_operations: null, bound_tools: null, bound_source_id: null, bound_brain_id: null,
+        delegated_slug_prefixes: null, delegated_namespace: 'prefixes', bound_max_concurrent: 1, budget_usd_per_day: null, surface: null,
+        surface_set_by: null, token_ttl: null, grant_profile: null, grant_revision: expected + 1, grant_repair_reasons: [],
+        legacy_jobs: { brain_id: null, federated_read: ['src-b'], scopes: ['read', 'write'], allowed_operations: null, max_concurrent: 1, budget_usd_per_day: null },
+        audit: { actor: 'operator', action: 'rescope', before_grant: '{"revision":3}', after_grant: '{"revision":4}' },
+      });
+      const stale = await engine.persistOauthClientGrant(grant('cas', 2));
+      const missing = await engine.persistOauthClientGrant(grant('nobody', 3));
+      const unchanged = { row: (await engine.readOauthClient('cas'))?.scope, audit: (await engine.listOauthGrantAudit('cas')).length };
+      const current = await engine.persistOauthClientGrant(grant('cas', 3));
+      const row = await engine.readOauthClient('cas');
+      return { stale, missing, unchanged, current, row: { scope: row?.scope, source_id: row?.source_id, grant_revision: row?.grant_revision }, audit: await audit(engine, 'cas') };
+    });
+
+  // The admin registration route, `agent register` and the MCP provisioner call registerScopedClient inside one engine
+  // transaction with that transaction as the engine: the client, its register audit row, its token ttl and the surface
+  // write commit or roll back together.
+  parityTest('register inside a transaction with the surface write: client, audit rows, ttl and surface land together, and a failure after leaves nothing',
+    { methods: ['readOauthClientColumns', 'insertOauthClientGrant', 'setOauthClientTokenTtl', 'readOauthClientForUpdate', 'persistOauthClientGrant', 'getSource', 'listOauthGrantAudit', 'readOauthClient'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      const columns = await preflightOauthClientColumns(engine);
+      const args = (extra: Partial<ReturnType<typeof parseRegisterClientArgs>> = {}) => ({ ...parseRegisterClientArgs(['--grant-types', 'client_credentials', '--scopes', 'read write', '--source', 'src-a', '--token-ttl', '900']), ...extra });
+      const register = (tx: BrainEngine, name: string) => registerScopedClient(sqlQueryForEngine(tx), name, args(),
+        { columns, engine: tx, surface: 'verbs', surfaceSetBy: 'operator', tokenTtlSeconds: 900 });
+      const registered = await engine.transaction(tx => register(tx, 'in-tx'));
+      const id = registered.clientId;
+      const row = await engine.readOauthClient(id);
+      const failure = await refusal(() => engine.transaction(async tx => {
+        await register(tx, 'rolled-back');
+        throw Object.assign(new Error('stop'), { code: 'test_stop' });
+      }));
+      const names = (await engine.listOauthClients()).map(c => c.client_name);
+      const movedSource = await engine.transaction(tx => rescopeOAuthClient(tx, id, { sourceId: 'src-b', federatedRead: ['src-a', 'src-b'] }));
+      const unknownSource = await refusal(() => engine.transaction(tx => rescopeOAuthClient(tx, id, { sourceId: 'src-nowhere' })));
+      return {
+        tokenTtl: registered.tokenTtl, surface: registered.surface, surfaceOld: registered.surfaceOld,
+        row: { surface: row?.surface, surface_set_by: row?.surface_set_by, token_ttl: row?.token_ttl, grant_revision: row?.grant_revision, source_id: row?.source_id },
+        failure: failure && failure.code, names,
+        movedSource: { sourceId: movedSource.sourceId, federatedRead: movedSource.federatedRead }, unknownSource: unknownSource && unknownSource.message,
+        audit: await audit(engine, id),
+      };
     });
 
   parityTest('revoke a client: the delete returns the client once, it is no longer live, and its ttl write finds no row',

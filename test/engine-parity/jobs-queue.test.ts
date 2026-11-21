@@ -26,15 +26,19 @@
  *    readings are compared only as present or absent. Submissions are 2 ms apart so created_at never ties.
  */
 import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, JobInsertValues, JobRow } from '../../src/core/engine-sql/jobs.ts';
 import type { JobAttachmentInsert, JobStatsRead, RetryJobPolicy } from '../../src/core/engine-sql/jobs-queue.ts';
-import { APPLICATION_AUTHORITY, authorityDigest, coalesceDecision, parseSubmissionAuthority, type SubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
+import { APPLICATION_AUTHORITY, authorityDigest, authorizeJobExecution, coalesceDecision, parseSubmissionAuthority, prepareRemoteJob, type SubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
+import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../src/core/minions/watchdog-attribution.ts';
 import { admitDelegatedRetry, checkDelegatedCapacity } from '../../src/core/minions/delegated-admission.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
-import { parityArms, sorted } from './harness.ts';
+import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -696,6 +700,48 @@ describe('engine parity: minion queue', () => {
         sameStamp: !!state && !!created && state.created_at.toISOString() === new Date(created).toISOString(),
         unknown: await engine.readJobSourceState('no-such-source'),
       };
+    });
+
+  // A generic remote submit (sync, import, lint) reads its source's registration (archived, root, config, creation
+  // stamp) through readJobSourceState, at acceptance and again when the job runs; a Rust brain answers it from its store.
+  parityTest('a remote import submit by an OAuth client reads its source registration through readJobSourceState, and refuses an archived, connector, relative or missing source',
+    { methods: ['readJobSourceState', 'readOauthClient', 'insertOauthClient', 'getSource'] }, async (engine, backend) => {
+      const scratch = mkdtempSync(join(tmpdir(), 'gbrain-remote-submit-'));
+      try {
+        const root = join(scratch, 'checkout');
+        mkdirSync(root);
+        await createSource(engine, backend, 'job-src', {}, root);
+        await createSource(engine, backend, 'job-connector', { kind: 'example-connector' }, root);
+        await createSource(engine, backend, 'job-relative', {}, 'relative/checkout');
+        await createSource(engine, backend, 'job-archived', {}, root);
+        await archiveSource(engine, backend, 'job-archived');
+        const ctx = (sourceId: string) => {
+          const clientId = `submit-${sourceId}`;
+          return { engine, remote: true, sourceId,
+            auth: { token: 'fixture-token', clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['admin'], sourceId } } as unknown as OperationContext;
+        };
+        for (const id of ['job-src', 'job-connector', 'job-relative', 'job-archived']) {
+          await engine.insertOauthClient({ client_id: `submit-${id}`, client_name: `submit-${id}`, grant_types: ['client_credentials'], scope: 'admin', source_id: id });
+        }
+        const canonical = realpathSync(root);
+        const scrub = (v: unknown) => JSON.parse(JSON.stringify(v).split(canonical).join('<root>')) as unknown;
+        const accepted = await prepareRemoteJob(ctx('job-src'), 'import', {});
+        const created = (await engine.getSource('job-src'))?.created_at;
+        const grant = accepted.authority.grant as unknown as Record<string, unknown>;
+        const rechecked = await denied(() => authorizeJobExecution(engine, { name: 'import', data: accepted.data, submission_authority: accepted.authority } as never));
+        return {
+          data: scrub(accepted.data),
+          grant: scrub({ ...grant, sourceCreatedAt: undefined }),
+          sameStamp: !!created && grant.sourceCreatedAt === new Date(created).toISOString(),
+          rechecked,
+          connector: await denied(() => prepareRemoteJob(ctx('job-connector'), 'import', {})),
+          relative: await denied(() => prepareRemoteJob(ctx('job-relative'), 'lint', {})),
+          archived: await denied(() => prepareRemoteJob(ctx('job-archived'), 'import', {})),
+          missing: await denied(() => prepareRemoteJob(ctx('job-missing'), 'import', {})),
+        };
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
     });
 
   /** A failed agent (`remote_agent`) job accepted against `sourceId` as created at `sourceCreatedAt`. */
