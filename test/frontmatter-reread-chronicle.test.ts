@@ -1,34 +1,28 @@
 /**
  * pages-03: a chronicle judge that is calling the model when the one-time upgrade re-read stores a page's values as
- * written is paid once, and its campaign keeps the page.
+ * written keeps its spend in its campaign, and nothing it wrote is lost or taken from an operator.
  *
- * 1. Protects: a `--max-usd` campaign row whose judge holds the lease when the new binary's first sync re-reads the
- *    unchanged file (a new content hash, nothing new to judge) ends with exactly one model call for that page, its spend
- *    recorded once, and the campaign stamp and attempt history on the page's live row.
- * 2. Fails when: the re-read leaves the leased row at the old hash and the write decision opens a fresh row at the new
- *    hash: the judge's publication is refused as superseded, its paid answer is dropped, and the next drain judges the
- *    page again outside the campaign (a second paid call, no cap, no attempt history).
- *    Also protects the same row waiting out a retry delay at the re-read: no drain judges the page until the delay ends,
- *    then the campaign row itself is judged at the new hash.
- * 3. Existing coverage: test/frontmatter-upgrade-reread.test.ts only checks that the leased row stays at the old hash
- *    and takes the judge's spend; it never runs the judge or a second drain.
- *    Also protects (pages-03 follow-up):
- *    - a waiting row whose delay ends after the chronicle run's settlement pass, or with no settlement pass at all
- *      (the legacy job), is judged once in its campaign; it fails when the claim frees the new hash's fresh row the
- *      moment the delay ends, judging the page outside the campaign;
- *    - a leased judge whose lease ends and whose row a later run moves before it reports keeps its spend and outcome on
- *      the moved row, or only its spend once a newer attempt claimed the row; it fails when the move drops the record,
- *      so the late report lands on a hash no row has and its paid call is lost;
- *    - on Postgres, the same holds when the move commits after the judge read the row's hash (it fails when the report
- *      lands on the old hash after the row left it), and when two runs move the row at once (it fails when the second
- *      deletes the forwarding record the first just settled);
- *    - a judge whose lease ended just before the re-read moved its row at once keeps its spend and outcome on the moved
- *      row (it fails when the move leaves no forwarding record);
- *    - a judge whose row moved does not overwrite a newer decision on the moved row (it fails when the late outcome
- *      replaces a skip), and its spend still lands;
- *    - events a publication wrote before the re-read superseded it are owned by the row after the judge follows it (it
- *      fails when the retry treats them as operator edits and the ledger records none), also when the re-read renamed
- *      the page so the retry proposes other slugs.
+ * 1. Protects: the re-read never moves a pending or failed chronicle row (a paid judge may still be calling the model
+ *    for it: no lease is provably over), so a `--max-usd` campaign row's spend and attempt history stay on its row at the
+ *    old hash and the campaign counts every paid call once. The new hash is judged once more, outside the campaign, and
+ *    the cycle marks the old row superseded. A chronicle attempt owns only the event pages whose live content is exactly
+ *    what it proposed.
+ * 2. Fails when: the re-read moves a row whose judge still runs (the lease ended, or the campaign's last attempt was
+ *    failed as exhausted mid-call), so the judge's spend lands on a hash no row has and the campaign loses it; or when
+ *    a failed activation adopts an operator's edit of an event the attempt wrote as the attempt's own, so a later
+ *    generation overwrites the edit.
+ * 3. Existing coverage: test/frontmatter-upgrade-reread.test.ts checks that a settled row moves with its page and that
+ *    a leased row stays at the old hash and takes the judge's spend; it never runs the judge or a second drain.
+ *    Also protects (pages-03 follow-up, the race cases):
+ *    - a judge whose lease ended just before the re-read, and a judge whose lease ended before a later run, keep their
+ *      spend (and a failure) on the row they claimed, inside the campaign;
+ *    - the campaign's last attempt, failed as exhausted while its judge still runs, keeps its spend (finding 1);
+ *    - a late judge never changes the new hash's decision;
+ *    - events a publication wrote before the re-read superseded it stay owned by the page's ledger, also when the
+ *      re-read renamed the page, so the next judging updates them instead of treating them as operator edits;
+ *    - an operator edit made to such an event before the failed activation is never owned, and a later judging keeps
+ *      it (finding 3);
+ *    - a re-read with extraction off, and a re-read that renamed the page, judge nothing twice.
  * 4. Runs on PGLite and, with DATABASE_URL, on Postgres (the managed-brain fixture). The Rust engine serves no raw SQL,
  *    so the managed sync and the chronicle phase stop there with engine_capability_missing. The judge is the phase's
  *    injected judge, recording spend on the ambient BudgetTracker; the embedding provider is a stub. No network, no
@@ -50,11 +44,9 @@ import { recordOnTracker } from '../src/core/ai/budget-record.ts';
 import { legacyTypedFrontmatter } from '../src/core/frontmatter-legacy.ts';
 import { contentHash } from '../src/core/utils.ts';
 import { CHRONICLE_EXTRACTOR_VERSION } from '../src/core/chronicle/contract.ts';
-import { campaignSpentUsd } from '../src/core/chronicle/campaign.ts';
+import { campaignSpentUsd, failExhaustedCampaignRows } from '../src/core/chronicle/campaign.ts';
 import type { ChronicleJudge } from '../src/core/chronicle/extract-events.ts';
 import { runPhaseChronicle } from '../src/core/cycle/chronicle.ts';
-import { runChronicleJob } from '../src/core/chronicle/job.ts';
-import { settleChronicleCarries } from '../src/core/chronicle/carry.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -119,7 +111,6 @@ function pausingJudge(failFirst = false) {
   return judge;
 }
 
-type LedgerRow = { content_hash: string; state: string; trigger: string; campaign_id: string | null; attempts: number; max_attempts: number | null; cost_usd: string | number | null };
 const OPTS = { sourceId: 'default', noPull: true };
 
 /**
@@ -154,17 +145,27 @@ async function upgradeReread(engine: BrainEngine, root: string, oldHash: string)
   return reread.content_hash;
 }
 
-/** One paid call in all, each spend once, all inside the campaign, and the live row is the campaign's with its outcome. */
-async function expectJudgedOnceInCampaign(engine: BrainEngine, id: number, liveHash: string): Promise<void> {
-  const rows = await engine.executeRaw<LedgerRow>(
-    `SELECT content_hash, state, trigger, campaign_id, attempts, max_attempts, cost_usd FROM chronicle_page_state
-      WHERE page_id=$1 AND extractor_version=$2 ORDER BY decided_at`, [id, CHRONICLE_EXTRACTOR_VERSION]);
-  const spent = Math.round(rows.reduce((sum, row) => sum + Number(row.cost_usd ?? 0), 0) * 10_000) / 10_000;
-  expect(spent).toBe(0.25 + CALL_USD);
-  expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.25 + CALL_USD);
-  // Both attempts count against the campaign's cap.
-  expect(rows.find(row => row.content_hash === liveHash)).toMatchObject(
-    { state: 'extracted', trigger: 'backfill', campaign_id: 'campaign-a', attempts: 2, max_attempts: 2 });
+type LedgerRow = { content_hash: string; state: string; reason: string | null; trigger: string; campaign_id: string | null; attempts: number;
+  max_attempts: number | null; cost_usd: string | number | null; event_slugs: string[] | null; event_hashes: string[] | null };
+const ledger = (engine: BrainEngine, id: number) => engine.executeRaw<LedgerRow>(
+  `SELECT content_hash, state, reason, trigger, campaign_id, attempts, max_attempts, cost_usd, event_slugs, event_hashes FROM chronicle_page_state
+    WHERE page_id=$1 AND extractor_version=$2 ORDER BY decided_at`, [id, CHRONICLE_EXTRACTOR_VERSION]);
+const usd = (value: number) => Math.round(value * 10_000) / 10_000;
+const expireLease = (engine: BrainEngine, id: number, hash: string) =>
+  engine.executeRaw(`UPDATE chronicle_page_state SET next_attempt_at = now() - interval '1 second' WHERE page_id=$1 AND content_hash=$2`, [id, hash]);
+
+/**
+ * The campaign row stays at the old hash with its attempts and every paid call it made (`campaignCalls`), counted once
+ * in its campaign; the new hash was judged `outsideCalls` times, outside the campaign, and nothing else was paid.
+ */
+async function expectCampaignKeptItsSpend(engine: BrainEngine, id: number, hashes: { oldHash: string; liveHash: string },
+  campaignCalls: number, outsideCalls: number): Promise<void> {
+  const rows = await ledger(engine, id);
+  expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(usd(0.25 + campaignCalls * CALL_USD));
+  expect(usd(rows.reduce((sum, row) => sum + Number(row.cost_usd ?? 0), 0))).toBe(usd(0.25 + (campaignCalls + outsideCalls) * CALL_USD));
+  expect(rows.filter(row => row.campaign_id === 'campaign-a')).toEqual([
+    expect.objectContaining({ content_hash: hashes.oldHash, trigger: 'backfill', attempts: 1 + campaignCalls, max_attempts: 2 })]);
+  if (outsideCalls) expect(rows.find(row => row.content_hash === hashes.liveHash)).toMatchObject({ state: 'extracted', campaign_id: null });
 }
 
 const inGateway = (body: () => Promise<void>) =>
@@ -174,10 +175,41 @@ const inGateway = (body: () => Promise<void>) =>
     try { await body(); } finally { __setEmbedTransportForTests(null); resetGateway(); }
   });
 
+/** A judge that proposes one event per call, recording one priced call each time. */
+function eventJudge() {
+  const judge = Object.assign((async () => {
+    recordOnTracker(getCurrentBudgetTracker(), { modelId: CHAT, ...CALL, label: 'chronicle', kind: 'chat' });
+    judge.calls++;
+    return { events: [{ when: '2024-03-01T12:00:00Z', who: [], what: 'The team agreed on the plan for acme-example', kind: 'decision' }] };
+  }) as ChronicleJudge, { calls: 0 });
+  return judge;
+}
+
+/** `engine`, except that `hook` runs once, when the publication activates the page's events (its first deleted-inclusive read of the page). */
+function beforeActivation(engine: BrainEngine, hook: (target: BrainEngine) => Promise<boolean>): BrainEngine {
+  let done = false;
+  return new Proxy(engine, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (prop !== 'readPageSnapshot') return typeof value === 'function' ? value.bind(target) : value;
+      return async (slug: string, opts?: { includeDeleted?: boolean }) => {
+        if (!done && slug === SLUG && opts?.includeDeleted) done = await hook(target);
+        return target.readPageSnapshot(slug, opts as never);
+      };
+    },
+  }) as BrainEngine;
+}
+const liveEvents = async (engine: BrainEngine) =>
+  (await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE type='event' AND deleted_at IS NULL ORDER BY slug`)).map(r => r.slug);
+const ownedBy = async (engine: BrainEngine, id: number) => {
+  const rows = await ledger(engine, id);
+  return { slugs: new Set(rows.flatMap(row => row.event_slugs ?? [])), hashes: new Set(rows.flatMap(row => row.event_hashes ?? [])) };
+};
+
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 describe(`pages-03: the upgrade re-read while a chronicle judge is calling the model (${backend})`, () => {
-  test('a campaign row leased by a running judge is judged once, its spend recorded once, its campaign kept', () => managedBrain(async ({ engine, root }) => {
+  test('a campaign row leased by a running judge stays at its old hash: its spend lands once in its campaign and the new hash is judged once more', () => managedBrain(async ({ engine, root }) => {
     await inGateway(async () => {
       const { id, oldHash } = await campaignBrain(engine, '-1 second');
       // The chronicle phase claims the row (its lease, the campaign's second attempt) and calls the model...
@@ -189,287 +221,211 @@ describe(`pages-03: the upgrade re-read while a chronicle judge is calling the m
       judge.release();
       await firstDrain;
       await drainEffects(engine);
-      // The next drain finds nothing to judge.
       await runPhaseChronicle(engine, { judge });
-      expect(judge.calls).toBe(1);
-      await expectJudgedOnceInCampaign(engine, id, liveHash);
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(2);
+      await expectCampaignKeptItsSpend(engine, id, { oldHash, liveHash }, 1, 1);
     });
   }, { setup, databaseUrl }), 240_000);
 
-  test('a campaign row waiting out its retry delay is judged once, at the new hash, when the delay ends', () => managedBrain(async ({ engine, root }) => {
+  test('a campaign row waiting out its retry delay stays at its old hash and is superseded; the new hash is judged once', () => managedBrain(async ({ engine, root }) => {
     await inGateway(async () => {
       const { id, oldHash } = await campaignBrain(engine, '1 hour');
       const liveHash = await upgradeReread(engine, root, oldHash);
       await drainEffects(engine);
       const judge = pausingJudge();
       judge.release();
-      // While the delay runs, no drain judges the page: not the write decision at the new hash either.
       await runPhaseChronicle(engine, { judge });
-      expect(judge.calls).toBe(0);
-      // The delay ends: the campaign row is judged, once.
-      await engine.executeRaw(`UPDATE chronicle_page_state SET next_attempt_at = now() - interval '1 second' WHERE page_id=$1 AND content_hash=$2`, [id, oldHash]);
+      // The delay ends: the old row is not judged, since its content is no longer live.
+      await expireLease(engine, id, oldHash);
       await runPhaseChronicle(engine, { judge });
       await runPhaseChronicle(engine, { judge });
       expect(judge.calls).toBe(1);
-      await expectJudgedOnceInCampaign(engine, id, liveHash);
+      await expectCampaignKeptItsSpend(engine, id, { oldHash, liveHash }, 0, 1);
+      expect((await ledger(engine, id)).find(row => row.content_hash === oldHash)).toMatchObject({ state: 'skipped', reason: 'superseded' });
     });
   }, { setup, databaseUrl }), 240_000);
 
-  test('a waiting campaign row whose delay ends after the run\'s settlement pass is judged once, in its campaign', () => managedBrain(async ({ engine, root }) => {
-    await inGateway(async () => {
-      const { id, oldHash } = await campaignBrain(engine, '1 hour');
-      const liveHash = await upgradeReread(engine, root, oldHash);
-      await drainEffects(engine);
-      const judge = pausingJudge();
-      judge.release();
-      // The delay ends after this run settled carried rows (nothing moved: the row still waited) and before it claims.
-      const delayEndsAfterSettlement = new Proxy(engine, {
-        get(target, prop) {
-          const value = Reflect.get(target, prop, target);
-          if (prop !== 'executeRaw') return typeof value === 'function' ? value.bind(target) : value;
-          return async (sql: string, params?: unknown[]) => {
-            if (sql.includes("reason='superseded'")) {
-              await target.executeRaw(`UPDATE chronicle_page_state SET next_attempt_at = now() - interval '1 second' WHERE page_id=$1 AND content_hash=$2`, [id, oldHash]);
-            }
-            return target.executeRaw(sql, params as never);
-          };
-        },
-      }) as BrainEngine;
-      await runPhaseChronicle(delayEndsAfterSettlement, { judge });
-      await runPhaseChronicle(engine, { judge });
-      expect(judge.calls).toBe(1);
-      await expectJudgedOnceInCampaign(engine, id, liveHash);
-    });
-  }, { setup, databaseUrl }), 240_000);
-
-  test('a legacy chronicle job for a page whose carried row stopped waiting judges the campaign row once', () => managedBrain(async ({ engine, root }) => {
-    await inGateway(async () => {
-      const { id, oldHash } = await campaignBrain(engine, '1 hour');
-      await engine.setConfig('auto_chronicle', 'false');
-      const liveHash = await upgradeReread(engine, root, oldHash);
-      await drainEffects(engine);
-      // The delay ends; no chronicle run settles the carried row before the job runs.
-      await engine.executeRaw(`UPDATE chronicle_page_state SET next_attempt_at = now() - interval '1 second' WHERE page_id=$1 AND content_hash=$2`, [id, oldHash]);
-      const judge = pausingJudge();
-      judge.release();
-      expect(await runChronicleJob(engine, { slug: SLUG, sourceId: 'default', trigger: 'legacy', judge })).toMatchObject({ slug: SLUG, status: 'no_events' });
-      await runPhaseChronicle(engine, { judge });
-      expect(judge.calls).toBe(1);
-      await expectJudgedOnceInCampaign(engine, id, liveHash);
-    });
-  }, { setup, databaseUrl }), 240_000);
-
-  /** The judge holds the campaign row's lease when the re-read runs; its lease then ends and a later run moves the row. */
-  async function leaseEndsAndRowMoves(engine: BrainEngine, root: string, judge: ReturnType<typeof pausingJudge>) {
-    const { id, oldHash } = await campaignBrain(engine, '-1 second');
-    const firstDrain = runPhaseChronicle(engine, { judge });
-    await judge.inCall;
-    const liveHash = await upgradeReread(engine, root, oldHash);
-    await drainEffects(engine);
-    await engine.executeRaw(`UPDATE chronicle_page_state SET next_attempt_at = now() - interval '1 second' WHERE page_id=$1 AND content_hash=$2`, [id, oldHash]);
-    return { id, liveHash, firstDrain };
-  }
-  const ledger = (engine: BrainEngine, id: number) => engine.executeRaw<LedgerRow & { reason: string | null }>(
-    `SELECT content_hash, state, reason, trigger, campaign_id, attempts, max_attempts, cost_usd FROM chronicle_page_state
-      WHERE page_id=$1 AND extractor_version=$2 ORDER BY decided_at`, [id, CHRONICLE_EXTRACTOR_VERSION]);
-
-  test('a judge whose lease ended and whose row a later run moved still reports its answer and spend to the moved row', () => managedBrain(async ({ engine, root }) => {
-    await inGateway(async () => {
-      const judge = pausingJudge();
-      const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
-      await runPhaseChronicle(engine, { judge }); // moves the row; its campaign attempts are used, so nothing is claimed
-      expect(judge.calls).toBe(1);
-      judge.release();
-      await firstDrain;
-      await runPhaseChronicle(engine, { judge });
-      expect(judge.calls).toBe(1);
-      await expectJudgedOnceInCampaign(engine, id, liveHash);
-      expect(await ledger(engine, id)).toHaveLength(1);
-    });
-  }, { setup, databaseUrl }), 240_000);
-
-  test('a judge whose lease ended before the re-read moved its row still reports its answer and spend to the moved row', () => managedBrain(async ({ engine, root }) => {
+  test('a judge whose lease ended just before the re-read keeps its answer\'s spend in its campaign', () => managedBrain(async ({ engine, root }) => {
     await inGateway(async () => {
       const judge = pausingJudge();
       const { id, oldHash } = await campaignBrain(engine, '-1 second');
       const firstDrain = runPhaseChronicle(engine, { judge });
       await judge.inCall;
-      // The judge's lease ends while it is still calling the model; then the re-read moves the row at once.
-      await engine.executeRaw(`UPDATE chronicle_page_state SET next_attempt_at = now() - interval '1 second' WHERE page_id=$1 AND content_hash=$2`, [id, oldHash]);
+      // The judge's lease ends while it is still calling the model; then the re-read runs.
+      await expireLease(engine, id, oldHash);
       const liveHash = await upgradeReread(engine, root, oldHash);
       await drainEffects(engine);
       judge.release();
       await firstDrain;
       await runPhaseChronicle(engine, { judge });
-      expect(judge.calls).toBe(1);
-      await expectJudgedOnceInCampaign(engine, id, liveHash);
-      expect(await ledger(engine, id)).toHaveLength(1);
-    });
-  }, { setup, databaseUrl }), 240_000);
-
-  test('events a publication wrote before the re-read moved its page are owned by the row after the judge follows it', () => managedBrain(async ({ engine, root }) => {
-    await inGateway(async () => {
-      const { id, oldHash } = await campaignBrain(engine, '-1 second');
-      const judge = Object.assign((async () => {
-        recordOnTracker(getCurrentBudgetTracker(), { modelId: CHAT, ...CALL, label: 'chronicle', kind: 'chat' });
-        judge.calls++;
-        return { events: [{ when: '2024-03-01T12:00:00Z', who: [], what: 'The team agreed on the plan for acme-example', kind: 'decision' }] };
-      }) as ChronicleJudge, { calls: 0 });
-      // The re-read lands after the publication committed its event pages and before it activates them.
-      let liveHash: string | null = null;
-      const rereadBeforeActivation = new Proxy(engine, {
-        get(target, prop) {
-          const value = Reflect.get(target, prop, target);
-          if (prop !== 'readPageSnapshot') return typeof value === 'function' ? value.bind(target) : value;
-          return async (slug: string, opts?: { includeDeleted?: boolean }) => {
-            if (liveHash === null && slug === SLUG && opts?.includeDeleted
-              && (await target.executeRaw(`SELECT 1 FROM pages WHERE type='event' AND deleted_at IS NULL`)).length) {
-              liveHash = await upgradeReread(target, root, oldHash);
-            }
-            return target.readPageSnapshot(slug, opts as never);
-          };
-        },
-      }) as BrainEngine;
-      await runPhaseChronicle(rereadBeforeActivation, { judge });
-      expect(liveHash).not.toBeNull();
-      await drainEffects(engine);
       await runPhaseChronicle(engine, { judge });
-      expect(judge.calls).toBe(1);
-      const live = (await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE type='event' AND deleted_at IS NULL ORDER BY slug`)).map(r => r.slug);
-      expect(live.length).toBeGreaterThan(0);
-      const [row] = await engine.executeRaw<{ state: string; event_slugs: string[] | null }>(
-        `SELECT state, event_slugs FROM chronicle_page_state WHERE page_id=$1 AND content_hash=$2`, [id, liveHash]);
-      expect(row?.state).toBe('extracted');
-      expect([...(row?.event_slugs ?? [])].sort()).toEqual(live);
+      expect(judge.calls).toBe(2);
+      await expectCampaignKeptItsSpend(engine, id, { oldHash, liveHash }, 1, 1);
     });
   }, { setup, databaseUrl }), 240_000);
 
-  test('events a publication wrote before a re-read that also renamed its page stay owned by the row after the judge follows it', () => managedBrain(async ({ engine, root }) => {
-    await inGateway(async () => {
-      const MOVED = 'meetings/moved';
-      const { id, oldHash } = await campaignBrain(engine, '-1 second');
-      const judge = Object.assign((async () => {
-        recordOnTracker(getCurrentBudgetTracker(), { modelId: CHAT, ...CALL, label: 'chronicle', kind: 'chat' });
-        judge.calls++;
-        return { events: [{ when: '2024-03-01T12:00:00Z', who: [], what: 'The team agreed on the plan for acme-example', kind: 'decision' }] };
-      }) as ChronicleJudge, { calls: 0 });
-      // The re-read lands after the publication committed its event pages and before it activates them, and it also
-      // moves the page to another slug: an event's slug hashes its depth page, so the retry proposes other slugs.
-      let liveHash: string | null = null, firstEvents: string[] = [];
-      const renameBeforeActivation = new Proxy(engine, {
-        get(target, prop) {
-          const value = Reflect.get(target, prop, target);
-          if (prop !== 'readPageSnapshot') return typeof value === 'function' ? value.bind(target) : value;
-          return async (slug: string, opts?: { includeDeleted?: boolean }) => {
-            if (liveHash === null && slug === SLUG && opts?.includeDeleted) {
-              firstEvents = (await target.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE type='event' AND deleted_at IS NULL`)).map(r => r.slug);
-              if (firstEvents.length) {
-                git(root, 'mv', `${SLUG}.md`, `${MOVED}.md`);
-                git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'move');
-                expect(await performManagedSync(target, OPTS)).toMatchObject({ status: 'synced' });
-                const [moved] = await target.executeRaw<{ id: number; content_hash: string }>('SELECT id, content_hash FROM pages WHERE slug=$1', [MOVED]);
-                expect(moved?.id).toBe(id);
-                expect(moved?.content_hash).not.toBe(oldHash);
-                liveHash = moved!.content_hash;
-              }
-            }
-            return target.readPageSnapshot(slug, opts as never);
-          };
-        },
-      }) as BrainEngine;
-      await runPhaseChronicle(renameBeforeActivation, { judge });
-      expect(liveHash).not.toBeNull();
-      expect(firstEvents.length).toBeGreaterThan(0);
-      await drainEffects(engine);
-      await runPhaseChronicle(engine, { judge });
-      expect(judge.calls).toBe(1);
-      const live = (await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE type='event' AND deleted_at IS NULL ORDER BY slug`)).map(r => r.slug);
-      const [row] = await engine.executeRaw<{ state: string; event_slugs: string[] | null }>(
-        `SELECT state, event_slugs FROM chronicle_page_state WHERE page_id=$1 AND content_hash=$2`, [id, liveHash]);
-      expect(row?.state).toBe('extracted');
-      // Every live event the page produced, the first publication's included, is the row's.
-      expect([...(row?.event_slugs ?? [])].sort()).toEqual(live);
-      expect(live).toEqual(expect.arrayContaining(firstEvents));
-    });
-  }, { setup, databaseUrl }), 240_000);
-
-  test('a judge whose row moved does not overwrite a newer decision on the moved row, though its spend lands', () => managedBrain(async ({ engine, root }) => {
-    await inGateway(async () => {
-      const judge = pausingJudge();
-      const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
-      await runPhaseChronicle(engine, { judge }); // moves the row
-      // A later write that kept the content (an added link, a --no-extract write) decides the page again: what
-      // upsertChronicleRow writes over the moved row, its attempts kept.
-      await engine.executeRaw(`UPDATE chronicle_page_state SET state='skipped', reason='no_extract', trigger='auto', no_extract=true,
-          request_id=$3::uuid, next_attempt_at=NULL, decided_at=now(), updated_at=now(), campaign_id=NULL, attempt_cap_usd=NULL,
-          max_attempts=NULL, pricing_policy=NULL, campaign_max_usd=NULL
-        WHERE page_id=$1 AND content_hash=$2`, [id, liveHash, randomUUID()]);
-      judge.release();
-      await firstDrain;
-      expect(judge.calls).toBe(1);
-      const rows = await ledger(engine, id);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ content_hash: liveHash, state: 'skipped', reason: 'no_extract', attempts: 2 });
-      expect(Number(rows[0]!.cost_usd)).toBeCloseTo(0.25 + CALL_USD, 10);
-    });
-  }, { setup, databaseUrl }), 240_000);
-
-  test('a judge whose lease ended and whose row a later run moved records its failure and spend once on the moved row', () => managedBrain(async ({ engine, root }) => {
+  test('a failing judge whose lease ended before a later run keeps its failure\'s spend in its campaign', () => managedBrain(async ({ engine, root }) => {
     await inGateway(async () => {
       const judge = pausingJudge(true);
-      const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
-      await runPhaseChronicle(engine, { judge });
-      judge.release();
-      await firstDrain;
-      await runPhaseChronicle(engine, { judge });
-      expect(judge.calls).toBe(1);
-      const rows = await ledger(engine, id);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ content_hash: liveHash, state: 'failed', reason: 'judge_chat_error', campaign_id: 'campaign-a', attempts: 2 });
-      expect(Number(rows[0]!.cost_usd)).toBeCloseTo(0.25 + CALL_USD, 10);
-      expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.25 + CALL_USD);
-    });
-  }, { setup, databaseUrl }), 240_000);
-
-  test('a judge whose moved row a newer attempt claimed records only its spend; the newer outcome stands', () => managedBrain(async ({ engine, root }) => {
-    await inGateway(async () => {
-      const judge = pausingJudge();
-      const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
-      await engine.executeRaw(`UPDATE chronicle_page_state SET max_attempts=3 WHERE page_id=$1`, [id]);
-      // A later run moves the row and judges it again: the campaign's third attempt.
+      const { id, oldHash } = await campaignBrain(engine, '-1 second');
+      const firstDrain = runPhaseChronicle(engine, { judge });
+      await judge.inCall;
+      const liveHash = await upgradeReread(engine, root, oldHash);
+      await drainEffects(engine);
+      await expireLease(engine, id, oldHash);
+      // A later run while the judge still runs: it judges the new hash and leaves the old row where it is.
       await runPhaseChronicle(engine, { judge });
       expect(judge.calls).toBe(2);
       judge.release();
       await firstDrain;
-      const rows = await ledger(engine, id);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ content_hash: liveHash, state: 'extracted', reason: 'no_events', campaign_id: 'campaign-a', attempts: 3 });
-      expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.25 + 2 * CALL_USD);
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(2);
+      await expectCampaignKeptItsSpend(engine, id, { oldHash, liveHash }, 1, 1);
     });
   }, { setup, databaseUrl }), 240_000);
 
-  test('a judge whose moved row\'s page then changed again publishes nothing for the changed page and records its spend once', () => managedBrain(async ({ engine, root }) => {
+  test('the campaign\'s last attempt, failed as exhausted while its judge still runs, keeps its spend through the re-read', () => managedBrain(async ({ engine, root }) => {
     await inGateway(async () => {
       const judge = pausingJudge();
-      const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
-      await runPhaseChronicle(engine, { judge }); // moves the row to the re-read's hash
-      // A real edit while the judge still runs: the page now means something else.
-      writeFileSync(join(root, `${SLUG}.md`), meeting.replace('The committed notes', 'The corrected notes'));
-      git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qam', 'correct');
-      expect(await performManagedSync(engine, OPTS)).toMatchObject({ status: 'synced' });
-      const [edited] = await engine.executeRaw<{ content_hash: string }>('SELECT content_hash FROM pages WHERE id=$1', [id]);
-      expect(edited!.content_hash).not.toBe(liveHash);
+      const { id, oldHash } = await campaignBrain(engine, '-1 second');
+      // The first attempt's executor crashed after its claim, so the row is still pending.
+      await engine.executeRaw(`UPDATE chronicle_page_state SET state='pending', reason=NULL WHERE page_id=$1`, [id]);
+      // The claim takes the campaign's last attempt (2 of 2) and the judge calls the model.
+      const firstDrain = runPhaseChronicle(engine, { judge });
+      await judge.inCall;
+      // Its lease ends and the exhausted-row sweep fails the row: state failed, no retry time, the judge still running.
+      await expireLease(engine, id, oldHash);
+      await failExhaustedCampaignRows(engine);
+      expect((await ledger(engine, id)).find(row => row.content_hash === oldHash)).toMatchObject({ state: 'failed', reason: 'campaign_exhausted', attempts: 2 });
+      const liveHash = await upgradeReread(engine, root, oldHash);
+      await drainEffects(engine);
       judge.release();
       await firstDrain;
-      // The answer was paid for once and is kept off the edited page: the moved row is superseded, not judged.
-      const moved = (await ledger(engine, id)).find(row => row.content_hash === liveHash);
-      expect(moved).toMatchObject({ state: 'skipped', reason: 'superseded', campaign_id: 'campaign-a', attempts: 2 });
-      expect(Number(moved!.cost_usd)).toBeCloseTo(0.25 + CALL_USD, 10);
-      expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.25 + CALL_USD);
+      expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(usd(0.25 + CALL_USD));
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(2);
+      await expectCampaignKeptItsSpend(engine, id, { oldHash, liveHash }, 1, 1);
     });
   }, { setup, databaseUrl }), 240_000);
 
-  test('a re-read with extraction turned off keeps the page unjudged after the carried row stops waiting', () => managedBrain(async ({ engine, root }) => {
+  test('a late judge never changes the decision the re-read recorded for the new hash', () => managedBrain(async ({ engine, root }) => {
+    await inGateway(async () => {
+      const judge = pausingJudge();
+      const { id, oldHash } = await campaignBrain(engine, '-1 second');
+      const firstDrain = runPhaseChronicle(engine, { judge });
+      await judge.inCall;
+      await expireLease(engine, id, oldHash);
+      // The re-read lands with extraction off (a --no-extract sync): the new hash is decided as a skip.
+      rewriteHistory(root);
+      expect(await performManagedSync(engine, { ...OPTS, noExtract: true })).toMatchObject({ status: 'synced' });
+      await drainEffects(engine);
+      const liveHash = (await pageRow(engine)).content_hash;
+      expect(liveHash).not.toBe(oldHash);
+      judge.release();
+      await firstDrain;
+      expect(judge.calls).toBe(1);
+      const rows = await ledger(engine, id);
+      const live = rows.find(row => row.content_hash === liveHash);
+      expect(live).toMatchObject({ state: 'skipped', reason: 'no_extract', campaign_id: null });
+      expect(Number(live!.cost_usd ?? 0)).toBe(0);
+      expect(Number(rows.find(row => row.content_hash === oldHash)!.cost_usd)).toBeCloseTo(0.25 + CALL_USD, 10);
+      expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(usd(0.25 + CALL_USD));
+    });
+  }, { setup, databaseUrl }), 240_000);
+
+  test('events a publication wrote before the re-read superseded it stay owned, so the next judging updates them', () => managedBrain(async ({ engine, root }) => {
+    await inGateway(async () => {
+      const { id, oldHash } = await campaignBrain(engine, '-1 second');
+      const judge = eventJudge();
+      // The re-read lands after the publication committed its event pages and before it activates them.
+      let liveHash: string | null = null, firstEvents: string[] = [];
+      await runPhaseChronicle(beforeActivation(engine, async target => {
+        firstEvents = await liveEvents(target);
+        if (firstEvents.length) liveHash = await upgradeReread(target, root, oldHash);
+        return firstEvents.length > 0;
+      }), { judge });
+      expect(liveHash).not.toBeNull();
+      expect(firstEvents.length).toBeGreaterThan(0);
+      await drainEffects(engine);
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(2);
+      const live = await liveEvents(engine);
+      expect(live).toEqual(firstEvents);
+      const [row] = (await ledger(engine, id)).filter(r => r.content_hash === liveHash);
+      expect(row?.state).toBe('extracted');
+      // The new hash's judging found them owned and recorded them as its own (an operator edit would be left out).
+      expect([...(row?.event_slugs ?? [])].sort()).toEqual(live);
+    });
+  }, { setup, databaseUrl }), 240_000);
+
+  test('events a publication wrote before a re-read that also renamed its page stay owned by the page\'s ledger', () => managedBrain(async ({ engine, root }) => {
+    await inGateway(async () => {
+      const MOVED = 'meetings/moved';
+      const { id, oldHash } = await campaignBrain(engine, '-1 second');
+      const judge = eventJudge();
+      // The re-read also moves the page to another slug: an event's slug hashes its depth page, so the retry proposes
+      // other slugs.
+      let liveHash: string | null = null, firstEvents: string[] = [];
+      await runPhaseChronicle(beforeActivation(engine, async target => {
+        firstEvents = await liveEvents(target);
+        if (!firstEvents.length) return false;
+        git(root, 'mv', `${SLUG}.md`, `${MOVED}.md`);
+        git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'move');
+        expect(await performManagedSync(target, OPTS)).toMatchObject({ status: 'synced' });
+        const [moved] = await target.executeRaw<{ id: number; content_hash: string }>('SELECT id, content_hash FROM pages WHERE slug=$1', [MOVED]);
+        expect(moved?.id).toBe(id);
+        expect(moved?.content_hash).not.toBe(oldHash);
+        liveHash = moved!.content_hash;
+        return true;
+      }), { judge });
+      expect(liveHash).not.toBeNull();
+      await drainEffects(engine);
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(2);
+      expect((await ledger(engine, id)).find(r => r.content_hash === liveHash)?.state).toBe('extracted');
+      // Every live event the page produced, the first publication's included, is owned by the page's ledger.
+      const owned = await ownedBy(engine, id);
+      const live = await liveEvents(engine);
+      expect(live.length).toBeGreaterThan(0);
+      for (const slug of live) expect(owned.slugs.has(slug)).toBe(true);
+    });
+  }, { setup, databaseUrl }), 240_000);
+
+  test('an operator edit to an event before its publication was superseded is never owned, and the next judging keeps it', () => managedBrain(async ({ engine, root }) => {
+    await inGateway(async () => {
+      const EDIT = 'An operator corrected this event by hand.';
+      const { id, oldHash } = await campaignBrain(engine, '-1 second');
+      const judge = eventJudge();
+      // After the publication committed its event page and before it activates it, an operator edits the event; then
+      // the re-read supersedes the publication.
+      let edited = '';
+      await runPhaseChronicle(beforeActivation(engine, async target => {
+        const [event] = await target.executeRaw<Row & { slug: string }>(
+          `SELECT id, slug, title, type, compiled_truth, timeline, frontmatter, content_hash FROM pages WHERE type='event' AND deleted_at IS NULL`);
+        if (!event) return false;
+        edited = event.slug;
+        const body = `${event.compiled_truth}\n\n${EDIT}`;
+        await withManagedFixtureWrite(target, ['default'], tx => tx.executeRaw('UPDATE pages SET compiled_truth=$1, content_hash=$2 WHERE id=$3',
+          [body, contentHash({ title: event.title, type: event.type as never, compiled_truth: body, timeline: event.timeline ?? '', frontmatter: event.frontmatter, tags: [] }), event.id]));
+        await upgradeReread(target, root, oldHash);
+        return true;
+      }), { judge });
+      expect(edited).not.toBe('');
+      const [{ content_hash: editedHash }] = await engine.executeRaw<{ content_hash: string }>('SELECT content_hash FROM pages WHERE slug=$1', [edited]);
+      expect((await ownedBy(engine, id)).hashes.has(editedHash)).toBe(false);
+      // The new hash is judged and proposes the same event: the operator's edit stands.
+      await drainEffects(engine);
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(2);
+      const [after] = await engine.executeRaw<{ compiled_truth: string; deleted_at: string | null }>('SELECT compiled_truth, deleted_at FROM pages WHERE slug=$1', [edited]);
+      expect(after).toMatchObject({ deleted_at: null });
+      expect(after!.compiled_truth).toContain(EDIT);
+      expect((await ownedBy(engine, id)).hashes.has(editedHash)).toBe(false);
+    });
+  }, { setup, databaseUrl }), 240_000);
+
+  test('a re-read with extraction turned off keeps the page unjudged after the old row stops waiting', () => managedBrain(async ({ engine, root }) => {
     await inGateway(async () => {
       const { id, oldHash } = await campaignBrain(engine, '1 hour');
       rewriteHistory(root);
@@ -478,7 +434,7 @@ describe(`pages-03: the upgrade re-read while a chronicle judge is calling the m
       const liveHash = (await pageRow(engine)).content_hash;
       expect(liveHash).not.toBe(oldHash);
       expect((await ledger(engine, id)).find(row => row.content_hash === liveHash)).toMatchObject({ state: 'skipped', reason: 'no_extract' });
-      await engine.executeRaw(`UPDATE chronicle_page_state SET next_attempt_at = now() - interval '1 second' WHERE page_id=$1 AND content_hash=$2`, [id, oldHash]);
+      await expireLease(engine, id, oldHash);
       const judge = pausingJudge();
       judge.release();
       await runPhaseChronicle(engine, { judge });
@@ -488,7 +444,7 @@ describe(`pages-03: the upgrade re-read while a chronicle judge is calling the m
     });
   }, { setup, databaseUrl }), 240_000);
 
-  test('a page renamed by the re-read is judged once at its new path when the carried row stops waiting', () => managedBrain(async ({ engine, root }) => {
+  test('a page renamed by the re-read is judged once at its new path; its waiting campaign row is not judged', () => managedBrain(async ({ engine, root }) => {
     await inGateway(async () => {
       const { id, oldHash } = await campaignBrain(engine, '1 hour');
       git(root, 'mv', `${SLUG}.md`, 'meetings/kept-renamed.md');
@@ -498,75 +454,15 @@ describe(`pages-03: the upgrade re-read while a chronicle judge is calling the m
       const [live] = await engine.executeRaw<{ id: number; slug: string; content_hash: string }>('SELECT id, slug, content_hash FROM pages WHERE id=$1 AND deleted_at IS NULL', [id]);
       expect(live).toMatchObject({ slug: 'meetings/kept-renamed' });
       expect(live!.content_hash).not.toBe(oldHash);
-      await engine.executeRaw(`UPDATE chronicle_page_state SET next_attempt_at = now() - interval '1 second' WHERE page_id=$1 AND content_hash=$2`, [id, oldHash]);
       const judge = pausingJudge();
       judge.release();
       await runPhaseChronicle(engine, { judge });
+      await expireLease(engine, id, oldHash);
+      await runPhaseChronicle(engine, { judge });
       await runPhaseChronicle(engine, { judge });
       expect(judge.calls).toBe(1);
-      await expectJudgedOnceInCampaign(engine, id, live!.content_hash);
+      await expectCampaignKeptItsSpend(engine, id, { oldHash, liveHash: live!.content_hash }, 0, 1);
     });
   }, { setup, databaseUrl }), 240_000);
-
-  /** Waits until `n` statements of this database wait on a row lock (bounded). */
-  async function lockWaiters(engine: BrainEngine, n: number): Promise<void> {
-    for (const until = Date.now() + 30_000; Date.now() < until; await new Promise(resolve => setTimeout(resolve, 25))) {
-      const [{ waiting }] = await engine.executeRaw<{ waiting: number }>(
-        `SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'`);
-      if (Number(waiting) >= n) return;
-    }
-    throw new Error(`fewer than ${n} statements waited on a lock`);
-  }
-  const carryRecords = (engine: BrainEngine, id: number) => engine.executeRaw<{ settled: boolean }>(
-    `SELECT completed_keys->0->>'settled' IS NOT NULL AS settled FROM op_checkpoints WHERE op='chronicle-carry' AND fingerprint LIKE '%:' || $1 || ':%'`, [String(id)]);
-
-  // Two connections race only on Postgres; PGLite runs one statement at a time.
-  if (backend === 'postgres') {
-    test('a failing judge whose row moves after it read the row\'s hash records its failure and spend once on the moved row', () => managedBrain(async ({ engine, root }) => {
-      await inGateway(async () => {
-        const judge = pausingJudge(true);
-        const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
-        // A later run moves the row; it holds the carry and the row while the judge reports.
-        await engine.transaction(async (tx) => {
-          await tx.executeRaw(`SELECT 1 FROM op_checkpoints WHERE op='chronicle-carry' FOR UPDATE`);
-          await tx.executeRaw(`SELECT 1 FROM chronicle_page_state WHERE page_id=$1 FOR UPDATE`, [id]);
-          judge.release();
-          await lockWaiters(engine, 1);
-          await settleChronicleCarries(tx);
-        });
-        await firstDrain;
-        await runPhaseChronicle(engine, { judge });
-        expect(judge.calls).toBe(1);
-        const rows = await ledger(engine, id);
-        expect(rows).toHaveLength(1);
-        expect(rows[0]).toMatchObject({ content_hash: liveHash, state: 'failed', reason: 'judge_chat_error', campaign_id: 'campaign-a', attempts: 2 });
-        expect(Number(rows[0]!.cost_usd)).toBeCloseTo(0.25 + CALL_USD, 10);
-        expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.25 + CALL_USD);
-      });
-    }, { setup, databaseUrl }), 240_000);
-
-    test('two runs moving one carried row at once keep its forwarding record, so the late judge\'s spend lands once', () => managedBrain(async ({ engine, root }) => {
-      await inGateway(async () => {
-        const judge = pausingJudge(true);
-        const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
-        // Both runs read the carry before either moves the row.
-        let movers!: Promise<unknown>;
-        await engine.transaction(async (tx) => {
-          await tx.executeRaw(`SELECT 1 FROM chronicle_page_state WHERE page_id=$1 AND content_hash<>$2 FOR UPDATE`, [id, liveHash]);
-          movers = Promise.all([settleChronicleCarries(engine), settleChronicleCarries(engine)]);
-          await lockWaiters(engine, 2);
-        });
-        await movers;
-        expect(await carryRecords(engine, id)).toEqual([{ settled: true }]);
-        judge.release();
-        await firstDrain;
-        const rows = await ledger(engine, id);
-        expect(rows).toHaveLength(1);
-        expect(rows[0]).toMatchObject({ content_hash: liveHash, state: 'failed', reason: 'judge_chat_error', campaign_id: 'campaign-a', attempts: 2 });
-        expect(Number(rows[0]!.cost_usd)).toBeCloseTo(0.25 + CALL_USD, 10);
-        expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.25 + CALL_USD);
-      });
-    }, { setup, databaseUrl }), 240_000);
-  }
 });
 }

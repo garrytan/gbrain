@@ -44,7 +44,6 @@ import { CAMPAIGN_PRICING_POLICY, rowMaxAttempts } from './campaign.ts';
 import { CHRONICLE_RETIRED_BY, pinDepth, publishChronicleGeneration, type ChronicleDepthPin } from './publish.ts';
 import { describeMalformedProposals, diagnoseMalformedProposals, type MalformedProposalDiagnostics } from './proposal-diagnostics.ts';
 import { sha256 } from '../persistence/digest.ts';
-import { awaitsCarriedRowSql, carriedRowHash, followChronicleCarry, settleCarryInto } from './carry.ts';
 
 export interface ChronicleExecContext {
   engine: BrainEngine;
@@ -82,27 +81,15 @@ function key(row: ChronicleLedgerRow) {
  * Lease one claimable row so a second executor (another host's cycle, a job) skips it. A
  * `--max-usd` campaign row (#6199) consumes its attempt here, atomically with the lease, and is
  * not claimable once its stamped attempts are used, so a crash between claim and outcome never
- * yields an extra paid attempt. A row whose page's earlier hash is still held by a judge across the upgrade re-read
- * (carry.ts) is not claimable until that row moves to it, so the same meaning is never judged twice; when the held
- * row's lease or retry delay has ended, the claim moves it here and claims it, with its state, campaign stamp and
- * attempts.
+ * yields an extra paid attempt.
  */
 export async function claimChronicleRow(engine: BrainEngine, row: ChronicleLedgerRow): Promise<ChronicleLedgerRow | null> {
-  const claimed = await claimOnce(engine, row);
-  if (claimed || !await settleCarryInto(engine, row)) return claimed;
-  const [moved] = await engine.executeRaw<ChronicleLedgerRow>(
-    `SELECT * FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4`, [...key(row)]);
-  return moved ? claimOnce(engine, moved) : null;
-}
-
-async function claimOnce(engine: BrainEngine, row: ChronicleLedgerRow): Promise<ChronicleLedgerRow | null> {
   const [claimed] = await engine.executeRaw<ChronicleLedgerRow>(
-    `UPDATE chronicle_page_state c SET next_attempt_at = now() + ($5::int * interval '1 millisecond'),
-       attempts = c.attempts + CASE WHEN c.campaign_id IS NOT NULL AND c.state IN ('pending','failed') THEN 1 ELSE 0 END
-      WHERE c.source_id=$1 AND c.page_id=$2 AND c.content_hash=$3 AND c.extractor_version=$4 AND c.state=$6
-        AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= now())
-        AND NOT (c.campaign_id IS NOT NULL AND c.state IN ('pending','failed') AND c.attempts >= COALESCE(c.max_attempts, $7))
-        AND NOT ${awaitsCarriedRowSql('c')}
+    `UPDATE chronicle_page_state SET next_attempt_at = now() + ($5::int * interval '1 millisecond'),
+       attempts = attempts + CASE WHEN campaign_id IS NOT NULL AND state IN ('pending','failed') THEN 1 ELSE 0 END
+      WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND state=$6
+        AND (next_attempt_at IS NULL OR next_attempt_at <= now())
+        AND NOT (campaign_id IS NOT NULL AND state IN ('pending','failed') AND attempts >= COALESCE(max_attempts, $7))
       RETURNING *`, [...key(row), LEASE_MS, row.state, CHRONICLE_DEFAULTS.maxAttempts]);
   return claimed ?? null;
 }
@@ -123,9 +110,7 @@ async function setNextAttempt(engine: BrainEngine, row: ChronicleLedgerRow, at: 
  * Record an attempt's outcome. Spend accumulates per attempt (#6199): keyed to `attempt`, so a
  * replayed completion adds nothing, and recorded even from a stale executor because the money was
  * spent. The outcome itself applies only while `attempt` is still the row's latest attempt, so a
- * completion arriving after its lease expired and another executor claimed the row is fenced. A row the upgrade re-read
- * carried to its page's new hash while this attempt ran is found there (carry.ts), under the same rules; a move of the row
- * that starts while this runs waits for it.
+ * completion arriving after its lease expired and another executor claimed the row is fenced.
  */
 async function finish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: number, patch: {
   state: ChronicleLedgerRow['state']; reason: string | null; nextAttemptAt: Date | null;
@@ -136,18 +121,6 @@ async function finish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: num
   /** This attempt was a paid judge call that ended in a SAME_INPUT_FAILURES outcome. */
   countFailure?: boolean;
 }): Promise<void> {
-  await engine.transaction(async (tx) => {
-    // The row is locked at its hash before its hash is resolved: a carry move of the row waits until this attempt's
-    // spend and outcome are on it, and a move that committed first is found through its forwarding record.
-    await tx.executeRaw(`SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 FOR UPDATE`, [...key(row)]);
-    // A row found through a forwarding record takes the outcome only while its decision is still the one this attempt
-    // judged: a later write that kept the content may have decided the page again.
-    const hash = await carriedRowHash(tx, row);
-    await recordFinish(tx, { ...row, content_hash: hash }, attempt, patch, hash !== row.content_hash);
-  });
-}
-
-async function recordFinish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: number, patch: Parameters<typeof finish>[3], sameDecision = false): Promise<void> {
   if (patch.costUsd != null) {
     await engine.executeRaw(
       `UPDATE chronicle_page_state SET cost_usd=COALESCE(cost_usd, 0) + $5::numeric, cost_attempts=array_append(cost_attempts, $6::int)
@@ -161,12 +134,11 @@ async function recordFinish(engine: BrainEngine, row: ChronicleLedgerRow, attemp
        judge_window_chars=CASE WHEN $15::boolean THEN judge_window_chars ELSE $13::int END,
        judge_window_hash=CASE WHEN $15::boolean THEN judge_window_hash ELSE $14 END,
        judge_input_failures=judge_input_failures + $16::int, updated_at=now()
-      WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND attempts=$11
-        AND (NOT $17::boolean OR request_id IS NOT DISTINCT FROM $18::uuid)`,
+      WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND attempts=$11`,
     [...key(row), patch.state, patch.reason, patch.nextAttemptAt ? patch.nextAttemptAt.toISOString() : null, patch.unpriced ?? null,
       patch.events ? patch.events.map((e) => e.slug) : null, patch.events ? patch.events.map((e) => e.hash) : null, attempt,
       patch.judged?.inputHash ?? null, patch.judged?.window.length ?? null, patch.judged?.windowHash ?? null,
-      patch.keepJudged === true, patch.countFailure ? 1 : 0, sameDecision, row.request_id ?? null]);
+      patch.keepJudged === true, patch.countFailure ? 1 : 0]);
 }
 
 function backoff(attempts: number, now: Date, maxAttempts: number): Date | null {
@@ -258,18 +230,6 @@ function classifyJudge(result: ChronicleJudgeResult | null, thrown: unknown): Ju
   return null;
 }
 
-/**
- * The page `row` names: read at its slug, or, when no page with its id is there, at the slug its id has now (pages-03: a
- * rename in the upgrade re-read moved the page while this row was leased or waiting). Null when the page is gone.
- */
-async function readRowPage(engine: BrainEngine, row: ChronicleLedgerRow) {
-  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
-  if (snapshot && Number(snapshot.page.id) === Number(row.page_id)) return snapshot;
-  const [live] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND id=$2 AND deleted_at IS NULL',
-    [row.source_id, Number(row.page_id)]);
-  return live && live.slug !== row.slug ? engine.readPageSnapshot(live.slug, { sourceId: row.source_id }) : snapshot;
-}
-
 /** Run one claimed row. The caller claimed it (lease) and owns its outcome. */
 export async function executeChronicleRow(ctx: ChronicleExecContext, row: ChronicleLedgerRow): Promise<ChronicleRowOutcome> {
   const { engine, settings } = ctx;
@@ -277,21 +237,16 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   const done = (state: ChronicleLedgerRow['state'], reason: string | null, extra: Partial<Extract<ChronicleRowOutcome, { kind: 'done' }>> = {}): ChronicleRowOutcome =>
     ({ kind: 'done', state, reason, judged: false, written: 0, retired: 0, costUsd: 0, unpriced: false, dropped: {}, ...extra });
 
-  const snapshot = await readRowPage(engine, row);
+  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   if (!snapshot || Number(snapshot.page.id) !== Number(row.page_id)) {
     await finish(engine, row, row.attempts, { state: 'skipped', reason: 'page_missing', nextAttemptAt: null });
     return done('skipped', 'page_missing');
   }
   if (String(snapshot.page.content_hash ?? '') !== row.content_hash) {
-    // pages-03: the upgrade re-read moved the page to a hash with the same meaning while this row was leased.
-    const carried = await followChronicleCarry(engine, row, row.attempts);
-    if (!carried || carried !== String(snapshot.page.content_hash ?? '')) {
-      await finish(engine, row, row.attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, keepJudged: true });
-      return done('skipped', 'superseded');
-    }
-    row = { ...row, content_hash: carried };
+    await finish(engine, row, row.attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, keepJudged: true });
+    return done('skipped', 'superseded');
   }
-  let pin = await pinDepth(engine, snapshot);
+  const pin = await pinDepth(engine, snapshot);
 
   // An ineligible revision of a page that once produced events retires them (E8). No model call.
   if (row.state === 'skipped') {
@@ -388,49 +343,23 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   }
 
   const proposals = result?.events ?? [];
-  const build = (depth: ChronicleDepthPin) => buildChronicleEvents(proposals, judgeCtx,
-    { slug: depth.slug, visibility: depth.visibility, contentHash: depth.contentHash }, { tz: ctx.tz, now, maxEvents: settings.maxEventsPerPage });
-  const publish = async (depth: ChronicleDepthPin, owned?: Array<{ slug: string; hash: string }>) => {
-    // #8972: a truncated generation that re-read the text of every live event is complete for what the page has produced.
-    const truncated = bodyTruncated && !(replacesPreviousGeneration(built, false) && await windowCoversLiveEvents(engine, row, depth.slug, judgedInput.window));
-    return publishChronicleGeneration(engine, {
-      sourceId: row.source_id, pin: depth, decisionRequestId: row.request_id, maintenance: ctx.maintenance, signal: ctx.signal,
-      events: invite ? markInviteEvents(built.events) : built.events, replaces: replacesPreviousGeneration(built, truncated),
-      ...(owned?.length ? { owned: owned.map(e => e.hash) } : {}),
-    });
-  };
-  let built = build(pin);
-  let generation: Awaited<ReturnType<typeof publishChronicleGeneration>>;
+  const built = buildChronicleEvents(proposals, judgeCtx,
+    { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash }, { tz: ctx.tz, now, maxEvents: settings.maxEventsPerPage });
+  const { events, dropped } = built;
+  // #8972: a truncated generation that re-read the text of every live event is complete for what the page has produced.
+  const truncated = bodyTruncated && !(replacesPreviousGeneration(built, false) && await windowCoversLiveEvents(engine, row, pin.slug, judgedInput.window));
+  let generation;
   try {
-    generation = await publish(pin);
-    // pages-03: the upgrade re-read moved the page to a hash with the same meaning while the judge ran. What this
-    // attempt paid for is published against the new revision when the row follows and the page's privacy and
-    // incarnation (part of the judged input) did not change.
-    if (generation.superseded) {
-      const live = await readRowPage(engine, row);
-      const livePin = live && Number(live.page.id) === Number(row.page_id) && String(live.page.content_hash ?? '') !== row.content_hash
-        ? await pinDepth(engine, live) : null;
-      const carried = livePin && livePin.visibility === pin.visibility && livePin.incarnation === pin.incarnation
-        ? await followChronicleCarry(engine, row, attempts) : null;
-      if (carried && livePin && carried === String(live!.page.content_hash ?? '')) {
-        // Events the superseded publication already wrote are this attempt's: the retry adopts them, and the ledger
-        // keeps any it no longer proposes (a rename moved their slugs), so later extraction still owns them.
-        const first = generation.written;
-        row = { ...row, content_hash: carried };
-        pin = livePin;
-        built = build(pin);
-        generation = await publish(pin, first);
-        const kept = new Set(generation.written.map(e => e.slug));
-        generation = { ...generation, written: [...generation.written, ...first.filter(e => !kept.has(e.slug))] };
-      }
-    }
+    generation = await publishChronicleGeneration(engine, {
+      sourceId: row.source_id, pin, decisionRequestId: row.request_id, maintenance: ctx.maintenance, signal: ctx.signal,
+      events: invite ? markInviteEvents(events) : events, replaces: replacesPreviousGeneration(built, truncated),
+    });
   } catch (error) {
     if ((error as Error)?.name === 'AbortError') throw error;
     console.warn(`[chronicle] ${row.slug}: publishing events failed (${error instanceof Error ? error.message : String(error)}); the row retries with backoff. Run now: gbrain dream --phase chronicle`);
     await finish(engine, row, attempts, { state: 'failed', reason: 'publish_error', nextAttemptAt: backoff(attempts, now, maxAttempts), ...spend });
-    return done('failed', 'publish_error', { ...judged, dropped: built.dropped });
+    return done('failed', 'publish_error', { ...judged, dropped });
   }
-  const { events, dropped } = built;
   if (generation.superseded) {
     await finish(engine, row, attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, events: generation.written, judged: invite ? undefined : judgedInput, ...spend });
     return done('skipped', 'superseded', { ...judged, written: generation.written.length, dropped });

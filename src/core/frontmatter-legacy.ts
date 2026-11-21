@@ -15,7 +15,6 @@ import { dataFrontmatter, LEGACY_TYPED_SCHEMA } from './data-frontmatter.ts';
 import { coerceFrontmatterString, comparableFrontmatter, parseMarkdownHead } from './markdown.ts';
 import type { BrainEngine } from './engine.ts';
 import { hasCapability } from './engine-capabilities.ts';
-import { moveChronicleRows } from './chronicle/carry.ts';
 import { SYNC_IMPORT_PROVENANCE_OP } from './persistence/sync-holds.ts';
 
 /** parseMarkdown keeps the text it read here, so alignWithStored can read the same file the old way. */
@@ -188,11 +187,12 @@ export function legacyHashToCarry(existing: { content_hash?: string | null; dele
  * a page's old hash to its new one, so a re-read that changes only how values are kept does not scan or judge the page
  * again. A page whose atoms carry the old hash (scanned before the scan-state table) gets a finished scan at the new
  * hash. The scan state and the managed atom checkpoints (a partial or held page's disposition lives only there) are
- * copied; the chronicle ledger row moves (it holds recorded spend and failed attempts, which campaign and ledger totals
- * sum), except while a judge holds its lease or it waits out a retry delay: that judge's outcome and spend are keyed to
- * the old hash, so the row stays there, recorded as carried (chronicle/carry.ts): the new hash's row is not judged while
- * it waits, and the row moves to the new hash when its judge finds the page moved or its wait ends, so the page is paid
- * for once. None replaces a record the new hash already has. Runs inside the page write.
+ * copied; a settled chronicle ledger row (extracted or skipped) moves (it holds recorded spend, which campaign and ledger
+ * totals sum, so a copy would count it twice). A pending or failed row never moves: a paid judge may still be calling
+ * the model for it (a lease ending proves nothing, since no bound holds a judge to it, and a used-up campaign attempt
+ * is marked failed while its judge still runs), and that judge's outcome and spend are keyed to the old hash. Such a
+ * row stays, its spend counted there; the cycle marks it superseded and the new hash's own row is judged once more.
+ * None replaces a record the new hash already has. Runs inside the page write.
  */
 export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string, pageId: number, fromHash: string, toHash: string): Promise<void> {
   await tx.executeRaw(
@@ -227,5 +227,13 @@ export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string,
        ON CONFLICT DO NOTHING`,
       [fingerprint, carried, toHash, pageId, sourceId]);
   }
-  await moveChronicleRows(tx, sourceId, pageId, fromHash, toHash);
+  // The settled chronicle row moves, naming the page's slug now (a rename in the same sync moved it).
+  await tx.executeRaw(
+    `UPDATE chronicle_page_state c SET content_hash=$3,
+            slug=COALESCE((SELECT p.slug FROM pages p WHERE p.id=c.page_id AND p.source_id=c.source_id AND p.deleted_at IS NULL), c.slug)
+      WHERE c.source_id=$4 AND c.page_id=$1 AND c.content_hash=$2 AND c.state NOT IN ('pending','failed')
+        AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= now())
+        AND NOT EXISTS (SELECT 1 FROM chronicle_page_state n WHERE n.source_id=c.source_id AND n.page_id=c.page_id
+          AND n.content_hash=$3 AND n.extractor_version=c.extractor_version)`,
+    [pageId, fromHash, toHash, sourceId]);
 }
