@@ -1,3 +1,4 @@
+import { alsoPrefixes } from './slug-params.ts';
 import { funnelPassThrough } from '../funnel.ts';
 import { suffixedSlugDryRun } from '../persistence/suffixed-slug.ts';
 import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, CAPTURE_CLI_PROVENANCE_PARAMS, REASON_PARAM, WRITE_WAIT_PARAM } from '../persistence/params.ts';
@@ -642,7 +643,7 @@ const list_pages: Operation = {
       excludePrivate,
       listColumnsOnly: true,
       where: whereOpParam(ctx, 'list_pages', p.where),
-      ...(typeof p.slug_prefix === 'string' && p.slug_prefix ? { slugPrefix: p.slug_prefix } : {}),
+      ...(typeof p.slug_prefix === 'string' && p.slug_prefix ? { slugPrefix: p.slug_prefix, ...alsoPrefixes('slugPrefixAlso', p.slug_prefix) } : {}),
       ...scope,
     }).catch((e: unknown) => {
       // #6103: an updated_after the database cannot parse is the caller's input, not a server fault.

@@ -1,3 +1,5 @@
+import { alsoPrefixes } from './slug-params.ts';
+import { normalizeSlug } from '../utils.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { recordFunnelEvent } from '../funnel.ts';
 import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/params.ts';
@@ -74,7 +76,7 @@ function quoteTakes<T extends { claim: string; page_slug: string; trust_tier: st
 /** #8377: a claim or source an agent copied out of a quoted takes read is written without the fence. */
 function unquotedTakeParams(ctx: OperationContext, p: Record<string, unknown>): Record<string, unknown> {
   if (ctx.remote === false) return p;
-  const slug = String(p.slug).toLowerCase();
+  const slug = normalizeSlug(String(p.slug));
   const unquote = (key: string) => typeof p[key] === 'string' ? { [key]: unquoteTranscriptText(p[key] as string, slug) } : {};
   return { ...p, ...unquote('claim'), ...unquote('source') };
 }
@@ -189,6 +191,7 @@ const takes_scorecard: Operation = {
         ...await readPolicyOpts(ctx),
         holder: p.holder as string | undefined,
         domainPrefix: p.domain_prefix as string | undefined,
+        ...(typeof p.domain_prefix === 'string' ? alsoPrefixes('domainPrefixAlso', p.domain_prefix) : {}),
         since: p.since as string | undefined,
         until: p.until as string | undefined,
       },

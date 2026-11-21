@@ -171,6 +171,7 @@ test/engine-parity/search-private-fence.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/slug-normalize.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts

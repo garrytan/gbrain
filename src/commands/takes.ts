@@ -17,6 +17,7 @@
  * retains read/maintenance command parsing and presentation.
  */
 
+import { normalizeSlug } from '../core/utils.ts';
 import { resolve as resolvePath } from 'node:path';
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
@@ -88,7 +89,7 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
   // #2079: slug is optional. `gbrain takes list` (no slug) lists ALL active
   // takes — CLI parity with the takes_list operation. A leading flag is not
   // a slug.
-  const slug = args[0] && !args[0].startsWith('-') ? args[0] : undefined;
+  const slug = args[0] && !args[0].startsWith('-') ? normalizeSlug(args[0]) : undefined;
   // #7271: there is no status filter here; an ignored --status read as a filtered list.
   if (args.includes('--status')) {
     console.error('takes list has no --status filter: it lists active takes, and --expired lists superseded ones. Proposed takes wait in the proposal queue: gbrain takes propose --json');
@@ -848,7 +849,7 @@ export function parseTakesBeforeCursor(rest: readonly string[]): { updatedAt: st
  * page body so the editor opens with intent visible.
  */
 async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
-  const slug = rest[0];
+  const slug = rest[0] === undefined ? rest[0] : normalizeSlug(rest[0]);
   if (!slug) {
     process.stderr.write('Usage: gbrain takes revisit <slug>\n');
     process.exit(1);
@@ -915,7 +916,7 @@ async function cmdHorizon(engine: BrainEngine, args: string[]): Promise<void> {
   }
 
   if (sub !== 'set' && sub !== 'clear') fail(usage);
-  const slug = rest[0] && !rest[0].startsWith('-') ? rest[0] : fail(usage);
+  const slug = rest[0] && !rest[0].startsWith('-') ? normalizeSlug(rest[0]) : fail(usage);
   const rowRaw = flagValue(rest, '--row');
   const row = rowRaw === undefined ? NaN : Number(rowRaw);
   if (!Number.isSafeInteger(row) || row < 1) fail(`--row requires the take's row number (a positive integer), e.g. --row 1.\n${usage}`);
