@@ -1180,12 +1180,9 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     const { timeline, materialized } = await materializeTimeline(engine,parsed,row.slug,snapshot,writer,timelinePolicy);
     if (materialized) content = serializePageToMarkdown({...snapshot.page,...parsed,timeline,type:parsed.typeExplicit ? parsed.type : snapshot.page.type},parsed.tags);
   }
-  const storedTier = snapshot ? await storedPageTier(engine, row.source_id, row.slug) : null;
-  // pages-03: a page stored under the old typing whose file holds the written values is never a no-op: publishing the
-  // stored page would write the old typing over the file, so the write puts the written values back instead.
-  const written = await legacyFileValues(engine, row, snapshot, content, activePack);
-  // Detect an exact canonical no-op before ingestion can invoke any provider.
-  // Revision/identity checks above still apply to stale identical replacements.
+  // pages-03: an older page whose file holds written values is never a no-op (publishing it would retype the file).
+  const storedTier = snapshot ? await storedPageTier(engine, row.source_id, row.slug) : null, written = await legacyFileValues(engine, row, snapshot, content, activePack);
+  // Detect an exact canonical no-op before ingestion can invoke any provider; revision/identity checks above still apply.
   if (snapshot && (snapshot.page.deleted_at != null) === targetDeleted && typeof content === 'string' && written.size === 0) {
     const incoming = parseMarkdown(content,row.slug,{ activePack });
     resolveParsedSubtype(incoming, snapshot.page);
