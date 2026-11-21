@@ -295,6 +295,7 @@ async function authorizeStoredTakeHolders(engine: AuthorityEngine, row: WriteReq
  */
 const ONCE_TYPED_READS: ReadonlySet<PropertyKey> = new Set<keyof BrainEngine>([
   'readLinkedMember', 'readFolderAccess', 'readLiveMember', 'hasLabelledOnlyMember', 'readWriteVisibilityProbe', 'getConfig',
+  'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig',
 ]);
 function onceReads(engine: BrainEngine): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
@@ -311,6 +312,9 @@ function onceReads(engine: BrainEngine): BrainEngine {
       opts?.lock ? target.readOAuthClientWriteGrant(id, opts) : once(JSON.stringify([key, id]), () => target.readOAuthClientWriteGrant(id));
     if (key === 'readAccessTokenWriteGrant') return (id: string, opts?: { lock?: boolean }) =>
       opts?.lock ? target.readAccessTokenWriteGrant(id, opts) : once(JSON.stringify([key, id]), () => target.readAccessTokenWriteGrant(id));
+    // The access config rows, answered once per key list; each caller gets its own copy of the rows.
+    if (key === 'getConfigValues' && typeof target.getConfigValues === 'function') return (keys: readonly string[]) =>
+      once(JSON.stringify([key, keys]), () => target.getConfigValues(keys)).then(rows => rows.map(row => ({ ...row })));
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
       if (/\bFOR (?:SHARE|UPDATE)\b/i.test(sql)) return target.executeRaw(sql, params, opts);
       const id = JSON.stringify([sql, params ?? null]);

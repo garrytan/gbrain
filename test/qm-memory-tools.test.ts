@@ -395,6 +395,44 @@ for (const kind of testBackends()) {
       });
     }, 60_000);
 
+    // The same check also reads the brain's access config rows and, when the page visibility probe gives no answer,
+    // the owner-only source flags, several times. Each identical call is answered once inside the check (onceReads).
+    test('reading an attested receipt answers each identical config and owner-only source read once inside the access check', async () => {
+      const out = await write(alice, [{ fact: 'Alice reads her receipt canaryonceconfig', provenance: 'turn 1' }]);
+      const target = engine as unknown as Record<string, unknown>;
+      const read = async (probeDown: boolean) => {
+        const counts: Record<string, number> = {};
+        const keys = ['getConfigValues', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig', 'readWriteVisibilityProbe'];
+        const saved = keys.map(k => [k, Object.prototype.hasOwnProperty.call(target, k), target[k]] as const);
+        for (const [k, , fn] of saved) {
+          target[k] = (...a: unknown[]) => {
+            if (k === 'readWriteVisibilityProbe') {
+              if (probeDown) return Promise.reject(new Error('probe unavailable'));
+              return (fn as (...x: unknown[]) => unknown).apply(engine, a);
+            }
+            const id = JSON.stringify([k, ...a]);
+            // Background work after the write reads other config keys (the embedding settings); count the access rows only.
+            if (k !== 'getConfigValues' || (a[0] as string[]).includes('access.owner_member')) counts[id] = (counts[id] ?? 0) + 1;
+            return (fn as (...x: unknown[]) => unknown).apply(engine, a);
+          };
+        }
+        try {
+          const receipt = await call(alice, 'get_write_request', { request_id: out.structured!.request_id });
+          expect(receipt.isError).toBe(false);
+          expect(receipt.all).toContain(out.structured!.request_id);
+        } finally {
+          for (const [k, own, fn] of saved) { if (own) target[k] = fn; else delete target[k]; }
+        }
+        return counts;
+      };
+      // One config read is the caller's own, before the check; the check answers its own repeats once.
+      const config = '["getConfigValues",["search.remote_private_pages","access.restrictions_present","access.owner_member","access.owner_reads_restricted","access.members_read_lineage","access.serves","access.serves_derived","access.serves_since","access.requester_scope_enforce","version"]]';
+      expect({ probe: await read(false), probeDown: await read(true) }).toEqual({
+        probe: { [config]: 2 },
+        probeDown: { [config]: 2, '["readOwnerOnlySourcesPresent"]': 1, '["readOwnerOnlySourceConfig","qm-memory"]': 1 },
+      });
+    }, 60_000);
+
     test('a write still publishing answers pending with a request id its receipt is read by', async () => {
       const out = await write(alice, [{ fact: 'Alice books the ferry canarypending', provenance: 'turn 9' }], randomUUID(), { writeWaitMs: 0 });
       expect(out.isError).toBe(false);
