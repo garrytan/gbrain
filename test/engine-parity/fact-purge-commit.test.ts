@@ -92,6 +92,8 @@ describe('engine parity: a whole fact purge', () => {
       // It stops inside the purge transaction, after the write admission stored the request: the rollback must undo it.
       expect({ backend, code: (commit.error as { code?: unknown }).code, admitted: called.has('insertWriteRequest') })
         .toEqual({ backend: 'rust', code: 'engine_capability_missing', admitted: true });
+      // The first unserved statement is lane 4's deletePurgeTrustProposals (the `facts` capability), which comes before the derivation sweep record.
+      expect((commit.error as Error).message).toContain('deletePurgeTrustProposals');
       expect(await brainState(engine, ctx, seeded.id)).toEqual(before);
       throw commit.error;
     }
