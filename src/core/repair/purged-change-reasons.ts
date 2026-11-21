@@ -84,11 +84,9 @@ export async function findLeakedChangeReasons(engine: BrainEngine, sourceId: str
     pathsByText.set(text, paths);
   }
   if (!pathsByText.size) return { rows: [], unreadable_commit: unreadable, without_checkout: false };
-  const rows = await engine.executeRaw<{ id: number | string; slug: string; source_path: string | null; reason: string }>(
-    `SELECT v.id, p.slug, v.source_path, v.change_reason AS reason FROM page_versions v JOIN pages p ON p.id = v.page_id
-      WHERE p.source_id = $1 AND v.change_reason = ANY($2::text[]) ORDER BY v.id`, [sourceId, [...pathsByText.keys()]]);
+  const rows = await engine.listVersionsByChangeReason(sourceId, [...pathsByText.keys()]);
   return {
-    rows: rows.map(row => ({ id: Number(row.id), source_id: sourceId, slug: row.slug, text: row.reason,
+    rows: rows.map(row => ({ id: row.id, source_id: sourceId, slug: row.slug, text: row.reason,
       class: row.source_path !== null && !sharedTexts.has(row.reason) && pathsByText.get(row.reason)!.has(row.source_path) ? 'evidenced' : 'path_mismatch' })),
     unreadable_commit: unreadable, without_checkout: false,
   };
@@ -187,10 +185,7 @@ export const purgedChangeReasonsRepair: RepairHandler = {
 async function clearBatch(tx: BrainEngine, batch: Approved, still: Array<{ id: number; text: string }>): Promise<{ cleared: number[]; changed: number[] }> {
   await tx.lockSourceRow(batch.source_id);
   const ids = batch.rows.map(row => row.id);
-  const cleared = still.length ? (await tx.executeRaw<{ id: number | string }>(
-    `UPDATE page_versions v SET change_reason = $1 FROM pages p, unnest($3::bigint[], $4::text[]) AS t(id, reason)
-      WHERE p.id = v.page_id AND p.source_id = $2 AND v.id = t.id AND v.change_reason = t.reason RETURNING v.id`,
-    [PURGED_REASON, batch.source_id, still.map(row => row.id), still.map(row => row.text)])).map(row => Number(row.id)) : [];
+  const cleared = await tx.replaceVersionChangeReasons(batch.source_id, still.map(row => ({ id: row.id, reason: row.text })), PURGED_REASON);
   const done = new Set(cleared);
-  return { cleared: cleared.sort((a, b) => a - b), changed: ids.filter(id => !done.has(id)) };
+  return { cleared, changed: ids.filter(id => !done.has(id)) };
 }

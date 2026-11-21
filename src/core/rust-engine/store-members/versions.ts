@@ -1,6 +1,7 @@
 /**
  * Page version members (BrainEngine createVersion, getVersions, the change-reason pair readLatestVersionId and
- * stampVersionChangeReason, readLatestVersionIdAtTier, engine-sql/version-reasons.ts, and the holding-page cap pruneHoldingPageVersions,
+ * stampVersionChangeReason, readLatestVersionIdAtTier, the purged-change-reasons pair listVersionsByChangeReason and
+ * replaceVersionChangeReasons, engine-sql/version-reasons.ts, and the holding-page cap pruneHoldingPageVersions,
  * engine-sql/version-prune.ts). A segmented page's snapshot references its body
  * generation and keeps content_hash, as insertSegmentedVersion does. A version keeps the reason a write stamped on it:
  * getVersions reads it as `replaced_because` (the trusted read; `excludePrivate` is refused). `revertToVersion` is not
@@ -8,6 +9,7 @@
  */
 import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-state/version-types.ts';
 import type { VersionHistory } from '../../page-state/versions.ts';
+import type { VersionReasonRow } from '../../engine-sql/version-reasons.ts';
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -70,3 +72,20 @@ export const stampVersionChangeReason: StoreMember<[spec: { pageId: number; afte
   if (typeof spec.reason !== 'string') refuseMember(member, 'a reason that is not text');
   return storeCall({ member }, () => brain.stampVersionChangeReason({ pageId: spec.pageId, afterVersionId: spec.afterVersionId, reason: spec.reason }));
 };
+
+/** The source's versions whose change reason is one of `reasons`, by id (repair_versions.rs). */
+export const listVersionsByChangeReason: StoreMember<[sourceId: string, reasons: readonly string[]], VersionReasonRow[]> = async (brain, sourceId, reasons) => {
+  const member = 'listVersionsByChangeReason';
+  if (reasons.some(reason => typeof reason !== 'string')) refuseMember(member, 'a reason that is not text');
+  const rows: VersionReasonRow[] = await storeCall({ member }, () => brain.listVersionsByChangeReason({ sourceId, reasons: [...reasons] }));
+  return rows.map(row => ({ id: Number(row.id), slug: row.slug, source_path: row.source_path ?? null, reason: row.reason }));
+};
+
+/** Sets `replacement` on each named version still holding its named reason; the ids set, by id (repair_versions.rs). */
+export const replaceVersionChangeReasons: StoreMember<[sourceId: string, rows: ReadonlyArray<{ id: number; reason: string }>, replacement: string], number[]> =
+  async (brain, sourceId, rows, replacement) => {
+    const member = 'replaceVersionChangeReasons';
+    for (const row of rows) requireInteger(member, 'version id', row.id);
+    const ids: number[] = await storeCall({ member }, () => brain.replaceVersionChangeReasons({ sourceId, rows: rows.map(row => ({ id: row.id, reason: row.reason })), replacement }));
+    return ids.map(Number);
+  };

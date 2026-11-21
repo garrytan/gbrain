@@ -9,9 +9,13 @@
  * - `readLatestVersionIdAtTier`: the page's newest version stamped with a tier, which a page-lowering proposal names
  *   as the edit its revert restores (trust/page-write.ts).
  *
- * The bulk rewrites of stored reasons (facts/purge.ts and repair/purged-change-reasons.ts) stay raw SQL: they join
- * `pages` across a whole source and are not part of a page write. A Rust brain refuses those rewrites, so a purge there
- * stops on the typed refusal rather than leave a reason unredacted.
+ * - `listVersionsByChangeReason` / `replaceVersionChangeReasons`: `gbrain repair purged-change-reasons` lists the
+ *   source's versions that still hold a purged reason text, and its apply replaces each approved one only while it
+ *   holds the text the apply found (rust/crates/gbrain-store/src/repair_versions.rs).
+ *
+ * The purge's own bulk rewrite of stored reasons (facts/purge.ts) stays raw SQL: it matches a needle across a whole
+ * source, not an approved id list. A Rust brain refuses that rewrite, so a purge there stops on the typed refusal
+ * rather than leave a reason unredacted.
  */
 import type { BrainEngine } from '../engine.ts';
 
@@ -36,4 +40,28 @@ export async function stampVersionChangeReason(tx: Raw, spec: { pageId: number; 
   const stamped = await tx.executeRaw<{ id: number }>(
     'UPDATE page_versions SET change_reason = $2 WHERE page_id = $1 AND id > $3 RETURNING id', [spec.pageId, spec.reason, spec.afterVersionId]);
   return stamped.length;
+}
+
+/** One version of a source's page whose stored change reason is one of the listed texts. */
+export interface VersionReasonRow { id: number; slug: string; source_path: string | null; reason: string }
+
+/** The versions of `sourceId`'s pages (live or deleted) whose change reason is one of `reasons`, by version id. */
+export async function listVersionsByChangeReason(tx: Raw, sourceId: string, reasons: readonly string[]): Promise<VersionReasonRow[]> {
+  const rows = await tx.executeRaw<{ id: number | string; slug: string; source_path: string | null; reason: string }>(
+    `SELECT v.id, p.slug, v.source_path, v.change_reason AS reason FROM page_versions v JOIN pages p ON p.id = v.page_id
+      WHERE p.source_id = $1 AND v.change_reason = ANY($2::text[]) ORDER BY v.id`, [sourceId, [...reasons]]);
+  return rows.map(row => ({ ...row, id: Number(row.id) }));
+}
+
+/**
+ * Sets `replacement` on each named version of `sourceId`'s pages only while it holds the reason it is named with;
+ * answers the ids that took it, by id.
+ */
+export async function replaceVersionChangeReasons(tx: Raw, sourceId: string, rows: ReadonlyArray<{ id: number; reason: string }>, replacement: string): Promise<number[]> {
+  if (!rows.length) return [];
+  const set = await tx.executeRaw<{ id: number | string }>(
+    `UPDATE page_versions v SET change_reason = $1 FROM pages p, unnest($3::bigint[], $4::text[]) AS t(id, reason)
+      WHERE p.id = v.page_id AND p.source_id = $2 AND v.id = t.id AND v.change_reason = t.reason RETURNING v.id`,
+    [replacement, sourceId, rows.map(row => row.id), rows.map(row => row.reason)]);
+  return set.map(row => Number(row.id)).sort((a, b) => a - b);
 }

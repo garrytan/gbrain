@@ -1,5 +1,6 @@
 //! Page versions: snapshot a page, list its versions, stamp the reason a write gave on the
-//! versions it archived, cap a holding page's versions.
+//! versions it archived, cap a holding page's versions, and list and replace the stored reasons a
+//! purge left (`gbrain repair purged-change-reasons`, `gbrain_store::repair_versions`).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -91,6 +92,36 @@ impl Brain {
             let a: gbrain_store::pages::VersionReasonStamp =
                 required(spec, "stampVersionChangeReason spec")?;
             s.stamp_version_change_reason(&a)
+        })
+    }
+
+    /// `listVersionsByChangeReason({ sourceId, reasons })`: resolves the source's versions whose change reason is one
+    /// of `reasons`, by version id (`gbrain repair purged-change-reasons`).
+    #[napi]
+    pub fn list_versions_by_change_reason<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::repair_versions::VersionReasonQuery =
+                required(query, "listVersionsByChangeReason query")?;
+            s.list_versions_by_change_reason(&q)
+        })
+    }
+
+    /// `replaceVersionChangeReasons({ sourceId, rows, replacement })`: resolves the ids of the versions that still held
+    /// the reason they were named with and now hold `replacement`.
+    #[napi]
+    pub fn replace_version_change_reasons<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::repair_versions::VersionReasonReplace =
+                required(spec, "replaceVersionChangeReasons spec")?;
+            s.replace_version_change_reasons(&q)
         })
     }
 }

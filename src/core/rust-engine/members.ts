@@ -295,6 +295,8 @@ export const RUST_ENGINE_MEMBERS = {
   readLatestVersionId: 'page_versions',
   readLatestVersionIdAtTier: 'page_versions',
   stampVersionChangeReason: 'page_versions',
+  listVersionsByChangeReason: 'page_versions',
+  replaceVersionChangeReasons: 'page_versions',
   pruneHoldingPageVersions: 'page_versions',
   revertToVersion: 'page_versions',
   // page_body
