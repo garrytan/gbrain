@@ -260,31 +260,27 @@ describe('the legacy-spelling retry obeys the caller\'s source scope', () => {
   });
 });
 
-describe('a put by the exact decomposed spelling writes that page, not a composed twin', () => {
+describe('a put by the exact decomposed spelling is refused: nothing moves and no composed twin is created', () => {
   const stored = 'notes/put-cafe\u0301';
   const composed = 'notes/put-caf\u00e9';
-  const count = async () => Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE slug IN ($1, $2)', [stored, composed]))[0]!.n);
+  const REFUSAL = `Page ${stored} is stored under an older decomposed Unicode spelling of its name, so a put by that spelling is refused and nothing was changed. `
+    + `A fix that moves the page to the composed spelling ${composed} is coming; until then the page cannot be replaced by put.`;
+  const rows = async () => (await engine.executeRaw<{ slug: string; knowledge_revision: string; compiled_truth: string }>(
+    'SELECT slug, knowledge_revision::text AS knowledge_revision, compiled_truth FROM pages WHERE slug IN ($1, $2) ORDER BY slug', [stored, composed]));
 
-  test('without expected_revision the page exists: revision_required, and no twin', async () => {
+  test('every put by that spelling gets the named refusal, and the stored page, its revision and its tags stay as they were', async () => {
     await legacyPage('notes/put-seed', stored, 'before');
-    const err = await errorOf('put_page', { slug: stored, content: page('Twin', 'note', 'twin') });
-    expect(err?.code).toBe('revision_required');
-    expect(await count()).toBe(1);
-  });
-
-  test('with the page\'s revision it updates the page and keeps its tags', async () => {
     await engine.executeRaw('INSERT INTO tags (page_id, tag) SELECT id, $1 FROM pages WHERE slug = $2', ['kept', stored]);
+    const before = await rows();
     const snapshot = await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true });
-    await call('put_page', { slug: stored, content: page('Put cafe', 'note', 'after'), expected_revision: snapshot!.revision });
-    expect(await count()).toBe(1);
-    expect((await call('get_page', { slug: stored })).compiled_truth).toContain('after');
-    expect(await call<string[]>('get_tags', { slug: composed })).toEqual(['kept']);
-  });
-
-  test('a stale expected_revision is a conflict and still makes no twin', async () => {
-    const err = await errorOf('put_page', { slug: stored, content: page('Stale', 'note', 'stale'), expected_revision: crypto.randomUUID() });
-    expect(err?.code).toBe('revision_conflict');
-    expect(await count()).toBe(1);
+    for (const extra of [{}, { expected_revision: snapshot!.revision }, { expected_revision: crypto.randomUUID() }, { force: true }]) {
+      const err = await errorOf('put_page', { slug: stored, content: page('Twin', 'note', 'after'), ...extra }) as { code?: string; message?: string; detail?: string } | null;
+      expect({ code: err?.code, detail: err?.detail, message: err?.message }).toEqual({ code: 'invalid_params', detail: 'legacy_slug_spelling', message: REFUSAL });
+    }
+    expect(await rows()).toEqual(before);
+    expect(before.map(r => r.slug)).toEqual([stored]);
+    expect((await call('get_page', { slug: stored })).compiled_truth).toContain('before');
+    expect(await call<string[]>('get_tags', { slug: stored })).toEqual(['kept']);
   });
 });
 

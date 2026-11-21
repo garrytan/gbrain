@@ -49,7 +49,7 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { liveSearchable } from './searchable.ts';
 import { ADMISSION_SOURCE_SQL, cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
-import { adoptLegacySpelling } from './legacy-slug-put.ts';
+import { refuseLegacySpelling } from './legacy-slug-put.ts';
 import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscriptText } from '../search/transcript-quote.ts';
 import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
@@ -514,7 +514,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     const via = CALLER_CONTENT_OPERATIONS.includes(input.operation) ? `mcp:${input.operation}` : null;
     Object.assign(intent, { source_kind: via, source_uri: null, ingested_via: via });
   }
-  const [authority, , firstSnapshot, boundAtStart, writeThroughSetting, repoPath] = await pipelined(ctx.engine, [
+  const [authority, , snapshot, boundAtStart, writeThroughSetting, repoPath] = await pipelined(ctx.engine, [
     () => submissionAuthority(ctx, input.operation, sourceId, source.incarnation, slug),
     () => assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug, operation: input.operation,
       intent: { purge: intent.purge, retention: intent.retention } }),
@@ -523,12 +523,8 @@ export async function preparePageAdmission(ctx: OperationContext,
     () => ctx.engine.getConfig('sync.write_through'),
     async () => !source.local_path && sourceId === 'default' ? ctx.engine.getConfig('sync.repo_path') : null,
   ]) as [Awaited<ReturnType<typeof submissionAuthority>>, unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, Awaited<ReturnType<typeof getWorktreeBinding>>, string | null, string | null];
-  // A put by a page's exact decomposed spelling writes that page, never a composed twin (legacy-slug-put.ts).
-  const adopted = firstSnapshot === null && input.operation === 'put_page' && input.managedFileImport !== true
-    ? await adoptLegacySpelling(ctx, sourceId, p.slug, slug, p.expected_revision) : null;
-  // The move gave the page a new revision; the write is judged on it (the replay digest keeps what the caller sent).
-  if (adopted) p.expected_revision = intent.expected_revision = adopted.revision;
-  const snapshot = adopted ?? firstSnapshot;
+  // A put by a page's exact decomposed spelling is refused, never written to a composed twin (legacy-slug-put.ts).
+  if (snapshot === null && input.operation === 'put_page' && input.managedFileImport !== true) await refuseLegacySpelling(ctx, sourceId, p.slug, slug);
   if (typeof intent.content === 'string' && (typeof p.expected_revision !== 'string' || p.expected_revision === snapshot?.revision)) {
     await assertTimelineNotOmitted(ctx.engine, { intent, remote: ctx.remote !== false, writer: typeof p.expected_revision === 'string' ? 'editing' : 'preserving',
       slug, sourceId, content: intent.content, prior: snapshot });
