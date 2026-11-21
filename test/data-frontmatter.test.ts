@@ -5,10 +5,11 @@ import { parseMarkdown } from '../src/core/markdown.ts';
 describe('frontmatter data and serialization compatibility', () => {
   test('preserves independently specified field order, scalar types and quoting', () => {
     const data = { title: 'A title', count: 3, enabled: true, date: new Date('2024-06-01'), code: '001', multiline: 'one\ntwo\n' };
-    const expected = "---\ntitle: A title\ncount: 3\nenabled: true\ndate: 2024-06-01T00:00:00.000Z\ncode: '001'\nmultiline: |\n  one\n  two\n---\n# Body\n\n---\nend\n";
+    // pages-03: `code: 001` reads back as the text 001, so it is written as plain text; a Date renders as its ISO text.
+    const expected = "---\ntitle: A title\ncount: 3\nenabled: true\ndate: 2024-06-01T00:00:00.000Z\ncode: 001\nmultiline: |\n  one\n  two\n---\n# Body\n\n---\nend\n";
     expect(stringifyDataFrontmatter('# Body\n\n---\nend', data)).toBe(expected);
     const parsed = parseDataFrontmatter(expected);
-    expect(parsed.data).toEqual(data);
+    expect(parsed.data).toEqual({ ...data, date: '2024-06-01T00:00:00.000Z' });
     expect(parsed.content).toBe('# Body\n\n---\nend\n');
   });
 

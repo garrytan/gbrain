@@ -115,7 +115,7 @@ test('an invalid_fence hold an older gbrain screened is screened once more, and 
   const meta = { recovery_version: RECOVERY_VERSION, fence_version: FENCE_VERSION };
   expect(holdRescreenDue({ code: 'invalid_fence', meta }, false)).toBe(true);
   expect(holdRescreenDue({ code: 'invalid_fence', meta: { ...meta, quote_version: QUOTE_SCREEN_VERSION } }, false)).toBe(false);
-  expect(SYNC_IMPORT_PARSER_VERSION).toBe(`import=1;frontmatter=${RECOVERY_VERSION};fence=${FENCE_VERSION}`);
+  expect(SYNC_IMPORT_PARSER_VERSION).toBe(`import=2;frontmatter=${RECOVERY_VERSION};fence=${FENCE_VERSION}`);
 });
 
 test('a brain with no repository: repair content previews the deterministic repair of the stored page and --apply --expect rewrites it in the database', async () => withEnv(env, async () => {

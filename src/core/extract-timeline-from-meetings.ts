@@ -14,7 +14,7 @@ import type { TimelineBatchInput } from './engine.ts';
 import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-mention.ts';
 import { isCrossSourceLinksEnabled } from './link-extraction.ts';
 import { sourceIsOwnerOnly } from './access/owner-only.ts';
-import { computeEffectiveDate } from './effective-date.ts';
+import { computeEffectiveDate, parseDateLoose } from './effective-date.ts';
 import { parseFrontmatter } from './backfill-effective-date.ts';
 import { folderRestrictedSql, isDerivationPrivate } from './search/private-visibility.ts';
 import { quarantineFilterFragment } from './quarantine.ts';
@@ -245,7 +245,7 @@ export async function extractTimelineFromMeetings(
     // Defer its rows until the first valid declared end, else start, else meeting
     // date; the source page stays as it is for meeting prep, and a later run admits it.
     const happenedAt = [frontmatter.end, frontmatter.start, date]
-      .map(value => value instanceof Date ? value.getTime() : typeof value === 'string' ? Date.parse(value) : NaN)
+      .map(value => value instanceof Date ? value.getTime() : typeof value === 'string' ? parseDateLoose(value)?.getTime() ?? NaN : NaN)
       .find(value => Number.isFinite(value));
     if (happenedAt !== undefined && happenedAt > Date.now()) continue;
 

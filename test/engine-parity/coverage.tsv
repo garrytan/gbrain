@@ -49,11 +49,11 @@ transaction	lifecycle	yes	13	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	40	yes	yes	yes	serves
+getPage	pages	yes	41	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	157	yes	yes	yes	serves
+putPage	pages	yes	159	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -228,8 +228,8 @@ sweepSegments	segmented_body	yes	1	no	yes	yes	refuses:page_body
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	5	no	yes	yes	serves
-getVersions	versions	yes	5	no	yes	yes	serves
+createVersion	versions	yes	6	no	yes	yes	serves
+getVersions	versions	yes	6	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	1	no	yes	yes	refuses:health
 getStats	stats_ingest	yes	4	yes	yes	yes	serves

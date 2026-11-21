@@ -118,7 +118,7 @@ export async function openTwinBrain(kind: 'pglite' | 'postgres', inlineSlugs: re
         'SELECT id, body_storage, content_hash, frontmatter, compiled_truth, timeline FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
       const id = Number(row!.id);
       const stored = row!.body_storage === 'segmented' ? await materializeSegmentedBody(engine, id, sourceId) : { compiled_truth: row!.compiled_truth, timeline: row!.timeline };
-      const neutral = (text: string) => text.split(slug).join('<slug>').replace(/ingested_at: '[^']*'/, "ingested_at: '<seeded>'");
+      const neutral = (text: string) => text.split(slug).join('<slug>').replace(/ingested_at: (?:'[^'\n]*'|[^\n]+)/, "ingested_at: '<seeded>'");
       return {
         body: stored, frontmatter: { ...row!.frontmatter, ...(row!.frontmatter?.ingested_at ? { ingested_at: '<seeded>' } : {}) },
         tags: (await engine.readPageSnapshot(slug, { sourceId }))!.tags, content_hash: row!.content_hash,

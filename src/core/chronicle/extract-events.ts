@@ -20,6 +20,7 @@ import { CHRONICLE_EXTRACTOR_VERSION } from './contract.ts';
 import { digest, sha256 } from '../persistence/digest.ts';
 import { buildChronicleEvent, pinDepth, publishChronicleGeneration, type BuiltChronicleEvent } from './publish.ts';
 import { diagnoseMalformedProposals, type MalformedProposalDiagnostics } from './proposal-diagnostics.ts';
+import { parseDateLoose } from '../effective-date.ts';
 
 export interface ChronicleEventProposal {
   when: string;            // ISO datetime or YYYY-MM-DD
@@ -219,11 +220,11 @@ export function lastMessageAt(body: string, fallbackDate: string | undefined): D
   return last;
 }
 
+/** pages-03: frontmatter keeps a timestamp as its text, read the way the YAML parser read it (an offset-less time as UTC). */
 function asDate(value: unknown): Date | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   if (typeof value !== 'string' || !value.trim()) return null;
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d;
+  return parseDateLoose(value);
 }
 
 /**

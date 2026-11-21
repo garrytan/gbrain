@@ -8,6 +8,7 @@
 // phase and `chronicle-backfill` all call it; time rules (recency, invite
 // end, settle window) apply only when the caller passes the policy for them.
 import type { PageType } from '../types.ts';
+import { parseDateLoose } from '../effective-date.ts';
 
 export type ChronicleEligibility =
   | { ok: true }
@@ -53,11 +54,11 @@ export function isChronicleShaped(type: string, slug: string): boolean {
   return (ELIGIBLE_TYPES as string[]).includes(type) || RESCUE_SLUG_PREFIXES.some((p) => slug.startsWith(p));
 }
 
+/** pages-03: frontmatter keeps a timestamp as its text, read the way the YAML parser read it (an offset-less time as UTC). */
 function toDate(value: unknown): Date | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   if (typeof value !== 'string' || !value.trim()) return null;
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d;
+  return parseDateLoose(value);
 }
 
 /** The page's own date: an authored effective_date, else frontmatter `date`/`start`. null = undated. */

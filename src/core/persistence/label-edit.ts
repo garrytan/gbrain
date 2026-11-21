@@ -10,7 +10,7 @@
  */
 import { opError } from '../ops/contract.ts';
 import { ACCESS_ID_RE } from '../access/principals.ts';
-import { loadBoundedYaml } from '../data-frontmatter.ts';
+import { FRONTMATTER_SCHEMA, LEGACY_TYPED_SCHEMA, loadBoundedYaml } from '../data-frontmatter.ts';
 
 /** The frontmatter keys a label edit may touch: visibility and the privacy aliases (search/private-visibility.ts PRIVACY_ALIASES). */
 export const LABEL_KEYS: readonly string[] = ['visibility', 'access', 'confidentiality'];
@@ -68,7 +68,7 @@ export function withStoredLabels(text: string, stored: Record<string, unknown> |
   let mapping = false;
   if (open && close) {
     try {
-      const block = loadBoundedYaml(body.slice(lead.length + open[0].length, lead.length + open[0].length + close.index));
+      const block = loadBoundedYaml(body.slice(lead.length + open[0].length, lead.length + open[0].length + close.index), { schema: FRONTMATTER_SCHEMA });
       mapping = block == null || (typeof block === 'object' && !Array.isArray(block));
     } catch { mapping = false; }
   }
@@ -86,7 +86,8 @@ export function storedLabelsToKeep(stored: Record<string, unknown> | null | unde
   return EDIT_KEYS.filter(key => stored?.[key] != null && (incoming[key] == null || incoming[key] === ''));
 }
 
-const listEntry = (entry: string) => (loadBoundedYaml(`[${entry}]`) as unknown[])[0] === entry ? entry : `'${entry}'`;
+// A reader id any YAML reader would type (a number, a date, a boolean, null) is quoted, so every reader reads the same id.
+const listEntry = (entry: string) => (loadBoundedYaml(`[${entry}]`, { schema: LEGACY_TYPED_SCHEMA }) as unknown[])[0] === entry ? entry : `'${entry}'`;
 const valueText = (value: string | string[]) => Array.isArray(value) ? `[${value.map(listEntry).join(', ')}]` : value;
 const keyLine = (key: string) => KEY_LINES[key] ?? /(?!)/;
 /** One plain scalar item of a block list (`  - alice-example`): a label written that way is edited as its key line plus these. */

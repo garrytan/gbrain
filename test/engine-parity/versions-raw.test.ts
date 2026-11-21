@@ -68,6 +68,28 @@ describe('engine parity: versions', () => {
     },
   );
 
+  // pages-03: frontmatter keeps a timestamp as the text written, so a midnight valid_from written with a space, a `t` or
+  // no zone (UTC midnight to the YAML parser that typed it before) is stored as that text and must still read as its date.
+  parityTest(
+    'getVersions reads a valid_from or valid_until written as midnight in any YAML timestamp form as its date',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      const forms = { iso: '2024-03-01T00:00:00.000Z', isoZ: '2024-03-01T00:00:00Z', date: '2024-03-01', spaced: '2024-03-01 00:00:00', naive: '2024-03-01T00:00:00', lower: '2024-03-01t00:00:00Z', noon: '2024-03-01T12:00:00Z' };
+      const read: Record<string, unknown> = {};
+      for (const [name, value] of Object.entries(forms)) {
+        const slug = `notes/valid-${name.toLowerCase()}`;
+        await engine.putPage(slug, { type: 'note', title: name, compiled_truth: 'Body.', timeline: '', frontmatter: { valid_from: value, valid_until: value } });
+        await engine.createVersion(slug);
+        const [v] = await engine.getVersions(slug, { limit: 1 });
+        read[name] = { valid_from: (v as { valid_from?: unknown }).valid_from ?? null, valid_until: (v as { valid_until?: unknown }).valid_until ?? null };
+      }
+      const day = { valid_from: '2024-03-01', valid_until: '2024-03-01' }, none = { valid_from: null, valid_until: null };
+      expect(read).toEqual({ iso: day, isoZ: day, date: day, spaced: day, naive: day, lower: day, noon: none });
+      const { spaced, naive, lower, ...stored } = read;
+      return { stored, written: { spaced, naive, lower } };
+    },
+  );
+
   parityTest(
     'createVersion on a missing page throws; getVersions of a missing page is empty',
     { methods: ['createVersion', 'getVersions'] },

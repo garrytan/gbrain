@@ -1,4 +1,5 @@
 import { inferTypeFromPack, resolveParsedSubtype, type ParsedMarkdown } from '../markdown.ts';
+import { alignLegacyTyped } from '../frontmatter-legacy.ts';
 
 /**
  * Aligns a canonical file's parse with what its import over `stored` keeps (#1035, #5521): a file without an explicit
@@ -13,6 +14,8 @@ export function alignWithStored(parsed: ParsedMarkdown, stored: { type: string; 
   if (!(retypeStamp && (keepRetypeStamp(parsed, stored) || keepPackRenamedType(parsed, stored, write))) && (inferred || !parsed.typeExplicit)) parsed.type = stored.type as ParsedMarkdown['type'];
   resolveParsedSubtype(parsed, stored);
   keepStoredOnlyStamps(parsed, stored, retypeStamp);
+  // pages-03: a comparison reads a value the old parser typed as stored; an import (write) stores the file's text.
+  if (!write) alignLegacyTyped(parsed, stored.frontmatter);
 }
 
 /** Sync's reading of a file over the stored page (sync-prepare.ts): the retype stamp, the subtype and the database-only stamps kept as `alignWithStored` keeps them; an explicit file type is otherwise read as written. */

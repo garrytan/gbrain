@@ -16,6 +16,7 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parseFindPattern } from '../../src/core/page-find.ts';
+import { parseMarkdown, serializePageToMarkdown } from '../../src/core/markdown.ts';
 import type { Page, PageInput } from '../../src/core/types.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -52,6 +53,20 @@ describe('engine parity: pages', () => {
     const missing = await engine.getPage('people/nobody');
     expect(missing).toBeNull();
     return { written: view(written), read: view(read), missing };
+  });
+
+  // pages-03: frontmatter keeps every value as the user wrote it (no date typing; a number only when it prints back the
+  // same), so every engine stores and returns the written text, and a re-rendered page writes each value line back as written.
+  parityTest('frontmatter values are stored and rendered as written: dates, offsets, zip codes and versions', { methods: ['putPage', 'getPage'] }, async (engine) => {
+    const lines = ['born: 1990-05-01', 'last_met: 2024-03-01T10:00:00+02:00', 'zip: 02134', 'version: 1.10', 'count: 42', 'details:', '  since: 2020-01-01'];
+    const parsed = parseMarkdown(`---\ntype: person\ntitle: Hal Example\n${lines.join('\n')}\n---\nHal likes tea.\n`, 'people/hal-example.md');
+    await engine.putPage('people/hal-example', { type: parsed.type, title: parsed.title, compiled_truth: parsed.compiled_truth, timeline: parsed.timeline, frontmatter: parsed.frontmatter });
+    const read = (await engine.getPage('people/hal-example'))!;
+    expect(read.frontmatter).toEqual({ born: '1990-05-01', last_met: '2024-03-01T10:00:00+02:00', zip: '02134', version: '1.10', count: 42, details: { since: '2020-01-01' } });
+    const rendered = serializePageToMarkdown(read, []).split('\n');
+    expect(lines.filter(line => rendered.includes(line))).toEqual(lines);
+    // Key order is not compared here: it is a separate finding (pages-04), and the arms order keys differently today.
+    return { frontmatter: read.frontmatter, valueLines: rendered.filter(line => lines.includes(line)).sort() };
   });
 
   parityTest('putPage on an existing slug updates in place', { methods: ['putPage', 'getPage', 'listPages'] }, async (engine) => {

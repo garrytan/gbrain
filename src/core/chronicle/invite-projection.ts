@@ -19,16 +19,17 @@
  */
 import type { ChronicleEventProposal } from './extract-events.ts';
 import type { BuiltChronicleEvent } from './publish.ts';
+import { parseDateLoose } from '../effective-date.ts';
 
 const CHRONICLE_INVITE_CAPTURED_VIA = 'life-chronicle:invite';
 const SCHEDULED_PREFIX = 'Scheduled: ';
 const INVITE_SLUG_PREFIXES = ['calendar/', 'cal/'];
 
+/** pages-03: frontmatter keeps a timestamp as its text, read the way the YAML parser read it (an offset-less time as UTC). */
 function instant(value: unknown): Date | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   if (typeof value !== 'string' || !value.trim()) return null;
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d;
+  return parseDateLoose(value);
 }
 
 /** The one event an ended invite projects to; null when the page is not a structured, ended invite. */

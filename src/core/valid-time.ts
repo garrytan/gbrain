@@ -20,8 +20,12 @@ export type ValidTimeHistory = 'retained' | 'incomplete' | 'unknown';
 export type ValidTimeWhy = 'history_pruned' | 'history_gap' | 'history_unknown' | 'before_recorded_history'
   | 'edition_pruned' | 'ambiguous_edition_dates' | 'undated_editions';
 
-/** The accepted forms; the same pattern runs in TypeScript and in Postgres (ARE), the date is the first group. */
-const DATE_FORM = '^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:T00:00:00(?:[.]0+)?(?:Z|[+]00:00))?$';
+/**
+ * The accepted forms; the same pattern runs in TypeScript and in Postgres (ARE), the date is the first group.
+ * pages-03: frontmatter keeps a timestamp as written, so midnight with a `t` or space separator or no zone (UTC
+ * midnight to the YAML parser that typed these values before) is accepted as well as the ISO forms stored before.
+ */
+const DATE_FORM = '^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:[Tt ]00:00:00(?:[.]0+)?(?:Z|[+]00:00)?)?$';
 const DATE_RE = new RegExp(DATE_FORM);
 
 /** The calendar date a frontmatter value declares, or null when it is not one of the accepted forms. */

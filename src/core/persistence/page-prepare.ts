@@ -4,7 +4,8 @@ import { sizeStateField } from '../page-embedding-budget.ts';
 import { enterClaimStep, waitingOnWhile, type ClaimPhaseClock } from './claim-phase.ts';
 import { boundedReads } from './bounded-reads.ts';
 import { isQuarantined, quarantineOutcome } from '../quarantine.ts';
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
+import { legacyWrittenValues, mayHoldLegacyTyped, restoreWrittenValues } from '../frontmatter-legacy.ts';
 import { join, relative, sep } from 'node:path';
 import { isSyncMetafile, matchesAnyGlob } from '../sync.ts';
 import { syncExcludePatterns } from './sync-discovery.ts';
@@ -425,6 +426,28 @@ async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: By
   const skip = bom[0] === 0xef && bom[1] === 0xbb && bom[2] === 0xbf ? 3 : 0;
   const prefix = await inferredHeadPrefix(bytes.subarray(skip, skip + FRONTMATTER_HEAD_MAX_BYTES), await sourcePath());
   return !!prefix?.length && await matches({ prefix, skip }, true) === true;
+}
+/**
+ * pages-03: the first write of a whole page (string content) over a page stored under the old frontmatter typing takes
+ * the file's text for the values the caller left alone. This returns, for such a page, the values its canonical file holds as written where the
+ * stored page holds the old typing (frontmatter-legacy.ts legacyWrittenValues); empty for every other page. Reads only
+ * the file's head, at the path prepareFileTarget compares; any failure reads as no file (the write is unchanged).
+ */
+async function legacyFileValues(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot | null, content: unknown, activePack?: ParseOpts['activePack']): Promise<Map<string, unknown>> {
+  if (typeof content !== 'string' || !row.worktree_id || !snapshot || snapshot.page.deleted_at || !mayHoldLegacyTyped(snapshot.page.frontmatter)) return new Map();
+  try {
+    const binding = await getWorktreeBinding(engine, row.source_id);
+    if (!binding?.local_path) return new Map();
+    const root = join(binding.local_path, binding.relative_path), mode = await scannerSlugRootMode(engine, row.source_id, root);
+    const captured = recordedPathFromFileUri(snapshot.page.source_uri, root);
+    const path = nativeFileTarget(binding.local_path, resolveSourceLocalFilePath(root, snapshot.page.source_path, row.slug, mode)
+      ?? (captured ? join(root, captured) : slugPathFile(root, row.slug, mode)));
+    if (!isWriteTargetContained(path, root) || !existsSync(path)) return new Map();
+    const head = Buffer.alloc(FRONTMATTER_HEAD_MAX_BYTES), fd = openSync(path, 'r');
+    let text: string;
+    try { text = head.subarray(0, readSync(fd, head, 0, head.length, 0)).toString('utf8'); } finally { closeSync(fd); }
+    return legacyWrittenValues(parseMarkdown(text, row.slug, { activePack }).frontmatter, text, comparableFrontmatter(snapshot.page.frontmatter));
+  } catch { return new Map(); }
 }
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'> & Partial<Pick<WriteRequest, 'sequence'>> & { operation?: string }, snapshot: PageSnapshot | null,
   content: string | Uint8Array | StreamedFileContent | null, hostId?: string, options: { allowMissing?: boolean; deleting?: boolean; capture?: { path: string; hash: string }; activePack?: ParseOpts['activePack']; remote?: boolean;
@@ -1176,7 +1199,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const defaultSourceWriter = row.operation === 'restore_page' || row.operation === 'revert_version' ? null : await defaultSourceMemberWriter(engine, row.authority), defaultSourceOwner = await defaultSourceWriterIsOwner(engine, defaultSourceWriter), ownerRewrite = ['put_page', 'edit_page', 'append_page'].includes(row.operation) ? await ownerRewriteOf(engine, row.authority, row.source_id, row.slug, row.operation === 'put_page') : null;
   // The apply diet: the publisher's locked read of row.slug is the import base, and one read after the
   // last page write serves the read-back check, the seal, the core notice and the receipt (as sync does).
-  const lean = options.coordinated === true && !targetDeleted && row.operation !== 'restore_page' && !versionTags;
+  const lean = options.coordinated === true && !targetDeleted && row.operation !== 'restore_page' && !versionTags, written = await legacyFileValues(engine, row, snapshot, content, activePack);
   enterClaimStep(clock, 'import_content', undefined, 'db');
   const result = await importFromContent(engine, row.slug, content, {
     ...source, noEmbed: true, remote: row.authority.remote || p.keep_hidden_rows === true, restoreHeldRows: p.keep_hidden_rows === true || !await storedWriterReadsHeld(engine, row.authority), activePack, fences: projected ? 'coordinated' : 'lenient', coordinated: lean, boundedChunkWrites: options.boundedChunkWrites,
@@ -1192,7 +1215,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     ...(gateTrust ? { writeGate: gateInput(gateTrust, row.id) } : {}),
     // Provenance compares the caller's page with the stored one, so it runs before the server's trust marker is stamped.
     prepareFrontmatter: page => {
-      provenance = putProvenance(row, snapshot, page);
+      restoreWrittenValues(page.frontmatter, snapshot?.page.frontmatter, written); provenance = putProvenance(row, snapshot, page);
       suppliedTrustMarker = page.frontmatter.trust_tier;
       if (labelGuard) heldLabels = holdPrivacyLabels(page.frontmatter, snapshot?.page.frontmatter, labelGuard);
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
