@@ -115,13 +115,14 @@ export async function resolveNameVariant<R extends VariantRow>(
     if (opts.omitQuarantined && isQuarantined(row.frontmatter)) continue;
     const kind = bestKind(name, row);
     if (!kind) continue;
-    const live = await followRetirement(engine, sourceId, row.slug, opts.retirementPrivacy).catch(() => null);
+    // A failed follow-up read drops a real candidate, so it is a failed lookup too (the capability refusal still ends the call).
+    const live = await followRetirement(engine, sourceId, row.slug, opts.retirementPrivacy).catch(err => { lookupReadFailed(err, opts.degraded); return null; });
     if (!live || exclude.has(live.slug)) continue;
     let target: R | undefined = live.slug === row.slug ? row : rows.find(r => r.slug === live.slug);
     if (!target) {
       const [fetched] = await engine.executeRaw<R>(
         `SELECT ${opts.selectColumns} FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = $2${opts.privatePredicate}`,
-        [sourceId, live.slug]).catch(() => [] as R[]);
+        [sourceId, live.slug]).catch(err => { lookupReadFailed(err, opts.degraded); return [] as R[]; });
       if (!fetched || (opts.omitQuarantined && isQuarantined(fetched.frontmatter))) continue;
       target = fetched;
     }

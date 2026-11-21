@@ -18,10 +18,16 @@ export interface EntityLookupFault {
   hydrate?: () => Error;
   /** The name-variant arm's candidate read over `pages` (`probe_hits`). */
   variants?: () => Error;
+  /** The variant arm's follow-the-retirement read (`followRetirement`, one `SELECT ... AS retired` per candidate). */
+  retirement?: () => Error;
+  /** The variant arm's fetch of a redirect target its candidate read did not return. */
+  redirect?: () => Error;
 }
 
 const ARM2 = /lower\(title\) = \$2/;
 const VARIANTS = /probe_hits/;
+const RETIREMENT = /AS retired/;
+const REDIRECT = /AND slug = \$2/;
 const HYDRATE = /AND slug = ANY\(\$2::text\[\]\)/;
 
 export function entityLookupFault(engine: BrainEngine, fault: EntityLookupFault): BrainEngine {
@@ -32,6 +38,8 @@ export function entityLookupFault(engine: BrainEngine, fault: EntityLookupFault)
           if (fault.arm2 && ARM2.test(sql)) throw fault.arm2();
           if (fault.hydrate && HYDRATE.test(sql)) throw fault.hydrate();
           if (fault.variants && VARIANTS.test(sql)) throw fault.variants();
+          if (fault.retirement && RETIREMENT.test(sql)) throw fault.retirement();
+          if (fault.redirect && REDIRECT.test(sql) && !HYDRATE.test(sql)) throw fault.redirect();
           return target.executeRaw(sql, params);
         };
       }

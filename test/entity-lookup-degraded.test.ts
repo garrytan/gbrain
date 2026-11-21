@@ -119,6 +119,48 @@ describe('the name-variant arm read fails', () => {
     expect(stampOf(out)).toContain('entity_lookup_failed');
   });
 
+  // The follow-up reads the variant arm makes per candidate (is the page retired, where does its redirect point) are lookup
+  // reads too: a failure there drops a real candidate and must not read as "no such entity".
+  test('the retirement follow-up read fails: found:false carries the marker, over the card and MCP', async () => {
+    const faulty = entityLookupFault(engine, { retirement: () => new Error(FAULT_MESSAGE) });
+    const res = await card(faulty, 'Alice Exampel', true);
+    expect(res.found).toBe(false);
+    expect(res.degraded).toEqual([{ stage: 'entity_lookup_failed', reason: 'provider_error' }]);
+    const out = await mcp(faulty, { name: 'Alice Exampel' });
+    expect(JSON.parse(out.content[0]!.text).found).toBe(false);
+    expect(stampOf(out)).toContain('entity_lookup_failed');
+  });
+
+  test('a retirement follow-up statement timeout is reason timeout', async () => {
+    const res = await card(entityLookupFault(engine, { retirement: () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }) }), 'Alice Exampel', true);
+    expect(res.degraded).toEqual([{ stage: 'entity_lookup_failed', reason: 'timeout' }]);
+  });
+
+  test('the redirect-target fetch fails: found:false carries the marker', async () => {
+    // A retired page redirecting to a page the candidate read does not return (its title shares no word with the query),
+    // so the arm fetches the target itself.
+    const put = (slug: string, title: string, frontmatter: Record<string, unknown>) =>
+      engine.putPage(slug, { type: 'person', title, compiled_truth: title + '.', timeline: '', frontmatter } as never);
+    await put('people/quentin-brightwater', 'Quentin Brightwater', { merged_into: 'people/zed-renamed' });
+    await put('people/zed-renamed', 'Zed Renamed', {});
+    try {
+      const healthy = await card(engine, 'Quentin Brightwatter', true);
+      expect(healthy.found).toBe(true);
+      expect(healthy.degraded).toBeUndefined();
+      expect(healthy.card?.entity.slug).toBe('people/zed-renamed');
+      const res = await card(entityLookupFault(engine, { redirect: () => new Error(FAULT_MESSAGE) }), 'Quentin Brightwatter', true);
+      expect(res.found).toBe(false);
+      expect(res.degraded).toEqual([{ stage: 'entity_lookup_failed', reason: 'provider_error' }]);
+    } finally {
+      await engine.executeRaw("DELETE FROM pages WHERE slug IN ('people/quentin-brightwater', 'people/zed-renamed')");
+    }
+  });
+
+  test('the typed capability refusal on a follow-up read ends the call', async () => {
+    const refusal = Object.assign(new Error('executeRaw is not served by this engine'), { code: 'engine_capability_missing', reason: 'raw_sql' });
+    await expect(card(entityLookupFault(engine, { retirement: () => refusal }), 'Alice Exampel', true)).rejects.toBe(refusal);
+  });
+
   test('healthy variant read: the same name resolves as a variant and carries no marker', async () => {
     const res = await card(engine, 'Alice Exampel', true);
     expect(res.found).toBe(true);

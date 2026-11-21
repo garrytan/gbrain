@@ -703,7 +703,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
 
     let rawResult: unknown;
     const enforcedReadOf = enforced && enforcedClass === 'read'
-      ? (p: Record<string, unknown>) => enforced.enforcedRead(engine, command, op.name, p, { sourceId: ctx.sourceId, localFederatedSourceIds: ctx.localFederatedSourceIds, config: ctx.config })
+      ? (p: Record<string, unknown>) => enforced.enforcedRead(engine, command, op.name, p, { sourceId: ctx.sourceId, localFederatedSourceIds: ctx.localFederatedSourceIds, config: ctx.config, ...(op.name === 'entity' ? { retrieval: (m: unknown) => captureRetrievalMeta('retrieval', m) } : {}) }) // entity alone reads the lookup marker back
       : null;
     if (enforced && enforcedClass === 'write') await enforced.checkEnforcedWrite(engine, command, op.name, params, ctx.sourceId);
     if (enforcedReadOf) {
