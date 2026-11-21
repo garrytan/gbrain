@@ -73,7 +73,7 @@ import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingRes
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
-import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, LivePageTypeRow, ResolverPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
+import type { EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, LivePageTypeRow, ResolverPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
@@ -4178,6 +4178,8 @@ export interface BrainEngine {
   readEntityAnchoredPages(sourceId: string, entitySlug: string): Promise<EntityAnchoredPages>;
   /** The title of each page id, deleted or not, in no set order. */
   readPageTitlesById(ids: readonly number[]): Promise<Array<{ id: number; title: string }>>;
+  /** The live pages at `slugs` in `sourceIds` with title, type, frontmatter and `COALESCE(effective_date, updated_at)` as `date` (the entity card's text mentions). */
+  readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]): Promise<TextMentionPageRow[]>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;

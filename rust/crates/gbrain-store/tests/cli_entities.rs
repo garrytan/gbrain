@@ -475,6 +475,55 @@ fn entity_anchored_pages_name_or_link_the_entity_newest_first() {
 }
 
 #[test]
+fn text_mention_pages_read_live_pages_at_the_slugs_in_the_sources() {
+    let dir = TempDir::new("cli-text-mentions");
+    let store = open(&dir);
+    for id in ["other", "third"] {
+        store
+            .upsert_source(&SourceInput {
+                id: id.into(),
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    let page = |title: &str, date: Option<&str>| {
+        json!({"type": "note", "title": title, "compiled_truth": "x", "frontmatter": {"quarantine": false},
+            "effective_date": date, "effective_date_source": date.map(|_| "date")})
+    };
+    put(&store, "default", "notes/a", page("A", Some("2026-03-04")));
+    put(&store, "other", "notes/a", page("A other", None));
+    put(&store, "third", "notes/a", page("A third", None));
+    put(&store, "default", "notes/gone", page("Gone", None));
+    put(&store, "default", "notes/unasked", page("Unasked", None));
+    store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
+    let rows = store
+        .read_text_mention_pages(
+            &["default".into(), "other".into()],
+            &["notes/a".into(), "notes/gone".into(), "notes/never".into()],
+        )
+        .unwrap();
+    let got: Vec<(&str, &str, &str)> = rows
+        .iter()
+        .map(|r| (r.source_id.as_str(), r.slug.as_str(), r.title.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![("default", "notes/a", "A"), ("other", "notes/a", "A other")]
+    );
+    assert!(rows[0].date.starts_with("2026-03-04T00:00:00"));
+    assert_eq!(rows[0].page_type, "note");
+    assert_eq!(rows[0].frontmatter.get("quarantine"), Some(&json!(false)));
+    assert!(
+        store
+            .read_text_mention_pages(&[], &["notes/a".into()])
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn retirement_hop_reads_retirement_and_target() {
     let dir = TempDir::new("cli-hop");
     let store = seeded(&dir);

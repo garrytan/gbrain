@@ -1015,7 +1015,6 @@ src/core/vector-prewarm.ts	execute_raw	4
 src/core/verbs/entity-names.ts	execute_raw	1
 src/core/verbs/entity-references.ts	execute_raw	1
 src/core/verbs/entity-source.ts	execute_raw	1
-src/core/verbs/entity-text-mentions.ts	execute_raw	1
 src/core/verbs/entity-variants.ts	execute_raw	4
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-through.ts	execute_raw	2

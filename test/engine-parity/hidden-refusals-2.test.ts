@@ -14,7 +14,7 @@
  *  - Seam: none. Pages are written with `putPage`; the callers run as production code.
  */
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { Notice } from '../../src/core/agent-output.ts';
 import { withIgnoredPrivacyLabelNotice } from '../../src/core/search/ignored-privacy-labels.ts';
@@ -25,6 +25,7 @@ import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from '
 import { applyEntityAnchoring } from '../../src/core/search/entity-anchor.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { readTextMentions } from '../../src/core/verbs/entity-text-mentions.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -52,6 +53,23 @@ async function putAnchorPages(engine: BrainEngine): Promise<void> {
   await engine.softDeletePage('notes/gone');
   await engine.addLink('notes/linked', 'people/nova-example', '', 'works_with', 'manual');
   await engine.addLink('notes/amends', 'people/nova-example', '', 'amends', 'manual');
+}
+
+/** Pages whose text names "Orla Example" (one in a second source, one gone), each with one chunk. */
+async function putMentionPages(engine: BrainEngine, backend: ParityBackend): Promise<void> {
+  await createSource(engine, backend, 'second');
+  const put = async (slug: string, body: string, day: number | null, sourceId = SRC) => {
+    await engine.putPage(slug, { type: 'note', title: `Title of ${slug}`, compiled_truth: body, timeline: '', frontmatter: { topic: 'widgets' },
+      ...(day === null ? {} : { effective_date: new Date(Date.UTC(2026, 3, day)), effective_date_source: 'date' as const }) }, { sourceId });
+    await installChunks(engine, slug, [chunk(0, body)], { sourceId });
+  };
+  await put('meetings/one', 'Lunch with Orla Example about widgets.', 3);
+  await put('meetings/two', 'Orla Example joined the call.', 9);
+  await put('notes/three', 'A note that cites Orla Example once.', 5);
+  await put('notes/other', 'Orla Example in another source.', 7, 'second');
+  await put('notes/gone', 'Orla Example left.', 11);
+  await put('notes/undated', 'Nobody here.', null);
+  await engine.softDeletePage('notes/gone');
 }
 
 describe('engine parity: fail-soft reads on the search, put and entity paths', () => {
@@ -200,5 +218,37 @@ describe('engine parity: fail-soft reads on the search, put and entity paths', (
         ['notes/tail', 'notes/tail', 'linked'], ['notes/title', 'notes/title', 'linked']],
     });
     return answer;
+  });
+
+  parityTest('readTextMentionPages reads the live pages at the slugs in the sources with their effective date', {
+    methods: ['putPage', 'sealChunks', 'softDeletePage', 'readTextMentionPages'],
+  }, async (engine, backend) => {
+    await putMentionPages(engine, backend);
+    const rows = await engine.readTextMentionPages([SRC, 'second'], ['meetings/one', 'notes/other', 'notes/gone', 'notes/undated', 'notes/never']);
+    const answer = rows
+      .map(r => ({ slug: r.slug, source: r.source_id, title: r.title, type: r.type, frontmatter: r.frontmatter,
+        date: r.slug === 'notes/undated' ? r.date instanceof Date : new Date(r.date as string).toISOString() }))
+      .sort((a, b) => a.source.localeCompare(b.source) || a.slug.localeCompare(b.slug));
+    expect(answer).toEqual([
+      { slug: 'meetings/one', source: SRC, title: 'Title of meetings/one', type: 'note', frontmatter: { topic: 'widgets' }, date: '2026-04-03T00:00:00.000Z' },
+      { slug: 'notes/undated', source: SRC, title: 'Title of notes/undated', type: 'note', frontmatter: { topic: 'widgets' }, date: true },
+      { slug: 'notes/other', source: 'second', title: 'Title of notes/other', type: 'note', frontmatter: { topic: 'widgets' }, date: '2026-04-07T00:00:00.000Z' },
+    ]);
+    return answer;
+  });
+
+  parityTest('an entity card lists the pages whose text names the entity, newest first', {
+    methods: ['putPage', 'sealChunks', 'softDeletePage', 'searchKeyword', 'readTextMentionPages'],
+  }, async (engine, backend) => {
+    await putMentionPages(engine, backend);
+    const out = await readTextMentions(engine, [SRC], 'Orla Example', { remote: false, excludePrivate: false, exclude: ['notes/three'] });
+    expect(out).toEqual({
+      pages: [
+        { slug: 'meetings/two', title: 'Title of meetings/two', type: 'note', source_id: SRC, date: '2026-04-09' },
+        { slug: 'meetings/one', title: 'Title of meetings/one', type: 'note', source_id: SRC, date: '2026-04-03' },
+      ],
+      total: 2, capped: false,
+    });
+    return out;
   });
 });

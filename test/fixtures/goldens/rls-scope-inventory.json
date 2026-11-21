@@ -7662,6 +7662,7 @@
         "readStoredBodyBytes": "none",
         "readStoredPageTier": "none",
         "readSyncDispatchRow": "none",
+        "readTextMentionPages": "none",
         "readTokenLifetimeClampedClients": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",

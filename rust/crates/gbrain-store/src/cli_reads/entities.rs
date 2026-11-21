@@ -179,6 +179,18 @@ pub struct PageTitleRow {
     pub title: String,
 }
 
+/// One page a text-mention probe lists; `date` is `COALESCE(effective_date, updated_at)` as ISO text.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TextMentionPageRow {
+    pub slug: String,
+    pub source_id: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub frontmatter: Map<String, Value>,
+    pub date: String,
+}
+
 /// One labelled page: its type and frontmatter.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LabelPageRow {
@@ -545,6 +557,33 @@ impl Store {
             }
         }
         Ok(rows)
+    }
+
+    /// `readTextMentionPages(sourceIds, slugs)`: each live page whose source is among `source_ids`
+    /// and whose slug is among `slugs`, with `COALESCE(effective_date, updated_at)` as `date`, in
+    /// store scan order (the SQL sets no order).
+    pub fn read_text_mention_pages(
+        &self,
+        source_ids: &[String],
+        slugs: &[String],
+    ) -> Result<Vec<TextMentionPageRow>> {
+        let read = self.read()?;
+        Ok(all_pages(&*read)?
+            .into_iter()
+            .filter(|p| {
+                p.deleted_at_us.is_none()
+                    && source_ids.contains(&p.source_id)
+                    && slugs.contains(&p.slug)
+            })
+            .map(|p| TextMentionPageRow {
+                date: iso(p.effective_date_us.unwrap_or(p.updated_at_us)),
+                slug: p.slug,
+                source_id: p.source_id,
+                title: p.title,
+                page_type: p.page_type,
+                frontmatter: p.frontmatter,
+            })
+            .collect())
     }
 }
 

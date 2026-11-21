@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 955/958
+# covered: 956/959
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -35,7 +35,7 @@
 # access_grants: 7/7
 # access_members: 11/11
 # persistence_journal: 112/112
-# entity_reads: 22/22
+# entity_reads: 23/23
 # cycle_locks: 10/10
 # minion_jobs: 8/8
 # minion_queue: 106/106
@@ -89,13 +89,13 @@ getPage	pages	yes	117	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	537	yes	yes	yes	serves
+putPage	pages	yes	539	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	161	yes	yes	yes	serves
+softDeletePage	pages	yes	163	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -131,7 +131,7 @@ listCorpusSample	pages	yes	2	no	yes	yes	serves
 bumpPageRetrievals	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
 refreshPageOrigin	pages	yes	2	no	yes	yes	serves
-searchKeyword	search	yes	19	yes	yes	yes	serves
+searchKeyword	search	yes	20	yes	yes	yes	serves
 countKeywordPages	search	yes	8	no	yes	yes	serves
 searchKeywordPages	search	yes	10	no	yes	yes	serves
 searchTitles	search	yes	11	yes	yes	yes	serves
@@ -208,7 +208,7 @@ deleteChunksForPages	chunks	yes	1	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
 upsertChunks	chunks	yes	29	yes	yes	yes	serves
-sealChunks	chunks	yes	57	no	yes	yes	serves
+sealChunks	chunks	yes	59	no	yes	yes	serves
 getChunks	chunks	yes	31	yes	yes	yes	serves
 getChunkPage	chunks	yes	7	no	yes	yes	serves
 getChunkWindows	chunks	yes	5	no	yes	yes	serves
@@ -557,6 +557,7 @@ readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 readLivePageFrontmatter	entity_reads	yes	2	no	yes	yes	serves
 readEntityAnchoredPages	entity_reads	yes	2	no	yes	yes	serves
 readPageTitlesById	entity_reads	yes	2	no	yes	yes	serves
+readTextMentionPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	12	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves

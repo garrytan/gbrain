@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, LivePageTypeRow, ResolverPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, LivePageTypeRow, TextMentionPageRow, ResolverPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -151,6 +151,13 @@ export const readEntityAnchoredPages: StoreMember<[sourceId: string, entitySlug:
 export const readPageTitlesById: StoreMember<[ids: readonly number[]], Array<{ id: number; title: string }>> =
   (brain, ids) =>
     storeCall({ member: 'readPageTitlesById' }, () => brain.readPageTitlesById([...ids])) as Promise<Array<{ id: number; title: string }>>;
+
+/** The live pages at the slugs in the sources; the store's ISO date string becomes the Date both SQL engines return. */
+export const readTextMentionPages: StoreMember<[sourceIds: readonly string[], slugs: readonly string[]], TextMentionPageRow[]> =
+  async (brain, sourceIds, slugs) => {
+    const rows = await storeCall({ member: 'readTextMentionPages' }, () => brain.readTextMentionPages([...sourceIds], [...slugs])) as TextMentionPageRow[];
+    return rows.map(r => ({ ...r, date: r.date === null ? null : new Date(r.date) }));
+  };
 
 /** The store returns every live labelled page with no visibility key; the label rule itself is the TypeScript twin of the SQL. */
 export const readIgnoredPrivacyLabelPages: StoreMember<[sourceId: string, scope: { slugs: readonly string[] } | { since: string },

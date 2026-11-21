@@ -316,6 +316,17 @@ export async function readPageTitlesById(exec: TimedRawRead, ids: readonly numbe
   return rows.map(r => ({ id: Number(r.id), title: r.title }));
 }
 
+/** One page a text-mention probe lists; `date` is `COALESCE(effective_date, updated_at)`. */
+export interface TextMentionPageRow { slug: string; source_id: string; title: string | null; type: string | null; frontmatter: Record<string, unknown> | null; date: Date | string | null }
+
+/** The live pages at `slugs` in `sourceIds`, in no set order (the entity card's text-mention probe; the caller keeps the keyword hits only). */
+export async function readTextMentionPages(exec: TimedRawRead, sourceIds: readonly string[], slugs: readonly string[]): Promise<TextMentionPageRow[]> {
+  return exec.executeRaw<TextMentionPageRow>(
+    `SELECT slug, source_id, title, type, frontmatter, COALESCE(effective_date, updated_at) AS date
+       FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND slug = ANY($2::text[])`,
+    [[...sourceIds], [...slugs]]);
+}
+
 /**
  * The slugs among `slugs` at which a live page sits in the source, retired or not, each once, in no set order
  * (entities/resolve.ts `tryOrgDirVariant`); `limit: 2` stops at two (`findExactBasenameCandidates`).

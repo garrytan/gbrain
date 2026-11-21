@@ -1723,6 +1723,12 @@ const PINS: Pin[] = [
     case: { method: 'readPageTitlesById', variant: 'default', run: e => e.readPageTitlesById([1, 2]) },
     texts: ['SELECT id, title FROM pages WHERE id = ANY($1::int[])'],
   },
+  {
+    from: 'src/core/verbs/entity-text-mentions.ts:103 probe (the text-mention pages; at efeb078093)',
+    case: { method: 'readTextMentionPages', variant: 'default', run: e => e.readTextMentionPages(['default'], ['notes/a']) },
+    texts: [`SELECT slug, source_id, title, type, frontmatter, COALESCE(effective_date, updated_at) AS date
+       FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND slug = ANY($2::text[])`],
+  },
 ];
 
 /** search/entity-facts.ts newestFacts's statement at efeb078093, verbatim (`worldOnly` stands for `worldOnlyFacts(opts.remote)`). */

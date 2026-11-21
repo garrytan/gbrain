@@ -313,6 +313,17 @@ impl Brain {
         })
     }
 
+    /// `readTextMentionPages(sourceIds, slugs)`: the live pages at the slugs in the sources.
+    #[napi]
+    pub fn read_text_mention_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_text_mention_pages(&source_ids, &slugs))
+    }
+
     /// `readPageTitlesById(ids)`: the title of each page id, deleted or not.
     #[napi]
     pub fn read_page_titles_by_id<'env>(
