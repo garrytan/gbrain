@@ -162,7 +162,24 @@ export async function searchKeywordCJK(
   const started = performance.now();
   const orFallback = ctx.opts?.orFallback === true && splitCJKQueryTerms(query).length > 1;
   const run = ctx.opts?.cjkKeyword;
-  if (!run) return (await scoped(exec => fullScoring(exec, query, ctx, orFallback))).map(rowToSearchResult);
+  if (!run) {
+    // Keyword-only callers pass no deadline. A statement timeout must not
+    // surface as an internal error: retry once as the capped stage (fresh
+    // transaction), and if that also times out return no rows and report it
+    // through onKeywordIncomplete('timeout') so the caller marks it degraded.
+    try {
+      return (await scoped(exec => fullScoring(exec, query, ctx, orFallback))).map(rowToSearchResult);
+    } catch (e) {
+      if (!isStatementTimeout(e)) throw e;
+    }
+    try {
+      return (await scoped(exec => cappedScoring(exec, query, ctx, orFallback, CJK_CANDIDATE_CAP))).rows.map(rowToSearchResult);
+    } catch (e) {
+      if (!isStatementTimeout(e)) throw e;
+      ctx.opts?.onKeywordIncomplete?.('timeout');
+      return [];
+    }
+  }
   const cap = run.candidateCap ?? CJK_CANDIDATE_CAP;
   const report = (meta: Omit<CjkKeywordMeta, 'arm_ms'>) => run.onMeta?.({ ...meta, arm_ms: Math.round(performance.now() - started) });
   const observe = run.onStatementBudget && ((timeoutMs: number, at: number) => run.onStatementBudget!({ timeoutMs, armMs: at - started }));
