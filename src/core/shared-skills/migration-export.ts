@@ -73,7 +73,8 @@ function exportPath(page: Page): string {
 
 async function exportInventory(engine: BrainEngine, sourceId: string) {
   const activePack = await loadActivePackForEngine(engine, { sourceId, remote: false });
-  const [source] = await engine.executeRaw<{ config: unknown; incarnation: string }>('SELECT config,incarnation FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
+  const state = await engine.readSourceState(sourceId);
+  const source = state && !state.archived ? state : null;
   if (!source) {
     throw opError('source_changed', 'The export source is no longer active.',
       `Source ${sourceId} was archived or removed, so nothing was exported or bound. Choose an active source for the export.`, { fix: SOURCES_FIX });
@@ -185,9 +186,9 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
       `Previews the database-only export of source ${options.sourceId}; only the brain host's CLI writes and binds the exported files.`);
   }
   const root = checkedContentRoot(options.root);
-  const [brain] = await ctx.engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  const brainId = await ctx.engine.readPersistenceBrainId();
   const [source] = await ctx.engine.executeRaw<{ incarnation: string; local_path: string | null }>('SELECT incarnation,local_path FROM sources WHERE id=$1 AND NOT archived', [options.sourceId]);
-  if (!brain || !source) {
+  if (brainId === null || !source) {
     throw opError('source_changed', 'The selected brain/source is not active.',
       `Source ${options.sourceId} is archived or not registered, or this brain has no persistence identity yet; pass an active source with --export-source.`, { fix: SOURCES_FIX });
   }
@@ -213,7 +214,7 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
   // to hold only the export's own bytes; a filled earlier root stays and is named in pending_actions. The checkpoint's
   // file hashes and schema policy are still checked against the database below, and a started claim keeps it.
   let moved: DatabaseContentExportReceipt | null = null;
-  if (prior?.version === 1 && prior.root !== root && prior.brain_id === brain.brain_id && prior.source_incarnation === source.incarnation
+  if (prior?.version === 1 && prior.root !== root && prior.brain_id === brainId && prior.source_incarnation === source.incarnation
     && (prior.stage === 'inventory' || prior.stage === 'exported') && !source.local_path
     && !(await ctx.engine.executeRaw("SELECT 1 FROM persistence_topology_changes WHERE request_id=$1::uuid AND state<>'failed'", [prior.request_id])).length) {
     if (existsSync(prior.staging_root)) assertOwnedStaging(prior.staging_root, prior.files);
@@ -221,7 +222,7 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
     prior = { ...prior, root, staging_root: `${root}.gbrain-export-${randomUUID()}`, request_id: randomUUID(), stage: 'inventory', root_identity: undefined,
       ...(existsSync(prior.root) ? { earlier_roots: [...(prior.earlier_roots ?? []), prior.root] } : {}) };
   }
-  if (prior && (prior.version !== 1 || prior.root !== root || prior.brain_id !== brain.brain_id || prior.source_incarnation !== source.incarnation)) {
+  if (prior && (prior.version !== 1 || prior.root !== root || prior.brain_id !== brainId || prior.source_incarnation !== source.incarnation)) {
     throw opError('local_conflict', 'The export checkpoint targets a different root or identity.',
       `An earlier export of source ${options.sourceId} is checkpointed for another root or source incarnation; resume it with its own --content-root, or ask the user to settle it before starting a new one.`,
       typeof prior.root === 'string' ? { fix: exportPreviewFix(prior.root, options.sourceId, `Previews the checkpointed export of source ${options.sourceId} at its original root.`) } : {});
@@ -242,7 +243,7 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
   const inventory = await exportInventory(ctx.engine, options.sourceId);
   const hashes = Object.fromEntries(Object.entries(inventory.files).map(([path, content]) => [path, setupHash(content)]));
   const receipt: DatabaseContentExportReceipt = prior ?? {
-    version: 1, brain_id: brain.brain_id, source_id: options.sourceId, source_incarnation: source.incarnation, root,
+    version: 1, brain_id: brainId, source_id: options.sourceId, source_incarnation: source.incarnation, root,
     staging_root: `${root}.gbrain-export-${randomUUID()}`, request_id: randomUUID(), stage: 'inventory', status: 'planned',
     database_retained: true, backup: options.backup ?? 'choice_required', validation: 'parsed_markdown_and_raw_hashes',
     files: hashes, pages: inventory.pages, conflicts: [], pending_actions: [],
@@ -261,7 +262,7 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
     receipt.pending_actions.push(...earlier);
     return receipt;
   }
-  const lock = await acquireNativeLock(gbrainPath('persistence', 'locks', `export-${brain.brain_id}-${source.incarnation}.lock`), { timeoutMs: 1000 });
+  const lock = await acquireNativeLock(gbrainPath('persistence', 'locks', `export-${brainId}-${source.incarnation}.lock`), { timeoutMs: 1000 });
   if (!lock) {
     throw opError('writer_lock_unavailable', 'Another export is using this source checkpoint.',
       `Another export of source ${options.sourceId} holds its checkpoint lock. Wait for it to finish and preview the checkpoint before starting again; nothing was written by this run.`,

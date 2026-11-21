@@ -503,3 +503,40 @@ fn onboard_signals_count_brain_wide_live_pages_under_the_entity_filter() {
     // A signal the member does not name counts live pages, as the SQL's last arm does.
     assert_eq!(onboard(&store, "unknown"), 5);
 }
+
+#[test]
+fn brain_live_pages_count_every_source_and_skip_soft_deleted_pages() {
+    let dir = TempDir::new("stats-brain-live");
+    let store = open(&dir);
+    assert_eq!(store.count_brain_live_pages().unwrap(), 0);
+    source(&store, "other");
+    put_page(&store, "notes/a", "note", "a", None);
+    put_page(&store, "notes/b", "note", "b", None);
+    put_page(&store, "notes/c", "note", "c", Some("other"));
+    assert_eq!(store.count_brain_live_pages().unwrap(), 3);
+    store.soft_delete_page("notes/b", None).unwrap();
+    assert_eq!(store.count_brain_live_pages().unwrap(), 2);
+}
+
+#[test]
+fn live_counts_by_source_count_live_pages_and_their_chunks_per_source() {
+    let dir = TempDir::new("stats-live-by-source");
+    let store = open(&dir);
+    assert_eq!(store.live_counts_by_source().unwrap(), json!([]));
+    source(&store, "other");
+    put_page(&store, "notes/a", "note", "a", None);
+    put_page(&store, "notes/b", "note", "b", None);
+    put_page(&store, "notes/gone", "note", "gone", None);
+    put_page(&store, "notes/c", "note", "c", Some("other"));
+    chunks(&store, "notes/a", 3, 2);
+    chunks(&store, "notes/gone", 2, 2);
+    // put_page writes one chunk of its own, so notes/b and notes/c have one each.
+    store.soft_delete_page("notes/gone", None).unwrap();
+    assert_eq!(
+        store.live_counts_by_source().unwrap(),
+        json!([
+            { "source_id": "default", "pages": 2, "chunks": 4, "embedded": 2 },
+            { "source_id": "other", "pages": 1, "chunks": 1, "embedded": 0 },
+        ])
+    );
+}

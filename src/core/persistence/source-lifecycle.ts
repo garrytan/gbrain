@@ -30,6 +30,7 @@ import { sourceCheckoutMissingRefusal } from './verb-errors.ts';
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { rebindContentReceipts } from '../shared-skills/receipt-root.ts';
+import { sqlContentReceiptStore } from '../engine-sql/writer-admin.ts';
 import { assertLinkedWorktreeIntact } from './worktree-link.ts';
 
 export interface SourceLifecycleInput {
@@ -370,7 +371,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1",[input.sourceId]);
       }
       if(source&&!['remove','purge'].includes(input.operation)) await supersedeTopologyRetires(tx,input.sourceId,source.incarnation,principal,requestId);
-      const contentReceipts=input.operation==='rebind'?await rebindContentReceipts(tx,worktrees,hostIdFor(tx),relocated?undefined:[input.sourceId]):[];
+      const contentReceipts=input.operation==='rebind'?await rebindContentReceipts(sqlContentReceiptStore(tx),worktrees,hostIdFor(tx),relocated?undefined:[input.sourceId]):[];
       await advanceTopology(tx,worktrees);
       for(const id of worktrees){
         const [host]=await tx.executeRaw<{local_path:string}>('SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[id,hostIdFor(tx)]);

@@ -11,6 +11,8 @@
  *    after the row's normaliser, and the raw answers must still differ (when the case starts to match, the row must go).
  *  - A case that reaches a member or an option the Rust engine refuses must END on the typed `engine_capability_missing`
  *    refusal naming that capability. A refusal the case caught on the way to another outcome does not count.
+ *  - A case with a `rustStop` pin must END on an Error with the pin's code whose message carries the pin, after calling
+ *    every member in `methods`; it counts as stopped. Returning, or ending on a capability refusal, fails (harness.ts).
  */
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -87,6 +89,11 @@ export async function createRustSource(engine: unknown, id: string, config: Reco
 /** Fixture: archive a source on the Rust brain (BrainEngine has no typed "archive source"). */
 export async function archiveRustSource(engine: unknown, id: string): Promise<void> {
   await (engine as RustEngine).openStore('archiveSource').brain.setSourceArchived(id, true);
+}
+
+/** Fixture: the Rust brain's access-rule store (the policy writes have no typed BrainEngine member). */
+export function rustAccessBrain(engine: unknown) {
+  return (engine as RustEngine).openStore('accessRules').brain;
 }
 
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }

@@ -220,11 +220,14 @@ src/core/engine-sql/pages.ts	revertToVersion	sql	SEGW	lane 1e: refuses a segment
 src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segmented pages are never sampled
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
+src/core/engine-sql/sources.ts	PAGE_SIZE_ROWS_FOR_SLUGS_SQL	sql	META	lane 1e file: body_bytes for segmented pages; octet_length of the inline body only (moved from page-embedding-budget.ts readPageSizeStates)
+src/core/engine-sql/sources.ts	PAGE_SIZE_ROWS_SQL	sql	META	lane 1e file: body_bytes for segmented pages; octet_length of the inline body only (moved from page-embedding-budget.ts readPageSizeStates)
 src/core/engine-sql/timeline-reads.ts	listTimelineOrphanPages	sql	STREAM	the orphan prune's page list, moved from timeline-extract.ts pruneTimelineOrphans: compiled_truth and timeline of inline pages
 src/core/engine-sql/timeline.ts	getTimeline	sql	NONE	not the page body: SELECT * FROM pages inside a LATERAL used for the page id only
 src/core/engine-sql/withdrawal-discovery.ts	INLINE_FENCE_PAGES_SQL	sql	STREAM	moved from discoverWithdrawalTargets: the inline page scan reads inline bodies (NULL never matches); segmented pages are found by SEGMENT_FENCE_ROWS_SQL and SPLIT_FENCE_SLOTS_SQL from their facts slots
 src/core/engine-sql/write-guards.ts	readInlinePageRegions	sql	INLINE	moved from page-body/tail-digest.ts inlineRegions: callers branch on storage: inline pages only, within the segmented threshold
 src/core/engine-sql/write-guards.ts	readLivePageBody	sql	INLINE	moved from valid-time-advisory.ts withValidTimeAdvisory: reads the written page's body columns, NULL for a segmented page (bodyKey then compares content_hash)
+src/core/engine-sql/writer-release.ts	AUDIT_PAGES_SQL	sql	META	the drift-audit page read, moved from persistence/reconcile-audit.ts auditCanonicalSource: octet_length metadata, no body shipped
 src/core/enrichment-service.ts	planEntity	call:putPage	INLINE	
 src/core/enrichment-service.ts	planEntity	call:serializeMarkdown	INLINE	
 src/core/enrichment-service.ts	stubMarkdown	call:serializeMarkdown	INLINE	G6: a new stub's markdown built from its own short template, never read from a stored body
@@ -412,7 +415,6 @@ src/core/page-body/streamed-import.ts	importScanned	field	LEAD	bounded heads of 
 src/core/page-body/tail-digest.ts	inlineRegions	field	INLINE	callers branch on storage: inline pages only, within the segmented threshold
 src/core/page-body/tail-digest.ts	inlineTailDigest	field	INLINE	get_page body:'none' of an inline page; a segmented page uses page-window/segmented.ts tailDigest
 src/core/page-embedding-budget.ts	planPageEmbedding	field	META	lane 1e file: body_bytes for segmented pages
-src/core/page-embedding-budget.ts	readPageSizeStates	sql	META	lane 1e file: body_bytes for segmented pages
 src/core/page-size-policy.ts	largePageBodyFilter	sql	META	fix lane J2: octet_length of the inline body columns, body_bytes for segmented pages (the size twin of pageBodyBytes)
 src/core/page-snapshot-batch.ts	readPageSnapshotsBatch	field	STREAM	same as readPageSnapshot: overlay skipped for a segmented page
 src/core/page-snapshot-batch.ts	readPageSnapshotsBatch	sql	STREAM	p.* feeds rowToPage; the byte budget counts a segmented row as 0 (no body shipped); fingerprint over a NULL body is empty
@@ -519,7 +521,6 @@ src/core/persistence/prepared-maintenance.ts	stampMaintenancePage	call:serialize
 src/core/persistence/prepared-maintenance.ts	verifyMaintenanceOutputs	call:serializePageToMarkdown	SEGW	
 src/core/persistence/purged-intent.ts	intentCarriesPurgedContent	call:contentHash	META	
 src/core/persistence/purged-intent.ts	intentCarriesPurgedContent	field	STREAM	
-src/core/persistence/reconcile-audit.ts	auditCanonicalSource	sql	META	
 src/core/persistence/reconcile-merge.ts	reconcileCanonical	field	INLINE	
 src/core/persistence/reconcile-prepare.ts	prepareReconcileMutation	call:serializePageToMarkdown	INLINE	
 src/core/persistence/reconcile-prepare.ts	prepareReconcileResult	call:serializePageToMarkdown	INLINE	

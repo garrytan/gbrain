@@ -20,7 +20,7 @@ import type * as LinkTemporalSql from '../../engine-sql/link-temporal.ts';
 import { DERIVED_TRANSITION_PRODUCERS } from '../../engine-sql/link-temporal.ts';
 import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from '../../link-relationships.ts';
 import { temporalLinkTypes } from '../../link-validity.ts';
-import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
+import { privacyAliasSql, privatePagesFilterFragment, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
 import type { VectorBackfillOpts } from '../../search-vector-backfill.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';

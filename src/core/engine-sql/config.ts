@@ -4,6 +4,11 @@
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 
+/** Every stored `{ key, value }` row, in no order. Reads the table, never a request snapshot (`getAllConfig` honors one). */
+export async function readConfigTable(exec: LegacyUnscopedRead): Promise<Array<{ key: string; value: string }>> {
+  return exec.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config');
+}
+
 /** The stored `{ key, value }` rows for the named keys, ordered by key; a key with no row is absent. Reads the table, never a request snapshot. */
 export async function getConfigValues(exec: LegacyUnscopedRead, keys: readonly string[]): Promise<Array<{ key: string; value: string }>> {
   return exec.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key', [[...keys]]);

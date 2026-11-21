@@ -49,6 +49,8 @@ import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
+import * as syncHoldStore from './sync-hold-store.ts';
+import * as syncStatusReads from './sync-status-reads.ts';
 import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
@@ -67,6 +69,7 @@ import * as withdrawalPages from './withdrawal-pages.ts';
 import * as withdrawalFence from './withdrawal-fence.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
+import * as notifier from './notifier.ts';
 import * as effectScans from './effect-scans.ts';
 import * as ownerScans from './owner-scans.ts';
 import * as effectWorker from './effect-worker.ts';
@@ -75,8 +78,17 @@ import * as pageEmbeddingBudget from './page-embedding-budget.ts';
 import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
+import * as chronicleLedger from './chronicle-ledger.ts';
+import * as pageMutationReads from './page-mutation-reads.ts';
+import * as worktreeClaim from './worktree-claim.ts';
+import * as writerAdmin from './writer-admin.ts';
+import * as writerRelease from './writer-release.ts';
+import * as publicationJournal from './publication-journal.ts';
+import * as writerStatus from './writer-status.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
+import * as accessPolicy from './access-policy.ts';
+import * as accessSetup from './access-setup.ts';
 import * as linkTemporal from './link-temporal.ts';
 import * as aliasFanoutReads from './alias-fanout-reads.ts';
 import * as entityIdentities from './entity-identities.ts';
@@ -99,6 +111,8 @@ import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
+
+const { readBrainMode: _brainModeHelper, ...writerReleaseMembers } = writerRelease;
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -143,13 +157,36 @@ export const STORE_MEMBERS = {
   ...aliasFanoutReads,
   ...entityIdentities,
   ...persistence, ...housekeeping, ...effectScans, ...ownerScans, ...effectWorker, ...noopSettle,
+  // The git sync hold store and managed sync pass rows, kept as op checkpoint rows (rust/docs/store/persistence.md, "Checkpoint rows").
+  ...syncHoldStore,
+  ...syncStatusReads,
+  // The commit notifier's host lease and host source list (rust/docs/store/persistence.md, "Commit notifier").
+  ...notifier,
   // The page embedding ledger on the paid path (rust/docs/store/embeddings.md).
   ...pageEmbeddingBudget,
   ...embeddingInstall,
   ...writeMisc,
+  // The write-time chronicle ledger decision (rust/docs/store/chronicle-ledger.md).
+  ...chronicleLedger,
+  // The reads a page write makes before admission (rust/docs/store/page-mutation-reads.md).
+  ...pageMutationReads,
+  // The unmanaged writer claim over the store's worktree bindings (rust/docs/store/persistence.md, "Worktree bindings").
+  ...worktreeClaim,
+  // Writer administration: the reviewed state digest, the operator lock, transfer prepare and cancel (same section).
+  ...writerAdmin,
+  // Writer activation, deactivation and the pre-activation release over the stored brain mode (same doc, "Writer release").
+  // `readBrainMode` is the module's shared brain-mode read for other members, not a BrainEngine member, so it is not served.
+  ...writerReleaseMembers,
+  // A bound publication's request-row reads and writes around its files (same doc, "Publication journal").
+  ...publicationJournal,
+  ...writerStatus,
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,
+  // The folder-rule policy members access/policy.ts runs (rust/docs/store/access_rules.md).
+  ...accessPolicy,
+  // The access setup and policy-store members outside access/policy.ts (rust/docs/store/access_rules.md).
+  ...accessSetup,
   // The page write guards a page write runs around the page row (rust/docs/store/write-guards.md).
   ...writeGuards, ...trustFence, ...trustProposals,
   // The page visibility guards a remote page write runs (rust/docs/store/page-visibility.md).

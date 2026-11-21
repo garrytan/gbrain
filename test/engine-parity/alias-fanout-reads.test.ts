@@ -384,7 +384,7 @@ describe('alias fan-out: a refused Rust read reads as no rows', () => {
       (STORE_MEMBERS.findPagesByTitles as (b: unknown, ...a: unknown[]) => Promise<never>)(brain, ...args)
         .catch((e: unknown) => { refusals.push(e); throw e; });
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
+      identity: ['member:alice-example'], lineage: true, hidePrivate: true,
     }, fn);
     const run = (engine: BrainEngine) => widened(() => withRequestConfigSnapshot(engine,
       () => resolveQueryEntities(engine, 'Acme Example renewal', { sourceId: 'default', excludePrivate: true })));

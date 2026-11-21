@@ -64,8 +64,7 @@ export async function observeUpstream(root: string, syncedCommit: string | null)
 /** Best-effort: never fails a sync. Compares the upstream with the source's synced commit as stored after the run. */
 export async function recordUpstreamObservation(engine: BrainEngine, sourceId: string, repoPath?: string): Promise<void> {
   try {
-    const [source] = await engine.executeRaw<{ local_path: string | null; last_commit: string | null }>(
-      'SELECT local_path,last_commit FROM sources WHERE id=$1', [sourceId]);
+    const source = await engine.getSource(sourceId);
     const root = repoPath ?? source?.local_path;
     if (!source || !root) return;
     const observed = await observeUpstream(root, source.last_commit);

@@ -342,13 +342,6 @@ export async function readPurgeSourceLocalPath(raw: EngineRawRead, sourceId: str
   return source?.local_path ?? null;
 }
 
-/** recordReasonTombstones: records each (commit, path) pair, none twice; the number added. */
-export async function insertReasonPurgeTombstones(raw: EngineRawRead, sourceId: string, commits: string[], paths: string[]): Promise<number> {
-  return (await raw(`INSERT INTO reason_purge_tombstones(source_id, commit_sha, path)
-    SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1`,
-  [sourceId, commits, paths])).length;
-}
-
 /**
  * redactGitEffectReasons: the source's Git effects whose data carries the claim in any of its three forms, locked for the
  * redaction; `foldedJson` is the folded needle as JSON text without its quotes.

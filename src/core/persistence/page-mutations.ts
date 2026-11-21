@@ -76,14 +76,13 @@ export async function initializeLocalPersistence(ctx: OperationContext): Promise
 const flatSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 /**
  * Pre-admission reads every page of one batch makes with the same arguments:
- * the source row, the writer registration, the shared
+ * the source row, the shared
  * skillpack roots, the persistence identity and config values, and a managed
  * import's source-root and company-profile checks. All of them are rechecked
  * under lock by the admission transaction or by publication. The source row and
  * the worktree binding are typed members, answered in `batchSharedReads` below.
  */
 const BATCH_SHARED_READS = new Set([
-  'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
   'SELECT brain_id FROM persistence_brain WHERE singleton=1',
   'SELECT value FROM config WHERE key=$1',
   "SELECT config,incarnation FROM sources WHERE id=$1",
@@ -113,7 +112,11 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
   return new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       BATCH_SHARED_READS.has(flatSql(sql)) || extra?.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
-    if (key === 'readPersistenceBrainId') return () => once('typed:brain', () => target.readPersistenceBrainId());
+    // A locking read always runs: the memo answers only the plain read.
+    if (key === 'readPersistenceBrainId') return (opts?: { lock?: boolean }) =>
+      opts?.lock ? target.readPersistenceBrainId(opts) : once('typed:brain', () => target.readPersistenceBrainId());
+    // A managed import's source-root check (import-prepare.ts assertImportPaths), once per host.
+    if (key === 'listSourceImportRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSourceImportRoots(hostId));
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
     // The worktree binding, once per source and host; an absence is read again, since a later page may claim the worktree.
@@ -190,10 +193,10 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
   }
   const file = p.local_file;
   delete p.local_file;
-  const [source] = await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
+  const sourceLocalPath = await ctx.engine.readSourceLocalPath(sourceId);
   const binding = await getWorktreeBinding(ctx.engine, sourceId);
   let root = binding ? binding.owner_host_id === hostIdFor(ctx.engine) && binding.local_path ? join(binding.local_path, binding.relative_path) : null
-    : source?.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
+    : sourceLocalPath || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
   if (root && !isHostAbsolutePath(root)) root = null;
   let origin: string | null = null;
   try { if (root) origin = relative(realpathSync(root), realpathSync(file)); } catch { /* unreadable or absent root */ }
@@ -347,8 +350,7 @@ async function unquotedPutContent(engine: BrainEngine, sourceId: string, slug: s
   const summarized = /, arguments omitted\]/.test(unquoted);
   const quotedType = isQuotedPageType(String(parseMarkdownHead(unquoted).frontmatter.type ?? ''));
   if (!summarized && (unquoted === content || quotedType)) return unquoted;
-  const [stored] = await engine.executeRaw<{ type: string | null; trust_tier: string | null; title: string | null; frontmatter: unknown }>(
-    'SELECT type, trust_tier, title, frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  const stored = await engine.readStoredPageHead(sourceId, slug);
   // Compared with the stored body's tool calls; a segmented page reads NULL inline columns, so its summarized round trip is refused.
   const losesCalls = async () => {
     const body = await readStoredBody(engine, sourceId, slug);
@@ -584,8 +586,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (writeThrough && root && !binding) {
     // #5393: a revert is also judged on the version it writes.
     const fileBacked = Boolean(snapshot?.page.source_path) || Boolean(input.operation === 'revert_version' && snapshot
-      && (await ctx.engine.executeRaw<{ source_path: string | null }>('SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2',
-        [p.version_id, snapshot.page.id]))[0]?.source_path);
+      && await ctx.engine.readVersionSourcePath(Number(p.version_id), Number(snapshot.page.id)));
     const decision = await decideUnboundWrite(ctx.engine, { sourceId, sourceKind: source.kind, fileBacked, path: ctx.remote === false ? root : null });
     if (decision.kind === 'claim') binding = await claimWorktree(ctx.engine, sourceId, root, undefined, undefined, { automatic: true });
     else authority.databaseOnlyReason = decision.reason;

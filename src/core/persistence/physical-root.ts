@@ -3,6 +3,7 @@ import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
+import type { WriterAdminStore } from '../engine-sql/writer-admin.ts';
 import { repairWedgedReservation, resolveCoordinationLock } from './coordination-lock.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import type { OperationError } from '../ops/contract.ts';
@@ -12,19 +13,48 @@ import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalR
 
 export { assertPhysicalRoot, isPhysicalRootMetadata, readPhysicalRootReservation } from './physical-root-record.ts';
 export interface PhysicalRootClaim { hostId: string; worktreeId?: string; coordinationPath?: string; }
-async function brainIdentity(tx: SqlEngine): Promise<string> {
-  const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-  if (!brain) throw physicalRootError();
-  return brain.brain_id;
+/**
+ * The database facts a root claim checks: the brain id, a worktree's owner and state, and its host binding. The
+ * default reads them with SQL on `tx`; the unmanaged claim passes its claim store (engine-sql/worktree-claim.ts), so a
+ * Rust brain answers them from its binding records.
+ */
+export interface PhysicalRootFacts {
+  brainId(): Promise<string | null>;
+  worktree(id: string): Promise<{ owner_host_id: string | null; state: string } | null>;
+  hostBinding(worktreeId: string, hostId: string): Promise<{ local_path: string; coordination_path: string } | null>;
+}
+/** The transaction engine a root claim reads through: its SQL reads and the brain identity member. */
+export type PhysicalRootEngine = SqlEngine & Pick<BrainEngine, 'readPersistenceBrainId'>;
+function sqlPhysicalRootFacts(tx: PhysicalRootEngine): PhysicalRootFacts {
+  return {
+    async brainId() {
+      return tx.readPersistenceBrainId();
+    },
+    async worktree(id) {
+      const [row] = await tx.executeRaw<{ owner_host_id: string | null; state: string }>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid', [id]);
+      return row ?? null;
+    },
+    async hostBinding(worktreeId, hostId) {
+      const [row] = await tx.executeRaw<{ local_path: string; coordination_path: string }>(
+        'SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid', [worktreeId, hostId]);
+      return row ?? null;
+    },
+  };
+}
+async function brainIdentity(facts: Pick<PhysicalRootFacts, 'brainId'>): Promise<string> {
+  const brainId = await facts.brainId();
+  if (!brainId) throw physicalRootError();
+  return brainId;
 }
 /**
  * Caller holds the brain/topology transaction guard. The private shared-path
  * reservation is a veto, never database ownership authority. It is deliberately
  * retained after a transaction rollback or process death.
  */
-export async function reservePhysicalRoot(tx: SqlEngine, path: string, opts: PhysicalRootClaim): Promise<PhysicalRootReservation> {
-  const root = canonicalFilesystemPath(path), brainId = await brainIdentity(tx);
-  await repairWedgedReservation(tx, root, opts.hostId);
+export async function reservePhysicalRoot(tx: PhysicalRootEngine, path: string, opts: PhysicalRootClaim,
+  facts: PhysicalRootFacts = sqlPhysicalRootFacts(tx)): Promise<PhysicalRootReservation> {
+  const root = canonicalFilesystemPath(path), brainId = await brainIdentity(facts);
+  await repairWedgedReservation(facts, root, opts.hostId);
   const previous = readPhysicalRootReservation(root);
   const worktreeId = opts.worktreeId ?? previous?.worktreeId ?? randomUUID();
   const coordinationPath = opts.coordinationPath ?? resolveCoordinationLock(root, worktreeId, { reservation: previous?.coordinationPath }, opts.hostId).path;
@@ -32,7 +62,7 @@ export async function reservePhysicalRoot(tx: SqlEngine, path: string, opts: Phy
   if (!previous && existsSync(join(root, PHYSICAL_ROOT_MARKER))) throw await movedPhysicalRoot(tx, root, opts.hostId) ? physicalRootMovedError() : physicalRootError();
   const reservation = previous ?? reservePhysicalRootRecord(root, { brainId, worktreeId, hostId: opts.hostId, coordinationPath });
   if (reservation.brainId !== brainId || reservation.worktreeId !== worktreeId || reservation.coordinationPath !== coordinationPath) throw physicalRootError();
-  const [owner] = await tx.executeRaw<{ owner_host_id: string | null }>('SELECT owner_host_id FROM persistence_worktrees WHERE id=$1::uuid', [worktreeId]);
+  const owner = await facts.worktree(worktreeId);
   if (owner ? owner.owner_host_id !== opts.hostId : reservation.hostId !== opts.hostId) throw physicalRootError('Another host owns or has prepared this physical checkout.');
   assertNoPhysicalRootOverlap(root);
   return reservation;
@@ -62,11 +92,12 @@ export async function movedPhysicalRootRefusal(tx: SqlEngine, root: string, exit
   return physicalRootMovedRefusal(moved, { ...exit, members: moved.members });
 }
 /** Existing bindings require their stamp; only a never-committed original claim may finish creating it. */
-export async function claimPhysicalRoot(tx: SqlEngine, path: string, opts: PhysicalRootClaim): Promise<PhysicalRootReservation> {
-  const reservation = await reservePhysicalRoot(tx, path, opts);
-  const [owner] = await tx.executeRaw<{ state: string }>('SELECT state FROM persistence_worktrees WHERE id=$1::uuid', [reservation.worktreeId]);
+export async function claimPhysicalRoot(tx: PhysicalRootEngine, path: string, opts: PhysicalRootClaim,
+  facts: PhysicalRootFacts = sqlPhysicalRootFacts(tx)): Promise<PhysicalRootReservation> {
+  const reservation = await reservePhysicalRoot(tx, path, opts, facts);
+  const owner = await facts.worktree(reservation.worktreeId);
   if (owner && owner.state !== 'active') throw physicalRootError('Finish the prepared transfer or recovery before claiming this root.');
-  const [bound] = await tx.executeRaw<{ local_path: string; coordination_path: string }>('SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid', [reservation.worktreeId, opts.hostId]);
+  const bound = await facts.hostBinding(reservation.worktreeId, opts.hostId);
   if (bound) {
     if (bound.local_path !== reservation.root || bound.coordination_path !== reservation.coordinationPath) throw physicalRootError('This worktree was rebound to a different checkout.');
     assertPhysicalRoot(reservation.root, reservation);
@@ -83,7 +114,7 @@ export async function claimPhysicalRoot(tx: SqlEngine, path: string, opts: Physi
  * has verified the canonical manifest and holds the stable outside-root lock.
  * Moving this stage to target preserves the stamp and immutable reservation.
  */
-export async function preparePhysicalRootReplacement(tx: SqlEngine, stage: string, target: string,
+export async function preparePhysicalRootReplacement(tx: PhysicalRootEngine, stage: string, target: string,
   opts: Required<PhysicalRootClaim>): Promise<void> {
   const reservation = await reservePhysicalRoot(tx, target, opts);
   const [owner] = await tx.executeRaw<{ owner_host_id: string; state: string }>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid', [opts.worktreeId]);
@@ -93,11 +124,12 @@ export async function preparePhysicalRootReplacement(tx: SqlEngine, stage: strin
   assertPhysicalRootStamp(stage, reservation);
 }
 /** Called only after the draining epoch and complete successor manifest were verified under SQL/native guards. */
-export async function preparePhysicalRootTransfer(tx: SqlEngine, path: string,
+/** A transfer accept's root claim, through the accept's writer-admin store (engine-sql/writer-admin.ts). */
+export async function preparePhysicalRootTransfer(store: Pick<WriterAdminStore, 'brainId' | 'lockWorktree'>, path: string,
   opts: Required<PhysicalRootClaim> & { expectedEpoch: string }): Promise<void> {
-  const [owner] = await tx.executeRaw<{ owner_epoch: string; state: string }>('SELECT owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid', [opts.worktreeId]);
+  const owner = await store.lockWorktree(opts.worktreeId);
   if (owner?.state !== 'draining' || String(owner.owner_epoch) !== opts.expectedEpoch) throw physicalRootError();
-  const root = canonicalFilesystemPath(path), brainId = await brainIdentity(tx);
+  const root = canonicalFilesystemPath(path), brainId = await brainIdentity(store);
   const reservation = readPhysicalRootReservation(root) ?? reservePhysicalRootRecord(root,
     { brainId, worktreeId: opts.worktreeId, hostId: opts.hostId, coordinationPath: opts.coordinationPath });
   if (reservation.brainId !== brainId || reservation.worktreeId !== opts.worktreeId || reservation.coordinationPath !== opts.coordinationPath) throw physicalRootError();
@@ -133,10 +165,10 @@ export async function restampPhysicalRoot(engine: BrainEngine, binding: { worktr
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
     const [owner] = await tx.executeRaw<{ owner_host_id: string | null; manifest: Record<string, any> | null }>(
       'SELECT owner_host_id,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
-    const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+    const brainId = await tx.readPersistenceBrainId();
     const [bound] = await tx.executeRaw<{ local_path: string; coordination_path: string }>(
       'SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid', [binding.worktree_id, hostId]);
-    if (!owner || owner.owner_host_id !== hostId || brain?.brain_id !== stamp.brainId
+    if (!owner || owner.owner_host_id !== hostId || brainId !== stamp.brainId
       || bound?.local_path !== root || bound.coordination_path !== binding.coordination_path) return false;
     const manifest = owner.manifest;
     if (manifest && restampRecovery(manifest.self_transfer, change)) {

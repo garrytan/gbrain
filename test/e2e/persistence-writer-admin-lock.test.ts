@@ -7,6 +7,7 @@ import { acceptWriterTransfer, claimWorktree, prepareWriterTransfer } from '../.
 import { activatePersistence } from '../../src/core/persistence/activation.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
 import { writeWriterAdminLock } from '../../src/core/persistence/admin-lock.ts';
+import { writerAdminTransaction } from '../../src/core/engine-sql/writer-admin.ts';
 import { localHostId } from '../../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
@@ -63,7 +64,7 @@ run('PostgreSQL: lock serializes with an in-flight claim, and a claim waits for 
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     let holding = false;
-    const lockTx = engine.transaction(async tx => { const result = await writeWriterAdminLock(tx, true); holding = true; await gate; return result; });
+    const lockTx = writerAdminTransaction(engine, async (store, tx) => { const result = await writeWriterAdminLock(store, tx, true); holding = true; await gate; return result; });
     while (!holding) await sleep(10);
     const claim = settled(claimWorktree(engine, 'default', root));
     await sleep(750);

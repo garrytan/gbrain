@@ -2,6 +2,7 @@
 //! block; napi-rs merges the blocks into one JavaScript class. Every family is listed once, here,
 //! so building a family never edits this list.
 
+mod access_rules;
 mod chunks;
 mod cli_entities;
 mod cli_reads_export;
@@ -18,9 +19,11 @@ mod import_members;
 mod journal;
 mod large_page;
 mod links;
+mod notifier;
 mod op_checkpoint;
 mod page_visibility;
 mod pages;
+mod publication_journal;
 mod search;
 mod sources;
 mod tags;
@@ -29,15 +32,20 @@ mod trust;
 mod trust_fence;
 mod trust_proposals;
 mod versions;
+mod worktrees;
 mod write_attribution;
 mod write_guards;
 mod write_misc;
 mod write_trust;
+mod writer_release;
+mod writer_status;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
 mod alias_fanout_reads;
 mod aliases;
 mod calibration_profiles;
+mod chronicle_ledger;
+mod chronicle_state;
 mod chunk_queries;
 mod code_edges;
 mod contradictions;
@@ -68,6 +76,7 @@ mod memory_mutation_reads;
 mod ontology;
 mod page_body;
 mod page_embedding_budget;
+mod page_mutation_reads;
 mod page_ops;
 mod raw_files;
 mod relations;

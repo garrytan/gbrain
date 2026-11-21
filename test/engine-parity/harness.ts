@@ -39,7 +39,7 @@ import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -79,6 +79,16 @@ export interface ParityCaseOpts {
    * `engine_capability_missing` refusal, and an `n/a` capability skips the arm.
    */
   requires?: EngineCapability;
+  /**
+   * A named stop on the Rust arm: the scenario there ends on an error with this `code` that is not a capability
+   * refusal (a refusal the store answers by design until a member lands elsewhere). The error must be an Error whose
+   * message carries `pin`, which says why, who owns the gap and how to unpin it, and every member in `methods` must
+   * have been called first. Counted as stopped. With a pin, the named stop is the only Rust outcome accepted: a case
+   * that returns, or ends on a capability refusal, fails until the pin is removed. The SQL arms still compare.
+   * One rule for a known Rust stop: a capability refusal uses the in-test pin (assert the refusal, rethrow it; the
+   * sweep-reads case is the example); any other refusal code uses `rustStop`. There is no third form.
+   */
+  rustStop?: { code: string; pin: string };
   timeout?: number;
 }
 
@@ -278,19 +288,59 @@ export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityB
 
 /**
  * Fixture: put a folder access rule (`kind: 'rule'`) or a pending coverage prefix (`kind: 'pending'`) on `prefix` of a
- * source, so the folder-restriction read has something to find. Harness-only SQL behind the backend switch.
+ * source, so the folder-access reads have something to find. The policy writes have no typed member (they stay raw SQL
+ * in policy.ts), so this is harness-only SQL behind the backend switch, and the Rust arm writes its store directly.
  */
-export async function restrictFolder(engine: BrainEngine, backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending'): Promise<void> {
+export async function restrictFolder(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending',
+  opts: { ruleId?: string; readers?: string[] } = {},
+): Promise<void> {
+  const ruleId = opts.ruleId ?? 'parity-rule';
+  const readers = opts.readers ?? ['member:parity'];
   switch (backend) {
-    // The Rust arm has no access-rule store yet; the same SQL stops on the engine's typed raw_sql refusal.
     case 'rust':
+      await seedAccessPolicy(engine, backend, sourceId);
+      if (kind === 'rule') {
+        await rustAccessBrain(engine).putAccessRule({ source_id: sourceId, rule_id: ruleId, prefix, readable_by: readers, revision: 1 });
+      } else {
+        await rustAccessBrain(engine).putAccessPendingCoverage({ source_id: sourceId, prefix, reason: 'pending' });
+      }
+      return;
+    case 'pglite':
+    case 'postgres':
+      await seedAccessPolicy(engine, backend, sourceId);
+      if (kind === 'rule') {
+        await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES ($1, $2, $3, $4::text[], 1)`, [sourceId, ruleId, prefix, readers]);
+      } else {
+        await engine.executeRaw(`INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ($1, $2, 'pending')`, [sourceId, prefix]);
+      }
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
+ * Fixture: give a source access state, and record each `revisions` entry as a policy revision (applied or not), so the
+ * applied-revision read has something to find. Harness-only SQL behind the backend switch, as in `restrictFolder`.
+ */
+export async function seedAccessPolicy(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, revisions: ReadonlyArray<{ revision: number; applied: boolean }> = [],
+): Promise<void> {
+  switch (backend) {
+    case 'rust': {
+      const brain = rustAccessBrain(engine);
+      await brain.putAccessPolicyState(sourceId);
+      for (const r of revisions) await brain.putAccessPolicyRevision({ source_id: sourceId, revision: r.revision, applied: r.applied });
+      return;
+    }
     case 'pglite':
     case 'postgres':
       await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [sourceId]);
-      if (kind === 'rule') {
-        await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES ($1, 'parity-rule', $2, ARRAY['member:parity'], 1)`, [sourceId, prefix]);
-      } else {
-        await engine.executeRaw(`INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ($1, $2, 'pending')`, [sourceId, prefix]);
+      for (const r of revisions) {
+        await engine.executeRaw(
+          `INSERT INTO access_policy_revisions (source_id, revision, rules, digest, change_kind, origin, applied_at)
+           VALUES ($1, $2, '[]'::jsonb, 'd', 'narrowing', 'parity', ${r.applied ? 'now()' : 'NULL'})`, [sourceId, r.revision]);
       }
       return;
     default:
@@ -528,7 +578,7 @@ export interface RustCase<T> {
 /**
  * The Rust arm's check for one case (rust-arm.ts). A case has exactly three acceptable outcomes on Rust:
  *  - it ends on the typed refusal of a capability it reaches (a member Rust does not serve, or an option a served
- *    member declines): counted as refused;
+ *    member declines), or on the error its `rustStop` pin names: counted as refused;
  *  - it returns the value the reference arm returned: counted as equal;
  *  - it returns a value that differs from the reference in exactly the way its row in test/rust-expected-divergence/
  *    names (a named normaliser maps both sides to one value, and the raw values must still differ so a stale row
@@ -551,14 +601,39 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   if (c.opts.requires !== undefined && !armHas('rust', c.opts.requires)) capabilities.add(c.opts.requires);
   const refusedBy = (e: unknown) => [...capabilities].some((capability) => isCapabilityRefusal(e, capability as EngineCapability));
   const caught = c.refusals.filter(refusedBy).length;
+  const pin = c.opts.rustStop;
+  if (pin !== undefined && pin.pin.trim() === '') throw new Error(`[rust] "${c.name}": its rustStop needs a pin`);
+  if (pin?.code === 'engine_capability_missing') {
+    throw new Error(`[rust] "${c.name}": a capability refusal takes the in-test pin (assert the refusal, rethrow it), not rustStop`);
+  }
+  const namedStop = (e: unknown) => pin !== undefined && e instanceof Error
+    && (e as { code?: unknown }).code === pin.code && e.message.includes(pin.pin);
+
+  if (pin !== undefined && !('error' in outcome)) {
+    throw new Error(`[rust] ${c.name} has a rustStop pin (${pin.code}) but now returns; remove the pin and expect equal`);
+  }
+  if (pin !== undefined && 'error' in outcome && !namedStop(outcome.error)) {
+    const why = refusedBy(outcome.error) ? 'a typed capability refusal' : 'another error';
+    if (outcome.error instanceof Error) {
+      outcome.error.message = `[rust] ${c.name} has a rustStop pin (${pin.code}) but ended on ${why}: ${outcome.error.message}`;
+      throw outcome.error;
+    }
+    throw new Error(`[rust] ${c.name} has a rustStop pin (${pin.code}) but ended on ${why}`);
+  }
 
   if ('error' in outcome) {
     // Only the terminal outcome counts: a refusal caught earlier does not excuse a different failure.
-    if (!refusedBy(outcome.error)) {
+    if (!refusedBy(outcome.error) && !namedStop(outcome.error)) {
       if (outcome.error instanceof Error) {
         outcome.error.message = `[rust] ${outcome.error.message}${caught > 0 ? ` (the case had caught ${caught} typed refusal(s) before this)` : ''}`;
       }
       throw outcome.error;
+    }
+    if (pin !== undefined) {
+      // A named stop comes after the members the case covers: each must have been called before it.
+      const notReached = c.opts.methods.filter((m) => !c.calls.has(m));
+      expect({ backend: 'rust', case: c.name, rustStop: pin.code, declaredButNotCalled: notReached })
+        .toEqual({ backend: 'rust', case: c.name, rustStop: pin.code, declaredButNotCalled: [] });
     }
     if (c.divergence) {
       throw new Error(`[rust] "${c.name}" has a row in test/rust-expected-divergence/ (${c.divergence.reason}) but now stops on a typed refusal; remove the row`);

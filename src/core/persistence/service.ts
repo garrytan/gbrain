@@ -466,6 +466,12 @@ export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number 
   }
   const withdrawn = isTerminal(row) ? withdrawnFromDetail(row.error_detail) : undefined;
   if (withdrawn) error.withdrawn = withdrawn;
+  // An engine's typed capability refusal: the waiter's error names the member and capability the way the refusal did
+  // (rust-engine/errors.ts), so a caller classifies it as that refusal. The message already names both.
+  const refusal = reason === 'engine_capability_missing' ? row.error_detail as { origin?: unknown; member?: unknown; capability?: unknown } | null | undefined : null;
+  if (isTerminal(row) && refusal?.origin === 'engine_capability' && typeof refusal.member === 'string' && typeof refusal.capability === 'string') {
+    Object.assign(error, { reason: refusal.capability, detail: `member=${refusal.member} capability=${refusal.capability} outcome=none written=nothing` });
+  }
   if (reason === 'page_identity_changed' && isMissingPageMessage(row.error_message)) error.canonical = 'page_not_found';
   error.receiptFields = { operation: row.operation, source_id: row.source_id, slug: row.slug || null, principal_kind: row.principal_kind, principal_id: row.principal_id };
   error.writeRequest = receipt as WriteReceipt;

@@ -1,6 +1,6 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
- * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
+ * insertLocalWriterRow, readJournalLimitRows; the held-file reads are in sync-hold-store.ts), the request rows the put path
  * reads and writes (readWriteRequest, readWriteRequestById, listWriteRequestRows, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
  * stampWriteClaim, lockWriteRequest, completeWriteRow, cancelWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
@@ -16,17 +16,22 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
+import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
+import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../../engine-sql/applied-watermark-reads.ts';
+import type { SourceDetailRow } from '../../engine.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
+import { readBrainMode } from './writer-release.ts';
 
-/** The store keeps no managed brains: a brain on this engine is always unmanaged, one singleton row. */
-export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async () => [{ enabled: false }];
+/** The one singleton row with the stored brain mode (gbrain-store `persistence::worktrees::release`; classic until activated). */
+export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async (brain) =>
+  [{ enabled: (await readBrainMode(brain, 'readManagedModeRows')).enabled }];
 
 /**
  * The registration row of a local writer, or undefined. `lock` asks PGLite for FOR SHARE so a revocation waits; the
@@ -66,12 +71,27 @@ export const readJournalLimitRows: StoreMember<[], Array<{ key: string | null; v
   return rows;
 };
 
-/** Sync holds are written only by the git sync path, which this engine refuses: no page is ever held. */
-export const readHeldPageRows: StoreMember<[pageIds: string[]], Array<{ record: never; revision: string | null }>> = async () => [];
+/** The source row's sync point (getSource) and the journal's outstanding requests of its current incarnation. */
+export const readWriteWatermarkRow: StoreMember<[sourceId: string], WriteWatermarkRow> = async (brain, sourceId) => {
+  const member = 'readWriteWatermarkRow';
+  const source: SourceDetailRow | null = await storeCall({ member, sourceId }, () => brain.getSource(sourceId));
+  const state: SourceStateRow | null = source ? await storeCall({ member, sourceId }, () => brain.readSourceState(sourceId)) : null;
+  const journal = await storeCall({ member, sourceId }, () => brain.readRequestWatermark(sourceId, state?.incarnation ?? null)) as Pick<WriteWatermarkRow, 'pending_min' | 'pending_count' | 'pending_since' | 'newest_sequence'>;
+  return { last_commit: source?.last_commit ?? null, last_sync_at: source?.last_sync_at ?? null, ...journal };
+};
 
-/** No hold rows exist on this engine (see readHeldPageRows), so no source has held coverage. */
-export const readHeldCoverageRows: StoreMember<[sourceIds: string[] | null], HeldCoverageRow[]> = async () => [];
+/** This engine keeps no host bindings, so the checkout is the source's own path. */
+export const readSourceCheckoutRoot: StoreMember<[sourceId: string, hostId: string | null], SourceCheckoutRoot | null> = async (brain, sourceId) => {
+  const state: SourceStateRow | null = await storeCall({ member: 'readSourceCheckoutRoot', sourceId }, () => brain.readSourceState(sourceId));
+  return state ? { incarnation: state.incarnation, root: state.local_path } : null;
+};
 
+/** The store holds one vector column, so `column` is the text column; it keeps no embedding budget rows, so `held` is 0. */
+export const readUnembeddedPageSummary: StoreMember<[sourceId: string, column: string], UnembeddedPageSummary> = async (brain, sourceId) => {
+  await requireTextColumn(brain, 'readUnembeddedPageSummary');
+  const row: UnembeddedPageSummary = await storeCall({ member: 'readUnembeddedPageSummary', sourceId }, () => brain.readUnembeddedPageSummary(sourceId));
+  return { ...row, oldest: row.oldest == null ? null : new Date(String(row.oldest)) };
+};
 
 /** The request a principal admitted under `requestId`, or null. */
 export const readWriteRequest: StoreMember<[principalKind: string, principalId: string, requestId: string], WriteRequest | null> =
@@ -220,8 +240,11 @@ export const probeLiveConsumerRows: StoreMember<[probe: ConsumerProbe, opts?: { 
 export const renewConsumerRow: StoreMember<[renewal: ConsumerRenewal, opts?: { signal?: AbortSignal }], void> = async () => undefined;
 /** The heartbeat's row delete; there is no row. */
 export const deleteConsumerRow: StoreMember<[key: ConsumerRowKey, opts?: { signal?: AbortSignal }], void> = async () => undefined;
-/** The worktree heartbeat stamp; this engine has no worktrees. */
-export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+/** The worktree heartbeat stamp: `heartbeat_at` now on every worktree the host owns (the claims an unmanaged brain keeps). */
+export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async (brain, hostId, opts) => {
+  opts?.signal?.throwIfAborted();
+  await storeCall({ member: 'stampWorktreeHeartbeats' }, () => brain.stampWorktreeHeartbeats(hostId));
+};
 
 /** A source's incarnation and archive flag, or null. FOR SHARE changes nothing in one store write. */
 export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean }], SourceMembership | null> = (brain, sourceId) =>
@@ -242,15 +265,15 @@ export const insertTopologyChange: StoreMember<[row: TopologyChangeInsert], Topo
 /**
  * The belief ledger's view of a source. Belief events, the purge epoch and take and page purges are written only
  * through `executeRaw`, which this engine refuses, so the epoch is 0 and coverage is null; a purge is possible when the
- * source holds a fact purge tombstone (`insertFactPurge`). A batch also returns the one unmanaged brain row and the
- * plan-cache mode PGLite reports, which it never changes here.
+ * source holds a fact purge tombstone (`insertFactPurge`). A batch also returns the brain row with its stored mode and
+ * the plan-cache mode PGLite reports, which it never changes here.
  */
 export const readLedgerSource: StoreMember<[sourceId: string, opts?: { batch?: boolean }], LedgerSource | null> = async (brain, sourceId, opts) => {
   const membership = await storeCall({ member: 'readLedgerSource' }, () => brain.readSourceMembership(sourceId)) as SourceMembership | null;
   if (!membership) return null;
   const purgesPossible = await storeCall({ member: 'readLedgerSource' }, () => brain.hasFactPurges(sourceId)) as boolean;
   return { incarnation: String(membership.incarnation), purgeEpoch: 0, coverage: null, purgesPossible,
-    ...(opts?.batch ? { managedRows: [{ enabled: false }], planModePrev: PLAN_CACHE_MODE } : {}) };
+    ...(opts?.batch ? { managedRows: [{ enabled: (await readBrainMode(brain, 'readLedgerSource')).enabled }], planModePrev: PLAN_CACHE_MODE } : {}) };
 };
 
 /**

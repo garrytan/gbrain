@@ -42,7 +42,6 @@ const BINDING_SQL = WORKTREE_BINDING_SQL.replace(/\s+/g, ' ').trim();
 const WRITER_SQL = new Set([
   'SELECT revoked_at,credential_hash,lane FROM persistence_local_writers WHERE id=$1::uuid',
   'SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=$1::uuid',
-  'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
 ]);
 /** Whether a read's rows are a presence worth keeping. */
 function present(sql: string, rows: Array<Record<string, unknown>>): boolean {
@@ -94,8 +93,8 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
     else held.reads.delete(key);
     return rows;
   };
-  const brainRead = async (): Promise<string | null> => {
-    if (caches.get(engine) !== held) return engine.readPersistenceBrainId();
+  const brainRead = async (opts?: { lock?: boolean }): Promise<string | null> => {
+    if (opts?.lock || caches.get(engine) !== held) return engine.readPersistenceBrainId(opts);
     if (held.brainId && now() - held.brainId.at < PREADMIT_TTL_MS) return held.brainId.id;
     const id = await engine.readPersistenceBrainId();
     if (typeof id === 'string' && caches.get(engine) === held) noteBrain(id);

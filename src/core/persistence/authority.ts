@@ -306,7 +306,8 @@ function onceReads(engine: BrainEngine): BrainEngine {
       if (/\bFOR (?:SHARE|UPDATE)\b/i.test(sql)) return target.executeRaw(sql, params, opts);
       return memo(JSON.stringify([sql, params ?? null]), () => target.executeRaw(sql, params, opts));
     };
-    if (key === 'readPersistenceBrainId') return () => memo('typed:brain', () => target.readPersistenceBrainId());
+    if (key === 'readPersistenceBrainId') return (opts?: { lock?: boolean }) =>
+      opts?.lock ? target.readPersistenceBrainId(opts) : memo('typed:brain', () => target.readPersistenceBrainId());
     // The opening page-visibility probe (authorizePageVisibility) was a plain executeRaw read this memo answered once;
     // as a typed member it is answered once too, so a receipt check's second visibility pass sends no second probe.
     if (key === 'readWriteVisibilityProbe') return (sourceId: string, slug: string) =>

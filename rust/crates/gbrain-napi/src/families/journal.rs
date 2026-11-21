@@ -394,6 +394,19 @@ impl Brain {
         })
     }
 
+    /// `readWriteWatermarkRow`'s journal half for one source incarnation (null for an absent source).
+    #[napi]
+    pub fn read_request_watermark<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_request_watermark(&source_id, incarnation.as_deref())
+        })
+    }
+
     #[napi]
     pub fn read_source_membership<'env>(
         &self,

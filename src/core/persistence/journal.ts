@@ -905,14 +905,10 @@ export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, re
     const counters = await lockCounters(tx, ['brain', `worktree:${row.worktree_id}`]);
     const fits = counters.every(c => Number(c.recovery_bytes) + bytes <= (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes));
     // #6007: the common case records the reservation in one statement; any other state takes the checked path below.
-    if (fits) {
-      const [reserved] = await tx.executeRaw(`WITH recorded AS (UPDATE persistence_requests SET recovery=$3::text::jsonb,recovery_bytes=$4,updated_at=now()
-          WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND recovery IS NULL RETURNING id),
-        reserved AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$4 WHERE key=ANY($5::text[]) AND EXISTS (SELECT 1 FROM recorded))
-        SELECT id FROM recorded`, [row.id, row.execution_token, JSON.stringify(recovery), bytes, counters.map(c => c.key)]);
-      if (reserved) return;
-    }
-    const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
+    const journal = await tx.publicationJournalStore();
+    const reservation = { id: row.id, executionToken: row.execution_token, recovery, bytes, keys: counters.map(c => c.key) };
+    if (fits && await journal.recordRecovery(reservation, true)) return;
+    const current = await tx.lockWriteRequest(row.id);
     if (!current || current.execution_token !== row.execution_token || current.state !== 'running') throw opError('write_claim_lost', 'The write execution claim was superseded.',
       `Another owner pass claimed request ${row.request_id} in source ${row.source_id} before this pass recorded its recovery, so this pass stopped without publishing; the current claim finishes or recovers it. Inspect the request with the command in fix instead of resubmitting it.`,
       { fix: requestInspectFix(row) });
@@ -923,9 +919,7 @@ export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, re
       return;
     }
     for (const c of counters) if (Number(c.recovery_bytes) + bytes > (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes)) throw capacityError('recovery bytes currently reserved by other requests');
-    await tx.executeRaw(`WITH reserved AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$4 WHERE key=ANY($5::text[]))
-      UPDATE persistence_requests SET recovery=$3::text::jsonb,recovery_bytes=$4,updated_at=now()
-      WHERE id=$1::uuid AND execution_token=$2::uuid`, [row.id, row.execution_token, JSON.stringify(recovery), bytes, counters.map(c => c.key)]);
+    await journal.recordRecovery(reservation, false);
   });
 }
 
@@ -1092,31 +1086,25 @@ export async function clearResolvedRecovery(engine: BrainEngine, id: string, kno
   if (known) for (const file of recoveryFiles(row.recovery)) assertRecoveryStagingAbsent(file);
   await transaction(async tx => {
     const keys = ['brain', ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])];
+    const journal = await tx.publicationJournalStore();
     if (known) {
       // The settings, the counter lock and the clear of the exact known record are sent together.
-      const [, , [cleared]] = await pipelined(tx, [() => declareDurablePersistence(tx), () => lockCounters(tx, keys), () => tx.executeRaw(`WITH locked AS (SELECT id,recovery_bytes FROM persistence_requests WHERE id=$1::uuid AND recovery=$3::text::jsonb
-          AND state IN ('committed','conflict','failed','cancelled') FOR UPDATE),
-        released AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes-(SELECT recovery_bytes FROM locked) WHERE key=ANY($2::text[]) AND EXISTS (SELECT 1 FROM locked))
-        UPDATE persistence_requests r SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL FROM locked WHERE r.id=locked.id RETURNING r.id`,
-      [id, keys, JSON.stringify(row.recovery)])]) as [unknown, unknown, unknown[]];
+      const [, , cleared] = await pipelined(tx, [() => declareDurablePersistence(tx), () => lockCounters(tx, keys),
+        () => journal.clearKnownRecovery(id, keys, row.recovery)]) as [unknown, unknown, boolean];
       if (cleared) return;
     } else {
       await declareDurablePersistence(tx);
       await lockCounters(tx, keys);
     }
-    const [locked] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [id]);
+    const locked = await tx.lockWriteRequest(id);
     if (!locked?.recovery || !isTerminal(locked)) return;
     for (const file of recoveryFiles(locked.recovery)) assertRecoveryStagingAbsent(file);
-    await tx.executeRaw(`WITH released AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$3 WHERE key=ANY($2::text[]))
-      UPDATE persistence_requests SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL WHERE id=$1::uuid`, [id, keys, Number(locked.recovery_bytes)]);
+    await journal.clearRecovery(id, keys, Number(locked.recovery_bytes));
   });
 }
-export async function markRecovering(engine: SqlEngine, row: WriteRequest, reason: string, failure?: {code:string;message:string;detail?:unknown}): Promise<void> {
-  await engine.executeRaw(`UPDATE persistence_requests SET state='recovering',blocked_reason=$3,updated_at=now(),
-    error_code=COALESCE(error_code,$4),error_message=COALESCE(error_message,$5),
-    error_detail=CASE WHEN error_code IS NULL THEN $6::text::jsonb ELSE error_detail END
-    WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-  [row.id, row.execution_token, reason, failure?.code ?? null, failure?.message ?? null, failure?.detail ? JSON.stringify(failure.detail) : null]);
+export async function markRecovering(engine: Pick<BrainEngine, 'publicationJournalStore'>, row: WriteRequest, reason: string,
+  failure?: {code:string;message:string;detail?:unknown}): Promise<void> {
+  await (await engine.publicationJournalStore()).markRecovering(row.id, row.execution_token, reason, failure);
 }
 const PERSISTENCE_QUEUE_TABLES = ['persistence_requests', 'persistence_effects', 'persistence_counters', 'page_projection_jobs', 'page_write_guards'];
 /**

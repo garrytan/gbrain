@@ -790,7 +790,7 @@ each of them with `engine_capability_missing` naming the member until the store 
 ## Purge, held-move and purge receipt statements (`engine-sql/facts-purge.ts`, Rust engine lane 4 item 4.2)
 
 The statements `facts/gone-page-facts.ts`, `facts/purge-reasons.ts`, `facts/held-fact-move.ts` and
-`facts/purge-verify.ts` ran through `executeRaw` are 34 typed members, so the Rust arm answers each with
+`facts/purge-verify.ts` ran through `executeRaw` are 33 typed members, so the Rust arm answers each with
 the typed `raw_sql` refusal until the store holds what it reads. None has a Rust implementation yet; the
 parity file `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for every case, and the
 Postgres text of each statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
@@ -799,7 +799,6 @@ Postgres text of each statement is pinned byte for byte by `test/facts-purge-sit
 |---|---|
 | `expireFactsOfGonePages` | Expires the facts a retention purge takes with its deleted pages (filed on them, their conversation slots, extracted from them, about them and held by no page): four updates in order over the paired source ids and slugs. Writes facts; run it in the purge transaction. |
 | `readPurgeSourceLocalPath` | The source's checkout path, null for none or no such source. Reads sources. |
-| `insertReasonPurgeTombstones` | Tombstones each (commit, path) pair, none twice; the number added. Writes reason_purge_tombstones. |
 | `listGitEffectsCarryingReason` | The source's Git effects whose data carries the claim in one of its three forms, in id order, locked for the redaction. Reads persistence_effects. |
 | `listPageGitEffectsForStrip` | The slug's Git effects that carry a commit line or trailers, in id order, locked for the strip. Reads persistence_effects. |
 | `setPurgeEffectData` | Replaces one effect's data (`effectId` is the bigint id as text). Writes persistence_effects. |

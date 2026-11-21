@@ -1,5 +1,6 @@
-/** Source members (BrainEngine listAllSources, updateSourceConfig, getSource, listSourceLocalPaths, getSourceStrictness). */
+/** Source members (BrainEngine listAllSources, updateSourceConfig, getSource, listSourceLocalPaths, listSourceImportRoots, countRepoBoundSources, getSourceStrictness). */
 import type { SourceDetailRow, SourceRow } from '../../engine.ts';
+import type { SourceImportRoot } from '../../engine-sql/sources.ts';
 import { toSource, withDates } from '../store-codec.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 
@@ -18,8 +19,15 @@ export const getSource: StoreMember<[sourceId: string], SourceDetailRow | null> 
   return row ? withDates(row as SourceDetailRow, ['last_sync_at', 'created_at']) : null;
 };
 
+export const countRepoBoundSources: StoreMember<[], number> = async (brain) =>
+  Number(await storeCall({ member: 'countRepoBoundSources' }, () => brain.countRepoBoundSources()));
+
 export const listSourceLocalPaths: StoreMember<[], string[]> = (brain) =>
   storeCall({ member: 'listSourceLocalPaths' }, () => brain.listSourceLocalPaths());
+
+/** Every unarchived source's own path and its binding's paths on host `hostId` (engine-sql/sources.ts). */
+export const listSourceImportRoots: StoreMember<[hostId: string], SourceImportRoot[]> = (brain, hostId) =>
+  storeCall({ member: 'listSourceImportRoots' }, () => brain.listSourceImportRoots(hostId));
 
 export const getSourceStrictness: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
   storeCall({ member: 'getSourceStrictness', sourceId }, () => brain.getSourceStrictness(sourceId));

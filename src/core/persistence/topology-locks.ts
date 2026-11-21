@@ -6,7 +6,7 @@ import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
-import { persistenceHome, currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, hostIdFor } from './identity.ts';
+import { persistenceHome, currentVerifiedLocalWriter, readBrainIdentity, readLocalWriter, verifyLocalWriter, hostIdFor } from './identity.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { containsPath, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { completeWrite, lockCounters } from './journal.ts';
@@ -27,7 +27,7 @@ export async function topologyPrincipal(engine: BrainEngine): Promise<string> {
   return writer.principal.id;
 }
 export async function lockTopologyPrincipal(engine: BrainEngine, id: string): Promise<void> {
-  const [writer] = await engine.executeRaw<{ lane: string; revoked_at: unknown }>('SELECT lane,revoked_at FROM persistence_local_writers WHERE id=$1::uuid FOR SHARE', [id]);
+  const writer = await engine.readLocalWriterRow(id, { lock: true });
   if (!writer || writer.lane !== 'cli' || writer.revoked_at != null) throw opError('permission_denied', 'The administering CLI registration was revoked.',
     `CLI writer registration ${id}, which started this source lifecycle change, was revoked, so nothing changed. Replacing it is the user's decision: review the registrations with the command in fix; the user stops any running owner and runs gbrain auth local-writer register cli --replace with the complete intended grant, then starts the lifecycle command again.`,
     {reason:'trusted_cli_required',fix:readFix('Lists the local writer registrations with their lane, grant and revocation state, read-only.',{argv:['gbrain','auth','local-writer','list','--json']})});
@@ -42,7 +42,7 @@ export async function lockTopologyPrincipal(engine: BrainEngine, id: string): Pr
  */
 export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string,
   run: (bindings: TopologyBinding[]) => Promise<T>, additionalRoot?: string, waitMs=5000, opts: { relocation?: boolean } = {}): Promise<T> {
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  const brainId = await readBrainIdentity(engine);
   const handles: NativeLockHandle[] = [];
   const take = async (path: string) => {
     const handle = waitMs===0?await tryAcquireNativeLock(path):await acquireNativeLock(path, { timeoutMs: waitMs });
@@ -54,7 +54,7 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
   try {
     // Serializes discovery of new/unbound paths on this host. Worktree locks
     // remain the actual publication authority and never live in the checkout.
-    await take(join(persistenceHome(), 'locks', `topology-${brain.brain_id}.lock`));
+    await take(join(persistenceHome(), 'locks', `topology-${brainId}.lock`));
     const binding = await getWorktreeBinding(engine, sourceId);
     const bindings:TopologyBinding[] = binding ? [binding] : [];
     if (additionalRoot) {

@@ -306,10 +306,17 @@ test('an unchanged re-import screens its files with one read of each batch-share
       counted.set('FROM persistence_local_writers', (counted.get('FROM persistence_local_writers') ?? 0) + 1);
       return writer.apply(this, args);
     };
+    // The other sources' import roots are the typed listSourceImportRoots member, counted under its old statement text.
+    const importRoots = brain.engine.listSourceImportRoots;
+    brain.engine.listSourceImportRoots = function(this: BrainEngine, hostId: string) {
+      counted.set('FROM sources s LEFT JOIN persistence_source_bindings', (counted.get('FROM sources s LEFT JOIN persistence_source_bindings') ?? 0) + 1);
+      return importRoots.call(this, hostId);
+    };
     let again: PromiseSettledResult<unknown>[];
     try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally {
       brain.engine.executeRaw = original; brain.engine.hasCompanyBrainReceipt = receipt;
       brain.engine.listSharedSkillPackRoots = packRoots; brain.engine.readLocalWriterRow = writer;
+      brain.engine.listSourceImportRoots = importRoots;
     }
     expect(again.map(r => r.status === 'fulfilled' && (r.value as { status: string }).status)).toEqual(files.map(() => 'skipped'));
     // A per-file screen would read each of these at least once per file (12 here).

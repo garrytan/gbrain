@@ -182,8 +182,8 @@ export async function joinBrain(ctx: OperationContext, params: { adapter: string
   return ctx.engine.transaction(async engine => {
     const tx = { ...ctx, engine };
     const authority = await memberAuthority(tx, 'join_brain');
-    const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1 FOR UPDATE');
-    if (!brain) fail('catalog_unavailable', 'Persistent brain identity is unavailable.',
+    const brainId = await engine.readPersistenceBrainId({ lock: true });
+    if (brainId === null) fail('catalog_unavailable', 'Persistent brain identity is unavailable.',
       'The brain host has not initialized its persistent identity, so nobody can enroll yet. The brain host\'s operator checks it with doctor.',
       { fix: hostFix(ctx, ['gbrain', 'doctor', '--json'], 'Reports the brain\'s persistence identity and what initializes it.') });
     const snapshot = await catalog(authority.ctx);
@@ -212,7 +212,7 @@ export async function joinBrain(ctx: OperationContext, params: { adapter: string
         epoch=shared_skill_members.epoch+1,follow_policy=EXCLUDED.follow_policy,issued_sequence=0,acknowledged_sequence=0,desired_view=NULL,acknowledged_view=NULL,joined_at=now(),
         join_count=CASE WHEN shared_skill_members.join_window<now()-interval '1 hour' THEN 1 ELSE shared_skill_members.join_count+1 END,
         join_window=CASE WHEN shared_skill_members.join_window<now()-interval '1 hour' THEN now() ELSE shared_skill_members.join_window END`,
-      [id, authority.principal.kind, authority.principal.id, adapter, brain.brain_id, JSON.stringify(policy)]);
+      [id, authority.principal.kind, authority.principal.id, adapter, brainId, JSON.stringify(policy)]);
       member = await ownMember(tx, id, authority.principal);
     }
     return issue(tx, member, authority.digest, snapshot);

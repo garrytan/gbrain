@@ -17,6 +17,12 @@
 //! | `d 0x05 <request id> 0x00 <kind>` | one `persistence_effects` row (`effects.rs`), JSON |
 //! | `d 0x06 <id, 8 bytes big-endian>` | the effect claim-order index (`effects.rs`), JSON |
 //! | `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoint.rs`), empty |
+//! | `d 0x08 0x01 <host_id>` | one `sync_notifier_leases` row (`notifier.rs`), JSON |
+//! | `d 0x08 0x02 <source_id>` | one `sync_notifier_sources` row (`notifier.rs`), JSON |
+//! | `d 0x08 0x03 <source_id> 0x00 <intent>` | one `sync_wanted_markers` row (`notifier.rs`), JSON |
+//! | `d 0x09 0x01 <worktree_id>` | one `persistence_worktrees` row (`worktrees.rs`), JSON |
+//! | `d 0x09 0x02 <worktree_id> 0x00 <host_id>` | one `persistence_host_bindings` row (`worktrees.rs`), JSON |
+//! | `d 0x09 0x03 <source_id>` | one `persistence_source_bindings` row (`worktrees.rs`), JSON |
 //!
 //! `d 0x05` and `d 0x06` are the `persistence_effects` rows and their claim-order index (`effects.rs`); no other
 //! family here uses them.
@@ -38,8 +44,9 @@
 //! `*_in` function over one `KvWrite`, so a store write transaction can run several of them.
 //!
 //! Every request row on this engine has a null `worktree_id` (the insert refuses another value:
-//! no worktree binding exists here), so the worktree terms of the claim statements are answered
-//! as Postgres answers them for a null worktree.
+//! a worktree binding is claimed here only on an unmanaged brain, `worktrees.rs`, and only the
+//! managed write path names a worktree on a request), so the worktree terms of the claim
+//! statements are answered as Postgres answers them for a null worktree.
 
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso, parse_iso};
@@ -53,29 +60,42 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod checkpoint_rows;
 mod effect_scans;
 mod effect_worker;
 mod effects;
 mod housekeeping;
 mod idle_probe;
 mod noop_settle;
+mod notifier;
 mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
+mod publication;
 mod receipt_list;
 mod topology;
+mod worktrees;
+mod writer_status;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
 pub use noop_settle::NoopSettleCandidateSpec;
+pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
+pub use notifier::{
+    NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
+};
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
+pub use publication::{PublicationRead, PublicationWrite, RecoveryTable};
 pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;
+pub use worktrees::{
+    CounterDelta, HostBindingInsert, ReleaseRead, SourceBindingInsert, WorktreeInsert,
+};
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
 const COUNTER: u8 = 0x01;
@@ -88,6 +108,11 @@ const QUEUE: u8 = 0x04;
 /// The byte after `keys::PERSISTENCE` of a resumable op's checkpoint path (persistence/op_checkpoint.rs).
 /// Not 0x05 or 0x06: those are the `persistence_effects` rows and their claim-order index.
 const CHECKPOINT_PATH: u8 = 0x07;
+/// The byte after `keys::PERSISTENCE` of a commit notifier row (persistence/notifier.rs). 0x05 to
+/// 0x07 are reserved for effect rows and operation checkpoint paths.
+const NOTIFIER: u8 = 0x08;
+/// The byte after `keys::PERSISTENCE` of a worktree binding row (persistence/worktrees.rs).
+const WORKTREES: u8 = 0x09;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[
@@ -314,6 +339,38 @@ pub(crate) fn count_outstanding_by_source_in(
         .into_iter()
         .map(|(source_id, n)| json!({ "source_id": source_id, "n": n }))
         .collect())
+}
+
+/// The journal half of `readWriteWatermarkRow` (`engine-sql/applied-watermark-reads.ts`): the
+/// outstanding requests of one source incarnation (lowest sequence, how many, oldest admission) and,
+/// when none is outstanding, the newest sequence in the brain. `incarnation` is `None` for an absent
+/// source, which has no outstanding request.
+pub(crate) fn read_request_watermark_in(
+    read: &dyn KvRead,
+    source_id: &str,
+    incarnation: Option<&str>,
+) -> Result<Value> {
+    let all = all_requests(read)?;
+    let pending: Vec<_> = all
+        .iter()
+        .filter(|r| {
+            r.source_id == source_id
+                && incarnation == Some(r.source_incarnation.as_str())
+                && OUTSTANDING_STATES.contains(&r.state.as_str())
+        })
+        .collect();
+    let pending_min = pending.iter().map(|r| r.sequence).min();
+    let pending_since = pending.iter().map(|r| r.created_at_us).min().map(iso);
+    let newest = match pending_min {
+        None => all.iter().map(|r| r.sequence).max(),
+        Some(_) => None,
+    };
+    Ok(json!({
+        "pending_min": pending_min,
+        "pending_count": pending.len(),
+        "pending_since": pending_since,
+        "newest_sequence": newest,
+    }))
 }
 
 /// `persistence/receipt-bytes.ts` `COMPACTED_HEADROOM_BYTES`.
@@ -614,7 +671,7 @@ pub(crate) fn insert_write_request_in(
     };
     if input.worktree_id.is_some() {
         return Err(violation(
-            "no persistence worktree exists on this engine, so worktree_id cannot be set",
+            "only the managed write path names a worktree, and it does not run on this engine, so worktree_id cannot be set",
         ));
     }
     if input.deferred_refresh_id.is_some() {
@@ -1313,6 +1370,16 @@ impl Store {
         principal_id: &str,
     ) -> Result<Vec<Value>> {
         count_outstanding_by_source_in(&*self.read()?, principal_kind, principal_id)
+    }
+
+    /// `readWriteWatermarkRow`'s journal half: `{ pending_min, pending_count, pending_since,
+    /// newest_sequence }` of one source incarnation (`None` for an absent source).
+    pub fn read_request_watermark(
+        &self,
+        source_id: &str,
+        incarnation: Option<&str>,
+    ) -> Result<Value> {
+        read_request_watermark_in(&*self.read()?, source_id, incarnation)
     }
 
     /// `readCounterRows(keys)`: the counter rows that exist, in byte order (`COLLATE "C"`), unlocked.

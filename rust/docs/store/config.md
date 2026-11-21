@@ -25,7 +25,7 @@ written with no model of its own carries the brain's model, as on PGLite. In Rus
 | `brain.setConfig(key, value)` | `null`; an upsert | `setConfig` |
 | `brain.unsetConfig(key)` | rows removed, `0` or `1` | `unsetConfig` |
 | `brain.listConfigKeys(prefix)` | sorted `string[]`; the prefix is literal (`%` and `_` are plain characters) | `listConfigKeys` |
-| `brain.getAllConfig()` | `{ [key]: value }` | `getAllConfig` |
+| `brain.getAllConfig()` | `{ [key]: value }` | `getAllConfig`; `readConfigTable` too, as `{ key, value }` rows (the store has no request snapshot, so the table is the whole answer) |
 
 ## Dream map rows
 

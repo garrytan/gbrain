@@ -13,6 +13,8 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { parsePersistenceAdminArgs, WRITER_HELP } from '../src/commands/persistence-admin.ts';
 import { runConfig } from '../src/commands/config.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { claimWorktreeBinding } from '../src/core/engine-sql/worktree-claim.ts';
+import { writerAdminTransaction } from '../src/core/engine-sql/writer-admin.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -184,3 +186,28 @@ test('the automatic first write to an unbound PGLite source still claims while l
   expect(managed).toMatchObject({ state: 'committed' });
   expect(await engine.executeRaw("SELECT source_id FROM persistence_source_bindings WHERE source_id='second-example'")).toEqual([{ source_id: 'second-example' }]);
 }), 120_000);
+
+test('the writer-admin and claim stores run in the transaction a wrapper of the engine opens', () => fixture(async () => {
+  // A wrapper that counts transactions and binds every other member to the engine, as the race tests' proxies do.
+  let transactions = 0;
+  const wrapped = new Proxy(engine, {
+    get(target, key, receiver) {
+      if (key === 'transaction') return (fn: Parameters<PGLiteEngine['transaction']>[0]) => { transactions += 1; return target.transaction(fn); };
+      const value = Reflect.get(target, key, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as PGLiteEngine;
+  const state = await wrapped.readWriterAdminState();
+  const parsed = JSON.parse(state) as { brain: { id: string; enabled: boolean }; worktrees: unknown; bindings: unknown };
+  expect(parsed).toMatchObject({ brain: { enabled: false }, worktrees: null, bindings: null });
+  const seen = await writerAdminTransaction(wrapped, async (store, tx) => {
+    expect(await store.adminLockValue()).toBeNull();
+    expect(await tx.readWriterAdminState()).toBe(state);
+    return store.now();
+  });
+  expect(typeof seen).toBe('string');
+  expect(await claimWorktreeBinding(wrapped, async store => store.brainId())).toBe(parsed.brain.id);
+  await engine.transaction(async tx => { expect(await (await tx.worktreeClaimStore()).hostWorktrees('00000000-0000-4000-8000-000000000000')).toEqual([]); });
+  await engine.transaction(async tx => { expect(await (await tx.writerAdminStore()).preparedTransferWorktree()).toBeNull(); });
+  expect(transactions).toBe(2);
+}));
