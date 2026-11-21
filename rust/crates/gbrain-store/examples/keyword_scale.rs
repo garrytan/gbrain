@@ -98,6 +98,16 @@ fn load(corpus: &Path, dir: &Path, nosync: bool) {
                 .open(dir.join("records.redb"))
                 .unwrap_or_else(|e| die(e)),
         );
+        // The normal open holds redb's exclusive lock on the record file, so a second writer is refused
+        // (`store_locked`). This backend bypasses redb's file, so take the same kind of lock here and keep
+        // it until the loader exits: a brain another handle holds is never opened for writing.
+        if let Err(e) = file.try_lock() {
+            die(format!(
+                "{}: another handle or process already has this brain open ({e}); \
+                 `nosync` loads only into a store nothing else holds",
+                dir.display()
+            ));
+        }
         final_sync = Some(file.clone());
         let kv = RedbKv::open_backend(Box::new(NoSyncFile(file))).unwrap_or_else(|e| die(e));
         Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), OpenOptions::default())
