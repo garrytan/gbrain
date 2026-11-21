@@ -20,7 +20,6 @@ export interface ReadSource {
 }
 
 const READ_TIMEOUT_MS = 30_000;
-
 export function openReadSource(primary: BrainEngine, opts: { pauseMs?: number } = {}): ReadSource {
   const postgres = hasCapability(primary, 'postgres_admin'); // a server database: a second connection is cheap, PGLite has one
   let dedicated: Promise<BrainEngine> | null = null;
@@ -31,12 +30,8 @@ export function openReadSource(primary: BrainEngine, opts: { pauseMs?: number } 
     dedicated ??= (async () => {
       const { PostgresEngine } = await import('../core/postgres-engine.ts');
       const own = new PostgresEngine();
-      try {
-        await own.connect({ engine: 'postgres', database_url: (primary as { connectedDatabaseUrl?: string }).connectedDatabaseUrl, poolSize: 1 });
-      } catch (error) {
-        await own.disconnect().catch(() => undefined); // a half-opened pool must not outlive the failed attempt
-        throw error;
-      }
+      await own.connect({ engine: 'postgres', database_url: (primary as { connectedDatabaseUrl?: string }).connectedDatabaseUrl, poolSize: 1 })
+        .catch(async (error) => { await own.disconnect().catch(() => undefined); throw error; }); // a half-opened pool must not outlive the attempt
       return own;
     })();
     dedicated.catch(() => { dedicated = null; });

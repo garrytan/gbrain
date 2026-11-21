@@ -24,8 +24,7 @@ import { appendPass, NIGHTLY_MS, readPasses, type PassRecord, type Watermark } f
 import { intervalDigest, rowDigest, sortKey, sortKeyUnsupported } from './follow-digest.ts';
 import { nextGeneration, type ShadowFollower } from './follower.ts';
 import { primaryTables } from './seed-gaps.ts';
-import type { BrainEngine } from '../core/engine.ts';
-import type { ReadQuery, ReadSource } from './read-pool.ts';
+import type { ReadSource } from './read-pool.ts';
 import { relationRead } from './seed.ts';
 
 export const RECONCILE_INTERVAL_ROWS = 500;
@@ -102,9 +101,7 @@ export class Reconciler {
     this.nightly = this.debounce = this.firstCheck = null;
   }
 
-  private read<T>(fn: (tx: BrainEngine, query: ReadQuery) => Promise<T>): Promise<T> {
-    return this.stopped ? Promise.reject(new Error('reconciler stopped')) : this.o.reads.read(fn);
-  }
+  private readonly read: ReadSource['read'] = (fn) => (this.stopped ? Promise.reject(new Error('reconciler stopped')) : this.o.reads.read(fn));
 
   private async tick(): Promise<void> {
     try {

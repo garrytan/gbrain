@@ -162,8 +162,7 @@ export class FollowChild {
         else this.invalidate('full_required');
       }
     } catch (error) {
-      // No file yet means no other process wrote. Anything else means writes may have gone unseen: only a full pass restores coverage.
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.invalidate('full_required');
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.invalidate('full_required'); // no file: no other writer; any other failure: writes may be unseen
     }
   }
 
