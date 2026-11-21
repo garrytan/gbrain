@@ -55,7 +55,7 @@ The source members below behave differently on the Rust engine. Each difference 
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one
   `readSourceIncarnation` call per source.
 - The store keeps only the `state` and `reason` of a page's `page_embedding_budget` row
-  (`holdPageEmbedding`, key tag `h`). The spend columns (signature, spent, reserved, cap) have no
+  (`holdPageEmbedding`, key tag `2`). The spend columns (signature, spent, reserved, cap) have no
   record: the embedding plan that writes them still runs raw SQL and refuses on this engine.
   `readPageSizeRows` reads the kept hold, so it reports the same `state` and `reason` as the SQL
   engines and lists a held page of any size.
