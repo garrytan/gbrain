@@ -191,7 +191,8 @@ export async function expireFact(exec: SqlExecutor, id: number, opts?: { superse
 /**
  * Expire fact `id` now and end it at `until`, or, without one, at its own earlier end or now (never before it began).
  * forgetFactInFence's supersession, retirement and file-mirror expiry. True iff an unexpired row changed. A date text
- * (`'YYYY-MM-DD'`) is cast by the server, to midnight in the session TimeZone, as master's file-mirror stamp bound it.
+ * (`'YYYY-MM-DD'`) binds as master's file-mirror stamp bound it: PGLite casts it to midnight in the session TimeZone;
+ * postgres.js turns it into a Date (`new Date(text)`), so Postgres stores UTC midnight. The Rust store stores UTC midnight.
  */
 export async function expireFactUntil(exec: SqlExecutor, id: number, until: Date | string | null): Promise<boolean> {
   const result = await exec.run(sqlFragment`

@@ -38,8 +38,9 @@ keys.
 - **Times.** The store keeps microseconds. The TypeScript member sends `ingestedAt` as a millisecond ISO time,
   as PGLite's `timestamptz` parameter receives a `Date`, and returns `deleted_at` as a `Date`.
 - **A day text has no session zone.** Forget's file-mirror stamp calls `expireFactUntil(id, 'YYYY-MM-DD')`
-  (`src/core/facts/forget.ts`), as master bound that text. Postgres and PGLite cast it with `::timestamptz` to
-  midnight in the session TimeZone. The store has no session zone: `brain.expireFactUntil({ id, until })` reads
+  (`src/core/facts/forget.ts`), as master bound that text. PGLite casts it with `::timestamptz` to midnight in the session TimeZone.
+  Postgres stores UTC midnight: postgres.js turns the text into a `Date` (`new Date(text)`) before it binds the
+  `timestamptz` parameter. The store has no session zone: `brain.expireFactUntil({ id, until })` reads
   a day text as midnight UTC (`day_or_time` in `crates/gbrain-store/src/facts.rs`), PGLite's default zone. An ISO
   time, as the supersession passes, is the same instant on every engine.
 
