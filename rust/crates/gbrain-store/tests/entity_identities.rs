@@ -323,3 +323,61 @@ fn identity_decisions_link_confirmed_members_and_refuse_a_stale_revision() {
         [json!("people/bob-example")]
     );
 }
+
+#[test]
+fn identity_decisions_keep_non_empty_evidence_and_sweep_a_broken_sync_link() {
+    use gbrain_store::identity_reviews::ApplyDecisions;
+    let b = Brain::new("identity-decisions-evidence");
+    b.page("default", "companies/acme-example");
+    let decision = |id: &str, evidence: Value| {
+        json!({
+            "decision_id": id, "verdict": "different",
+            "members": [{"source_id": "default", "slug": "companies/acme-example"}],
+            "group_id": null, "entity_id": null, "canonical": null, "decided_by": "owner",
+            "decided_at": null, "origin": "database", "home_source_id": null, "git_blob": null,
+            "evidence": evidence,
+        })
+    };
+    b.store
+        .apply_identity_decisions(&de::<ApplyDecisions>(json!({ "upsert": [
+            decision("01", json!(["linkedin:acme-example"])), decision("02", json!([])), decision("03", Value::Null),
+        ] })))
+        .unwrap();
+    let read = b.store.list_identity_decisions().unwrap();
+    let evidence: Vec<Value> = read["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["evidence"].clone())
+        .collect();
+    assert_eq!(
+        evidence,
+        [json!(["linkedin:acme-example"]), Value::Null, Value::Null]
+    );
+    // A company link the sync made ('dedupe:auto') is swept by the apply, as the SQL apply does: a
+    // group left with one member is broken, so the apply removes it along with the decision.
+    let auto = json!({ "entity_id": "company/acme", "slug": "companies/acme-example", "source_id": "default",
+        "confidence": 1.0, "established_by": "dedupe:auto", "canonical": true });
+    assert!(
+        b.store
+            .link_entity_identity(&de::<IdentityLink>(auto))
+            .unwrap()
+    );
+    assert_eq!(
+        b.members(),
+        ["company/acme:default:companies/acme-example:true"]
+    );
+    let applied = b
+        .store
+        .apply_identity_decisions(&de::<ApplyDecisions>(json!({ "remove": ["01"] })))
+        .unwrap();
+    assert_eq!(applied["removed"], json!(1));
+    assert_eq!(
+        b.store.list_identity_decisions().unwrap()["decisions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(b.members().is_empty());
+}
