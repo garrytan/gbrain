@@ -205,6 +205,30 @@ impl Brain {
         })
     }
 
+    /// `listNameVariantCardCandidates(sourceId, query, policy)`: the candidates as entity-card
+    /// rows with their probe hits; a `null` policy reads every page.
+    #[napi]
+    pub fn list_name_variant_card_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        query: Value,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let query = required(query, "listNameVariantCardCandidates query")?;
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(
+                        v,
+                        "listNameVariantCardCandidates policy",
+                    )
+                })
+                .transpose()?;
+            s.list_name_variant_card_candidates(&source_id, &query, policy.as_ref())
+        })
+    }
+
     /// `readVisibleVariantPages(sourceId, slugs, policy)`: the live pages at `slugs` in list order;
     /// a `null` policy reads every page.
     #[napi]

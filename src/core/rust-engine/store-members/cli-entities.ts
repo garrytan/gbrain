@@ -8,7 +8,7 @@
  */
 import type {
   EntityCardMatch, EntityCardRow, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, MentionDueQuery, NameVariantCandidateQuery,
-  NameVariantCandidateRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, VariantPageRow,
+  NameVariantCandidateRow, NameVariantCardCandidateRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, VariantPageRow,
 } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
@@ -107,6 +107,16 @@ export const listVisibleNameVariantCandidates: StoreMember<[sourceId: string, q:
   const policy = storePagePolicy('listVisibleNameVariantCandidates', taken.excludePrivate, { callerReaders: true });
   return storeCall({ member: 'listVisibleNameVariantCandidates', sourceId }, () => brain.listVisibleNameVariantCandidates(sourceId, {
     types: [...q.types], slugPatterns: [...q.slugPatterns], probes: [...q.probes], limit: Math.max(0, Math.floor(q.limit)) }, policy ?? null));
+};
+
+/** listVisibleNameVariantCandidates as entity-card rows (readEntityCardRows' columns) with their probe hits. */
+export const listNameVariantCardCandidates: StoreMember<[sourceId: string, q: NameVariantCandidateQuery, opts?: { excludePrivate?: boolean }],
+  NameVariantCardCandidateRow[]> = (brain, sourceId, q, opts) => {
+  takeOptions('listNameVariantCardCandidates', q, ['types', 'slugPatterns', 'probes', 'limit']);
+  const taken = takeOptions('listNameVariantCardCandidates', opts, ['excludePrivate']);
+  const policy = storePagePolicy('listNameVariantCardCandidates', taken.excludePrivate, { callerReaders: true });
+  return storeCall({ member: 'listNameVariantCardCandidates', sourceId }, () => brain.listNameVariantCardCandidates(sourceId, {
+    types: [...q.types], slugPatterns: [...q.slugPatterns], probes: [...q.probes], limit: Math.max(0, Math.floor(q.limit)) }, policy ?? null)) as Promise<NameVariantCardCandidateRow[]>;
 };
 
 /** The live pages at `slugs` in list order under the page policy, read as readEntityCardRows reads it. */

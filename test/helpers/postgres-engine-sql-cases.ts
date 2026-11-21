@@ -775,7 +775,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'findFuzzyEntityCandidates': OOS.entityReads, 'findExactBasenameCandidates': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'listUnretiredPagesBySlugPattern': OOS.entityReads, 'listNameVariantCandidates': OOS.entityReads,
-  'countDistinctInboundLinkers': OOS.entityReads, 'listVisibleNameVariantCandidates': OOS.entityReads, 'readVisibleVariantPages': OOS.entityReads,
+  'countDistinctInboundLinkers': OOS.entityReads, 'listVisibleNameVariantCandidates': OOS.entityReads, 'listNameVariantCardCandidates': OOS.entityReads, 'readVisibleVariantPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'releaseUnpublishedClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
   'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql,
   'hasClaimableWrite': OOS.journal, 'selectClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
@@ -1681,6 +1681,10 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listVisibleNameVariantCandidates', [
     ['all', (e) => e.listVisibleNameVariantCandidates(SRC, { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 })],
     ['caller', (e) => e.listVisibleNameVariantCandidates(SRC, { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 }, { excludePrivate: true })],
+  ]),
+  ...variants('listNameVariantCardCandidates', [
+    ['all', (e) => e.listNameVariantCardCandidates(SRC, { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 })],
+    ['caller', (e) => e.listNameVariantCardCandidates(SRC, { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 }, { excludePrivate: true })],
   ]),
   ...variants('readVisibleVariantPages', [
     ['all', (e) => e.readVisibleVariantPages(SRC, [SLUG])],

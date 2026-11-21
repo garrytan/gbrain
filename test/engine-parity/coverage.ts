@@ -126,7 +126,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions'],
   entity_reads: ['readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'findFuzzyEntityCandidates', 'findExactBasenameCandidates', 'readRetirementHop', 'readEntityCardRows',
     'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages', 'listUnretiredPagesBySlugPattern', 'listNameVariantCandidates',
-    'countDistinctInboundLinkers', 'listVisibleNameVariantCandidates', 'readVisibleVariantPages'],
+    'countDistinctInboundLinkers', 'listVisibleNameVariantCandidates', 'readVisibleVariantPages', 'listNameVariantCardCandidates'],
   cycle_locks: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
     'assertCycleLease', 'takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease'],
   minion_jobs: ['admitJob', 'getJob', 'listJobs', 'claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'reclaimStalledJobs'],

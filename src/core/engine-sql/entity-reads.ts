@@ -288,6 +288,29 @@ export async function listVisibleNameVariantCandidates(exec: LegacyUnscopedRead,
   return exec.executeRaw<NameVariantCandidateRow>(text, params);
 }
 
+/** One name-variant candidate as an entity-card row (`ENTITY_CARD_COLUMNS_SQL`) with its probe hits. */
+export interface NameVariantCardCandidateRow extends EntityCardRow { probe_hits: number }
+
+/**
+ * listVisibleNameVariantCandidates as entity-card rows (the entity card's name-variant arm, verbs/entity-variants.ts):
+ * the same candidates under the same page policy, with the card columns, most probe hits first, then the shortest
+ * title, then by slug, at most `limit`.
+ */
+export async function listNameVariantCardCandidates(exec: LegacyUnscopedRead, sourceId: string, q: NameVariantCandidateQuery,
+  opts: { excludePrivate?: boolean } = {}): Promise<NameVariantCardCandidateRow[]> {
+  const limit = Math.max(0, Math.floor(q.limit));
+  const priv = opts.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('pages'))}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(ENTITY_CARD_COLUMNS_SQL)},
+                (SELECT count(*)::int FROM unnest(${[...q.probes]}::text[]) w WHERE pages.title ILIKE w OR pages.slug ILIKE w) AS probe_hits
+           FROM pages
+          WHERE deleted_at IS NULL AND source_id = ${sourceId}
+            AND (type = ANY(${[...q.types]}::text[]) OR slug LIKE ANY(${[...q.slugPatterns]}::text[]))
+            AND (title ILIKE ANY(${[...q.probes]}::text[]) OR slug ILIKE ANY(${[...q.probes]}::text[]))${priv}
+          ORDER BY probe_hits DESC, length(title), slug
+          LIMIT ${limit}`);
+  return exec.executeRaw<NameVariantCardCandidateRow>(text, params);
+}
+
 export interface VariantPageRow { slug: string; title: string | null; type: string | null; frontmatter: Record<string, unknown> | null }
 
 /**

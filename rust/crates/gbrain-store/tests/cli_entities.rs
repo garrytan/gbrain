@@ -438,6 +438,65 @@ fn name_variant_candidates_rank_by_probe_hits_then_title_length() {
 }
 
 #[test]
+fn name_variant_card_candidates_are_the_visible_candidates_as_card_rows() {
+    let dir = TempDir::new("cli-name-variant-cards");
+    let store = seeded(&dir);
+    put(
+        &store,
+        "default",
+        "people/ada-private",
+        json!({"type": "person", "title": "Ada", "compiled_truth": "secret body", "frontmatter": {"visibility": "private"}}),
+    );
+    let world = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        ..Default::default()
+    };
+    let q = NameVariantCandidateQuery {
+        types: vec!["company".into()],
+        slug_patterns: vec!["people/%".into()],
+        probes: vec!["%ADA%".into(), "%founder%".into()],
+        limit: 10,
+    };
+    for policy in [None, Some(&world)] {
+        let cards = store
+            .list_name_variant_card_candidates("default", &q, policy)
+            .unwrap();
+        let plain = store
+            .list_visible_name_variant_candidates("default", &q, policy)
+            .unwrap();
+        let got: Vec<(&str, u64)> = cards
+            .iter()
+            .map(|r| (r.card.slug.as_str(), r.probe_hits))
+            .collect();
+        let want: Vec<(&str, u64)> = plain
+            .iter()
+            .map(|r| (r.slug.as_str(), r.probe_hits))
+            .collect();
+        assert_eq!(got, want);
+        assert_eq!(
+            cards.iter().any(|r| r.card.slug == "people/ada-private"),
+            policy.is_none()
+        );
+    }
+    let cards = store
+        .list_name_variant_card_candidates("default", &q, None)
+        .unwrap();
+    let ada = cards.iter().find(|r| r.card.slug == "people/ada").unwrap();
+    assert_eq!(
+        (ada.card.source_id.as_str(), ada.card.page_type.as_str()),
+        ("default", "person")
+    );
+    assert_eq!(ada.card.frontmatter.get("identity"), Some(&json!("ada-1")));
+    assert!(ada.card.compiled_truth.is_some());
+    assert_eq!(ada.card.last_retrieved_at, None);
+    let row = serde_json::to_value(ada).unwrap();
+    assert_eq!(row["probe_hits"], json!(1));
+    assert_eq!(row["slug"], json!("people/ada"));
+    assert_eq!(row["type"], json!("person"));
+}
+
+#[test]
 fn visible_name_variants_skip_private_pages_under_the_policy() {
     let dir = TempDir::new("cli-name-variants-private");
     let store = seeded(&dir);

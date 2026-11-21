@@ -262,7 +262,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential',
   'readFolderAccess', 'cancelWriteRow', 'readRetirementHop', 'readEntityCardRows', 'findFuzzyEntityCandidates', 'findExactBasenameCandidates', 'listWriteRequestRows',
   'listUnretiredPagesBySlugPattern', 'listNameVariantCandidates', 'countDistinctInboundLinkers',
-  'listVisibleNameVariantCandidates', 'readVisibleVariantPages',
+  'listVisibleNameVariantCandidates', 'readVisibleVariantPages', 'listNameVariantCardCandidates',
   // The MCP tool reads (schema_stats, get_status_snapshot, cache_stats: engine-sql/cli-reads-ops.ts, telemetry.ts) and the put_pages
   // batch write (engine-sql/persistence-journal.ts, persistence-effect-scans.ts).
   'countLivePagesBySourceType', 'countLivePagesBySlugPrefixes', 'countSourcePagesAndChunks', 'readQueryCacheStats',

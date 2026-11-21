@@ -2814,6 +2814,28 @@
         ],
         "flagOnScopes": []
       },
+      "listNameVariantCardCandidates#all": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listNameVariantCardCandidates#caller": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listOverdueHeldWrites#import": {
         "flagOffLanes": [
           "pool"
@@ -6320,6 +6342,7 @@
         "listManagedRootBindings": "none",
         "listMemoryProposalRows": "none",
         "listNameVariantCandidates": "none",
+        "listNameVariantCardCandidates": "none",
         "listOauthClients": "none",
         "listOpenJobIdsInQueue": "none",
         "listOpenLoops": "none",

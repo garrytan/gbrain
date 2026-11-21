@@ -27,6 +27,7 @@ import { chunk, seedPage } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { FILE_DRIFT_MESSAGE } from '../../src/core/persistence/drift-conflicts.ts';
+import { ENTITY_NAMES_REFERENCES_KEY } from '../../src/core/entity-references-config.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -266,4 +267,45 @@ describe('engine parity: MCP tools a Rust brain refused', () => {
       expect(JSON.stringify(world.body)).not.toContain('private-drift');
       return { local: view(local.body), paged: view(paged.body).conflicts, second: view(second.body).conflicts, world: view(world.body) };
     }));
+
+  // The names form reads the same card-projection variant lookup as the full card. The cases turn its reference counts
+  // off: that read (mentions/referrers.ts) is raw SQL a Rust brain refuses, and it is not the read under test.
+  type NameRow = { found: boolean; slug?: string; title?: string; lead?: string; match?: unknown; suggestions?: Array<{ slug: string }>; ambiguous?: boolean };
+  const nameView = (a: ToolAnswer) => {
+    const [r] = ((a.body as { results?: NameRow[] } | null)?.results ?? []);
+    return { error: a.error, found: r?.found, slug: r?.slug ?? null, title: r?.title ?? null, lead: r?.lead ?? null, match: r?.match ?? null,
+      suggestions: (r?.suggestions ?? []).map(x => x.slug), ambiguous: r?.ambiguous ?? false };
+  };
+
+  parityTest('entity resolves a name that has no page to its one name variant, for a local and a remote caller',
+    { methods: ['listNameVariantCardCandidates'] }, async (engine) => {
+      const put = (slug: string, type: string, title: string, body: string) =>
+        engine.putPage(slug, { type, title, compiled_truth: body, timeline: '', frontmatter: {} }, { sourceId: 'default' });
+      await engine.setConfig(ENTITY_NAMES_REFERENCES_KEY, 'off');
+      await put('people/example-zelda', 'person', 'Example Zelda', 'Synthetic person.');
+      await put('notes/zelda-meeting', 'note', 'Zelda meeting', 'Met Zelda Example about the plan.');
+      const local = nameView(await call(engine, 'entity', { names: ['Zelda Example'] }));
+      const world = nameView(await call(engine, 'entity', { names: ['Zelda Example'] }, { remote: true }));
+      const want = { error: null, found: true, slug: 'people/example-zelda', title: 'Example Zelda', lead: 'Synthetic person.',
+        match: { kind: 'reordered', via: 'Zelda Example' }, suggestions: [], ambiguous: false };
+      expect(local).toEqual(want);
+      expect(world).toEqual(want);
+      return { local, world };
+    });
+
+  parityTest('entity follows a retired name variant to the live page it names',
+    { methods: ['listNameVariantCardCandidates', 'readEntityCardRows'] }, async (engine) => {
+      const put = (slug: string, title: string, frontmatter: Record<string, unknown> = {}) =>
+        engine.putPage(slug, { type: 'person', title, compiled_truth: `${title} page.`, timeline: '', frontmatter }, { sourceId: 'default' });
+      await engine.setConfig(ENTITY_NAMES_REFERENCES_KEY, 'off');
+      await put('people/example-yara', 'Example Yara', { superseded_by: 'people/yq-current' });
+      await put('people/yq-current', 'Yq Current');
+      const local = nameView(await call(engine, 'entity', { names: ['Yara Example'] }));
+      const world = nameView(await call(engine, 'entity', { names: ['Yara Example'] }, { remote: true }));
+      const want = { error: null, found: true, slug: 'people/yq-current', title: 'Yq Current', lead: 'Yq Current page.',
+        match: { kind: 'reordered', via: 'Yara Example' }, suggestions: [], ambiguous: false };
+      expect(local).toEqual(want);
+      expect(world).toEqual(want);
+      return { local, world };
+    });
 });

@@ -9,6 +9,7 @@ use crate::cli_reads::pg_text::pg_lower;
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, like, page_hidden};
+use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -139,6 +140,14 @@ pub struct NameVariantCandidateRow {
     #[serde(rename = "type")]
     pub page_type: String,
     pub frontmatter: Map<String, Value>,
+    pub probe_hits: u64,
+}
+
+/// One name-variant candidate as an entity-card row (`listNameVariantCardCandidates`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NameVariantCardCandidateRow {
+    #[serde(flatten)]
+    pub card: EntityCardRow,
     pub probe_hits: u64,
 }
 
@@ -332,24 +341,7 @@ impl Store {
             {
                 continue;
             }
-            let body = match p.compiled_truth.as_deref() {
-                Some(text) => Some(text.to_string()),
-                None => crate::page_body::truth_lead(&*read, p.id)?,
-            };
-            out.push(EntityCardRow {
-                compiled_truth: body.map(|b| {
-                    b.char_indices()
-                        .nth(CARD_PREFIX_CHARS)
-                        .map_or(b.clone(), |(at, _)| b[..at].to_string())
-                }),
-                updated_at: iso(p.updated_at_us),
-                last_retrieved_at: None,
-                frontmatter: Value::Object(p.frontmatter.clone()),
-                slug: p.slug,
-                source_id: p.source_id,
-                title: p.title,
-                page_type: p.page_type,
-            });
+            out.push(card_row(&*read, p)?);
         }
         Ok(out)
     }
@@ -439,44 +431,37 @@ impl Store {
         policy: Option<&PrivacyPolicy>,
     ) -> Result<Vec<NameVariantCandidateRow>> {
         let read = self.read()?;
-        let mut rows = Vec::new();
-        for p in all_pages(&*read)? {
-            if p.source_id != source_id || p.deleted_at_us.is_some() {
-                continue;
-            }
-            if !(q.types.contains(&p.page_type) || any_like(&p.slug, &q.slug_patterns, false)?) {
-                continue;
-            }
-            let mut hits = 0u64;
-            for probe in &q.probes {
-                if like(&p.title, probe, true)? || like(&p.slug, probe, true)? {
-                    hits += 1;
-                }
-            }
-            if hits == 0 {
-                continue;
-            }
-            if let Some(policy) = policy
-                && page_hidden(&*read, &p, policy)?
-            {
-                continue;
-            }
-            rows.push(NameVariantCandidateRow {
+        Ok(name_variant_pages(&*read, source_id, q, policy)?
+            .into_iter()
+            .map(|(p, hits)| NameVariantCandidateRow {
                 slug: p.slug,
                 title: p.title,
                 page_type: p.page_type,
                 frontmatter: p.frontmatter,
                 probe_hits: hits,
-            });
-        }
-        rows.sort_by(|a, b| {
-            b.probe_hits
-                .cmp(&a.probe_hits)
-                .then_with(|| a.title.chars().count().cmp(&b.title.chars().count()))
-                .then_with(|| a.slug.cmp(&b.slug))
-        });
-        rows.truncate(usize::try_from(q.limit).unwrap_or(usize::MAX));
-        Ok(rows)
+            })
+            .collect())
+    }
+
+    /// `listNameVariantCardCandidates(sourceId, q, policy)`: the candidates
+    /// `listVisibleNameVariantCandidates` reads, in the same order and under the same page policy,
+    /// as entity-card rows (`readEntityCardRows`) with their `probe_hits`.
+    pub fn list_name_variant_card_candidates(
+        &self,
+        source_id: &str,
+        q: &NameVariantCandidateQuery,
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Vec<NameVariantCardCandidateRow>> {
+        let read = self.read()?;
+        name_variant_pages(&*read, source_id, q, policy)?
+            .into_iter()
+            .map(|(p, probe_hits)| {
+                Ok(NameVariantCardCandidateRow {
+                    card: card_row(&*read, p)?,
+                    probe_hits,
+                })
+            })
+            .collect()
     }
 
     /// `readVisibleVariantPages(sourceId, slugs, policy)`: the live page of the source at each of
@@ -618,6 +603,73 @@ fn jsonb_text(value: &Value) -> String {
         }
         other => other.to_string(),
     }
+}
+
+/// The live pages of the source that are name-variant candidates for `q` (a type in `types` or a
+/// slug matching `slug_patterns`, and a title or slug matching a probe, ILIKE) and that `policy`
+/// (when given) does not hide, with their probe hits. Most hits first, then the shortest title
+/// (code points), then slug in byte order; at most `q.limit`.
+fn name_variant_pages(
+    read: &dyn KvRead,
+    source_id: &str,
+    q: &NameVariantCandidateQuery,
+    policy: Option<&PrivacyPolicy>,
+) -> Result<Vec<(PageRecord, u64)>> {
+    let mut rows = Vec::new();
+    for p in all_pages(read)? {
+        if p.source_id != source_id || p.deleted_at_us.is_some() {
+            continue;
+        }
+        if !(q.types.contains(&p.page_type) || any_like(&p.slug, &q.slug_patterns, false)?) {
+            continue;
+        }
+        let mut hits = 0u64;
+        for probe in &q.probes {
+            if like(&p.title, probe, true)? || like(&p.slug, probe, true)? {
+                hits += 1;
+            }
+        }
+        if hits == 0 {
+            continue;
+        }
+        if let Some(policy) = policy
+            && page_hidden(read, &p, policy)?
+        {
+            continue;
+        }
+        rows.push((p, hits));
+    }
+    rows.sort_by(|(a, a_hits), (b, b_hits)| {
+        b_hits
+            .cmp(a_hits)
+            .then_with(|| a.title.chars().count().cmp(&b.title.chars().count()))
+            .then_with(|| a.slug.cmp(&b.slug))
+    });
+    rows.truncate(usize::try_from(q.limit).unwrap_or(usize::MAX));
+    Ok(rows)
+}
+
+/// One entity-card row for a live page: the bounded body prefix
+/// (`left(coalesce(compiled_truth, truth_lead), 65536)`) and no retrieval time.
+fn card_row(read: &dyn KvRead, p: PageRecord) -> Result<EntityCardRow> {
+    let body = match p.compiled_truth.as_deref() {
+        Some(text) => Some(text.to_string()),
+        None => crate::page_body::truth_lead(read, p.id)?,
+    };
+    Ok(EntityCardRow {
+        compiled_truth: body.map(|b| {
+            b.char_indices()
+                .nth(CARD_PREFIX_CHARS)
+                .map_or(b.clone(), |(at, _)| b[..at].to_string())
+        }),
+        updated_at: iso(p.updated_at_us),
+        last_retrieved_at: None,
+        frontmatter: Value::Object(p.frontmatter),
+        slug: p.slug,
+        source_id: p.source_id,
+        title: p.title,
+        page_type: p.page_type,
+    })
 }
 
 #[cfg(test)]

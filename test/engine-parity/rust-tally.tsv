@@ -72,7 +72,7 @@ test/engine-parity/link-read-options.test.ts	17	0
 test/engine-parity/link-reads.test.ts	14	0
 test/engine-parity/link-temporal.test.ts	15	0
 test/engine-parity/links.test.ts	38	0
-test/engine-parity/mcp-tools-rust.test.ts	8	0
+test/engine-parity/mcp-tools-rust.test.ts	10	0
 test/engine-parity/memory-mutation-reads.test.ts	6	0
 test/engine-parity/memory-proposal-reads.test.ts	3	0
 test/engine-parity/oauth-clients.test.ts	6	0
