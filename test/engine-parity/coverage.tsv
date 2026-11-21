@@ -561,7 +561,7 @@ readOAuthClientMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readAccessTokenMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readLocalWriterMemberGrant	access_grants	yes	6	no	yes	yes	serves
 readSharedSkillServingEpoch	access_grants	yes	5	no	yes	yes	serves
-insertAccessMember	access_members	yes	33	no	yes	yes	serves
+insertAccessMember	access_members	yes	34	no	yes	yes	serves
 setAccessMemberDisabled	access_members	yes	15	no	yes	yes	serves
 setAccessMemberEmail	access_members	yes	2	no	yes	yes	serves
 setAccessMemberKind	access_members	yes	2	no	yes	yes	serves
@@ -575,9 +575,9 @@ insertAccessMemberLink	access_members	yes	2	no	yes	yes	serves
 deleteAccessMemberLink	access_members	yes	1	no	yes	yes	serves
 listAccessMemberLinks	access_members	yes	1	no	yes	yes	serves
 readCredentialBindingForUpdate	access_members	yes	4	no	yes	yes	serves
-readCredentialMemberId	access_members	yes	1	no	yes	yes	serves
+readCredentialMemberId	access_members	yes	2	no	yes	yes	serves
 readLinkedMember	access_members	yes	1	no	yes	yes	serves
-writeCredentialBinding	access_members	yes	7	no	yes	yes	serves
+writeCredentialBinding	access_members	yes	8	no	yes	yes	serves
 writeCredentialReadsUnscoped	access_members	yes	5	no	yes	yes	serves
 readSharedSkillCatalogIdentity	shared_skill_members	yes	3	no	yes	yes	serves
 listSharedSkillCatalogHeads	shared_skill_members	yes	5	no	yes	yes	serves
@@ -945,7 +945,7 @@ readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	26	no	yes	yes	serves
 listOauthClients	minion_queue	yes	4	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
-insertAccessToken	minion_queue	yes	37	no	yes	yes	serves
+insertAccessToken	minion_queue	yes	38	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
 setAccessTokenMinTrust	minion_queue	yes	2	no	yes	yes	serves
 readLiveAccessTokenScope	minion_queue	yes	2	no	yes	yes	serves

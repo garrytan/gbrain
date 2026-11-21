@@ -22,7 +22,8 @@
  *    one more grant revision; a second conversion finds nothing.
  *    `credentialScopeFor` on an agent job's legacy token reads the live token's creation time and its stored
  *    `--reads-unscoped` opt-out (a minted token has none; an opted-out token reads unscoped, a cleared one does not); a
- *    revoked token and an id no token has read as not opted out, creation unknown.
+ *    revoked token and an id no token has read as not opted out, creation unknown. `defaultSourceMemberWriter` reads a
+ *    bound token's stored member for its default-source page writes.
  *  - Regression: a store that finds a revoked token, ignores the id-or-name pair, matches a name partly, lets two tokens
  *    share a hash, takes a tier it should refuse, or returns the ambiguity as a pick of the first row: a floor set on the
  *    wrong credential, which widens or narrows what an agent can read. A store whose scope read fails, which
@@ -35,6 +36,7 @@
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { credentialScopeFor } from '../../src/core/access/requester-scope.ts';
+import { defaultSourceMemberWriter } from '../../src/core/persistence/page-visibility.ts';
 import { setMinTrust } from '../../src/core/trust/min-trust.ts';
 import { mintLegacyToken, readActiveTokenPermissions, readActiveTokenPrivatePages, revokeLegacyTokenById } from '../../src/core/token-mint.ts';
 import { hashToken } from '../../src/core/utils.ts';
@@ -858,5 +860,19 @@ describe('engine parity: access_tokens members', () => {
       expect(optedOut).toEqual({ readsUnscoped: true, created: true, stored: 'a time' });
       expect(cleared).toEqual(minted);
       return { minted, optedOut, cleared };
+    });
+
+  // A remote page write in the default source by a legacy token bound to a member is that member's page (GST-2059); an
+  // unbound or missing token writes a shared page.
+  parityTest('the default-source member read of a legacy token\'s write answers the stored member, and no member for an unbound or missing token',
+    { methods: ['insertAccessToken', 'insertAccessMember', 'writeCredentialBinding', 'readCredentialMemberId'] }, async (engine) => {
+      await engine.insertAccessMember({ id: 'alice-example', displayName: null, email: null, kind: 'person', groups: [], bindTokenId: null });
+      const bound = await mintLegacyToken(engine, { name: 'bound-writer', scopes: ['read', 'write'], takesHolders: ['world'] });
+      const unbound = await mintLegacyToken(engine, { name: 'unbound-writer', scopes: ['read', 'write'], takesHolders: ['world'] });
+      await bindCredential(engine, { kind: 'token', id: bound.id }, { member: 'alice-example' });
+      const writer = (id: string) => defaultSourceMemberWriter(engine, { remote: true, principal: { kind: 'legacy_token', id }, sourceId: 'default' } as never);
+      const out = { bound: await writer(bound.id), unbound: await writer(unbound.id), missing: await writer('00000000-0000-4000-8000-000000000000') };
+      expect(out).toEqual({ bound: 'member:alice-example', unbound: null, missing: null });
+      return out;
     });
 });
