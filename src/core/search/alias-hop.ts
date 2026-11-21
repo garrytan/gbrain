@@ -60,10 +60,10 @@ export interface IdentityTierOpts {
   requireSafeChunks?: boolean;
   excludeSlugs?: string[];
   excludeSlugPrefixes?: string[];
-  /** Caller's type filters: a page of another type is never injected (same gate as exact-lookup). */
-  type?: string;
-  types?: string[];
 }
+
+/** Identity opts plus the caller's type filters: a page of another type is never injected (same gate as exact-lookup). */
+type AliasGateOpts = IdentityTierOpts & { type?: string; types?: string[] };
 
 /** True when an identity injection must skip `slug` under the caller's excludes. */
 export function isExcludedIdentity(slug: string, opts: Pick<IdentityTierOpts, 'excludeSlugs' | 'excludeSlugPrefixes'>): boolean {
@@ -291,7 +291,7 @@ function topOrganicScore(results: SearchResult[]): number {
 async function fetchAliasCanonical(
   engine: import('../engine.ts').BrainEngine,
   ref: { slug: string; source_id: string },
-  opts: IdentityTierOpts,
+  opts: AliasGateOpts,
 ): Promise<import('../types.ts').Page | null> {
   let page;
   try {
