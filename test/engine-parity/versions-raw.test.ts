@@ -68,6 +68,40 @@ describe('engine parity: versions', () => {
     },
   );
 
+  // pages-03: frontmatter keeps a timestamp as the text written, so a valid_from or valid_until stored as text counts
+  // when the YAML parser that typed it before read it as UTC midnight (any YAML timestamp form, offsets included), and
+  // its date is the UTC date. One table on every engine. The Rust store's own pick (valid_time.rs valid_date) is not
+  // reached by any engine read yet; it must accept exactly this table when pickValidTimeEdition is wired.
+  parityTest(
+    'getVersions reads a valid_from or valid_until written as midnight UTC in any YAML timestamp form as its date',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      const forms: Array<[string, string | null]> = [
+        ['2024-03-01', '2024-03-01'], ['2024-03-01T00:00:00.000Z', '2024-03-01'], ['2024-03-01T00:00:00Z', '2024-03-01'],
+        ['2024-03-01T00:00:00+00:00', '2024-03-01'], ['2024-03-01T00:00:00', '2024-03-01'], ['2024-03-01 00:00:00', '2024-03-01'],
+        ['2024-03-01t00:00:00Z', '2024-03-01'], ['2024-03-01  00:00:00', '2024-03-01'], ['2024-03-01\t00:00:00', '2024-03-01'],
+        ['2024-03-01T00:00:00+00', '2024-03-01'], ['2024-03-01T00:00:00 Z', '2024-03-01'], ['2024-03-01T00:00:00-00:00', '2024-03-01'],
+        ['2024-03-01T02:00:00+02:00', '2024-03-01'], ['2024-03-01T01:30:00+01:30', '2024-03-01'], ['2024-02-29T23:00:00-01:00', '2024-03-01'],
+        ['2024-03-01T00:00:00.000000Z', '2024-03-01'], ['2024-3-1T00:00:00Z', '2024-03-01'], ['1000-01-01T01:00:00+01:00', '1000-01-01'],
+        ['2024-03-01T12:00:00Z', null], ['2024-03-01T00:00:01Z', null], ['2024-03-01T00:00:00.5Z', null], ['2024-03-01T00:00:00+01:00', null],
+        ['2024-02-30T00:00:00Z', null], ['2024-13-01', null], ['0999-12-31', null], ['2024-03', null], ['2024-03-01T00:60:00Z', null], ['nope', null],
+        // An instant that rolls past year 9999 is no four-digit date on any engine.
+        ['9999-12-31T24:00:00Z', null], ['9999-12-31T23:00:00-01:00', null],
+      ];
+      const read: Record<string, unknown> = {}, want: Record<string, unknown> = {};
+      for (const [i, [value, day]] of forms.entries()) {
+        const slug = `notes/valid-form-${i}`;
+        await engine.putPage(slug, { type: 'note', title: value, compiled_truth: 'Body.', timeline: '', frontmatter: { valid_from: value, valid_until: value } });
+        await engine.createVersion(slug);
+        const [v] = await engine.getVersions(slug, { limit: 1 });
+        read[value] = { valid_from: (v as { valid_from?: unknown }).valid_from ?? null, valid_until: (v as { valid_until?: unknown }).valid_until ?? null };
+        want[value] = { valid_from: day, valid_until: day };
+      }
+      expect(read).toEqual(want);
+      return read;
+    },
+  );
+
   parityTest(
     'createVersion on a missing page throws; getVersions of a missing page is empty',
     { methods: ['createVersion', 'getVersions'] },

@@ -16,6 +16,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from './engine.ts';
+import { keptNumberText } from './data-frontmatter.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { privatePagesFilterForCaller, remoteReadFloorSql } from './search/private-visibility.ts';
 import { quarantineFilterFragment } from './quarantine.ts';
@@ -52,7 +53,7 @@ export function isCoreFrontmatter(frontmatter: unknown): boolean {
 /** `core_priority` when it is a positive integer, else the default. */
 export function corePriority(frontmatter: unknown): number {
   const raw = frontmatter && typeof frontmatter === 'object' ? (frontmatter as Record<string, unknown>).core_priority : undefined;
-  const n = typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : raw;
+  const n = typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : keptNumberText(raw) ?? raw;
   return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : CORE_DEFAULT_PRIORITY;
 }
 

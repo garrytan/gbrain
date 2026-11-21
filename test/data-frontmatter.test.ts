@@ -8,7 +8,8 @@ describe('frontmatter data and serialization compatibility', () => {
     const expected = "---\ntitle: A title\ncount: 3\nenabled: true\ndate: 2024-06-01T00:00:00.000Z\ncode: '001'\nmultiline: |\n  one\n  two\n---\n# Body\n\n---\nend\n";
     expect(stringifyDataFrontmatter('# Body\n\n---\nend', data)).toBe(expected);
     const parsed = parseDataFrontmatter(expected);
-    expect(parsed.data).toEqual(data);
+    // pages-03: nothing in a file reads back as a Date; a Date a write site passes reads back as its ISO text.
+    expect(parsed.data).toEqual({ ...data, date: '2024-06-01T00:00:00.000Z' });
     expect(parsed.content).toBe('# Body\n\n---\nend\n');
   });
 

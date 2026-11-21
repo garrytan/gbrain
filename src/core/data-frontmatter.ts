@@ -1,13 +1,82 @@
-import { load, dump, Type, DEFAULT_SCHEMA, type Schema } from 'js-yaml';
-import { NAIVE_DATETIME } from './effective-date.ts';
+import * as jsYaml from 'js-yaml';
+import { load, dump, Type, Schema, DEFAULT_SCHEMA } from 'js-yaml';
 
-// js-yaml's timestamp type builds `2024-02-30` as March 1 (Date.UTC rolls the
-// day over). A calendar-invalid timestamp stays the string the author wrote,
-// so date consumers reject it instead of storing the wrong day.
+/** js-yaml's built-in types (exported at runtime; @types/js-yaml does not declare them). */
+const types = (jsYaml as unknown as { types: Record<'null' | 'bool' | 'int' | 'float' | 'merge' | 'str' | 'seq' | 'map' | 'binary' | 'omap' | 'pairs' | 'set' | 'timestamp', Type> }).types;
+
+/**
+ * pages-03: frontmatter keeps every scalar as the user wrote it. The schema is
+ * YAML's core schema (null, bool, int, float) with no timestamp typing, so
+ * `born: 1990-05-01` and `last_met: 2024-03-01T10:00:00+02:00` stay the exact
+ * strings in the file. A plain scalar becomes a number only when the number
+ * prints back as the same text (`2134`, `0.5`), so `zip: 02134`,
+ * `version: 1.10`, `n: 1.0`, `big: 12345678901234567890` and `.inf` stay
+ * strings instead of turning into 2134, 1.1, 1, a rounded integer or null.
+ * Dumping with the same schema prints such strings plain again, so a parsed
+ * value renders back as the text it came from. Readers of dates parse the
+ * string (effective-date.ts parseDateLoose reads every YAML timestamp form).
+ */
+type ScalarType = Type & { resolve(data: string): boolean; construct(data: string): unknown };
+const CORE_NUMBERS = new Schema({ explicit: [types.str, types.seq, types.map], implicit: [types.int, types.float] });
+/** Whether a plain scalar's number prints back as the scalar itself (JS text, or js-yaml's own dump of it). */
+function printsAsWritten(data: string, n: unknown): boolean {
+  return typeof n === 'number' && Number.isFinite(n) && (String(n) === data || dump(n, { schema: CORE_NUMBERS }).trimEnd() === data);
+}
+/** js-yaml's core int or float type, resolving only a scalar whose number prints back as written. */
+function exactNumber(base: Type): Type {
+  const core = base as ScalarType;
+  return Object.assign(Object.create(Object.getPrototypeOf(core)) as Type, core, {
+    resolve: (data: string) => core.resolve(data) && printsAsWritten(data, core.construct(data)),
+  });
+}
+/** A Date a write site puts into frontmatter prints as its ISO text; nothing in a file ever reads back as a Date. */
+const dateText = new Type('tag:gbrain.dev,2026:date', {
+  kind: 'scalar',
+  resolve: () => false,
+  instanceOf: Date,
+  represent: (date: object) => (date as Date).toISOString(),
+});
+/** An explicit `!!timestamp` tag keeps its text too. */
+const timestampText = new Type('tag:yaml.org,2002:timestamp', {
+  kind: 'scalar',
+  resolve: (data: string) => (types.timestamp as ScalarType).resolve(data),
+  construct: (data: string) => data,
+});
+export const FRONTMATTER_SCHEMA = new Schema({
+  implicit: [types.null, types.bool, exactNumber(types.int), exactNumber(types.float), types.merge, dateText],
+  // Explicit `!!int` / `!!float` tags still mean a number; the rest are js-yaml's default explicit types.
+  explicit: [types.str, types.seq, types.map, types.binary, types.omap, types.pairs, types.set, types.int, types.float, timestampText],
+});
+
+/**
+ * The number a frontmatter string FRONTMATTER_SCHEMA kept as written would have been under the old typing (`1.0` -> 1,
+ * `007` -> 7, `+5` -> 5), or null: not a YAML number, or one that prints as written (that text is a string only because
+ * it was quoted). For readers that compared a value the old parser typed as a number.
+ */
+export function keptNumberText(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  for (const type of [types.int, types.float] as ScalarType[]) {
+    if (!type.resolve(value)) continue;
+    const n = type.construct(value);
+    return typeof n === 'number' && Number.isFinite(n) && !printsAsWritten(value, n) ? n : null;
+  }
+  return null;
+}
+
+/** Whether `value` is text YAML reads as a timestamp (the old parser typed it as a Date). */
+export function isYamlTimestampText(value: string): boolean {
+  return (types.timestamp as ScalarType).resolve(value.trim());
+}
+
+/**
+ * The typing gbrain applied before pages-03 (js-yaml's default schema, a calendar-invalid timestamp kept as text).
+ * Pages stored before then hold its values (a date as its UTC ISO timestamp, `02134` as 2134), so file-versus-database
+ * comparisons read a file this way too (`legacyFrontmatterOf`). Never used to store a value.
+ */
 type TimestampBehavior = { resolve(data: string): boolean; construct(data: string): Date; represent(data: object): string };
 const baseTimestamp = (DEFAULT_SCHEMA as unknown as { compiledTypeMap: { scalar: Record<string, TimestampBehavior> } })
   .compiledTypeMap.scalar['tag:yaml.org,2002:timestamp']!;
-const calendarTimestamp = new Type('tag:yaml.org,2002:timestamp', {
+export const LEGACY_TYPED_SCHEMA = DEFAULT_SCHEMA.extend({ implicit: [new Type('tag:yaml.org,2002:timestamp', {
   kind: 'scalar',
   resolve: (data: string) => {
     if (!baseTimestamp.resolve(data)) return false;
@@ -16,18 +85,10 @@ const calendarTimestamp = new Type('tag:yaml.org,2002:timestamp', {
     const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
     return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
   },
-  // An offset-less datetime keeps its wall-clock reading for brain.timezone.
-  construct: (data: string) => {
-    const date = baseTimestamp.construct(data);
-    if (/^\d{4}-\d{1,2}-\d{1,2}(?:[Tt]|[ \t]+)\d/.test(data) && !/(?:[Zz]|[+-]\d{1,2}(?::?\d{2})?)\s*$/.test(data)) {
-      Object.defineProperty(date, NAIVE_DATETIME, { value: true });
-    }
-    return date;
-  },
+  construct: (data: string) => baseTimestamp.construct(data),
   instanceOf: Date,
   represent: baseTimestamp.represent,
-});
-export const FRONTMATTER_SCHEMA = DEFAULT_SCHEMA.extend({ implicit: [calendarTimestamp] });
+})] });
 
 /**
  * Most characters a YAML document's aliases may add once expanded. js-yaml
@@ -150,13 +211,13 @@ function withoutNulJson<T>(value: T): T {
 }
 
 /** Parse data only. There is deliberately no pluggable engine or evaluator. */
-export function parseDataFrontmatter(input: string): DataFrontmatter {
+export function parseDataFrontmatter(input: string, schema: Schema = FRONTMATTER_SCHEMA): DataFrontmatter {
   const { original, fenced } = scanDataFrontmatter(input);
   if (!fenced) return { data: {}, content: original, hasFrontmatter: false };
   const { language, block } = fenced;
   let value: unknown;
   try {
-    value = block.trim() === '' ? {} : language === 'json' ? JSON.parse(block) : loadBoundedYaml(block, { schema: FRONTMATTER_SCHEMA });
+    value = block.trim() === '' ? {} : language === 'json' ? JSON.parse(block) : loadBoundedYaml(block, { schema });
   } catch (error) {
     // Parser messages can contain the document itself. Report only location,
     // so request/job diagnostics never copy private frontmatter into logs.
@@ -180,7 +241,10 @@ export function parseDataFrontmatter(input: string): DataFrontmatter {
  * omits the key (conditional spread) or writes null instead.
  */
 export function dumpFrontmatterYaml(data: unknown, opts: { lineWidth?: number } = {}): string {
-  return dump(data, { ...opts, replacer: (key: string, value: unknown) => {
+  // Quoting follows js-yaml's default schema, not FRONTMATTER_SCHEMA: a string whose plain text any YAML reader (an
+  // older gbrain, PyYAML, Obsidian) would type, like '02134', '1.10', '0x1F' or '2024-03-01', is written quoted, so
+  // every reader of the file gets the same string. FRONTMATTER_SCHEMA reads the quoted and the plain text alike.
+  return dump(data, { ...opts, schema: DEFAULT_SCHEMA, replacer: (key: string, value: unknown) => {
     if (value === undefined) {
       throw new TypeError(`Frontmatter field "${key}" is undefined. Why: YAML has no undefined, so the field would be dropped silently. Fix: omit the key at the write site (\`...(v ? { ${key}: v } : {})\`) or pass null.`);
     }
@@ -197,4 +261,4 @@ export function stringifyDataFrontmatter(content: string, data: Record<string, u
 
 // Small compatibility surface for callers that parse and serialize together.
 // Unlike the removed dependency, stringify never parses its content argument.
-export const dataFrontmatter = Object.assign(parseDataFrontmatter, { stringify: stringifyDataFrontmatter });
+export const dataFrontmatter = Object.assign((input: string, schema?: Schema) => parseDataFrontmatter(input, schema), { stringify: stringifyDataFrontmatter });

@@ -8,6 +8,7 @@
 // phase and `chronicle-backfill` all call it; time rules (recency, invite
 // end, settle window) apply only when the caller passes the policy for them.
 import type { PageType } from '../types.ts';
+import { keptInstant } from '../effective-date.ts';
 
 export type ChronicleEligibility =
   | { ok: true }
@@ -53,28 +54,21 @@ export function isChronicleShaped(type: string, slug: string): boolean {
   return (ELIGIBLE_TYPES as string[]).includes(type) || RESCUE_SLUG_PREFIXES.some((p) => slug.startsWith(p));
 }
 
-function toDate(value: unknown): Date | null {
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  if (typeof value !== 'string' || !value.trim()) return null;
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
 /** The page's own date: an authored effective_date, else frontmatter `date`/`start`. null = undated. */
 export function chroniclePageDate(input: Pick<ChronicleEligibilityInput, 'effectiveDate' | 'effectiveDateSource' | 'frontmatter'>): Date | null {
   const authored = input.effectiveDateSource != null && !UNAUTHORED_DATE_SOURCES.has(input.effectiveDateSource);
   if (authored) {
-    const d = toDate(input.effectiveDate);
+    const d = keptInstant(input.effectiveDate);
     if (d) return d;
   }
   const fm = input.frontmatter ?? {};
-  return toDate(fm.date) ?? toDate(fm.start);
+  return keptInstant(fm.date) ?? keptInstant(fm.start);
 }
 
 /** C13: the meeting's end (else start) when the page declares one. */
 function meetingEnd(fm: Record<string, unknown> | null | undefined): Date | null {
   if (!fm) return null;
-  return toDate(fm.end) ?? toDate(fm.start);
+  return keptInstant(fm.end) ?? keptInstant(fm.start);
 }
 
 export function isChronicleEligible(input: ChronicleEligibilityInput, policy?: ChronicleTimePolicy): ChronicleEligibility {
@@ -97,7 +91,7 @@ export function isChronicleEligible(input: ChronicleEligibilityInput, policy?: C
     if (dated && dated.getTime() < policy.now.getTime() - policy.recentDays * 86_400_000) return { ok: false, reason: 'history' };
   }
   if (policy.settleSeconds != null && policy.settleSeconds > 0) {
-    const changed = toDate(input.changedAt);
+    const changed = keptInstant(input.changedAt);
     if (changed && policy.now.getTime() - changed.getTime() < policy.settleSeconds * 1000) {
       return { ok: false, reason: 'settling', wait: true, until: new Date(changed.getTime() + policy.settleSeconds * 1000) };
     }

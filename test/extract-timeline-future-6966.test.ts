@@ -51,6 +51,9 @@ for (const kind of testBackends()) describe(`meeting timeline waits for future i
     ['a past end wins over a later start', { start: FUTURE, end: PAST }, PAST, 1],
     ['ended with a timezone offset', { start: '2000-01-01T09:00:00+08:00', end: '2000-01-01T10:00:00+08:00' }, PAST, 1],
     ['unparseable start and end keep the past meeting date', { start: 'tbd', end: false }, PAST, 1],
+    // pages-03: `end: 1.10` is kept as the text 1.10, which is not a date (Date.parse read it as 2001-01-10).
+    ['a number kept as text is not an end date', { start: FUTURE, end: '1.10' }, PAST, 0],
+    ['a YAML space-separated timestamp kept as text is read as its instant', { start: PAST, end: '2999-01-01 10:00:00 +02:00' }, PAST, 0],
   ] as const)('%s', async (_label, frontmatter, date, expected) => {
     await seedMeeting({ ...frontmatter }, new Date(date));
     const result = await extract();

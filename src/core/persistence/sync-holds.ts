@@ -1280,7 +1280,8 @@ export interface SyncImportProvenance {
  * leading import counter to bump when the import's own parsing or canonical form changes. It deliberately leaves out the
  * release, so a parser fingerprint holds across releases that change no parsing.
  */
-export const SYNC_IMPORT_PARSER_VERSION = `import=1;frontmatter=${RECOVERY_VERSION};fence=${FENCE_VERSION}`;
+// import=2 (pages-03): frontmatter values are kept as written, so every Markdown file is read once more after the upgrade.
+export const SYNC_IMPORT_PARSER_VERSION = `import=2;frontmatter=${RECOVERY_VERSION};fence=${FENCE_VERSION}`;
 
 /** The provenance a preparation knows before its page is written; page id, revision and disk bytes come from the publication or the waiver that settles it. */
 export type SyncImportProvenanceBase = Omit<SyncImportProvenance, 'page_id' | 'revision' | 'disk_sha256' | 'disk_blob_oid' | 'recorded_at' | 'validated'>;

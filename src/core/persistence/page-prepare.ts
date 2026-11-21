@@ -4,7 +4,8 @@ import { sizeStateField } from '../page-embedding-budget.ts';
 import { enterClaimStep, waitingOnWhile, type ClaimPhaseClock } from './claim-phase.ts';
 import { boundedReads } from './bounded-reads.ts';
 import { isQuarantined, quarantineOutcome } from '../quarantine.ts';
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
+import { legacyWrittenValues, mayHoldLegacyTyped, PARSED_FILE_TEXT, restoreWrittenValues } from '../frontmatter-legacy.ts';
 import { join, relative, sep } from 'node:path';
 import { isSyncMetafile, matchesAnyGlob } from '../sync.ts';
 import { syncExcludePatterns } from './sync-discovery.ts';
@@ -372,14 +373,15 @@ export function labelEditFit(slug: string, before: Buffer | FileBytes, content: 
 export async function protectedLocalEdit(engine: BrainEngine, slug: string, fileText: string, snapshot: PageSnapshot, activePack?: ParseOpts['activePack']): Promise<boolean> {
   snapshot = (await materializedSnapshot(engine, snapshot))!;
   const file = parseMarkdown(fileText, slug, { activePack });
-  if (file.title !== snapshot.page.title || importedFileType(file, snapshot.page, false) !== snapshot.page.type) return true;
+  const type = importedFileType(file, snapshot.page, false); // aligns the title too (pages-03)
+  if (file.title !== snapshot.page.title || type !== snapshot.page.type) return true;
   const fileFrontmatter = comparableFrontmatter(withoutSafetyAssessments(file.frontmatter));
   const stored = comparableFrontmatter(withoutSafetyAssessments(snapshot.page.frontmatter ?? {}));
   return [...new Set([...Object.keys(fileFrontmatter), ...Object.keys(stored)])].some(key => digest(fileFrontmatter[key] ?? null) !== digest(stored[key] ?? null)
     && (POLICY_KEYS.has(key) || protectedReconcileKey(key) || SPLICE_REFUSED_KEYS.has(key) || key === 'slug'));
 }
 /** The type a file's parse compares with (`fileMatchesSnapshot`), after aligning the parse with what its import over `page` stores. */
-function importedFileType(parsed: ParsedMarkdown, page: Pick<Page, 'type' | 'frontmatter'>, inferred: boolean): Page['type'] {
+function importedFileType(parsed: ParsedMarkdown, page: Pick<Page, 'type' | 'frontmatter' | 'title'>, inferred: boolean): Page['type'] {
   // #5521 parity for subtype (#5928): a pack rule is not part of the file's bytes, so a file
   // without an explicit `subtype:` keeps the stored subtype (or none); the import still stamps it.
   delete parsed.inferredSubtype;
@@ -413,6 +415,8 @@ async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: By
       fence => fenceTooLargeError(slug, snapshot.page.source_id, fence), between)
       : file.digests;
     const parsed = { ...file.parsed, compiled_truth: fileDigests.truth, timeline: fileDigests.timeline };
+    // pages-03: the file's frontmatter head, so the alignment reads a value the old typing stored as stored (alignLegacyTyped).
+    Object.defineProperty(parsed, PARSED_FILE_TEXT, { value: Buffer.concat([reading.prefix, bytes.subarray(reading.skip, reading.skip + FRONTMATTER_HEAD_MAX_BYTES)]).toString('utf8') });
     const type = importedFileType(parsed, snapshot.page, inferred);
     stored ??= await storedBodyDigests(engine, Number(snapshot.page.id), ledger, between);
     return digest(canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type }, parsed.tags))
@@ -425,6 +429,46 @@ async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: By
   const skip = bom[0] === 0xef && bom[1] === 0xbb && bom[2] === 0xbf ? 3 : 0;
   const prefix = await inferredHeadPrefix(bytes.subarray(skip, skip + FRONTMATTER_HEAD_MAX_BYTES), await sourcePath());
   return !!prefix?.length && await matches({ prefix, skip }, true) === true;
+}
+/** Whether the page owns no file in its source's checkout: any file at its path is not its canonical file, so it is neither read, written nor removed. */
+async function ownsNoFile(engine: BrainEngine, sourceId: string, slug: string, snapshot: PageSnapshot | null): Promise<boolean> {
+  // #6212: a legacy slug (admitted only to delete or restore its existing row) never owns a file: its recorded
+  // source_uri or source_path may name the file of another page, such as the one sync now slugs it to.
+  if (!isOpPageSlug(slug)) return true;
+  // #5409: a read-only mirror's checkout belongs to its Git remote; nothing is written or removed there.
+  if (await sourceMirrorReadOnly(engine, sourceId)) return true;
+  if (!snapshot || snapshot.page.source_path) return false;
+  if (await isMirrorOnlyPage(engine, sourceId, slug)) return true;
+  // #5254: a page written while its source was unbound stays database-only in
+  // every state (live, tombstone, restore, revert, delete, purge); any file at
+  // its derived path is not its canonical file and is neither written nor removed.
+  if (await isUnboundSourcePage(engine, sourceId, slug)) return true;
+  // #6948: a page that gave its file up to a duplicate it was merged into never writes or removes a file again (restore,
+  // edit, purge); any file at its slug path is another page's.
+  return isOriginTwinPage(engine, sourceId, slug);
+}
+/**
+ * pages-03: the first write of a whole page (string content) over a page stored under the old frontmatter typing takes
+ * the file's text for the values the caller left alone. This returns, for such a page, the values its canonical file holds as written where the
+ * stored page holds the old typing (frontmatter-legacy.ts legacyWrittenValues); empty for every other page. Reads only
+ * the file's head, at the path prepareFileTarget compares, and only of a page that owns its file (ownsNoFile); any failure reads as no file (the write is unchanged).
+ */
+async function legacyFileValues(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot | null, content: unknown, activePack?: ParseOpts['activePack']): Promise<Map<string, unknown>> {
+  if (typeof content !== 'string' || !row.worktree_id || !snapshot || snapshot.page.deleted_at || !mayHoldLegacyTyped(snapshot.page.frontmatter)) return new Map();
+  try {
+    if (await ownsNoFile(engine, row.source_id, row.slug, snapshot)) return new Map();
+    const binding = await getWorktreeBinding(engine, row.source_id);
+    if (!binding?.local_path) return new Map();
+    const root = join(binding.local_path, binding.relative_path), mode = await scannerSlugRootMode(engine, row.source_id, root);
+    const captured = recordedPathFromFileUri(snapshot.page.source_uri, root);
+    const path = nativeFileTarget(binding.local_path, resolveSourceLocalFilePath(root, snapshot.page.source_path, row.slug, mode)
+      ?? (captured ? join(root, captured) : slugPathFile(root, row.slug, mode)));
+    if (!isWriteTargetContained(path, root) || !existsSync(path)) return new Map();
+    const head = Buffer.alloc(FRONTMATTER_HEAD_MAX_BYTES), fd = openSync(path, 'r');
+    let text: string;
+    try { text = head.subarray(0, readSync(fd, head, 0, head.length, 0)).toString('utf8'); } finally { closeSync(fd); }
+    return legacyWrittenValues(parseMarkdown(text, row.slug, { activePack }).frontmatter, text, comparableFrontmatter(snapshot.page.frontmatter));
+  } catch { return new Map(); }
 }
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'> & Partial<Pick<WriteRequest, 'sequence'>> & { operation?: string }, snapshot: PageSnapshot | null,
   content: string | Uint8Array | StreamedFileContent | null, hostId?: string, options: { allowMissing?: boolean; deleting?: boolean; capture?: { path: string; hash: string }; activePack?: ParseOpts['activePack']; remote?: boolean;
@@ -446,19 +490,7 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   // large-file.ts), and the push gate scans a staged file over the cap in bounded windows (workspace-push.ts).
   if (content !== null && !isStreamedContent(content) && Buffer.byteLength(content, 'utf-8') > PUSH_SCAN_MAX_FILE_BYTES) throw opError('request_too_large', 'The canonical file would exceed the pre-push secret-scan cap.',
     `Nothing was written. The rendered file of ${row.slug} is over ${PUSH_SCAN_MAX_FILE_BYTES} bytes, which the pre-push secret scan cannot scan, so it would block every push of source ${row.source_id}. Keep the page under the 24 MiB page ceiling (docs/guides/memory-boundaries.md#large-pages).`);
-  // #6212: a legacy slug (admitted only to delete or restore its existing row) never owns a file: its recorded
-  // source_uri or source_path may name the file of another page, such as the one sync now slugs it to.
-  if (!isOpPageSlug(row.slug)) return undefined;
-  // #5409: a read-only mirror's checkout belongs to its Git remote; nothing is written or removed there.
-  if (await sourceMirrorReadOnly(engine, row.source_id)) return undefined;
-  if (snapshot && !snapshot.page.source_path && await isMirrorOnlyPage(engine, row.source_id, row.slug)) return undefined;
-  // #5254: a page written while its source was unbound stays database-only in
-  // every state (live, tombstone, restore, revert, delete, purge); any file at
-  // its derived path is not its canonical file and is neither written nor removed.
-  if (snapshot && !snapshot.page.source_path && await isUnboundSourcePage(engine, row.source_id, row.slug)) return undefined;
-  // #6948: a page that gave its file up to a duplicate it was merged into never writes or removes a file again (restore,
-  // edit, purge); any file at its slug path is another page's.
-  if (snapshot && !snapshot.page.source_path && await isOriginTwinPage(engine, row.source_id, row.slug)) return undefined;
+  if (await ownsNoFile(engine, row.source_id, row.slug, snapshot)) return undefined;
   const binding = await getWorktreeBinding(engine, row.source_id, hostId);
   if (!binding?.local_path) throw opError('owner_unavailable', 'The canonical worktree is unavailable on this host.',
     `This host does not hold source ${row.source_id}'s canonical worktree (or it has no local path), so the file of ${row.slug} was not written. Inspect the owner before resubmitting; the write publishes on the host that owns the source.`,
@@ -1149,10 +1181,10 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     const { timeline, materialized } = await materializeTimeline(engine,parsed,row.slug,snapshot,writer,timelinePolicy);
     if (materialized) content = serializePageToMarkdown({...snapshot.page,...parsed,timeline,type:parsed.typeExplicit ? parsed.type : snapshot.page.type},parsed.tags);
   }
-  const storedTier = snapshot ? await storedPageTier(engine, row.source_id, row.slug) : null;
-  // Detect an exact canonical no-op before ingestion can invoke any provider.
-  // Revision/identity checks above still apply to stale identical replacements.
-  if (snapshot && (snapshot.page.deleted_at != null) === targetDeleted && typeof content === 'string') {
+  // pages-03: an older page whose file holds written values is never a no-op (publishing it would retype the file).
+  const storedTier = snapshot ? await storedPageTier(engine, row.source_id, row.slug) : null, written = await legacyFileValues(engine, row, snapshot, content, activePack);
+  // Detect an exact canonical no-op before ingestion can invoke any provider; revision/identity checks above still apply.
+  if (snapshot && (snapshot.page.deleted_at != null) === targetDeleted && typeof content === 'string' && written.size === 0) {
     const incoming = parseMarkdown(content,row.slug,{ activePack });
     resolveParsedSubtype(incoming, snapshot.page);
     const tags = versionTags ?? [...new Set([...snapshot.tags,...incoming.tags])].sort();
@@ -1192,7 +1224,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     ...(gateTrust ? { writeGate: gateInput(gateTrust, row.id) } : {}),
     // Provenance compares the caller's page with the stored one, so it runs before the server's trust marker is stamped.
     prepareFrontmatter: page => {
-      provenance = putProvenance(row, snapshot, page);
+      restoreWrittenValues(page.frontmatter, snapshot?.page.frontmatter, written); provenance = putProvenance(row, snapshot, page);
       suppliedTrustMarker = page.frontmatter.trust_tier;
       if (labelGuard) heldLabels = holdPrivacyLabels(page.frontmatter, snapshot?.page.frontmatter, labelGuard);
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);

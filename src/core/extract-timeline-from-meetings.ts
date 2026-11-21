@@ -14,7 +14,7 @@ import type { TimelineBatchInput } from './engine.ts';
 import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-mention.ts';
 import { isCrossSourceLinksEnabled } from './link-extraction.ts';
 import { sourceIsOwnerOnly } from './access/owner-only.ts';
-import { computeEffectiveDate } from './effective-date.ts';
+import { computeEffectiveDate, keptInstant } from './effective-date.ts';
 import { parseFrontmatter } from './backfill-effective-date.ts';
 import { folderRestrictedSql, isDerivationPrivate } from './search/private-visibility.ts';
 import { quarantineFilterFragment } from './quarantine.ts';
@@ -244,8 +244,10 @@ export async function extractTimelineFromMeetings(
     // #6966: a retained calendar invite is not evidence that a discussion happened.
     // Defer its rows until the first valid declared end, else start, else meeting
     // date; the source page stays as it is for meeting prep, and a later run admits it.
+    // pages-03: a value kept as text is read as js-yaml read it (a timestamp form as its instant, `1.10` as a number,
+    // which is never a date here), so a kept value decides the same way as before.
     const happenedAt = [frontmatter.end, frontmatter.start, date]
-      .map(value => value instanceof Date ? value.getTime() : typeof value === 'string' ? Date.parse(value) : NaN)
+      .map(value => keptInstant(value)?.getTime() ?? NaN)
       .find(value => Number.isFinite(value));
     if (happenedAt !== undefined && happenedAt > Date.now()) continue;
 

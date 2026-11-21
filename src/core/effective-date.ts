@@ -37,6 +37,7 @@
  */
 
 import type { EffectiveDateSource } from './types.ts';
+import { keptNumberText } from './data-frontmatter.ts';
 
 export interface EffectiveDateResult {
   date: Date | null;
@@ -106,7 +107,9 @@ const MONTHS: Record<string, number> = {
   nov: 11, november: 11, dec: 12, december: 12,
 };
 const NUMERIC_DATE_RE = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/;
-const DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?\s*(Z|[+-]\d{2}:?\d{2})?$/i;
+// pages-03: every YAML 1.1 timestamp form (one-digit month/day/hour, tab or spaced separator, `+2` / `-05` / `+0200`
+// offsets) as well as the ISO shapes, since frontmatter now keeps the timestamp text as written instead of a Date.
+const DATETIME_RE = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[Tt]|[ \t]+)(\d{1,2}):(\d{2})(?::(\d{2})(\.\d+)?)?[ \t]*(Z|[+-]\d{1,2}(?::?\d{2})?)?$/i;
 const MONTH_DAY_YEAR_RE = /^(?:[a-z]+,?\s+)?([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$/i;
 const DAY_MONTH_YEAR_RE = /^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,9})\.?,?\s+(\d{4})$/i;
 /** Chat-export style "1:56 pm on 8 May, 2023": the clock time is dropped and the date parsed. */
@@ -179,6 +182,17 @@ function zonedWallTime(wall: Date, timeZone: string): Date {
  * (`2024-02-30`) is rejected rather than rolled over. Other strings fall back
  * to Date.parse.
  */
+/**
+ * pages-03: a frontmatter value as an instant, read the way the YAML parser read it before values were kept as written
+ * (an offset-less time as UTC). A number, or text the old parser typed as a number (`1.10`, `1e308`), is no instant.
+ */
+export function keptInstant(value: unknown): Date | null {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
+  if (typeof value !== 'string' || !value.trim() || keptNumberText(value) !== null) return null;
+  const date = parseDateLoose(value);
+  return date && Number.isFinite(date.getTime()) ? date : null;
+}
+
 export function parseDateLoose(value: unknown, timeZone?: string): Date | null {
   if (value == null) return null;
   const zone = timeZone && timeZone !== 'UTC' ? timeZone : null;
@@ -194,14 +208,19 @@ export function parseDateLoose(value: unknown, timeZone?: string): Date | null {
     const datetime = DATETIME_RE.exec(trimmed);
     if (datetime) {
       const [, y, mo, d, h, mi, sec, frac, offset] = datetime;
-      const wall = utcCalendarDate(+y, +mo, +d, +h, +mi, +(sec ?? 0), frac ? Math.round(+frac * 1000) : 0);
+      // Milliseconds are the fraction's first three digits, as js-yaml read them.
+      const wall = utcCalendarDate(+y, +mo, +d, +h, +mi, +(sec ?? 0), frac ? +frac.slice(1, 4).padEnd(3, '0') : 0);
       if (!wall || +h > 23 || +mi > 59 || +(sec ?? 0) > 59) return null;
       if (!offset) return zone ? zonedWallTime(wall, zone) : wall;
       if (offset.toUpperCase() === 'Z') return wall;
       const sign = offset.startsWith('-') ? -1 : 1;
-      const [zh, zm] = [+offset.slice(1, 3), +offset.slice(-2)];
+      const digits = offset.slice(1).replace(':', '');
+      const [zh, zm] = digits.length <= 2 ? [+digits, 0] : [+digits.slice(0, -2), +digits.slice(-2)];
       return new Date(wall.getTime() - sign * (zh * 60 + zm) * 60_000);
     }
+    // pages-03: `published: 1.10` is kept as the text `1.10`; it was a number before, never a Date.parse date (2001-01-10).
+    const number = keptNumberText(trimmed);
+    if (number !== null) return parseDateLoose(number);
     const dated = trimmed.replace(TIME_ON_PREFIX_RE, '');
     const mdy = MONTH_DAY_YEAR_RE.exec(dated);
     if (mdy && MONTHS[mdy[1].toLowerCase()]) return utcCalendarDate(+mdy[3], MONTHS[mdy[1].toLowerCase()], +mdy[2]);

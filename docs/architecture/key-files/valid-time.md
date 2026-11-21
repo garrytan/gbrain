@@ -4,7 +4,7 @@ GBRA-217. Guide: [page history](../../guides/page-history.md#valid-time). Record
 [belief ledger](belief-ledger.md).
 
 - `src/core/valid-time.ts` — the one date normaliser (`validDate` in TypeScript, `validDateSql` in SQL, the same
-  pattern: `YYYY-MM-DD`, a YAML Date or a midnight-UTC timestamp; anything else is undated), the pure status rules
+  pattern: `YYYY-MM-DD`, a YAML Date or a YAML timestamp in any form whose instant is midnight UTC, such as `T00:00:00Z` or `02:00:00+02:00`; anything else, or an instant past year 9999, is undated), the pure status rules
   (`validTimeVerdict`: status, history `retained|incomplete|unknown`, the one `why`), the plain-read status
   (`currentValidTime`), the write advisory (`validTimeWriteAdvisory`) and the client's version-skew check
   (`assertValidTimeEcho`, `host_upgrade_required`). Intervals are half-open, as links are.

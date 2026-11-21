@@ -1,4 +1,4 @@
-import { dataFrontmatter as matter, FrontmatterLanguageError, loadBoundedYaml as yamlLoad, YamlAliasBoundError } from './data-frontmatter.ts';
+import { dataFrontmatter as matter, FrontmatterLanguageError, keptNumberText, loadBoundedYaml as yamlLoad, YamlAliasBoundError } from './data-frontmatter.ts';
 import type { Page, PageType } from './types.ts';
 import { resolveSlugForPath, slugifyPath } from './sync.ts';
 import {
@@ -323,12 +323,12 @@ export function parseMarkdown(
 ): ParsedMarkdown {
   const head = parseMarkdownHead(content, opts);
   const { compiled_truth, timeline } = splitBody(head.body);
-  return {
+  return Object.defineProperty({ // pages-03: the text read, for alignLegacyTyped (frontmatter-legacy.ts)
     frontmatter: comparableFrontmatter(head.frontmatter),
     compiled_truth: compiled_truth.trim(),
     timeline: timeline.trim(),
     ...parsedMarkdownFields(head, () => inferTitleFromBody(head.body) || inferTitleFromEmbeddedFrontmatter(head.body), filePath, opts),
-  };
+  }, Symbol.for('gbrain.parsed-file-text'), { value: content });
 }
 
 /** #6729: parseMarkdown's title from the content alone (frontmatter, first H1, embedded fence), with no filename fallback; '' when none. */
@@ -1189,7 +1189,7 @@ export function inferTypeAndSubtypeFromPack(
   for (const st of subtypes) {
     if (st.when.frontmatter_field !== undefined && frontmatter !== undefined) {
       const value = frontmatter[st.when.frontmatter_field];
-      if (st.when.frontmatter_value !== undefined && value === st.when.frontmatter_value) {
+      if (st.when.frontmatter_value !== undefined && (value === st.when.frontmatter_value || typeof st.when.frontmatter_value === 'number' && keptNumberText(value) === st.when.frontmatter_value)) {
         return { type: typeName, subtype: st.name };
       }
     }

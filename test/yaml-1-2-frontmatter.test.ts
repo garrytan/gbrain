@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { dump, load } from 'js-yaml';
 import { parseDataFrontmatter, stringifyDataFrontmatter } from '../src/core/data-frontmatter.ts';
-import { NAIVE_DATETIME } from '../src/core/effective-date.ts';
 
 // js-yaml 4 parses YAML 1.2 core scalars. These cases pin what changed from
 // js-yaml 3 (YAML 1.1 integers) and what must not change (dates, duplicate
@@ -14,22 +13,20 @@ describe('frontmatter scalars under YAML 1.2 (js-yaml 4)', () => {
     expect(fm('duration: 1:20:05')).toEqual({ duration: '1:20:05' });
   });
 
-  test('a leading zero is decimal, 0o is octal, underscores are not digit separators', () => {
-    expect(fm('id: 010')).toEqual({ id: 10 });
-    expect(fm('mode: 0o755')).toEqual({ mode: 0o755 });
+  test('pages-03: a number is typed only when it prints back as written; 010, 0o755 and 1_000 stay the text written', () => {
+    expect(fm('id: 010')).toEqual({ id: '010' });
+    expect(fm('mode: 0o755')).toEqual({ mode: '0o755' });
     expect(fm('count: 1_000')).toEqual({ count: '1_000' });
+    expect(fm('n: 10\nx: -2.5\ny: !!int 010')).toEqual({ n: 10, x: -2.5, y: 10 });
   });
 
   test('yes/no/on/off stay strings; only true/false are booleans', () => {
     expect(fm('a: yes\nb: off\nc: true\nd: False')).toEqual({ a: 'yes', b: 'off', c: true, d: false });
   });
 
-  test('dates still load as Date, calendar-invalid dates stay strings, naive datetimes keep their marker', () => {
-    const data = fm('date: 2024-02-29\nbad: 2024-02-30\nat: 2024-03-01 09:15:00');
-    expect(data.date).toBeInstanceOf(Date);
-    expect((data.date as Date).toISOString()).toBe('2024-02-29T00:00:00.000Z');
-    expect(data.bad).toBe('2024-02-30');
-    expect((data.at as Date & Record<symbol, unknown>)[NAIVE_DATETIME]).toBe(true);
+  test('pages-03: dates and datetimes stay the text written (no timestamp typing)', () => {
+    const data = fm('date: 2024-02-29\nbad: 2024-02-30\nat: 2024-03-01 09:15:00\noff: 2024-03-01T10:00:00+02:00');
+    expect(data).toEqual({ date: '2024-02-29', bad: '2024-02-30', at: '2024-03-01 09:15:00', off: '2024-03-01T10:00:00+02:00' });
   });
 
   test('duplicate keys are refused and merge keys still merge', () => {

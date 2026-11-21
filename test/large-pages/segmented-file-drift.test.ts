@@ -31,6 +31,8 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
+import { legacyTypedFrontmatter } from '../../src/core/frontmatter-legacy.ts';
+import { contentHash } from '../../src/core/utils.ts';
 import { SEGMENT_MAX_BYTES } from '../../src/core/page-body/limits.ts';
 import { bodyDigestWork } from '../../src/core/page-body/body-digests.ts';
 import { PAGE_MAX_BYTES } from '../../src/core/page-size-policy.ts';
@@ -209,6 +211,70 @@ test('a file edited on disk still refuses soft delete, purge and restore as drif
       expect(await refusal(submit(engine, f, 'restore_page', slug))).toEqual(inline);
       expect((await pageState(engine, f, slug))?.deleted).toBe(true);
       expect(readFileSync(file, 'utf8') === drifted).toBe(true);
+    } finally {
+      await disposePersistenceConsumer(engine);
+    }
+  }
+}), 900_000);
+
+test('a page over the ceiling stored under the old frontmatter typing is not drift: its file still deletes', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await managedSource(engine);
+    try {
+      const slug = 'notes/typed';
+      const file = join(f.root, `${slug}.md`);
+      writeFileSync(file, huge.replace('type: note\n', 'type: note\nzip: 02134\nversion: 1.10\n'));
+      await disposePersistenceConsumer(engine);
+      await ownerImportFile(engine, f.sourceId, file, `${slug}.md`);
+      const [row] = await engine.executeRaw<{ body_storage: string; frontmatter: Record<string, unknown> }>('SELECT body_storage, frontmatter FROM pages WHERE source_id=$1 AND slug=$2', [f.sourceId, slug]);
+      expect(row?.body_storage).toBe('segmented');
+      expect(row?.frontmatter).toMatchObject({ zip: '02134', version: '1.10' });
+      // What an older gbrain stored for the same file: the values typed as numbers.
+      await coordinated(engine, f.sourceId, tx => tx.executeRaw(
+        `UPDATE pages SET frontmatter = frontmatter || '{"zip":2134,"version":1.1}'::jsonb WHERE source_id=$1 AND slug=$2`, [f.sourceId, slug]));
+      expect(await submit(engine, f, 'delete_page', slug)).toMatchObject({ status: 'soft_deleted' });
+      expect(existsSync(file)).toBe(false);
+    } finally {
+      await disposePersistenceConsumer(engine);
+    }
+  }
+}), 900_000);
+
+test('the re-read of a page over the ceiling stored under the old typing keeps its paid scan state', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await managedSource(engine);
+    try {
+      const slug = 'notes/scanned';
+      const file = join(f.root, `${slug}.md`);
+      const text = huge.replace('type: note\n', 'type: note\nzip: 02134\nversion: 1.10\n');
+      writeFileSync(file, text);
+      await disposePersistenceConsumer(engine);
+      await ownerImportFile(engine, f.sourceId, file, `${slug}.md`);
+      type Row = { id: number; body_storage: string; frontmatter: Record<string, unknown>; content_hash: string };
+      const row = async () => (await engine.executeRaw<Row>('SELECT id, body_storage, frontmatter, content_hash FROM pages WHERE source_id=$1 AND slug=$2', [f.sourceId, slug]))[0]!;
+      const first = await row();
+      expect(first.body_storage).toBe('segmented');
+      const parsed = parseMarkdown(text, `${slug}.md`);
+      const hashOf = (frontmatter: Record<string, unknown>) => contentHash({ title: parsed.title, type: parsed.type, compiled_truth: parsed.compiled_truth, timeline: parsed.timeline, frontmatter, tags: [] });
+      expect(hashOf(first.frontmatter)).toBe(first.content_hash); // the stored hash is the formula over the stored values
+      // What an older gbrain left: the old typing and the hash over it, and a finished atom scan at that hash.
+      const legacy = { ...first.frontmatter, ...legacyTypedFrontmatter(text) };
+      expect(legacy).toMatchObject({ zip: 2134, version: 1.1 });
+      const oldHash = hashOf(legacy);
+      await coordinated(engine, f.sourceId, async tx => {
+        await tx.executeRaw('UPDATE pages SET frontmatter=$1::text::jsonb, content_hash=$2 WHERE id=$3', [JSON.stringify(legacy), oldHash, first.id]);
+        await tx.executeRaw('DELETE FROM extract_atoms_page_state WHERE page_id=$1', [first.id]);
+        await tx.executeRaw(`INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned)
+          SELECT incarnation, $1, $2, 0, true FROM sources WHERE id=$3`, [first.id, oldHash, f.sourceId]);
+      });
+      await disposePersistenceConsumer(engine);
+      await ownerImportFile(engine, f.sourceId, file, `${slug}.md`, { pageId: first.id, revision: await revisionOf(engine, f, slug) });
+      const reread = await row();
+      expect(reread.frontmatter).toMatchObject({ zip: '02134', version: '1.10' });
+      expect(reread.content_hash).toBe(first.content_hash);
+      // The scan state moved with the page to the hash it now holds, so the page is not scanned again.
+      expect(await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM extract_atoms_page_state WHERE page_id=$1 AND content_hash=$2',
+        [first.id, reread.content_hash])).toEqual([{ n: 1 }]);
     } finally {
       await disposePersistenceConsumer(engine);
     }

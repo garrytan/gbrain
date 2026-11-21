@@ -20,6 +20,7 @@ import { CHRONICLE_EXTRACTOR_VERSION } from './contract.ts';
 import { digest, sha256 } from '../persistence/digest.ts';
 import { buildChronicleEvent, pinDepth, publishChronicleGeneration, type BuiltChronicleEvent } from './publish.ts';
 import { diagnoseMalformedProposals, type MalformedProposalDiagnostics } from './proposal-diagnostics.ts';
+import { keptInstant } from '../effective-date.ts';
 
 export interface ChronicleEventProposal {
   when: string;            // ISO datetime or YYYY-MM-DD
@@ -219,13 +220,6 @@ export function lastMessageAt(body: string, fallbackDate: string | undefined): D
   return last;
 }
 
-function asDate(value: unknown): Date | null {
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  if (typeof value !== 'string' || !value.trim()) return null;
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
 /**
  * The judge input for one immutable depth snapshot (E5: the judge never re-reads the page). `lastMessage` is the
  * body's last message time when the caller read the body itself (a segmented page, block by block); `compiled_truth`
@@ -246,7 +240,7 @@ export function chronicleJudgeContext(page: { slug: string; type: string; title:
   const own = chroniclePageDate({ effectiveDate: page.effective_date as Date | string | null | undefined,
     effectiveDateSource: page.effective_date_source ?? null, frontmatter: fm });
   const last = lastMessage !== undefined ? lastMessage : lastMessageAt(body, own?.toISOString().slice(0, 10));
-  const pageDates = [own, asDate(fm.end), last].filter((d): d is Date => d !== null);
+  const pageDates = [own, keptInstant(fm.end), last].filter((d): d is Date => d !== null);
   return {
     effectiveDate, attendees, pageDates,
     input: { slug: page.slug, type: page.type, title: page.title, body, effectiveDate, attendees },

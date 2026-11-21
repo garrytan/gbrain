@@ -18,7 +18,8 @@ import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts'
  */
 
 import { createHash } from 'crypto';
-import { loadBoundedYaml as yamlLoad } from './data-frontmatter.ts';
+import { FRONTMATTER_SCHEMA, loadBoundedYaml } from './data-frontmatter.ts';
+const yamlLoad = (text: string) => loadBoundedYaml(text, { schema: FRONTMATTER_SCHEMA });
 import { existsSync, readFileSync, readdirSync, copyFileSync, writeFileSync, mkdirSync, lstatSync } from 'fs';
 import { join, relative, resolve, dirname, basename } from 'path';
 import type { BrainEngine } from './engine.ts';

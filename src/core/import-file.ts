@@ -13,6 +13,8 @@ import { basename, extname, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { classifyImportHold, parseMarkdown, resolveParsedSubtype, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
+import { carryHashKeyedPageState, legacyHashToCarry } from './frontmatter-legacy.ts';
+import { hasCapability } from './engine-capabilities.ts';
 import { alignWithStored } from './persistence/align-stored.ts';
 import { CODE_FILE_MAX_BYTES, isLargePageBytes } from './page-size-policy.ts';
 import { importSizeLimit, MAX_FILE_SIZE, screenImportContent, settleContentDisposition, stripGateOwnedMarkers, type ContentRefusal, type FenceScreen } from './import-screen.ts';
@@ -485,6 +487,7 @@ export async function importFromContent(
       tags: parsed.tags,
     });
 
+    const carryHashFrom = legacyHashToCarry(existing, parsed.frontmatter, content, hash, frontmatter => contentHash({ ...parsed, frontmatter })); // pages-03
     const parsedPage: ParsedPage = {
       type: parsed.type,
       title: parsed.title,
@@ -781,6 +784,7 @@ export async function importFromContent(
       const pageId = segmented?.applied ? segmented.applied.pageId : written && written.deleted_at == null ? written.id : undefined;
       const deferSeal = opts.coordinated === true && pageId !== undefined && !segmented;
       await pipelined(tx, [
+        async () => { if (carryHashFrom && pageId !== undefined && hasCapability(tx, 'raw_sql')) await carryHashKeyedPageState(tx, txOpts.sourceId, Number(pageId), carryHashFrom, hash); },
         async () => {
           // Tag reconciliation (A14): frontmatter tags carry tag_source='frontmatter'.
           // A frontmatter-owned row whose tag left the frontmatter is deleted; rows

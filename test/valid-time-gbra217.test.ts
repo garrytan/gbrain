@@ -206,6 +206,14 @@ for (const backend of testBackends()) {
       expect((await read(renewal, '2026-06-01')).valid_time).toMatchObject({ status: 'in_force', chosen_is_current: true, why: 'ambiguous_edition_dates' });
     });
 
+    test('an as_of read treats a valid_from that rolls past year 9999 as no date, on every engine', async () => {
+      // '9999-12-31T24:00:00Z' rolls over to year 10000; validDate and the SQL pick (validDateSql) both refuse it.
+      const slug = fresh('rollover');
+      await put(slug, 'Earlier text.', ["valid_from: '2026-01-01'"]);
+      await put(slug, 'Rolled text.', ["valid_from: '9999-12-31T24:00:00Z'"]);
+      expect((await read(slug, '2026-06-01')).valid_time).toMatchObject({ why: null });
+    });
+
     test('B-T1: a withdrawn scheduled edition and a backfill recorded last stay the rule pick, flagged', async () => {
       const withdrawn = fresh('withdrawn');
       await put(withdrawn, 'Edition A.', ["valid_from: '2026-01-01'"]);
@@ -382,10 +390,15 @@ for (const backend of testBackends()) {
       expect(r.valid_time).toMatchObject({ valid_from: '2026-02-01', undated_versions: 1 });
       expect(r.compiled_truth).toContain('Quoted.');
       expect((await read(slug, '2026-01-15')).compiled_truth).toContain('Unquoted.');
-      const inputs = ['2026-01-01', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00+00:00', '2026-02-29', '2028-02-29', '2026-02-30', '2026-13-01', '2026-00-10', '2026-01', '2026', '0999-01-01', '2026-01-01T09:00:00Z', 'soon', ''];
+      const inputs = ['2026-01-01', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00+00:00', '2026-02-29', '2028-02-29', '2026-02-30', '2026-13-01', '2026-00-10', '2026-01', '2026', '0999-01-01', '2026-01-01T09:00:00Z', '9999-12-31T24:00:00Z', '9999-12-31T23:00:00-01:00', 'soon', ''];
       for (const input of inputs) {
         const [row] = await engine.executeRaw<{ d: string | null }>('SELECT ' + validDateSql('$1::text') + ' AS d', [input]);
         expect([input, row!.d ?? null]).toEqual([input, validDate(input)]);
+      }
+      // A rollover past year 9999 is refused by both, not only by the TypeScript slice.
+      for (const input of ['9999-12-31T24:00:00Z', '9999-12-31T23:00:00-01:00']) {
+        const [row] = await engine.executeRaw<{ d: string | null }>('SELECT ' + validDateSql('$1::text') + ' AS d', [input]);
+        expect([input, row!.d ?? null, validDate(input)]).toEqual([input, null, null]);
       }
     });
 
