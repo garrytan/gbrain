@@ -161,6 +161,9 @@ export async function dispatchFactsBackstopEffect(engine: BrainEngine, effect: P
       notabilityFilter: connector ? 'high-only' : notabilityFilter,
       visibility: effect.data.visibility === 'world' ? 'world' : 'private',
       persistence_request_id: effect.request_id, page_id: effect.data.page_id, revision: effect.revision,
+      // A remote write's job runs as a remote caller (facts-absorb handler): the owner socket sends none of its writes. Set
+      // only to narrow, so a local write's job data stays as it was.
+      ...(row!.authority?.remote !== false ? { remote_write: true } : {}),
     }, { queue: 'default', idempotency_key: factsAbsorbWriteKey(effect.request_id), max_attempts: 5, backoff_delay: 60_000 });
     await completeEffect(tx, effect, { facts: 'queued', job_id: job.id });
   });

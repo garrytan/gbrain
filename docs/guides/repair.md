@@ -4347,6 +4347,19 @@ Each file gets one minimal line change in one class:
 | `interpretive` | Fold unquoted continuation lines into the value above, keep the later of a duplicated key, quote an unclosed `[`/`{` or a `#`-leading title, insert a missing closing `---`, remove a `slug:` line that names another page, re-import a page from its file, re-bind a held rename to the old page's current revision. | Only with `--include-ambiguous`. |
 | `needs_review` | No rule fixes it (mis-indented YAML, a protected key such as `visibility`, an import that would keep page data the file does not carry, a file over the [page size limit](memory-boundaries.md#large-page-limits)). | Never written. The preview names the exact manual fix. |
 
+A file held for something other than its frontmatter (a `file_drift` hold of a
+deleted or purged page, a `page_identity_changed` hold such as two spellings of
+one path, an origin conflict, a write that raced the database) is
+`needs_review` with that hold's own fix, for example the
+[`repair file-drift --held`](#file-drift-held) preview (`--side deleted`
+restores or keeps a deleted page after you decide): importing it would decide
+that hold without you. So is any file whose import would bring a
+deleted page back (`page_deleted`: restore it with `gbrain restore` first) or
+re-create a purged one (`page_purged`). So are two files whose paths differ
+only by case and name one page (`notes/Standup.md` and `notes/standup.md`), held or
+not: importing one would pick a spelling. Frontmatter repair never imports
+any of these.
+
 Two passes: when interpretive candidates exist, the safe preview's
 `next_actions` carry both the safe apply and the `--include-ambiguous` preview.
 Review each interpretation in the full diff, then approve all of them or only
