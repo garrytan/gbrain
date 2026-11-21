@@ -99,26 +99,108 @@ describe('blocker 3: rows keyed by the caller\'s spelling and prefixes typed the
   });
 });
 
-describe('notes: delete_page, add_timeline_entry and add_tag by a stored spelling', () => {
-  test('each is refused with the legacy-spelling refusal, never run on a composed twin, and the page stays as it was', async () => {
-    const stored = 'notes/w-caf\u0065\u0301';
-    await storeAs('notes/w-seed', stored, 'Writes');
-    const writes: Array<[string, Record<string, unknown>]> = [
-      ['add_tag', { slug: stored, tag: 'added' }],
-      ['remove_tag', { slug: stored, tag: 'gone' }],
-      ['append_page', { slug: stored, text: 'more', request_id: '5b0c1a52-8a4e-4a3c-9f0e-2d6a7c1e9b11' }],
-      ['edit_page', { slug: stored, expected_revision: (await engine.readPageSnapshot(stored, { sourceId: 'default' }))!.revision, edits: [{ old_text: 'Body.', new_text: 'Changed.' }] }],
-      ['add_timeline_entry', { slug: stored, date: '2026-03-04', summary: 'added entry' }],
-      ['delete_page', { slug: stored, expected_revision: (await engine.readPageSnapshot(stored, { sourceId: 'default' }))!.revision }],
-    ];
-    for (const [op, params] of writes) {
-      const err = await errorOf(op, params) as { code?: string; detail?: string; message?: string } | null;
-      expect({ op, code: err?.code, detail: err?.detail }).toEqual({ op, code: 'invalid_params', detail: 'legacy_slug_spelling' });
-      expect(err?.message).toContain(`so ${op} by that spelling is refused and nothing was changed`);
-    }
-    expect((await pageRows('notes/w-caf%')).map(r => r.slug)).toEqual([stored]);
-    expect(await call<string[]>('get_tags', { slug: stored })).toEqual([]);
-    expect(await call<unknown[]>('get_timeline', { slug: stored })).toEqual([]);
+describe('prefixes read every spelling that holds pages, so no stored row hides', () => {
+  const nfdOne = 'un/caf\u0065\u0301-old';
+  const nfcTwo = 'un/caf\u00e9-new';
+
+  test('list_pages and search_exact by a decomposed prefix list the decomposed and the composed pages together', async () => {
+    await storeAs('un/seed-old', nfdOne, 'Union old', 'union-marker-unique words');
+    await call('put_page', { slug: nfcTwo, content: page('Union new', 'union-marker-unique words') });
+    const prefix = 'un/caf\u0065\u0301';
+    expect((await call<Array<{ slug: string }>>('list_pages', { slug_prefix: prefix })).map(p => p.slug).sort()).toEqual([nfdOne, nfcTwo].sort());
+    // A composed prefix reads as master read it (the composed rows): only the spellings the caller sent, lowercased or normalized, are read.
+    expect((await call<Array<{ slug: string }>>('list_pages', { slug_prefix: 'un/caf\u00e9' })).map(p => p.slug)).toEqual([nfcTwo]);
+    const hits = await call<{ matches?: Array<{ slug: string }> }>('search_exact', { phrase: 'union-marker-unique', slug_prefix: prefix });
+    expect((hits.matches ?? []).map(h => h.slug).sort()).toEqual([nfdOne, nfcTwo].sort());
+  });
+
+  test('a prefix with pages under one spelling only is unchanged', async () => {
+    expect((await call<Array<{ slug: string }>>('list_pages', { slug_prefix: 'zz-none/' }))).toEqual([]);
+    await call('put_page', { slug: 'solo/a', content: page('Solo', 'x') });
+    expect((await call<Array<{ slug: string }>>('list_pages', { slug_prefix: 'Solo/' })).map(p => p.slug)).toEqual(['solo/a']);
+  });
+
+  test('takes_scorecard and get_recent_salience hand the engine both prefixes', async () => {
+    const seen: Record<string, unknown> = {};
+    const real = { sc: engine.getScorecard.bind(engine), sal: engine.getRecentSalience.bind(engine) };
+    (engine as any).getScorecard = async (o: any, ...rest: any[]) => { seen.scorecard = { p: o.domainPrefix, also: o.domainPrefixAlso }; return (real.sc as any)(o, ...rest); };
+    (engine as any).getRecentSalience = async (o: any) => { seen.salience = { p: o.slugPrefix, also: o.slugPrefixAlso }; return real.sal(o); };
+    try {
+      await call('takes_scorecard', { domain_prefix: 'un/caf\u0065\u0301' });
+      await call('get_recent_salience', { slugPrefix: 'un/caf\u0065\u0301' });
+    } finally { (engine as any).getScorecard = real.sc; (engine as any).getRecentSalience = real.sal; }
+    expect(seen).toEqual({
+      scorecard: { p: 'un/caf\u0065\u0301', also: ['un/caf\u00e9'] },
+      salience: { p: 'un/caf\u0065\u0301', also: ['un/caf\u00e9'] },
+    });
+  });
+
+  test('get_recent_salience reads both spellings\' pages in one list', async () => {
+    const rows = await call<Array<{ slug: string }>>('get_recent_salience', { slugPrefix: 'un/caf\u0065\u0301', days: 3650 });
+    expect(rows.map(r => r.slug).sort()).toEqual([nfdOne, nfcTwo].sort());
+  });
+});
+
+describe('writes by a stored spelling change that row in place, as on the merge base, and write no composed twin', () => {
+  const stored = 'notes/w-caf\u0065\u0301';
+  const rowsOf = async () => (await engine.executeRaw<{ slug: string; deleted: boolean }>('SELECT slug, deleted_at IS NOT NULL AS deleted FROM pages WHERE slug ILIKE $1 ORDER BY slug', ['notes/w-caf%']));
+  const revisionOf = async (slug: string) => (await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true }))!.revision;
+  const tagsOf = async (slug: string) => await call<string[]>('get_tags', { slug });
+  const fresh = async (key: string, title = 'Writes') => {
+    await engine.executeRaw('DELETE FROM pages WHERE slug ILIKE $1', ['notes/w-caf%']);
+    await storeAs('notes/w-seed', key, title, 'Body.');
+  };
+
+  test('delete_page soft-deletes the stored row, and a second delete is the same no-op', async () => {
+    await fresh(stored);
+    const out = await call('delete_page', { slug: stored, expected_revision: await revisionOf(stored) });
+    expect({ slug: out.slug, status: out.status, noop: out.noop }).toEqual({ slug: stored, status: 'soft_deleted', noop: false });
+    expect(await rowsOf()).toEqual([{ slug: stored, deleted: true }]);
+    const again = await call('delete_page', { slug: stored, expected_revision: await revisionOf(stored) });
+    expect({ slug: again.slug, status: again.status, noop: again.noop }).toEqual({ slug: stored, status: 'soft_deleted', noop: true });
+  });
+
+  test('add_tag and remove_tag change the stored row\'s tags', async () => {
+    await fresh(stored);
+    const added = await call('add_tag', { slug: stored, tag: 'added' });
+    expect({ slug: added.slug, tag: added.tag, noop: added.noop, status: added.status }).toEqual({ slug: stored, tag: 'added', noop: false, status: 'ok' });
+    await call('add_tag', { slug: stored, tag: 'gone' });
+    const removed = await call('remove_tag', { slug: stored, tag: 'gone' });
+    expect({ slug: removed.slug, tag: removed.tag, noop: removed.noop }).toEqual({ slug: stored, tag: 'gone', noop: false });
+    expect(await tagsOf(stored)).toEqual(['added']);
+    expect(await rowsOf()).toEqual([{ slug: stored, deleted: false }]);
+  });
+
+  test('add_timeline_entry adds the entry to the stored row', async () => {
+    await fresh(stored);
+    const out = await call('add_timeline_entry', { slug: stored, date: '2026-03-04', summary: 'added entry' });
+    expect({ slug: out.slug, status: out.status, noop: out.noop, entry: out.entry }).toEqual({ slug: stored, status: 'ok', noop: false, entry: { date: '2026-03-04', source: 'manual', summary: 'added entry' } });
+    expect((await call<Array<{ summary: string }>>('get_timeline', { slug: stored })).map(e => e.summary)).toEqual(['added entry']);
+    expect(await rowsOf()).toEqual([{ slug: stored, deleted: false }]);
+  });
+
+  test('edit_page edits the stored row\'s text', async () => {
+    await fresh(stored);
+    const out = await call('edit_page', { slug: stored, expected_revision: await revisionOf(stored), edits: [{ old_text: 'Body.', new_text: 'Changed.' }] });
+    expect({ slug: out.slug, status: out.status, noop: out.noop }).toEqual({ slug: stored, status: 'created_or_updated', noop: false });
+    expect((await engine.getPage(stored))?.compiled_truth).toBe('Changed.');
+    expect(await rowsOf()).toEqual([{ slug: stored, deleted: false }]);
+  });
+
+  test('append_page appends to the stored row', async () => {
+    await fresh(stored);
+    const out = await call('append_page', { slug: stored, text: 'Appended.', request_id: '5b0c1a52-8a4e-4a3c-9f0e-2d6a7c1e9b11' });
+    expect({ slug: out.slug, appended: out.appended_bytes }).toEqual({ slug: stored, appended: 10 });
+    expect((await engine.getPage(stored))?.compiled_truth).toBe('Body.\nAppended.');
+    expect(await rowsOf()).toEqual([{ slug: stored, deleted: false }]);
+  });
+
+  test('a capital spelling of a capital-stored page (beyond the merge base, which lowercased the slug): add_tag and delete_page act on that row, never a lowercase twin', async () => {
+    await fresh('Notes/W-Cafe');
+    await call('add_tag', { slug: 'Notes/W-Cafe', tag: 'cap' });
+    expect(await tagsOf('Notes/W-Cafe')).toEqual(['cap']);
+    await call('delete_page', { slug: 'Notes/W-Cafe', expected_revision: await revisionOf('Notes/W-Cafe') });
+    expect(await rowsOf()).toEqual([{ slug: 'Notes/W-Cafe', deleted: true }]);
   });
 });
 

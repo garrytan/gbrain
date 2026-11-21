@@ -4,9 +4,9 @@
 - A slug read with capitals (`gbrain get People/Alice-Example`) finds the page that put stored as `people/alice-example`, instead of answering page not found with a soft-delete hint.
 - Slugs are stored and read in one Unicode form (NFC), so `notes/café` typed composed or decomposed is one page, not two pages that look the same and block export.
 - A wikilink written in decomposed form links the existing accented page instead of reporting it as a page to create.
-- A put by the decomposed spelling of a page stored that way before this release is refused (detail `legacy_slug_spelling`) and changes nothing, instead of creating a second page, and so are deleting, tagging, untagging, timeline entries, editing and appending by that spelling; a later fix will move such pages to the composed slug.
+- A put by the decomposed spelling of a page stored that way before this release is refused (detail `legacy_slug_spelling`) and changes nothing, instead of creating a second page; a later fix will move such pages to the composed slug. Deleting, tagging, untagging, timeline entries, editing and appending by the stored spelling change that page in place, with no second page.
 - A fact saved with `remember --entity people/ünal-example` before the page exists keeps the accented slug, so the entity card and recall show it once the page is created.
 
 <!-- behavior-change: slug_reads_normal_form -->
-- A page stored under a capitalised or decomposed slug before this release opens by that exact spelling (not the composed twin of another page), keeps its files, ontology and `list_pages` prefix, and an import into a slug that would create its twin stops with a message saying how to fix it.
-- When two pages are stored under spellings of one slug and a read names neither exactly, it is refused with a message naming both spellings, instead of picking one.
+- A page stored under a capitalised or decomposed slug before this release opens by that exact spelling (not the composed twin of another page), keeps its files and ontology, and shows under a slug prefix typed either way; an import into a slug that would create its twin stops with a message saying how to fix it.
+- When two pages are stored under spellings of one slug and a read finds no page by the spelling sent, its lowercase or its normal form, it is refused with a message naming both spellings, instead of answering page not found.

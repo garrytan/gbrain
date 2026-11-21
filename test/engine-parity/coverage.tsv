@@ -51,11 +51,11 @@ transaction	lifecycle	yes	13	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	41	yes	yes	yes	serves
-readPageSnapshot	pages	yes	9	no	yes	yes	serves
+getPage	pages	yes	42	yes	yes	yes	serves
+readPageSnapshot	pages	yes	11	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	161	yes	yes	yes	serves
+putPage	pages	yes	164	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves

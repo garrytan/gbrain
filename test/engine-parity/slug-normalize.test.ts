@@ -6,16 +6,23 @@
  *    GBRAIN_TEST_RUST_ARM=1), `putPage` stores a decomposed (NFD) slug in NFC, get_page answers a capitalised
  *    or decomposed spelling of a stored slug with that page, and the shared link extractor turns an NFD
  *    wikilink into the NFC slug the engine stored. A put_page by the exact decomposed spelling a page is still
- *    stored under is refused with the same text (detail legacy_slug_spelling); nothing moves and no twin appears.
+ *    stored under is refused with the same text (detail legacy_slug_spelling); nothing moves and no twin appears. A
+ *    delete_page, add_tag, remove_tag, add_timeline_entry, edit_page and append_page by the decomposed spelling a page is stored under
+ *    change that row in place (the same answers as on a normalized slug), and no twin appears.
+ *    A read that finds no page by any exact spelling, and two stored spellings that normalize to the asked slug, is refused.
  *  - Regression: an engine that keeps the caller's NFD bytes (two pages that print the same name), or an op
  *    path that looks the raw spelling up and answers page_not_found for `People/Alice-Example`.
  *  - Why existing coverage misses it: every parity case writes and reads lowercase NFC slugs.
  *  - Seam: none. Real engines; get_page runs through the registry operation.
  *
  * Rust arm known stops (each case asserts the exact Rust answer, then rethrows or throws the typed refusal):
- *  - ambiguity refusal: member `getPage` (Rust pages area, gbrain-store pages.rs): the Rust store lowercases the slug it
- *    reads, so a capitalised spelling already reads the decomposed page, the exact-spelling probe never sees two pages,
- *    and get_page stops at resolveAlias. Rust must read a slug exactly as sent (no case fold) for the refusal to be reachable.
+ *  - ambiguity refusal: member `executeRaw`, capability `raw_sql` (Rust raw-sql area): the case stores two capitalised
+ *    rows by renaming them, which needs raw SQL; and the Rust store lowercases every slug it stores or reads, so it can hold
+ *    neither capitalised spelling. Rust must keep a stored slug's capitals and read a slug exactly as sent for the refusal
+ *    (built in TS from `executeRaw` over pages) to be reachable.
+ *  - delete_page, add_tag, remove_tag, add_timeline_entry, edit_page and append_page by the stored spelling: member `readPersistenceBrainId`, capability `persistence_journal` (Rust
+ *    persistence area): each needs the write journal, which the Rust store does not serve, so the op stops
+ *    before admission. When it does, Rust must delete the row it stored, by the spelling it stored.
  *  - get_page: member `readPageSnapshot`, option `resolveAlias` (Rust pages area, store-members/pages.ts):
  *    the Rust store does not serve resolveAlias on master yet, so the op refuses before any slug is read.
  *  - NFC storage: member `putPage` (Rust pages area, gbrain-store pages.rs `validate_slug`): the Rust store
@@ -42,9 +49,11 @@ const NFC_ZOE = 'people/zoë-example';
 const NFD_ZOE = 'people/zoë-example';
 const LEGACY_REFUSAL = (stored: string, composed: string) => `Page ${stored} is stored under an older decomposed Unicode spelling of its name, so a put by that spelling is refused and nothing was changed. `
   + `A fix that moves the page to the composed spelling ${composed} is coming; until then the page cannot be replaced by put.`;
-const AMBIGUOUS_REFUSAL = (asked: string, decomposed: string, composed: string) => `The slug "${asked}" is ambiguous: this brain stores two pages whose slugs read the same, "${decomposed}" (decomposed) and "${composed}" (composed), and "${asked}" is neither of them exactly.`;
+const AMBIGUOUS_REFUSAL = (asked: string, decomposed: string, composed: string) => `The slug "${asked}" is ambiguous: this brain stores two pages whose slugs read the same, "${decomposed}" (decomposed, with capitals) and "${composed}" (composed, with capitals), and "${asked}" is neither of them exactly.`;
 const RUST_JOURNAL_STOP =
   "This brain's engine does not support readPersistenceBrainId yet (it needs the persistence_journal capability), so nothing ran.";
+const RUST_RAW_SQL_STOP =
+  "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
 const RUST_RESOLVE_ALIAS_STOP =
   "This brain's engine does not support readPageSnapshot (option resolveAlias) yet (it needs the pages capability), so nothing ran.";
 
@@ -112,15 +121,19 @@ describe('engine parity: slug normal form', () => {
     expect(result).toEqual({ answers: [refusal, refusal], unchanged: true, twin: null });
     return result;
   });
-  parityTest('two pages stored under spellings of one slug: a read that names neither is refused with both named, byte for byte', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
-    const nfd = 'notes/ambig-cafe\u0301';
-    const nfc = 'notes/ambig-caf\u00e9';
-    const asked = 'Notes/Ambig-Cafe\u0301';
-    const stored = (slug: string) => engine.putPage(slug, { type: 'note', title: slug === nfd ? 'Decomposed' : 'Composed', compiled_truth: 'Body.', timeline: '' });
-    // The Rust store keeps the NFD bytes a caller sends (the NFC-storage stop above), so it stores both directly;
-    // the TS engines compose, so the decomposed row is moved back to its old spelling.
-    if (backend === 'rust') { await stored(nfd); await stored(nfc); }
-    else { await stored(nfc); await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [nfd, nfc]); await stored(nfc); }
+  parityTest('two pages stored under spellings of one slug: a read that finds neither exactly is refused with both named, byte for byte', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
+    const nfd = 'Notes/Ambig-Cafe\u0301';
+    const nfc = 'Notes/Ambig-Caf\u00e9';
+    const asked = 'notes/ambig-cafe\u0301';
+    // Both rows carry capitals, so the lowercase the caller sent matches neither exactly and neither normalizes to it.
+    const store = async (slug: string, title: string) => {
+      await engine.putPage('notes/ambig-seed', { type: 'note', title, compiled_truth: 'Body.', timeline: '' });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [slug, 'notes/ambig-seed']);
+    };
+    try { await store(nfd, 'Decomposed'); await store(nfc, 'Composed'); } catch (e) {
+      if (backend === 'rust') expect((e as Error).message).toBe(RUST_RAW_SQL_STOP);
+      throw e;
+    }
     let answer: { code: unknown; detail: unknown; message: string };
     try {
       await operationsByName.get_page!.handler(ctx(engine), { slug: asked });
@@ -128,14 +141,70 @@ describe('engine parity: slug normal form', () => {
     } catch (e) {
       answer = { code: (e as { code?: unknown }).code, detail: (e as { detail?: unknown }).detail, message: (e as Error).message };
     }
-    if (backend === 'rust') {
-      // The exact Rust difference today: getPage lowercases the slug it is given, so the capitalised spelling the caller sent
-      // already reads the decomposed page and the op never sees an ambiguity; get_page then stops at resolveAlias.
-      expect({ read: (await engine.getPage(asked))?.slug ?? null, answer }).toEqual({ read: nfd, answer: { code: 'engine_capability_missing',
-        detail: 'member=readPageSnapshot (option resolveAlias) capability=pages outcome=none written=nothing', message: RUST_RESOLVE_ALIAS_STOP } });
-      throw capabilityMissing('pages', 'getPage (a slug read exactly as sent, without case folding)', 'partial');
-    }
     expect(answer).toEqual({ code: 'invalid_params', detail: 'ambiguous_slug', message: AMBIGUOUS_REFUSAL(asked, nfd, nfc) });
     return answer;
+  });
+  parityTest('delete_page by the stored decomposed spelling soft-deletes that row in place, with no composed twin', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
+    const stored = 'notes/del-cafe\u0301';
+    const composed = 'notes/del-caf\u00e9';
+    if (backend === 'rust') await engine.putPage(stored, { type: 'note', title: 'Delete me', compiled_truth: 'Old.', timeline: '' });
+    else {
+      await engine.putPage(composed, { type: 'note', title: 'Delete me', compiled_truth: 'Old.', timeline: '' });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
+    }
+    const before = await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true });
+    let out: { slug: string; status: string; noop: boolean };
+    try {
+      out = await operationsByName.delete_page!.handler(ctx(engine), { slug: stored, expected_revision: before!.revision, request_id: randomUUID() }) as typeof out;
+    } catch (e) {
+      if (backend === 'rust') { expect((e as Error).message).toBe(RUST_JOURNAL_STOP); throw e; }
+      throw e;
+    }
+    const after = await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true });
+    const twin = await engine.readPageSnapshot(composed, { sourceId: 'default', includeDeleted: true });
+    const result = { slug: out.slug, status: out.status, noop: out.noop, deletedInPlace: after?.page.deleted_at != null, twin: twin?.page.slug ?? null };
+    expect(result).toEqual({ slug: stored, status: 'soft_deleted', noop: false, deletedInPlace: true, twin: null });
+    return result;
+  });
+  parityTest('add_tag, remove_tag, add_timeline_entry, edit_page and append_page by the stored decomposed spelling change that row in place, with no composed twin', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
+    const stored = 'notes/write-cafe\u0301';
+    const composed = 'notes/write-caf\u00e9';
+    if (backend === 'rust') await engine.putPage(stored, { type: 'note', title: 'Write', compiled_truth: 'Body.', timeline: '' });
+    else {
+      await engine.putPage(composed, { type: 'note', title: 'Write', compiled_truth: 'Body.', timeline: '' });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
+      await engine.executeRaw('UPDATE pages SET text_projection_revision = knowledge_revision WHERE slug = $1', [stored]);
+    }
+    const revision = async () => (await engine.readPageSnapshot(stored, { sourceId: 'default' }))!.revision;
+    const outputs: Array<{ op: string; slug: unknown; status: unknown; noop: unknown }> = [];
+    const run = async (op: string, params: Record<string, unknown>) => {
+      try {
+        const out = await operationsByName[op]!.handler(ctx(engine), { slug: stored, ...params }) as { slug?: unknown; status?: unknown; noop?: unknown };
+        outputs.push({ op, slug: out.slug, status: out.status, noop: out.noop });
+      } catch (e) {
+        if (backend === 'rust') expect((e as Error).message).toBe(RUST_JOURNAL_STOP);
+        throw e;
+      }
+    };
+    await run('add_tag', { tag: 'added' });
+    await run('add_tag', { tag: 'gone' });
+    await run('remove_tag', { tag: 'gone' });
+    await run('add_timeline_entry', { date: '2026-03-04', summary: 'added entry' });
+    await run('edit_page', { expected_revision: await revision(), edits: [{ old_text: 'Body.', new_text: 'Changed.' }] });
+    await run('append_page', { text: 'Appended.', request_id: randomUUID() });
+    const rows = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE slug LIKE $1 ORDER BY slug', ['notes/write-caf%']);
+    const tags = await engine.executeRaw<{ tag: string }>('SELECT t.tag FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.slug = $1 ORDER BY t.tag', [stored]);
+    const timeline = await engine.executeRaw<{ summary: string }>('SELECT t.summary FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.slug = $1', [stored]);
+    const page = (await engine.readPageSnapshot(stored, { sourceId: 'default' }))!.page;
+    const body = page.compiled_truth, whole = `${page.compiled_truth}\n${page.timeline}`;
+    const result = { outputs, rows: rows.map(r => r.slug), tags: tags.map(t => t.tag), timeline: timeline.map(t => t.summary), changed: body.includes('Changed.'), appended: whole.includes('Appended.') };
+    expect(result).toEqual({
+      outputs: [
+        { op: 'add_tag', slug: stored, status: 'ok', noop: false }, { op: 'add_tag', slug: stored, status: 'ok', noop: false }, { op: 'remove_tag', slug: stored, status: 'ok', noop: false },
+        { op: 'add_timeline_entry', slug: stored, status: 'ok', noop: false }, { op: 'edit_page', slug: stored, status: 'created_or_updated', noop: false },
+        { op: 'append_page', slug: stored, status: undefined, noop: undefined },
+      ],
+      rows: [stored], tags: ['added'], timeline: ['added entry'], changed: true, appended: true });
+    return result;
   });
 });
