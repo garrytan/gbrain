@@ -438,8 +438,10 @@ Thirty-six members that were raw `executeRaw` statements in seventeen callers (`
 `src/core/engine-sql/facts-recall.ts` (`readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`, `listPoolUnbackedKeys`,
 `listCallOffCueFacts`, `listPoolEntityPairs`, `listFactRowsByIds`) and twenty-nine are in `facts-trust.ts`. Each runs the
 statement its caller ran, except `listNearestFacts`, which binds the embedding model, dimensions and vector literal twice
-(dimensions once when the column type is declared), so its `$n` numbers differ from the old text. None is implemented on Rust
-yet: each is named `facts` in `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store
+(dimensions once when the column type is declared), so its `$n` numbers differ from the old text. Three are served on Rust,
+forget's: `readFactForForget` (`brain.readFactForForget`), and `expireFactSuperseded` and `expireFactAtDate`, which both
+call `brain.expireFactUntil` (`expire_fact_until` with `day_or_time` in `crates/gbrain-store/src/facts.rs`). Each other
+member is named `facts` in `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store
 serves it. Two `factWithdrawnRefusal` reads in `single-prepare.ts` are still raw (the withdrawal lane owns them).
 
 | Group | Members | What the store would need |
@@ -756,7 +758,8 @@ the store would need:
 
 Thirty-four members replace the 37 `executeRaw` sites of eight files. Each runs the statement its caller ran at base
 `5e22f0c134`, with the same text and parameters (`test/facts-cycle-sites-sql-pin.test.ts` pins both). The Rust engine refuses
-each of them with `engine_capability_missing` naming the member until the store serves it
+each of them with `engine_capability_missing` naming the member until the store serves it, except
+`readLiveStoredBody`, which the store serves from `brain.readLivePageBody` (rust/docs/store/write-guards.md)
 (`test/engine-parity/facts-cycle-sites.test.ts` is the parity arm). Three members serve two callers each, so 37 sites are
 34 members. Data the store needs, by caller:
 

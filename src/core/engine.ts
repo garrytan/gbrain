@@ -4397,7 +4397,7 @@ export interface BrainEngine {
   readFactForForget(id: number): Promise<FactsTrustSql.ForgetFactRow | null>;
   /** Expires an active fact for a supersession or retirement (`validUntil` or now ends it). */
   expireFactSuperseded(factId: number, validUntil: string | null): Promise<void>;
-  /** Ends an active fact on `today` and expires it. */
+  /** Ends an active fact on `today` and expires it. The day text is session-zone midnight on PGLite, UTC midnight on Postgres (postgres.js) and Rust. */
   expireFactAtDate(factId: number, today: string): Promise<void>;
   /** Whether the withdrawal ledger covers this fact of the source, or null when the fact is not there. */
   readWithdrawalAnchor(factId: number, sourceId: string): Promise<{ withdrawn: boolean } | null>;

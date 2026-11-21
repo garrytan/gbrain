@@ -220,6 +220,7 @@ test/engine-parity/forget-commit.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-rebuild.test.ts
 test/engine-parity/forget-remember.test.ts
+test/engine-parity/forget-whole.test.ts
 test/engine-parity/git-holds.test.ts
 test/engine-parity/harness-consumer-stop.test.ts
 test/engine-parity/held-fence-cells.test.ts
@@ -389,6 +390,7 @@ test/folder-holding-coverage-gst2497.test.ts
 test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
 test/forget-door-landed-gst2517.test.ts
+test/forget-expiry-zone.test.ts
 test/forget-one-id-9738.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
 test/function-search-path-upgrade-parity.test.ts

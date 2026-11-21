@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::{
-    DuplicateQuery, ExpireFactArgs, FactQuery, FenceTarget, InsertFactArgs, InsertFactsArgs,
-    PageDeleteArgs, SupersessionQuery, TrajectoryQuery, UnattributedQuery,
+    DuplicateQuery, ExpireFactArgs, ExpireFactUntilArgs, FactQuery, FenceTarget, InsertFactArgs,
+    InsertFactsArgs, PageDeleteArgs, SupersessionQuery, TrajectoryQuery, UnattributedQuery,
 };
 
 #[napi]
@@ -55,6 +55,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: ExpireFactArgs = required(args, "expireFact args")?;
             s.expire_fact(&a)
+        })
+    }
+
+    /// `expireFactUntil(id, until)`: resolves true when an unexpired row changed.
+    #[napi]
+    pub fn expire_fact_until<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: ExpireFactUntilArgs = required(args, "expireFactUntil args")?;
+            s.expire_fact_until(&a)
         })
     }
 
