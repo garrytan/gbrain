@@ -224,6 +224,12 @@ ids, chunk `created_at`). `losses` counts, by reason, the rows dropped and the v
 | `segmented_version_body` | the segments a segmented page version references (its generation and size are kept) |
 | `legacy_version_columns` | a page version with NULL `title`, `type`, `tags`, `knowledge_revision` or `is_deleted`: the store holds an empty value |
 
+Some unmapped columns are expected, not losses:
+
+| Column | Why it shows in `unmapped_columns` | Readers |
+| --- | --- | --- |
+| `pages.generation` | unmapped, known value: the primary's cache clock; the Rust store keeps 1 | the `query_cache` freshness check (`query_cache` is not copied) and the dedupe plan fence (`identity-decisions.ts`, applied only when `p.generation = pl.generation`), which a Rust identity-decisions family must replace. The store refuses `applyIdentityDecisions` today, so no read differs yet |
+
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.seedPlan()` | `{ relations: [{ relation, key }], carried: [[table, relation]], not_copied: [{ table, kind, read, gap_rows }], gap_columns: [{ table, column, gap }] }`: the relations in import order with their key columns, the tables carried in them, the tables left behind on purpose, and the gap columns | none |
