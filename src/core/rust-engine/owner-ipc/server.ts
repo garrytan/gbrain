@@ -4,7 +4,8 @@
  * BrainEngine calls through it (client.ts). The server takes any BrainEngine, so tests can host a PGLite engine as the
  * owner while the Rust store is still being built.
  *
- * - Calls run on a permit pool (OWNER_IPC_DEFAULT_PERMITS). A call over the limit waits in a FIFO queue; at its
+ * - Calls run on a permit pool (OWNER_IPC_DEFAULT_PERMITS). A call over the limit waits in a FIFO queue (a call an
+ *   orphan holds back, below, is passed over until it may run); at its
  *   `deadline_at` it ends with `timeout`: reason `not_started` when it never left the queue, `outcome_unknown` when it
  *   was running (the store does not observe the abort, so a running write can still commit). A `cancel` frame ends it
  *   with nothing more sent.
@@ -29,7 +30,14 @@
  *   frame of that connection is read. Where the platform cannot read peer uids (Windows, other Unixes), the private
  *   0700 directory and the 0600 socket are the only guard.
  * - `close()` aborts every call and resolves only after all engine work that started has settled, so the owner lock
- *   (released by RustEngine.disconnect after close) never frees while the old owner still runs a call.
+ *   (released by RustEngine.disconnect after close) never frees while the old owner still runs a call. An owner that
+ *   exits therefore never leaves a started write running behind a new owner: `ownerGone` after the send stays final.
+ * - Orphans: a write the owner started whose caller stopped waiting (deadline, cancel, closed connection) keeps running
+ *   and can still commit. Until it settles, the owner holds back every call to a member that would confirm it
+ *   (confirming-reads.ts, membersWaitingFor: the members its confirming read names, or the write's own member when
+ *   that read goes through it, as for executeRaw). The hold is by member, not by key, so an unrelated read of the same
+ *   member waits too; other members run as before. A held call that reaches its deadline ends `owner_unavailable`,
+ *   reason `earlier_call_running`, not retryable: it never ran and tells nothing about the earlier write yet.
  */
 import net, { type Server, type Socket } from 'node:net';
 import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
@@ -45,8 +53,10 @@ import {
   OWNER_IPC_VERSION, frameLine, readFrames, type OwnerHello,
 } from './protocol.ts';
 import {
-  OWNER_IPC_ROUTES, ownerBusy, ownerCallTimeout, ownerIpcProtocol, ownerIpcRefusal, ownerPeerRefused, ownerResponseTooLarge,
+  OWNER_IPC_ROUTES, ownerBusy, ownerCallTimeout, ownerEarlierCallRunning, ownerIpcProtocol, ownerIpcRefusal, ownerMemberOnlyReads,
+  ownerPeerRefused, ownerResponseTooLarge,
 } from './routes.ts';
+import { membersWaitingFor } from './confirming-reads.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 
 /** A whole operation the owner runs for a client in one request (whole-op.ts); it may open its own transaction. */
@@ -90,6 +100,12 @@ interface PendingCall {
   timer?: DeadlineTimer;
   /** Epoch ms after which the call must not start; a call past it ends with `timeout` and never runs. */
   deadlineAt?: number;
+  /** The deadline as the caller gave it, in ms from arrival, for the error. */
+  deadlineMs?: number;
+  /** True for a call that can write: a whole operation, or a member that does not only read. */
+  write: boolean;
+  /** True once the engine call has settled (its then-handlers ran), whether or not its reply was still wanted. */
+  settled: boolean;
   reply(frame: object): void;
 }
 
@@ -122,16 +138,13 @@ function rebuildFunction(wire: { [key: string]: Wire }, call: PendingCall, send:
   };
 }
 
-export async function serveOwnerEngine(
-  engine: BrainEngine,
-  legacySocketPath: string,
-  opts: OwnerServerOptions = {},
-): Promise<OwnerEngineServer | null> {
+/** Claims the owner socket path. The owner lock is held, so a socket left there belongs to an owner that died. */
+async function claimOwnerSocket(legacySocketPath: string) {
   const binding = await claimLocalIpcBinding(legacySocketPath);
   if (!binding) return null;
   const socketPath = binding.socketPath;
   try {
-    // The owner lock is held, so a socket left here belongs to an owner that died. Never remove a non-socket.
+    // Never remove a non-socket.
     if (binding.removeStaleWindowsSocket) binding.removeStaleWindowsSocket();
     else if (!isWindowsIpcPipe(socketPath)) {
       if (!lstatSync(socketPath).isSocket()) throw new Error('The owner socket path is not a socket.');
@@ -140,6 +153,62 @@ export async function serveOwnerEngine(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { await binding.release(); throw error; }
   }
+  return binding;
+}
+
+function expire(call: PendingCall, queued: boolean): void {
+  call.timer?.clear();
+  call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerCallTimeout(call.member, 0, queued ? 'queued' : 'sent')) });
+  call.controller.abort(timeoutReason());
+}
+
+/**
+ * An orphan is a write the owner started whose caller stopped waiting (its deadline, a cancel, a closed connection)
+ * and whose engine call has not settled: it can still commit. A call that would read its outcome waits until it has
+ * settled, so a confirming read never answers "not there" for a write that is about to commit (routes.ts,
+ * confirmingReadAdvice). Returns the orphan's member, or undefined when nothing holds `call` back.
+ */
+function orphanAhead(started: ReadonlySet<PendingCall>, call: PendingCall): string | undefined {
+  for (const other of started) {
+    if (other.write && other.done && !other.settled && membersWaitingFor(other.member).has(call.member)) return other.member;
+  }
+  return undefined;
+}
+
+/** Ends a call an orphan held back until its deadline: nothing ran, and it says which earlier call held it. */
+function holdExpired(call: PendingCall, earlier: string): void {
+  call.timer?.clear();
+  call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerEarlierCallRunning(call.member, earlier, call.deadlineMs ?? 0)) });
+  call.controller.abort(timeoutReason());
+}
+
+/** Answers a started call with its engine result once it settles, unless the call already ended. */
+function answerCall(call: PendingCall, settled: Promise<unknown>): Promise<void> {
+  return settled.then(
+    value => {
+      call.settled = true;
+      if (call.done) return;
+      let encoded: Wire;
+      try { encoded = encodeValue(value); }
+      catch (error) { call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(error) }); return; }
+      call.reply({ t: 'result', id: call.id, ok: true, value: encoded });
+    },
+    error => {
+      call.settled = true;
+      if (call.done) return;
+      call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(error) });
+    },
+  );
+}
+
+export async function serveOwnerEngine(
+  engine: BrainEngine,
+  legacySocketPath: string,
+  opts: OwnerServerOptions = {},
+): Promise<OwnerEngineServer | null> {
+  const binding = await claimOwnerSocket(legacySocketPath);
+  if (!binding) return null;
+  const socketPath = binding.socketPath;
 
   const permits = Math.max(1, opts.permits ?? OWNER_IPC_DEFAULT_PERMITS);
   const maxFrameBytes = opts.maxFrameBytes ?? OWNER_IPC_MAX_FRAME_BYTES;
@@ -160,6 +229,8 @@ export async function serveOwnerEngine(
   let closed: Promise<void> | undefined;
   // Engine work that has started and not settled. close() waits for all of it before the owner lock can be released.
   const running = new Set<Promise<unknown>>();
+  // Calls whose engine work has started and not settled, so a later call can see an orphan among them.
+  const started = new Set<PendingCall>();
 
   const releaseBytes = (call: PendingCall) => {
     if (call.released) return;
@@ -175,46 +246,42 @@ export async function serveOwnerEngine(
     releaseBytes(call);
   };
 
-  const expire = (call: PendingCall, queued: boolean) => {
-    call.timer?.clear();
-    call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerCallTimeout(call.member, 0, queued ? 'queued' : 'sent')) });
-    call.controller.abort(timeoutReason());
-  };
-
+  // Calls start in arrival order, except that a call an orphan holds back is passed over until the orphan settles.
   const pump = () => {
-    while (active < permits && queue.length) {
-      const call = queue[0]!;
+    for (let at = 0; active < permits && at < queue.length;) {
+      const call = queue[at]!;
       if (call.done) { leaveQueue(call); continue; }
       if (closing) { call.done = true; leaveQueue(call); call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); continue; }
+      const earlier = orphanAhead(started, call);
       // A timer fires on a later turn, so a call whose deadline passed while it waited is checked here, before it runs.
-      if (call.deadlineAt !== undefined && Date.now() >= call.deadlineAt) { expire(call, true); leaveQueue(call); continue; }
-      queue.shift();
-      call.queued = false;
-      active++;
-      let settled: Promise<unknown>;
-      try { settled = call.run(); } catch (error) { settled = Promise.reject(error); }
-      const tracked = settled.then(
-        value => {
-          if (call.done) return;
-          let encoded: Wire;
-          try { encoded = encodeValue(value); }
-          catch (error) { call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(error) }); return; }
-          call.reply({ t: 'result', id: call.id, ok: true, value: encoded });
-        },
-        error => {
-          if (call.done) return;
-          call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(error) });
-        },
-      ).finally(() => {
-        active--;
-        call.done = true;
-        call.timer?.clear();
-        releaseBytes(call);
-        running.delete(tracked);
-        pump();
-      });
-      running.add(tracked);
+      if (call.deadlineAt !== undefined && Date.now() >= call.deadlineAt) {
+        if (earlier) holdExpired(call, earlier); else expire(call, true);
+        leaveQueue(call);
+        continue;
+      }
+      if (earlier) { at++; continue; }
+      queue.splice(at, 1);
+      start(call);
     }
+  };
+
+  const start = (call: PendingCall) => {
+    call.queued = false;
+    active++;
+    started.add(call);
+    let settled: Promise<unknown>;
+    try { settled = call.run(); } catch (error) { settled = Promise.reject(error); }
+    const tracked = answerCall(call, settled).finally(() => {
+      active--;
+      call.done = true;
+      call.settled = true;
+      started.delete(call);
+      call.timer?.clear();
+      releaseBytes(call);
+      running.delete(tracked);
+      pump();
+    });
+    running.add(tracked);
   };
 
   const hello: OwnerHello = {
@@ -324,6 +391,7 @@ export async function serveOwnerEngine(
     const controller = new AbortController();
     const call: PendingCall = {
       id, member, controller, done: false, queued: false, bytes, released: true, run: () => Promise.resolve(),
+      write: frame.t === 'fn' || !ownerMemberOnlyReads(member), settled: false,
       reply: out => { if (calls.get(id) === call) calls.delete(id); call.done = true; send(out, member); },
     };
     calls.set(id, call);
@@ -364,10 +432,15 @@ export async function serveOwnerEngine(
       // A request that arrives after its deadline never starts: a fast write would otherwise commit before the timer.
       if (Date.now() >= deadlineAt) { expire(call, true); return; }
       const ms = Math.max(0, deadlineAt - Date.now());
+      call.deadlineMs = ms;
       call.timer = setDeadlineTimer(() => {
         if (call.done) return;
         const queued = call.queued;
-        call.reply({ t: 'result', id, ok: false, error: encodeError(ownerCallTimeout(member, ms, queued ? 'queued' : 'sent')) });
+        // A call still queued behind an orphan never ran, but it cannot say the orphan did not commit either.
+        const earlier = queued ? orphanAhead(started, call) : undefined;
+        call.reply({ t: 'result', id, ok: false, error: encodeError(earlier
+          ? ownerEarlierCallRunning(member, earlier, ms)
+          : ownerCallTimeout(member, ms, queued ? 'queued' : 'sent')) });
         leaveQueue(call);
         controller.abort(timeoutReason());
       }, ms, { unref: true });

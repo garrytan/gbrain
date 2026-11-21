@@ -229,7 +229,11 @@ function decodeTagged(wire: { [key: string]: Wire }, opts: DecodeOptions): unkno
       return opts.onFunction(wire);
     }
     case 'signal': return opts.onSignal ? opts.onSignal(wire) : undefined;
-    default: return decodePlain(wire, opts);
+    // A guard is read only as the value of a guarded body field (decodePlain); anywhere else it would turn into a plain
+    // object, so a body that must throw page_body_segmented would read as data. A tag this side does not know is never
+    // read as data either: the peer speaks another protocol.
+    case 'guard': throw new OwnerIpcEncodeError('A segmented-body guard crossed the owner socket outside a guarded body field.', 'value');
+    default: throw new OwnerIpcEncodeError(`An unknown value tag crossed the owner socket (${String(wire.$t).slice(0, 32)}).`, 'value');
   }
 }
 

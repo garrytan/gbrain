@@ -8,6 +8,9 @@
  *
  * `deadline_at` (epoch ms) is the caller's deadline: the owner ends the call with `timeout` there, queued or running;
  * a running call is not interrupted, so that timeout's outcome is unknown.
+ * A call that keeps running after its caller stopped waiting (an orphan) holds back, on every connection, the later
+ * calls of the members that confirm it (confirming-reads.ts `membersWaitingFor`) until it ends, so a confirming read
+ * answers with the final state; a held call that reaches its deadline ends `owner_unavailable` (`earlier_call_running`).
  * `read_deadline_at` is the caller's read deadline (read-deadline.ts), restored around the call in the owner.
  * `access` is the caller's access record (search/private-visibility.ts CallerAccess), absent when it had none; the owner
  * runs the call under it, so a restricted caller (a labelled-only member, a remote grant) reads no more over the socket
@@ -22,6 +25,8 @@
  * Each call needs a hello of OWNER_IPC_VERSION first, an id not open on its connection, and a list as `args`; the owner
  * refuses anything else with `owner_ipc_protocol` and runs nothing. A hello of another version gets the owner's hello
  * (so the client can name both versions) and then the connection closes.
+ * Values are tagged (codec.ts); a tag the decoder does not know, or a segmented-body guard outside a guarded body
+ * field, fails the decode (`owner_ipc_protocol`), never a plain object.
  * A closed connection ends every call on it: the owner aborts them, and the client rejects them with
  * `owner_unavailable`. Frames over OWNER_IPC_MAX_FRAME_BYTES are refused (`response_too_large` for a reply).
  * The owner bounds its memory across every client: past OWNER_IPC_MAX_QUEUED waiting calls, OWNER_IPC_MAX_INFLIGHT_BYTES
@@ -32,7 +37,11 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Wire } from './codec.ts';
 
-export const OWNER_IPC_VERSION = 1;
+/**
+ * 2: values may carry the segmented-body guard (`{ $t: 'guard', site }`), which a version 1 decoder read as a plain
+ * object, and a decoder refuses any tag it does not know. Version 1 and version 2 peers refuse each other at the hello.
+ */
+export const OWNER_IPC_VERSION = 2;
 /** The largest frame either side sends or accepts. */
 export const OWNER_IPC_MAX_FRAME_BYTES = 128 * 1024 * 1024;
 /** Calls the owner runs at once across every client; more wait in a FIFO queue within their own deadline. */

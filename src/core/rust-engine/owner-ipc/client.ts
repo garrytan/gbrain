@@ -152,6 +152,37 @@ export function callEndCheck(member: string, args: unknown[]): () => void {
   };
 }
 
+/**
+ * Waits for `wait` (an election or a store open this call cannot start without) for only as long as the caller still
+ * wants the call: a signal in its arguments or on its request that aborts, or its deadline, ends the call at once with
+ * its own `cancelled` or `timeout` (`not_sent`), while the wait itself goes on for the other callers that share it.
+ */
+export function untilCallEnds<T>(member: string, args: unknown[], wait: Promise<T>): Promise<T> {
+  const startedAt = Date.now();
+  const signals = callerSignals(args);
+  const { deadlineAt } = callDeadline();
+  return new Promise<T>((resolve, reject) => {
+    let timer: DeadlineTimer | undefined;
+    const listeners: Array<() => void> = [];
+    const finish = (settle: () => void) => {
+      timer?.clear();
+      for (const remove of listeners) remove();
+      listeners.length = 0;
+      settle();
+    };
+    for (const signal of signals) {
+      if (signal.aborted) { finish(() => reject(abortError(member, signal, startedAt, false))); wait.catch(() => undefined); return; }
+      const onAbort = () => finish(() => reject(abortError(member, signal, startedAt, false)));
+      signal.addEventListener('abort', onAbort, { once: true });
+      listeners.push(() => signal.removeEventListener('abort', onAbort));
+    }
+    if (deadlineAt !== undefined) {
+      timer = setDeadlineTimer(() => finish(() => reject(ownerCallTimeout(member, Date.now() - startedAt, 'not_sent'))), deadlineAt - Date.now());
+    }
+    wait.then(value => finish(() => resolve(value)), (error: unknown) => finish(() => reject(error)));
+  });
+}
+
 /** A frame field as text for an error detail: scalars only, so a hostile object never runs its own conversion. */
 function fieldText(value: unknown): string {
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value).slice(0, 64) : typeof value;
@@ -456,8 +487,9 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
         const stillWanted = callEndCheck(member, args);
         // An election that fails ends this call with its own error (a store that would not open, a disconnect that won),
         // not with the `engine_closed` the emptied engine would give; a call the election could not place still ends
-        // `owner_unavailable` (`not_sent`) below.
-        const failure = await rejoin().then(() => null, (error: unknown) => ({ error }));
+        // `owner_unavailable` (`not_sent`) below. A call cancelled or past its deadline while the election still runs ends
+        // at once; the election goes on for the calls that share it.
+        const failure = await untilCallEnds(member, args, rejoin()).then(() => null, (error: unknown) => ({ error }));
         if (failure && !(failure.error instanceof OperationError && failure.error.code === 'owner_unavailable')) throw failure.error;
         const now = record[member];
         if (now !== value && typeof now === 'function') {

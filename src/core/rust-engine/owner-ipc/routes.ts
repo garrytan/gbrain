@@ -20,8 +20,11 @@
  */
 import type { Capability } from '../../engine-capabilities.ts';
 import { opError, type OperationError } from '../../ops/contract.ts';
+import { CODES } from '../../error-registry.ts';
 import { RUST_ENGINE_MEMBERS, type RustEngineMember } from '../members.ts';
-import { OWNER_IPC_CONFIRMING_READS, OWNER_IPC_LOCAL_ONLY_READS } from './confirming-reads.ts';
+import {
+  OWNER_IPC_CONFIRMING_NOTES, OWNER_IPC_CONFIRMING_READS, OWNER_IPC_LOCAL_ONLY_READS, OWNER_IPC_WHOLE_OP_CONFIRMING_READS,
+} from './confirming-reads.ts';
 
 export type OwnerIpcRoute = 'local' | 'forward' | 'refuse';
 
@@ -105,12 +108,34 @@ export function ownerMemberOnlyReads(member: string): boolean {
  * not stop a started call, so a write may have committed. A rerun is advised only when nothing can have been written
  * (a read, or a write whose entry says a rerun repeats nothing); otherwise the advice names the read that confirms the
  * write (confirming-reads.ts). A write with no entry gets the most general read.
+ *
+ * The owner holds that read back while the earlier call still runs (server.ts, orphans), so the read answers only
+ * after the call has ended, committed or not, and what it finds is final. A read that cannot wait that long ends
+ * `owner_unavailable` (`earlier_call_running`) and tells nothing.
  */
 export function confirmingReadAdvice(member: string): string {
   if (ownerMemberOnlyReads(member)) return `Before you rerun ${member}: it only reads, so nothing was written and running it again is safe.`;
-  const read = OWNER_IPC_CONFIRMING_READS[member] ?? 'a read of every row the call writes';
+  const read = OWNER_IPC_CONFIRMING_READS[member] ?? OWNER_IPC_WHOLE_OP_CONFIRMING_READS[member] ?? 'a read of every row the call writes';
   if (read.startsWith('nothing:')) return `Before you rerun ${member}, there is ${read}.`;
-  return `Before you rerun ${member}, run ${read} to see whether it committed; rerun it only if it did not.`;
+  const note = OWNER_IPC_CONFIRMING_NOTES[member];
+  return `Before you rerun ${member}, run ${read} to see whether it committed; rerun it only if it did not. `
+    + `The owner answers that read only after the earlier ${member} call has ended, so what it finds is final.`
+    + (note ? ` ${note}` : '');
+}
+
+/**
+ * A call that waited behind an earlier write the owner still runs after that write's caller stopped waiting (a
+ * timeout, a cancel or a closed connection), and reached its own deadline there. It never ran. It is the read that
+ * would confirm the earlier write, so until that write ends whether it committed is not known: this is not `not_sent`
+ * and not a reason to rerun the write.
+ */
+export function ownerEarlierCallRunning(member: string, earlier: string, ms: number): OperationError {
+  return opError('owner_unavailable',
+    `${member} did not run within ${ms} ms: the brain's owner holds it back while an earlier ${earlier} call still runs after its caller stopped waiting. Until that call ends, whether it committed is not known.`,
+    `Wait for the earlier ${earlier} call to end, then run ${member} again; its answer is final then. Do not rerun ${earlier} before that read answers. If it never ends, check the owner process log.`,
+    { reason: 'earlier_call_running', retryable: false,
+      detail: `member=${member} via=owner_ipc earlier=${earlier} deadline_ms=${ms} sent=true ran=false`,
+      why: 'The owner does not stop a store call it started, so a write whose caller timed out or cancelled can still commit. A read that confirms it waits until it has ended, so an empty answer can never come from a write that is about to commit.' });
 }
 
 /** The owner went away. `sent` says whether the owner may have started the call (its outcome is then unknown). */
@@ -202,7 +227,7 @@ export function ownerIpcProtocol(reason: OwnerIpcProtocolReason, member: string 
       : reason === 'result_undecodable'
         ? 'Read the data again before you retry a write, and report this as a gbrain bug with the code, reason and detail.'
         : 'Report this as a gbrain bug with the code, reason and detail; the call did not run.',
-    { reason, retryable: false,
+    { reason, retryable: false, fix: CODES.owner_ipc_protocol.fix,
       detail: `${member === null ? '' : `member=${member} `}via=owner_ipc reason=${reason} ${detail}`.trim() });
 }
 
@@ -222,7 +247,7 @@ export function ownerBusy(reason: OwnerBusyReason, member: string | null, limit:
   };
   return opError('owner_busy', messages[reason],
     'Retry after the calls in flight finish. If it keeps happening, fewer processes or smaller calls on this brain at once help.',
-    { reason, retryable: true,
+    { reason, retryable: true, fix: CODES.owner_busy.fix,
       detail: `${member === null ? '' : `member=${member} `}via=owner_ipc reason=${reason} limit=${limit}` });
 }
 
@@ -243,5 +268,5 @@ export function ownerPeerRefused(reason: OwnerPeerRefusedReason, detail: string)
     reason === 'peer_uid'
       ? 'Run every gbrain process on this brain as the same OS user.'
       : 'Stop the process that made the socket (gbrain doctor names the owner pid), check the brain directory belongs to you, then run the command again.',
-    { reason, retryable: false, detail: `via=owner_ipc reason=${reason} ${detail}`.trim() });
+    { reason, retryable: false, fix: CODES.owner_ipc_peer_refused.fix, detail: `via=owner_ipc reason=${reason} ${detail}`.trim() });
 }

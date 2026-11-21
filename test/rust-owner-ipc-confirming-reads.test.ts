@@ -8,8 +8,11 @@ import { describe, expect, test } from 'bun:test';
 import { RUST_ENGINE_MEMBERS } from '../src/core/rust-engine/members.ts';
 import { OWNER_IPC_CONFIRMING_READS } from '../src/core/rust-engine/owner-ipc/confirming-reads.ts';
 import {
-  OWNER_IPC_ROUTES, confirmingReadAdvice, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerMemberOnlyReads,
+  OWNER_IPC_ROUTES, confirmingReadAdvice, ownerBusy, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol,
+  ownerMemberOnlyReads, ownerPeerRefused,
 } from '../src/core/rust-engine/owner-ipc/routes.ts';
+import { cliRenderContext, toAgentError } from '../src/core/agent-output.ts';
+import { CODES } from '../src/core/error-registry.ts';
 
 const forwarded = Object.entries(OWNER_IPC_ROUTES).filter(([, route]) => route === 'forward').map(([member]) => member);
 const writes = forwarded.filter(member => !ownerMemberOnlyReads(member));
@@ -31,7 +34,8 @@ describe('the confirming read for each forwarded write', () => {
 
   test('insertFact names the facts read for that entity; a read says a rerun is safe', () => {
     expect(confirmingReadAdvice('insertFact')).toBe(
-      'Before you rerun insertFact, run listFactsByEntity for that entity to see whether it committed; rerun it only if it did not.');
+      'Before you rerun insertFact, run listFactsByEntity for that entity to see whether it committed; rerun it only if it did not.'
+      + ' The owner answers that read only after the earlier insertFact call has ended, so what it finds is final.');
     expect(confirmingReadAdvice('getPage')).toBe('Before you rerun getPage: it only reads, so nothing was written and running it again is safe.');
     expect(confirmingReadAdvice('lockPageKeys')).toContain('there is nothing: the lock is released');
   });
@@ -57,5 +61,62 @@ describe('a sent call whose answer never came back', () => {
     expect(ownerCallTimeout('insertFact', 300, 'not_sent')).toMatchObject({ code: 'timeout', reason: 'not_sent', retryable: true });
     expect(ownerCallTimeout('insertFact', 300, 'queued')).toMatchObject({ code: 'timeout', reason: 'not_started', retryable: true });
     expect(ownerGone('insertFact', 42, false)).toMatchObject({ code: 'owner_unavailable', reason: 'not_sent', retryable: true });
+  });
+});
+
+describe('the decide queue writes, whose confirming reads list only due rows', () => {
+  // Value: protects=the advice for the two decide queue writes says what a due-only read can and cannot prove;
+  // fails_when=the note is dropped, or the sweep note stops saying that a defer of a fact with no row is never
+  // listed; why_new=the decide store members are new on the owner socket; seam=none; no_claim=the read finds rows
+  // that are not yet due
+  test('applyDecideReviewQueue and applyDecideSweepDeferred name the due-only rule', () => {
+    const review = confirmingReadAdvice('applyDecideReviewQueue');
+    expect(review).toContain('run listDueDecideReviewQueue for that kind and source');
+    expect(review).toContain('That read lists only due rows: a defer or clear that committed takes the row out of it, so a row still listed means the call did not commit');
+    const sweep = confirmingReadAdvice('applyDecideSweepDeferred');
+    expect(sweep).toContain('run listDueDecideSweepDeferred for that source');
+    expect(sweep).toContain('A defer of a fact that had no row is never listed, so the read cannot tell');
+    expect(sweep).toContain('only adds one attempt and pushes the next try back');
+    expect(confirmingReadAdvice('insertFact')).not.toContain('due rows');
+  });
+});
+
+describe('the owner errors render a read-only fix and redact host details over HTTP', () => {
+  // Value: protects=owner_busy, owner_ipc_peer_refused and owner_ipc_protocol carry a default fix an agent can run,
+  // and the HTTP view never shows the socket path or the owner pid; fails_when=the registry row has no fix, the fix
+  // is not read-only, or an HTTP envelope keeps a path or pid; why_new=the plan's two partial items; seam=none;
+  // no_claim=what doctor prints
+  test('each error renders gbrain doctor --json as its fix, appended to the suggestion', () => {
+    const errors = [
+      ownerBusy('queue_full', 'getPage', 8), ownerPeerRefused('peer_uid', 'peer_uid=1001 owner_uid=1000'),
+      ownerIpcProtocol('version_mismatch', null, 'client_version=2 owner_version=1'),
+    ];
+    for (const error of errors) {
+      expect(error.fix?.argv).toEqual(['gbrain', 'doctor', '--json']);
+      expect(error.fix?.consent).toEqual([]);
+      expect(String(error.fix?.why)).toStartWith('Read-only:');
+      const env = toAgentError(error, { transport: 'cli', command: 'gbrain query', render: cliRenderContext() });
+      expect(env.fix?.command).toBe('gbrain doctor --json');
+      expect(env.suggestion).toContain('Next: gbrain doctor --json');
+    }
+    for (const code of ['owner_busy', 'owner_ipc_peer_refused', 'owner_ipc_protocol'] as const) {
+      expect(CODES[code].fix.argv).toEqual(['gbrain', 'doctor', '--json']);
+    }
+  });
+
+  test('over HTTP the socket path and the owner pid are redacted', () => {
+    const socket = '/home/user-example/.gbrain/brain/.gbrain-owner.sock';
+    const errors = [
+      ownerPeerRefused('socket_owner', `socket=${socket} socket_uid=1001`),
+      ownerGone('insertFact', 4242, true),
+    ];
+    for (const error of errors) {
+      const env = toAgentError(error, { transport: 'http', op: 'put_page', render: cliRenderContext() });
+      const text = JSON.stringify(env);
+      expect(text).not.toContain('/home/user-example');
+      expect(text).not.toContain('4242');
+    }
+    // The CLI view keeps them: the local user can act on them.
+    expect(JSON.stringify(toAgentError(errors[0]!, { transport: 'cli', render: cliRenderContext() }))).toContain('/home/user-example');
   });
 });

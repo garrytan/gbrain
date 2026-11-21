@@ -11,12 +11,14 @@
  *
  * When the owner has gone and the engine registered an election rerun (client.ts `rejoin`), the operation waits for
  * it and goes to the new owner; when this process became the owner it ends `owner_unavailable` (`not_sent`) and the
- * caller's retry runs it in process.
+ * caller's retry runs it in process. An election that fails ends it with the election's own error (`rust_store_unreadable`
+ * stays permanent), and a cancel or deadline during the election ends it at once.
  *
  * The owner side table is owner-ops.ts; it is kept apart so the import modules can call this one without a cycle.
  */
 import { resolve } from 'node:path';
-import { callerIsRemote, ownerConnectionFor, ownerRejoinFor, type OwnerConnection } from './client.ts';
+import { OperationError } from '../../ops/contract.ts';
+import { callerIsRemote, ownerConnectionFor, ownerRejoinFor, untilCallEnds, type OwnerConnection } from './client.ts';
 import { ownerGone, ownerIpcRefusal } from './routes.ts';
 
 export type WholeOperationName = 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles';
@@ -53,8 +55,13 @@ export function forwardWholeOperation<T>(engine: object, name: WholeOperationNam
   const rejoin = connection.closed ? ownerRejoinFor(connection) : undefined;
   if (!rejoin) return connection.request('fn', name, sent) as Promise<T>;
   // The owner has gone: run the election again. A new owner elsewhere takes the operation; when this process became
-  // the owner it cannot run it from here, so it is not sent and the caller's retry runs it in process.
-  return rejoin().catch(() => undefined).then(() => {
+  // the owner it cannot run it from here, so it is not sent and the caller's retry runs it in process. An election
+  // that fails for its own reason (a store that will not open, a disconnect that won) ends the operation with that
+  // error, and a caller that cancels or passes its deadline during the election stops waiting at once.
+  const elected = untilCallEnds(name, args, rejoin()).catch((error: unknown) => {
+    if (!(error instanceof OperationError && error.code === 'owner_unavailable')) throw error;
+  });
+  return elected.then(() => {
     const next: OwnerConnection | undefined = ownerConnectionFor(engine);
     if (next && !next.closed) return next.request('fn', name, sent) as Promise<T>;
     throw ownerGone(name, connection.hello.pid, false);

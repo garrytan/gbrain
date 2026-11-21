@@ -98,3 +98,37 @@ export const OWNER_IPC_CONFIRMING_READS: Readonly<Record<string, string>> = {
   applyDecideReviewQueue: 'listDueDecideReviewQueue for that kind and source',
   applyDecideSweepDeferred: 'listDueDecideSweepDeferred for that source',
 };
+
+/**
+ * The read that confirms each whole operation (whole-op.ts) a client sends as one request. Kept apart from
+ * OWNER_IPC_CONFIRMING_READS, whose keys are exactly the forwarded BrainEngine writes.
+ */
+export const OWNER_IPC_WHOLE_OP_CONFIRMING_READS: Readonly<Record<string, string>> = {
+  importFromContent: 'getPage for that slug and source',
+  importFromFile: 'getPage for the slug of that file',
+  importImageFile: 'getPage for the slug of that file',
+  importManagedFiles: 'getPage for each slug the call named',
+};
+
+/**
+ * What the advice adds for a write whose confirming read cannot answer every case. Both decide reads list only due
+ * rows (`next_attempt_at <= now()` and fewer than 5 attempts).
+ */
+export const OWNER_IPC_CONFIRMING_NOTES: Readonly<Record<string, string>> = {
+  applyDecideReviewQueue: 'That read lists only due rows: a defer or clear that committed takes the row out of it, so a row still listed means the call did not commit, and an enqueue that committed shows its row.',
+  applyDecideSweepDeferred: 'That read lists only due rows: a defer or clear that committed takes the row out of it, so a row still listed means the call did not commit. A defer of a fact that had no row is never listed, so the read cannot tell; a rerun of a defer that did commit only adds one attempt and pushes the next try back.',
+};
+
+const MEMBER_TOKEN = /\b[a-z]+[A-Z]\w*\b/g;
+
+/**
+ * The members the owner holds back while a `write` it started still runs after its caller stopped waiting (an orphan,
+ * server.ts): the reads its confirming read names, or the write itself when that read goes through the same member
+ * (executeRaw's SELECT). A write whose rerun repeats nothing (`nothing:`) holds nothing back.
+ */
+export function membersWaitingFor(write: string): ReadonlySet<string> {
+  const read = OWNER_IPC_CONFIRMING_READS[write] ?? OWNER_IPC_WHOLE_OP_CONFIRMING_READS[write];
+  if (read === undefined || read.startsWith('nothing:')) return new Set();
+  const named = read.match(MEMBER_TOKEN) ?? [];
+  return new Set(named.length === 0 ? [write] : named);
+}

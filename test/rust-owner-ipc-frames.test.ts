@@ -83,6 +83,20 @@ describe('frame rules on the owner', () => {
     expect(ran).toEqual([]);
   });
 
+  // Value: protects=a version 1 client (whose decoder reads a segmented-body guard as a plain object) never talks to this owner, which sends guards; fails_when=OWNER_IPC_VERSION stays 1 while the guard tag crosses; why_new=the test above sends OWNER_IPC_VERSION + 1, which passes whatever the version is; seam=none; no_claim=a version 3 peer
+  test('a version 1 client hello gets the version 2 owner hello, then the owner closes, and its call never runs', async () => {
+    ran.length = 0;
+    expect(OWNER_IPC_VERSION).toBe(2);
+    const raw = rawSession(server.socketPath);
+    await raw.send(hello(1));
+    await raw.send({ t: 'call', id: 1, member: 'getConfig', args: encodeValue(['v1-client']) });
+    const answer = await raw.next(f => f.t === 'hello');
+    expect(answer?.version).toBe(2);
+    expect(await raw.closes()).toBe(true);
+    expect(raw.frames.filter(f => f.t === 'result')).toEqual([]);
+    expect(ran).toEqual([]);
+  });
+
   test('a call before the hello is refused with owner_ipc_protocol hello_missing and never runs', async () => {
     ran.length = 0;
     const raw = rawSession(server.socketPath);
@@ -196,6 +210,52 @@ describe('frame rules on the client', () => {
       expect({ code: outcome?.code, reason: outcome?.reason }).toEqual({ code: 'owner_ipc_protocol', reason: 'version_mismatch' });
       expect(outcome?.detail).toContain(`client_version=${OWNER_IPC_VERSION}`);
       expect(outcome?.detail).toContain(`owner_version=${OWNER_IPC_VERSION + 1}`);
+    } finally {
+      await owner.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Value: protects=this client refuses a version 1 owner, whose answers it would read under the old rules; fails_when=OWNER_IPC_VERSION stays 1; why_new=the test above uses OWNER_IPC_VERSION + 1; seam=none; no_claim=a version 3 owner
+  test('connectOwner refuses a version 1 owner with a clear owner_ipc_protocol version_mismatch', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-frames-v1-'));
+    const owner = await rawOwner(dir, ownerHello(1), f => ({ t: 'result', id: f.id, ok: true, value: encodeValue(null) }));
+    try {
+      const outcome = await connectOwner(owner.socketPath).then(c => { c.close(); return null; }, e => e as OperationError);
+      expect({ code: outcome?.code, reason: outcome?.reason }).toEqual({ code: 'owner_ipc_protocol', reason: 'version_mismatch' });
+      expect(outcome?.detail).toContain('client_version=2');
+      expect(outcome?.detail).toContain('owner_version=1');
+    } finally {
+      await owner.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Value: protects=a segmented-body guard is never read as a plain object: outside a guarded body field it fails the decode, and an unknown tag does too; fails_when=decodeTagged falls back to decodePlain for a tag it does not handle; why_new=the codec tests round-trip a guard only in a guarded field; seam=none; no_claim=which fields may carry a guard
+  test('a guard outside a guarded body field, or an unknown tag, fails the decode instead of becoming a plain object', () => {
+    for (const wire of [
+      { $t: 'guard', site: 'getPage' },
+      { notes: { $t: 'guard', site: 'getPage' } },
+      [{ $t: 'guard', site: 'getPage' }],
+      { $t: 'future-tag', v: 1 },
+      { page: { $t: 'future-tag', v: 1 } },
+    ] as Wire[]) {
+      expect(() => decodeValue(wire)).toThrow(/owner socket/);
+    }
+    // A plain object whose own data has a `$t` key still crosses, wrapped as `obj`.
+    expect(decodeValue(encodeValue({ $t: 'guard', site: 'getPage' }))).toEqual({ $t: 'guard', site: 'getPage' });
+  });
+
+  // Value: protects=a client fails only the call whose answer carries a misplaced guard, with result_undecodable, and never hands the caller a plain object for the page body; fails_when=the decoder falls back to a plain object; why_new=the result_undecodable test below uses a malformed frame, not a guard; seam=none; no_claim=a guard in a guarded field, which other tests cover
+  test('an answer with a guard outside a guarded field fails that call with result_undecodable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-frames-g-'));
+    const owner = await rawOwner(dir, ownerHello(), f => ({ t: 'result', id: f.id, ok: true, value: { slug: 'a', notes: { $t: 'guard', site: 'getPage' } } }));
+    try {
+      const connection = await connectOwner(owner.socketPath);
+      try {
+        const outcome = await connection.request('call', 'getPage', ['a']).then(() => null, e => e as OperationError);
+        expect({ code: outcome?.code, reason: outcome?.reason }).toEqual({ code: 'owner_ipc_protocol', reason: 'result_undecodable' });
+      } finally { connection.close(); }
     } finally {
       await owner.close();
       rmSync(dir, { recursive: true, force: true });

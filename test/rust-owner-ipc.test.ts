@@ -53,6 +53,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { errorShape, readScript } from './helpers/owner-ipc-child.ts';
+import { currentSubmissionAuthority, withSubmissionAuthority, type SubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 
 const CHILD = join(import.meta.dir, 'helpers', 'owner-ipc-child.ts');
 
@@ -314,6 +315,7 @@ describe('deadlines, cancel and permits', () => {
       for (const error of [(await cancelled) as OperationError, (await timedOut) as OperationError]) {
         expect(error).toMatchObject({ code: 'owner_unavailable', reason: 'outcome_unknown', retryable: false });
         expect(error.suggestion).toBe('Before you rerun insertFact, run listFactsByEntity for that entity to see whether it committed; rerun it only if it did not.'
+          + ' The owner answers that read only after the earlier insertFact call has ended, so what it finds is final.'
           + (error.message.includes('did not finish within') ? ' If calls keep timing out, the owner process is busy: check its log.' : ''));
       }
       // Before the send nothing ran, so the answers stay as they were: `cancelled`, and a retryable `timeout`.
@@ -547,7 +549,7 @@ describe('an owner that exits', () => {
     return { child, pid: ready.pid as number };
   }
   /** A store with one config key, so a call this process serves itself is told apart from one the owner served. */
-  class ConfigBrain { async open() {} async close() {} async getConfig(key: string) { return key === 'who' ? 'this-process' : null; } }
+  class ConfigBrain { async open() {} async close() {} async getConfig(key: string): Promise<string | null> { return key === 'who' ? 'this-process' : null; } }
   const configAddon = { target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} }, Brain: ConfigBrain } as never;
 
   test('a client installed without rejoin: calls in flight end outcome_unknown and later calls fail fast with not_sent', async () => {
@@ -824,6 +826,166 @@ describe('an owner that exits', () => {
         expect(written).toEqual(['k=v']);
       }, 60_000);
     });
+
+    // Value: protects=a call cancelled or past its deadline while the election or the store open still runs ends at once, not when the open ends, and is never written; fails_when=the call waits for the whole election or open before it checks its signal and deadline, so a slow or stuck open holds a cancelled caller; why_new=the tests above end the call before or just as a 20-400 ms open ends, so a call that waited for the open and then checked passed them; seam=none; no_claim=a store open that never ends at all
+    describe('a call that ends while the takeover still opens the store', () => {
+      /** A store whose open waits for the test to release it, so the test acts while this process still opens the store it took over. */
+      function gatedAddon(written: string[]) {
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const opened = { n: 0 };
+        const addon = { target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} },
+          Brain: class extends ConfigBrain { async open() { opened.n++; await gate; } async setConfig(key: string, value: string) { written.push(`${key}=${value}`); } } } as never;
+        return { addon, opened, release };
+      }
+      const outcomeOf = (call: Promise<unknown>) => call.then(() => 'ran', (error: OperationError) => `${error.code}/${error.reason ?? ''}`);
+      /** The call's outcome if it ends within two seconds while the open is held, else `still waiting`. */
+      const whileHeld = (call: Promise<unknown>) => Promise.race([outcomeOf(call), Bun.sleep(2_000).then(() => 'still waiting')]);
+
+      async function heldTakeover(act: (rust: RustEngine, gated: ReturnType<typeof gatedAddon>) => Promise<string>, written: string[]) {
+        const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-held-open-'));
+        const db = join(dir, 'brain.rust');
+        const first = await ownerChild(db);
+        const gated = gatedAddon(written);
+        const rust = openRustEngine({ addon: gated.addon, databasePath: db, ownerWaitMs: 5_000 });
+        try {
+          await rust.connect({});
+          await afterOwnerDeath(first, rust);
+          const outcome = await act(rust, gated);
+          gated.release();
+          // The takeover still ends, and a call that stays live is served in process.
+          const live = await settle((rust as unknown as BrainEngine).getConfig('who'));
+          return { outcome, live, role: rust.ownerRole };
+        } finally {
+          gated.release();
+          await rust.disconnect();
+          first.child.kill('SIGKILL');
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }
+      const untilOpening = async (gated: ReturnType<typeof gatedAddon>) => { await waitFor(() => gated.opened.n === 1, { timeoutMs: 10_000 }); };
+
+      test('the call that starts the takeover, cancelled while the store opens: ends cancelled at once and nothing is written', async () => {
+        const written: string[] = [];
+        const result = await heldTakeover(async (rust, gated) => {
+          const controller = new AbortController();
+          const call = withRequestSignal(controller.signal, () => (rust as unknown as BrainEngine).setConfig('k', 'v'));
+          await untilOpening(gated);
+          controller.abort();
+          return whileHeld(call);
+        }, written);
+        expect(result).toEqual({ outcome: 'cancelled/', live: 'this-process', role: 'owner' });
+        expect(written).toEqual([]);
+      }, 60_000);
+
+      test('the call that starts the takeover, past its deadline while the store opens: ends timeout not_sent at once and nothing is written', async () => {
+        const written: string[] = [];
+        const result = await heldTakeover(async (rust, gated) => {
+          const call = withReadDeadline(Date.now() + 300, () => (rust as unknown as BrainEngine).setConfig('k', 'v'));
+          await untilOpening(gated);
+          return whileHeld(call);
+        }, written);
+        expect(result).toEqual({ outcome: 'timeout/not_sent', live: 'this-process', role: 'owner' });
+        expect(written).toEqual([]);
+      }, 60_000);
+
+      test('a whole operation that starts the takeover, cancelled while the store opens: ends cancelled at once', async () => {
+        const result = await heldTakeover(async (rust, gated) => {
+          const controller = new AbortController();
+          const call = withRequestSignal(controller.signal, () => forwardWholeOperation(rust, 'importFromContent', ['x', 'y'])!);
+          await untilOpening(gated);
+          controller.abort();
+          return whileHeld(call);
+        }, []);
+        expect(result).toEqual({ outcome: 'cancelled/', live: 'this-process', role: 'owner' });
+      }, 60_000);
+
+      test('a whole operation that starts the takeover, past its deadline while the store opens: ends timeout not_sent at once', async () => {
+        const result = await heldTakeover(async (rust, gated) => {
+          const call = withReadDeadline(Date.now() + 300, () => forwardWholeOperation(rust, 'importFromContent', ['x', 'y'])!);
+          await untilOpening(gated);
+          return whileHeld(call);
+        }, []);
+        expect(result).toEqual({ outcome: 'timeout/not_sent', live: 'this-process', role: 'owner' });
+      }, 60_000);
+
+      test('a second call made while the store opens, cancelled: ends cancelled at once and nothing is written', async () => {
+        const written: string[] = [];
+        const result = await heldTakeover(async (rust, gated) => {
+          const brain = rust as unknown as BrainEngine;
+          void settle(brain.getConfig('who'));
+          await untilOpening(gated);
+          expect(rust.ownerRole).toBe('owner');
+          const controller = new AbortController();
+          const call = withRequestSignal(controller.signal, () => brain.setConfig('k', 'v'));
+          await Bun.sleep(20);
+          controller.abort();
+          return whileHeld(call);
+        }, written);
+        expect(result).toEqual({ outcome: 'cancelled/', live: 'this-process', role: 'owner' });
+        expect(written).toEqual([]);
+      }, 60_000);
+
+      test('a second call made while the store opens, past its deadline: ends timeout not_sent at once and nothing is written', async () => {
+        const written: string[] = [];
+        const result = await heldTakeover(async (rust, gated) => {
+          const brain = rust as unknown as BrainEngine;
+          void settle(brain.getConfig('who'));
+          await untilOpening(gated);
+          return whileHeld(withReadDeadline(Date.now() + 300, () => brain.setConfig('k', 'v')));
+        }, written);
+        expect(result).toEqual({ outcome: 'timeout/not_sent', live: 'this-process', role: 'owner' });
+        expect(written).toEqual([]);
+      }, 60_000);
+    });
+
+    // Value: protects=a whole operation whose takeover fails because the store will not open ends with that permanent error, not a retryable not_sent; fails_when=the whole-operation path swallows every election error and reports owner_unavailable not_sent, so the caller retries a store that cannot open; why_new=the ordinary-member path rethrew election errors, the whole-operation path did not and no test covered it; seam=none; no_claim=which store faults map to rust_store_unreadable (store-errors tests)
+    test('a whole operation whose takeover finds the store unreadable ends rust_store_unreadable, not retryable', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-unreadable-'));
+      const db = join(dir, 'brain.rust');
+      const first = await ownerChild(db);
+      const addon = { target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} },
+        Brain: class extends ConfigBrain { async open() { throw Object.assign(new Error('bad record'), { code: 'store_corrupt' }); } } } as never;
+      const rust = openRustEngine({ addon, databasePath: db, ownerWaitMs: 5_000 });
+      try {
+        await rust.connect({});
+        await afterOwnerDeath(first, rust);
+        const error = (await forwardWholeOperation(rust, 'importFromContent', ['x', 'y'])!.then(() => null, e => e)) as OperationError;
+        expect({ code: error.code, reason: error.reason, retryable: error.retryable ?? false })
+          .toEqual({ code: 'rust_store_unreadable', reason: 'store_corrupt', retryable: false });
+      } finally {
+        await rust.disconnect();
+        first.child.kill('SIGKILL');
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
+
+    // Value: protects=a takeover that a remote job's call starts does not hand that job's authority to the owner server, so later local callers of the owner are not refused as remote; fails_when=the election and the owner server run in the caller's async context, so every served call carries the remote job's submission authority; why_new=every takeover test above started from a call with no authority; seam=a stub store, so the local importManagedFiles is checked only to get past the trusted-CLI gate, not to import; no_claim=a real managed import through the new owner
+    test('a takeover started by a remote job\'s call: the owner serves later callers with no authority, and a local managed import is not refused', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-detached-'));
+      const db = join(dir, 'brain.rust');
+      const first = await ownerChild(db);
+      const addon = { target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} },
+        Brain: class extends ConfigBrain { async getConfig(key: string) { return key === 'authority' ? JSON.stringify(currentSubmissionAuthority() ?? null) : super.getConfig(key); } } } as never;
+      const rust = openRustEngine({ addon, databasePath: db, ownerWaitMs: 5_000 });
+      try {
+        await rust.connect({});
+        await afterOwnerDeath(first, rust);
+        const remoteJob = { version: 1, kind: 'remote_generic' } as unknown as SubmissionAuthority;
+        expect(await withSubmissionAuthority(remoteJob, () => (rust as unknown as BrainEngine).getConfig('who'))).toBe('this-process');
+        expect(rust.ownerRole).toBe('owner');
+        const { engine, close } = await clientOf(ownerSocketPath(db));
+        try {
+          expect(await engine.getConfig('authority')).toBe('null');
+          const managed = await forwardWholeOperation(engine, 'importManagedFiles', [[], {}])!.then(() => 'ran', (error: OperationError) => `${error.code}/${error.reason ?? ''}`);
+          expect(managed).not.toBe('permission_denied/trusted_cli_required');
+        } finally { close(); }
+      } finally {
+        await rust.disconnect();
+        first.child.kill('SIGKILL');
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 60_000);
 
     // Value: protects=the first ordinary call after owner death reaches a new owner in another process on a fresh connection; fails_when=it ends owner_unavailable or runs locally; why_new=failover tests began with a whole op, never an ordinary call, for a new owner elsewhere; seam=none; no_claim=takeover
     test('a first ordinary call after the owner dies goes to the new owner on a new connection, without opening this store', async () => {

@@ -14,6 +14,7 @@
  * lock, makes this engine a client of that owner: its data members then run on the owner, and the members that need a
  * transaction refuse (owner-ipc/routes.ts). A client never opens the store.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from './engine.ts';
 import type { Capability, EngineCapabilities } from './engine-capabilities.ts';
 import type { EngineConfig } from './types.ts';
@@ -24,9 +25,17 @@ import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
-import { callEndCheck, installOwnerClient } from './rust-engine/owner-ipc/client.ts';
+import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
+
+/**
+ * The async context this module loaded in, taken once. The engine runs its election, and the owner server and store
+ * open that follow it, inside it, so the owner never runs with the authority, deadline or signal of the caller whose
+ * call happened to start the election. Load this module at startup, outside any request or job (as the engine factory
+ * and the tests do); a load inside one would make that one the owner's context.
+ */
+const ownerContext = AsyncLocalStorage.snapshot();
 
 /** The loaded, verified addon exports. Opaque to the shell: the typed methods later PRs add call into it. */
 export type RustEngineAddonHandle = object;
@@ -106,7 +115,10 @@ export class RustEngine {
   private _electOnce(): Promise<void> {
     if (!this._opening) {
       const generation = this._generation;
-      const opening: Promise<void> = this._open(generation)
+      // The election and the owner server it starts run in the context this module loaded in, not the caller's: a
+      // takeover a remote job's call starts must not hand that job's authority, deadline or signal to the owner every
+      // later caller reaches.
+      const opening: Promise<void> = ownerContext(() => this._open(generation))
         .finally(() => { if (this._opening === opening) this._opening = null; });
       this._opening = opening;
     }
@@ -231,8 +243,9 @@ export class RustEngine {
     if (!this._store && this._storeReady && this._owner?.role === 'owner') {
       // A call that waited for the open is checked again before it runs: nothing else ends one that was cancelled or
       // went past its deadline while the store opened, and it may be a write.
+      // A call cancelled or past its deadline while the open still runs ends at once; the open goes on.
       const stillWanted = callEndCheck(member, args);
-      await this._storeReady;
+      await untilCallEnds(member, args, this._storeReady);
       stillWanted();
     }
     return this.openStore(member);

@@ -10,7 +10,12 @@
 - The owner keeps the brain lock until a store open that is still pending settles.
 - A page stored in segments no longer breaks a second process that reads it through the owner: its metadata crosses the socket and its body fields refuse with `page_body_segmented`, as they do in the owner, and one such page no longer fails the whole list.
 - Errors from the owner keep their type across the socket, so link and revision recovery that checks the error type also works from a second process.
-- A call that was already sent to the owner and then is cancelled, passes its deadline or loses its owner ends `owner_unavailable` with reason `outcome_unknown`, since the owner may still commit it. A deadline after the send used to end `timeout`. Its advice names the read that shows whether that write committed, and it is retryable only for a call that only reads.
+- A call that was already sent to the owner and then is cancelled, passes its deadline or loses its owner ends `owner_unavailable` with reason `outcome_unknown`, since the owner may still commit it. A deadline after the send used to end `timeout`. Its advice names the read that shows whether that write committed, and it is retryable only for a call that only reads. The owner now answers that read only after the earlier call has ended, so a read that finds nothing means the write did not commit; a read that cannot wait that long ends `owner_unavailable` with reason `earlier_call_running` and tells nothing.
+- A call cancelled or past its deadline while a takeover still opens the store now ends at once, instead of when the open ends.
+- A whole operation whose takeover cannot open the store now fails with the store's own error, which is not retryable, instead of a retryable `owner_unavailable`.
+- A takeover that a remote job's call starts no longer gives that job's authority to the new owner, so later local calls such as a managed import are not refused.
+- Owner sockets speak protocol version 2. A client and an owner of different versions refuse each other, so restart every gbrain process on a Rust brain after the upgrade.
+- An error shown over HTTP now hides a process id written as `owner_pid=` too.
 
 ### Added
-- Three error codes, `owner_busy`, `owner_ipc_peer_refused` and `owner_ipc_protocol`, in the error guide and the public surface.
+- Three error codes, `owner_busy`, `owner_ipc_peer_refused` and `owner_ipc_protocol`, in the error guide and the public surface, each with `gbrain doctor --json` as its fix.
