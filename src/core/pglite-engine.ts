@@ -152,6 +152,10 @@ import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import * as entityReadsImpl from './engine-sql/entity-reads.ts';
 import * as jobsInsight from './engine-sql/jobs-insight.ts';
+import * as jobsStatus from './engine-sql/jobs-status.ts';
+import type { JobStatusFilter } from './engine-sql/jobs-status.ts';
+import * as embeddingCatalogImpl from './engine-sql/embedding-catalog.ts';
+import * as fenceHoldsImpl from './engine-sql/fence-holds.ts';
 import type { PageAtRevisionRef } from './engine-sql/cli-reads-import.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
 import * as codeTraversalCache from './engine-sql/code-traversal-cache.ts';
@@ -1480,6 +1484,25 @@ export class PGLiteEngine implements BrainEngine {
   findExactBasenameCandidates(sourceId: string, slugs: readonly string[]) { return entityReadsImpl.findExactBasenameCandidates(unscopedExecutor(this.engineSql, 'entities: exact basename ran unscoped through executeRaw'), sourceId, slugs); }
   // The reads behind describeJobs (engine-sql/jobs-insight.ts).
   async readJobInsight(spec: jobsInsight.JobInsightSpec) { return jobsInsight.readJobInsight(this, spec); }
+  // Embedding catalog and held fence reads (engine-sql/embedding-catalog.ts, fence-holds.ts), through executeRaw as before.
+  readChunkVectorColumn(column: string) { return embeddingCatalogImpl.readChunkVectorColumn(this.rawRead, column); }
+  readEmbeddingIdentity() { return embeddingCatalogImpl.readEmbeddingIdentity(this.rawRead, () => this.getConfig('embedding_model')); }
+  listEmbeddingStores() { return embeddingCatalogImpl.listEmbeddingStores(this.rawRead); }
+  hasStoredVectors(store: embeddingCatalogImpl.EmbeddingStore) { return embeddingCatalogImpl.hasStoredVectors(this.rawRead, store); }
+  countChunkVectorCoverage(column: embeddingCatalogImpl.FixedVectorColumn) { return embeddingCatalogImpl.countChunkVectorCoverage(this.rawRead, column); }
+  listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string) { return fenceHoldsImpl.listFenceHoldRows(this.rawRead, sourceIds, kinds, ownerKey); }
+  // Job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts).
+  async readLastAutopilotCycles() { return jobsStatus.readLastAutopilotCycles(this); }
+  async countJobsByStatus(filter?: JobStatusFilter) { return jobsStatus.countJobsByStatus(this, filter); }
+  async readWaitingQueueDepths() { return jobsStatus.readWaitingQueueDepths(this); }
+  async readLastCompletedJobAt() { return jobsStatus.readLastCompletedJobAt(this); }
+  async countTtlCancelledByName(reasonLike: string, withinSeconds: number) { return jobsStatus.countTtlCancelledByName(this, reasonLike, withinSeconds); }
+  async readWaitingScopeState(spec: { name: string; queue: string; jobId: number }) { return jobsStatus.readWaitingScopeState(this, spec); }
+  async countRecentCompletedJobs(name: string, withinSeconds: number) { return jobsStatus.countRecentCompletedJobs(this, name, withinSeconds); }
+  async listRecentFailedJobErrors(withinSeconds: number) { return jobsStatus.listRecentFailedJobErrors(this, withinSeconds); }
+  async readQueuedPageChars(spec: { name: string; queue: string; maxChars: number }) { return jobsStatus.readQueuedPageChars(this, spec); }
+  async readSourceJobCounts(failedWithinSeconds: number) { return jobsStatus.readSourceJobCounts(this, failedWithinSeconds); }
+  async readEmbedBackfillBySource(sourceIds: readonly string[]) { return jobsStatus.readEmbedBackfillBySource(this, sourceIds); }
   listExportPageKeys(q: exportReadsImpl.ExportPageKeyQuery) { return exportReadsImpl.listExportPageKeys(this, q); }
   readExportWithdrawalLedgerBytes(sourceId: string) { return exportReadsImpl.readExportWithdrawalLedgerBytes(this, sourceId); }
   listExportWithdrawals(sourceId: string) { return exportReadsImpl.listExportWithdrawals(this, sourceId); }

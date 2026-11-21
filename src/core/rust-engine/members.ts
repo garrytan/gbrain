@@ -309,6 +309,26 @@ export const RUST_ENGINE_MEMBERS = {
   findExactBasenameCandidates: 'raw_sql',
   // The reads behind describeJobs (engine-sql/jobs-insight.ts), answered from the store's job rows (rust/crates/gbrain-store/src/jobs/insight.rs).
   readJobInsight: 'minion_queue',
+  // Job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts), answered from the store's job rows.
+  readLastAutopilotCycles: 'minion_queue',
+  countJobsByStatus: 'minion_queue',
+  readWaitingQueueDepths: 'minion_queue',
+  readLastCompletedJobAt: 'minion_queue',
+  countTtlCancelledByName: 'minion_queue',
+  readWaitingScopeState: 'minion_queue',
+  countRecentCompletedJobs: 'minion_queue',
+  listRecentFailedJobErrors: 'minion_queue',
+  readQueuedPageChars: 'minion_queue',
+  readSourceJobCounts: 'minion_queue',
+  readEmbedBackfillBySource: 'minion_queue',
+  // Embedding catalog and held fence reads (engine-sql/embedding-catalog.ts, fence-holds.ts): refused as the raw SQL they replace
+  // until the Rust store serves them, so the reported capabilities stay as before.
+  readChunkVectorColumn: 'raw_sql',
+  readEmbeddingIdentity: 'raw_sql',
+  listEmbeddingStores: 'raw_sql',
+  hasStoredVectors: 'raw_sql',
+  countChunkVectorCoverage: 'raw_sql',
+  listFenceHoldRows: 'raw_sql',
   readPersistenceBrainId: 'persistence_journal',
   readLocalWriterRow: 'persistence_journal',
   insertLocalWriterRow: 'persistence_journal',

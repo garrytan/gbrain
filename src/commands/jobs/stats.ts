@@ -32,14 +32,7 @@ export async function runJobsStats({ args, engine, queue }: JobsCommandContext):
   let ttlCancelled: Array<{ name: string; count: number }> = [];
   try {
     const { TTL_REASON_PREFIX } = await import('../../core/minions/admission.ts');
-    const ttlRows = await engine.executeRaw<{ name: string; count: string }>(
-      `SELECT name, count(*)::text AS count FROM minion_jobs
-            WHERE status = 'cancelled' AND error_text LIKE $1
-              AND finished_at > now() - interval '24 hours'
-            GROUP BY name ORDER BY count(*) DESC`,
-      [`${TTL_REASON_PREFIX}%`],
-    );
-    ttlCancelled = ttlRows.map(r => ({ name: r.name, count: parseInt(r.count, 10) }));
+    ttlCancelled = await engine.countTtlCancelledByName(`${TTL_REASON_PREFIX}%`, 86400);
   } catch { /* best-effort */ }
   // Job names originate from the MCP-exposed submit surface — strip
   // control/ANSI bytes + cap before echoing into the terminal screams
@@ -208,23 +201,9 @@ export async function runJobsStats({ args, engine, queue }: JobsCommandContext):
           // across brains in one GBRAIN_HOME, so an id from another
           // brain's audit trail must fail the match here rather than
           // name an unrelated job as the suppressor.
-          const rows = await engine.executeRaw<{ waiting: string; live_id: string | null; age_min: string | null }>(
-            `WITH target AS (
-                   SELECT id, started_at, status, lock_until,
-                          COALESCE(data->>'sourceId', data->>'source_id') AS scope
-                     FROM minion_jobs WHERE id = $3 AND name = $1 AND queue = $2
-                 )
-                 SELECT (SELECT count(*)::text FROM minion_jobs m, target t
-                          WHERE m.name = $1 AND m.queue = $2 AND m.status = 'waiting'
-                            AND COALESCE(m.data->>'sourceId', m.data->>'source_id') IS NOT DISTINCT FROM t.scope) AS waiting,
-                        (SELECT id::text FROM target WHERE status = 'active' AND lock_until > now()) AS live_id,
-                        (SELECT floor(EXTRACT(EPOCH FROM (now() - started_at)) / 60)::text FROM target
-                          WHERE status = 'active' AND lock_until > now()) AS age_min`,
-            [name, statsQueue, summary.last_returned_job_id],
-          );
-          const r = rows[0];
-          const ageMin = r?.age_min != null ? parseInt(r.age_min, 10) : null;
-          if (r && parseInt(r.waiting ?? '0', 10) === 0 && r.live_id != null && ageMin != null && ageMin > wedgeMins) {
+          const r = await engine.readWaitingScopeState({ name, queue: statsQueue, jobId: summary.last_returned_job_id });
+          const ageMin = r.age_min;
+          if (r.waiting === 0 && r.live_id != null && ageMin != null && ageMin > wedgeMins) {
             console.log(
               `     ${name}: dispatch suppressed by in-flight job #${r.live_id} (age ${ageMin}m) — check \`gbrain jobs get ${r.live_id}\``,
             );
@@ -250,12 +229,7 @@ export async function runJobsStats({ args, engine, queue }: JobsCommandContext):
       // Also surface whether any of those bounces stalled forward progress.
       // Bounces with rising completed counts = healthy backpressure; bounces
       // with zero completes = real blocker (matches doctor's subagent_health).
-      const completedRows = await engine.executeRaw<{ count: string }>(
-        `SELECT count(*)::text AS count FROM minion_jobs
-              WHERE finished_at > now() - interval '1 hour'
-                AND status = 'completed' AND name = 'subagent'`,
-      ).catch(() => [{ count: '0' }]);
-      const completed = parseInt(completedRows[0]?.count ?? '0', 10);
+      const completed = await engine.countRecentCompletedJobs('subagent', 3600).catch(() => 0);
       const tag = completed > 0
         ? `(${completed} subagent job${completed === 1 ? '' : 's'} completed, throughput healthy)`
         : `(no subagent jobs completed — cap may be too tight; \`export GBRAIN_ANTHROPIC_MAX_INFLIGHT=64\`)`;
@@ -275,11 +249,7 @@ export async function runJobsStats({ args, engine, queue }: JobsCommandContext):
   if (hasFlag(args, '--cluster-errors')) {
     try {
       const { clusterErrors } = await import('../../core/minions/error-classify.ts');
-      const errRows = await engine.executeRaw<{ id: number; last_error: string | null }>(
-        `SELECT id, error_text AS last_error FROM minion_jobs
-              WHERE status IN ('dead', 'failed')
-                AND updated_at > now() - interval '24 hours'`,
-      );
+      const errRows = await engine.listRecentFailedJobErrors(86400);
       if (errRows.length === 0) {
         console.log(`\n  Error clusters (24h): no dead/failed jobs`);
       } else {

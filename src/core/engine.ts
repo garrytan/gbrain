@@ -2,6 +2,12 @@ import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawal
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type { LinkPageMetadataRow, PageAtRevisionRef, SourceIncarnationRow, SourceRecordRow, StoredTimelineRow } from './engine-sql/cli-reads-import.ts';
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
+import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
+import type { FenceHoldRow } from './engine-sql/fence-holds.ts';
+import type {
+  EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount,
+  WaitingScopeState,
+} from './engine-sql/jobs-status.ts';
 export type { LinkPageMetadataRow, PageAtRevisionRef, SourceIncarnationRow, SourceRecordRow, StoredTimelineRow } from './engine-sql/cli-reads-import.ts';
 export type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
@@ -2999,6 +3005,45 @@ export interface BrainEngine {
   findExactBasenameCandidates(sourceId: string, slugs: readonly string[]): Promise<string[]>;
   /** The reads behind `describeJobs`: submitter, queue position, slot holders, live children, blocking locks and foreign-owner tokens of a batch of jobs (engine-sql/jobs-insight.ts). */
   readJobInsight(spec: JobInsightSpec): Promise<JobInsightRows>;
+
+  // Embedding catalog (engine-sql/embedding-catalog.ts): what the embedding commands read about the vector columns.
+  /** A `content_chunks` vector column: whether it exists and its width (null when the type is not a vector type). */
+  readChunkVectorColumn(column: string): Promise<EmbeddingCatalogSql.ChunkVectorColumn>;
+  /** The stored embedding identity (model and width of `content_chunks.embedding`); null when the brain has no vector column. Throws when the width is unknown. */
+  readEmbeddingIdentity(): Promise<EmbeddingCatalogSql.EmbeddingIdentity | null>;
+  /** The tables that carry an `embedding` vector column, in PRIMARY_EMBEDDING_TABLES order. */
+  listEmbeddingStores(): Promise<EmbeddingCatalogSql.EmbeddingStore[]>;
+  /** Whether any row of `store` holds a vector. */
+  hasStoredVectors(store: EmbeddingCatalogSql.EmbeddingStore): Promise<boolean>;
+  /** Per source with chunks, the chunk count and how many hold a vector in a fixed column (`embedding_image`, `embedding_multimodal`), in source id order. */
+  countChunkVectorCoverage(column: EmbeddingCatalogSql.FixedVectorColumn): Promise<EmbeddingCatalogSql.ChunkVectorCoverageRow[]>;
+  /** The held fence results of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first (`listFenceHolds`, engine-sql/fence-holds.ts). */
+  listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string): Promise<FenceHoldRow[]>;
+
+  // Minion job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts): `gbrain status`, `jobs stats`,
+  // the facts drain backlog, source health and the sync status report. Windows are seconds.
+  /** The newest completed `autopilot-cycle` job and the newest completed `autopilot-*` job (finished-at order), or null each. */
+  readLastAutopilotCycles(): Promise<LastAutopilotCycles>;
+  /** Job counts by status, in status order, over the jobs a filter (name, queue, statuses) matches; no filter counts all. */
+  countJobsByStatus(filter?: JobStatusFilter): Promise<JobStatusCount[]>;
+  /** Waiting depth and oldest-waiting age in seconds per queue with waiting work, deepest first. */
+  readWaitingQueueDepths(): Promise<QueueDepth[]>;
+  /** The freshest `updated_at` among completed jobs, or null. */
+  readLastCompletedJobAt(): Promise<Date | null>;
+  /** Cancelled jobs whose `error_text` matches the LIKE pattern and that finished in the last `withinSeconds`, counted by name. */
+  countTtlCancelledByName(reasonLike: string, withinSeconds: number): Promise<TtlCancelledCount[]>;
+  /** The waiting jobs sharing a returned job's source scope, plus its id and age in minutes while it is active with a live lease. */
+  readWaitingScopeState(spec: { name: string; queue: string; jobId: number }): Promise<WaitingScopeState>;
+  /** Jobs of a name that completed within the last `withinSeconds`. */
+  countRecentCompletedJobs(name: string, withinSeconds: number): Promise<number>;
+  /** The id and failure text of dead or failed jobs updated within the last `withinSeconds`, by id. */
+  listRecentFailedJobErrors(withinSeconds: number): Promise<FailedJobError[]>;
+  /** The average page text length (capped at `maxChars`) of the pages queued jobs of a name and queue point at, or null. */
+  readQueuedPageChars(spec: { name: string; queue: string; maxChars: number }): Promise<number | null>;
+  /** Per-source failure, queue and embed-backfill counts over the `sync` and `embed-backfill` jobs. */
+  readSourceJobCounts(failedWithinSeconds: number): Promise<SourceJobCounts[]>;
+  /** The embed-backfill jobs of each named source: queued, active and last completion. */
+  readEmbedBackfillBySource(sourceIds: readonly string[]): Promise<EmbedBackfillState[]>;
 
   /** gbrain export: the next 256 live page keys after page id `q.afterId`, in id order, within the filters (engine-sql/export-reads.ts). */
   listExportPageKeys(q: ExportPageKeyQuery): Promise<ExportPageKey[]>;

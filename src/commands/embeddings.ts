@@ -93,8 +93,7 @@ async function assertSameIdentity(engine: BrainEngine, model: string): Promise<v
   const stored = await readStoredEmbeddingIdentity(engine);
   if (stored?.model === model) return;
   for (const table of await readPrimaryEmbeddingStores(engine)) {
-    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM ${table} WHERE embedding IS NOT NULL) AS present`);
-    if (row?.present) {
+    if (await engine.hasStoredVectors(table)) {
       throw opError('embedding_model_mismatch', 'This brain already holds vectors from a different or unrecorded embedding model; enabling cannot change their identity.',
         'Read `gbrain migrate embeddings --status --json`, then preview an explicit migration with --dry-run.',
         { fix: { argv: ['gbrain', 'migrate', 'embeddings', '--status', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'A model switch with existing vectors is a re-embed migration, previewed first.' } });

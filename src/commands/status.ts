@@ -250,28 +250,12 @@ export async function buildCycleSnapshot(engine: BrainEngine): Promise<CycleSnap
   let fullRow: Row | undefined;
   let targetedRow: Row | undefined;
   try {
-    const fullRows = await engine.executeRaw<Row>(
-      `SELECT finished_at, name, status, started_at, result
-         FROM minion_jobs
-        WHERE name = 'autopilot-cycle' AND status = 'completed'
-        ORDER BY finished_at DESC NULLS LAST
-        LIMIT 1`,
-    );
-    fullRow = fullRows[0];
+    // One typed read serves both queries, so a failure now leaves both rows empty (it was one try per query).
+    const { full, targeted } = await engine.readLastAutopilotCycles();
+    fullRow = (full ?? undefined) as Row | undefined;
+    targetedRow = (targeted ?? undefined) as Row | undefined;
   } catch {
     /* fall through — no row */
-  }
-  try {
-    const targetedRows = await engine.executeRaw<Row>(
-      `SELECT finished_at, name, status, started_at, result
-         FROM minion_jobs
-        WHERE name LIKE 'autopilot-%' AND status = 'completed'
-        ORDER BY finished_at DESC NULLS LAST
-        LIMIT 1`,
-    );
-    targetedRow = targetedRows[0];
-  } catch {
-    /* fall through */
   }
   return { last_full: toCycleRow(fullRow), last_targeted: toCycleRow(targetedRow) };
 }
@@ -311,17 +295,13 @@ async function buildLocks(engine: BrainEngine): Promise<LockRow[]> {
 
 // Exported for `src/core/operations.ts:get_status_snapshot` (snapshot v2 queue section).
 export async function buildQueueCounts(engine: BrainEngine): Promise<QueueCounts> {
-  type Row = { status: string; count: string | number };
   const counts: QueueCounts = { active: 0, waiting: 0, completed: 0, failed: 0, dead: 0 };
   try {
     // Live counts, NO time window (codex MAJOR-6). Old stuck waiting/active
     // jobs are the failure mode `gbrain status` should surface, not hide.
-    const rows = await engine.executeRaw<Row>(
-      `SELECT status, COUNT(*)::text AS count FROM minion_jobs GROUP BY status`,
-    );
+    const rows = await engine.countJobsByStatus();
     for (const r of rows) {
-      const n = typeof r.count === 'string' ? parseInt(r.count, 10) : r.count;
-      if (r.status in counts) (counts as unknown as Record<string, number>)[r.status] = n;
+      if (r.status in counts) (counts as unknown as Record<string, number>)[r.status] = r.count;
     }
   } catch {
     /* PGLite without minion_jobs or pre-migration brain — return zeros */
@@ -340,19 +320,7 @@ export async function buildQueueCounts(engine: BrainEngine): Promise<QueueCounts
  * is the fix if it becomes hot.
  */
 export async function buildQueueDepths(engine: BrainEngine): Promise<QueueDepthRow[]> {
-  const rows = await engine.executeRaw<{
-    queue: string;
-    depth: number | string;
-    oldest_waiting_age_seconds: number | string | null;
-  }>(
-    `SELECT queue,
-            count(*)::int AS depth,
-            EXTRACT(EPOCH FROM (now() - min(created_at)))::int AS oldest_waiting_age_seconds
-       FROM minion_jobs
-      WHERE status = 'waiting'
-      GROUP BY queue
-      ORDER BY depth DESC`,
-  );
+  const rows = await engine.readWaitingQueueDepths();
   return rows.map((r) => ({
     queue: r.queue,
     depth: Number(r.depth),
@@ -393,11 +361,7 @@ export async function buildWorkersSnapshot(
 
   let lastCompleted: string | null = null;
   try {
-    const rows = await engine.executeRaw<{ last_completed: string | Date | null }>(
-      `SELECT max(updated_at) AS last_completed FROM minion_jobs WHERE status = 'completed'`,
-    );
-    const v = rows[0]?.last_completed ?? null;
-    lastCompleted = v ? (v instanceof Date ? v.toISOString() : new Date(v).toISOString()) : null;
+    lastCompleted = (await engine.readLastCompletedJobAt())?.toISOString() ?? null;
   } catch {
     /* no minion_jobs table — leave null */
   }

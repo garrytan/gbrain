@@ -70,6 +70,7 @@ import type {
 } from '../types.ts';
 import type { GBrainConfig } from '../config.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from '../ai/defaults.ts';
+import { readConfigRows } from '../config-values.ts';
 
 // ---- Constants ---------------------------------------------------------
 
@@ -669,6 +670,8 @@ export function resolveWriteColumnFromConfigRows(rows: {
  */
 export interface RawQueryEngine {
   executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  /** The typed keyed config read (BrainEngine.getConfigValues); a handle without it reads config through executeRaw. */
+  getConfigValues?(keys: readonly string[]): Promise<Array<{ key: string; value: string }>>;
 }
 
 /**
@@ -698,9 +701,7 @@ export async function resolveActiveEmbeddingColumnFromEngine(
   let searchEmbeddingColumn: string | null = null;
   let embeddingColumnsJson: string | null = null;
   try {
-    const rows = await engine.executeRaw<{ key: string; value: string }>(
-      `SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')`,
-    );
+    const rows = await readConfigRows(engine, ['embedding_columns', 'search_embedding_column']);
     for (const r of rows) {
       if (r.key === 'search_embedding_column') searchEmbeddingColumn = r.value;
       else if (r.key === 'embedding_columns') embeddingColumnsJson = r.value;
