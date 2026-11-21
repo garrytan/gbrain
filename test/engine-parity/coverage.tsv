@@ -93,7 +93,7 @@ getPage	pages	yes	128	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	558	yes	yes	yes	serves
+putPage	pages	yes	559	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	9	yes	yes	yes	serves
@@ -413,8 +413,8 @@ listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
 listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	serves
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
-insertFact	facts	yes	112	yes	yes	yes	serves
-insertFacts	facts	yes	139	no	yes	yes	serves
+insertFact	facts	yes	114	yes	yes	yes	serves
+insertFacts	facts	yes	140	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	76	no	yes	yes	serves
 listFactsByEntity	facts	yes	37	yes	yes	yes	serves
@@ -974,10 +974,10 @@ softDeleteDerivedPages	facts_trust	yes	1	no	yes	yes	refuses:facts
 markNeedsRederive	facts_trust	yes	1	no	yes	yes	refuses:facts
 readMemberPageWithdrawal	facts_trust	yes	3	no	yes	yes	serves
 readFactVisibility	facts_trust	yes	4	no	yes	yes	serves
-readReplacementTarget	facts_trust	yes	4	no	yes	yes	serves
-readPairFactRow	facts_trust	yes	7	no	yes	yes	serves
-expireSupersededFact	facts_trust	yes	4	no	yes	yes	serves
-restoreSupersededFact	facts_trust	yes	3	no	yes	yes	serves
+readReplacementTarget	facts_trust	yes	6	no	yes	yes	serves
+readPairFactRow	facts_trust	yes	9	no	yes	yes	serves
+expireSupersededFact	facts_trust	yes	6	no	yes	yes	serves
+restoreSupersededFact	facts_trust	yes	4	no	yes	yes	serves
 readFactForForget	facts_trust	yes	3	no	yes	yes	serves
 expireFactSuperseded	facts_trust	yes	3	no	yes	yes	serves
 expireFactAtDate	facts_trust	yes	2	no	yes	yes	serves

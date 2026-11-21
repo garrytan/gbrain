@@ -31,6 +31,7 @@ import { ensureFactsFtsIndex } from '../../src/core/facts/fts-index.ts';
 import { getFtsLanguage } from '../../src/core/fts-language.ts';
 import { basisEmbedding, createSource, archiveSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -392,6 +393,8 @@ describe('engine parity: facts write-path and recall statements that left execut
       const targetId = ids.get(name)!;
       out[name] = {
         local: view(await engine.readReplacementTarget({ targetId, sourceId: SRC, ownPage: null })),
+        // A local read has no floor, so the own page it names changes nothing.
+        localOwn: view(await engine.readReplacementTarget({ targetId, sourceId: SRC, ownPage: 'memory/members/alice-example' })),
         remote: view(await engine.readReplacementTarget({ targetId, sourceId: SRC, excludePrivate: true, ownPage: null })),
         remoteOwn: view(await engine.readReplacementTarget({ targetId, sourceId: SRC, excludePrivate: true, ownPage: 'memory/members/alice-example' })),
         locked: await engine.transaction(async tx => view(await tx.readReplacementTarget({ targetId, sourceId: SRC, ownPage: null, lock: true }))),
@@ -402,8 +405,51 @@ describe('engine parity: facts write-path and recall statements that left execut
     expect(out['open row']).toMatchObject({ local: { withdrawn: false }, remote: { fact: 'open row' }, otherSource: null });
     expect((out['hidden row'] as { remote: unknown }).remote).toBeNull();
     expect((out['own page row'] as { remoteOwn: unknown }).remoteOwn).not.toBeNull();
+    for (const name of Object.keys(out)) {
+      const row = out[name] as { local: unknown; localOwn: unknown };
+      expect(row.localOwn).toEqual(row.local);
+    }
     expect(await engine.readReplacementTarget({ targetId: 999_999, sourceId: SRC, ownPage: null })).toBeNull();
     return out;
+  });
+
+  // The store applies the remote floor only as the no-caller rendering. An owner read renders other floor text, so the
+  // Rust member stops on its typed refusal there; PGLite reads through the owner's floor, which still hides this row.
+  parityTest('readReplacementTarget under an owner read, whose remote floor is not the plain floor', {
+    methods: ['readReplacementTarget', 'insertFacts', 'putPage'],
+  }, async (engine) => {
+    await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    const ids = await fenced(engine, [
+      { fact: 'open row', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'hidden row', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
+    ]);
+    const plain = await engine.readReplacementTarget({ targetId: ids.get('hidden row')!, sourceId: SRC, excludePrivate: true, ownPage: null });
+    expect(plain).toBeNull();
+    const out = await withCallerAccess({ owner: true }, async () => {
+      const read: Record<string, unknown> = {};
+      for (const name of ['open row', 'hidden row']) {
+        const row = await engine.readReplacementTarget({ targetId: ids.get(name)!, sourceId: SRC, excludePrivate: true, ownPage: null });
+        read[name] = row === null ? null : { fact: row.fact, visibility: row.visibility };
+      }
+      return read;
+    });
+    expect(out).toEqual({ 'open row': { fact: 'open row', visibility: 'world' }, 'hidden row': null });
+    return out;
+  });
+
+  // An id binds as bigint: PGLite refuses a fraction with the cast error; the Rust member refuses it before the store with
+  // its typed refusal. Any other error fails the case.
+  parityTest('readReplacementTarget refuses an id that is not a whole number', {
+    methods: ['readReplacementTarget'],
+  }, async (engine) => {
+    try {
+      await engine.readReplacementTarget({ targetId: 1.5, sourceId: SRC, ownPage: null });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/invalid input syntax for type bigint: "1\.5"/.test(message)) return 'invalid input syntax for type bigint: "1.5"';
+      throw error;
+    }
+    throw new Error('readReplacementTarget read a fractional id');
   });
 
   parityTest('readMemberPageWithdrawal finds the withdrawal a save onto a member page meets: its own subject first, another subject only for a row the member reads', {
@@ -536,6 +582,41 @@ describe('engine parity: facts write-path and recall statements that left execut
     expect(out).toMatchObject({ wrongSource: 0, expiredAt: 1, secondExpire: 0, wrongPointer: 0, restored: 1, secondRestore: 0, nowExpire: 1, missing: null });
     expect(out.afterExpire).toMatchObject({ expired: true, valid_until: '2026-03-01T00:00:00.000Z', superseded_by: 'new claim' });
     expect(out.afterRestore).toMatchObject({ expired: false, valid_until: null, superseded_by: null });
+    return out;
+  });
+
+  // Postgres reads many timestamptz texts; the store reads only an ISO instant (`YYYY-MM-DDTHH:MM:SS[.ffffff]Z`). For a
+  // text that Postgres reads and the store does not, PGLite writes the row and the Rust member stops on its typed refusal.
+  const supersedePair = async (engine: BrainEngine) => {
+    const ids = await remember(engine, [
+      { fact: 'old claim', entity_slug: 'people/a', valid_from: at('2026-01-01T00:00:00Z') },
+      { fact: 'new claim', entity_slug: 'people/a', valid_from: at('2026-02-01T00:00:00Z') },
+    ]);
+    return { oldId: ids.get('old claim')!, newId: ids.get('new claim')! };
+  };
+
+  parityTest('expireSupersededFact takes an until that is not an ISO instant only where Postgres reads it', {
+    methods: ['expireSupersededFact', 'readPairFactRow', 'insertFact'],
+  }, async (engine) => {
+    const { oldId, newId } = await supersedePair(engine);
+    const expired = await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: '2026-03-01 00:00:00+00' });
+    const row = await engine.readPairFactRow(oldId);
+    const out = { expired, valid_until: iso(row!.valid_until) };
+    expect(out).toEqual({ expired: 1, valid_until: '2026-03-01T00:00:00.000Z' });
+    return out;
+  });
+
+  parityTest('restoreSupersededFact takes an expiredAt that is not an ISO instant only where Postgres reads it', {
+    methods: ['expireSupersededFact', 'restoreSupersededFact', 'readPairFactRow', 'insertFact'],
+  }, async (engine) => {
+    const { oldId, newId } = await supersedePair(engine);
+    expect(await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: null })).toBe(1);
+    const restored = await engine.restoreSupersededFact({
+      oldId, sourceId: SRC, expiredAt: '2026-04-01 00:00:00+00', validUntil: null, supersededBy: null, expectedSupersededBy: newId,
+    });
+    const row = await engine.readPairFactRow(oldId);
+    const out = { restored, expired_at: iso(row!.expired_at), superseded_by: row!.superseded_by };
+    expect(out).toEqual({ restored: 1, expired_at: '2026-04-01T00:00:00.000Z', superseded_by: null });
     return out;
   });
 
