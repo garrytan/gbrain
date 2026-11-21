@@ -2,7 +2,10 @@
  * `facts_drain` cycle phase (Lane D): one bounded run of the automatic facts
  * drain (src/core/facts/drain.ts) inside the cycle, so a PGLite brain run by
  * autopilot or `gbrain dream` extracts queued `facts-absorb` jobs without
- * `gbrain jobs work`. Postgres brains have a job worker and skip the phase.
+ * `gbrain jobs work`. Postgres brains have a job worker and skip the phase,
+ * except that it warns with the command that starts one when facts-absorb jobs
+ * have waited past GBRAIN_QUEUE_NO_WORKER_WARN_HOURS (default 1) on a queue where
+ * no job is running or started in that time (overtonxyz/gbrain#2772).
  * The phase never fails the cycle: deferrals (no key, budget) report `warn`
  * with the fix; an internal error reports `warn` with the doctor command.
  *
@@ -14,6 +17,8 @@ import type { PhaseResult } from '../cycle.ts';
 import { FACTS_DRAIN_DEFERRALS, FACTS_DRAIN_WALL_MS, runFactsDrain } from '../facts/drain.ts';
 import { CYCLE_DEADLINE_RESERVE_MS } from './base-phase.ts';
 import { retryDeadFactsAbsorb, type DeadAbsorbRetryResult } from '../facts/dead-absorb-retry.ts';
+import { resolveEnvNumber } from '../env-number.ts';
+import { runWaitingJobsFix } from '../minions/no-worker.ts';
 
 export async function runPhaseFactsDrain(engine: BrainEngine | null, opts: { dryRun: boolean; signal?: AbortSignal; deadlineAtMs?: number | null }): Promise<PhaseResult> {
   const base = { phase: 'facts_drain' as const, duration_ms: 0 };
@@ -25,6 +30,11 @@ export async function runPhaseFactsDrain(engine: BrainEngine | null, opts: { dry
     ...(deadRetry.waiting_on ? { waiting_on: deadRetry.waiting_on } : {}), ...('error' in deadRetry ? { error: deadRetry.error } : {}) };
   const retryWarn = deadRetry.exhausted.length > 0 || 'error' in deadRetry;
   if (engine.kind !== 'pglite') {
+    const untaken = await untakenFactsAbsorb(engine).catch(() => null);
+    if (untaken) {
+      return { ...base, status: 'warn', details: { reason: 'no_worker', no_worker: untaken, dead_retry },
+        summary: `${untaken.waiting} facts-absorb job(s) have waited up to ${formatAge(untaken.oldest_age_seconds)} on queue '${untaken.queue}' and no job worker has run a job there in ${untaken.threshold_hours}h, so no facts are being extracted; start one: ${untaken.fix.argv!.join(' ')}${retryNote}` };
+    }
     return { ...base, status: retryWarn ? 'warn' : 'skipped', summary: `Postgres brains run facts-absorb jobs on the job worker${retryNote}`, details: { reason: 'not_applicable', dead_retry } };
   }
   if (opts.dryRun) return { ...base, status: 'skipped', summary: `dry run: no facts extracted${retryNote}`, details: { reason: 'dry_run', dead_retry } };
@@ -42,6 +52,36 @@ export async function runPhaseFactsDrain(engine: BrainEngine | null, opts: { dry
   const summary = `${r.completed} page(s) extracted (${r.facts_inserted} facts, $${r.spent_usd.toFixed(3)}), ${r.backlog_after ?? '?'} still queued` +
     (r.error ? `: ${r.error.message}` : '') + retryNote;
   return { ...base, status: FACTS_DRAIN_DEFERRALS.has(r.outcome) || r.failed > 0 || retryWarn ? 'warn' : 'ok', summary, details };
+}
+
+/**
+ * The queue whose facts-absorb jobs nothing is running: the oldest has waited past the threshold, and no job on that
+ * queue is active or started within it. Read from the queue rather than the worker registry, so a worker on another
+ * host counts.
+ */
+async function untakenFactsAbsorb(engine: BrainEngine) {
+  const threshold_hours = resolveEnvNumber('GBRAIN_QUEUE_NO_WORKER_WARN_HOURS', 1);
+  const [row] = await engine.executeRaw<{ queue: string; waiting: number; oldest_age_seconds: number }>(
+    `WITH served AS (
+       SELECT DISTINCT queue FROM minion_jobs WHERE status = 'active' OR started_at > now() - $1::text::interval
+     )
+     SELECT queue, count(*)::int AS waiting, EXTRACT(EPOCH FROM (now() - min(created_at)))::int AS oldest_age_seconds
+       FROM minion_jobs
+      WHERE name = 'facts-absorb' AND status = 'waiting' AND queue NOT IN (SELECT queue FROM served)
+      GROUP BY queue
+     HAVING min(created_at) < now() - $1::text::interval
+      ORDER BY oldest_age_seconds DESC
+      LIMIT 1`,
+    [`${threshold_hours} hours`],
+  );
+  if (!row) return null;
+  return { queue: row.queue, waiting: Number(row.waiting), oldest_age_seconds: Number(row.oldest_age_seconds), threshold_hours, fix: runWaitingJobsFix(engine.kind, row.queue) };
+}
+
+function formatAge(seconds: number): string {
+  if (seconds >= 86_400) return `${Math.floor(seconds / 86_400)}d`;
+  if (seconds >= 3_600) return `${Math.floor(seconds / 3_600)}h`;
+  return `${Math.max(1, Math.floor(seconds / 60))}m`;
 }
 
 function deadRetrySummary(r: DeadAbsorbRetryResult & { error?: string }): string {
