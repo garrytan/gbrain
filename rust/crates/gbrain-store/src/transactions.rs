@@ -341,8 +341,49 @@ impl State {
     }
 }
 
+/// Entries a scan copies out under the state lock before it hands them to the caller.
+const SCAN_BATCH: usize = 256;
+
+/// A merged scan that holds the state lock only while it copies a batch of entries, never while
+/// `f` runs, so `f` may read through the same transaction (a vector scan reads each take's row).
+/// The next batch starts after the last key handed out.
+fn scan_unlocked(
+    state: &Mutex<State>,
+    start: &[u8],
+    end: &[u8],
+    reverse: bool,
+    f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+) -> Result<()> {
+    let (mut lo, mut hi) = (start.to_vec(), end.to_vec());
+    loop {
+        let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        lock(state).scan(&lo, &hi, reverse, &mut |k, v| {
+            batch.push((k.to_vec(), v.to_vec()));
+            batch.len() < SCAN_BATCH
+        })?;
+        let full = batch.len() == SCAN_BATCH;
+        let Some((last, _)) = batch.last() else {
+            return Ok(());
+        };
+        if reverse {
+            hi = last.clone();
+        } else {
+            lo = last.clone();
+            lo.push(0);
+        }
+        for (k, v) in &batch {
+            if !f(k, v) {
+                return Ok(());
+            }
+        }
+        if !full {
+            return Ok(());
+        }
+    }
+}
+
 /// The view a bound store reads through: the transaction's merged state, read under its lock for
-/// each call.
+/// each call (a scan only while it copies a batch: `scan_unlocked`).
 struct TxReader(Arc<Transaction>);
 
 impl KvRead for TxReader {
@@ -356,7 +397,7 @@ impl KvRead for TxReader {
         reverse: bool,
         f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
     ) -> Result<()> {
-        lock(&self.0.state).scan(start, end, reverse, f)
+        scan_unlocked(&self.0.state, start, end, reverse, f)
     }
 }
 
@@ -375,7 +416,7 @@ impl KvRead for StatementWriter<'_> {
         reverse: bool,
         f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
     ) -> Result<()> {
-        lock(&self.0.state).scan(start, end, reverse, f)
+        scan_unlocked(&self.0.state, start, end, reverse, f)
     }
 }
 
