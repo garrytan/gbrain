@@ -39,7 +39,7 @@ src/commands/doctor/checks/access-pages-read-by-nobody.ts	execute_raw	5	GBRA-582
 src/commands/doctor/checks/agent-session-facts.ts	execute_raw	1
 src/commands/doctor/checks/atom-body-recheck.ts	execute_raw	3
 src/commands/doctor/checks/atom-fence-rows.ts	execute_raw	1
-src/commands/doctor/checks/atom-retirements.ts	execute_raw	3
+src/commands/doctor/checks/atom-retirements.ts	execute_raw	2
 src/commands/doctor/checks/attest-read-access.ts	execute_raw	1
 src/commands/doctor/checks/calibration.ts	execute_raw	10
 src/commands/doctor/checks/captured-facts.ts	execute_raw	1
@@ -50,7 +50,7 @@ src/commands/doctor/checks/conversation-outcomes.ts	execute_raw	3
 src/commands/doctor/checks/coordination-lock.ts	execute_raw	1
 src/commands/doctor/checks/core-health.ts	execute_raw	9
 src/commands/doctor/checks/core-memory.ts	execute_raw	1
-src/commands/doctor/checks/data-integrity.ts	execute_raw	4
+src/commands/doctor/checks/data-integrity.ts	execute_raw	3
 src/commands/doctor/checks/database-encoding.ts	execute_raw	1
 src/commands/doctor/checks/db-ahead-of-git.ts	execute_raw	1
 src/commands/doctor/checks/db-connection.ts	execute_raw	1
@@ -62,20 +62,17 @@ src/commands/doctor/checks/edge-validity.ts	execute_raw	4
 src/commands/doctor/checks/embed-backfill-stalled.ts	execute_raw	2
 src/commands/doctor/checks/embedding-health.ts	execute_raw	4
 src/commands/doctor/checks/embedding-identity.ts	execute_raw	1
-src/commands/doctor/checks/embedding-plane.ts	execute_raw	1
 src/commands/doctor/checks/entity-duplicates.ts	execute_raw	3
 src/commands/doctor/checks/extraction-input.ts	execute_raw	2
 src/commands/doctor/checks/extraction-sync.ts	execute_raw	12
 src/commands/doctor/checks/extractor-facts.ts	execute_raw	1
 src/commands/doctor/checks/facts-pages.ts	execute_raw	1
-src/commands/doctor/checks/facts-redaction-marker.ts	execute_raw	1
-src/commands/doctor/checks/fence-integrity.ts	execute_raw	1
 src/commands/doctor/checks/folder-access.ts	execute_raw	3
 src/commands/doctor/checks/foreign-writers.ts	execute_raw	2
 src/commands/doctor/checks/frontmatter-hook.ts	execute_raw	1
 src/commands/doctor/checks/frontmatter-keys.ts	execute_raw	1
 src/commands/doctor/checks/function-search-path.ts	execute_raw	1
-src/commands/doctor/checks/generations.ts	execute_raw	3
+src/commands/doctor/checks/generations.ts	execute_raw	2
 src/commands/doctor/checks/git-convergence.ts	execute_raw	3
 src/commands/doctor/checks/git-holds.ts	execute_raw	4
 src/commands/doctor/checks/git-index-lag.ts	execute_raw	1
@@ -84,8 +81,6 @@ src/commands/doctor/checks/google-api-access.ts	execute_raw	1
 src/commands/doctor/checks/google-calendar.ts	execute_raw	1
 src/commands/doctor/checks/grant-new-ops.ts	execute_raw	2
 src/commands/doctor/checks/graph-embedding.ts	execute_raw	5
-src/commands/doctor/checks/graph-health.ts	execute_raw	3
-src/commands/doctor/checks/graph-health.ts	sql_template	3
 src/commands/doctor/checks/guest-source.ts	execute_raw	4
 src/commands/doctor/checks/image-embedding-coverage.ts	execute_raw	2
 src/commands/doctor/checks/keyword-plan.ts	execute_raw	3
@@ -95,7 +90,6 @@ src/commands/doctor/checks/legacy-job-authority.ts	execute_raw	5
 src/commands/doctor/checks/legacy-token-grants.ts	execute_raw	1
 src/commands/doctor/checks/local-audits.ts	execute_raw	2
 src/commands/doctor/checks/local-edit-adoptions.ts	execute_raw	1
-src/commands/doctor/checks/loop-facts.ts	execute_raw	1
 src/commands/doctor/checks/maintenance-drift.ts	execute_raw	4
 src/commands/doctor/checks/managed-guard.ts	execute_raw	2
 src/commands/doctor/checks/managed-sync-convergence.ts	execute_raw	1
@@ -108,8 +102,6 @@ src/commands/doctor/checks/ontology-facts.ts	execute_raw	1
 src/commands/doctor/checks/origin-twins.ts	execute_raw	1
 src/commands/doctor/checks/orphan-bindings.ts	execute_raw	3
 src/commands/doctor/checks/orphan-estimate.ts	execute_raw	2
-src/commands/doctor/checks/outside-content-fences.ts	execute_raw	1
-src/commands/doctor/checks/overwritten-edits.ts	execute_raw	1
 src/commands/doctor/checks/owner-host-stale.ts	execute_raw	2
 src/commands/doctor/checks/parked-effects.ts	execute_raw	2
 src/commands/doctor/checks/persistence-capacity.ts	execute_raw	3
@@ -119,7 +111,6 @@ src/commands/doctor/checks/pglite-worker.ts	sql_template	1
 src/commands/doctor/checks/postgres-tls.ts	execute_raw	1
 src/commands/doctor/checks/privacy-label-ignored.ts	execute_raw	1
 src/commands/doctor/checks/projection-readiness.ts	execute_raw	1
-src/commands/doctor/checks/provenance-stamp-drift.ts	execute_raw	1
 src/commands/doctor/checks/purge-mirror.ts	execute_raw	1
 src/commands/doctor/checks/purged-page-facts.ts	execute_raw	1
 src/commands/doctor/checks/queue-assets.ts	execute_raw	3
@@ -166,7 +157,6 @@ src/commands/dream-retriage.ts	execute_raw	3
 src/commands/edge-proposals.ts	execute_raw	6
 src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
-src/commands/embeddings.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
 src/commands/enrich.ts	execute_raw	1
 src/commands/eval-suspected-contradictions.ts	execute_raw	1
@@ -212,7 +202,6 @@ src/commands/migrations/v0_29_1.ts	execute_raw	1
 src/commands/migrations/v0_31_0.ts	execute_raw	1
 src/commands/migrations/v0_32_2.ts	execute_raw	3
 src/commands/onboard.ts	execute_raw	1
-src/commands/orphans.ts	execute_raw	2
 src/commands/pages-status.ts	execute_raw	2
 src/commands/quarantine.ts	execute_raw	1
 src/commands/recall.ts	execute_raw	1
@@ -256,7 +245,7 @@ src/commands/sources-sync-enabled.ts	execute_raw	1
 src/commands/sources-trust.ts	execute_raw	2
 src/commands/sources-writers.ts	execute_raw	1
 src/commands/sources.ts	execute_raw	15
-src/commands/status.ts	execute_raw	7
+src/commands/status.ts	execute_raw	1
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	2
 src/commands/sync/connector.ts	execute_raw	1
@@ -365,6 +354,7 @@ src/core/company-brain/runtime.ts	execute_raw	14
 src/core/company-brain/status.ts	execute_raw	1
 src/core/company-brain/verification.ts	execute_raw	3
 src/core/config-db-merge.ts	execute_raw	1
+src/core/config-values.ts	execute_raw	1	the keyed config read for a narrow executeRaw-only handle (a test fake or wrapper without getConfigValues); real engines take the typed getConfigValues read, and 23 config sites moved here from their own executeRaw
 src/core/connection-manager.ts	sql_template	3
 src/core/connectors/api-source.ts	execute_raw	2
 src/core/connectors/connector-hold-session.ts	execute_raw	1
@@ -427,7 +417,7 @@ src/core/derived-links.ts	execute_raw	10
 src/core/destructive-guard.ts	execute_raw	17
 src/core/eligibility/activation.ts	execute_raw	2
 src/core/eligibility/explain.ts	execute_raw	4
-src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
+src/core/eligibility/fence-overlay.ts	execute_raw	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/eligibility/generation.ts	execute_raw	1
 src/core/eligibility/scan.ts	execute_raw	7
 src/core/eligibility/stamp.ts	execute_raw	5	came from master #9574 (held private restatements), which landed before this ratchet
@@ -439,7 +429,7 @@ src/core/embed-stale-images.ts	execute_raw	2
 src/core/embed-stale.ts	execute_raw	3
 src/core/embed-takes.ts	execute_raw	1
 src/core/embedding-ann-build.ts	execute_raw	8
-src/core/embedding-dim-check.ts	execute_raw	4
+src/core/embedding-dim-check.ts	execute_raw	2
 src/core/embedding-invalidation.ts	execute_raw	8
 src/core/embedding-migration-budget.ts	execute_raw	2
 src/core/embedding-migration-retention.ts	execute_raw	6
@@ -479,7 +469,6 @@ src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	7	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
 src/core/facts/dead-absorb-retry.ts	execute_raw	2
 src/core/facts/derivation-inputs.ts	execute_raw	7	#9653: releaseHiddenMoment, a delete of an already-hidden page ends the automatic purge hold
-src/core/facts/drain.ts	execute_raw	2
 src/core/facts/embedding-identity.ts	execute_raw	2
 src/core/facts/facts-home.ts	execute_raw	4
 src/core/facts/fence-fact-append.ts	execute_raw	4
@@ -543,7 +532,7 @@ src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held pri
 src/core/github-source.ts	execute_raw	3
 src/core/google/attachment-backfill.ts	execute_raw	2
 src/core/google/counterparty.ts	execute_raw	2
-src/core/google/file-modes.ts	execute_raw	2
+src/core/google/file-modes.ts	execute_raw	1
 src/core/google/google-source.ts	execute_raw	4
 src/core/google/loop-catchup.ts	execute_raw	8
 src/core/google/loops-exclusion.ts	execute_raw	4
@@ -602,7 +591,6 @@ src/core/mentions/newer-mentions.ts	execute_raw	1
 src/core/mentions/pass.ts	execute_raw	35
 src/core/mentions/referrers.ts	execute_raw	11
 src/core/mentions/siblings.ts	execute_raw	4
-src/core/mentions/stale.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
 src/core/migration-preludes.ts	execute_raw	12
 src/core/minions/admission.ts	execute_raw	1
@@ -666,11 +654,11 @@ src/core/ops/facts.ts	execute_raw	1
 src/core/ops/files.ts	execute_raw	13
 src/core/ops/get-page-body.ts	execute_raw	2
 src/core/ops/get-page-projection.ts	execute_raw	1
-src/core/ops/graph-rank.ts	execute_raw	3
+src/core/ops/graph-rank.ts	execute_raw	2
 src/core/ops/jobs.ts	execute_raw	4
 src/core/ops/known-as-of.ts	execute_raw	3
 src/core/ops/links.ts	execute_raw	1
-src/core/ops/loops.ts	execute_raw	6
+src/core/ops/loops.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	3
 src/core/ops/pages.ts	execute_raw	1
 src/core/ops/persistence.ts	execute_raw	4
@@ -824,7 +812,7 @@ src/core/persistence/legacy-locks.ts	execute_raw	1
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
 src/core/persistence/limits.ts	execute_raw	7
 src/core/persistence/links-extraction-holds.ts	execute_raw	2
-src/core/persistence/links-preparation.ts	execute_raw	4
+src/core/persistence/links-preparation.ts	execute_raw	3
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
 src/core/persistence/loop-fact-retirement.ts	execute_raw	7
 src/core/persistence/connector-fact-retirement.ts	execute_raw	3	GST-3256, modeled on loop-fact-retirement.ts: reads (FOR UPDATE under publication) the facts rows a connector wrote, expires them, and reads the source row at admission; no typed engine method exists yet
@@ -1083,7 +1071,7 @@ src/core/search-vector-backfill.ts	execute_raw	3
 src/core/search/alias-fanout.ts	execute_raw	1
 src/core/search/dedup.ts	execute_raw	1
 src/core/search/embedding-column.ts	execute_raw	1
-src/core/search/entity-anchor.ts	execute_raw	5
+src/core/search/entity-anchor.ts	execute_raw	4
 src/core/search/entity-facts.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
 src/core/search/evidence-delivery.ts	execute_raw	2

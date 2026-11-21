@@ -25,8 +25,6 @@ src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	sql	LEA
 src/commands/doctor/checks/content-quality.ts	runContentSanity	sql	META	
 src/commands/doctor/checks/data-integrity.ts	runMarkdownBody	sql	META	
 src/commands/doctor/checks/derived-visibility.ts	derivedVisibilityCheck	sql	NONE	not the page body: p.* in a CTE, only metadata columns read
-src/commands/doctor/checks/graph-health.ts	runGraphCoverage	field	NONE	not the page body: timeline count alias
-src/commands/doctor/checks/graph-health.ts	runGraphCoverage	sql	NONE	not the page body: timeline coverage count alias
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
@@ -180,7 +178,6 @@ src/core/cycle/transcript-discovery.ts	discoverConversationPages	field	STREAM
 src/core/cycle/transcript-discovery.ts	discoverConversationPages	sql	STREAM	
 src/core/eligibility/fence-overlay.ts	loadFenceChunkOverlay	field	STREAM	
 src/core/eligibility/fence-overlay.ts	worldLinkContexts	field	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
-src/core/eligibility/fence-overlay.ts	worldLinkContexts	sql	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
 src/core/eligibility/scan.ts	SELECT	sql	STREAM	
 src/core/eligibility/scan.ts	assess	field	STREAM	
 src/core/embed-consent.ts	estimateEmbedBackfillUsd	sql	META	
@@ -197,8 +194,10 @@ src/core/engine-sql/export-reads.ts	normalizeFenceLines	sql	STREAM	moved from ex
 src/core/engine-sql/export-reads.ts	readExportPageRows	sql	STREAM	moved from export-snapshot.ts readExportPages unchanged: rowToPage blanks a segmented page's body, which streams through segmentedExportMarkdown (readBodyRange, trusted stored)
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	sql	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
+src/core/engine-sql/jobs-status.ts	readQueuedPageChars	sql	META	the facts drain's cost estimate, moved from facts/drain.ts estimateBacklogUsd: average capped compiled_truth length
 src/core/engine-sql/large-page.ts	PAGE_BODY_SIZES_SQL	sql	META	append_page's size read after the write, moved from persistence/page-append.ts prepareAppendMutation: body_bytes, else octet_length of an inline page's regions
 src/core/engine-sql/large-page.ts	STORED_BODY_BYTES_SQL	sql	META	the large-page guard's stored size read, moved from persistence/large-page-guard.ts assertLargePageAdmission: body_bytes for a segmented page, octet_length of the columns for an inline page
+src/core/engine-sql/link-reads.ts	LINK_CONTEXT_ORIGIN_SQL	sql	INLINE	moved from fence-overlay.ts worldLinkContexts: segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
 src/core/engine-sql/page-body.ts	createSegmentedPageShell	sql	NONE	not a reader: the segmented storage writer sets the body columns NULL on the shell row
 src/core/engine-sql/page-body.ts	flipBodyGeneration	sql	NONE	not a reader: the generation flip sets the body columns NULL and the segmented body columns
 src/core/engine-sql/page-body.ts	sealSegmentedPage	field	LEAD	the withdrawal overlay of the stored timeline_lead (a bounded prefix), indexed sanitized
@@ -236,7 +235,6 @@ src/core/facts-fence.ts	factsFenceView	field	INLINE	inline arm; a segmented page
 src/core/facts/backstop.ts	runFactsBackstop	field	STREAM	
 src/core/facts/backstop.ts	runPipeline	field	STREAM	
 src/core/facts/conversation-window-extract.ts	regularPageVersionToken	field	STREAM	
-src/core/facts/drain.ts	estimateBacklogUsd	sql	META	
 src/core/facts/eligibility.ts	isFactsBackstopEligible	field	LEAD	
 src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	field	SEGW	assertInlineBody before the fence write

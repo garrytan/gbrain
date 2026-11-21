@@ -154,6 +154,25 @@ export const FAMILIES: Record<string, readonly string[]> = {
   owner_only: ['ownerOnlyMarkTriggers'],
   wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies'],
+  // link_reads: the link and entity-graph reads (engine-sql/link-reads.ts)
+  link_reads: ['inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges',
+    'listLivePageSummaries', 'countInboundLinks', 'readEntityInboundEdges', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes',
+    'readLinkContextMatches', 'readLinkContextOriginPages'],
+  // facts_doctor: doctor checks over the facts tables (engine-sql/facts-doctor.ts)
+  facts_doctor: ['listConversationFactRows', 'countRedactedFacts', 'listOutsideContentFenceCounts', 'countAtomFacts', 'listUnpreviewedTrustFacts',
+    'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes', 'listUnlinkedConversationSlugs', 'countFactEmbeddingCoverage',
+    'countStaleFactEmbeddings', 'countSegmentedCensusPages', 'listFactsPageBodies', 'readFactTableCatalog'],
+  // embedding_catalog: the vector column catalog the embedding commands read (engine-sql/embedding-catalog.ts)
+  embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage'],
+  // persistence_journal: the fence-hold rows and the writer-version reads (store-members/fence-holds.ts, engine-sql/writer-versions.ts)
+  persistence_journal: ['listFenceHoldRows', 'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions'],
+  // minion_status: job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts)
+  minion_status: ['readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+    'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
+    'readEmbedBackfillBySource'],
+  // memory_mutation_reads: the reads remember and forget make before admission
+  memory_mutation_reads: ['readSourceWriteRow', 'readSourceLocalPath', 'readFactEntitySlug', 'hasLiveFileBackedPage', 'factReadableUnder', 'readRemoteForgetTier', 'readForgetTarget',
+    'isFactEntityUnbacked', 'readLinkedFactCopies', 'hasHiddenFactCopy', 'ownerReachesFact', 'readFactWithdrawalClaim'],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */
