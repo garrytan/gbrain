@@ -153,6 +153,7 @@ test/engine-parity/search-private-fence.test.ts	5	0
 test/engine-parity/search-reads.test.ts	18	0
 test/engine-parity/search.test.ts	23	0
 test/engine-parity/segmented-body.test.ts	20	1
+test/engine-parity/slot-ends-callers.test.ts	0	3
 test/engine-parity/slot-ends-refusal.test.ts	0	1
 test/engine-parity/source-resolver-reads.test.ts	15	0
 test/engine-parity/source-verify-reads.test.ts	2	0

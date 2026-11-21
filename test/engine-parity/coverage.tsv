@@ -106,7 +106,7 @@ getPage	pages	yes	147	yes	yes	yes	serves
 readPageSnapshot	pages	yes	38	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	6	no	yes	yes	serves
-putPage	pages	yes	676	yes	yes	yes	serves
+putPage	pages	yes	679	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	27	yes	yes	yes	serves
@@ -471,7 +471,7 @@ listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	109	yes	yes	yes	serves
-insertFacts	facts	yes	149	no	yes	yes	serves
+insertFacts	facts	yes	152	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	62	no	yes	yes	serves
 listFactsByEntity	facts	yes	36	yes	yes	yes	serves
@@ -1171,7 +1171,7 @@ readFactsFtsIndexState	facts_trust	yes	1	no	yes	yes	refuses:facts
 swapFactsFtsIndex	facts_trust	yes	1	no	yes	yes	refuses:facts
 readFactsEmbeddingColumn	facts_recall	yes	1	no	yes	yes	refuses:facts
 listNearestFacts	facts_recall	yes	1	no	yes	yes	refuses:facts
-listSlotRows	facts_recall	yes	2	no	yes	yes	refuses:facts
+listSlotRows	facts_recall	yes	5	no	yes	yes	refuses:facts
 listPoolUnbackedKeys	facts_recall	yes	1	no	yes	yes	refuses:facts
 listCallOffCueFacts	facts_recall	yes	1	no	yes	yes	refuses:facts
 listPoolEntityPairs	facts_recall	yes	1	no	yes	yes	refuses:facts

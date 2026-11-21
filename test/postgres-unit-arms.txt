@@ -298,6 +298,7 @@ test/engine-parity/search-private-fence.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/slot-ends-callers.test.ts
 test/engine-parity/slot-ends-refusal.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/source-verify-reads.test.ts
@@ -809,6 +810,7 @@ test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
 test/physical-root-copied-brain-fix-7671.test.ts
 test/physical-root-moved-8625.test.ts
+test/postgres-source-lock-contention.test.ts
 test/privacy-label-ignored.test.ts
 test/projection-rebuild-progress-9192.test.ts
 test/provenance-drift-7891.test.ts
