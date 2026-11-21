@@ -39,7 +39,7 @@ import { addMember, bindCredential, disableMember, enableMember, getMember, list
 
 const { parityTest } = parityArms(testBackends());
 
-const SINCE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+const SINCE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 
 const TOKEN_GRANT = { source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
 

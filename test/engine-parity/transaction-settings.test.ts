@@ -214,24 +214,16 @@ describe('engine parity: transaction-local settings', () => {
     return { plain: await read(), readOnly: await read(true), readWrite: await read(false) };
   });
 
-  // READ ONLY is a Postgres check: a write in the transaction refuses there. The Rust store does not enforce it, so the
-  // write lands (docs/architecture/key-files/engines-2-continued.md, beginSnapshotRead).
-  parityTest('a write in a READ ONLY snapshot refuses on Postgres engines and lands on Rust', {
+  // READ ONLY refuses a write in the transaction on every engine with Postgres's read_only_sql_transaction error
+  // (SQLSTATE 25006), and the refused write leaves nothing behind.
+  parityTest('a write in a READ ONLY snapshot refuses with read_only_sql_transaction and leaves nothing', {
     methods: ['transaction', 'beginSnapshotRead', 'putPage', 'getPage'],
-  }, async (engine, backend) => {
+  }, async (engine) => {
     const refusal = await engine.transaction(async (tx) => {
       await tx.beginSnapshotRead({ readOnly: true });
       await tx.putPage('snap/ro', { type: 'note', title: 'RO', compiled_truth: 'body' });
-    }).then(() => null, (error: unknown) => String((error as Error)?.message ?? error));
-    const page = await engine.getPage('snap/ro');
-    if (backend === 'rust') {
-      expect(refusal).toBeNull();
-      expect(page?.title).toBe('RO');
-    } else {
-      expect(refusal).toContain('read-only transaction');
-      expect(page).toBeNull();
-    }
-    return 'checked';
+    }).then(() => null, (error: unknown) => error as { code?: unknown; message?: unknown; constructor?: { name?: string } });
+    return { code: refusal?.code ?? null, message: String(refusal?.message ?? '').replace(/^cannot execute .+ in a read-only transaction$/, 'cannot execute <statement> in a read-only transaction'), page: await engine.getPage('snap/ro') };
   });
 
   // The attribution triggers cast `gbrain.write_request` with `::uuid` on every row written to pages, page_versions,

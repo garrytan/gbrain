@@ -50,8 +50,11 @@
 //! Time: every timestamp is UTC microseconds from the store's clock, read once per call, as one
 //! Postgres transaction reads one `now()`. A millisecond duration becomes `round(ms * 1000)` µs.
 //!
-//! The one write transaction is the lock: two claims never see the same `waiting` row, which is
-//! what `FOR UPDATE SKIP LOCKED` gives the SQL engines. `FOR KEY SHARE` on a lease (the fence) has
+//! Two claims never take the same `waiting` row, which is what `FOR UPDATE SKIP LOCKED` gives the
+//! SQL engines. With one writer, the write transaction is the lock. With concurrent writes on, a
+//! claim reads the claim index up to the row it takes; when another claim, completion or
+//! submission commits a change to that part of the index first, the claim conflicts and runs
+//! again on the new state, so it takes the next job. `FOR KEY SHARE` on a lease (the fence) has
 //! nothing to wait for here, so `assertCycleLease` is a read.
 //!
 //! Deleting a job does what the foreign keys do: its inbox rows go (`ON DELETE CASCADE`) and its
@@ -97,6 +100,7 @@ pub use client_grants::{
 pub use credential_binding::{CredentialBinding, CredentialKind, CredentialLookup};
 pub use health::{DivergenceSpec, HealthSpec};
 pub use insight::InsightSpec;
+use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub use oauth_codes::OauthCodeInsert;
@@ -112,9 +116,9 @@ pub use wake::{
     CronRunInput, EndSpec, ForgetClaimSpec, ForgetSettle, WatchFilter, WatchInsert, WatchSettle,
 };
 
-use crate::dream::jsonb;
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::jsonb::ordered;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::timeline_queries::jsonb_field_text;
@@ -283,8 +287,10 @@ pub struct JobRecord {
     pub queue: String,
     pub status: String,
     pub priority: i32,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub submission_authority: Option<Value>,
     pub claim_generation: i64,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub data: Value,
     pub max_attempts: i32,
     pub attempts_made: i32,
@@ -302,9 +308,12 @@ pub struct JobRecord {
     pub tokens_input: i32,
     pub tokens_output: i32,
     pub tokens_cache_read: i32,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub result: Option<Value>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub progress: Option<Value>,
     pub error_text: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub stacktrace: Option<Value>,
     pub depth: i32,
     pub max_children: Option<i32>,
@@ -321,11 +330,13 @@ pub struct JobRecord {
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
     pub updated_at: i64,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub quiet_hours: Option<Value>,
     pub stagger_key: Option<String>,
     pub budget_remaining_cents: Option<i32>,
     pub budget_owner_job_id: Option<i64>,
     pub budget_root_owner_id: Option<i64>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub spend_authorization: Option<Value>,
     pub spend_claim_token: Option<i64>,
 }
@@ -336,7 +347,7 @@ impl JobRecord {
     /// `jsonb` key order.
     pub fn to_json(&self) -> Value {
         let t = |v: Option<i64>| v.map(iso);
-        let j = |v: &Option<Value>| v.as_ref().map(jsonb);
+        let j = |v: &Option<Value>| v.as_ref().map(ordered);
         // `real` prints its shortest float4 form; read back as a double that is the same text.
         let jitter: f64 = format!("{}", self.backoff_jitter).parse().unwrap_or(0.0);
         let mut m = Map::new();
@@ -350,7 +361,7 @@ impl JobRecord {
         put("priority", json!(self.priority));
         put("submission_authority", json!(j(&self.submission_authority)));
         put("claim_generation", json!(self.claim_generation));
-        put("data", jsonb(&self.data));
+        put("data", ordered(&self.data));
         put("max_attempts", json!(self.max_attempts));
         put("attempts_made", json!(self.attempts_made));
         put("attempts_started", json!(self.attempts_started));
@@ -443,6 +454,7 @@ struct InboxRecord {
     id: i64,
     job_id: i64,
     sender: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     payload: Value,
     sent_at: i64,
     read_at: Option<i64>,
@@ -865,6 +877,10 @@ fn check_insert(v: &JobInsert) -> Result<()> {
             format!("minion_jobs check: {what}"),
         ))
     };
+    // A NUL byte is not valid text in Postgres, and the claim index uses it as the queue separator.
+    if v.queue.contains('\0') {
+        return bad("queue");
+    }
     if !["fixed", "exponential"].contains(&v.backoff_type.as_str()) {
         return bad("backoff_type");
     }
@@ -1002,7 +1018,7 @@ impl Store {
                 tx,
                 spec,
                 authority.as_ref(),
-                spend,
+                spend.clone(),
                 (delay_until, lease_until),
                 now,
             )? {
@@ -1158,7 +1174,9 @@ impl Store {
             let mut picked = None;
             let mut first_overdue = None;
             for id in ids_under(tx, &claim_prefix(&spec.queue))? {
-                let Some(row) = load(tx, id)? else { continue };
+                let Some(row) = load(tx, id)?.filter(|r| r.queue == spec.queue) else {
+                    continue;
+                };
                 let eligible =
                     row.submission_authority.is_some() && names.contains(row.name.as_str());
                 if eligible && overdue(&row) {
@@ -1278,9 +1296,9 @@ impl Store {
                     && let Some(p_old) = load(tx, parent)?.filter(|p| !is_terminal(&p.status))
                 {
                     let mut p = p_old.clone();
-                    p.tokens_input += tokens[0];
-                    p.tokens_output += tokens[1];
-                    p.tokens_cache_read += tokens[2];
+                    p.tokens_input = add_token("input", p.tokens_input, tokens[0])?;
+                    p.tokens_output = add_token("output", p.tokens_output, tokens[1])?;
+                    p.tokens_cache_read = add_token("cache_read", p.tokens_cache_read, tokens[2])?;
                     p.updated_at = now;
                     save(tx, Some(&p_old), &p)?;
                 }
@@ -1709,7 +1727,7 @@ impl Store {
                     "acquired_at": iso(l.acquired_at),
                     "ttl_expires_at": iso(l.ttl_expires_at),
                     "last_refreshed_at": l.last_refreshed_at.map(iso),
-                    "acquisition_token": l.acquisition_token,
+                    "acquisition_token": l.acquisition_token.clone(),
                     "db_now": iso(now),
                 })
             })
@@ -1804,7 +1822,7 @@ fn legacy_spend_record(row: &JobRecord, spend: &LegacySpend, now: i64) -> Value 
     let at = iso(millis);
     // `YYYY-MM-DDTHH24:MI:SS.MSZ`: millisecond precision.
     let at = format!("{}Z", &at[..23]);
-    jsonb(&json!({
+    ordered(&json!({
         "version": 1,
         "kind": "legacy_default",
         "group_id": spend.group_id,

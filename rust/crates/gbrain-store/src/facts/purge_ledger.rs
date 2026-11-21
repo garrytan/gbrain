@@ -105,6 +105,35 @@ pub(crate) fn purged_claim(
     Ok(false)
 }
 
+/// `EXISTS (SELECT 1 FROM fact_purges WHERE source_id = $source AND visibility = $visibility AND
+/// fact_hash = $hash AND ($subject IS NULL OR subject = '*' OR subject = $subject))`: a tombstone at
+/// `visibility` with exactly `hash`, under subject `*` or `subject`, any subject when None.
+pub(crate) fn purge_hash_under(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    subject: Option<&str>,
+    hash: &str,
+) -> Result<bool> {
+    if let Some(subject) = subject {
+        for who in ["*", subject] {
+            if exists(read, &[source_id, visibility, who, hash])? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+    let prefix = key(&[source_id, visibility]);
+    let mut found = false;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        // The rest of the key is `subject \0 fact_hash \0`.
+        let mut parts = k[prefix.len()..].split(|b| *b == 0);
+        found = parts.nth(1).is_some_and(|h| h == hash.as_bytes());
+        !found
+    })?;
+    Ok(found)
+}
+
 /// Whether a tombstone reaches `row`: same source, visibility and fingerprint, and subject `*`, the
 /// row's entity, or any subject when the entity is an unbacked name key.
 fn purged_row(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
@@ -240,7 +269,7 @@ impl Store {
                 tx,
                 &k,
                 &PurgeRecord {
-                    request_id,
+                    request_id: request_id.clone(),
                     actor: row.actor.clone(),
                     reason: row.reason.clone(),
                     purged_at_us,

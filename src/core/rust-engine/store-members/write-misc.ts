@@ -117,6 +117,13 @@ export const readHealthMemoClock: StoreMember<[], string> = async (brain) =>
 export const listSynopsisSourceIds: StoreMember<[], string[]> = async () => [];
 
 /**
+ * Whether a live markdown page of the `default` source, not archived, names the synopsis tier in its frontmatter. The
+ * store keeps no `trust_frontmatter_overrides`, so no other source trusts its pages' overrides.
+ */
+export const hasSynopsisFrontmatterOverride: StoreMember<[], boolean> = async (brain) =>
+  (await storeCall({ member: 'hasSynopsisFrontmatterOverride' }, () => brain.hasSynopsisFrontmatterOverride())) === true;
+
+/**
  * Folder rules and pending prefixes are gbrain-store `access_rules` records (rust/docs/store/access_rules.md). A slug
  * under a rule of its source or a pending prefix is restricted; the store has no row-level security, so the unreadable
  * part is always false.

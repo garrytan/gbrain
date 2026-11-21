@@ -12,10 +12,11 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::purge::{
-    FactScopeArgs, HeldFenceQuery, PurgeTargetArgs, RelinkQuery, SimilarQuery, SingleFactQuery,
-    SourceArgs, UnfencedQuery, WithdrawalExpiry,
+    DerivedRowsQuery, FactScopeArgs, HeldFenceQuery, PurgeTargetArgs, RelinkQuery, SimilarQuery,
+    SingleFactQuery, SourceArgs, UnfencedQuery, WithdrawalExpiry,
 };
 use gbrain_store::facts::purge_ledger::FactPurgeInsert;
+use gbrain_store::facts::reconcile::{BacklogArgs, DrainArgs, LockArgs, SettleArgs};
 
 #[napi]
 impl Brain {
@@ -29,6 +30,20 @@ impl Brain {
         self.run(env, move |s| {
             let a: FactScopeArgs = required(args, "countFactFingerprintLeftovers args")?;
             s.count_fact_fingerprint_leftovers(&a)
+        })
+    }
+
+    /// `listDerivedRows({ frontier, limit })`: resolves the rows one walk hop reaches (none: the
+    /// store keeps no `derivation_inputs`).
+    #[napi]
+    pub fn list_derived_rows<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DerivedRowsQuery = required(args, "listDerivedRows args")?;
+            s.list_derived_rows(&a)
         })
     }
 
@@ -159,6 +174,58 @@ impl Brain {
         self.run(env, move |s| {
             let a: WithdrawalExpiry = required(args, "expireFactsByWithdrawal args")?;
             s.expire_facts_by_withdrawal(&a)
+        })
+    }
+
+    /// `listFactsReconcileBacklog({ marker })`: resolves `{ rows, segmented }`.
+    #[napi]
+    pub fn list_facts_reconcile_backlog<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: BacklogArgs = required(args, "listFactsReconcileBacklog args")?;
+            s.list_facts_reconcile_backlog(&a)
+        })
+    }
+
+    /// `settleFactsReconcile(args)`: records one page's reconcile outcome; resolves null.
+    #[napi]
+    pub fn settle_facts_reconcile<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: SettleArgs = required(args, "settleFactsReconcile args")?;
+            s.settle_facts_reconcile(&a)
+        })
+    }
+
+    /// `lockReconcileRevision(args)`: resolves whether the live page is still at `revision`.
+    #[napi]
+    pub fn lock_reconcile_revision<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: LockArgs = required(args, "lockReconcileRevision args")?;
+            s.lock_reconcile_revision(&a)
+        })
+    }
+
+    /// `selectFactsReconcileDrain(args)`: settles the fenceless due pages; resolves the slugs to drain.
+    #[napi]
+    pub fn select_facts_reconcile_drain<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DrainArgs = required(args, "selectFactsReconcileDrain args")?;
+            s.select_facts_reconcile_drain(&a)
         })
     }
 

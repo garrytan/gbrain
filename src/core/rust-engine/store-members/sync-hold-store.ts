@@ -182,9 +182,9 @@ export const readHeldPageRows: StoreMember<[pageIds: string[]], Array<{ record: 
   });
   const numeric = [...new Set(held.map(h => Number(h.pageId)).filter(Number.isSafeInteger))];
   const revisions = numeric.length
-    ? await storeCall({ member }, () => brain.readPageRevisions(numeric)) as Array<{ id: number; revision: string | number | null }>
+    ? await storeCall({ member }, () => brain.readPageRevisions(numeric)) as Array<{ id: number; knowledge_revision: string | number | null }>
     : [];
-  const revisionOf = new Map(revisions.map(row => [String(row.id), row.revision === null ? null : String(row.revision)]));
+  const revisionOf = new Map(revisions.map(row => [String(row.id), row.knowledge_revision === null ? null : String(row.knowledge_revision)]));
   return held.map(h => ({ record: h.record as never, revision: revisionOf.get(String(Number(h.pageId))) ?? null }));
 };
 

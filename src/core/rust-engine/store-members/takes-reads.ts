@@ -7,9 +7,13 @@
  * applies, with the caller's reader identity and private-readable grant (the same caller the scorecard it decorates
  * serves), and refuses with `engine_capability_missing` for a caller whose folder rules, audience or lineage widen
  * the policy.
+ *
+ * The reads and the delete of `gbrain extract takes` (readLivePageIdBySlug through findTakeId) refuse a page, take or
+ * row id that is not an integer, as the SQL's integer casts refuse it.
  */
-import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead, type TakeTrustRef, type AbandonedTakeRow, type HolderResolvedTakeRow } from '../../engine-sql/takes-reads.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PageTierRef, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead, type TakeTrustRef, type TakesLeavingFence, type AbandonedTakeRow, type HolderResolvedTakeRow } from '../../engine-sql/takes-reads.ts';
+import { storedTrustTier } from '../../trust/tier.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
 export const countOffGridTakeWeights: StoreMember<[], { off_grid: number; total: number }> = (brain) =>
@@ -72,3 +76,63 @@ export const listTopResolvedTakesForHolder: StoreMember<[holder: string], Holder
 /** The five oldest abandoned high-conviction takes (the calibration abandoned-threads card). */
 export const listAbandonedTakes: StoreMember<[], AbandonedTakeRow[]> =
   (brain) => storeCall({ member: 'listAbandonedTakes' }, () => brain.listAbandonedTakes());
+
+// ---- The reads and the delete of `gbrain extract takes` ----
+
+function ints(member: string, values: readonly number[]): number[] {
+  if (!values.every(Number.isSafeInteger)) refuseMember(member, 'an id or row number that is not an integer');
+  return [...values];
+}
+
+export const readLivePageIdBySlug: StoreMember<[slug: string, sourceId: string], number | null> = async (brain, slug, sourceId) => {
+  const id = await storeCall({ member: 'readLivePageIdBySlug', slug, sourceId }, () => brain.readLivePageIdBySlug(slug, sourceId)) as number | null;
+  return id === null || id === undefined ? null : Number(id);
+};
+
+export const readPageTierRef: StoreMember<[pageId: number], PageTierRef | null> = async (brain, pageId) => {
+  ints('readPageTierRef', [pageId]);
+  const page = await storeCall({ member: 'readPageTierRef' }, () => brain.readPageTierRef(pageId)) as { source_id: string; slug: string; trust_tier: string } | null;
+  return page ? { source_id: page.source_id, slug: page.slug, trust_tier: storedTrustTier(page.trust_tier) } : null;
+};
+
+export const readPageTierRows: StoreMember<[ids: readonly number[]], Array<PageTierRef & { id: number }>> = async (brain, ids) => {
+  const wanted = ints('readPageTierRows', ids);
+  const rows = await storeCall({ member: 'readPageTierRows' }, () => brain.readPageTierRows(wanted)) as Array<{ id: number; source_id: string; slug: string; trust_tier: string }>;
+  return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, trust_tier: storedTrustTier(r.trust_tier) }));
+};
+
+export const pageHasFrontmatterKey: StoreMember<[pageId: number, key: string], boolean> = async (brain, pageId, key) => {
+  ints('pageHasFrontmatterKey', [pageId]);
+  return (await storeCall({ member: 'pageHasFrontmatterKey' }, () => brain.pageHasFrontmatterKey(pageId, key))) === true;
+};
+
+export const listTakeIdsLeavingFence: StoreMember<[pageId: number, fence: TakesLeavingFence], number[]> = async (brain, pageId, fence) => {
+  const member = 'listTakeIdsLeavingFence';
+  ints(member, [pageId]);
+  const arg = fence.change === 'removed'
+    ? { change: 'removed', rowNums: ints(member, fence.rowNums) }
+    : { change: 'replaced', rows: fence.rows.map(r => ({ row_num: ints(member, [r.row_num])[0], claim: r.claim })) };
+  const ids = await storeCall({ member }, () => brain.listTakeIdsLeavingFence(pageId, arg)) as number[];
+  return ids.map(Number);
+};
+
+export const listTakePreimages: StoreMember<[pageId: number, ids: readonly number[], incoming: ReadonlyArray<{ row_num: number; claim: string; kind: string; holder: string }>], Array<{ preimage: TakePreimage; gone: boolean }>> =
+  async (brain, pageId, ids, incoming) => {
+    const member = 'listTakePreimages';
+    ints(member, [pageId, ...incoming.map(t => t.row_num)]);
+    const rows = await storeCall({ member }, () => brain.listTakePreimages(pageId, ints(member, ids),
+      incoming.map(t => ({ row_num: t.row_num, claim: t.claim, kind: t.kind, holder: t.holder })))) as Array<{ preimage: TakePreimage; gone: boolean }>;
+    return rows.map(r => ({ preimage: r.preimage, gone: r.gone === true }));
+  };
+
+export const deleteTakesByIds: StoreMember<[ids: readonly number[]], void> = async (brain, ids) => {
+  const wanted = ints('deleteTakesByIds', ids);
+  if (!wanted.length) return;
+  await storeCall({ member: 'deleteTakesByIds' }, () => brain.deleteTakesByIds(wanted));
+};
+
+export const findTakeId: StoreMember<[pageId: number, rowNum: number], number | null> = async (brain, pageId, rowNum) => {
+  ints('findTakeId', [pageId, rowNum]);
+  const id = await storeCall({ member: 'findTakeId' }, () => brain.findTakeId(pageId, rowNum)) as number | null;
+  return id === null || id === undefined ? null : Number(id);
+};

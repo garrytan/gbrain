@@ -80,13 +80,6 @@ and otherwise kept. `sealChunks` (replace) writes what it is given.
 | `brain.getTakeEmbeddings(ids)` | `[{ id, embedding }]` for takes with a current vector | `getTakeEmbeddings` |
 | `brain.countStaleTakes(opts)` / `brain.listStaleTakes(opts)` | active takes on live pages with no current vector, or one of another model or width; the list is by id, at most 100000 | `countStaleTakes`, `listStaleTakes` |
 
-A take vector is current only at the take's `claim_rev`: it counts only while its `B 'k'` row equals the
-take's `claim_rev`, so a claim edit makes it stale at once. Postgres and PGLite set `takes.embedding` (and its
-model, time and text hash) to NULL when `addTakesBatch` changes a claim (`src/core/engine-sql/takes.ts:81`,
-`CASE WHEN takes.claim IS DISTINCT FROM EXCLUDED.claim THEN NULL`), and keep it when the claim is the same.
-The store keeps the old vector record, so this rule is what hides it from every read: `hasStoredVectors`,
-the stale-take queue and take search. Test: `a_take_vector_is_current_only_at_the_claim_revision` in
-`rust/crates/gbrain-store/tests/embedding_catalog.rs`.
 
 ## Page embedding ledger
 
@@ -97,6 +90,7 @@ the policy is `src/core/page-embedding-budget.ts`, the SQL copy `src/core/engine
 | --- | --- | --- |
 | `brain.readPageEmbeddingBudget(pageId)` | the hold marker (`transcript_archive.embedding_hold`, else `call_import.embedding_hold`) and the row's state, reason, signature, spent, reserved, cap, unpriced count and reservation window; all null for a missing page | the plan's hold read |
 | `brain.recordPageEmbeddingHold(pageId, reason)` | a held row for a page with no row; a page with a row keeps it | `INSERT ... ON CONFLICT DO NOTHING` |
+| `brain.holdPageEmbedding(pageId, reason)` | the row is `held` with `reason`: added when the page has none, a held row's reason replaced, an open row re-held; the spend columns are kept. An unknown page refuses `page_not_found`, a reason with a NUL byte `invalid_argument` | `INSERT ... ON CONFLICT (page_id) DO UPDATE SET state = 'held', reason = EXCLUDED.reason` |
 | `brain.openPageEmbeddingHold(pageId)` | opens the row; no row is a no-op | the small-page approval |
 | `brain.reservePageEmbedding(pageId, input)` | `held`, `needs_junk` (an open, unapproved page with no junk verdict yet) or a `grant` of the newest chunks that fit the cap | the grant transaction |
 | `brain.settlePageEmbeddingReservation(pageId, settle)` | books the spend and drops the hold, only while the grant's window is still open | `settleLedgerReservation` |
@@ -104,6 +98,12 @@ the policy is `src/core/page-embedding-budget.ts`, the SQL copy `src/core/engine
 The grant is one store write, so it needs no row lock. A reservation older than an hour counts as spent.
 A new signature starts a new ledger. A window is `reserved_at` in microseconds; a new window is at least one
 millisecond later than the one it replaces. An unlimited cap crosses the addon as `null`.
+
+A take vector counts only while its `B 'k'` row equals the take's `claim_rev`, so a claim edit makes it
+stale at once (PGLite compares `embedded_text_hash` with `md5(claim)`). `addTakesBatch` also deletes the
+vector when it changes a claim, as Postgres nulls the column; that raises the vector generation, so a warm
+vector index (vectors.rs) rebuilds and `searchTakesVector` stops ranking the old claim's vector. Test: `a_take_vector_is_current_only_at_the_claim_revision` in
+`rust/crates/gbrain-store/tests/embedding_catalog.rs`.
 
 
 ## Embedding install
@@ -148,10 +148,14 @@ is still refused on write.
 
 - The stale queue keeps a held or capped page (`budgetLimited` is not kept). The plan then refuses the page
   from its ledger row, so no money is spent on it, but each embedding run lists it again.
-- `reservePageSpend`'s embedding branch, `listBudgetLimitedPages`, `readPageSizeStates` and
-  `holdPageEmbedding` are still raw SQL, so a Rust brain refuses them (`engine_capability_missing`).
-- PGLite's generation filter (`chunkGenerationFilter`) is read as the chunk view the page shows now
-  (`visible_at`).
+- `reservePageSpend`'s embedding branch, `listBudgetLimitedPages` and `readPageSizeStates` are still raw SQL,
+  so a Rust brain refuses them (`engine_capability_missing`). `holdPageEmbedding` and `readPageSizeRows` are
+  served from the ledger row.
+- The stale reads (`countStaleChunks`, `sumStaleChunkChars`, `listStaleChunks`), `readEmbeddingStateCounts`,
+  `listEmbeddingStateRows` and the `includeUnsealed` reads take PGLite's `chunkGenerationFilter`: an inline chunk only
+  on a page that is not segmented, and a segmented chunk only at or below the page's generation with a live manifest
+  row. A chunk whose occurrence a deferred retire closed is not read. The served reads (`getEmbeddingsByChunkIds`,
+  `cosinesByChunkIds`, sealed `getChunksWithEmbeddings`) keep `chunkVisibleFilter`, the generation alone (`visible_at`).
 - A segmented page counts as having no chunkless content.
 - Segment chunks get no pending stamp.
 - `ops` mode counts `embedded` exactly; `unstamped_created_at_min` is null.

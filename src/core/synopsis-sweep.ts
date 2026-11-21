@@ -43,19 +43,22 @@ export interface SynopsisTierConfig {
   kill_switch: boolean;
   /** Sources whose own contextual_retrieval_mode is per_chunk_synopsis. */
   synopsis_sources: string[];
-  /** True when any page can resolve to the synopsis tier (page frontmatter overrides aside). */
+  /** True when any page can resolve to the synopsis tier: the global tier, a source row, or a trusted page frontmatter override. */
   configured: boolean;
 }
 
 export async function readSynopsisTierConfig(engine: BrainEngine): Promise<SynopsisTierConfig> {
   const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
-  const synopsisSources = await engine.listSynopsisSourceIds();
   const killSwitch = knobs.contextual_retrieval_disabled === true;
+  const synopsisSources = await engine.listSynopsisSourceIds();
+  // #9683: a page's trusted frontmatter can pick the tier (the trust rule of eligiblePagesSql); the probe is moot once the
+  // kill switch or the global tier already decides.
+  const overridden = !killSwitch && knobs.contextual_retrieval !== 'per_chunk_synopsis' && await engine.hasSynopsisFrontmatterOverride();
   return {
     global_tier: knobs.contextual_retrieval,
     kill_switch: killSwitch,
     synopsis_sources: synopsisSources,
-    configured: !killSwitch && (knobs.contextual_retrieval === 'per_chunk_synopsis' || synopsisSources.length > 0),
+    configured: !killSwitch && (knobs.contextual_retrieval === 'per_chunk_synopsis' || synopsisSources.length > 0 || overridden),
   };
 }
 

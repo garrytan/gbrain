@@ -21,7 +21,7 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, LinkBatchInput } from '../../src/core/engine.ts';
-import type { Link, PageInput, PageType } from '../../src/core/types.ts';
+import type { Link, PageInput, PageType, RelationalFanoutOpts, SearchResult } from '../../src/core/types.ts';
 import { linkFamily } from '../../src/core/search/relational-chain.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
@@ -29,6 +29,7 @@ import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { runPostFusionStages, type PostFusionOpts } from '../../src/core/search/hybrid.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -543,6 +544,61 @@ describe('engine parity: relational fan-out', () => {
       return { toObject: sorted(toObject, (e) => e.to), toSubject, capped, empty };
     },
   );
+
+  // Review finding specialist-batched#1 / targeted#1 and #5: with requireSafeChunks the SQL engines return an edge's
+  // context only when its evidence page is sealed at the safe fence and holds no facts/takes fence (textGate), and a
+  // canonical chunk only for a sealed page.
+  parityTest(
+    'requireSafeChunks withholds edge context and canonical chunks of unsealed or fenced pages',
+    { methods: ['relationalChainHop', 'relationalFanout', 'sealChunks', 'upsertChunks', 'addLink'] },
+    async (engine) => {
+      const company = (await engine.putPage('companies/sf-co', page('companies/sf-co', { type: 'company' }))).id;
+      const people: Array<[string, string]> = [
+        ['people/sf-sealed', 'sealed plain body'],
+        ['people/sf-unsealed', 'unsealed plain body'],
+        ['people/sf-fenced', 'fenced body\n\n<!--- gbrain:facts:begin -->\n| 1 | owns the vault | fact |\n<!--- gbrain:facts:end -->'],
+        ['people/sf-takes', 'takes body\n\n<!--- gbrain:takes:begin -->\n| 1 | thinks so | take |\n<!--- gbrain:takes:end -->'],
+      ];
+      for (const [slug, body] of people) {
+        await engine.putPage(slug, page(slug, { type: 'person', compiled_truth: body }));
+        const chunks = [{ chunk_index: 0, chunk_text: `${slug} chunk`, chunk_source: 'compiled_truth' as const }];
+        if (slug === 'people/sf-unsealed') await engine.upsertChunks(slug, chunks);
+        else await engine.sealChunks(slug, chunks);
+        await engine.addLink(slug, 'companies/sf-co', `ctx ${slug}`, 'invested_in', 'manual');
+      }
+      const chain = async (opts: Partial<import('../../src/core/types.ts').ChainHopOpts>) =>
+        sorted((await engine.relationalChainHop([company], {
+          linkTypes: ['invested_in'], toward: 'subject', subjectTypes: ['person'], objectTypes: ['company'],
+          degreeLinkTypes: ['invested_in'], neighborCap: 100, ...opts,
+        })).map((e) => ({ to: e.to_slug, context: e.context, chunk: e.canonical_chunk_id != null })), (e) => e.to);
+      const fanout = async (opts: RelationalFanoutOpts) =>
+        (await engine.relationalFanout(['companies/sf-co'], { direction: 'in', ...opts }))
+          .map((r) => `${r.slug}:${r.canonical_chunk_id != null ? 'chunk' : 'nochunk'}`).sort();
+      const open = await chain({});
+      const safe = await chain({ requireSafeChunks: true });
+      const safeHolders = await chain({ requireSafeChunks: true, takesHoldersAllowList: ['people/sf-sealed'] });
+      // GST-3058: the owner's own direct call reads the stored context; a holders list still skips takes-bearing evidence.
+      const owner = <T>(fn: () => Promise<T>) => withCallerAccess({ owner: true, ownerReads: true }, fn);
+      const ownerSafe = await owner(() => chain({ requireSafeChunks: true }));
+      const ownerHolders = await owner(() => chain({ requireSafeChunks: true, takesHoldersAllowList: ['people/sf-sealed'] }));
+      const fanOpen = await fanout({});
+      const fanSafe = await fanout({ requireSafeChunks: true });
+      expect(open.every((e) => e.context !== null && e.chunk)).toBe(true);
+      expect(ownerSafe.map((e) => e.context === null)).toEqual([false, false, false, false]);
+      expect(ownerHolders.map((e) => [e.to, e.context === null])).toEqual([
+        ['people/sf-fenced', false], ['people/sf-sealed', false], ['people/sf-takes', true], ['people/sf-unsealed', true],
+      ]);
+      expect(safe).toEqual([
+        { to: 'people/sf-fenced', context: null, chunk: true },
+        { to: 'people/sf-sealed', context: 'ctx people/sf-sealed', chunk: true },
+        { to: 'people/sf-takes', context: null, chunk: true },
+        { to: 'people/sf-unsealed', context: null, chunk: false },
+      ]);
+      expect(safeHolders).toEqual(safe);
+      expect(fanSafe).toContain('people/sf-unsealed:nochunk');
+      return { open, safe, safeHolders, ownerSafe, ownerHolders, fanOpen, fanSafe };
+    },
+  );
 });
 
 describe('engine parity: backlink and page signal reads', () => {
@@ -811,6 +867,36 @@ describe('engine parity: backlink and page signal reads', () => {
     },
   );
 
+  // Review finding outside-voice#5: hybrid search hands its whole post-fusion option bag (applyBacklinks, floorRatio,
+  // graphSignalsEnabled, query, titleBoost...) to getSalienceScores. A member that refused those keys had its refusal
+  // swallowed by the stage, so the salience boost silently never applied on the Rust engine.
+  parityTest(
+    'the salience boost applies through the post-fusion stage, which passes the hybrid option bag',
+    { methods: ['getSalienceScores', 'setEmotionalWeightBatch', 'putPage'] },
+    async (engine) => {
+      const ids = await seedPages(engine, ['salpf/plain', 'salpf/weighted']);
+      await engine.setEmotionalWeightBatch([{ slug: 'salpf/weighted', source_id: 'default', weight: 0.9 }]);
+      const round = (n: number) => Math.round(n * 1e6) / 1e6;
+      // The stage hands the bag on only when it carries a read policy (hasReadPolicy), as a source-scoped search does.
+      const run = async (policy: Pick<PostFusionOpts, 'sourceId' | 'takesHoldersAllowList'>) => {
+        const results = ['salpf/plain', 'salpf/weighted'].map((slug) => ({
+          slug, page_id: ids.get(slug)!, source_id: 'default', title: slug, type: 'note', chunk_text: slug,
+          chunk_source: 'compiled_truth', chunk_id: 0, chunk_index: 0, score: 1, stale: false,
+        })) as unknown as SearchResult[];
+        await runPostFusionStages(engine, results, {
+          ...policy, excludePrivate: undefined, requireSafeChunks: undefined, applyBacklinks: true, salience: 'on',
+          recency: 'off', floorRatio: undefined, graphSignalsEnabled: false, query: 'salpf', titleBoost: undefined,
+        });
+        return Object.fromEntries(results.map((r) => [r.slug, round(r.score)]));
+      };
+      const unscoped = await run({});
+      const scoped = await run({ sourceId: 'default' });
+      const holders = await run({ takesHoldersAllowList: ['garry'] });
+      expect(scoped['salpf/weighted']).toBeGreaterThan(scoped['salpf/plain']);
+      return { unscoped, scoped, holders };
+    },
+  );
+
   parityTest(
     'findOrphanPages: islanded default vs inbound mode, with source scope',
     { methods: ['findOrphanPages', 'addLink', 'putPage'] },
@@ -840,7 +926,7 @@ describe('engine parity: backlink and page signal reads', () => {
       await engine.putPage('fz/a-tie', page('Widget Example', { type: 'concept' }));
       await engine.putPage('fz_x/odd', page('Gadget Thing', { type: 'concept' }));
       await engine.putPage('fz/gone', page('Vanished Widget Example', { type: 'concept' }));
-      await engine.putPage('fz/alt', page('Widget Example', { type: 'concept' }), { sourceId: 'fuzzy-src' });
+      await engine.putPage('fz/z-alt', page('Widget Example', { type: 'concept' }), { sourceId: 'fuzzy-src' });
       await engine.softDeletePage('fz/gone');
       const tie = await engine.findByTitleFuzzy('Widget Example');
       const partial = await engine.findByTitleFuzzy('Widget Exampl', 'fz');

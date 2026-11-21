@@ -57,9 +57,7 @@ impl Store {
             };
             let tier = take.trust.tier();
             let held = tier.rank() > writer
-                || (spec.pending == Some(true)
-                    && i64::try_from(take.id)
-                        .map_or(Ok(false), |id| pending_forget(&*read, "takes", id))?);
+                || (spec.pending == Some(true) && pending_forget(&*read, "takes", take.id)?);
             if held {
                 out.push(json!({ "id": take.id, "trust_tier": tier.as_str() }));
             }

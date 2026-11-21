@@ -74,6 +74,46 @@ pub(crate) fn remove_source_page_purges(
     Ok(())
 }
 
+/// The `(slug, purged_at_us)` of every row of a source, in content-hash order (`countPurgedPageFacts`
+/// reads the ledger through this).
+pub(crate) fn source_purges(
+    read: &dyn KvRead,
+    source_id: &str,
+    op: &str,
+) -> Result<Vec<(String, i64)>> {
+    let rows = source_page_purges(read, source_id).map_err(|e| {
+        StoreError::new(
+            e.code,
+            format!("{op}: corrupt page purge record: {}", e.message),
+        )
+    })?;
+    Ok(rows
+        .into_iter()
+        .map(|(_, r)| (r.slug, r.purged_at_us))
+        .collect())
+}
+
+/// Writes one row. Only the unit tests of the readers call it; the store-side writer is
+/// [`Store::record_page_purge`].
+#[cfg(test)]
+pub(crate) fn put_purge(
+    tx: &mut dyn crate::kv::KvWrite,
+    source_id: &str,
+    content_hash: &str,
+    slug: &str,
+    purged_at_us: i64,
+) -> Result<()> {
+    put_json(
+        tx,
+        &row_key(source_id, content_hash),
+        &PagePurgeRecord {
+            slug: slug.to_string(),
+            request_id: None,
+            purged_at_us,
+        },
+    )
+}
+
 impl Store {
     /// `INSERT INTO page_purges(source_id, content_hash, slug, request_id) ... ON CONFLICT
     /// (source_id, content_hash) DO UPDATE SET slug, request_id, purged_at = now()` for each hash:

@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -134,6 +134,14 @@ export const readEntityCardRows: StoreMember<[sourceId: string, match: EntityCar
     const wire = 'titleLc' in match ? { titleLc: match.titleLc, slugs: [...match.slugs], slugLike: match.slugLike } : { slugs: [...match.slugs] };
     return storeCall({ member: 'readEntityCardRows', sourceId }, () => brain.readEntityCardRows(sourceId, wire, policy ?? null)) as Promise<EntityCardRow[]>;
   };
+
+/** pg_trgm `similarity` and `%` as PGLite computes them (keyword/trgm.rs); the store always has the trigram functions. */
+export const findFuzzyEntityCandidates: StoreMember<[sourceId: string, title: string, fragment: string], FuzzyEntityCandidateRow[]> = (brain, sourceId, title, fragment) =>
+  storeCall({ member: 'findFuzzyEntityCandidates', sourceId }, () => brain.findFuzzyEntityCandidates(sourceId, title, fragment));
+
+/** The store returns the matches in slug byte order; Postgres states no order (`LIMIT 2` with no `ORDER BY`). */
+export const findExactBasenameCandidates: StoreMember<[sourceId: string, slugs: readonly string[]], string[]> = (brain, sourceId, slugs) =>
+  storeCall({ member: 'findExactBasenameCandidates', sourceId }, () => brain.findExactBasenameCandidates(sourceId, [...slugs]));
 
 /** The store returns every live labelled page with no visibility key; the label rule itself is the TypeScript twin of the SQL. */
 export const readIgnoredPrivacyLabelPages: StoreMember<[sourceId: string, scope: { slugs: readonly string[] } | { since: string },

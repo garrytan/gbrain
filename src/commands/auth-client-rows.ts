@@ -4,6 +4,7 @@
  * to the columns the listing shows.
  */
 import type { BrainEngine } from '../core/engine.ts';
+import { readSharedFromColumns } from '../core/grants/model.ts';
 import type { ClientRow } from './auth.ts';
 
 /** The columns a brain from before them leaves out of the row rather than reading as null. */
@@ -30,6 +31,8 @@ export async function listClientRows(engine: BrainEngine): Promise<ClientRow[]> 
       federated_read: full.federated_read ?? null,
     };
     for (const column of OPTIONAL_COLUMNS) if (column in r) (row as unknown as Record<string, unknown>)[column] = r[column];
+    // The shared-source read grant stands only while its stamp is the client's current grant revision.
+    row.read_shared = readSharedFromColumns(r.read_shared_revision, r.grant_revision);
     return row;
   });
 }

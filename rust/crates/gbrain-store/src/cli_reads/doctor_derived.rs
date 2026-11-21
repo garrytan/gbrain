@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::pg_text::fm_text;
 use crate::Store;
-use crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION;
+use crate::chunks::SAFE_FENCE_CHUNKER_VERSION;
 use crate::env::iso;
 use crate::error::Result;
 use crate::keys;

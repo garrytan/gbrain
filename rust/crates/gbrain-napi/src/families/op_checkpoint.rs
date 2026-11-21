@@ -137,17 +137,4 @@ impl Brain {
             s.list_op_checkpoint_rows(&op, &fingerprint_prefix)
         })
     }
-
-    /// `readPageRevisions(ids)`: `{ id, revision }` of each listed page, deleted or not.
-    #[napi]
-    pub fn read_page_revisions<'env>(
-        &self,
-        env: &'env Env,
-        ids: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let ids: Vec<i64> = required(ids, "readPageRevisions ids")?;
-            s.read_page_revisions(&ids)
-        })
-    }
 }

@@ -4,12 +4,15 @@
  * connection carries all of the process's calls at once.
  *
  * - A call carries the caller's deadline (the read deadline and the statement deadline of its async context) as
- *   `deadline_at`; the owner ends it there with `timeout`, queued or running. The client keeps a short grace timer of
- *   its own in case the owner is stuck.
+ *   `deadline_at`; the owner ends it there with `timeout`, queued (`not_started`) or running (`outcome_unknown`: a
+ *   running write is not interrupted). The client keeps a short grace timer of its own in case the owner is stuck.
+ *   The caller's access record (`callerAccessRecord()`) goes with each call as `access`, so the owner reads as that caller.
  * - The caller's AbortSignals (the request signal of request-signal.ts and any signal argument) end the call at once
  *   with `cancelled`, or `timeout` when the signal's reason is a TimeoutError, and tell the owner to stop it.
- * - When the owner goes away, every call in flight ends with `owner_unavailable` (`outcome_unknown`) and every later
- *   call with `owner_unavailable` (`not_sent`). There is no owner handoff in this release.
+ * - When the owner goes away, every call in flight ends with `owner_unavailable` (`outcome_unknown`) and is never sent
+ *   again, so a write the owner may have committed is not applied twice. A later call first runs the engine's
+ *   `recover` step (a new election, rust-engine.ts) and then runs on the new owner, or in this process when it won.
+ *   Without `recover`, a later call ends with `owner_unavailable` (`not_sent`).
  * - The socket holds the event loop open only while a call is in flight, so a finished CLI command exits.
  */
 import net, { type Socket } from 'node:net';
@@ -17,6 +20,7 @@ import { engineKey } from '../../engine-key.ts';
 import { requestSignal } from '../../request-signal.ts';
 import { readDeadline } from '../../read-deadline.ts';
 import { currentStatementDeadline } from '../../statement-deadline.ts';
+import { callerAccessRecord } from '../../search/private-visibility.ts';
 import { prepareLocalIpcPath } from '../../context/ipc-path.ts';
 import type { Capability } from '../../engine-capabilities.ts';
 import { capabilityMissing } from '../errors.ts';
@@ -51,13 +55,19 @@ interface Pending {
   cleanup(): void;
 }
 
-const connections = new WeakMap<object, OwnerConnection>();
+/** Each client engine's owner connection, and the step that replaces a lost owner (a new election) when it has one. */
+const connections = new WeakMap<object, { connection: OwnerConnection; recover?: () => Promise<void> }>();
 /** countPagesBy grouper functions the client resolved to a fixed table; they cross the socket as that table. */
 const grouperTables = new WeakMap<object, { types: string[]; groups: string[] }>();
 
 /** The owner connection an engine reaches its brain through, or undefined when the engine owns it (or is no client). */
 export function ownerConnectionFor(engine: object): OwnerConnection | undefined {
-  return connections.get(engineKey(engine));
+  return connections.get(engineKey(engine))?.connection;
+}
+
+/** The step that replaces the engine's lost owner, when the engine has one (installOwnerClient `recover`). */
+export function ownerRecoveryFor(engine: object): (() => Promise<void>) | undefined {
+  return connections.get(engineKey(engine))?.recover;
 }
 
 function lastKey(path: string): string {
@@ -78,7 +88,7 @@ function callDeadline(): { deadlineAt?: number; readDeadlineAt?: number } {
 function abortError(member: string, signal: AbortSignal, startedAt: number, sent: boolean): Error {
   const reason = signal.reason as { name?: unknown } | undefined;
   return reason?.name === 'TimeoutError'
-    ? ownerCallTimeout(member, Date.now() - startedAt, false)
+    ? ownerCallTimeout(member, Date.now() - startedAt, sent ? 'sent' : 'not_sent')
     : ownerCallCancelled(member, sent);
 }
 
@@ -162,9 +172,13 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
         if (signal.aborted) return Promise.reject(abortError(member, signal, startedAt, false));
       }
       const { deadlineAt, readDeadlineAt } = callDeadline();
+      // The caller's access record (who it is, what it may read) goes with the call, so the owner reads as this caller.
+      const record = callerAccessRecord();
+      const access = record ? encodeValue(record) : undefined;
       const line = frameLine({ t: kind, id, [kind === 'fn' ? 'name' : 'member']: member, args: wireArgs,
         ...(deadlineAt !== undefined ? { deadline_at: deadlineAt } : {}),
-        ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}) });
+        ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}),
+        ...(access ? { access } : {}) });
       if (line === null) return Promise.reject(ownerIpcRefusal(member, `its arguments are larger than ${OWNER_IPC_MAX_FRAME_BYTES} bytes, the most the owner socket carries`));
       return new Promise((resolveCall, rejectCall) => {
         let grace: ReturnType<typeof setTimeout> | undefined;
@@ -187,7 +201,7 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
         }
         if (deadlineAt !== undefined) {
           const ms = Math.max(0, deadlineAt - Date.now());
-          grace = setTimeout(() => endLocally(ownerCallTimeout(member, ms, false)), ms + CLIENT_DEADLINE_GRACE_MS);
+          grace = setTimeout(() => endLocally(ownerCallTimeout(member, ms, 'sent')), ms + CLIENT_DEADLINE_GRACE_MS);
         }
         pending.set(id, { member, resolve: resolveCall, reject: rejectCall, callbacks, cleanup });
         refresh();
@@ -232,13 +246,12 @@ export function rustOwnerServesPersistence(capabilities: Iterable<string> | unde
 /**
  * The capability a member needs on a Rust owner that does not report it, or null when the call may be sent. Such a
  * member is refused here with the error the Rust engine gives in process (rust-engine.ts), so the client never asks
- * an owner for what it said it cannot do (executeRaw with no `raw_sql`). A member the Rust store serves
- * (store-members/index.ts) is always sent, because the owner runs it even when the rest of its capability class still
- * refuses. An owner of another kind (tests host PGLite) is asked as before.
+ * an owner for what it said it cannot do (executeRaw with no `raw_sql`). An owner of another kind (tests host PGLite)
+ * is asked as before. A member the Rust store serves (store-members/) runs on the owner even when the rest of its
+ * capability does not, exactly as it runs in the owner's own process.
  */
 function missingOnRustOwner(hello: { kind: string; capabilities: readonly string[] }, member: string): Capability | null {
-  if (hello.kind !== 'rust') return null;
-  if (member in STORE_MEMBERS) return null;
+  if (hello.kind !== 'rust' || member in STORE_MEMBERS) return null;
   const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[member];
   if (cls === undefined || cls === 'implemented') return null;
   return hello.capabilities.includes(cls) ? null : cls as Capability;
@@ -265,11 +278,30 @@ async function countPagesByThroughOwner(connection: OwnerConnection, args: unkno
 /**
  * Makes `engine` a client of the owner on `connection`: each forwarded member becomes an own property that sends the
  * call, each refused member rejects with `engine_capability_missing`, and the engine's capability set mirrors the
- * owner's. Returns the function that undoes it (on disconnect or when the owner goes away).
+ * owner's. Returns the function that undoes it (on disconnect or when the owner goes away), which also restores the
+ * engine's own capability set.
+ *
+ * `recover` replaces a lost owner. Once the connection has closed, a call that was not sent runs it and then calls the
+ * member again on the engine (now a client of the new owner, or the owner itself); a call in flight when the owner
+ * went away still ends with `owner_unavailable` (`outcome_unknown`).
  */
-export function installOwnerClient(engine: object, connection: OwnerConnection): () => void {
+export function installOwnerClient(
+  engine: object, connection: OwnerConnection, opts: { recover?: () => Promise<void> } = {},
+): () => void {
   const record = engine as EngineRecord;
   const installed: string[] = [];
+  const recover = opts.recover;
+  const viaOwner = (member: string, send: (...args: unknown[]) => Promise<unknown>) => {
+    const value = (...args: unknown[]): Promise<unknown> => {
+      if (!recover || !connection.closed) return send(...args);
+      return recover().then(() => {
+        const next = record[member];
+        if (next === value || typeof next !== 'function') throw ownerGone(member, connection.hello.pid, false);
+        return (next as (...a: unknown[]) => Promise<unknown>).apply(engine, args);
+      });
+    };
+    return value;
+  };
   for (const [member, route] of Object.entries(OWNER_IPC_ROUTES)) {
     if (route === 'local') continue;
     const missing = missingOnRustOwner(connection.hello, member);
@@ -278,19 +310,21 @@ export function installOwnerClient(engine: object, connection: OwnerConnection):
       : route === 'refuse'
       ? () => Promise.reject(ownerIpcRefusal(member, 'transactions, reserved connections and engine callbacks do not cross the owner socket'))
       : member === 'countPagesBy'
-        ? (...args: unknown[]) => countPagesByThroughOwner(connection, args)
-        : (...args: unknown[]) => connection.request('call', member, args);
+        ? viaOwner(member, (...args: unknown[]) => countPagesByThroughOwner(connection, args))
+        : viaOwner(member, (...args: unknown[]) => connection.request('call', member, args));
     Object.defineProperty(record, member, { value, writable: true, configurable: true, enumerable: false });
     installed.push(member);
   }
   const capabilities = record.capabilities as Set<string> | undefined;
+  const own = capabilities instanceof Set ? [...capabilities] : [];
   if (capabilities instanceof Set) { capabilities.clear(); for (const c of connection.hello.capabilities) capabilities.add(c); }
   const key = engineKey(engine);
-  connections.set(key, connection);
+  const entry = { connection, ...(recover ? { recover } : {}) };
+  connections.set(key, entry);
   return () => {
     for (const member of installed) delete record[member];
-    if (capabilities instanceof Set) capabilities.clear();
-    if (connections.get(key) === connection) connections.delete(key);
+    if (capabilities instanceof Set) { capabilities.clear(); for (const c of own) capabilities.add(c); }
+    if (connections.get(key) === entry) connections.delete(key);
     connection.close();
   };
 }

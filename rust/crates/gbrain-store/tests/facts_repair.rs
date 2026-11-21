@@ -599,3 +599,69 @@ fn label_facts_count_the_uncovered_segment_facts_of_pages_with_a_label_line() {
     assert_eq!(count(100, &["other"]), 0);
     assert_eq!(count(100, &[]), 0);
 }
+
+#[test]
+fn purged_page_facts_are_the_uncovered_gone_page_facts_and_an_empty_ledger_leaves_each_ambiguous() {
+    let (_d, store) = brain("purged-page-facts");
+    put(&store, "notes/live", "note", json!({}), "default");
+    let gone = |source: &str, text: &str, context: Option<&str>, extra: Value| {
+        let mut row = json!({ "source": "mcp:put_page", "context": context });
+        for (k, v) in extra.as_object().unwrap() {
+            row[k] = v.clone();
+        }
+        fact(&store, source, text, row)
+    };
+    gone(
+        "default",
+        "counted",
+        Some("notes/gone \u{2014} a"),
+        json!({}),
+    );
+    gone(
+        "default",
+        "counted too",
+        Some("code/x.ts"),
+        json!({ "source": "code_import" }),
+    );
+    gone("other", "other source", Some("notes/gone"), json!({}));
+    gone("default", "no slash", Some("gone \u{2014} a"), json!({}));
+    gone("default", "space", Some("notes/a\u{2003}b"), json!({}));
+    gone("default", "live page", Some("notes/live"), json!({}));
+    gone("default", "no context", None, json!({}));
+    gone(
+        "default",
+        "lane",
+        Some("notes/gone"),
+        json!({ "source": LANE }),
+    );
+    gone(
+        "default",
+        "filed",
+        Some("notes/gone"),
+        json!({ "source_markdown_slug": "notes/gone" }),
+    );
+    gone(
+        "default",
+        "withdrawn",
+        Some("notes/gone"),
+        json!({ "entity_slug": "people/a" }),
+    );
+    assert!(
+        store
+            .insert_fact_withdrawal("default", "private", "withdrawn", "people/a", None)
+            .unwrap()
+    );
+    let count = |limit: u64, sources: &[&str]| {
+        store
+            .count_purged_page_facts(&args(json!({ "sourceIds": sources, "limit": limit })))
+            .unwrap()
+    };
+    assert_eq!(count(100, &["default"]), vec![false, false]);
+    assert_eq!(count(1, &["default"]), vec![false]);
+    assert!(count(0, &["default"]).is_empty());
+    assert_eq!(
+        count(100, &["other", "default", "other"]),
+        vec![false, false, false]
+    );
+    assert!(count(100, &[]).is_empty());
+}

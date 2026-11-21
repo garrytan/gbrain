@@ -111,6 +111,20 @@ export async function listSynopsisSourceIds(exec: LegacyUnscopedRead): Promise<s
   return rows.map(r => r.id);
 }
 
+/**
+ * Whether a live markdown page names the synopsis tier in its frontmatter where the frontmatter is trusted: a page of
+ * `default`, or of a source that trusts its pages' overrides, that is not archived (synopsis-sweep.ts, #9683: the probe
+ * the sweep's single statement used to carry as a NULL row).
+ */
+export async function hasSynopsisFrontmatterOverride(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ present: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM pages p LEFT JOIN sources s ON s.id = p.source_id
+       WHERE p.deleted_at IS NULL AND p.page_kind = 'markdown' AND NOT COALESCE(s.archived, false)
+         AND p.frontmatter @> '{"contextual_retrieval":"per_chunk_synopsis"}'::jsonb
+         AND (p.source_id = 'default' OR COALESCE(s.trust_frontmatter_overrides, false))) AS present`);
+  return row?.present === true;
+}
+
 /** Every shared skillpack bound to its source's current incarnation, with its roots on host `hostId`. */
 export function listSharedSkillPackRoots(exec: LegacyUnscopedRead, hostId: string): Promise<SharedSkillPackRoot[]> {
   return exec.executeRaw<SharedSkillPackRoot>(`SELECT p.source_id,p.source_incarnation,s.local_path AS source_root,

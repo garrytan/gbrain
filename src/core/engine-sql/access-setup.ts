@@ -6,7 +6,7 @@
  * (test/engine-sql-caller-raw-sql-pins.test.ts). Every member runs on the executor it is given, so a member of a
  * transaction-bound engine runs on that transaction.
  */
-import { accessAllowedSql, privacyPartSql } from '../search/private-visibility.ts';
+import { accessAllowedSql, liveCoverageSql, privacyPartSql } from '../search/private-visibility.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** The engine's own executeRaw (a transaction-bound engine inside a transaction). */
@@ -131,7 +131,12 @@ export async function countPeopleFolderPages(exec: AccessSetupExec): Promise<Peo
 }
 
 /** The open-page predicate over pages alias `p`: live, and the read path's floor with an empty identity admits it. */
-export const openPageSql = (p: string) => `${p}.deleted_at IS NULL AND ${accessAllowedSql(p, [], [])}`;
+export const openPageSql = (p: string) => {
+  const floor = accessAllowedSql(p, [], []);
+  // Inside a caller record (openPages carries the brain's schema version in one) the floor reads the record's coverage, which
+  // names no pending prefix; a page under one is not open, so read them live as the floor does outside a record.
+  return `${p}.deleted_at IS NULL AND ${floor}${floor.includes('access_pending_coverage') ? '' : liveCoverageSql(p)}`;
+};
 
 /**
  * The statement access/open-pages.ts openPages ran through `executeRaw`, rendered in the current access context (the

@@ -49,7 +49,7 @@ import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, pub
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { headCommit, landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
-import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, GRANDFATHER_RETIRED, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
+import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, GRANDFATHER_RETIRED, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, capabilityRefusalDetail, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 import { SYNC_CURSOR_REPLACED, SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 import { fenceFailureDetail } from '../fence-repair/refusal.ts';
 import { withdrawalFailureDetail } from '../facts/withdrawal.ts';
@@ -238,6 +238,7 @@ function requestError(error: unknown): PublicationFailure {
       // #6693: a refusal on a page whose file awaits import or is held by sync; the replay after import selects on it.
       ?? (error.code === 'source_changed' && (error.reason === PENDING_IMPORT || error.reason === SYNC_HELD) ? { origin: error.reason } : undefined)
       ?? stagingFailureDetail(error)
+      ?? capabilityRefusalDetail(error)
       ?? (error.code === 'source_changed' ? sourceChangedDetail(error.message) : undefined);
     return { code: error.code, message: error.message, ...(detail ? { detail } : {}) };
   }
@@ -386,8 +387,9 @@ export async function releaseChargedInterruption(engine: BrainEngine, row: Write
 export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRequest, error: unknown,
   stage: PublicationStage = 'publication'): Promise<WriteRequest> {
   // An engine that cannot yet record a publication step refused before anything published: the write goes back to
-  // queued under its own name, so no claim stays running and a later engine that has the step publishes it.
-  if (isEngineCapabilityRefusal(error)) {
+  // queued under its own name, so no claim stays running and a later engine that has the step publishes it. A refusal
+  // in preparation is not a publication step: it ends failed below, typed, in one attempt.
+  if (stage === 'publication' && isEngineCapabilityRefusal(error)) {
     await releaseUnpublishedClaim(engine, row, 'engine_capability_missing');
     return (await getWriteRequestById(engine, row.id))!;
   }
@@ -401,11 +403,27 @@ export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRe
   // GST-1582: with the refresh barrier on, a write refused because its file awaits an import waits for that import instead.
   const held = failure.code === 'source_changed' ? await holdForImport(engine, row, error) : null;
   if (held) return held;
+  // The engine's typed capability refusal (a member the Rust engine does not serve) repeats on every attempt, so the write
+  // ends failed with it rather than staying pending. A transient database failure is never one and is released below.
+  if (failure.code === 'engine_capability_missing') return completeThroughTypedMembers(engine, row, failure);
   if (mayReprepare(row, failure) || transientDatabaseFailure(error)) {
     await releaseUnpublishedClaim(engine, row, transientDatabaseFailure(error) ? 'database_contention' : 'revision_changed_repreparing');
     return (await getWriteRequestById(engine, row.id))!;
   }
   return engine.transaction(tx => completeWrite(tx, row, failureState(failure.code), {}, failure));
+}
+
+/**
+ * Ends an unpublished request with `failure` through typed members only: the publication's own durable declaration,
+ * counter locks and row lock, then `completeWrite` with that locked row. An engine with no raw SQL records it this way.
+ */
+async function completeThroughTypedMembers(engine: BrainEngine, row: WriteRequest, failure: PublicationFailure): Promise<WriteRequest> {
+  return engine.transaction(async tx => {
+    await declareDurablePersistence(tx);
+    await lockCounters(tx, ['brain', principalKey(requestPrincipal(row)), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])]);
+    const current = await tx.lockWriteRequest(row.id);
+    return completeWrite(tx, row, failureState(failure.code), {}, failure, current ?? undefined);
+  });
 }
 
 /**

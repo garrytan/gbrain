@@ -7,6 +7,8 @@
  *  - `revision_conflict` and `revision_required` are `PageRevisionConflictError`; a missing page is the error
  *    PGLite's member throws (`PageMissingError` for addLink and addTimelineEntry).
  *  - `origin_claimed` is `page_identity_changed` with detail `origin_already_claimed`, PGLite's origin-guard refusal.
+ *  - `read_only_transaction` is Postgres's refusal of a write in a READ ONLY transaction: code `25006`
+ *    (`read_only_sql_transaction`), message `cannot execute <member> in a read-only transaction`.
  *  - `page_ambiguous` is `PageSnapshotAmbiguousError`, what readPageSnapshot throws under `requireUnambiguous`.
  *  - Every other code stays on the original error, which already carries it (`invalid_slug`, `empty_overwrite`, ...).
  */
@@ -14,6 +16,7 @@ import { opError } from '../ops/contract.ts';
 import { originAlreadyClaimed } from '../persistence/origin-guard.ts';
 import { PageMissingError } from '../engine-errors.ts';
 import { PageRevisionConflictError, PageSnapshotAmbiguousError } from '../page-state/types.ts';
+import { READ_ONLY_SQLSTATE } from '../postgres-engine/read-write-transactions.ts';
 
 export interface StoreErrorContext {
   member: string;
@@ -58,6 +61,8 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return pageNotFound(error, ctx);
     case 'origin_claimed':
       return originClaimed(error);
+    case 'read_only_transaction':
+      return Object.assign(new Error(`cannot execute ${ctx.member} in a read-only transaction`), { code: READ_ONLY_SQLSTATE });
     case 'page_ambiguous':
       return new PageSnapshotAmbiguousError();
     default:

@@ -205,3 +205,51 @@ fn pages_naming_reader_match_normalized_readers_exactly_in_every_source() {
     assert_eq!(naming(&store, "group:alice-example", 50), vec![]);
     assert_eq!(naming(&store, "member:carol-example", 50), vec![]);
 }
+
+#[test]
+fn a_synopsis_frontmatter_override_is_a_live_default_page_naming_the_tier() {
+    let dir = TempDir::new("write-misc-synopsis-override");
+    let store = open(&dir);
+    source(&store, "other", json!({}));
+    assert!(!store.has_synopsis_frontmatter_override().unwrap());
+    // Another tier, another key, a value that only contains the tier, and a source that does not trust its pages.
+    put(
+        &store,
+        "default",
+        "a",
+        json!({ "contextual_retrieval": "off" }),
+    );
+    put(
+        &store,
+        "default",
+        "b",
+        json!({ "retrieval": "per_chunk_synopsis" }),
+    );
+    put(
+        &store,
+        "default",
+        "c",
+        json!({ "contextual_retrieval": ["per_chunk_synopsis"] }),
+    );
+    put(
+        &store,
+        "other",
+        "d",
+        json!({ "contextual_retrieval": "per_chunk_synopsis" }),
+    );
+    assert!(!store.has_synopsis_frontmatter_override().unwrap());
+    put(
+        &store,
+        "default",
+        "e",
+        json!({ "contextual_retrieval": "per_chunk_synopsis" }),
+    );
+    assert!(store.has_synopsis_frontmatter_override().unwrap());
+    // A deleted page and an archived source no longer count.
+    store.soft_delete_page("e", Some("default")).unwrap();
+    assert!(!store.has_synopsis_frontmatter_override().unwrap());
+    store.restore_page("e", Some("default")).unwrap();
+    assert!(store.has_synopsis_frontmatter_override().unwrap());
+    store.set_source_archived("default", true).unwrap();
+    assert!(!store.has_synopsis_frontmatter_override().unwrap());
+}

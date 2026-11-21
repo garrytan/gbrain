@@ -492,7 +492,7 @@ describe('engine parity: typed trust tier reads', () => {
         tier: r.tier, successor_tier: r.successor_tier, segmented: r.segmented, successor_pruned: r.successor_pruned,
         replaced: r.replaced_at instanceof Date || typeof r.replaced_at === 'string', since: r.recorded_since != null,
         competing: Array.isArray(r.competing) ? r.competing.map(ord) : r.competing,
-        undated: Number(r.undated), large: Number(r.large_versions), segmentedVersions: Number(r.segmented_versions), filed: r.any_filed, gap: r.gap_at,
+        undated: Number(r.undated), large: Number(r.large_versions), segmentedVersions: Number(r.segmented_versions), filed: r.any_filed, gap: r.gap_at instanceof Date,
       });
       const spec = { pageId, excludePrivate: false, pinOrd: null, inlineMaxBytes: 1_000_000 };
       const march = norm(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-03-01' }));
@@ -608,7 +608,7 @@ describe('engine parity: typed trust tier reads', () => {
       reason: r.reason, introduced: r.introduced_because, tier: r.tier, successor_tier: r.successor_tier, segmented: r.segmented,
       successor_pruned: r.successor_pruned, replaced: r.replaced_at instanceof Date, since: r.recorded_since instanceof Date,
       competing: Array.isArray(r.competing) ? r.competing.map(ord) : r.competing, undated: Number(r.undated), large: Number(r.large_versions),
-      segmentedVersions: Number(r.segmented_versions), filed: r.any_filed, gap: r.gap_at, created: r.created_at instanceof Date,
+      segmentedVersions: Number(r.segmented_versions), filed: r.any_filed, gap: r.gap_at instanceof Date, created: r.created_at instanceof Date,
     });
   };
 
@@ -646,7 +646,7 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
-    'pickValidTimeEdition reads the reason a version was replaced for, and the reason it was introduced',
+    'pickValidTimeEdition reads the reason a version was replaced for and the reason the next edition was introduced for',
     { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
     async (engine) => {
       const write = (validFrom: string) => engine.putPage('vt/reason', { type: 'note', title: 'VT', compiled_truth: `body ${validFrom}`, timeline: '', frontmatter: { valid_from: validFrom } });
@@ -660,6 +660,38 @@ describe('engine parity: typed trust tier reads', () => {
       expect(july).toMatchObject({ ord: 'current', introduced: 'imported from the notes export' });
       expect(march).toMatchObject({ ord: 'v1', reason: 'imported from the notes export' });
       return { july, march };
+    },
+  );
+
+  parityTest(
+    'a large page keeps its newest five large versions, and the pick reads the marks the prune leaves',
+    { methods: ['putPage', 'createVersion', 'getVersions', 'getPage', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const labels = new Map<string, string>();
+      const write = (body: string, validFrom: string) =>
+        engine.putPage('vt/pruned', { type: 'note', title: 'VT', compiled_truth: body, timeline: '', frontmatter: { valid_from: validFrom } });
+      const snap = async (label: string, reason?: string) =>
+        labels.set(String((await engine.createVersion('vt/pruned', { sourceId: 'default', reason })).id), label);
+      await write('Small.', '2026-01-01');
+      await snap('small', 'grew');
+      await write('x'.repeat(1024 * 1024 + 1), '2026-06-01');
+      for (let i = 1; i <= 6; i++) await snap(`large${i}`);
+      const kept = (await engine.getVersions('vt/pruned', { sourceId: 'default', includeBody: false })).map((v) => labels.get(String(v.id)));
+      expect(kept).toEqual(['large6', 'large5', 'large4', 'large3', 'large2', 'small']);
+      const pageId = (await engine.getPage('vt/pruned', { sourceId: 'default' }))!.id;
+      const view = pickView(labels);
+      const spec = { pageId, pinOrd: null, inlineMaxBytes: 1024 * 1024 };
+      const trusted = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-03-01', excludePrivate: false }));
+      const remote = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-03-01', excludePrivate: true }));
+      const july = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-07-01', excludePrivate: false }));
+      // large2 follows a pruned edition: the small version's reason does not introduce it.
+      const [large2] = [...labels].find(([, l]) => l === 'large2')!;
+      const pinned = view(await engine.pickValidTimeEdition({ ...spec, asOf: '2026-07-01', excludePrivate: false, pinOrd: Number(large2) }));
+      expect(trusted).toMatchObject({ ord: 'small', successor_pruned: true, reason: 'grew', large: 5, gap: true });
+      expect(remote).toMatchObject({ ord: 'small', successor_pruned: true, reason: null, gap: true });
+      expect(july).toMatchObject({ ord: 'current', introduced: null, gap: true });
+      expect(pinned).toMatchObject({ ord: 'large2', successor_pruned: false, introduced: null });
+      return { kept, trusted, remote, july, pinned };
     },
   );
 
@@ -804,6 +836,33 @@ describe('engine parity: typed trust tier reads', () => {
     return { before: await read('2026-03-01'), after: await read('2026-07-01') };
   });
 
+  parityTest(
+    'updateSlug keeps the trust tier of the moved page and the facts it re-keys, whatever tier the mover declares (#9735)',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFacts', 'updateSlug', 'readPageTrustRows', 'listFactsByEntity'] },
+    async (engine) => {
+      await declared(engine, 'agent_written', async (tx) => {
+        await tx.putPage('people/mover-example', { type: 'person', title: 'Mover Example', compiled_truth: 'A founder.', timeline: '' });
+        await tx.insertFacts([
+          { fact: 'founded acme-example', entity_slug: 'people/mover-example', source_markdown_slug: 'people/mover-example', row_num: 1,
+            kind: 'fact', visibility: 'world', source: 'fence' },
+        ] as never, { source_id: 'default' });
+      });
+      const tiers = async (slug: string) => ({
+        page: (await engine.readPageTrustRows({ keys: [{ source_id: 'default', slug }] })).map(r => r.trust_tier),
+        facts: (await engine.listFactsByEntity('default', slug, { limit: 10 })).map(f => f.trust_tier),
+      });
+      const seeded = await tiers('people/mover-example');
+      expect(seeded).toEqual({ page: ['agent_written'], facts: ['agent_written'] });
+      // An owner-tier mover does not raise the page or its facts, and a mover with no declared tier does not lower them.
+      expect(await declared(engine, 'operator_curated', tx => tx.updateSlug('people/mover-example', 'people/moved-example'))).toBe(1);
+      const raisedMover = await tiers('people/moved-example');
+      expect(await declared(engine, null, tx => tx.updateSlug('people/moved-example', 'people/moved-again-example'))).toBe(1);
+      const plainMover = await tiers('people/moved-again-example');
+      expect(raisedMover).toEqual(seeded);
+      expect(plainMover).toEqual(seeded);
+      return { seeded, raisedMover, plainMover };
+    },
+  );
   // GST-687 quoting: get_timeline, the chronicle reads and get_chunks look up each row's page type (and get_chunks its
   // page's slug and source) by page id. Ids differ between arms, so answers are keyed by slug.
   parityTest('listPageRefsByIds, pageTypesById and quoteTimelineRows read each page by id: deleted pages and other sources included, unknown ids absent', {

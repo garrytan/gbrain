@@ -50,3 +50,26 @@ Differences from PGLite and PostgreSQL:
 - The typed write API snaps every weight to the grid, so an off-grid weight can only come from a raw insert; the boundary
   is pinned by `rust/crates/gbrain-store/tests/takes_reads.rs` and `test/engine-sql-takes-reads.test.ts`, not by the
   parity test.
+
+## The reads and the delete of `gbrain extract takes`
+
+`cycle/extract-takes.ts` and `generations/adapters/take-rows.ts` read and prune through these members, not raw SQL
+(the batch guard is `listGuardedTakeRows` in [trust.md](trust.md); the coverage read `listCoveredSources` answers `[]`
+on the store, which records no belief events). The whole re-extract still stops on the typed `raw_sql` refusal inside
+`publishFenceGeneration`, whose ledger statements have no member yet; `test/engine-parity/extract-takes.test.ts` pins it.
+
+| Member | Returns | Used by |
+| --- | --- | --- |
+| `brain.readLivePageIdBySlug(slug, sourceId)` | the id of the live page, or null; only this read hides a soft-deleted page | `getPageIdForSlug` |
+| `brain.readPageTierRef(pageId)` | `{ source_id, slug, trust_tier }` of the page, deleted or not; a stored tier that names no tier reads `unknown` | `reconcileTier` |
+| `brain.readPageTierRows(ids)` | `[{ id, source_id, slug, trust_tier }]` by id, once per id, deleted or not | `upsertProjectedTakes` |
+| `brain.pageHasFrontmatterKey(pageId, key)` | whether the page's frontmatter has the top-level key (`frontmatter ? key`), deleted or not | the checkout's quarantine check |
+| `brain.listTakeIdsLeavingFence(pageId, fence)` | the ids of the page's takes at no listed row number (`removed`), or that no row restates with the same claim (`replaced`) | `unheldTakes` |
+| `brain.listTakePreimages(pageId, ids, incoming)` | `[{ preimage, gone }]` by row number: the gone takes and those an incoming row of the number restates with another claim, kind or holder, once per such row (the SQL's `LEFT JOIN`) | `takePreimages` |
+| `brain.deleteTakesByIds(ids)` | deletes the listed takes on any page with the evidence rows that cite them; an empty list writes nothing | the prune delete |
+| `brain.findTakeId(pageId, rowNum)` | the id of the page's take at the row number, or null | `upsertProjectedTakes` |
+
+The `preimage` object has the keys of `TAKE_PREIMAGE_SQL`; `resolved_at` is printed the way `jsonb_build_object` prints
+a `timestamptz`. The TypeScript members refuse an id that is not an integer. Pinned by
+`rust/crates/gbrain-store/tests/takes_extract.rs`, `test/engine-parity/extract-takes-reads.test.ts` and, for the
+Postgres text, `test/extract-takes-sql-pin.test.ts`.

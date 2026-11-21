@@ -100,6 +100,9 @@ pub(super) struct ClientRecord {
     pub(super) grant_profile: Option<String>,
     #[serde(default)]
     pub(super) grant_revision: i32,
+    /// `read_shared_revision` (v323): the read-shared switch is on while it equals `grant_revision`.
+    #[serde(default)]
+    pub(super) read_shared_revision: Option<i32>,
     #[serde(default)]
     pub(super) grant_repair_reasons: Vec<String>,
     pub(super) created_at: i64,
@@ -229,7 +232,7 @@ impl ClientRecord {
     /// The row as `SELECT *` returns it on the SQL engines: times as ISO text, the cap as `NUMERIC` text.
     pub(super) fn to_row(&self) -> Value {
         let t = |m: Option<i64>| m.map(iso);
-        json!({
+        let mut row = json!({
             "client_id": self.client_id,
             "client_secret_hash": self.client_secret_hash,
             "client_name": self.client_name,
@@ -271,7 +274,10 @@ impl ClientRecord {
             "attest_read": self.attest_read,
             "reads_unscoped": t(self.reads_unscoped),
             "private_facts": self.private_facts,
-        })
+        });
+        // Added past the macro's recursion limit: the v323 read-shared switch, null on a row that never set it.
+        row["read_shared_revision"] = json!(self.read_shared_revision);
+        row
     }
 }
 
@@ -398,6 +404,8 @@ pub struct ClientInsert {
     pub grant_profile: Option<String>,
     #[serde(default)]
     pub grant_revision: i32,
+    #[serde(default)]
+    pub read_shared_revision: Option<i32>,
     #[serde(default)]
     pub grant_repair_reasons: Vec<String>,
     /// ISO text; left out, the store clock.
@@ -588,6 +596,7 @@ impl Store {
             delegated_namespace: row.delegated_namespace.clone(),
             grant_profile: row.grant_profile.clone(),
             grant_revision: row.grant_revision,
+            read_shared_revision: row.read_shared_revision,
             grant_repair_reasons: row.grant_repair_reasons.clone(),
             created_at: created_at.unwrap_or_else(|| self.env.now_micros()),
             source_grant: row.source_grant.clone(),

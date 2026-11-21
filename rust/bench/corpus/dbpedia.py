@@ -70,6 +70,10 @@ def main() -> None:
     if a.query_offset < a.chunks:
         raise SystemExit("--query-offset must be >= --chunks")
     os.makedirs(a.out, exist_ok=True)
+    # Cached exact ground truth belongs to the corpus files being replaced.
+    stale_truth = os.path.join(a.out, "truth_top10.json")
+    if os.path.exists(stale_truth):
+        os.remove(stale_truth)
     pages_f = open(os.path.join(a.out, "pages.jsonl"), "w")
     chunks_f = open(os.path.join(a.out, "chunks.jsonl"), "w")
     vec_f = open(os.path.join(a.out, "vectors.f32"), "wb")

@@ -28,6 +28,7 @@ use std::collections::BTreeSet;
 
 use crate::facts::{PrivacyPolicy, page_hidden, stamped_rules};
 use crate::owner_only::{any_owner_only, source_owner_only};
+use crate::owner_only_marks::any_marked;
 use crate::pages::read_page;
 use crate::{Result, Store};
 
@@ -66,7 +67,8 @@ impl Store {
         policy: &PrivacyPolicy,
     ) -> Result<WriteVisibilityProbe> {
         let read = self.read()?;
-        let owner_only_any = any_owner_only(&*read)?;
+        // `gbrain_owner_only_lineage()` (v322): an owner-only source, or the one-way held flag a first mark sets.
+        let owner_only_any = any_owner_only(&*read)? || any_marked(&*read)?;
         let identity_may_open = match read_page(&*read, source_id, slug)? {
             // `page_readers IS NOT NULL OR folder_rule_ids IS NOT NULL`.
             Some(page) if page_hidden(&*read, &page, policy)? => Some(

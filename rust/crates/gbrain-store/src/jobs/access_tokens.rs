@@ -63,6 +63,9 @@ pub(super) struct TokenRecord {
     pub(super) allowed_operations: Option<Vec<String>>,
     pub(super) takes_holders: Option<Vec<String>>,
     pub(super) grant_revision: i32,
+    /// The revision the read-shared switch was set at (the birth revision, 1); None is off.
+    #[serde(default)]
+    pub(super) read_shared_revision: Option<i32>,
     pub(super) min_trust: Option<String>,
     pub(super) revoked_at: Option<i64>,
     pub(super) created_at: i64,
@@ -166,6 +169,9 @@ pub struct TokenInsert {
     pub allowed_operations: Option<Vec<String>>,
     #[serde(default)]
     pub takes_holders: Option<Vec<String>>,
+    /// Born with the read-shared switch on (`read_shared_revision` = 1, the birth revision).
+    #[serde(default)]
+    pub read_shared: bool,
     #[serde(default)]
     pub min_trust: Option<String>,
     /// ISO text (the TypeScript member turns the `Date`).
@@ -241,6 +247,7 @@ impl Store {
                 allowed_operations: row.allowed_operations.clone(),
                 takes_holders: row.takes_holders.clone(),
                 grant_revision: 1,
+                read_shared_revision: row.read_shared.then_some(1),
                 min_trust: row.min_trust.clone(),
                 revoked_at,
                 created_at: created_at.unwrap_or_else(|| self.env.now_micros()),

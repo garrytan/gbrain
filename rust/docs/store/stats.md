@@ -41,11 +41,11 @@ two engines share that code instead of copying it:
   pages with `countStalePagesForExtraction` (per source when scoped), applies
   `shouldExcludeFromOrphanReporting` to `linkable`, and computes the coverage, the five score parts
   and `brain_score` with the arithmetic of `engine-sql/health.ts`.
-- `resolveEntityTypes` runs one `executeRaw` for a brain-wide reading: the registered sources with
-  a `schema_pack.source.<id>` config row. The Rust engine does not serve `executeRaw`, so the member
-  passes a small engine shim that answers that one query from `listConfigKeys` and the source list.
-  The shim matches the key as LIKE does (`_` matches any one character). Any other query throws,
-  and `resolveEntityTypes` then reports `pack_unavailable`, as it does for a failed read on PGLite.
+- `resolveEntityTypes` reads the registered sources with a `schema_pack.source.<id>` config row for a
+  brain-wide reading. The Rust engine does not serve `executeRaw`, so the member passes an engine of
+  `kind: 'rust'` and the resolver answers from `listConfigKeys` and the source list (the key matches as LIKE
+  does: `_` matches any one character). Any other raw query refuses with `engine_capability_missing`, and
+  `resolveEntityTypes` then reports `pack_unavailable`, as it does for a failed read on PGLite.
 - `findAnomalies` computes the window bounds from `since` and `lookback_days` (an invalid `since`
   throws the same `RangeError`), zero-fills the store's day counts over the same days as
   `generate_series`, and runs `computeAnomaliesFromBuckets`. `excludePrivate` (any truthy value) applies
@@ -81,3 +81,18 @@ two engines share that code instead of copying it:
   each page in the scope through the timeline family, one prefix scan per page. This is fine at
   the parity sizes; a brain with many thousand pages will want a per-page count record.
 
+
+## Page visibility and version history reads (`src/core/engine-sql/admin-reads.ts`)
+
+Two members for statements `src/core/ops/admin.ts` ran as raw SQL: `listVisiblePageSlugs` (the slugs `visibleMostConnected`
+may show, under the read or access policy and an optional source scope) and `readPagesForVersionHistory` (the page rows
+by id that `get_versions` resolves). Neither is served on Rust today: each is absent from `store-members/*`, so it refuses with
+`engine_capability_missing` naming the member (the capability in `members.ts` is `pages`). The caller sees the refusal;
+no member changes behaviour. What the store would need to serve them:
+
+| Members | Reads | The store would need |
+| --- | --- | --- |
+| `listVisiblePageSlugs` | the slugs of live pages the caller's policy admits, within the sources given | the page scan with the caller's page policy (read or access form) applied per page |
+| `readPagesForVersionHistory` | `id`, `slug`, `source_id` and `frontmatter` for each page id; the statement does not filter soft-deleted pages | the page record by id |
+
+The policy text is Postgres text only; the store reads the typed arguments, never the statement.

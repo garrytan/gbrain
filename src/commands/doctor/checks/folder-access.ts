@@ -27,7 +27,7 @@ import { isGitWorkTree, sourcePolicyRoot } from '../../../core/access/policy-git
 const DOCS = 'docs/guides/write-refusals.md#access_policy_pending';
 
 async function policySources(engine: BrainEngine): Promise<string[]> {
-  return engine.listPolicySourceIds();
+  return engine.listAccessPolicySourceIds();
 }
 
 async function pending(engine: BrainEngine, sources: string[]): Promise<Check> {

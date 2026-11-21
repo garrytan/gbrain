@@ -1,5 +1,5 @@
 /**
- * BrainEngine parity — the purged change-reason members (`writeReasonPurgeTombstones`, `readReasonPurgeTombstones`)
+ * BrainEngine parity — the purged change-reason members (`insertReasonPurgeTombstones`, `readReasonPurgeTombstones`)
  * that `src/core/facts/purge-reasons.ts`, `src/core/reason-trailers.ts`, `src/core/repair/purged-change-reasons.ts`
  * and `src/core/page-state/versions.ts` call instead of raw SQL, so a purge's tombstones hold on every engine.
  *
@@ -26,6 +26,7 @@ import { bumpPurgeEpoch } from '../../src/core/belief/purge.ts';
 import { cachedSyncReasonScan, clearReasonScanCache, scanSyncReasons } from '../../src/core/reason-trailers.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -48,24 +49,28 @@ function repoWithReasons(): { root: string; sha: string } {
   return { root, sha: git(root, 'rev-parse', 'HEAD') };
 }
 
+/** Writes (commit, path) pairs through the typed member, which takes the commits and the paths as two parallel lists. */
+const writeTombstones = (engine: BrainEngine, sourceId: string, rows: Array<{ commit_sha: string; path: string }>): Promise<number> =>
+  engine.insertReasonPurgeTombstones(sourceId, rows.map(r => r.commit_sha), rows.map(r => r.path));
+
 const pairs = (rows: Array<{ commit_sha: string; path: string }>) =>
   sorted(rows.map(r => ({ commit_sha: r.commit_sha, path: r.path })), r => `${r.commit_sha}\0${r.path}`);
 
 describe('engine parity: purged change-reason tombstones', () => {
-  parityTest('writeReasonPurgeTombstones stores each pair once and readReasonPurgeTombstones reads them back by source or pair', { methods: ['writeReasonPurgeTombstones', 'readReasonPurgeTombstones'] }, async (engine, backend) => {
+  parityTest('insertReasonPurgeTombstones stores each pair once and readReasonPurgeTombstones reads them back by source or pair', { methods: ['insertReasonPurgeTombstones', 'readReasonPurgeTombstones'] }, async (engine, backend) => {
     await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
     await createSource(engine, backend, 'repo-2', {}, '/srv/brain/repo-2');
-    const added = await engine.writeReasonPurgeTombstones('repo', [
+    const added = await writeTombstones(engine, 'repo', [
       { commit_sha: 'bbbb222', path: 'notes/a.md' },
       { commit_sha: 'aaaa111', path: 'notes/b.md' },
       { commit_sha: 'bbbb222', path: 'notes/a.md' },
     ]);
-    const again = await engine.writeReasonPurgeTombstones('repo', [{ commit_sha: 'aaaa111', path: 'notes/b.md' }, { commit_sha: 'cccc333', path: 'notes/c.md' }]);
-    const none = await engine.writeReasonPurgeTombstones('repo', []);
-    const other = await engine.writeReasonPurgeTombstones('repo-2', [{ commit_sha: 'dddd444', path: 'notes/d.md' }]);
+    const again = await writeTombstones(engine, 'repo', [{ commit_sha: 'aaaa111', path: 'notes/b.md' }, { commit_sha: 'cccc333', path: 'notes/c.md' }]);
+    const none = await writeTombstones(engine, 'repo', []);
+    const other = await writeTombstones(engine, 'repo-2', [{ commit_sha: 'dddd444', path: 'notes/d.md' }]);
     let unknown: string;
     try {
-      await engine.writeReasonPurgeTombstones('missing', [{ commit_sha: 'eeee555', path: 'notes/e.md' }]);
+      await writeTombstones(engine, 'missing', [{ commit_sha: 'eeee555', path: 'notes/e.md' }]);
       unknown = 'stored';
     } catch {
       unknown = 'threw';
@@ -91,12 +96,12 @@ describe('engine parity: purged change-reason tombstones', () => {
     return result;
   });
 
-  parityTest('a sync reason scan drops the reason of a tombstoned (commit, path) and keeps the others', { methods: ['writeReasonPurgeTombstones', 'readReasonPurgeTombstones'] }, async (engine, backend) => {
+  parityTest('a sync reason scan drops the reason of a tombstoned (commit, path) and keeps the others', { methods: ['insertReasonPurgeTombstones', 'readReasonPurgeTombstones'] }, async (engine, backend) => {
     const { root, sha } = repoWithReasons();
     await createSource(engine, backend, 'repo', {}, root);
     await createSource(engine, backend, 'repo-2', {}, '/srv/brain/repo-2');
-    await engine.writeReasonPurgeTombstones('repo', [{ commit_sha: sha, path: 'notes/a.md' }]);
-    await engine.writeReasonPurgeTombstones('repo-2', [{ commit_sha: sha, path: 'notes/b.md' }]);
+    await writeTombstones(engine, 'repo', [{ commit_sha: sha, path: 'notes/a.md' }]);
+    await writeTombstones(engine, 'repo-2', [{ commit_sha: sha, path: 'notes/b.md' }]);
     const scan = await scanSyncReasons(engine, { sourceId: 'repo', sourceRoot: root, from: null, to: sha });
     const reasons = Object.fromEntries([...(scan?.byPath ?? new Map()).entries()].map(([path, d]) => [path, d.reason]));
     const result = { status: scan?.status ?? null, reasons };
@@ -105,7 +110,7 @@ describe('engine parity: purged change-reason tombstones', () => {
   });
 
   parityTest('a purge between two syncs advances the purge epoch, so the second sync scans again and drops the purged reason', {
-    methods: ['advanceSourcePurgeEpoch', 'readSourcePurgeEpoch', 'writeReasonPurgeTombstones', 'readReasonPurgeTombstones'],
+    methods: ['advanceSourcePurgeEpoch', 'readSourcePurgeEpoch', 'insertReasonPurgeTombstones', 'readReasonPurgeTombstones'],
   }, async (engine, backend) => {
     clearReasonScanCache();
     const { root, sha } = repoWithReasons();
@@ -118,7 +123,7 @@ describe('engine parity: purged change-reason tombstones', () => {
     const before = { epoch: await epochOf('repo'), reasons: await reasonsOf() };
     // The purge's storage effects, as facts/purge.ts makes them in one transaction: the epoch bump, then the tombstone.
     const bumped = await bumpPurgeEpoch(engine, 'repo');
-    await engine.writeReasonPurgeTombstones('repo', [{ commit_sha: sha, path: 'notes/a.md' }]);
+    await writeTombstones(engine, 'repo', [{ commit_sha: sha, path: 'notes/a.md' }]);
     const after = { epoch: await epochOf('repo'), reasons: await reasonsOf() };
     const result = { before, bumped, after, again: await bumpPurgeEpoch(engine, 'repo'), unknown: await bumpPurgeEpoch(engine, 'missing'), unknownEpoch: await epochOf('missing') };
     expect(result).toEqual({

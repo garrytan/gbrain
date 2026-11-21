@@ -38,6 +38,9 @@ export async function listAppliedPolicyRevisions(exec: LegacyUnscopedRead): Prom
  * value of the key, a live legacy token's member, or a live OAuth client's member.
  */
 export type MemberBindingVia = 'member' | 'stdio_config' | 'legacy_token' | 'oauth_client';
+
+/** The same set under the name main's callers and tests import (`LiveMemberVia`). */
+export type LiveMemberVia = MemberBindingVia;
 /** The engine's own executeRaw, so a statement fault a test injects on the engine reaches the access read. */
 export interface MemberLookupRead {
   executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;

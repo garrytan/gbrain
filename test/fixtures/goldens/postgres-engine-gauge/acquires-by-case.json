@@ -259,6 +259,8 @@
     "listEnrichCandidates#default": {},
     "listEnrichCandidates#sourceId": {},
     "listEnrichCandidates#sourceIds+reenrich": {},
+    "listEntityKeyRows#after": {},
+    "listEntityKeyRows#default": {},
     "listFactsByEntity#allFilters": {},
     "listFactsByEntity#default": {},
     "listFactsBySession#allFilters": {},
@@ -529,7 +531,7 @@
     "traversePathsDetailed#out+sourceId+linkType": {},
     "updatePageContextualRetrievalState#default": {},
     "updateSlug#moved": {
-      "raw": 17,
+      "raw": 18,
       "tx": 1
     },
     "updateSlug#noop": {
@@ -565,9 +567,6 @@
     "upsertEventProjection#default": {},
     "upsertFile#default": {},
     "writeContradictionsRun#default": {},
-    "writeReasonPurgeTombstones#default": {
-      "raw": 1
-    },
     "writeSourceSyncHeartbeat#default": {
       "raw": 1
     },

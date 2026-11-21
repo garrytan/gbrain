@@ -48,9 +48,17 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
   them (`getBacklinkCounts`, `getAdjacencyBoosts`, `supersedingPageSlugs`, `relationalFanout`, `relationalChainHop`,
   `listLivePageSummaries`, `listPagesTitledIn`): `GraphScope` applies `trust::TrustPolicy` to the page's stamped tier
   and its write-gate receipts. `findOrphanPages` and `listLinkSources` still refuse them: their SQL does not read
-  them through `pageReadFilter`, and no caller passes them. `requireSafeChunks` and `takesHoldersAllowList` are accepted where `pageReadFilter`
-  does not read them: they only turn the live filter on in `relationalFanout`, and they are ignored by
-  `getBacklinkCounts`, `getAdjacencyBoosts` and `relationalChainHop`, as in the SQL engines.
+  them through `pageReadFilter`, and no caller passes them. `takesHoldersAllowList` is accepted: it turns the live
+  filter on in `relationalFanout` and is ignored by `getBacklinkCounts` and `getAdjacencyBoosts`, as in the SQL
+  engines. `requireSafeChunks` is accepted everywhere `pageReadFilter` does not read it, and the relational walks model
+  it: `relationalFanout` and `relationalChainHop` give a page a `canonical_chunk_id` only when it is sealed at the safe
+  fence (`chunker_version >= 4`; a page that records no version is not safe), and `relationalChainHop` applies
+  readChainHop's `textGate` to edge context. The TypeScript member reads the caller and sends `textGate: 'body'` (the
+  evidence page must be sealed and hold no facts / takes fence; a segmented page's `body_flags.has_protected` decides,
+  fail closed), `'takes'` (an owner call whose credential names a holders list: sealed and no takes fence) or none (the
+  owner's own direct call). An unknown `textGate` is an invalid argument. `getBacklinkCounts`, `getAdjacencyBoosts` and
+  `supersedingPageSlugs` also accept and ignore the other keys of hybrid search's option bag
+  (`HYBRID_BAG_KEYS`), because hybrid search hands them that whole bag as their policy; any other key still refuses.
 - A page id that is not a 32-bit integer (`getBacklinkCounts`, `getAdjacencyBoosts`, `relationalChainHop`): Postgres
   casts the ids into `int[]`. A non-safe-integer id in `getAdjacencyBoosts` throws the same `TypeError` the SQL engines
   throw, before any option is read.
@@ -80,7 +88,9 @@ from a hidden page or with a hidden origin (`privateLinkOriginFilterForCaller` t
 whether it is live). The origin clause (`originFilter`) passes a link with no origin, or one whose origin page passes the
 live filter. The policy carries a caller's reader identity and private-readable grant (the `callerReaders`
 opt-in), in these reads and in `listLivePageSummaries`, `listPagesTitledIn` and `countInboundLinks`; any other caller
-whose policy differs (folder grants, lineage, an owner read) refuses.
+whose policy differs (folder grants, lineage, an owner read) refuses. The owner-only part of the policy (`ownerOnly`: a
+page of an owner-only source, a concept synthesized from one, or every page under the closed form) applies to each page
+the read judges, with the owner-only sources read once per call, on the first page the call judges (`OwnerOnlyCache`).
 
 ## Derived-link replacement
 
@@ -116,7 +126,7 @@ error rolls back the whole batch.
   live filter; the trusted unscoped call counts every page.
 - `getAdjacencyBoosts`: in-set linkers per page over the subgraph the ids induce, with the cross-source subset.
 - `relationalFanout`: every simple path from the seeds up to `depth` hops, grouped per reached page; the best path is
-  the one with the lowest `(hop, path length, path text)`. `canonical_chunk_id` is the page's lowest-index chunk.
+  the one with the lowest `(hop, path length, path text)`. `canonical_chunk_id` is the lowest-index chunk of the page's live body (`chunkGenerationProbe`): a staged chunk, one whose occurrence a deferred retire closed and an inline chunk left on a segmented page are never named.
   With `temporal`, a step keeps an edge only while `relationshipFilterSql` would: the edge's relationship row in the
   `world` scope with `excludePrivate`, else `all`, matches the status (`live`, `ended`, `all`) on `asOf` (today, UTC,
   from the store clock, when absent) or overlaps `during`. An edge with no relationship row passes, and an `amends`

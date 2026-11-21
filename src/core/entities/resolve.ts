@@ -351,12 +351,7 @@ async function findExactBasenameCandidates(
 ): Promise<Array<{ slug: string }>> {
   const token = slugify(raw);
   if (raw.includes('/') || !token.includes('-')) return [];
-  let slugs: string[];
-  try {
-    slugs = await engine.readLiveSlugs(source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`), { limit: 2 });
-  } catch {
-    return [];
-  }
+  const slugs = await engine.findExactBasenameCandidates(source_id, BASENAME_DIRS.map(dir => `${dir}/${token}`));
   return canonicalPages(engine, source_id, slugs);
 }
 
@@ -786,7 +781,7 @@ async function tryFuzzyMatch(
   // tends to be display-name-shaped ("Alice Example" vs "alice-example"). Cap at
   // 3 candidates; pick the first deterministic one.
   try {
-    const rows = await engine.readTrigramCandidates(source_id, { arm: 'fuzzy', titleLc: lc, slugFragment: fragment });
+    const rows = await engine.findFuzzyEntityCandidates(source_id, lc, fragment);
     // A trigram score alone attributes facts about "Alicia Example" to Alice,
     // and facts about a person with no page to a meeting page that carries
     // their name. Entity resolution takes a candidate only when it names the

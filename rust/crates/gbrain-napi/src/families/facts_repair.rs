@@ -1,9 +1,10 @@
 //! Group 5 facts members, repair classifiers and loop retirement: one `#[napi] impl Brain` block over `gbrain_store::facts::repair`.
 //!
-//! Seven members are served, countLabelFacts with the label line the TypeScript member reads into its
-//! literal labels, and (from `facts/repair_gone.rs`) listExtractorFactsForClassification and countPurgedPageFacts.
-//! listUnwithdrawnFacts reads the derived-generation tables, which have no Rust writer, so the TypeScript member
-//! answers it with no row; the two loop reads live in `facts_loops.rs`.
+//! Eight members are served, countLabelFacts with the label line the TypeScript member reads into its
+//! literal labels, countPurgedPageFacts over the `page_purges` ledger, listUnwithdrawnFacts over the
+//! derived generation ledger (`gbrain_store::facts::generations`, both read only) and
+//! listExtractorFactsForClassification, which reads the write journal's requests
+//! (`gbrain_store::facts::extractor_classify`); the two loop reads live in `facts_loops.rs`.
 
 use napi::Env;
 use napi::bindgen_prelude::Object;
@@ -11,11 +12,29 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::repair::{ClassifyArgs, LabelCountArgs, TwinArgs, WorldFactArgs};
-use gbrain_store::facts::repair_gone::{ExtractorArgs, PurgedArgs};
+use gbrain_store::facts::extractor_classify::ExtractorClassificationQuery;
+use gbrain_store::facts::generations::UnwithdrawnArgs;
+use gbrain_store::facts::repair::{
+    ClassifyArgs, LabelCountArgs, PurgedCountArgs, TwinArgs, WorldFactArgs,
+};
 
 #[napi]
 impl Brain {
+    /// `listExtractorFactsForClassification({ sourceIds, slug })`: resolves the expired fenceless
+    /// extractor facts with their evidence, in (source, page, id) order.
+    #[napi]
+    pub fn list_extractor_facts_for_classification<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: ExtractorClassificationQuery =
+                required(args, "listExtractorFactsForClassification args")?;
+            s.list_extractor_facts_for_classification(&q)
+        })
+    }
+
     /// `listSessionFactsForClassification({ sourceIds, lanes, ids })`: resolves the fact rows.
     #[napi]
     pub fn list_session_facts_for_classification<'env>(
@@ -84,21 +103,8 @@ impl Brain {
         })
     }
 
-    /// `listExtractorFactsForClassification({ sourceIds, slug })`: resolves the expired extractor facts with their
-    /// evidence.
-    #[napi]
-    pub fn list_extractor_facts_for_classification<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: ExtractorArgs = required(args, "listExtractorFactsForClassification args")?;
-            s.list_extractor_facts_for_classification(&a)
-        })
-    }
-
-    /// `countPurgedPageFacts({ sourceIds, limit })`: resolves the `purged` flag of each counted fact, at most `limit`.
+    /// `countPurgedPageFacts({ sourceIds, limit })`: resolves one boolean per counted fact, at most
+    /// `limit`: whether a purge record of its page is the evidence.
     #[napi]
     pub fn count_purged_page_facts<'env>(
         &self,
@@ -106,8 +112,21 @@ impl Brain {
         args: Value,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            let a: PurgedArgs = required(args, "countPurgedPageFacts args")?;
+            let a: PurgedCountArgs = required(args, "countPurgedPageFacts args")?;
             s.count_purged_page_facts(&a)
+        })
+    }
+
+    /// `listUnwithdrawnFacts({ sourceIds, slug, fenceKind })`: resolves the rows of the SQL.
+    #[napi]
+    pub fn list_unwithdrawn_facts<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: UnwithdrawnArgs = required(args, "listUnwithdrawnFacts args")?;
+            s.list_unwithdrawn_facts(&a)
         })
     }
 }

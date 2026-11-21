@@ -102,8 +102,9 @@ export const holdPageEmbedding: StoreMember<[pageId: number, reason: string], vo
 export const readReasonPurgeTombstones: StoreMember<[sourceId: string, pair?: ReasonPurgeTombstone], ReasonPurgeTombstone[]> = async (brain, sourceId, pair) =>
   (await storeCall({ member: 'readReasonPurgeTombstones', sourceId }, () => brain.readReasonPurgeTombstones(sourceId, pair ?? null))) as ReasonPurgeTombstone[];
 
-export const writeReasonPurgeTombstones: StoreMember<[sourceId: string, pairs: readonly ReasonPurgeTombstone[]], number> = async (brain, sourceId, pairs) =>
-  Number(await storeCall({ member: 'writeReasonPurgeTombstones', sourceId }, () => brain.writeReasonPurgeTombstones(sourceId, pairs.map(pair => ({ commit_sha: pair.commit_sha, path: pair.path })))));
+/** `insertReasonPurgeTombstones` (main's member): the (commit, path) pairs zip up the two lists; the store tombstones each pair, none twice, and answers how many it added. */
+export const insertReasonPurgeTombstones: StoreMember<[sourceId: string, commits: string[], paths: string[]], number> = async (brain, sourceId, commits, paths) =>
+  Number(await storeCall({ member: 'insertReasonPurgeTombstones', sourceId }, () => brain.writeReasonPurgeTombstones(sourceId, commits.map((commit, i) => ({ commit_sha: commit, path: paths[i]! })))));
 
 /** The store's purge epoch advance (sources.rs `advance_source_purge_epoch`): the new epoch, or null for an unknown source. */
 export const advanceSourcePurgeEpoch: StoreMember<[sourceId: string], number | null> = async (brain, sourceId) =>

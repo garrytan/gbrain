@@ -52,4 +52,14 @@ impl Brain {
             s.list_pages_naming_reader(&principal, limit, live)
         })
     }
+
+    /// `hasSynopsisFrontmatterOverride()`: whether a live markdown page of the `default` source names the synopsis tier
+    /// in its frontmatter.
+    #[napi]
+    pub fn has_synopsis_frontmatter_override<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, |s| s.has_synopsis_frontmatter_override())
+    }
 }

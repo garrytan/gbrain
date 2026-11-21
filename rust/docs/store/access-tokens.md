@@ -14,7 +14,8 @@ below; rotate is still raw SQL and stops on a Rust brain.
 
 | Member | Returns |
 | --- | --- |
-| `brain.insertAccessToken(row)` | `{ id }`, the generated UUID. `row` has `name`, `token_hash`, `scopes` (null is a full-access token), `permissions` (an object), the five grant columns (`source_grant`, `source_id`, `federated_read`, `allowed_operations`, `takes_holders`, each null for NULL) and, optionally, `min_trust`, `revoked_at`, `member_id`, `may_act_for` and `created_at` (ISO text; left out, the store clock). The row is born at `grant_revision` 1 |
+| `brain.insertAccessToken(row)` | `{ id }`, the generated UUID. `row` has `name`, `token_hash`, `scopes` (null is a full-access token), `permissions` (an object), the five grant columns (`source_grant`, `source_id`, `federated_read`, `allowed_operations`, `takes_holders`, each null for NULL) and, optionally, `min_trust`, `revoked_at`, `member_id`, `may_act_for`, `read_shared` (true is born with the read-shared switch on: `read_shared_revision` 1, the birth revision; absent or false leaves it off) and `created_at` (ISO text; left out, the store clock). The row is born at `grant_revision` 1 |
+
 | `brain.findActiveAccessTokens(target)` | `[{ id, name, min_trust }]`: the tokens with no `revoked_at` whose id (as text) or name is `target`, by id. Names are not unique, so there may be several |
 | `brain.setAccessTokenMinTrust(id, tier)` | null. Sets the token's read floor, or clears it with null. An id no token has changes nothing |
 | `brain.listAccessTokens()` | every token, revoked ones too, newest first (`ORDER BY created_at DESC`; a tie by id): `{ id, name, scopes, created_at, last_used_at, revoked_at }` plus the grant columns `gbrain auth list` prints. `last_used_at` is always null (not kept) |

@@ -44,6 +44,11 @@ impl FileBackend for MemFile {
     }
 }
 
+/// An empty record file in memory, to open and reopen a brain on.
+pub(crate) fn mem_kv() -> Arc<dyn crate::kv::Kv> {
+    Arc::new(RedbKv::open_backend(Box::<MemFile>::default()).unwrap())
+}
+
 /// A fresh brain on an in-memory file, with the `default` source.
 pub(crate) fn store() -> Store {
     store_on(Arc::new(SystemEnv))
@@ -59,4 +64,21 @@ pub(crate) fn store_on(env: Arc<dyn crate::env::Env>) -> Store {
 pub(crate) fn store_with_env(env: Arc<dyn Env>) -> Store {
     let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();
     Store::open_kv(Arc::new(kv), env, OpenOptions::default()).unwrap()
+}
+
+/// The concurrent-writer engine (`OccKv`) on an in-memory file, with no brain in it.
+pub(crate) fn occ_kv() -> crate::occ_kv::OccKv {
+    let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();
+    crate::occ_kv::OccKv::new(kv).unwrap()
+}
+
+/// A fresh brain on an in-memory file behind the concurrent-writer engine (`OccKv`), so a write
+/// that loses a conflict runs again.
+pub(crate) fn occ_store() -> Store {
+    Store::open_kv(
+        Arc::new(occ_kv()),
+        Arc::new(SystemEnv),
+        OpenOptions::default(),
+    )
+    .unwrap()
 }

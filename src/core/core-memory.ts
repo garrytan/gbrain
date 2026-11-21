@@ -140,10 +140,13 @@ export function coreChars(pages: readonly Pick<CorePage, 'chars'>[]): number {
   return pages.reduce((sum, p, i) => sum + p.chars + (i > 0 ? 2 : 0), 0);
 }
 
-/** Session order: `default` first, then other sources; within a source by priority then slug. */
+/** UTF-8 byte order, as `COLLATE "C"` sorts text; never the process locale. */
+const byteOrder = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
+
+/** Session order: `default` first, then other sources; within a source by priority then slug. Text in byte order. */
 export function orderCorePages<T extends Pick<CorePage, 'source_id' | 'slug' | 'priority'>>(pages: readonly T[]): T[] {
   return [...pages].sort((a, b) => (a.source_id === 'default' ? 0 : 1) - (b.source_id === 'default' ? 0 : 1)
-    || a.source_id.localeCompare(b.source_id) || a.priority - b.priority || a.slug.localeCompare(b.slug));
+    || byteOrder(a.source_id, b.source_id) || a.priority - b.priority || byteOrder(a.slug, b.slug));
 }
 
 export interface CoreBlock {

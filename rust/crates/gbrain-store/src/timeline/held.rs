@@ -71,9 +71,7 @@ impl Store {
             let tier = row.trust.tier();
             let held = tier.rank() > writer
                 || (spec.pending == Some(true)
-                    && i64::try_from(row.id).map_or(Ok(false), |id| {
-                        pending_forget(&*read, "timeline_entries", id)
-                    })?);
+                    && pending_forget(&*read, "timeline_entries", row.id)?);
             if held {
                 out.push(json!({ "id": row.id, "trust_tier": tier.as_str() }));
             }

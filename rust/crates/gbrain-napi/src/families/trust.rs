@@ -136,6 +136,19 @@ impl Brain {
         })
     }
 
+    /// `readSourcePurgeFlags(sourceId)`: resolves `{ facts, takes }`.
+    #[napi]
+    pub fn read_source_purge_flags<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_source_purge_flags(&source_id)
+                .map(|(facts, takes)| serde_json::json!({ "facts": facts, "takes": takes }))
+        })
+    }
+
     /// `listFactWithdrawalKeys(sourceId, limit)`: resolves `[{ visibility, fact_hash, subject }]`.
     #[napi]
     pub fn list_fact_withdrawal_keys<'env>(

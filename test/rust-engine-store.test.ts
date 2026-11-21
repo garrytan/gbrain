@@ -144,6 +144,7 @@ describe('Rust engine on the store', () => {
     // findOrphanPages takes no trust floor on Rust: no production caller sends one, so it refuses.
     const refused = await code(() => engine.findOrphanPages({ minTrust: 'agent_written' }));
     expect(refused).toBe('engine_capability_missing');
+    expect(await code(() => engine.getChunks('notes/a', { notAStoreOption: true } as never))).toBe('engine_capability_missing');
   });
 
   withAddon('excludePrivate on the salience and anomaly reads hides a private page the plain read returns', async () => {
@@ -213,6 +214,21 @@ describe('Rust engine on the store', () => {
     }
   });
 
+  withAddon('readRemoteForgetTier under the remote floor serves no caller record, a restricted or unrestricted brain and the owner, and refuses labelled-only and folder coverage', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const { ids } = await engine.insertFacts([{ fact: 'f', entity_slug: 'people/a-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' });
+    const read = () => engine.readRemoteForgetTier({ factId: ids[0]!, sourceId: 'default', remoteFloor: true });
+    const served = { restricted: { restricted: true }, unrestricted: { restricted: false }, owner: { owner: true }, ownerUnrestricted: { owner: true, restricted: false } };
+    for (const [kind, access] of Object.entries(served)) {
+      expect([kind, await withCallerAccess(access, read)]).toEqual([kind, expect.any(String)]);
+    }
+    expect(await read()).toEqual(expect.any(String));
+    // A labelled-only caller or pending folder coverage renders a floor the store has no form for.
+    expect(await code(() => withCallerAccess({ labelledOnly: true }, read))).toBe('engine_capability_missing');
+    expect(await code(() => withCallerAccess({ folderCoverage: [{ source_id: 'default', prefix: 'team/' }] }, read))).toBe('engine_capability_missing');
+  });
+
   withAddon('a chunk vector of the wrong width is refused, and writes nothing', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
@@ -247,6 +263,15 @@ describe('Rust engine on the store', () => {
     const unlabeled = { chunk_index: 0, chunk_text: 'Labeled.', chunk_source: 'compiled_truth', embedding: new Float32Array(1536).fill(0.25) } as never;
     await engine.upsertChunks('notes/a', [unlabeled], { embeddingColumn: column({ embeddingModel: 'm:column' }) });
     expect((await engine.getChunks('notes/a', { includeUnsealed: true })).map((c) => [c.chunk_text, c.model])).toEqual([['Labeled.', 'm:column']]);
+  });
+
+  withAddon('a chunk that carries an image vector refuses chunks, and writes nothing', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const before = await engine.getChunks('notes/a');
+    const chunk = { chunk_index: 0, chunk_text: 'Replaced.', chunk_source: 'compiled_truth', embedding_image: new Float32Array(4) } as never;
+    expect(await code(() => engine.upsertChunks('notes/a', [chunk]))).toBe('engine_capability_missing');
+    expect(await engine.getChunks('notes/a')).toEqual(before);
   });
 
   withAddon('getStats and getHealth refuse a brain whose config selects another embedding column', async () => {
@@ -493,6 +518,19 @@ describe('Rust store members', () => {
     expect(await code(() => count(brain, ['default'], -2, args))).toBe('engine_capability_missing');
     expect(await code(() => count(brain, ['default'], 2, { ...args, labelLine: line('Da.e') }))).toBe('engine_capability_missing');
     for (const contextLike of ['seg%', '%se_g%', '%a%b%', '%a\\b%']) expect(await code(() => count(brain, ['default'], 2, { ...args, contextLike }))).toBe('engine_capability_missing');
+    expect(sent).toHaveLength(2);
+  });
+
+  test('countPurgedPageFacts sends LIMIT cap + 1, counts the first cap rows by class, and refuses a cap that is not an integer', async () => {
+    const sent: unknown[] = [];
+    const brain = { countPurgedPageFacts: async (q: unknown) => { sent.push(q); return [true, false, true]; } };
+    const count = STORE_MEMBERS.countPurgedPageFacts as unknown as (brain: unknown, sourceIds: string[], cap: number) => Promise<unknown>;
+    expect(await count(brain, ['default'], 2)).toEqual({ evidenced: 1, ambiguous: 1, capped: true });
+    expect(await count(brain, ['default'], 3)).toEqual({ evidenced: 2, ambiguous: 1, capped: false });
+    expect(sent[0]).toEqual({ sourceIds: ['default'], limit: 3 });
+    const code = async (run: () => Promise<unknown>) => { try { await run(); return 'ran'; } catch (e) { return (e as { code?: string }).code; } };
+    expect(await code(() => count(brain, ['default'], 1.5))).toBe('engine_capability_missing');
+    expect(await code(() => count(brain, ['default'], -2))).toBe('engine_capability_missing');
     expect(sent).toHaveLength(2);
   });
 });

@@ -473,9 +473,9 @@ const PINS: Pin[] = [
          FROM pages WHERE id = ANY($1::int[])`],
   },
   {
-    from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent',
+    from: 'src/core/access/owner-only.ts:56 ownerOnlySourcesPresent (rust-engine/main reads the v320 lineage function, OWNER_ONLY_LINEAGE_PRESENT_SQL)',
     case: { method: 'readOwnerOnlySourcesPresent', variant: 'default', run: e => e.readOwnerOnlySourcesPresent() },
-    texts: [`SELECT EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id >= '' AND (read_source.config->>'kind' IN ('imessage') OR read_source.config->>'owner_only' = 'true')) AS present`],
+    texts: ['SELECT gbrain_owner_only_lineage() AS present'],
   },
   {
     from: 'src/core/access/owner-only.ts:66 sourceIsOwnerOnly',
@@ -563,7 +563,7 @@ const PINS: Pin[] = [
   },
   {
     from: 'src/core/ops/facts.ts:706 withProvenance, at 0a68889b57',
-    case: { method: 'listFactProvenance', variant: 'default', run: e => e.listFactProvenance({ sourceId: 'default', ids: [1, 2] }) },
+    case: { method: 'listFactProvenance', variant: 'default', run: e => e.listFactProvenance('default', [1, 2]) },
     texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])'],
   },
   {

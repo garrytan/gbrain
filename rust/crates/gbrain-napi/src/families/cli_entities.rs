@@ -227,6 +227,34 @@ impl Brain {
         })
     }
 
+    /// `findFuzzyEntityCandidates(sourceId, title, fragment)`: up to five `{ slug, title, type,
+    /// score }` rows, best pg_trgm score first.
+    #[napi]
+    pub fn find_fuzzy_entity_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        title: String,
+        fragment: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.find_fuzzy_entity_candidates(&source_id, &title, &fragment)
+        })
+    }
+
+    /// `findExactBasenameCandidates(sourceId, slugs)`: at most two live slugs, in slug byte order.
+    #[napi]
+    pub fn find_exact_basename_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.find_exact_basename_candidates(&source_id, &slugs)
+        })
+    }
+
     /// `readRetirementHop(sourceId, slug, policy)`: the live page with its retirement and redirect
     /// target, or `null`; a `null` policy reads every page.
     #[napi]

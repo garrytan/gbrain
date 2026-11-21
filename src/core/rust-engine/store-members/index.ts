@@ -42,6 +42,9 @@ import * as trustWithdrawals from './trust-withdrawals.ts';
 import * as openLoops from './open-loops.ts';
 import * as trustWriteGate from './trust-write-gate.ts';
 import * as cliSources from './cli-sources.ts';
+import * as filesSources from './files-sources.ts';
+import * as dreamConfig from './dream-config.ts';
+import * as factsHoldingPurges from './facts-holding-purges.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
 import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
@@ -61,7 +64,13 @@ import * as derivationTrust from './derivation-trust.ts';
 import * as chronicleEvents from './chronicle-events.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
 import * as factsProvenance from './facts-provenance.ts';
+import * as factsTrustOwner from './facts-trust-owner.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
+import * as memoryMutationReads from './memory-mutation-reads.ts';
+import * as withdrawalCommit from './withdrawal-commit.ts';
+import * as withdrawalDiscovery from './withdrawal-discovery.ts';
+import * as withdrawalPages from './withdrawal-pages.ts';
+import * as withdrawalFence from './withdrawal-fence.ts';
 import * as jobs from './jobs.ts';
 import * as housekeeping from './housekeeping.ts';
 import * as notifier from './notifier.ts';
@@ -91,7 +100,11 @@ import * as factRelinkWrites from './fact-relink-writes.ts';
 import * as connectGate from './connect-gate.ts';
 import * as telemetry from './telemetry.ts';
 import * as importMembers from './import-members.ts';
+import * as calibrationProfiles from './calibration-profiles.ts';
+// Group C: decide proposals and review proposals (rust/docs/store/decide-proposals.md).
+import * as decideProposals from './decide-proposals.ts';
 import * as fieldUsage from './field-usage.ts';
+import * as decideStore from './decide-store.ts';
 import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
@@ -112,6 +125,7 @@ import * as doctorFactsTrust from './doctor-facts-trust.ts';
 import * as fenceCensus from './fence-census.ts';
 import * as doctorSources from './doctor-sources.ts';
 import * as sweepReads from './sweep-reads.ts';
+import * as cliReadsExport from './cli-reads-export.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -125,17 +139,29 @@ export const STORE_MEMBERS = {
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
-  ...cliSources,
+  ...cliSources, ...filesSources, ...dreamConfig, ...factsHoldingPurges,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages, ...sweepReads,
+  // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
+  ...cliReadsExport,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsProvenance, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factsProvenance, ...factRelinkAttempts,
   ...factRelinkWrites,
   // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).
   ...chronicleEvents,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,
+  // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
+  ...memoryMutationReads,
+  // The statements a forget's withdrawal commits and the fact_withdrawn refusal reads (rust/docs/store/trust.md).
+  ...withdrawalCommit,
+  // The reads withdrawal discovery makes to find the pages a withdrawn claim reaches (rust/docs/store/facts.md).
+  ...withdrawalDiscovery,
+  // The page statements a fact withdrawal runs on the pages that carry the claim (rust/docs/store/facts.md).
+  ...withdrawalPages,
+  // The withdrawal check a prepared import runs on a malformed facts fence (rust/docs/store/facts.md).
+  ...withdrawalFence,
   // The persistence brain identity the store already keeps (rust/docs/store/journal.md).
   ...persistenceIdentity,
   // Search telemetry (rust/docs/store/telemetry.md).
@@ -172,6 +198,10 @@ export const STORE_MEMBERS = {
   ...connectGate,
   // The page and chunk statements a page import runs around its chunk write (rust/docs/store/import-members.md).
   ...importMembers,
+  // Decide family, group B: calibration profiles (rust/docs/store/calibration-profiles.md).
+  ...calibrationProfiles,
+  // Group C: the decide proposal tables (rust/docs/store/decide-proposals.md).
+  ...decideProposals,
   // The field usage sample read of schema detect --fields (rust/docs/store/field-usage.md).
   ...fieldUsage,
   // The access-grant reads and the request-id lookup of the receipt operations (rust/docs/store/persistence.md).
@@ -205,6 +235,8 @@ export const STORE_MEMBERS = {
   // The doctor facts, fence and trust reads (rust/docs/store/cli-reads-doctor-facts-trust.md).
   ...doctorFactsTrust,
   ...fenceCensus,
+  // Group A: the decide store (rust/docs/store/decide-store.md).
+  ...decideStore,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

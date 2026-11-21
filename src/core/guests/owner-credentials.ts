@@ -61,7 +61,8 @@ function credential(kind: 'client' | 'token', id: string, name: string, g: Princ
 }
 
 /** An access_tokens row as JSON with only the columns a grant and its read floor need: never the token hash. */
-export const tokenGrantJsonSql = (alias: string) => `jsonb_build_object(${[...TOKEN_GRANT_ROW_COLUMNS, 'min_trust'].map(c => `'${c}', ${alias}.${c}`).join(', ')})`;
+// read_shared_revision (GST-2898) reads through to_jsonb so a brain whose migration is pending reads it as absent (off).
+export const tokenGrantJsonSql = (alias: string) => `jsonb_build_object(${[...TOKEN_GRANT_ROW_COLUMNS, 'min_trust'].map(c => c === 'read_shared_revision' ? `'${c}', to_jsonb(${alias})->'${c}'` : `'${c}', ${alias}.${c}`).join(', ')})`;
 
 const json = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v) as Record<string, unknown>;
 

@@ -3,14 +3,14 @@
  * (rust/crates/gbrain-store/src/facts/repair.rs). A member not exported here refuses with `engine_capability_missing`.
  *
  * Served: listSessionFactsForClassification, listSessionFactTwins, listCapturedFactsForClassification and
- * listWorldFactsFromPrivateSources, which read only `facts` and `pages`, and countLabelFacts, whose label line this member
- * reads into literal labels (label-line.ts). loopFactDrift and closedLoopWithActiveFact are served from open-loops.ts.
- * Also served (facts/repair_gone.rs): listExtractorFactsForClassification, whose receipt is read off the write journal's
- * committed requests, and countPurgedPageFacts, which the store answers as one `purged` flag per counted fact: true when
- * the source's `page_purges` ledger records a purge of the fact's page at or after the fact was written.
- * Not served: listUnwithdrawnFacts (it refuses as an unserved member of the facts capability). The store keeps derived
- * generations and their items (generations.rs writes them), but no store read lists the facts a facts-fence generation
- * retired, so answering no row could hide one.
+ * listWorldFactsFromPrivateSources, which read only `facts` and `pages`, countLabelFacts, whose label line this member
+ * reads into literal labels (label-line.ts), and countPurgedPageFacts, which reads the store's `page_purges` ledger. No
+ * member writes that ledger on Rust: the page purge sweep and the restore replay write it with raw SQL in the write
+ * journal's transaction and refuse, so on Rust every counted fact is ambiguous. listUnwithdrawnFacts reads the store's
+ * derived generation ledger (facts/generations.rs), which no member writes on Rust either: the fence writer publishes
+ * generations with raw SQL and refuses, so on Rust it lists nothing. loopFactDrift and closedLoopWithActiveFact are
+ * served from open-loops.ts. listExtractorFactsForClassification reads its receipts from
+ * the write journal's committed requests (`persistence_requests` on SQL), the requests the store's journal records.
  *
  * An id list binds as `bigint[]` on PGLite, so an id that is not an integer refuses rather than guess at its cast error.
  */
@@ -24,6 +24,13 @@ type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infe
 function wholeIds(member: string, ids: readonly number[] | null): void {
   for (const id of ids ?? []) if (!Number.isSafeInteger(id)) refuseMember(member, 'a fact id that is not an integer');
 }
+
+/**
+ * `listExtractorFactsForClassification`: the expired fenceless extractor facts with their page, withdrawal, duplicate,
+ * fence and receipt evidence, by (source, page, id). `expired_at` is the UTC microsecond text the SQL's `to_char` gives.
+ */
+export const listExtractorFactsForClassification: Member<'listExtractorFactsForClassification'> = (brain, sourceIds, slug) =>
+  storeCall({ member: 'listExtractorFactsForClassification' }, () => brain.listExtractorFactsForClassification({ sourceIds, slug }));
 
 /** `listSessionFactsForClassification` (engine-sql/facts-repair.ts): by (source, id), as the SQL orders them. */
 export const listSessionFactsForClassification: Member<'listSessionFactsForClassification'> = (brain, sourceIds, lanes, ids) => {
@@ -78,20 +85,22 @@ export const countLabelFacts: Member<'countLabelFacts'> = (brain, sourceIds, cap
   });
 };
 
-/** `listExtractorFactsForClassification`: by (source, page, id); `slug` null lists every page of the sources. */
-export const listExtractorFactsForClassification: Member<'listExtractorFactsForClassification'> = (brain, sourceIds, slug) =>
-  storeCall({ member: 'listExtractorFactsForClassification' }, () => brain.listExtractorFactsForClassification({ sourceIds, slug }));
-
 /**
- * `countPurgedPageFacts`: the store lists the `purged` flag of up to `cap + 1` facts and this member counts them as the
- * SQL does. A cap that is not an integer, or one whose `LIMIT` would be negative, refuses.
+ * `countPurgedPageFacts`: the store lists, for up to `LIMIT cap + 1` gone-page facts, whether a purge record is the
+ * evidence; this member keeps the first `cap` and counts them, as the SQL does. A cap that is not an integer, or one whose
+ * `LIMIT` would be negative, refuses.
  */
 export const countPurgedPageFacts: Member<'countPurgedPageFacts'> = (brain, sourceIds, cap) => {
   const m = 'countPurgedPageFacts';
   if (!Number.isSafeInteger(cap) || cap + 1 < 0) refuseMember(m, 'a cap that is not an integer of -1 or more');
   return storeCall({ member: m }, async () => {
     const rows = (await brain.countPurgedPageFacts({ sourceIds, limit: cap + 1 })) as boolean[];
-    const kept = rows.slice(0, cap);
-    return { evidenced: kept.filter(Boolean).length, ambiguous: kept.filter(r => !r).length, capped: rows.length > cap };
+    const kept = rows.slice(0, Math.max(cap, 0));
+    const evidenced = kept.filter(Boolean).length;
+    return { evidenced, ambiguous: kept.length - evidenced, capped: rows.length > cap };
   });
 };
+
+/** `listUnwithdrawnFacts`: the store answers the rows in the SQL's order with its columns. */
+export const listUnwithdrawnFacts: Member<'listUnwithdrawnFacts'> = (brain, sourceIds, slug, fenceKind) =>
+  storeCall({ member: 'listUnwithdrawnFacts' }, () => brain.listUnwithdrawnFacts({ sourceIds, slug, fenceKind }));

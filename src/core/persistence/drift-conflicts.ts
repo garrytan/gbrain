@@ -67,6 +67,8 @@ export type DriftClass = typeof DRIFT_CLASSES[number];
 export interface LiveDrift {
   still_present: boolean | null;
   reason: string;
+  /** The refusal's own message when `reason` is only its code, so a caller can say why the file could not be read. */
+  message?: string;
   file_hash?: string;
   db_revision?: string;
   /** Source-relative path of the canonical file the check compared (trusted callers only). */
@@ -107,7 +109,7 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
       if (error.detail === 'canonical_file_missing' || twin && error.detail === 'shared_origin' && await claimedBySourcePath(engine, sourceId, root, page)) {
         return { still_present: false, reason: 'database_only', db_revision: page.revision };
       }
-      return { still_present: null, reason: typeof error.detail === 'string' ? error.detail : error.code };
+      return typeof error.detail === 'string' ? { still_present: null, reason: error.detail } : { still_present: null, reason: error.code, message: error.message };
     }
   }
   try {
@@ -120,7 +122,7 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
     if (error.detail !== 'file_database_drift') {
       // #6696 (A12): a recorded canonical file that is gone is its own reason; a producer refuses before admission on it.
       if (error.detail === 'canonical_file_missing') return { still_present: null, reason: 'canonical_file_missing', db_revision: page.revision };
-      return { still_present: null, reason: error.code === 'source_changed' ? 'file_missing' : error.code };
+      return error.code === 'source_changed' ? { still_present: null, reason: 'file_missing' } : { still_present: null, reason: error.code, message: error.message };
     }
     const path = await canonicalFilePath(engine, sourceId, root, page, slug);
     let file_hash: string | undefined;

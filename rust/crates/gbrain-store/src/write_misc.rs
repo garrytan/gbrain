@@ -64,6 +64,27 @@ impl Store {
         Ok(rows)
     }
 
+    /// `hasSynopsisFrontmatterOverride()`: whether a live markdown page of the `default` source, which is not archived,
+    /// carries `contextual_retrieval: per_chunk_synopsis` in its frontmatter. The store keeps no
+    /// `trust_frontmatter_overrides` (it reads as false, as `sources.rs` says), so the SQL's other arm, a source that
+    /// trusts its pages' overrides, never holds here. `frontmatter @> '{"contextual_retrieval":"per_chunk_synopsis"}'`
+    /// is string equality on that key.
+    pub fn has_synopsis_frontmatter_override(&self) -> Result<bool> {
+        let read = self.read()?;
+        if read_source(&*read, "default")?.is_some_and(|source| source.archived) {
+            return Ok(false);
+        }
+        Ok(all_pages(&*read)?.iter().any(|p| {
+            p.source_id == "default"
+                && p.deleted_at_us.is_none()
+                && p.page_kind == "markdown"
+                && p.frontmatter
+                    .get("contextual_retrieval")
+                    .and_then(Value::as_str)
+                    == Some("per_chunk_synopsis")
+        }))
+    }
+
     /// The source's incarnation, archived flag, local path and config, or `None` for an unknown id.
     /// The SQL engines can hold the row FOR SHARE; the store runs one write transaction at a time,
     /// so no lock is needed and the TypeScript member drops the option.

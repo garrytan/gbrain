@@ -1284,6 +1284,74 @@ fn source_records(read: &dyn KvRead, source_id: &str) -> Result<Vec<GenerationRe
     }
 }
 
+/// Every `derived_generations` row with its items, in id order, in the shape `facts::generations`
+/// reads for `listUnwithdrawnFacts` (the repair classifier of retired fence rows).
+pub(crate) fn ledger_generations(
+    read: &dyn KvRead,
+) -> Result<Vec<(u64, crate::facts::generations::GenerationRecord)>> {
+    let mut rows = Vec::new();
+    let mut failure = None;
+    scan_prefix(
+        read,
+        &[keys::DERIVED_GENERATION, RECORD],
+        false,
+        &mut |_, v| match serde_json::from_slice::<GenerationRecord>(v) {
+            Ok(record) => {
+                rows.push(record);
+                true
+            }
+            Err(e) => {
+                failure = Some(StoreError::from(e));
+                false
+            }
+        },
+    )?;
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for record in rows {
+        let prefix = item_prefix(record.id);
+        let mut items = Vec::new();
+        let mut failure = None;
+        scan_prefix(
+            read,
+            &prefix,
+            false,
+            &mut |k, v| match serde_json::from_slice::<ItemRecord>(v) {
+                Ok(item) => {
+                    items.push(crate::facts::generations::ItemRecord {
+                        item_key: String::from_utf8_lossy(&k[prefix.len()..]).into_owned(),
+                        action: item.action,
+                        preimage: item.preimage,
+                    });
+                    true
+                }
+                Err(e) => {
+                    failure = Some(StoreError::from(e));
+                    false
+                }
+            },
+        )?;
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        out.push((
+            record.id,
+            crate::facts::generations::GenerationRecord {
+                source_id: record.source_id,
+                kind: record.kind,
+                owner_key: record.owner_key,
+                generation: record.generation,
+                state: record.state,
+                created_at_us: record.created_at_us,
+                items,
+            },
+        ));
+    }
+    Ok(out)
+}
+
 /// `proposal @> jsonb_build_array(jsonb_build_object('key', slug))`: the proposal is an array
 /// with an object element whose `key` is the string `slug`.
 fn proposes_key(proposal: &Value, slug: &str) -> bool {
@@ -1326,6 +1394,18 @@ mod tests {
     use crate::access_flag::RESTRICTIONS_PRESENT_KEY as FLAG;
     use crate::test_support::store;
 
+    /// A stored page the tests then name readers on with a raw put (a record the keyword indexer
+    /// reads back, so it must be a whole page record).
+    fn put_closed_page(store: &crate::Store) {
+        let input: crate::pages::PageInput = serde_json::from_value(json!({
+            "type": "note", "title": "closed", "compiled_truth": "body", "frontmatter": {"tags": ["a"]}
+        }))
+        .unwrap();
+        store
+            .put_page("notes/closed", &input, &Default::default())
+            .unwrap();
+    }
+
     fn key() -> GenerationKey {
         GenerationKey {
             source_id: "default".into(),
@@ -1352,6 +1432,7 @@ mod tests {
     fn a_generation_write_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
         assert_eq!(store.get_config(FLAG).unwrap(), None);
+        put_closed_page(&store);
         store
             .write(|tx| {
                 crate::sources::require_source(&*tx, "default")?;
@@ -1359,7 +1440,8 @@ mod tests {
                 tx.put(&pointer_key(&key(), "held"), &id.to_be_bytes())?;
                 tx.delete(&pointer_key(&key(), "held"))?;
                 let page = keys::page("default", "notes/closed");
-                let record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                let mut record: Value = serde_json::from_slice(&tx.get(&page)?.unwrap())?;
+                record["frontmatter"]["readable_by"] = json!(["alice-example"]);
                 tx.put(&page, &serde_json::to_vec(&record)?)
             })
             .unwrap();
@@ -1548,6 +1630,7 @@ mod tests {
     #[test]
     fn an_attempt_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_closed_page(&store);
         store
             .write(|tx| {
                 let record = AttemptRecord {
@@ -1561,7 +1644,8 @@ mod tests {
                 put_json(tx, &attempt_key("a1"), &record)?;
                 tx.put(&attempt_index_key(&record, "a1"), &[])?;
                 let page = keys::page("default", "notes/closed");
-                let page_record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                let mut page_record: Value = serde_json::from_slice(&tx.get(&page)?.unwrap())?;
+                page_record["frontmatter"]["readable_by"] = json!(["alice-example"]);
                 tx.put(&page, &serde_json::to_vec(&page_record)?)
             })
             .unwrap();

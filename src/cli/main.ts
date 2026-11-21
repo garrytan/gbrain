@@ -171,6 +171,8 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   advisor: true, anomalies: true, feedback: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
   founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
   brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true, wakeshift: true,
+  secrets: true,
+  dedupe: true, identity: true, 'apple-contacts': true,
 };
 
 /** Returns true when the command's own help was printed. */
@@ -1370,7 +1372,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
   // (src/core/ops/context.ts), which widens only an unqualified read with no
   // OAuth grant; remote transports compute the same field for no-grant tokens.
   let localFederated: string[] | undefined;
-  let sourceImplicit = true;
+  let sourceImplicit = true, sourceFromCheckout = false;
   // params.source is set when a CLI flag was parsed for the op (rare; most
   // CLI ops don't take --source). Falls through to env/dotfile/path-match.
   // An op that owns `source` (opOwnsSource) receives it as its own param.
@@ -1382,7 +1384,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     await withRequestConfigSnapshot(engine, async () => {
       const resolved = await resolveSourceWithTier(engine, explicit);
       sourceId = resolved.source_id;
-      sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile';
+      sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile'; sourceFromCheckout = resolved.tier === 'local_path';
       localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
     }, commandStartupConfig(engine));
   } catch (err) {
@@ -1466,7 +1468,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // brain (that would be an untrusted-caller cross-brain hole over MCP).
     brainId: activeBrainId,
     ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
-    ...(sourceImplicit ? { localSourceImplicit: true } : {}),
+    ...(sourceImplicit ? { localSourceImplicit: true, ...(sourceFromCheckout ? { localSourceFromCheckout: true } : {}) } : {}),
     // T15/FOV-1: capture the retrieval meta for formatResult's empty-result
     // render (the local-engine twin of the MCP _meta.retrieval channel).
     emitResponseMeta: captureRetrievalMeta,

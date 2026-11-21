@@ -146,7 +146,7 @@ describe('whois candidate read', () => {
   test('every probe is served by an index: no sequential scan of pages or page_aliases', async () => {
     const plan = await whoisCandidatePlan(engine);
     expect(plan).not.toMatch(/Seq Scan on (pages|page_aliases)\b/);
-    for (const index of ['idx_pages_source_title_lower', 'idx_pages_slug_basename', 'idx_pages_frontmatter']) expect(plan).toContain(index);
+    for (const index of ['idx_pages_title_lower_hash', 'idx_pages_slug_basename', 'idx_pages_frontmatter']) expect(plan).toContain(index);
     expect(plan).toMatch(/(on|using) page_aliases_\w+/);
   });
 });

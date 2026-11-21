@@ -12,13 +12,13 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+use super::cjk::CjkTerm;
 use super::tsearch::{TsVector, Weight, concat, fts_input, setweight, to_tsvector};
 use super::vector_cache::{VectorKind, cached};
-use crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION;
-use crate::chunks::ChunkRecord;
+use crate::chunks::{ChunkRecord, SAFE_FENCE_CHUNKER_VERSION};
 use crate::env::iso;
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden_with};
 use crate::kv::KvRead;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
@@ -107,12 +107,52 @@ pub struct KeywordOptions {
     /// `suppressFlagged`: drops a page `activationSuppressedSql('pages', p)` suppresses, a page at or
     /// below `agent_written` that holds a `flag` receipt in an activation reason family.
     pub suppress_flagged: bool,
+    /// `countKeywordPages` and `searchKeywordPages` on a CJK query: the match terms
+    /// (`cjkMatchTerms`), matched with `LIKE` / `ILIKE` in place of the text search, with no
+    /// handle arm (`keyword/cjk.rs`).
+    pub cjk_terms: Option<Vec<CjkTerm>>,
 }
 
 /// A parsed date bound.
 pub(super) struct Bound {
     micros: i64,
     inclusive: bool,
+}
+
+/// A read's parsed `afterDate` and `beforeDate`. A page is dated by its `effective_date`, else its
+/// `updated_at` (the SQL's `created_at` arm is never reached: a page row always has `updated_at`).
+pub(crate) struct DateWindow {
+    after: Option<Bound>,
+    before: Option<Bound>,
+}
+
+impl DateWindow {
+    pub(crate) fn parse(after: Option<&DateBound>, before: Option<&DateBound>) -> Result<Self> {
+        Ok(Self {
+            after: Bound::parse(after, "afterDate")?,
+            before: Bound::parse(before, "beforeDate")?,
+        })
+    }
+
+    /// `dateBound('>' | '>=', afterDate)` and `dateBound('<' | '<=', beforeDate)`.
+    pub(crate) fn admits(&self, page: &PageRecord) -> bool {
+        let dated = page.effective_date_us.unwrap_or(page.updated_at_us);
+        let after = self.after.as_ref().is_none_or(|b| {
+            if b.inclusive {
+                dated >= b.micros
+            } else {
+                dated > b.micros
+            }
+        });
+        let before = self.before.as_ref().is_none_or(|b| {
+            if b.inclusive {
+                dated <= b.micros
+            } else {
+                dated < b.micros
+            }
+        });
+        after && before
+    }
 }
 
 impl Bound {
@@ -141,7 +181,13 @@ fn safe_chunks(page: &PageRecord) -> bool {
 /// The read's trust floor (`trustFloorSql`): none when unset or empty, and a refusal for a name
 /// that is no tier.
 fn trust_floor(o: &KeywordOptions) -> Result<Option<TrustTier>> {
-    match o.min_trust.as_deref() {
+    parse_trust_floor(o.min_trust.as_deref())
+}
+
+/// A `minTrust` name as a trust floor: none when unset or empty, and a refusal for a name that is
+/// no tier.
+pub(crate) fn parse_trust_floor(name: Option<&str>) -> Result<Option<TrustTier>> {
+    match name {
         None | Some("") => Ok(None),
         Some(name) => TrustTier::parse(name).map(Some).ok_or_else(|| {
             StoreError::invalid(format!("minTrust: \"{name}\" names no trust tier"))
@@ -152,18 +198,19 @@ fn trust_floor(o: &KeywordOptions) -> Result<Option<TrustTier>> {
 /// The page-level predicates, with the source table read once per source.
 pub(super) struct PageFilter<'a> {
     options: &'a KeywordOptions,
-    after: Option<Bound>,
-    before: Option<Bound>,
+    dates: DateWindow,
     live_sources: HashMap<String, bool>,
+    /// The owner-only sources, read on the first page `exclude_private` judges.
+    owner_only: Option<OwnerOnlySources>,
 }
 
 impl<'a> PageFilter<'a> {
     pub(super) fn new(options: &'a KeywordOptions) -> Result<Self> {
         Ok(Self {
             options,
-            after: Bound::parse(options.after_date.as_ref(), "afterDate")?,
-            before: Bound::parse(options.before_date.as_ref(), "beforeDate")?,
+            dates: DateWindow::parse(options.after_date.as_ref(), options.before_date.as_ref())?,
             live_sources: HashMap::new(),
+            owner_only: None,
         })
     }
 
@@ -178,6 +225,16 @@ impl<'a> PageFilter<'a> {
                 .any(|key| page.frontmatter.contains_key(*key))
         {
             return Ok(false);
+        }
+        if let Some(policy) = &o.exclude_private {
+            if self.owner_only.is_none() {
+                self.owner_only = Some(OwnerOnlySources::read(read)?);
+            }
+            if let Some(owner_only) = &self.owner_only
+                && page_hidden_with(read, page, policy, owner_only)?
+            {
+                return Ok(false);
+            }
         }
         if o.page_type.as_ref().is_some_and(|t| *t != page.page_type)
             || o.types
@@ -197,20 +254,7 @@ impl<'a> PageFilter<'a> {
         {
             return Ok(false);
         }
-        let dated = page.effective_date_us.unwrap_or(page.updated_at_us);
-        if self.after.as_ref().is_some_and(|b| {
-            if b.inclusive {
-                dated < b.micros
-            } else {
-                dated <= b.micros
-            }
-        }) || self.before.as_ref().is_some_and(|b| {
-            if b.inclusive {
-                dated > b.micros
-            } else {
-                dated >= b.micros
-            }
-        }) {
+        if !self.dates.admits(page) {
             return Ok(false);
         }
         // `JOIN sources s ... AND NOT s.archived`: a page whose source row is gone drops too.
@@ -223,11 +267,6 @@ impl<'a> PageFilter<'a> {
             }
         };
         if !live {
-            return Ok(false);
-        }
-        if let Some(policy) = &o.exclude_private
-            && page_hidden(read, page, policy)?
-        {
             return Ok(false);
         }
         // `pageEligibleSql(p)`: the trust floor, then the flagged-page filter.
@@ -255,7 +294,7 @@ impl<'a> PageFilter<'a> {
 
 /// `servedTextProjectionFilter`: the page's text projection is current, or the activation
 /// sentinel.
-pub(super) fn served(page: &PageRecord) -> bool {
+pub(crate) fn served(page: &PageRecord) -> bool {
     match page.text_projection_revision.as_deref() {
         Some(r) => r == page.knowledge_revision || r == ACTIVATION_SERVED_REVISION,
         None => false,
@@ -276,7 +315,11 @@ fn jsonb_eq(a: &Value, b: &Value) -> bool {
 }
 
 /// `frontmatter @> {key: v} OR frontmatter @> {key: [v]}` for any `v` of `values`.
-fn frontmatter_holds(frontmatter: &Map<String, Value>, key: &str, values: &[Value]) -> bool {
+pub(crate) fn frontmatter_holds(
+    frontmatter: &Map<String, Value>,
+    key: &str,
+    values: &[Value],
+) -> bool {
     let Some(field) = frontmatter.get(key) else {
         return false;
     };
@@ -316,6 +359,14 @@ pub(super) fn chunk_vector(chunk: &ChunkRecord) -> Result<Arc<TsVector>> {
         let head = concat(&part(doc, Weight::A)?, &part(symbol, Weight::A)?)?;
         concat(&head, &part(&chunk.chunk_text, Weight::B)?)
     })
+}
+
+/// The chunk's vector as a search reads it, or `None` for a chunk whose vector cannot be built (a text past the
+/// tsvector size cap). SQL never stores such a chunk (its trigger raises in the write, and `check_chunk_vector` raises
+/// the same here), but a store written before that check may hold one. It matches nothing; it must not fail the searches
+/// that pass over it.
+pub(super) fn readable_chunk_vector(chunk: &ChunkRecord) -> Option<Arc<TsVector>> {
+    chunk_vector(chunk).ok()
 }
 
 /// `[[:space:]]` in a Postgres regular expression.

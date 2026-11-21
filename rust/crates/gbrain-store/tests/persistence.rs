@@ -131,6 +131,20 @@ fn counters_are_created_at_zero_deduplicated_and_in_key_order() {
 }
 
 #[test]
+fn a_principal_id_with_a_nul_byte_is_refused_before_a_duplicate_could_slip_in() {
+    let dir = TempDir::new("persist-insert-nul");
+    let store = open(&dir);
+    let mut input = insert_input(&store, REQ_1, "people/a", json!({}));
+    input.principal_id = "a\0b".into();
+    for _ in 0..2 {
+        assert_eq!(
+            store.insert_write_request(&input).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+    }
+}
+
+#[test]
 fn an_inserted_request_has_every_column_and_charges_only_existing_counters() {
     let dir = TempDir::new("persist-insert");
     let store = open(&dir);
@@ -361,6 +375,37 @@ fn completion_releases_counters_and_records_the_outcome() {
     assert_eq!(
         store.get_config("persistence.true_up.clamped").unwrap(),
         None
+    );
+}
+
+#[test]
+fn completion_stores_the_outcome_and_error_detail_in_jsonb_key_order() {
+    let dir = TempDir::new("persist-complete-order");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let text = |v: &Value| serde_json::to_string(v).unwrap();
+    let mut ids = Vec::new();
+    for request in [REQ_1, "b0000000-0000-4000-8000-0000000000b9"] {
+        let row = store
+            .insert_write_request(&insert_input(&store, request, "notes/a", json!({})))
+            .unwrap();
+        ids.push(row["id"].as_str().unwrap().to_string());
+    }
+    let mut committed = completion(&ids[0], "committed", 512);
+    committed.outcome = json!({"status": "ok", "zz": 1, "fact": {"kind": "fact", "id": 7}});
+    let done = store.complete_write_row(&committed).unwrap().unwrap();
+    // Shorter keys first, then bytes: not the caller's order, and not plain byte order either.
+    let ordered = r#"{"zz":1,"fact":{"id":7,"kind":"fact"},"status":"ok"}"#;
+    assert_eq!(text(&done["outcome"]), ordered);
+    let read = store.read_write_request_by_id(&ids[0]).unwrap().unwrap();
+    assert_eq!(text(&read["outcome"]), ordered);
+    let mut failed = completion(&ids[1], "failed", 0);
+    failed.outcome = Value::Null;
+    failed.error_detail = json!({"retryable": false, "at": "publish"});
+    let done = store.complete_write_row(&failed).unwrap().unwrap();
+    assert_eq!(
+        text(&done["error_detail"]),
+        r#"{"at":"publish","retryable":false}"#
     );
 }
 

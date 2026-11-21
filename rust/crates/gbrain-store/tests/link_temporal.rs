@@ -75,7 +75,7 @@ impl Brain {
 
     fn evidence(&self, keys: Value) -> Value {
         let input: EvidenceInput = de(json!({
-            "keys": keys, "originPolicy": {"honorAliases": false, "entityPrivacy": true},
+            "keys": keys, "originPolicy": {"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"},
         }));
         serde_json::to_value(self.store.read_link_relationship_evidence(&input).unwrap()).unwrap()
     }
@@ -455,12 +455,12 @@ fn record_metadata_and_page_status() {
         json!([{"from_id": a, "slug": "decision-c", "link_type": "amends", "since": "2024-03-01"}])
     );
     assert_eq!(trusted["status"][0], json!({"id": a, "status": "accepted"}));
-    let remote = meta(json!({"honorAliases": false, "entityPrivacy": true}));
+    let remote = meta(json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"}));
     assert_eq!(remote["links"], json!([]));
     let status: PageStatusInput = de(json!({
         "refs": [{"slug": "decision-a", "source_id": "default"}, {"slug": "decision-c", "source_id": "default"},
                  {"slug": "decision-q", "source_id": "default"}],
-        "excludePrivate": {"honorAliases": false, "entityPrivacy": true},
+        "excludePrivate": {"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"},
     }));
     let rows = serde_json::to_value(b.store.list_page_status_by_ref(&status).unwrap()).unwrap();
     assert_eq!(

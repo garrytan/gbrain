@@ -19,15 +19,15 @@ Keys (tag `A`, `keys::TAKE`):
 
 `<row>` is `(row_num as u32 ^ 0x8000_0000)` big-endian, so negative row numbers sort first. A take keeps
 the `source_id` of its page and a `claim_rev` that moves each time the claim text changes (for the
-embedding staleness check owned by core).
+embedding staleness check owned by core). `addTakesBatch` that changes a take's claim drops the take's stored vector (`embeddings::remove_take_vector`, which also raises the vector generation), as Postgres nulls the embedding in that upsert; deleting a take deletes its vector too.
 
 A take record also holds the `trust_tier` and `write_origin` PGLite's `trust_tier_stamp` trigger stamps
 (`trust::stamp_row`, [trust.md](trust.md)), left out of the record while the tier is `unknown` with no origin, so a
 record stored before them decodes unchanged. Every takes writer stores through `store_take`: an insert takes the
 write's declared tier and origin; an update (`addTakesBatch` in place, `updateTake`, both `supersedeTake` rows,
 `resolveTake`) keeps the stored tier and origin unless `claim`, `kind` or `holder` changed, and then lowers them to
-the write's. Only `readRowTrustRows` ([cli-reads-import.md](cli-reads-import.md)) reads them; the take reads
-return neither column, as PGLite's `takeRowToTake` does. The embedding write changes no trust column and stores
+the write's. `readRowTrustRows` ([cli-reads-import.md](cli-reads-import.md)) and the fence guard's held-row read
+`listHeldRows` ([trust.md](trust.md)) read them; the take reads return neither column, as PGLite's `takeRowToTake` does. The embedding write changes no trust column and stores
 the record as it is.
 
 | JS | Resolves | Mirrors |
@@ -36,7 +36,7 @@ the record as it is.
 | `brain.listTakes(filter)` | `Take[]`: page/slug/holder/kind/active/resolved/allow-list/source filters, `since_on_or_before` (`since_date <= x`, nulls drop), sort by `since_date` (NULLS LAST, `oldest_first` flips), `weight DESC` or `created_at DESC`, then `id DESC`; `limit` (100 when absent) and `offset` (a non-number, negative or non-finite offset is `invalid_argument`) | `listTakes` |
 | `brain.listActiveTakesForPages({ page_ids, allow_list })` | active takes of the pages, by page then row | `listActiveTakesForPages` |
 | `brain.searchTakes({ query, limit, allow_list, source_ids, eligible_only, min_trust, suppress_flagged })` | `TakeHit[]`: active takes whose `word_similarity(query, claim) >= 0.6` (`pg_trgm` default), `score DESC, weight DESC`; `limit` 30 when absent | `searchTakes` |
-| `brain.searchTakesVector({ embedding, limit, allow_list, source_ids, eligible_only, min_trust, suppress_flagged, exclude_private })` | `TakeHit[]`: active takes whose vector was written for their current claim, nearest by pgvector cosine distance first (`takes/vector_search.rs`), `score` = `(1 - distance)::real`; `limit` 30 when absent. `invalid_argument` for an empty query, more than 16000 elements, a NaN (sent as null) or infinite element, or a width other than a candidate take's vector ("different vector dimensions") | `searchTakesVector` |
+| `brain.searchTakesVector(embedding, { limit, allow_list, source_ids, eligible_only, min_trust, suppress_flagged, exclude_private })` | `TakeHit[]`: active takes whose vector was written for their current claim, nearest by pgvector cosine distance first (`vectors.rs`, over the cached vector index), `score` = `(1 - distance)::real`; `limit` 30 when absent. `invalid_argument` for an empty query, more than 16000 elements, a NaN (sent as null) or infinite element, or a width other than a candidate take's vector ("different vector dimensions") | `searchTakesVector` |
 | `brain.updateTake({ page_id, row_num, weight, since_date, source })` | `false` when no take; else COALESCEs the three columns, moves `updated_at`, `true`. `takes_weight_check` applies | `updateTake` |
 | `brain.supersedeTake(input)` | `{ status: 'not_found' \| 'resolved' }`, or `{ status: 'ok', old_row, new_row }` with `new_row = max(row_num) + 1` on the page; the old row turns inactive with `superseded_by = new_row`. Both rows share one timestamp; the new take keeps the old take's source | `supersedeTake` |
 | `brain.resolveTake({ page_id, row_num, resolution })` | `'not_found'`, `'resolved'` or `'ok'`. Writes only on `'ok'` with a resolution: `takes_resolution_consistency` (three-valued, as the CHECK: `correct` needs outcome not false, `incorrect` not true, `partial`/`unresolvable` null) then `takes_resolved_quality_values` | `resolveTake` |

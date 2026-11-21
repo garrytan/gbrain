@@ -710,7 +710,7 @@ fn exclude_private_hides_rows_the_private_provenance_policy_hides() {
     batch(&b, Value::Array(rows));
     let all = by_entity(&b, "subject", json!({}));
     assert_eq!(all.len(), 7);
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     let kept = by_entity(&b, "subject", json!({ "excludePrivate": policy }));
     let mut kept = facts(&kept);
     kept.sort_unstable();
@@ -718,14 +718,14 @@ fn exclude_private_hides_rows_the_private_provenance_policy_hides() {
     let no_alias = by_entity(
         &b,
         "subject",
-        json!({ "excludePrivate": { "honorAliases": false, "entityPrivacy": true } }),
+        json!({ "excludePrivate": { "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn" } }),
     );
     assert!(facts(&no_alias).contains(&"notes/alias"));
     let entity = |entity_privacy: bool| {
         facts(&by_entity(
             &b,
             "people/private-entity",
-            json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": entity_privacy } }),
+            json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": entity_privacy, "ownerOnly": "fn" } }),
         ))
         .len()
     };

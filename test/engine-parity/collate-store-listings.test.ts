@@ -84,7 +84,7 @@ async function seedSources(engine: BrainEngine, backend: ParityBackend) {
 }
 
 describe('store listings come out by byte', () => {
-  parityTest('listCalibrations lists a slot tie by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('listCalibrations lists a slot tie by byte', { methods: ['insertDecideCalibration', 'listDecideCalibrations'] }, async (engine) => {
     for (const slot of MIXED_SLUGS) {
       await insertCalibration(engine, {
         slot, call_site: 'site', provider: 'p', model_resolved: 'm', threshold: 0.5, min_keep: 1, metric: 'ece', metric_value: 0.1, ece: 0.1,

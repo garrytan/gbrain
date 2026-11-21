@@ -156,6 +156,55 @@ export async function findExactSlug(exec: LegacyUnscopedRead, sourceId: string, 
   return row?.slug ?? null;
 }
 
+export interface FuzzyEntityCandidateRow { slug: string; title: string; type: string | null; score: number }
+
+/**
+ * The fuzzy entity lookup's statement (entities/resolve.ts `tryFuzzyMatch`), spelled out because `$2` and `$3` each
+ * bind twice: a fragment would number every use. The retirement test is `retiredPageSql('pages')` as text; the pin
+ * test (test/entity-fuzzy-candidates-sql.test.ts) holds it to that builder.
+ */
+const FUZZY_ENTITY_CANDIDATES_SQL = `SELECT slug, title, type,
+         GREATEST(
+           similarity(lower(title), $2),
+           similarity(slug, $3)
+         ) AS score
+       FROM pages
+       WHERE source_id = $1
+         AND deleted_at IS NULL
+         AND NOT (lower(COALESCE(pages.frontmatter->>'canonical', '')) IN ('false', 'no')
+    OR btrim(COALESCE(pages.frontmatter->>'superseded_by', '')) <> ''
+    OR btrim(COALESCE(pages.frontmatter->>'merged_into', '')) <> ''
+    OR lower(COALESCE(pages.frontmatter->>'status', '')) ~ '(^|[^a-z])(alias|redirect|redirected)([^a-z]|$)')
+         AND (
+           lower(title) % $2
+           OR slug ILIKE '%' || $3 || '%'
+         )
+       ORDER BY score DESC, slug ASC
+       LIMIT 5`;
+
+/**
+ * Up to five live, unretired pages of one source whose lowercased title is trigram-similar to `title` (pg_trgm `%`)
+ * or whose slug contains `fragment` (ILIKE), scored by the greater of the two pg_trgm similarities, best first and
+ * then by slug. A brain without pg_trgm throws its own error (42883); the caller decides what that means.
+ */
+export async function findFuzzyEntityCandidates(exec: LegacyUnscopedRead, sourceId: string, title: string, fragment: string): Promise<FuzzyEntityCandidateRow[]> {
+  return exec.executeRaw<FuzzyEntityCandidateRow>(FUZZY_ENTITY_CANDIDATES_SQL, [sourceId, title, fragment]);
+}
+
+/**
+ * At most two of `slugs` that hold a live page of the source, in no stated order (entities/resolve.ts
+ * `findExactBasenameCandidates`: the `<dir>/<basename>` slugs of a reference).
+ */
+export async function findExactBasenameCandidates(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[]): Promise<string[]> {
+  const rows = await exec.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])
+        LIMIT 2`,
+    [sourceId, [...slugs]],
+  );
+  return rows.map(r => r.slug);
+}
+
 /**
  * The page policy a retirement hop applies to the page it reads (alias `p`), rendered in the caller's access record:
  * none, the caller's page policy (`privatePagesFilterForCaller`), the remote read floor (`remoteReadFloorSql`), or

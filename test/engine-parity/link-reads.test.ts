@@ -394,6 +394,22 @@ describe('engine parity: link reads', () => {
   );
 
   parityTest(
+    'listPagesTitledIn: sources and slugs sort byte by byte, punctuation included',
+    { methods: ['putPage', 'listPagesTitledIn'] },
+    async (engine, backend) => {
+      // A collation that skips punctuation puts ab before a-z; byte order puts '-' (0x2d) before letters.
+      await createSource(engine, backend, 'ab');
+      await createSource(engine, backend, 'a-z');
+      for (const sourceId of ['ab', 'a-z']) {
+        for (const slug of ['notes/ab', 'notes/a-z', 'notes/a_z', 'notes/a.z']) await put(engine, slug, 'note', {}, sourceId, 'Acme Example');
+      }
+      const listed = (await engine.listPagesTitledIn('notes on acme example', {})).map(r => `${r.source_id}:${r.slug}`);
+      expect(listed[0]).toBe('a-z:notes/a-z');
+      return { listed };
+    },
+  );
+
+  parityTest(
     'wordLexemes: each word maps to its English lexemes',
     { methods: ['wordLexemes'] },
     async (engine) => {

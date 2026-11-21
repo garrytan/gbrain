@@ -1,11 +1,12 @@
-//! The two group D repair reads the store serves (`facts/repair_gone.rs`): the expired extractor-fact classifier and
+//! The two group D repair reads the store serves (`facts/extractor_classify.rs`, `facts/repair.rs`): the expired extractor-fact classifier and
 //! the purged-page fact count.
 
 mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
-use gbrain_store::facts::repair_gone::{ExtractorArgs, PurgedArgs};
+use gbrain_store::facts::extractor_classify::ExtractorClassificationQuery as ExtractorArgs;
+use gbrain_store::facts::repair::PurgedCountArgs as PurgedArgs;
 use gbrain_store::facts::{ExpireFactArgs, InsertFactsArgs};
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use serde_json::{Value, json};

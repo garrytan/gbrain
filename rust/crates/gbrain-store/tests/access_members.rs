@@ -122,7 +122,7 @@ fn two_enabled_members_derive_several_and_set_serves_since_once() {
         Some("several")
     );
     let since = store.get_config("access.serves_since").unwrap().unwrap();
-    assert_eq!(since.len(), 20);
+    assert_eq!(since.len(), 27);
     assert!(since.ends_with('Z'));
     assert_eq!(
         store.list_active_access_members().unwrap(),

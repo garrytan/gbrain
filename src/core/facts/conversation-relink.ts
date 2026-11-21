@@ -32,11 +32,10 @@
  * through its superseded_by target), private pages excluded for a world row.
  * A key that resolves to no page, or to two, keeps its rows; no memo is written.
  */
-import type { BrainEngine, FactAttribution } from '../engine.ts';
+import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
-import type { FactVisibility } from './visibility.ts';
 import { opError } from '../ops/contract.ts';
 import { digest } from '../persistence/digest.ts';
 import { isTerminal } from '../persistence/model.ts';
@@ -45,12 +44,11 @@ import { authorizeStoredRequest, authorizeWrite } from '../persistence/authority
 import { waitForWrite, writeResponse } from '../persistence/service.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { writeDerivedFacts } from '../persistence/derived-facts.ts';
-import { AUDIT_ROW_SOURCES } from './audit-sources.ts';
 import { CONVERSATION_UNRESOLVED } from './relink-reasons.ts';
 import { appendContextNote } from './subject-infer.ts';
 import { entityLinkable } from './attribution.ts';
 import { inferConversationSubject } from './conversation-subject-infer.ts';
-import { ACTIVE_UNLINKED_FACT_SQL, UNBACKED_FACT_SQL, derivedConversationRow } from '../engine-sql/fact-relink-writes.ts';
+import { UNBACKED_FACT_SQL, derivedConversationRow } from '../engine-sql/fact-relink-writes.ts';
 import { hasRelinkAttemptsTable } from './conversation-memo.ts';
 import { resolveStrictEntityReference } from '../entities/resolve.ts';
 import { dropRekeyDuplicates } from './ontology-rekey.ts';
@@ -63,7 +61,6 @@ export const CONVERSATION_RELINK_PAGES = 50;
 // The derived-row predicate and the live, unlinked and unbacked row tests live with the relink writer (engine-sql/fact-relink-writes.ts),
 // so the planner here and the guarded link read the same text.
 export { derivedConversationRow };
-const ACTIVE = ACTIVE_UNLINKED_FACT_SQL;
 /** GBRA-574: a derived row on an unbacked name key (`--unbacked`). */
 const UNBACKED = UNBACKED_FACT_SQL;
 
@@ -93,10 +90,7 @@ export async function conversationRelinkPages(engine: BrainEngine, sourceId: str
 
 /** GBRA-574 C1: each page's rows on an unbacked name key, linked when the key now resolves to exactly one readable page. */
 async function planUnbackedPages(engine: BrainEngine, sourceId: string, slugs: string[]): Promise<PagePlan[]> {
-  const rows = await engine.executeRaw<{ id: number | string; fact: string; context: string | null; visibility: FactVisibility; slug: string; attributed_to: FactAttribution | null; entity_slug: string }>(
-    `SELECT f.id, f.fact, f.context, f.visibility, f.source_markdown_slug AS slug, f.attributed_to, f.entity_slug FROM facts f
-      WHERE f.source_id = $1 AND f.source_markdown_slug = ANY($2::text[]) AND ${UNBACKED} AND ${derivedConversationRow('$3')}
-      ORDER BY f.source_markdown_slug COLLATE "C", f.id`, [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
+  const rows = await engine.listUnbackedConversationRows(sourceId, slugs);
   const targets = new Map<string, string | null>();
   const pages = new Map<string, PagePlan>();
   for (const row of rows) {
@@ -114,10 +108,7 @@ async function planUnbackedPages(engine: BrainEngine, sourceId: string, slugs: s
 }
 
 async function planPages(engine: BrainEngine, sourceId: string, slugs: string[]): Promise<PagePlan[]> {
-  const rows = await engine.executeRaw<{ id: number | string; fact: string; context: string | null; visibility: FactVisibility; slug: string; attributed_to: FactAttribution | null }>(
-    `SELECT f.id, f.fact, f.context, f.visibility, f.source_markdown_slug AS slug, f.attributed_to FROM facts f
-      WHERE f.source_id = $1 AND f.source_markdown_slug = ANY($2::text[]) AND ${ACTIVE} AND ${derivedConversationRow('$3')}
-      ORDER BY f.source_markdown_slug COLLATE "C", f.id`, [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
+  const rows = await engine.listUnlinkedConversationRows(sourceId, slugs);
   const pages = new Map<string, PagePlan>();
   for (const row of rows) {
     const page = pages.get(row.slug) ?? { slug: row.slug, link: [], misses: [], notUserAttributed: 0 };

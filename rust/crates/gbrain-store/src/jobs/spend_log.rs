@@ -66,7 +66,7 @@ fn own_key_time(key: &[u8]) -> Option<i64> {
 struct LogRecord {
     id: i64,
     client_id: Option<String>,
-    budget_key: Option<String>,
+    pub budget_key: Option<String>,
     token_name: Option<String>,
     operation: String,
     /// `NUMERIC(12,4)`, scaled.
@@ -81,7 +81,7 @@ impl LogRecord {
         json!({
             "id": self.id,
             "client_id": self.client_id,
-            "budget_key": self.budget_key,
+            "budget_key": self.budget_key.clone(),
             "token_name": self.token_name,
             "operation": self.operation,
             "spend_cents": cents(self.spend),
@@ -94,6 +94,15 @@ impl LogRecord {
 
 /// Append one ledger row, with its owner-index entries.
 fn append_log(tx: &mut dyn KvWrite, now: i64, mut row: LogRecord) -> Result<()> {
+    // A NUL byte is not valid text in Postgres, and the owner index uses it as the owner separator.
+    for owner in [&row.client_id, &row.budget_key].into_iter().flatten() {
+        if owner.contains('\0') {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                "mcp_spend_log owner: a NUL byte is not valid text",
+            ));
+        }
+    }
     row.id = next_seq(tx, "mcp_spend_log")?;
     row.created_at = now;
     let amount = row.spend.to_be_bytes();

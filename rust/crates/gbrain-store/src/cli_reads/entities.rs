@@ -306,6 +306,29 @@ impl Store {
         Ok(None)
     }
 
+    /// `findExactBasenameCandidates(sourceId, slugs)`: at most two of `slugs` at which a live page
+    /// sits, in slug byte order. Postgres reads them with `LIMIT 2` and no `ORDER BY`, so when more
+    /// than two match, the two it returns can differ from these.
+    pub fn find_exact_basename_candidates(
+        &self,
+        source_id: &str,
+        slugs: &[String],
+    ) -> Result<Vec<String>> {
+        let wanted: BTreeSet<&String> = slugs.iter().collect();
+        let read = self.read()?;
+        let mut found = Vec::new();
+        for slug in wanted {
+            let page = crate::pages::read_page(&*read, source_id, slug)?;
+            if let Some(p) = page.filter(|p| p.deleted_at_us.is_none()) {
+                found.push(p.slug);
+                if found.len() == 2 {
+                    break;
+                }
+            }
+        }
+        Ok(found)
+    }
+
     /// `readRetirementHop(sourceId, slug, privacy)`: the live page at `slug` in the source with its
     /// retirement and redirect target, or `None` when no live page sits there or `policy` hides it
     /// (`page_hidden`). `None` policy reads every page.
@@ -554,7 +577,7 @@ fn any_like(text: &str, patterns: &[String], fold: bool) -> Result<bool> {
 
 /// `retiredPageSql`: `canonical` is false or no, `superseded_by` or `merged_into` names a page, or
 /// `status` contains the word alias, redirect or redirected.
-fn is_retired(p: &PageRecord) -> bool {
+pub(crate) fn is_retired(p: &PageRecord) -> bool {
     let text = |key: &str| {
         p.frontmatter
             .get(key)

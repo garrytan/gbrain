@@ -114,7 +114,7 @@ impl Brain {
         })
     }
 
-    /// `pickValidTimeEdition(spec)`: resolves `{ row, history_unpruned }` for one page.
+    /// `pickValidTimeEdition(spec)`: resolves `{ row }` for one page.
     #[napi]
     pub fn pick_valid_time_edition<'env>(
         &self,

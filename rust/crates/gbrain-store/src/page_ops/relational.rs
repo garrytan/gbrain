@@ -12,6 +12,7 @@ use crate::Store;
 use crate::cli_reads::pg_text::pg_lower;
 use crate::cli_reads::reads::retired;
 use crate::error::Result;
+use crate::facts::OwnerOnlyCache;
 use crate::pages::{PageRecord, all_pages, read_page};
 use crate::trust::TrustPolicy;
 use serde_json::{Value, json};
@@ -49,10 +50,11 @@ impl Store {
             live: true,
             ..scope.clone()
         };
+        let mut owner_only = OwnerOnlyCache::default();
         let mut out = Vec::new();
         for r in refs {
             if let Some(page) = read_page(&*read, &r.source_id, &r.slug)?
-                && passes_read_scope(&*read, &page, &scope, &trust, &sources)?
+                && passes_read_scope(&*read, &page, &scope, &trust, &sources, &mut owner_only)?
             {
                 out.push(json!({ "source_id": page.source_id, "slug": page.slug }));
             }
@@ -81,6 +83,7 @@ impl Store {
             live: true,
             ..scope.clone()
         };
+        let mut owner_only = OwnerOnlyCache::default();
         let mut out = Vec::new();
         for r in refs {
             let Some(page) = read_page(&*read, &r.source_id, &r.slug)? else {
@@ -88,7 +91,7 @@ impl Store {
             };
             if !served(&page)
                 || page.frontmatter.contains_key("pinned_question")
-                || !passes_read_scope(&*read, &page, &scope, &trust, &sources)?
+                || !passes_read_scope(&*read, &page, &scope, &trust, &sources, &mut owner_only)?
             {
                 continue;
             }

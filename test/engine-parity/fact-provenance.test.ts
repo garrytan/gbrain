@@ -48,15 +48,16 @@ describe('engine parity: fact provenance', () => {
       const names = await seed(engine);
       const ids = [...names.keys()];
       const name = (id: number) => names.get(id) ?? '<unknown-id>';
-      const view = (rows: Array<{ id: number; source: string }>) => sorted(rows.map((r) => ({ fact: name(r.id), source: r.source })), (r) => r.fact);
-      const all = await engine.listFactProvenance({ sourceId: SRC, ids: [...ids, ids[0]!, Math.max(...ids) + 1000] });
+      // The member answers `id` as a number or a numeric string (a bigint) and `source` as null when the fact has none; compare by number.
+      const view = (rows: Array<{ id: number | string; source: string | null }>) => sorted(rows.map((r) => ({ fact: name(Number(r.id)), source: r.source })), (r) => r.fact);
+      const all = await engine.listFactProvenance(SRC, [...ids, ids[0]!, Math.max(...ids) + 1000]);
       expect(all.length).toBe(3);
-      expect(all.every((r) => typeof r.id === 'number')).toBe(true);
+      expect(all.every((r) => Number.isSafeInteger(Number(r.id)))).toBe(true);
       return {
         all: view(all),
-        one: view(await engine.listFactProvenance({ sourceId: SRC, ids: [ids[1]!] })),
-        otherSource: await engine.listFactProvenance({ sourceId: 'other', ids }),
-        none: await engine.listFactProvenance({ sourceId: SRC, ids: [] }),
+        one: view(await engine.listFactProvenance(SRC, [ids[1]!])),
+        otherSource: await engine.listFactProvenance('other', ids),
+        none: await engine.listFactProvenance(SRC, []),
       };
     },
   );

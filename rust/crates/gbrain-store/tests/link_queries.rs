@@ -499,6 +499,145 @@ fn search_reads_supersede_probe_and_slugs() {
     assert!(elsewhere.is_empty());
 }
 
+/// A private page hidden by the page policy removes itself and every edge it takes part in from
+/// the three ranking reads that serve `excludePrivate`: as the target, as the linking page and as
+/// the page that authored the edge (the origin).
+#[test]
+fn ranking_reads_under_exclude_private_hide_private_targets_linkers_and_origins() {
+    let b = Brain::new("lq-private");
+    let marked = |slug: &str, frontmatter: Value| -> u64 {
+        let input: PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": format!("{slug} body"),
+            "frontmatter": frontmatter,
+        }))
+        .unwrap();
+        let options: PutPageOptions =
+            serde_json::from_value(json!({"sourceId": "default", "index": false})).unwrap();
+        b.store.put_page(slug, &input, &options).unwrap()["id"]
+            .as_u64()
+            .unwrap()
+    };
+    let open_to = marked("open-to", json!({}));
+    let open_from = marked("open-from", json!({}));
+    let private_from = marked("private-from", json!({"visibility": "private"}));
+    let by_alias = marked("alias-from", json!({"access": "private"}));
+    let private_to = marked("private-to", json!({"visibility": "private"}));
+    let private_origin = marked("private-origin", json!({"visibility": "private"}));
+    let by_origin = marked("by-origin", json!({}));
+    b.link("open-from", "open-to", "cites", "markdown");
+    b.link("private-from", "open-to", "cites", "markdown");
+    b.link("alias-from", "open-to", "cites", "markdown");
+    b.link("open-from", "private-to", "cites", "markdown");
+    b.link("open-from", "open-to", "supersedes", "markdown");
+    b.link("private-from", "open-to", "supersedes", "manual");
+    b.link("alias-from", "by-origin", "supersedes", "manual");
+    let origin = AddLinkOptions {
+        link_type: Some("cites".into()),
+        link_source: Some("markdown".into()),
+        origin_slug: Some("private-origin".into()),
+        from_source_id: Some("default".into()),
+        to_source_id: Some("default".into()),
+        origin_source_id: Some("default".into()),
+        ..AddLinkOptions::default()
+    };
+    b.store.add_link("open-from", "by-origin", &origin).unwrap();
+    let _ = private_origin;
+    let scope = |policy: Value| -> GraphScope {
+        serde_json::from_value(json!({"scoped": true, "excludePrivate": policy})).unwrap()
+    };
+    let all = scope(json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"}));
+    let visibility_only =
+        scope(json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"}));
+    let unpoliced = scope(Value::Null);
+
+    // getBacklinkCounts: a private target is dropped, a private linker or a private origin does
+    // not count. `open-to` keeps `open-from` only. `by-origin` has a link from `open-from` that a
+    // private origin authored, and `alias-from`'s supersedes: both count without a policy; under
+    // `visibility` alone only the second does.
+    let ids = [open_to, private_to, by_origin];
+    let counts = |scope: &GraphScope| b.store.get_backlink_counts(&ids, scope).unwrap();
+    assert_eq!(
+        counts(&unpoliced),
+        vec![
+            json!({"page_id": open_to, "cnt": 3}),
+            json!({"page_id": private_to, "cnt": 1}),
+            json!({"page_id": by_origin, "cnt": 2}),
+        ],
+        "a scope without a policy hides nothing private"
+    );
+    assert_eq!(
+        counts(&all),
+        vec![
+            json!({"page_id": open_to, "cnt": 1}),
+            json!({"page_id": by_origin, "cnt": 0}),
+        ],
+        "private target, private linker (`visibility`, `access` alias) and private origin all drop"
+    );
+    assert_eq!(
+        counts(&visibility_only),
+        vec![
+            json!({"page_id": open_to, "cnt": 2}),
+            json!({"page_id": by_origin, "cnt": 1}),
+        ],
+        "without the alias keys only `visibility` hides a page"
+    );
+
+    // getAdjacencyBoosts: both ends and the origin must pass.
+    let set = [
+        open_from,
+        private_from,
+        by_alias,
+        open_to,
+        private_to,
+        by_origin,
+    ];
+    let hits = |scope: &GraphScope| -> Vec<(u64, u64)> {
+        b.store
+            .get_adjacency_boosts(&set, scope)
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["to_page_id"].as_u64().unwrap(),
+                    r["hits"].as_u64().unwrap(),
+                )
+            })
+            .collect()
+    };
+    let mut open_rows = vec![(open_to, 3), (private_to, 1), (by_origin, 2)];
+    open_rows.sort();
+    assert_eq!(hits(&unpoliced), open_rows);
+    assert_eq!(hits(&all), vec![(open_to, 1)]);
+    assert_eq!(hits(&visibility_only), vec![(open_to, 2), (by_origin, 1)]);
+
+    // supersedingPageSlugs: the superseding page, the target and the origin must pass.
+    let slugs = |scope: &GraphScope| -> Vec<String> {
+        strings(
+            &b.store
+                .superseding_page_slugs(&[open_to, by_origin], scope)
+                .unwrap(),
+            "by_slug",
+        )
+    };
+    // Ordered by target id, then slug: `open-to`'s superseders, then `by-origin`'s.
+    assert_eq!(
+        slugs(&unpoliced),
+        vec!["open-from", "private-from", "alias-from"]
+    );
+    assert_eq!(slugs(&all), vec!["open-from"]);
+    assert_eq!(slugs(&visibility_only), vec!["open-from", "alias-from"]);
+    let private_target: GraphScope = serde_json::from_value(
+        json!({"scoped": true, "excludePrivate": {"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"}}),
+    )
+    .unwrap();
+    assert!(
+        b.store
+            .superseding_page_slugs(&[private_to], &private_target)
+            .unwrap()
+            .is_empty()
+    );
+}
+
 #[test]
 fn search_reads_pages_linking_to() {
     let b = Brain::new("lq-linking");

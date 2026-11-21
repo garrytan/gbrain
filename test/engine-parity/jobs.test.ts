@@ -331,6 +331,39 @@ describe('engine parity: minion jobs', () => {
     return rowView(id)(row);
   });
 
+  parityTest('claimNextJob from eight workers at once, while jobs keep arriving, hands each job to exactly one worker',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'getJob'] }, async (engine) => {
+      // The engines serialize this differently (row locks with SKIP LOCKED, one writer, or optimistic commits that
+      // rerun on a conflict); what must match is the outcome: no job claimed twice, none lost, one claim each.
+      const base = await add(engine, 'work');
+      for (let i = 1; i < 24; i++) await add(engine, 'work', { priority: i % 3 });
+      const total = 32;
+      const claimed: number[] = [];
+      const refusedCompletes: number[] = [];
+      let idlePolls = 0;
+      const submitter = (async () => { for (let i = 0; i < total - 24; i++) await add(engine, 'work', { priority: i % 2 }); })();
+      const worker = async (w: number) => {
+        while (claimed.length < total && idlePolls < 5_000) {
+          const row = await engine.claimNextJob(claimSpec(`w${w}:a`));
+          if (!row) { idlePolls++; await Bun.sleep(1); continue; }
+          const id = Number(row.id);
+          claimed.push(id - base);
+          if (!(await engine.completeJob(id, `w${w}:a`))) refusedCompletes.push(id - base);
+        }
+      };
+      await Promise.all([submitter, ...Array.from({ length: 8 }, (_, w) => worker(w))]);
+      const rows = await Promise.all(Array.from({ length: total }, (_, i) => engine.getJob(base + i)));
+      const tally = (values: unknown[]) => Object.fromEntries(sorted([...new Set(values.map(String))]).map(v => [v, values.filter(x => String(x) === v).length]));
+      return {
+        claimed: [...claimed].sort((a, b) => a - b),
+        twice: claimed.length - new Set(claimed).size,
+        refusedCompletes,
+        status: tally(rows.map(r => r?.status)),
+        claimGeneration: tally(rows.map(r => Number(r?.claim_generation))),
+        attemptsStarted: tally(rows.map(r => Number(r?.attempts_started))),
+      };
+    });
+
   parityTest('reclaimStalledJobs requeues an expired lease, kills one at max_stalled, requeues a dead worker\'s co-runners marked, and clears drain-lease holders',
     { methods: ['admitJob', 'claimNextJob', 'reclaimStalledJobs', 'getJob', 'acquireCycleLock'] }, async (engine) => {
       const parent = await add(engine, 'parent');

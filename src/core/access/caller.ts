@@ -40,9 +40,8 @@ import { audienceMemberIds, parseMayActFor } from './members.ts';
 import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
-import type { LiveMemberRow, MemberBindingVia } from '../engine-sql/access-control.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
-import { readAudiencePrincipals as readAudiencePrincipalsOver, readMayActFor as readMayActForOver, type MayActForVia } from '../engine-sql/access-control.ts';
+import { readAudiencePrincipals as readAudiencePrincipalsOver, readLiveMember as readLiveMemberOver, readMayActFor as readMayActForOver, type LiveMemberRow, type MemberBindingVia, type MayActForVia } from '../engine-sql/access-control.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -83,16 +82,15 @@ export function identityLookupUnavailable(error: unknown): OperationError | null
   return null;
 }
 
-/**
- * An engine the member lookup reads through: its typed readLiveMember, which every engine serves (a Rust brain without
- * raw SQL) and every persistence SqlEngine view carries.
- */
+/** An engine that reads a live member: a typed engine, or a narrow executeRaw caller (the same SQL over it). */
+export type LiveMemberEngine = Pick<BrainEngine, 'readLiveMember'> | Pick<BrainEngine, 'executeRaw'>;
+/** The typed-only form (a Rust brain without raw SQL, every persistence SqlEngine view): this line's name for what LiveMemberEngine accepts first. */
 export type MemberLookupEngine = Pick<BrainEngine, 'readLiveMember'>;
 
-async function liveIdentity(engine: MemberLookupEngine, via: MemberBindingVia, param: string): Promise<string[]> {
+async function liveIdentity(engine: LiveMemberEngine, via: MemberBindingVia, key: string): Promise<string[]> {
   let row: LiveMemberRow | null;
   try {
-    row = await engine.readLiveMember(via, param);
+    row = 'readLiveMember' in engine ? await engine.readLiveMember(via, key) : await readLiveMemberOver(engine, via, key);
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', MEMBER_TABLES) || isMissingSchemaObject(error, 'column', MEMBER_COLUMN)) return [];
     if (error && typeof error === 'object' && (transientDatabaseFailure(error) || transientInterruption(error))) {
@@ -115,13 +113,13 @@ async function liveIdentity(engine: MemberLookupEngine, via: MemberBindingVia, p
  * that fails throws (liveIdentity: a transient database failure unchanged, else access_identity_unavailable). A write's publication passes only its stored
  * principal, so a member disabled or a binding removed after submission takes effect.
  */
-export async function memberIdentityFor(engine: MemberLookupEngine, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
+export async function memberIdentityFor(engine: LiveMemberEngine, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
   const principal = auth?.principal;
   if (principal?.kind === 'local_stdio') return auth?.stdioMember !== undefined ? liveIdentity(engine, 'member', auth.stdioMember)
     : liveIdentity(engine, 'stdio_config', STDIO_MEMBER_KEY);
   if (!principal || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return [];
-  return liveIdentity(engine, principal.kind, principal.id);
+  return liveIdentity(engine, principal.kind === 'legacy_token' ? 'legacy_token' : 'oauth_client', principal.id);
 }
 
 /** The member a local stdio server is bound to (config mcp.stdio_member), or null when unset or ill-formed. */

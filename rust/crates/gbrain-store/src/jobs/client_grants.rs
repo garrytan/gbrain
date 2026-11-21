@@ -16,6 +16,7 @@
 
 use super::oauth_clients::{ClientRecord, all_clients, budget_hundredths, load_client, put_client};
 use super::*;
+use crate::dream::jsonb;
 use crate::env::Env;
 use crate::sources::{read_source, source_key};
 
@@ -311,8 +312,8 @@ impl Store {
                 &input.client_id,
                 input.grant_revision,
                 (&input.audit.action, &input.audit.actor),
-                before_grant,
-                after_grant,
+                before_grant.clone(),
+                after_grant.clone(),
             )?;
             if input.private_pages.is_some() || input.private_facts.is_some() {
                 if let Some(pages) = &input.private_pages {
@@ -344,7 +345,7 @@ impl Store {
                 row.grant_revision,
                 ("register", &audit.actor),
                 None,
-                after_grant,
+                after_grant.clone(),
             )
         })
     }
@@ -365,8 +366,8 @@ impl Store {
                 &row.client_id,
                 row.revision,
                 (&row.action, &row.actor),
-                before_grant,
-                after_grant,
+                before_grant.clone(),
+                after_grant.clone(),
             )
         })
     }

@@ -14,7 +14,8 @@ secondary indexes yet.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.readPageSnapshot(slug, { sourceId?, sourceIds?, includeDeleted?, resolveAlias? }?)` | `{ page, tags, revision, sourceIncarnation, withdrawals: [] }` or `null`. `sourceIds` wins over `sourceId`; with neither, the first match, `default` first. With `resolveAlias`, an exact-slug miss reads the page a slug alias names, in the first source in scope whose source is live (any source with `includeDeleted`) and whose named page passes the soft-delete rule. `requireUnambiguous` and `preserveExactIdentity` stay refused. The `getPage` member reads through it and ignores `requireSafeChunks` and `takesHoldersAllowList` (`readPolicyOpts` passes both), which the SQL page read does not read | `readPageSnapshot` |
+| `brain.readPageSnapshot(slug, { sourceId?, sourceIds?, includeDeleted?, resolveAlias? }?)` | `{ page, tags, revision, sourceIncarnation, withdrawals: [] }` or `null`. `sourceIds` wins over `sourceId`; with neither, the first match, `default` first. With `resolveAlias`, an exact-slug miss reads the page a slug alias names, in the first source in scope whose source is live (any source with `includeDeleted`) and whose named page passes the soft-delete rule. `requireUnambiguous` and `preserveExactIdentity` stay refused | `readPageSnapshot` |
+
 | `brain.putPage(slug, page, { sourceId?, allowEmptyOverwrite?, expectedRevision?, force?, chunks?, index? }?)` | the stored `Page`. By default the store also installs chunks and seals the page (see "Chunks and keyword search"); `index: false` writes the page alone, which is what the TypeScript engine always passes, as PGLite's `putPage` writes no chunks | `putPage` |
 | `brain.listPages(filters?)` | `Page[]` (default `limit` 100). Filters: `type`, `tag`, `updated_after`, `updatedAfterKeyset { updatedAt, slug }`, `slugPrefix` (literal), `excludeSlugPrefixes`, `slugAfter`, `sourceId`, `sourceIds`, `includeDeleted`, `sort` (`updated_desc` default, `updated_asc`, `created_desc`, `slug`) | `listPages` |
 | `brain.countPages({ sourceId? }?)` | number of live pages | `countPages` |
@@ -23,11 +24,37 @@ secondary indexes yet.
 | `brain.softDeletePage(slug, { sourceId? }?)` | `{ slug }` or `null` | `softDeletePage` |
 | `brain.restorePage(slug, { sourceId? }?)` | `boolean` | `restorePage` |
 | `brain.deletePage(slug, { sourceId? }?)` | `null`; removes the page and its versions | `deletePage` |
-| `brain.getTags(slug, { sourceId?, sourceIds?, excludePrivate? }?)` | sorted `string[]`; a page the `excludePrivate` page policy hides has none | `getTags` |
+| `brain.getTags(slug, { sourceId?, sourceIds? }?)` | sorted `string[]` | `getTags` |
 | `brain.addTag(slug, tag, { sourceId? }?)` | `null`; `page_not_found` for a missing page | `addTag` |
 | `brain.removeTag(slug, tag, { sourceId? }?)` | `null`; no error when the page or tag is absent | `removeTag` |
-| `brain.createVersion(slug, { sourceId?, reason?, historyGap? }?)` | the version row, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own) and `reason` stamped as its `change_reason` (versions.ts passes null when `reasonSource` names a pair `readReasonPurgeTombstones` holds); `historyGap` first sets the page's `version_history_gap_at_us`; `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
-| `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody?, excludePrivate? }?)` | version rows, newest first; `includeBody: false` leaves out `compiled_truth` and `timeline`; `excludePrivate` (the caller's page policy) drops a hidden page's versions and each version whose own readers or fields the caller may not read, before `limit` | `getVersions` |
+| `brain.createVersion(slug, { sourceId?, reason?, historyGap? }?)` | the version row, with `reason` as its `change_reason` when given (and only if the prune kept the new version), `historyGap` recording the page's `version_history_gap_at` before the snapshot, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own); `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
+| `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody?, excludePrivate? }?)` | version rows, newest first, each with its change reason as `replaced_because`; `includeBody: false` leaves out `compiled_truth` and `timeline`; `excludePrivate` (the caller's page policy) drops a hidden page's versions and each version whose own readers or fields the caller may not read, before `limit` | `getVersions` |
+| `brain.readLatestVersionId(pageId)` | the page's newest version id, or `null` when it has none or the id is not a page's | `readLatestVersionId` |
+| `brain.readLatestVersionIdAtTier(pageId, tier)` | the page's newest version id whose snapshot `trust_tier` is `tier` (a version with no stored tier reads as `unknown`), or `null`; `invalid_argument` for a NUL byte | `readLatestVersionIdAtTier` |
+| `brain.stampVersionChangeReason({ pageId, afterVersionId, reason })` | how many versions took the reason: it sets `change_reason` on each of the page's versions with an id over `afterVersionId`, in one write; `invalid_argument` for a NUL byte | `stampVersionChangeReason` |
+
+### Version prune
+
+`version_prune.rs` runs PGLite's prune (`src/core/page-state/versions.ts`) in the same write as every snapshot
+(`createVersion`, a journal page write, `updateSlug`):
+
+- A large inline page (body plus timeline over `PAGE_INLINE_MAX_BYTES`, 1 MiB) keeps its newest five large inline
+  versions (`LARGE_PAGE_VERSIONS_KEPT`); a version with no body is never counted.
+- A segmented page keeps at most `versions.segmented_max_per_page` versions (default 50) and drops a version once the
+  closed manifest rows it pins, counted once per occurrence and generation, pass the larger of
+  `versions.segmented_max_pinned_bytes` (default 64 MiB) and the page's body bytes. A malformed config value reads as
+  the default. After a prune it sweeps the page's segments (`page_body.md`, "The sweep").
+- Each prune marks `successor_pruned` on the newest kept version before each pruned one and sets the page's
+  `version_history_gap_at`. That page write leaves the knowledge revision as it was, so nothing is queued.
+- `pruneHoldingPageVersions(pageId)` is the holding-page cap a fence fact append runs after its snapshot: it keeps the
+  page's newest `LARGE_PAGE_VERSIONS_KEPT` versions that are not segmented, deletes at most 100 of the older ones,
+  oldest first, marks the history as every prune does and answers how many it deleted (0 for an unknown page).
+- `restorePageTrust({ pageId, trustTier, writeOrigin })` sets back the tier and origin a fence append's page write
+  restamped (`src/core/trust/fence-append.ts`). It goes through the same trust stamp as the PGLite `UPDATE`: a lower
+  always lands, and a raise lands only under a promotion that covers it, else the stored tier stays. `writeOrigin` is
+  JSON text or null; a tier that is not a trust tier is refused.
+
+
 
 `putPage` follows PGLite:
 

@@ -41,7 +41,9 @@ export type TerminalCategory =
   // #6904: the write met a missing relation or column (42P01 / 42703); the schema is behind this build or lost a table.
   | 'schema_missing'
   // #7837: a request for a write gbrain retired (the v0.13.1 grandfather, #7814) that an older build queued; nothing to do.
-  | 'retired_operation';
+  | 'retired_operation'
+  // The brain's engine does not serve a member this write needs (engine_capability_missing); every retry meets the same refusal.
+  | 'needs_engine_upgrade';
 
 /** The receipt columns the classifier reads; every one but `intent_kind` and `error_message` survives compaction. */
 export interface TerminalInput {
@@ -96,7 +98,7 @@ export interface TerminalVerdict {
 /** The connection-loss texts `classifySyncFault` reads as `connection_lost`; POSIX-compatible, so readers match it in SQL (`~*`). */
 export const CONNECTION_MESSAGE_PATTERN = 'ECONN|ETIMEDOUT|EPIPE|connection.*closed|CONNECTION_ENDED';
 
-const DEFECTS = new Set<TerminalCategory>(['outside_fence', 'writer_guard', 'database_refusal', 'owner_exception', 'gbrain_defect', 'fence_unrenderable']);
+const DEFECTS = new Set<TerminalCategory>(['outside_fence', 'writer_guard', 'database_refusal', 'owner_exception', 'gbrain_defect', 'fence_unrenderable', 'needs_engine_upgrade']);
 const FAULT_CODES = new Set(SYNC_FAULT_TABLE.map(rule => rule.code));
 const escalateOf = (code: string) => SYNC_FAULT_TABLE.find(rule => rule.code === code)?.escalate ?? 'always';
 
@@ -159,6 +161,20 @@ function diagnosis(input: TerminalInput, code: string, origin: string | null, wh
     human_reason: `${why} The receipt does not record enough to name a fix; inspect it and the writer before acting.`,
     escalate: 'always: a person reads the writer status and the receipt',
     action: inspect(input.source_id, `${why} Writer status and the receipt are read-only; nothing is guessed.`) };
+}
+
+/**
+ * The brain's engine refused a member this write needs (`engine_capability_missing`, today the Rust engine preview). The
+ * refusal repeats on every attempt, so nothing clears it but a gbrain release whose engine serves the member, or running
+ * the write on a pglite or postgres brain: the user's choice. Warns as an unresolved class until then.
+ */
+function needsEngineUpgrade(input: TerminalInput, code: string, origin: string | null, capability: string | null): Partial_ {
+  const needs = capability ? `the ${capability} capability` : 'a capability';
+  return { category: 'needs_engine_upgrade', code, origin, class: 'systemic', safe_actions: ['upgrade'], needs_human: true,
+    human_reason: `The brain's engine does not serve ${needs} this write needs, so every attempt is refused the same way and nothing was written.`,
+    escalate: 'always: the same refusal on every attempt until the engine serves the capability',
+    action: inspect(input.source_id, `The write was refused because the brain's engine lacks ${needs}. Writer status names the engine and the build, read-only; gbrain errors ${code} explains the refusal.`,
+      `Upgrade gbrain to a release whose engine reports ${needs}, or run the write on a pglite or postgres brain; then submit it again with a new request id.`) };
 }
 
 function route(input: TerminalInput): Partial_ {
@@ -298,6 +314,7 @@ function route(input: TerminalInput): Partial_ {
         why: 'The page changed after the caller read it. Read the current revision and resubmit against it with a new request id.',
         verify: { argv: failuresArgv(source) } } };
   }
+  if (code === 'engine_capability_missing') return needsEngineUpgrade(input, code, origin, stringField(detail, 'capability'));
   if (code === 'owner_marker_missing') return fromTable('sync_fault', code, origin, ownerMarkerRestoreFix(source));
   if (FAULT_CODES.has(code)) {
     const verdict = fromTable('sync_fault', code, origin, faultAction(code, input), null, input.error_message);
@@ -348,7 +365,7 @@ function schemaMissingVerdict(input: TerminalInput, code: string, origin: string
 /** #7630: the caller-submitted page and memory writes a caller resubmits; no sync replays them. */
 const RESUBMITTED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page', 'remember', 'forget', 'forget_fact',
   'add_tag', 'remove_tag', 'add_link', 'remove_link', 'add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove',
-  'loops_close', 'decide_proposal', 'trust_owner_page', 'trust_release', 'relink_facts']);
+  'loops_close', 'decide_proposal', 'trust_owner_page', 'trust_release', 'relink_facts', 'retire_connector_facts']);
 
 /**
  * #7630: the operation a fault's fix depends on. A reconcile or managed write (import, repair, quarantine clear,

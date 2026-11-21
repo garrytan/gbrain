@@ -1,4 +1,5 @@
-//! The derivation trust members: `lowerTrustTier`, `countDerivedRowTaint`, `countDerivedFactTaint` and `stampPageFrontmatter`.
+//! The derivation trust members: `lowerTrustTier`, `countDerivedRowTaint` and `stampPageFrontmatter`
+//! (`countDerivedFactTaint` is `facts_trust_owner.rs`).
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store::trust::derivation` call on
 //! the pool through `Brain::run` and resolves plain JSON. The TypeScript members
@@ -39,12 +40,6 @@ impl Brain {
             let a: TaintCountQuery = required(spec, "countDerivedRowTaint spec")?;
             s.count_derived_row_taint(&a)
         })
-    }
-
-    /// `countDerivedFactTaint()`: resolves `{ derived, external }` for the facts.
-    #[napi]
-    pub fn count_derived_fact_taint<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.count_derived_fact_taint())
     }
 
     /// `stampPageFrontmatter(spec)`: applies one fixed frontmatter stamp.

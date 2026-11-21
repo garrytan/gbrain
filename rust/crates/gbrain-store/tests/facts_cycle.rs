@@ -6,8 +6,8 @@ mod memory_env;
 use gbrain_store::env::iso;
 use gbrain_store::facts::InsertFactsArgs;
 use gbrain_store::facts::cycle::{
-    BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, PageCoordinate,
-    WorldFactCount,
+    BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, FenceRowOccupantQuery,
+    PageCoordinate, WorldFactCount,
 };
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
@@ -403,6 +403,39 @@ fn fence_row_numbers_and_stored_rows_follow_the_page_coordinate() {
             json!({ "row_num": 2, "fact": "first" }),
         ]
     );
+}
+
+#[test]
+fn fence_row_occupant_is_the_fact_at_that_row_of_the_page_coordinate() {
+    let b = brain("cycle-occupant");
+    source(&b, "other", None);
+    let ids = insert(
+        &b,
+        "default",
+        json!([
+            { "fact": "first holder", "row_num": 4, "source_markdown_slug": "n/a" },
+            { "fact": "second holder", "row_num": 4, "source_markdown_slug": "n/a" },
+            { "fact": "other row", "row_num": 7, "source_markdown_slug": "n/a" },
+            { "fact": "unfenced", "source_markdown_slug": "n/a" },
+            { "fact": "other page", "row_num": 4, "source_markdown_slug": "n/b" },
+        ]),
+    );
+    let occupant = |source: &str, slug: &str, row: i64| {
+        b.read_fence_row_occupant(&args::<FenceRowOccupantQuery>(
+            json!({ "sourceId": source, "slug": slug, "rowNum": row }),
+        ))
+        .unwrap()
+    };
+    assert_eq!(occupant("default", "n/a", 4), Some(ids[0]));
+    // The second row 4 of n/a is skipped (one fact per fence row), so ids are first holder, other row, ...
+    assert_eq!(occupant("default", "n/a", 7), Some(ids[1]));
+    assert_eq!(occupant("default", "n/a", 5), None);
+    assert_eq!(occupant("default", "n/none", 4), None);
+    assert_eq!(occupant("other", "n/a", 4), None);
+    let nul = b.read_fence_row_occupant(&args::<FenceRowOccupantQuery>(
+        json!({ "sourceId": "default", "slug": "n/\0a", "rowNum": 4 }),
+    ));
+    assert!(nul.is_err());
 }
 
 #[test]

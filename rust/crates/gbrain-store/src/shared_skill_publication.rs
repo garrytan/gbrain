@@ -490,7 +490,7 @@ impl Store {
                     source_id: w.source_id.clone(),
                     source_incarnation: inc.clone(),
                     pack_id: w.pack_id.clone(),
-                    revision,
+                    revision: revision.clone(),
                     manifest: w.manifest.clone(),
                     manifest_hash: w.manifest_hash.clone(),
                 },

@@ -95,7 +95,7 @@ impl Store {
                 tx,
                 &key,
                 &HousekeepingRow {
-                    completed_keys,
+                    completed_keys: completed_keys.clone(),
                     updated_at_us: self.env.now_micros(),
                 },
             )
@@ -121,7 +121,7 @@ impl Store {
                         tx,
                         &key,
                         &HousekeepingRow {
-                            completed_keys,
+                            completed_keys: completed_keys.clone(),
                             updated_at_us: self.env.now_micros(),
                         },
                     )?;
@@ -140,24 +140,6 @@ impl Store {
         fingerprint_prefix: &str,
     ) -> Result<Vec<Value>> {
         list_in(&*self.read()?, op, fingerprint_prefix)
-    }
-
-    /// `readPageRevisions(ids)`: `{ id, revision }` of each listed page record, deleted or not, once
-    /// each in id order; an id no page has answers nothing. The held-page read joins a hold's page
-    /// by id this way (`readHeldPageRows`).
-    pub fn read_page_revisions(&self, ids: &[i64]) -> Result<Vec<Value>> {
-        let read = self.read()?;
-        let wanted: std::collections::BTreeSet<u64> = ids
-            .iter()
-            .filter_map(|id| u64::try_from(*id).ok())
-            .collect();
-        let mut out = Vec::new();
-        for id in wanted {
-            if let Some(page) = crate::pages::read_page_by_id(&*read, id)? {
-                out.push(json!({ "id": page.id, "revision": page.knowledge_revision }));
-            }
-        }
-        Ok(out)
     }
 }
 
@@ -248,7 +230,9 @@ mod tests {
         let rows = s.read_page_revisions(&[id, id, -1, id + 1]).unwrap();
         assert_eq!(
             rows,
-            vec![json!({ "id": page.id, "revision": page.knowledge_revision })]
+            vec![
+                json!({ "id": page.id, "slug": "a", "knowledge_revision": page.knowledge_revision })
+            ]
         );
     }
 

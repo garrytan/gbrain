@@ -10,6 +10,8 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
+use gbrain_store::facts::contest::LexicalContestQuery;
+use gbrain_store::facts::quote::{OwnerTierQuery, QuotedPagesQuery};
 use gbrain_store::facts::saved_match::SavedFactsMatchQuery;
 use gbrain_store::facts::trust::{RelevanceQuery, UncomparableQuery};
 
@@ -51,6 +53,45 @@ impl Brain {
         self.run(env, move |s| {
             let a: SavedFactsMatchQuery = required(query, "matchSavedFacts query")?;
             s.match_saved_facts(&a)
+        })
+    }
+
+    /// `listLexicalContestCandidates(query)`: resolves `{ id, fact, trust_tier }` rows, highest id first.
+    #[napi]
+    pub fn list_lexical_contest_candidates<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: LexicalContestQuery = required(query, "listLexicalContestCandidates query")?;
+            s.list_lexical_contest_candidates(&a)
+        })
+    }
+
+    /// `listFactsFromQuotedPages(query)`: resolves the fact ids from a quoted page, ascending.
+    #[napi]
+    pub fn list_facts_from_quoted_pages<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: QuotedPagesQuery = required(query, "listFactsFromQuotedPages query")?;
+            s.list_facts_from_quoted_pages(&a)
+        })
+    }
+
+    /// `listOwnerTierFacts(query)`: resolves the fact ids at or above the floor, ascending.
+    #[napi]
+    pub fn list_owner_tier_facts<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: OwnerTierQuery = required(query, "listOwnerTierFacts query")?;
+            s.list_owner_tier_facts(&a)
         })
     }
 }

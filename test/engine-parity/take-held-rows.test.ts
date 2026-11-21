@@ -1,9 +1,10 @@
 /**
- * BrainEngine parity — the fence guard's read of held takes (engine-sql/trust-fence.ts `listHeldTakeRows`, called by
+ * BrainEngine parity — the fence guard's read of held takes (engine-sql/trust-fence.ts `listHeldRows` on the `takes`
+ * table, called by
  * trust/fence-guard.ts `heldRows` when a takes reconcile asks which stored takes it may not retire).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: of the ids asked about, listHeldTakeRows returns the same takes, in id order, with their stored tier, on
+ *  - Contract: of the ids asked about, listHeldRows returns the same takes of the page, in id order, with their stored tier, on
  *    every engine arm: takes more trusted than the writer (named, or the transaction's declared tier, `unknown` when
  *    undeclared; a name that is no tier ranks below every tier) and, when the caller asks, takes a pending `forget`
  *    proposal targets. A forget of another table's row with the same id holds no take.
@@ -37,7 +38,7 @@ async function asWriter<T>(engine: BrainEngine, tier: string, fn: (tx: BrainEngi
 }
 
 /** One take per tier (`plain` undeclared), each in its own write; returns claim -> id. */
-async function seed(engine: BrainEngine): Promise<Map<string, number>> {
+async function seed(engine: BrainEngine): Promise<{ ids: Map<string, number>; pageId: number }> {
   const page = await engine.putPage(SLUG, { type: 'person', title: 'Held Take Example', compiled_truth: 'A person.', timeline: '' });
   for (const [i, [claim, tier]] of ROWS.entries()) {
     const row = [{ page_id: Number(page.id), row_num: i + 1, claim, kind: 'take', holder: 'alice-example', weight: 0.5 }];
@@ -45,7 +46,7 @@ async function seed(engine: BrainEngine): Promise<Map<string, number>> {
     else await engine.addTakesBatch(row);
   }
   const takes = await engine.listTakes({ page_slug: SLUG });
-  return new Map(takes.map(t => [t.claim, Number(t.id)]));
+  return { ids: new Map(takes.map(t => [t.claim, Number(t.id)])), pageId: Number(page.id) };
 }
 
 /** The held takes as `claim:tier`, so the answer compares across arms without raw ids. */
@@ -56,13 +57,13 @@ function labeller(ids: Map<string, number>) {
 
 describe('engine parity: the fence guard read of held takes', () => {
   parityTest('takes above the writer are held in id order; the writer is the named tier, else the declared one, else unknown', {
-    methods: ['putPage', 'transaction', 'applyTransactionSettings', 'addTakesBatch', 'listTakes', 'listHeldTakeRows'],
+    methods: ['putPage', 'transaction', 'applyTransactionSettings', 'addTakesBatch', 'listTakes', 'listHeldRows'],
   }, async (engine) => {
-    const ids = await seed(engine);
+    const { ids, pageId } = await seed(engine);
     const label = labeller(ids);
     const all = ['external', 'plain', 'agent', 'curated'].map(s => ids.get(s)!);
     const read = (tx: BrainEngine, writer?: string) =>
-      tx.listHeldTakeRows({ ids: all, ...(writer ? { writer: writer as TrustTier } : {}) }).then(label);
+      tx.listHeldRows({ table: 'takes', pageId, ids: all, ...(writer ? { writer: writer as TrustTier } : {}) }).then(label);
     const out = {
       undeclared: await read(engine),
       named_agent: await asWriter(engine, 'operator_curated', tx => read(tx, 'agent_written')),
@@ -71,8 +72,8 @@ describe('engine parity: the fence guard read of held takes', () => {
       declared_external: await asWriter(engine, 'external_untrusted', tx => read(tx)),
       // The declared tier ends with its transaction.
       after: await read(engine),
-      missing_ids: label(await engine.listHeldTakeRows({ ids: [ids.get('agent')!, 999_999_999, -4] })),
-      empty: await engine.listHeldTakeRows({ ids: [] }),
+      missing_ids: label(await engine.listHeldRows({ table: 'takes', pageId, ids: [ids.get('agent')!, 999_999_999, -4] })),
+      empty: await engine.listHeldRows({ table: 'takes', pageId, ids: [] }),
     };
     expect(out).toEqual({
       undeclared: ['curated:operator_curated', 'agent:agent_written'],
@@ -88,9 +89,9 @@ describe('engine parity: the fence guard read of held takes', () => {
   });
 
   parityTest('the fence guard holds a take a pending forget targets only when asked, and stops holding it once decided', {
-    methods: ['putPage', 'addTakesBatch', 'listTakes', 'insertTrustProposal', 'transitionTrustProposal', 'listHeldTakeRows'],
+    methods: ['putPage', 'addTakesBatch', 'listTakes', 'insertTrustProposal', 'transitionTrustProposal', 'listHeldRows'],
   }, async (engine) => {
-    const ids = await seed(engine);
+    const { ids, pageId } = await seed(engine);
     const name = new Map([...ids].map(([claim, id]) => [id, claim]));
     // `plain` is the target of a pending forget; `external` is only its related row. A forget that targets a timeline
     // row with `agent`'s id names another table, so it holds no take.
@@ -102,12 +103,12 @@ describe('engine parity: the fence guard read of held takes', () => {
       before: {}, proposer: 'test' });
     const all = [...ids.values()];
     // The production caller: trust/fence-guard.ts heldRows, as the takes reconcile (cycle/extract-takes.ts) calls it.
-    const guard = async (pending: boolean) => [...(await heldRows(engine, 'takes', all, { writer: 'user_confirmed', pending }))]
+    const guard = async (pending: boolean) => [...(await heldRows(engine, 'takes', pageId, all, { writer: 'user_confirmed', pending }))]
       .map(([id, tier]) => `${name.get(id) ?? 'other'}:${tier}`).sort();
     const out = {
       not_asked: await guard(false),
       asked: await guard(true),
-      below_writer_and_asked: (await heldRows(engine, 'takes', all, { pending: true })).size,
+      below_writer_and_asked: (await heldRows(engine, 'takes', pageId, all, { pending: true })).size,
       decided: await engine.transitionTrustProposal(tp, 'pending', 'rejected'),
       after_decision: await guard(true),
     };

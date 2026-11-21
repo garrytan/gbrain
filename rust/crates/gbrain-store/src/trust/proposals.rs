@@ -101,7 +101,9 @@ struct ProposalRecord {
     target_id: i64,
     related_table: Option<String>,
     related_id: Option<i64>,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     before_state: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     after_state: Value,
     proposer: String,
     status: String,
@@ -123,8 +125,8 @@ impl ProposalRecord {
             "target_id": self.target_id,
             "related_table": self.related_table,
             "related_id": self.related_id,
-            "before_state": self.before_state,
-            "after_state": self.after_state,
+            "before_state": crate::jsonb::ordered(&self.before_state),
+            "after_state": crate::jsonb::ordered(&self.after_state),
             "proposer": self.proposer,
             "proposer_principal_kind": Value::Null,
             "proposer_principal_id": Value::Null,
@@ -320,6 +322,27 @@ fn get_id(read: &dyn KvRead, key: &[u8]) -> Result<Option<u64>> {
     }
 }
 
+/// The open contest of one row (engine-sql/trust-fence.ts `OPEN_CONTEST_SQL`): a pending `forget`
+/// proposal whose target is the row.
+pub(crate) fn pending_forget(read: &dyn KvRead, table: &str, row_id: u64) -> Result<bool> {
+    let Ok(row_id) = i64::try_from(row_id) else {
+        return Ok(false);
+    };
+    for id in ids_naming(read, table, row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if p.status == "pending"
+            && p.action == "forget"
+            && p.target_table == table
+            && p.target_id == row_id
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The fence guard's held arm for one fact (engine-sql/trust-fence.ts `listFenceFactRows`): a
 /// `supersede_fact` or `confirm` proposal names it as `related`, is pending, rejected or undone,
 /// and its before state has a `visibility` key (`before_state->'visibility' IS NOT NULL`: a JSON
@@ -339,24 +362,6 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
             && p.before_state
                 .as_object()
                 .is_some_and(|state| state.contains_key("visibility"))
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// The open contest of one row (fence-guard.ts `OPEN_CONTEST`): a pending `forget` proposal
-/// targets `(table, row_id)`.
-pub(crate) fn pending_forget(read: &dyn KvRead, table: &str, row_id: i64) -> Result<bool> {
-    for id in ids_naming(read, table, row_id)? {
-        let Some(p) = read_record(read, id)? else {
-            return Err(corrupt("row index entry without its row"));
-        };
-        if p.status == "pending"
-            && p.action == "forget"
-            && p.target_table == table
-            && p.target_id == row_id
         {
             return Ok(true);
         }

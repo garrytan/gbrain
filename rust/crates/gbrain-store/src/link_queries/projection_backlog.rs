@@ -15,7 +15,7 @@
 
 use super::retrieval_coverage::{CoverageScope, ProjectionClass, Sources, class, in_scope};
 use crate::Store;
-use crate::chunk_queries::SAFE_FENCE_CHUNKER_VERSION;
+use crate::chunks::SAFE_FENCE_CHUNKER_VERSION;
 use crate::chunks::read_chunks;
 use crate::cli_reads::pg_text::timestamptz_text;
 use crate::error::Result;

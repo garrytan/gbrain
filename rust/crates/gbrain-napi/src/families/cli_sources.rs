@@ -71,7 +71,8 @@ impl Brain {
         })
     }
 
-    /// `holdPageEmbedding(pageId, reason)`: sets the page's embedding hold; resolves null.
+    /// `holdPageEmbedding(pageId, reason)`: sets the page's ledger row to held (an upsert that keeps
+    /// its spend columns); resolves null.
     #[napi]
     pub fn hold_page_embedding<'env>(
         &self,

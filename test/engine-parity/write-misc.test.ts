@@ -394,11 +394,33 @@ describe('engine parity: write misc', () => {
     return view;
   });
 
-  parityTest('readSynopsisTierConfig lists no synopsis source on a fresh brain', { methods: ['listSynopsisSourceIds'] }, async (engine) => {
+  parityTest('readSynopsisTierConfig lists no synopsis source on a fresh brain', { methods: ['listSynopsisSourceIds', 'hasSynopsisFrontmatterOverride'] }, async (engine) => {
     const config = await readSynopsisTierConfig(engine);
     expect(config.synopsis_sources).toEqual([]);
-    return { config, direct: await engine.listSynopsisSourceIds() };
+    expect(config.configured).toBe(false);
+    return { config, direct: await engine.listSynopsisSourceIds(), override: await engine.hasSynopsisFrontmatterOverride() };
   });
+
+  parityTest('a live default page that names the synopsis tier in its frontmatter configures the tier; another value, key, source or a deleted page does not',
+    { methods: ['hasSynopsisFrontmatterOverride', 'listSynopsisSourceIds', 'putPage', 'softDeletePage'] }, async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const put = (slug: string, sourceId: string, frontmatter: Record<string, unknown>) =>
+        engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, timeline: '', frontmatter }, { sourceId });
+      const seen = async () => ({ override: await engine.hasSynopsisFrontmatterOverride(), configured: (await readSynopsisTierConfig(engine)).configured });
+      await put('a', 'default', { contextual_retrieval: 'off' });
+      await put('b', 'default', { retrieval: 'per_chunk_synopsis' });
+      await put('c', 'default', { contextual_retrieval: ['per_chunk_synopsis'] });
+      await put('d', 'other', { contextual_retrieval: 'per_chunk_synopsis' });
+      const none = await seen();
+      await put('e', 'default', { contextual_retrieval: 'per_chunk_synopsis' });
+      const named = await seen();
+      await engine.softDeletePage('e', { sourceId: 'default' });
+      const deleted = await seen();
+      expect({ none, named, deleted }).toEqual({
+        none: { override: false, configured: false }, named: { override: true, configured: true }, deleted: { override: false, configured: false },
+      });
+      return { none, named, deleted };
+    });
 
   // A source's own contextual-retrieval mode is written by `sources` admin raw SQL; on Rust the seed refuses, because no
   // Rust brain keeps one, and the member answers none, as the fresh-brain case.

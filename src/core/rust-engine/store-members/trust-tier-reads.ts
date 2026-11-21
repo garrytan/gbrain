@@ -6,8 +6,8 @@
  * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
  * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
  * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` answers false: the store keeps no `needs_rederive`
- * queue (only a raw-SQL purge writes one, and `executeRaw` refuses here). `beginSnapshotRead` sets nothing: a store transaction is one snapshot
- * already, and `READ ONLY` is not enforced.
+ * queue (only a raw-SQL purge writes one, and `executeRaw` refuses here). `beginSnapshotRead` sets no isolation level: a store transaction is one
+ * snapshot already. Its `READ ONLY` is enforced: every later write in the transaction refuses as Postgres refuses it.
  *
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
  *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is neither the no-caller one nor the
@@ -30,14 +30,13 @@
  *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { LARGE_PAGE_VERSIONS_KEPT } from '../../page-body/limits.ts';
-import { PAGE_INLINE_MAX_BYTES } from '../../page-size-policy.ts';
 import {
   callerReadersAllowedSql, privacyForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment,
   remoteReadFloorSql, withoutCallerAccess,
 } from '../../search/private-visibility.ts';
 import { validDate } from '../../valid-time.ts';
 import type { RustEngine } from '../../rust-engine.ts';
+import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { judgeWidenedCaller, renderForStoreCaller, storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
@@ -147,12 +146,14 @@ export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain
   if (!snapshotServed) refuseMember(member, 'a caller whose snapshot policy is not the canonical one for its readers');
   const got = await storeCall({ member }, () => brain.pickValidTimeEdition({
     pageId: spec.pageId, asOf: spec.asOf, excludePrivate: spec.excludePrivate, pinOrd: spec.pinOrd, inlineMaxBytes: spec.inlineMaxBytes,
-    policy, pruneMaxBytes: PAGE_INLINE_MAX_BYTES, pruneKept: LARGE_PAGE_VERSIONS_KEPT,
-  })) as { row: Record<string, unknown> | null; history_unpruned: boolean };
-  if (got.history_unpruned) refuseMember(member, 'a version history PGLite would have pruned, which the store keeps whole');
+    policy,
+  })) as { row: Record<string, unknown> | null };
   if (!got.row) return null;
   const row = got.row;
-  return { ...row, replaced_at: asDate(row.replaced_at), recorded_since: asDate(row.recorded_since), created_at: asDate(row.created_at), gap_at: asDate(row.gap_at) };
+  return {
+    ...row, replaced_at: asDate(row.replaced_at), recorded_since: asDate(row.recorded_since), gap_at: asDate(row.gap_at),
+    created_at: asDate(row.created_at),
+  };
 };
 
 export const listAmendmentsNotApplied: Member<'listAmendmentsNotApplied'> = (brain, spec) => {
@@ -189,10 +190,19 @@ export const pageAwaitsRederive: Member<'pageAwaitsRederive'> = async (_brain, p
 };
 
 /**
- * `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ [READ ONLY]`: nothing to set. A store transaction holds the
- * store's one writer from its start, so its reads already see one state. `READ ONLY` is not enforced: a write in the
- * transaction still lands. Refuses on a transaction that has ended, as the other transaction members do.
+ * `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ [READ ONLY]`. A store transaction holds the store's one writer
+ * from its start, so its reads already see one state and there is no isolation level to set. `READ ONLY` makes the
+ * store refuse every later write in the transaction with `read_only_transaction`, which `mapStoreError` turns into
+ * Postgres's SQLSTATE 25006 refusal. Outside a transaction it does nothing, as `SET TRANSACTION` there only warns on
+ * Postgres. Refuses on a transaction that has ended, as the other transaction members do.
  */
-export const beginSnapshotRead = async function beginSnapshotRead(this: RustEngine): Promise<void> {
-  if (this._txScope?.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'beginSnapshotRead' });
+export const beginSnapshotRead = async function beginSnapshotRead(this: RustEngine, _brain: StoreBrain, opts?: { readOnly?: boolean }): Promise<void> {
+  const scope = this._txScope;
+  if (scope?.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'beginSnapshotRead' });
+  if (!scope || opts?.readOnly !== true) return;
+  try {
+    await scope.brain.setTransactionReadOnly();
+  } catch (error) {
+    throw mapStoreError(error, { member: 'beginSnapshotRead' });
+  }
 };

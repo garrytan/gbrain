@@ -46,7 +46,9 @@ export const upsertChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts
  * Replaces a page's chunks and seals them to its current revision (PGLite's sealChunks). A missing or deleted page
  * throws PGLite's `Page not found`; the write itself carries the revision it read, so a page that changes in between
  * rejects as a revision conflict. The seal also sends `sanitizeRemoteBody(timeline)`, the timeline text of the page
- * keyword vector (PGLite's `sealPageTextProjection`); a segmented page (NULL timeline) sends none.
+ * keyword vector (PGLite's `sealPageTextProjection`); a segmented page (NULL timeline) sends none. The store refuses,
+ * before it writes, what PGLite's `sealChunks` refuses: a page in an archived source (`Page not found`) and a
+ * segmented page (`sealChunks refuses segmented page ...`), whose projection is built from its segments.
  */
 export const sealChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }], void> =
   async (brain, slug, chunks, opts) => {
@@ -60,7 +62,6 @@ export const sealChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?:
 
 export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; includeUnsealed?: boolean; requireSafeChunks?: boolean }], Chunk[]> =
   async (brain, slug, opts) => {
-    // `requireSafeChunks` (the chunker-version fence the import's chunk reuse asks for) is served by the store.
     const { sourceIds, sourceId, includeEmbedding, includeUnsealed, requireSafeChunks } =
       takeOptions('getChunks', opts, ['sourceId', 'sourceIds', 'includeEmbedding', 'includeUnsealed', 'requireSafeChunks']) as
         { sourceId?: unknown; sourceIds?: unknown[]; includeEmbedding?: boolean; includeUnsealed?: boolean; requireSafeChunks?: boolean };
@@ -73,10 +74,9 @@ export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; s
     // Chunks of one slug from several sources come back in an order PGLite leaves to the database (the sort key ties
     // across sources), so a read over more than one source is refused, not guessed.
     if (named.length > 1) refuseMember('getChunks', 'a read over several sources');
-    const scope = {
-      sourceId: named[0]!, includeEmbedding: includeEmbedding === true, includeUnsealed: includeUnsealed === true,
-      requireSafeChunks: requireSafeChunks === true,
-    };
+    // `requireSafeChunks` (safeChunksFilter): a page chunked before the fence chunker version has no chunks to read.
+    const scope = { sourceId: named[0]!, includeEmbedding: includeEmbedding === true, includeUnsealed: includeUnsealed === true,
+      requireSafeChunks: requireSafeChunks === true };
     const rows: Chunk[] = await storeCall({ member: 'getChunks', slug }, () => brain.getChunks(slug, scope));
     return rows.map((row) => toChunk(row));
   };

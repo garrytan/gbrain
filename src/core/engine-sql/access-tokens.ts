@@ -30,6 +30,8 @@ export interface AccessTokenInsert {
   federated_read: string[] | null;
   allowed_operations: string[] | null;
   takes_holders: string[] | null;
+  /** GST-2898: born with the read-shared switch on (read_shared_revision = 1, the birth revision). */
+  read_shared?: boolean;
   min_trust?: string | null;
   revoked_at?: Date | null;
   member_id?: string | null;
@@ -52,7 +54,19 @@ export async function insertAccessToken(tx: Raw, row: AccessTokenInsert): Promis
   const base = [row.name, row.token_hash, row.scopes, row.permissions, row.source_grant, row.source_id, row.federated_read, row.allowed_operations, row.takes_holders];
   const withBinding = row.member_id !== undefined || row.may_act_for !== undefined || row.created_at !== undefined;
   const withFloor = row.min_trust !== undefined || row.revoked_at !== undefined;
-  const rows = withBinding
+  const rows = row.read_shared && withBinding
+    ? await tx.executeRaw<{ id: string }>(
+      `INSERT INTO access_tokens (name, token_hash, scopes, permissions, source_grant, source_id, federated_read, allowed_operations, takes_holders, grant_revision, read_shared_revision, min_trust, revoked_at, member_id, may_act_for, created_at)
+       VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1, 1, $10, $11::timestamptz, $12, $13::text[], COALESCE($14::timestamptz, now()))
+       RETURNING id::text AS id`,
+      [...base, row.min_trust ?? null, row.revoked_at ?? null, row.member_id ?? null, row.may_act_for ?? null, row.created_at ?? null])
+    : row.read_shared
+    ? await tx.executeRaw<{ id: string }>(
+      `INSERT INTO access_tokens (name, token_hash, scopes, permissions, source_grant, source_id, federated_read, allowed_operations, takes_holders, grant_revision, read_shared_revision, min_trust, revoked_at)
+       VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1, 1, $10, $11::timestamptz)
+       RETURNING id::text AS id`,
+      [...base, row.min_trust ?? null, row.revoked_at ?? null])
+    : withBinding
     ? await tx.executeRaw<{ id: string }>(
       `INSERT INTO access_tokens (name, token_hash, scopes, permissions, source_grant, source_id, federated_read, allowed_operations, takes_holders, grant_revision, min_trust, revoked_at, member_id, may_act_for, created_at)
        VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1, $10, $11::timestamptz, $12, $13::text[], COALESCE($14::timestamptz, now()))

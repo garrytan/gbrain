@@ -1,9 +1,9 @@
 /**
- * BrainEngine parity — the fence guard's read of held timeline rows (engine-sql/trust-fence.ts `listHeldTimelineRows`,
- * called by trust/fence-guard.ts `heldRows` for timeline reconcile and the fence projection).
+ * BrainEngine parity — the fence guard's read of held timeline rows (engine-sql/trust-fence.ts `listHeldRows` on the
+ * `timeline_entries` table, called by trust/fence-guard.ts `heldRows` for timeline reconcile and the fence projection).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: of the ids asked about, listHeldTimelineRows returns the same timeline rows, in id order, with their stored
+ *  - Contract: of the ids asked about, listHeldRows returns the same timeline rows of the page, in id order, with their stored
  *    tier, on every engine arm: rows more trusted than the writer (named, or the transaction's declared tier, `unknown`
  *    when undeclared; a name that is no tier ranks below every tier) and, when the caller asks, rows a pending `forget`
  *    proposal targets.
@@ -37,15 +37,15 @@ async function asWriter<T>(engine: BrainEngine, tier: string, fn: (tx: BrainEngi
 }
 
 /** One timeline row per tier (`plain` undeclared), each in its own write; returns summary -> id. */
-async function seed(engine: BrainEngine): Promise<Map<string, number>> {
-  await engine.putPage(SLUG, { type: 'person', title: 'Held Example', compiled_truth: 'A person.', timeline: '' });
+async function seed(engine: BrainEngine): Promise<{ ids: Map<string, number>; pageId: number }> {
+  const page = await engine.putPage(SLUG, { type: 'person', title: 'Held Example', compiled_truth: 'A person.', timeline: '' });
   for (const [i, [summary, tier]] of ROWS.entries()) {
     const entry = { date: `2026-01-0${i + 1}`, summary };
     if (tier) await asWriter(engine, tier, tx => tx.addTimelineEntry(SLUG, entry));
     else await engine.addTimelineEntry(SLUG, entry);
   }
   const rows = await engine.getTimeline(SLUG);
-  return new Map(rows.map(r => [r.summary, Number(r.id)]));
+  return { ids: new Map(rows.map(r => [r.summary, Number(r.id)])), pageId: Number(page.id) };
 }
 
 /** The held rows as `summary:tier`, so the answer compares across arms without raw ids. */
@@ -56,13 +56,13 @@ function labeller(ids: Map<string, number>) {
 
 describe('engine parity: the fence guard read of held timeline rows', () => {
   parityTest('rows above the writer are held in id order; the writer is the named tier, else the declared one, else unknown', {
-    methods: ['putPage', 'transaction', 'applyTransactionSettings', 'addTimelineEntry', 'getTimeline', 'listHeldTimelineRows'],
+    methods: ['putPage', 'transaction', 'applyTransactionSettings', 'addTimelineEntry', 'getTimeline', 'listHeldRows'],
   }, async (engine) => {
-    const ids = await seed(engine);
+    const { ids, pageId } = await seed(engine);
     const label = labeller(ids);
     const all = ['external', 'plain', 'agent', 'curated'].map(s => ids.get(s)!);
     const read = (tx: BrainEngine, writer?: string) =>
-      tx.listHeldTimelineRows({ ids: all, ...(writer ? { writer: writer as TrustTier } : {}) }).then(label);
+      tx.listHeldRows({ table: 'timeline_entries', pageId, ids: all, ...(writer ? { writer: writer as TrustTier } : {}) }).then(label);
     const out = {
       undeclared: await read(engine),
       named_agent: await asWriter(engine, 'operator_curated', tx => read(tx, 'agent_written')),
@@ -71,8 +71,8 @@ describe('engine parity: the fence guard read of held timeline rows', () => {
       declared_external: await asWriter(engine, 'external_untrusted', tx => read(tx)),
       // The declared tier ends with its transaction.
       after: await read(engine),
-      missing_ids: label(await engine.listHeldTimelineRows({ ids: [ids.get('agent')!, 999_999_999, -4] })),
-      empty: await engine.listHeldTimelineRows({ ids: [] }),
+      missing_ids: label(await engine.listHeldRows({ table: 'timeline_entries', pageId, ids: [ids.get('agent')!, 999_999_999, -4] })),
+      empty: await engine.listHeldRows({ table: 'timeline_entries', pageId, ids: [] }),
     };
     expect(out).toEqual({
       undeclared: ['curated:operator_curated', 'agent:agent_written'],
@@ -88,9 +88,9 @@ describe('engine parity: the fence guard read of held timeline rows', () => {
   });
 
   parityTest('the fence guard holds a row a pending forget targets only when asked, and stops holding it once decided', {
-    methods: ['putPage', 'addTimelineEntry', 'getTimeline', 'insertTrustProposal', 'transitionTrustProposal', 'listHeldTimelineRows'],
+    methods: ['putPage', 'addTimelineEntry', 'getTimeline', 'insertTrustProposal', 'transitionTrustProposal', 'listHeldRows'],
   }, async (engine) => {
-    const ids = await seed(engine);
+    const { ids, pageId } = await seed(engine);
     const name = new Map([...ids].map(([summary, id]) => [id, summary]));
     // `plain` is the target of a pending forget; `external` is only its related row.
     const { id: tp } = await engine.insertTrustProposal({ action: 'forget', sourceId: 'default',
@@ -98,12 +98,12 @@ describe('engine parity: the fence guard read of held timeline rows', () => {
       before: {}, proposer: 'test' });
     const all = [...ids.values()];
     // The production caller: trust/fence-guard.ts heldRows, as timeline reconcile calls it.
-    const guard = async (pending: boolean) => [...(await heldRows(engine, 'timeline_entries', all, { writer: 'user_confirmed', pending }))]
+    const guard = async (pending: boolean) => [...(await heldRows(engine, 'timeline_entries', pageId, all, { writer: 'user_confirmed', pending }))]
       .map(([id, tier]) => `${name.get(id) ?? 'other'}:${tier}`).sort();
     const out = {
       not_asked: await guard(false),
       asked: await guard(true),
-      below_writer_and_asked: (await heldRows(engine, 'timeline_entries', all, { pending: true })).size,
+      below_writer_and_asked: (await heldRows(engine, 'timeline_entries', pageId, all, { pending: true })).size,
       decided: await engine.transitionTrustProposal(tp, 'pending', 'rejected'),
       after_decision: await guard(true),
     };

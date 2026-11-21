@@ -1,8 +1,9 @@
 //! Takes and synthesis evidence: the `takes` and `synthesis_evidence` tables of the PGLite engine.
 //!
 //! Members: addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
-//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, the
-//! reads of `takes/reads.rs`, and the fence guard's held takes (`takes/held.rs`).
+//! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, the reads of
+//! `takes/reads.rs`, the fence guard's held takes (`takes/held.rs`), and the reads and the delete of
+//! `takes/extract.rs`.
 //!
 //! Keys (every record starts with `keys::TAKE`, `A`; ids and page ids are u64 BE, a `row_num` is
 //! its i32 with the sign bit flipped, BE, so keys sort by row number):
@@ -16,8 +17,10 @@
 //! A take records the source of its page (`source_id`) and an evidence row the source of its
 //! synthesis page, so `remove_source_rows` can sweep a deleted source without its pages.
 //!
-//! `claim_rev` counts claim changes. Postgres nulls a take's embedding when its claim changes; the
-//! embeddings family stores the rev with the vector and treats a vector with another rev as stale.
+//! `claim_rev` counts claim changes. Postgres nulls a take's embedding when its claim changes; so does
+//! `addTakesBatch` here (`embeddings::remove_take_vector`, which also raises the vector generation the
+//! warm vector index is keyed by). The embeddings family stores the rev with the vector and treats a
+//! vector with another rev as stale, so a vector written for an older claim never counts.
 //! A claim edited A -> B -> A is then stale, as it is in Postgres (an md5 compare would miss it).
 
 use crate::env::iso;
@@ -28,19 +31,20 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
 use crate::trust::{RowTrust, TrustPolicy, TrustTable, check_insert, stamp_row};
+
 use crate::write_receipt::WriteReceipt;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod extract;
 mod held;
 mod reads;
-mod vector_search;
 
+pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
 pub use held::HeldTakeSpec;
 pub use reads::{IncomingTakeRow, McpResolvedInput, PurgeTakesInput, TakePreimageInput};
-pub use vector_search::SearchTakesVectorOptions;
 
 const NEXT_TAKE_ID: &str = "next_take_id";
 const TAKE: u8 = 0x01;
@@ -983,6 +987,9 @@ impl Store {
                     }
                     if existing.claim != claim {
                         existing.claim_rev += 1;
+                        // Postgres nulls the embedding in this upsert. Dropping the vector also raises the vector
+                        // generation, so a warm vector index rebuilds instead of ranking the old claim's vector.
+                        crate::embeddings::remove_take_vector(tx, existing.id)?;
                     }
                     existing.claim = claim;
                     existing.kind = kind;
@@ -1674,7 +1681,7 @@ impl Store {
             return Ok(());
         }
         self.write(|tx| {
-            for row_num in wanted {
+            for row_num in wanted.iter().copied() {
                 if let Some(take) = take_at(&*tx, page_id, row_num)? {
                     delete_take(tx, &take)?;
                 }

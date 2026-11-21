@@ -136,6 +136,20 @@ A remote caller whose credential is bound to a listed member (directly or throug
 
 On a brain with two or more enabled members, Model C is required, not optional: a remote read from a token or OAuth client bound to no member is refused with [`requester_scope_required`](../guides/write-refusals.md#requester_scope_required) (connections that already existed get 14 days of notices first), and `gbrain auth create` refuses an unbound token. Bind each teammate's credential with `--member`; a bot serving a channel names its audience per call (`--may-act-for`); `--reads-unscoped --yes` opts one credential out on purpose.
 
+**Calls are kept to the people on them.** On a brain with two or more enabled members, `gbrain import --calls` writes each new call with `readable_by` set to the brain owner plus the teammates its header names (an `Attendees:` or `Participants:` line near the top, or an `attendees:` key in its frontmatter). A name counts only on an exact match: an email matches the member who declared it, otherwise the member id, otherwise a display name exactly one enabled member holds. Anything else is listed in the import output for that call and never guessed, so a teammate who wasn't named doesn't read the call. A call with no list is kept to the owner. Name the owner first (`gbrain access owner set <member>`) and bind every connection to a member. If some connection that could be the owner's own would lose the call, the import keeps the call open, as before, and prints [`calls_not_scoped`](../guides/repair.md#calls-not-scoped) with the one command that fixes it. `--readers source` imports open on purpose.
+
+Calls imported before this change stay open until you label them. Preview first, then apply each printed command with its hash:
+
+```bash
+gbrain repair visibility --propose --source team-a   # reader set per call: owner first, then matched attendees
+gbrain repair visibility --source team-a --slugs-file <file> --readers <list>                       # preview, prints a hash
+gbrain repair visibility --source team-a --slugs-file <file> --readers <list> --apply --expect <hash>
+```
+
+Names that matched nobody are listed under their own heading. Declare the right member's email (`gbrain access member set <id> --email <address>`) and preview again, or add those readers by hand. The owner reads every call before and after. This works the same on a repo-less brain, because members, owners and readers live in the database.
+
+`--propose` does not cover meeting pages an agent writes (the meeting-ingestion skill links attendees as `people/` pages, and `--propose` matches only email addresses), so don't wait for it there. Label those pages by hand with `gbrain repair visibility --slug <slug> --readers <list>`, or give their folder a rule (`gbrain access rule add --prefix meetings/ --readers <list> --source team-a`).
+
 **Folder rules: keep a whole folder to some members.** Instead of tagging every page, give a prefix its readers. On a repo-less brain (the default install) the rules live in the database:
 
 ```bash
@@ -614,6 +628,17 @@ Returns a per-source dashboard: when each source last synced, how many pages, ho
 
 The admin dashboard at `https://brain.acme-co.com/admin` shows live request volume, registered OAuth clients, recent activity, and brain stats. Use the admin bootstrap token from Part 4 to log in the first time, then register additional admin users from inside the dashboard.
 
+### When someone leaves
+
+Switch their member off, then give the pages they kept to themselves to the owner (preview first; nothing is written without `--yes --expect`):
+
+```bash
+gbrain access member disable bob-example
+gbrain access member handover bob-example
+```
+
+Pages they shared with teammates stay as they are, and `--set kept=alice-example` gives their pages to a teammate instead. `gbrain doctor` lists any page no enabled member reads (`access_pages_read_by_nobody`). Details, undo and every choice: [When someone leaves](../guides/member-handover.md).
+
 ### If agents run as containers on the same Docker host
 
 OAuth source scoping only guards the HTTP MCP path. If the brain's Postgres and your teammates' agent runtimes are containers on the same Docker host, make sure the agents can't reach Postgres directly over Docker's default bridge network — a direct DB session skips OAuth entirely. Put Postgres on its own user-defined network, publish it loopback-only if at all, and never hand agent containers a `DATABASE_URL`. The copy-paste operator checklist lives in [docs/mcp/DEPLOY.md — Co-located Docker workloads](../mcp/DEPLOY.md#co-located-docker-workloads-self-hosted-postgres).
@@ -646,7 +671,16 @@ For a 25-person company at sustained use, expect about $40 a month in embeddings
 
 ### "My teammate can't see anything"
 
-Check `gbrain auth list` on the host and confirm their client has `--source` set to a source that actually exists. Empty or null `--source` means the client falls through to the `default` source, which probably has no content if you set up three named sources. Under Model C, run `gbrain access check --token <their token>` to see what the credential reads, axis by axis, and `gbrain access who-can-read <slug>` for a page they expect: a credential bound to no member, or to one missing from the page's `readable_by` or a folder rule covering it, gets `not_found`.
+If their key writes to its own source, it reads only the sources its grant lists. To have it also read every shared source, now and later, turn on the read-shared switch on the brain host:
+
+```bash
+gbrain auth rescope --token bot-alice-example --read-shared on
+gbrain auth rescope --client <client_id> --read-shared on   # an OAuth client
+```
+
+Writes stay in the key's own source. Shared means `default` plus every federated source; a guest source is never included, nor another member's own source unless the key is the brain owner's, and private pages and private facts stay closed in every source the key reaches only through the switch. A source you federate later is read on the next request with no re-grant (`gbrain sources federate` names the keys that now read it). `gbrain access check --token bot-alice-example` lists what the key reads now, and `--read-shared off` takes it back to its listed sources.
+
+Otherwise, check `gbrain auth list` on the host and confirm their client has `--source` set to a source that actually exists. Empty or null `--source` means the client falls through to the `default` source, which probably has no content if you set up three named sources. Under Model C, run `gbrain access check --token <their token>` to see what the credential reads, axis by axis, and `gbrain access who-can-read <slug>` for a page they expect: a credential bound to no member, or to one missing from the page's `readable_by` or a folder rule covering it, gets `not_found`.
 
 ### "Sync is slow and feels stuck"
 

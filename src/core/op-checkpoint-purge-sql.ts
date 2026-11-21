@@ -8,7 +8,7 @@
  */
 import { FENCE_REPAIR_ATTEMPT_OP } from './fence-repair/attempts.ts';
 import { FENCE_CANDIDATE_OP, FENCE_SCAN_OP } from './fence-repair/census-store.ts';
-import { FENCE_UNCOMMITTED_OP } from './fence-repair/uncommitted.ts';
+import { FENCE_UNCOMMITTED_OP } from './fence-repair/uncommitted-op.ts';
 import { SYNC_PASS_ROW_OPS } from './persistence/sync-pass-row.ts';
 import { SYNC_DELETE_TOMBSTONE_OP } from './persistence/sync-delete-tombstones.ts';
 

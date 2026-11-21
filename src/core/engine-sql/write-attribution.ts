@@ -5,7 +5,7 @@
  * exactly as before; a Rust brain answers from its store (rust/crates/gbrain-store/src/write_attribution.rs,
  * rust/docs/store/write_attribution.md).
  */
-import { privateFactFilterForReader } from '../search/private-visibility.ts';
+import { ownerOnlyTakeAllowedSql, ownerOnlyTimelineAllowedSql, privateFactFilterForReader } from '../search/private-visibility.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
@@ -45,12 +45,13 @@ export interface VersionRef { id: number; page_id: number }
 /**
  * The fact, take or timeline entry `readRowAttribution` picks. A fact matches on the page's source and slug (entity or
  * fenced source page); `worldOnly` keeps world facts only and `excludePrivate` applies the reader's private-fact
- * filter. A take matches on page and row number, inside `holders` when given.
+ * filter. A take matches on page and row number, inside `holders` when given. A take or timeline row under `excludePrivate` also
+ * drops one whose own recorded inputs reach owner-only data (GST-3032; the caller's page is tested apart).
  */
 export type RowAttributionTarget =
   | { kind: 'fact'; id: number; sourceId: string; slug: string; worldOnly: boolean; excludePrivate: boolean }
-  | { kind: 'take'; pageId: number; rowNum: number; holders?: string[] }
-  | { kind: 'timeline'; id: number; pageId: number };
+  | { kind: 'take'; pageId: number; rowNum: number; holders?: string[]; excludePrivate?: boolean }
+  | { kind: 'timeline'; id: number; pageId: number; excludePrivate?: boolean };
 
 /** A row's creating (`w_*`, `created_at`) and last (`l_*`, `last_written_at`) write receipts, tier and origin. */
 export interface RowAttributionRow {
@@ -114,9 +115,9 @@ export function rowAttributionStatement(target: RowAttributionTarget): { sql: st
         AND (entity_slug = ${target.slug} OR source_markdown_slug = ${target.slug}) ${worldOnly} ${excludePrivate}`;
   } else if (target.kind === 'take') {
     const holders = target.holders ? sqlFragment`AND holder = ANY(${target.holders}::text[])` : sqlFragment``;
-    fragment = sqlFragment`SELECT id, ${cols} FROM takes WHERE page_id = ${target.pageId} AND row_num = ${target.rowNum} ${holders}`;
+    fragment = sqlFragment`SELECT id, ${cols} FROM takes WHERE page_id = ${target.pageId} AND row_num = ${target.rowNum} ${holders}${trustedSql(target.excludePrivate ? ownerOnlyTakeAllowedSql('takes') : '')}`;
   } else {
-    fragment = sqlFragment`SELECT id, ${cols} FROM timeline_entries WHERE id = ${target.id} AND page_id = ${target.pageId}`;
+    fragment = sqlFragment`SELECT id, ${cols} FROM timeline_entries WHERE id = ${target.id} AND page_id = ${target.pageId}${trustedSql(target.excludePrivate ? ownerOnlyTimelineAllowedSql('timeline_entries') : '')}`;
   }
   const { text, params } = renderFragment(fragment);
   return { sql: text, params };

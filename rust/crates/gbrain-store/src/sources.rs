@@ -19,6 +19,7 @@ pub(crate) struct SourceRecord {
     /// When the sync anchor last advanced (`sources.last_sync_at`).
     #[serde(default)]
     pub last_sync_at_us: Option<i64>,
+    #[serde(deserialize_with = "crate::jsonb::de_map")]
     pub config: Map<String, Value>,
     /// Changes when a source is deleted and created again; page snapshots carry it.
     pub incarnation: String,

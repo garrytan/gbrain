@@ -9,6 +9,7 @@ use crate::keys::*;
 use crate::kv::*;
 use crate::records::{chunk_parts, decode_page, Records, DIMS};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub const K: usize = 10;
@@ -338,14 +339,80 @@ pub struct Truth {
     pub top: Vec<Vec<u32>>,
 }
 
-/// Compute exact top-10 of every query over the raw corpus vectors and write `truth_top10.json`
-/// into the corpus directory (atomically) if it is not already there. The file is shared with the
-/// TypeScript baseline: a JSON array with one entry per query, each the 10 nearest chunk row
+/// Format tag of `truth_top10.json`; the TypeScript baseline writes and checks the same tag.
+pub const TRUTH_FORMAT: &str = "gbrain-bench-truth/1";
+
+/// Byte size and sha256 (lowercase hex) of one corpus file.
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
+pub struct FileIdentity {
+    pub bytes: u64,
+    pub sha256: String,
+}
+
+/// The corpus files a cached truth was computed from. Same JSON layout as the TypeScript
+/// baseline's `TruthFingerprint` (`rust/bench/baseline/lib/truth.ts`).
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
+pub struct TruthFingerprint {
+    pub k: usize,
+    pub dims: usize,
+    pub vectors: FileIdentity,
+    pub queries: FileIdentity,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TruthFile {
+    format: String,
+    fingerprint: TruthFingerprint,
+    top10: Vec<Vec<u32>>,
+}
+
+fn file_identity(path: &std::path::Path) -> std::result::Result<FileIdentity, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let name = path.display();
+    let mut file = std::fs::File::open(path).map_err(|e| format!("{name}: {e}"))?;
+    let mut hash = Sha256::new();
+    let mut buf = vec![0u8; 8 << 20];
+    let mut bytes = 0u64;
+    loop {
+        let n = file.read(&mut buf).map_err(|e| format!("{name}: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buf[..n]);
+        bytes += n as u64;
+    }
+    let sha256 = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    Ok(FileIdentity { bytes, sha256 })
+}
+
+/// The identity of the corpus files the truth depends on: byte size and sha256 of `vectors.f32`
+/// and `queries.f32`, with the dims and the top-N the truth holds.
+pub fn truth_fingerprint(corpus: &Corpus) -> std::result::Result<TruthFingerprint, String> {
+    Ok(TruthFingerprint {
+        k: K,
+        dims: corpus.manifest.dims,
+        vectors: file_identity(&corpus.dir.join("vectors.f32"))?,
+        queries: file_identity(&corpus.dir.join("queries.f32"))?,
+    })
+}
+
+/// Return the exact top-10 of every query over the raw corpus vectors, from `truth_top10.json` in
+/// the corpus directory when it was computed from these exact `vectors.f32` and `queries.f32`.
+/// A missing file, a file with no fingerprint (the older bare array) or a different fingerprint is
+/// recomputed and rewritten (atomically). The file is shared with the TypeScript baseline: one JSON
+/// object with a `fingerprint` and `top10`, one entry per query, each the 10 nearest chunk row
 /// indices (rows of vectors.f32), best first.
 pub fn ensure_truth(corpus: &Corpus) -> std::result::Result<Truth, String> {
     let path = corpus.truth_path();
+    let fingerprint = truth_fingerprint(corpus)?;
     if path.exists() {
-        if let Ok(t) = read_truth(&path, corpus.manifest.queries, corpus.manifest.chunks) {
+        if let Ok(t) = read_truth(
+            &path,
+            &fingerprint,
+            corpus.manifest.queries,
+            corpus.manifest.chunks,
+        ) {
             return Ok(t);
         }
     }
@@ -362,23 +429,34 @@ pub fn ensure_truth(corpus: &Corpus) -> std::result::Result<Truth, String> {
         let t = top_k_mt(&pool, &m, &queries[q * DIMS..(q + 1) * DIMS], None);
         top.push(t.hits().iter().map(|h| h.1).collect::<Vec<_>>());
     }
+    let file = TruthFile {
+        format: TRUTH_FORMAT.into(),
+        fingerprint,
+        top10: top,
+    };
     let tmp = corpus
         .dir
         .join(format!("truth_top10.json.{}.tmp", std::process::id()));
-    std::fs::write(&tmp, serde_json::to_vec(&top).map_err(|e| e.to_string())?)
+    std::fs::write(&tmp, serde_json::to_vec(&file).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?; // atomic: readers never see half a file
-    Ok(Truth { top })
+    Ok(Truth { top: file.top10 })
 }
 
+/// Read a cached truth, refusing it unless its fingerprint equals `expected` and it holds at least
+/// `min_queries` well-formed rows below `rows`.
 pub fn read_truth(
     path: &std::path::Path,
+    expected: &TruthFingerprint,
     min_queries: usize,
     rows: usize,
 ) -> std::result::Result<Truth, String> {
-    let v: Vec<Vec<u32>> = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+    let file: TruthFile = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
-    if v.len() < min_queries
+    let v = file.top10;
+    if file.format != TRUTH_FORMAT
+        || &file.fingerprint != expected
+        || v.len() < min_queries
         || v.iter()
             .take(min_queries)
             .any(|r| r.len() != K || r.iter().any(|&x| x as usize >= rows))
@@ -465,5 +543,59 @@ mod tests {
             scores,
             vec![1.0, 0.95, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2]
         );
+    }
+
+    /// Write a tiny corpus (just the files ground truth reads) with `rows` chunks and 2 queries.
+    fn write_tiny_corpus(dir: &std::path::Path, rows: usize, seed: u64) {
+        std::fs::create_dir_all(dir).unwrap();
+        let bytes =
+            |m: &Matrix| -> Vec<u8> { m.data.iter().flat_map(|x| x.to_le_bytes()).collect() };
+        std::fs::write(dir.join("vectors.f32"), bytes(&random_matrix(rows, seed))).unwrap();
+        std::fs::write(
+            dir.join("queries.f32"),
+            bytes(&random_matrix(2, seed + 1000)),
+        )
+        .unwrap();
+        let manifest = format!(
+            r#"{{"format":"gbrain-bench-corpus/1","dims":{DIMS},"pages":{},"chunks":{rows},"queries":2,"sources":["default"]}}"#,
+            rows / 4
+        );
+        std::fs::write(dir.join("manifest.json"), manifest).unwrap();
+    }
+
+    /// Ground truth belongs to the corpus files beside it. A corpus rebuilt in the same directory
+    /// with the same shape but different vectors must get its own truth, not the cached one.
+    #[test]
+    fn a_rebuilt_corpus_of_the_same_size_gets_its_own_truth() {
+        let dir = std::env::temp_dir().join(format!(
+            "gbrain-truth-cache-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        write_tiny_corpus(&dir, 16, 1);
+        let a = ensure_truth(&Corpus::open(&dir).unwrap()).unwrap();
+        let again = ensure_truth(&Corpus::open(&dir).unwrap()).unwrap();
+        assert_eq!(a.top, again.top, "an unchanged corpus reuses its truth");
+
+        write_tiny_corpus(&dir, 16, 2);
+        let corpus_b = Corpus::open(&dir).unwrap();
+        let b = ensure_truth(&corpus_b).unwrap();
+        let m = Matrix {
+            data: corpus_b.read_f32_file("vectors.f32").unwrap(),
+            rows: 16,
+        };
+        let queries = corpus_b.queries().unwrap();
+        let exact: Vec<Vec<u32>> = (0..2)
+            .map(|q| brute(&m, &queries[q * DIMS..(q + 1) * DIMS], None))
+            .collect();
+        assert_ne!(
+            a.top, exact,
+            "the two corpora must have different neighbors"
+        );
+        assert_eq!(b.top, exact);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

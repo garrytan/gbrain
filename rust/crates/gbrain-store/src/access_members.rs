@@ -249,7 +249,7 @@ fn mark_restricted(tx: &mut dyn KvWrite) -> Result<()> {
 
 /// `gbrain_access_refresh_serves()` (v309) at read committed: `access.serves_derived` is
 /// `several` while two or more members are enabled and `one` otherwise (written as `one` only when
-/// the key exists); `access.serves_since` is set once, when the explicit `access.serves` (`one` or
+/// the key exists); `access.serves_since` is set once (to the microsecond, v329), when the explicit `access.serves` (`one` or
 /// `several`, trimmed and lower-cased) or else the derived value is `several`.
 fn refresh_serves(tx: &mut dyn KvWrite, now_us: i64) -> Result<()> {
     let enabled = all_members(&*tx)?
@@ -269,9 +269,8 @@ fn refresh_serves(tx: &mut dyn KvWrite, now_us: i64) -> Result<()> {
     };
     let since_key = config_key(SERVES_SINCE_KEY);
     if serves == "several" && tx.get(&since_key)?.is_none() {
-        // to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'): whole seconds.
-        let text = iso(now_us);
-        tx.put(&since_key, format!("{}Z", &text[..19]).as_bytes())?;
+        // to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') (v329): microseconds.
+        tx.put(&since_key, iso(now_us).as_bytes())?;
     }
     Ok(())
 }

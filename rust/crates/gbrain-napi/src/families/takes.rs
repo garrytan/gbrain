@@ -59,20 +59,6 @@ impl Brain {
         })
     }
 
-    /// `searchTakesVector(embedding, opts)`: takes nearest the query vector, nearest first.
-    #[napi]
-    pub fn search_takes_vector<'env>(
-        &self,
-        env: &'env Env,
-        options: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let options: takes::SearchTakesVectorOptions =
-                required(options, "searchTakesVector options")?;
-            s.search_takes_vector(&options)
-        })
-    }
-
     /// `updateTake(pageId, rowNum, fields)`: resolves whether the take exists.
     #[napi]
     pub fn update_take<'env>(&self, env: &'env Env, input: Value) -> napi::Result<Object<'env>> {

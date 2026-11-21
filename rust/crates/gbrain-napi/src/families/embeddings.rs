@@ -31,6 +31,20 @@ impl Brain {
         })
     }
 
+    /// `cosinesByChunkIds(ids, query)`: `[{ id, cosine }]` for the served chunks with a vector.
+    #[napi]
+    pub fn cosines_by_chunk_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Value,
+        query: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<u64> = required(ids, "cosinesByChunkIds ids")?;
+            s.cosines_by_chunk_ids(&ids, &query)
+        })
+    }
+
     /// `countStaleChunks({ sourceId?, signature?, includeNullSignature? }?)`.
     #[napi]
     pub fn count_stale_chunks<'env>(

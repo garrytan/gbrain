@@ -38,6 +38,10 @@ A request id that is not a UUID refuses the write with `invalid_argument`, as th
   facts only. `excludePrivate` is the reader's private-provenance policy, which hides a fact whose provenance page is private.
 - A take must be on the page at the row number. `holders`, when present, admits only those holders; an empty list admits none.
 - A timeline entry must have the id and be on the page.
+- A take or timeline entry read under excludePrivate by a caller who is not the owner carries its own owner-only form
+  (`ownerOnly`). The closed form hides the row while the brain holds an owner-only source or a mark. The function form
+  hides a row only by its own lineage, and the store has none for these rows (no take or timeline marks, no
+  `derivation_inputs`). A target that names no form takes the closed form.
 
 A stored tier of none reads `unknown`: the column default of pages, facts, takes and timeline entries, and the tier a
 version snapshot copies from a page with no tier.

@@ -11,14 +11,18 @@ const SLUG_STORES: ReadonlyArray<readonly [table: string, column: string]> = [
  * core-edit notices (which keep a copy of the page text), the page's free-text aliases, the redirects that resolve to
  * it and the rename rows that end at it (a redirect from this slug to another page stays). A purge's cascade never
  * reaches them, so every hard delete of a page calls this inside its transaction; a soft delete keeps them, because
- * restore_page can bring the page back. `ifPresent` skips a store the database does not have (a restored archive
+ * restore_page can bring the page back. GST-2988: the page's secret store occurrences go too, and with them every
+ * sealed original no other page or commit references (secret-store/store.ts purgeSecretsForSlugs), so a purge leaves
+ * no original of a secret the page held. An occurrence still under a slug the page had before a rename goes by its
+ * page: `pageIds` names pages whose rows are not deleted yet, `secretOccurrences` the occurrences pageSecretOccurrences
+ * read for pages a caller has since deleted. `ifPresent` skips a store the database does not have (a restored archive
  * older than it). Returns rows removed per store, keyed as the purge receipt names them.
  */
 export async function scrubPurgedSlugStores(
   engine: Pick<BrainEngine, 'executeRaw'>,
   sourceId: string,
   slugs: readonly string[],
-  opts: { ifPresent?: boolean } = {},
+  opts: { ifPresent?: boolean; secretOccurrences?: readonly string[]; pageIds?: readonly number[] } = {},
 ): Promise<Record<string, number>> {
   if (!slugs.length) return {};
   const removed: Record<string, number> = {};
@@ -29,7 +33,24 @@ export async function scrubPurgedSlugStores(
     }
     removed[table] = (await engine.executeRaw(`DELETE FROM ${table} WHERE source_id = $1 AND ${column} = ANY($2::text[]) RETURNING 1`, [sourceId, [...slugs]])).length;
   }
+  const [store] = opts.ifPresent ? await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('secret_store_occurrence') IS NOT NULL AS present") : [{ present: true }];
+  if (store?.present) {
+    const onPages = [...opts.secretOccurrences ?? [], ...(await pageSecretOccurrences(engine, opts.pageIds ?? [])).map(o => o.id)];
+    const secrets = await (await import('../secret-store/store.ts')).purgeSecretsForSlugs(engine, sourceId, slugs, onPages);
+    removed.secret_store_occurrence = secrets.occurrences;
+    removed.secret_store = secrets.entries;
+  }
   return removed;
+}
+
+/**
+ * The page-level occurrences of these pages, read before their rows are deleted: deleting a page sets its occurrences'
+ * page_id to NULL, so one still under a slug the page had before a rename is found only this way. Pass the ids of pages the
+ * delete removed to scrubPurgedSlugStores as `secretOccurrences`.
+ */
+export async function pageSecretOccurrences(engine: Pick<BrainEngine, 'executeRaw'>, pageIds: readonly number[]): Promise<Array<{ id: string; page_id: number }>> {
+  if (!pageIds.length) return [];
+  return engine.executeRaw<{ id: string; page_id: number }>('SELECT id::text AS id, page_id FROM secret_store_occurrence WHERE page_id = ANY($1::int[]) AND commit_sha IS NULL', [[...pageIds]]);
 }
 
 /**

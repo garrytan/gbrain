@@ -21,8 +21,9 @@
 //! | `d 0x08 0x02 <source_id>` | one `sync_notifier_sources` row (`notifier.rs`), JSON |
 //! | `d 0x08 0x03 <source_id> 0x00 <intent>` | one `sync_wanted_markers` row (`notifier.rs`), JSON |
 //!
-//! `d 0x05` and `d 0x06` are taken by the `persistence_effects` rows and their claim-order index
-//! (`effects.rs`); no other family here uses them.
+//! `d 0x05` and `d 0x06` are the `persistence_effects` rows and their claim-order index (`effects.rs`); no other
+//! family here uses them.
+
 //!
 //! A resumable op's checkpoint parent (`op_checkpoint.rs`) is an `op_checkpoints` row, so it is
 //! stored under `d 0x02` with the housekeeping turns, as Postgres keeps both in one table.
@@ -66,7 +67,7 @@ mod noop_settle;
 mod notifier;
 mod op_checkpoint;
 mod owner_scans;
-mod projection_queue;
+pub(crate) mod projection_queue;
 mod receipt_list;
 pub(crate) mod topology;
 mod writer_versions;
@@ -81,8 +82,9 @@ pub use notifier::{
     NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
 };
 mod trust_scan_cursor;
+
 pub use projection_queue::{
-    ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
+    ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{
     activation_started_us, parse_timestamptz, queue_page_projection, queued_jobs,
@@ -153,7 +155,10 @@ pub(crate) fn fill_request_columns(row: &mut Map<String, Value>, extra: &Map<Str
         "transient_interruptions",
     ];
     let mut put = |column: &str, default: Value| {
-        row.insert(column.into(), extra.get(column).cloned().unwrap_or(default));
+        // The jsonb columns (recovery, error_detail, claim_phase) read in jsonb key order; ordering
+        // a scalar changes nothing.
+        let value = extra.get(column).cloned().map(crate::jsonb::order);
+        row.insert(column.into(), value.unwrap_or(default));
     };
     for column in NULLS {
         put(column, Value::Null);
@@ -764,6 +769,13 @@ pub(crate) fn insert_write_request_in(
             "no worktree refresh exists on this engine, so deferred_refresh_id cannot be set",
         ));
     }
+    if input.principal_id.contains('\0') {
+        // Postgres text refuses a NUL byte, and the duplicate lookup below cannot find a key
+        // that holds one, so a repeat would add a second row instead of being refused.
+        return Err(StoreError::invalid(
+            "insertWriteRequest: principal_id contains a NUL byte",
+        ));
+    }
     let principal = Principal {
         kind: input.principal_kind.clone(),
         id: input.principal_id.clone(),
@@ -944,15 +956,22 @@ pub(crate) fn complete_write_row_in(
     }
     let reservation = extra_i64(&record, "terminal_reservation");
     let (effect_bytes, unfinished) = effects::effect_totals(&*tx, &c.id)?;
-    if c.result_bytes + effect_bytes > reservation {
+    // SQL sums these as exact numerics, so a sum past i64 is simply too big, never a wrapped small one.
+    if i128::from(c.result_bytes) + i128::from(effect_bytes) > i128::from(reservation) {
         return Ok(None);
     }
     let kept = if unfinished {
         reservation
     } else {
-        reservation.min(c.retained_bytes + effect_bytes)
+        let retained = i128::from(c.retained_bytes) + i128::from(effect_bytes);
+        i64::try_from(i128::from(reservation).min(retained)).unwrap_or(reservation)
     };
-    let released = c.terminal_reservation - kept;
+    let out_of_range =
+        || StoreError::invalid("completeWriteRow: a byte count is out of range for type bigint");
+    let released = c
+        .terminal_reservation
+        .checked_sub(kept)
+        .ok_or_else(out_of_range)?;
     let mut clamped = 0u64;
     for key in distinct_keys(&c.counter_keys) {
         let Some(mut counter) = read_counter(&*tx, &key)? else {
@@ -961,16 +980,26 @@ pub(crate) fn complete_write_row_in(
         if released > counter.terminal_bytes {
             clamped += 1;
         }
-        counter.outstanding_count -= 1;
-        counter.intent_bytes -= c.intent_bytes;
-        counter.terminal_bytes -= released.min(counter.terminal_bytes);
+        counter.outstanding_count = counter
+            .outstanding_count
+            .checked_sub(1)
+            .ok_or_else(out_of_range)?;
+        counter.intent_bytes = counter
+            .intent_bytes
+            .checked_sub(c.intent_bytes)
+            .ok_or_else(out_of_range)?;
+        counter.terminal_bytes = counter
+            .terminal_bytes
+            .checked_sub(released.min(counter.terminal_bytes))
+            .ok_or_else(out_of_range)?;
         write_counter(tx, &key, &counter)?;
     }
     add_true_up_clamped(tx, clamped)?;
     let now = env.now_micros();
     let committed = c.state == "committed";
     record.state = c.state.clone();
-    record.outcome = (!c.outcome.is_null()).then(|| c.outcome.clone());
+    // Stored as `jsonb` stores it: keys shorter first, then by bytes, at every depth.
+    record.outcome = (!c.outcome.is_null()).then(|| crate::jsonb::ordered(&c.outcome));
     record.error_code = c.error_code.clone();
     record.error_message = c.error_message.clone();
     record.blocked_reason = None;
@@ -978,7 +1007,10 @@ pub(crate) fn complete_write_row_in(
     record.updated_at_us = now;
     let extra = &mut record.extra;
     if !c.error_detail.is_null() {
-        extra.insert("error_detail".into(), c.error_detail.clone());
+        extra.insert(
+            "error_detail".into(),
+            crate::jsonb::ordered(&c.error_detail),
+        );
     }
     extra.insert("claim_expires_at".into(), Value::Null);
     if committed {

@@ -14,10 +14,12 @@ import type { BrainEngine, FactRow } from '../engine.ts';
 import type { Action, Notice } from '../agent-output.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
+import { sqlQueryForEngine } from '../sql-query.ts';
+import { sharedReadSources } from '../grants/read-shared.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import { getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
 import { calibrationKey } from './supersession-threshold.ts';
-import { rowToFact, type FactRowSqlShape } from '../engine-sql/facts.ts';
+import { rowToFact } from '../engine-sql/facts.ts';
 import { collapseFactReads, type CollapsedFactRead } from './capture-dedup.ts';
 import { loadEmbeddingQueryPrefix } from '../search/query-prefix.ts';
 import { embedQueryBounded, makeQueryEmbedDeadline } from '../search/hybrid.ts';
@@ -26,6 +28,7 @@ import {
   FACT_ADMISSION_FLOOR_EVIDENCE, QUESTION_ADMISSION_RULES, admitted, collectFactCandidates, countUncomparableFacts, isDatedFact, poolEntityPairs, queryTerms, scoreFactCandidates,
   type FactPoolFilters, type FactPoolScope, type QuestionAdmissionRule,
 } from '../search/fact-relevance.ts';
+import { applySlotEnds } from '../search/slot-ends.ts';
 import { confidenceFactor, recallConfidence } from './decay.ts';
 import { readRecallSwitches } from './recall-config.ts';
 
@@ -71,6 +74,21 @@ export async function unlinkedNamesakes(engine: BrainEngine, lists: Array<Array<
   const ids = await identityIdsForPages(engine, candidates.map(c => ({ sourceId: c.source_id, slug: c.entity_slug })));
   const groups = new Set(candidates.map(c => ids.get(`${c.source_id}:${c.entity_slug}`) ?? null));
   return groups.size === 1 && !groups.has(null) ? null : candidates;
+}
+
+/**
+ * GST-2898 (D3-B): the one split the read-shared switch creates. A switched key whose write source is outside the
+ * shared set gets both sets of facts, each labelled by its source_id, when the namesakes are exactly its write source
+ * and one shared source; `mergedSources` names the pair. Every other split keeps today's refusal: unscoped keys, keys
+ * writing into a shared source, guest namesakes, two shared namesakes, or a shared set that cannot be read.
+ */
+export async function namesakesOrMerge(ctx: OperationContext, candidates: EntityCandidate[] | null): Promise<{ ambiguousEntity: EntityCandidate[] | null; mergedSources: [string, string] | null }> {
+  const write = ctx.auth?.sourceId;
+  const other = candidates?.length === 2 && candidates.some(c => c.source_id === write) ? candidates.find(c => c.source_id !== write) : undefined;
+  if (!other || !write || ctx.auth?.readShared !== true) return { ambiguousEntity: candidates, mergedSources: null };
+  const shared = await sharedReadSources(sqlQueryForEngine(ctx.engine), ctx.auth.member?.id ?? null).catch(() => null);
+  return shared && !shared.includes(write) && shared.includes(other.source_id)
+    ? { ambiguousEntity: null, mergedSources: [write, other.source_id] } : { ambiguousEntity: candidates, mergedSources: null };
 }
 
 /** The call's arguments without transport metadata, for retry fixes. */
@@ -192,6 +210,8 @@ export interface QuestionRecall {
   /** The source holding the most uncomparable facts, for the `embed --stale --facts` fix. */
   unembeddedSource?: string;
   ambiguousEntity: EntityCandidate[] | null;
+  /** GST-2898: the write source and the shared source whose namesake facts were merged (namesakesOrMerge). */
+  mergedSources?: [string, string];
 }
 
 /** Active facts (all facts with `includeExpired`) ranked by relevance to `question` under recall's read policy and filters. */
@@ -203,13 +223,15 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     ...(input.grep ? { grep: input.grep } : {}),
     ...(input.includeExpired ? { includeExpired: true } : {}),
   };
+  let mergedSources: [string, string] | undefined;
   const empty = (degraded?: FactsDegraded, ambiguousEntity: EntityCandidate[] | null = null): QuestionRecall => ({ rows: [], relevance: new Map(), ambiguousEntity, ...(degraded ? { degraded } : {}) });
   try {
     if (input.entity) {
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
       filters.entities = await Promise.all(input.factSources.map(async src => ({ sourceId: src, slug: (await resolveEntitySlug(ctx.engine, src, input.entity!)) ?? input.entity! })));
-      const ambiguous = await unlinkedNamesakes(ctx.engine, [await poolEntityPairs(ctx.engine, scope, filters)]);
-      if (ambiguous) return empty(undefined, ambiguous);
+      const split = await namesakesOrMerge(ctx, await unlinkedNamesakes(ctx.engine, [await poolEntityPairs(ctx.engine, scope, filters)]));
+      if (split.ambiguousEntity) return empty(undefined, split.ambiguousEntity);
+      if (split.mergedSources) mergedSources = split.mergedSources;
     }
   } catch (error) {
     throw rankingUnavailable(input.params, error);
@@ -235,7 +257,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     const degraded: FactsDegraded | undefined = why || unembedded ? { ...(why ? { reason: why } : {}), ...(unembedded ? { unembedded } : {}) } : undefined;
     let ids = ranked.map(s => s.candidate.id);
     const raw = ids.length
-      ? await ctx.engine.executeRaw<FactRowSqlShape>('SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])', [input.factSources, ids])
+      ? await ctx.engine.listFactRowsByIds(input.factSources, ids)
       : [];
     const byId = new Map(raw.map(r => { const row = rowToFact(r); return [row.id, { ...row, embedding: null }] as const; }));
     const modelKey = embedding && pool.column ? calibrationKey(getEmbeddingModel(), getEmbeddingDimensions()) : null;
@@ -243,12 +265,14 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     if (weighting) ids = weighting.order;
     let rows: CollapsedFactRead<FactRow>[] = await collapseFactReads(ctx.engine, ids.flatMap(id => byId.get(id) ?? []));
     if (weighting) rows = rows.map(r => weightedRepresentative(r, byId, weighting.rank));
+    // GST-3170: read-time slot ends before the limit cut, so an ended slot value never shortens the answer.
+    rows = await applySlotEnds(ctx.engine, scope, rows, { activeOnly: !input.includeExpired, entities: input.entity ? input.factSources.map(src => ({ source_id: src, slugs: [...new Set(rows.flatMap(r => (r.source_id === src && r.entity_slug ? [r.entity_slug] : [])))] })) : undefined });
     return {
       rows: rows.slice(0, input.limit),
       relevance: new Map(ranked.map(s => [s.candidate.id, Math.round(s.score * 1e4) / 1e4])),
       ...(weighting ? { weighting: { rank: weighting.rank, factor: weighting.factor } } : {}),
       ...(grouped ? { groupByEntity: true } : {}),
-      ambiguousEntity: null,
+      ambiguousEntity: null, ...(mergedSources ? { mergedSources } : {}),
       ...(scored.length && !ranked.length ? { belowFloor: scored.length } : {}),
       ...(degraded ? { degraded } : {}),
       ...(modelKey && FACT_ADMISSION_FLOOR_EVIDENCE[modelKey] === undefined ? { calibration: { status: 'unmeasured' as const, model_key: modelKey } } : {}),

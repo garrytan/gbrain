@@ -28,6 +28,8 @@ export async function mutateClientLifecycle(engine: BrainEngine, clientId: strin
     await tx.deleteOauthClientCodes(clientId);
     if (action === 'delete') await tx.deleteOauthClientRow(clientId);
     else await tx.setOauthClientRevision(clientId, after.revision, action === 'revoke');
+    // GST-2898: invalidating tokens changes no grant, so a switched client stays switched at the new revision.
+    if (action === 'invalidate-tokens' && before.readShared === true) await tx.executeRaw('UPDATE oauth_clients SET read_shared_revision = $2 WHERE client_id = $1', [clientId, after.revision]);
     const auditAfter = action === 'delete' ? { clientId, revision: after.revision, deleted: true } : after;
     await tx.insertOauthGrantAudit({ client_id: clientId, actor: opts.actor, action, revision: after.revision,
       before_grant: JSON.stringify(before), after_grant: JSON.stringify(auditAfter) });

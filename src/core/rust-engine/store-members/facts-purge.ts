@@ -3,8 +3,11 @@
  * store (rust/crates/gbrain-store/src/facts/purge.rs). Each member sends the arguments of its BrainEngine member and
  * turns the ISO times the store returns into `Date`s, as PGLite returns them.
  *
- * A member not exported here refuses with `engine_capability_missing`: `listFactsReconcileBacklog` reads
- * `page_facts_reconcile`, a table the store does not have. `listSingleFactMetadata` is served by facts-trust-reads.ts.
+ * `listFactsReconcileBacklog`, `settleFactsReconcile` and `selectFactsReconcileDrain` read and write the store's
+ * `page_facts_reconcile` watermark (facts/reconcile.rs). `lockReconcileRevision` reads the page inside the caller's store
+ * transaction, whose single writer is the lock, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
+ * `listSingleFactMetadata` is served by facts-trust-reads.ts.
+ * `listDerivedRows` answers no rows: the store keeps no `derivation_inputs`.
  * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy) and
  * `listSimilarActiveFacts` serves `excludePrivate`; each refuses a caller whose policy the store does not model
  * (private-provenance.ts).
@@ -12,7 +15,9 @@
 import type { BrainEngine } from '../../engine.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { FACTS_FENCE_BEGIN } from '../../facts-fence.ts';
+import { FACTLESS_SETTLE_LIMIT } from '../../engine-sql/facts-purge.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storeFloorPolicy, storePrivacyPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -30,6 +35,25 @@ export const loadPurgeTarget: Member<'loadPurgeTarget'> = (brain, id, sourceId) 
 
 export const planFactPurgeIds: Member<'planFactPurgeIds'> = (brain, sourceId, visibility, factHash, subject) =>
   storeCall({ member: 'planFactPurgeIds' }, () => brain.planFactPurgeIds({ sourceId, visibility, factHash, subject }));
+
+/** `listFactsReconcileBacklog`: the store matches the fence marker as plain text, as the SQL's `LIKE '%marker%'` does. */
+export const listFactsReconcileBacklog: Member<'listFactsReconcileBacklog'> = (brain) =>
+  storeCall({ member: 'listFactsReconcileBacklog' }, () => brain.listFactsReconcileBacklog({ marker: FACTS_FENCE_BEGIN }));
+
+/** `settleFactsReconcile`: an `undefined` revision settles at the page's current revision, as the SQL's `$5` flag does. */
+export const settleFactsReconcile: Member<'settleFactsReconcile'> = (brain, sourceId, slug, outcome, revision) =>
+  storeCall({ member: 'settleFactsReconcile' }, async () => {
+    await brain.settleFactsReconcile({ sourceId, slug, outcome, revision: revision ?? null, anyRevision: revision === undefined });
+  });
+
+/** `lockReconcileRevision`: the store's transaction holds its single writer until commit, which is the row lock. */
+export const lockReconcileRevision: Member<'lockReconcileRevision'> = (brain, sourceId, slug, revision) =>
+  storeCall({ member: 'lockReconcileRevision' }, () => brain.lockReconcileRevision({ sourceId, slug, revision }));
+
+/** `selectFactsReconcileDrain`: the store matches the fence marker as plain text and settles at most FACTLESS_SETTLE_LIMIT pages, as the SQL does. */
+export const selectFactsReconcileDrain: Member<'selectFactsReconcileDrain'> = (brain, sourceId, pageLimit) =>
+  storeCall({ member: 'selectFactsReconcileDrain' }, () => brain.selectFactsReconcileDrain({
+    sourceId, marker: FACTS_FENCE_BEGIN, settleLimit: FACTLESS_SETTLE_LIMIT, pageLimit }));
 
 export const listRelinkCandidateRows: Member<'listRelinkCandidateRows'> = (brain, opts) =>
   storeCall({ member: 'listRelinkCandidateRows' }, () => brain.listRelinkCandidateRows({
@@ -50,7 +74,7 @@ export const findActiveSingleFact: Member<'findActiveSingleFact'> = async (brain
   const remoteFloor = opts.remoteFloor ? storeFloorPolicy('findActiveSingleFact') : undefined;
   const row: Row | null = await storeCall({ member: 'findActiveSingleFact' }, () => brain.findActiveSingleFact({
     sourceId: opts.sourceId, entitySlug: opts.entitySlug, visibility: opts.visibility, fact: opts.fact,
-    attributedTo: opts.attributedTo, pageSlug: opts.pageSlug, remoteFloor }));
+    attributedTo: opts.attributedTo, pageSlug: opts.pageSlug, remoteFloor, newest: opts.newest === true }));
   return row === null ? null : withDates(row, FACT_DATES) as never;
 };
 
@@ -72,3 +96,15 @@ export const expireFactsByWithdrawal: Member<'expireFactsByWithdrawal'> = (brain
 
 export const insertFactPurge: Member<'insertFactPurge'> = (brain, row) =>
   storeCall({ member: 'insertFactPurge', sourceId: row.sourceId }, () => brain.insertFactPurge(row));
+
+/**
+ * The store keeps no `derivation_inputs` (its only writer, recordDerivationInputs, goes through `executeRaw`, which this
+ * engine refuses), so one hop of the walk reaches no rows (facts/purge.rs list_derived_rows). A limit or id that is not
+ * what PGLite binds is refused rather than answered.
+ */
+export const listDerivedRows: Member<'listDerivedRows'> = (brain, frontier, limit) => {
+  const member = 'listDerivedRows';
+  if (!Number.isSafeInteger(limit)) refuseMember(member, 'a limit that is not an integer');
+  for (const ref of frontier) if (typeof ref.table !== 'string' || typeof ref.id !== 'string') refuseMember(member, 'a frontier row whose table or id is not text');
+  return storeCall({ member }, () => brain.listDerivedRows({ frontier: frontier.map(f => ({ table: f.table, id: f.id })), limit }));
+};

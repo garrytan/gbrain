@@ -82,7 +82,7 @@ impl Store {
                 priority: 0,
                 submission_authority: Some(json!({ "version": 1, "kind": "application" })),
                 claim_generation: 0,
-                data,
+                data: data.clone(),
                 max_attempts: 1,
                 attempts_made: 0,
                 attempts_started: 0,

@@ -61,7 +61,7 @@ impl Store {
 
     /// `writeTrustScanCursor(completedKeys)`.
     pub fn write_trust_scan_cursor(&self, completed: Vec<Value>) -> Result<()> {
-        self.write(|tx| write_trust_scan_cursor_in(tx, &*self.env, completed))
+        self.write(|tx| write_trust_scan_cursor_in(tx, &*self.env, completed.clone()))
     }
 }
 

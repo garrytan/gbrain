@@ -117,6 +117,11 @@ const GATE_LOCATION = "eu-central-h1";
 // keys), so every test in them would skip; the gate leaves them out instead of
 // counting a run that tested nothing (GBRA-237 removed the same keyless run from CI).
 export const KEYED_E2E = ["test/e2e/skills.test.ts"];
+// E2E files that need the OpenClaw CLI: e2e.yml's openclaw-skill-resolver job runs
+// them on the full-corpus profile only, so a labelled head's E2E run never lists
+// them and a gate VM (no openclaw) would skip every test in them. Left out like
+// the keyed files, so the inventory asks only for files the label's runs execute.
+export const OPENCLAW_CLI_E2E = ["test/e2e/openclaw-skill-resolver-real.test.ts"];
 // Items this heavy are the run's long poles: spread them one per VM so two of
 // them never compete for the same VM's CPUs.
 const HEAVY_MS = 60_000;
@@ -274,7 +279,7 @@ function gateInventory(opts: Opts, note: (message: string) => void) {
     serial: lines(sh("bash", ["scripts/run-serial-tests.sh", "--dry-run-list"])).filter((f) => !exclusive.includes(f)),
     slow: lines(sh("bash", ["scripts/run-slow-tests.sh", "--dry-run-list"])).filter((f) => !slowExclusive.includes(f)),
     "pg-arms": arms.files,
-    e2e: lines(sh("bash", ["scripts/run-e2e.sh", "--dry-run-list"])).filter((f) => !KEYED_E2E.includes(f)),
+    e2e: lines(sh("bash", ["scripts/run-e2e.sh", "--dry-run-list"])).filter((f) => !KEYED_E2E.includes(f) && !OPENCLAW_CLI_E2E.includes(f)),
   };
   return { inventory, exclusive, slowExclusive };
 }

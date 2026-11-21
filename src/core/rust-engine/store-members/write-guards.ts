@@ -1,7 +1,6 @@
 /**
  * The page write guards (BrainEngine readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest,
- * sealImportedPage, readLivePageBody, readInlinePageRegions, readStoredPageTier, readPageIndexingState,
- * hasSegmentStorage): the reads and
+ * sealImportedPage, readLivePageBody, readPageIndexingState, readInlinePageRegions, readStoredPageTier, hasSegmentStorage): the reads and
  * writes a page write runs around the page row (engine-sql/write-guards.ts on the SQL engines). The store runs one
  * write transaction at a time, so the advisory locks PGLite takes before it lists origin claims are already held,
  * and `listOriginClaims` takes none.
@@ -50,6 +49,8 @@ export const sealImportedPage: StoreMember<[slug: string, seal: ImportedPageSeal
 export const readLivePageBody: StoreMember<[slug: string, opts: { sourceId: string }], LivePageBodyRow | null> = (brain, slug, opts) =>
   storeCall({ member: 'readLivePageBody', slug, sourceId: opts.sourceId }, () => brain.readLivePageBody(slug, opts.sourceId));
 
+export const readPageIndexingState: StoreMember<[pageId: number], PageIndexingState | null> = (brain, pageId) =>
+  storeCall({ member: 'readPageIndexingState' }, () => brain.readPageIndexingState(pageId)) as Promise<PageIndexingState | null>;
 /** A page id that is not a positive integer names no page: null, as PGLite's `WHERE id=$1` matches none (a fraction refuses). */
 export const readInlinePageRegions: StoreMember<[pageId: number], InlinePageRegionsRow | null> = async (brain, pageId) => {
   if (!Number.isSafeInteger(pageId)) refuseMember('readInlinePageRegions', 'a page id that is not an integer');
@@ -59,9 +60,6 @@ export const readInlinePageRegions: StoreMember<[pageId: number], InlinePageRegi
 
 export const readStoredPageTier: StoreMember<[sourceId: string, slug: string], string | null> = (brain, sourceId, slug) =>
   storeCall({ member: 'readStoredPageTier', slug, sourceId }, () => brain.readStoredPageTier(sourceId, slug));
-
-export const readPageIndexingState: StoreMember<[pageId: number], PageIndexingState | null> = (brain, pageId) =>
-  storeCall({ member: 'readPageIndexingState' }, () => brain.readPageIndexingState(pageId)) as Promise<PageIndexingState | null>;
 
 /** True once a segment text or a body staging is stored; the store keeps neither until the page-body family lands. */
 export const hasSegmentStorage: StoreMember<[], boolean> = (brain) => storeCall({ member: 'hasSegmentStorage' }, () => brain.hasSegmentStorage());

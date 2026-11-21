@@ -25,7 +25,7 @@ advances them. Records written before these fields existed read them as absent.
 | `brain.readRenameIdentityRows(sourceId, paths, slugs)` | `{ slug, source_path, title }[]`, the source's live pages whose source path is in `paths` or slug in `slugs`, in slug byte order | `readRenameIdentityRows` (a sync's rename confirmation) |
 | `brain.readLiveIdentityHolders(sourceId, ids, titles)` | `{ slug, source_path, fm_id, title }[]`, the source's live pages whose frontmatter `id` (a string as is, any other value as its JSON text) is in `ids` or title in `titles`, in slug byte order | `readLiveIdentityHolders` (a sync's rename confirmation) |
 | `brain.readPageIdentity(pageId)` | `{ fm_id, title }` of a live page, or `null` | `readPageIdentity` (a held rename decided again) |
-| `brain.holdPageEmbedding(pageId, reason)` | `null`; sets the page's embedding hold to `{ state: 'held', reason }`, replacing a held reason; an unknown page id refuses `page_not_found`; a hard page delete drops the hold | `holdPageEmbedding` (page-embedding-budget.ts) |
+| `brain.holdPageEmbedding(pageId, reason)` | `null`; sets the page's `page_embedding_budget` ledger row to `{ state: 'held', reason }`: adds the row when the page has none, re-holds an open row and replaces a held row's reason, and keeps the row's spend columns (signature, spent, reserved, window, unpriced calls, cap); an unknown page id refuses `page_not_found`; a reason with a NUL byte refuses `invalid_argument`; a hard page delete drops the row | `holdPageEmbedding` (page-embedding-budget.ts) |
 | `brain.readReasonPurgeTombstones(sourceId, pair)` | `{ commit_sha, path }[]`, the source's purged change-reason pairs by commit then path, or only `pair` (when not `null`) if it is stored | `readReasonPurgeTombstones` (`reason_purge_tombstones`) |
 | `brain.writeReasonPurgeTombstones(sourceId, pairs)` | `number`, the pairs added; a stored or repeated pair adds nothing; an unknown source refuses `source_not_found` and stores nothing; a source delete drops its pairs | `writeReasonPurgeTombstones` (facts purge) |
 | `brain.advanceSourcePurgeEpoch(sourceId)`, `brain.readSourcePurgeEpoch(sourceId)` | `number`, the source's purge epoch after adding one / as stored (0 before any purge); `null` for an unknown source, which changes nothing | `advanceSourcePurgeEpoch` (`belief/purge.ts` `bumpPurgeEpoch`), `readSourcePurgeEpoch` (`reason-trailers.ts` `cachedSyncReasonScan`, `readLedgerSource`) |
@@ -65,11 +65,11 @@ The source members below behave differently on the Rust engine. Each difference 
 - `advanceSourceCommit` stamps `last_sync_at` with the process clock. The SQL engines use the
   database clock (`now()`). `getSource`, `readPlainSyncSource` and `listSourceRecords` read the
   stored `last_commit`; `listSourceRecords` also reads the stored `newest_content_at`.
-- The store keeps only the `state` and `reason` of a page's `page_embedding_budget` row
-  (`holdPageEmbedding`, key tag `2`). The spend columns (signature, spent, reserved, cap) have no
-  record: the embedding plan that writes them still runs raw SQL and refuses on this engine.
-  `readPageSizeRows` reads the kept hold, so it reports the same `state` and `reason` as the SQL
-  engines and lists a held page of any size.
+- A page's embedding hold lives only in its `page_embedding_budget` ledger row
+  (`page_embedding_budget.rs`, `holdPageEmbedding` and `recordPageEmbeddingHold`; docs/store/embeddings.md).
+  There is no separate hold family: key tag `2` (the old `embedding_holds`) is free.
+  `readPageSizeRows` reads the ledger row's `state` and `reason`, so it reports the same as the SQL
+  engines (which left-join the row) and lists a page with any ledger row, of any size.
 - `readReasonPurgeTombstones` sorts pairs by commit, then path, in byte order. The SQL engines
   sort them by the database collation. The callers put the pairs in a set or a map, so no caller
   reaches this difference.

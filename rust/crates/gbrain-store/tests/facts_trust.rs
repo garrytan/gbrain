@@ -178,7 +178,7 @@ fn the_pool_hides_ended_audit_quarantined_deleted_and_private_rows() {
     let mut names = texts(&world);
     names.sort_unstable();
     assert_eq!(names, ["p-open", "p-private-page"]);
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     let public = relevance(
         &b,
         "entity",

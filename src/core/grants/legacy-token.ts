@@ -28,17 +28,18 @@
  * `--adopt-permissions` or `--adopt-columns` resolves it.
  */
 import type { BrainEngine } from '../engine.ts';
-import { assertAllowedScopes, operationScopesAllowed } from '../scope.ts';
+import { assertAllowedScopes, hasScope, operationScopesAllowed } from '../scope.ts';
 import { isValidSourceId } from '../source-id.ts';
-import type { SqlQuery } from '../sql-query.ts';
+import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
+import { sharedReadSources } from './read-shared.ts';
 import { TOKEN_ID_RE } from '../token-mint.ts';
 import { isUndefinedColumnError } from '../utils.ts';
-import { requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
+import { addedOnlyByName, requiresExplicitApproval } from '../ops/execution-prerequisites.ts';
 import {
   GrantError, LEGACY_GRANT_AXES, grantFromTokenRow, permissionsMirror, tokenGrantColumnArrays, tokenGrantColumnValues, tokenGrantFromColumns,
   tokenGrantFromPermissions, validatePrincipalGrant, TOKEN_GRANT_COLUMNS, type LegacyGrantAxis, type PrincipalGrant, type PrivateFactsGrant, type PrivatePagesGrant,
 } from './model.ts';
-import { parsePrivateFactsFlag, parsePrivatePagesFlag } from './cli.ts';
+import { parsePrivateFactsFlag, parsePrivatePagesFlag, parseReadSharedFlag } from './cli.ts';
 
 export type { LegacyGrantAxis } from './model.ts';
 
@@ -52,6 +53,8 @@ export interface RescopeTokenArgs {
   scopes?: string[];
   privatePages?: PrivatePagesGrant;
   privateFacts?: PrivateFactsGrant;
+  /** GST-2898: `--read-shared on|off`, also read every shared source, now and later. */
+  readShared?: boolean;
   reset: LegacyGrantAxis[];
   refreshOperations: boolean;
   add?: string[];
@@ -68,6 +71,8 @@ export interface LegacyTokenGrantView {
   operations: string[] | 'unrestricted';
   /** Present only when granted, so a 'none' token's view is unchanged. */
   privatePages?: 'granted_sources';
+  /** GST-2898: present only when the read-shared switch is on, so every other token's view is unchanged. */
+  readShared?: true;
   /** GBRA-575: likewise. */
   privateFacts?: 'granted_sources';
 }
@@ -91,6 +96,11 @@ export interface RescopeTokenResult {
    * allow today plus the added ones, so operations later upgrades add need their own refresh.
    */
   refresh?: { available: string[]; added: string[]; unregistered: string[]; materialized?: true };
+  /**
+   * GST-2898: the resolved read set before and after (stored list plus, with the switch on, every shared source now),
+   * the sources the call stops reading, and the shared set it reads now when the switch is on after the call.
+   */
+  reads: { before: string[]; after: string[]; stops_reading: string[]; shared_now?: string[] };
 }
 
 const csvOrNone = (value: string): string[] =>
@@ -132,6 +142,7 @@ export function parseRescopeTokenArgs(args: string[]): RescopeTokenArgs {
         break;
       case '--add': out.add = csvOrNone(value); break;
       case '--private-pages': out.privatePages = parsePrivatePagesFlag(value); break;
+      case '--read-shared': out.readShared = parseReadSharedFlag(value); break;
       case '--private-facts': out.privateFacts = parsePrivateFactsFlag(value); break;
       case '--scopes':
         out.scopes = csvOrNone(value.replaceAll(' ', ','));
@@ -164,7 +175,7 @@ export function parseRescopeTokenArgs(args: string[]): RescopeTokenArgs {
   return { target, ...out };
 }
 
-function grantView(g: TokenGrantAxes & Pick<PrincipalGrant, 'privatePages' | 'privateFacts'>): LegacyTokenGrantView {
+function grantView(g: TokenGrantAxes & Pick<PrincipalGrant, 'privatePages' | 'privateFacts' | 'readShared'>): LegacyTokenGrantView {
   const s = g.sources;
   return {
     sources: s.kind === 'default' ? 'default' : s.kind === 'none' ? [] : s.kind === 'scalar' ? [s.writeSource] : [...s.readSources],
@@ -172,6 +183,7 @@ function grantView(g: TokenGrantAxes & Pick<PrincipalGrant, 'privatePages' | 'pr
     operations: g.allowedOperations ?? 'unrestricted',
     ...(g.privatePages === 'granted_sources' ? { privatePages: g.privatePages } : {}),
     ...(g.privateFacts === 'granted_sources' ? { privateFacts: g.privateFacts } : {}),
+    ...(g.readShared === true ? { readShared: true as const } : {}),
   };
 }
 
@@ -198,17 +210,22 @@ async function assertActiveSources(engine: BrainEngine, ids: string[]): Promise<
 const SCHEMA_HINT = 'this brain predates the unified token grant columns (access_tokens.source_grant); run `gbrain apply-migrations --yes` (no user decision needed), then retry';
 
 function schemaError(error: unknown): unknown {
-  return ['source_grant', 'grant_revision', 'private_pages', 'private_facts', ...TOKEN_GRANT_COLUMNS].some(c => isUndefinedColumnError(error, c)) ? new GrantError('grant_schema_required', SCHEMA_HINT) : error;
+  return ['source_grant', 'grant_revision', 'private_pages', 'private_facts', 'read_shared_revision', ...TOKEN_GRANT_COLUMNS].some(c => isUndefinedColumnError(error, c)) ? new GrantError('grant_schema_required', SCHEMA_HINT) : error;
 }
 
 /** Write the unified columns and the `permissions` mirror in one UPDATE; returns the new revision. */
-async function writeTokenGrant(tx: BrainEngine, row: Record<string, unknown>, grant: TokenGrantAxes, scopes?: string[]): Promise<number> {
+async function writeTokenGrant(tx: BrainEngine, row: Record<string, unknown>, grant: TokenGrantAxes, scopes?: string[], readShared = false): Promise<number> {
   const { assertScopeSourceGrant, sourcesOf } = await import('../access/attest-sources.ts');
   const before = sourcesOf(grantFromTokenRow(row).sources).reads;
   await assertScopeSourceGrant(tx, { kind: 'token', id: String(row.id) }, sourcesOf(grant.sources).reads.filter(s => !before.includes(s)), { writeSource: sourcesOf(grant.sources).write });
   const written = await tx.writeAccessTokenGrant(String(row.id), { columns: tokenGrantColumnArrays(grant), scopes: scopes ?? null, permissions: permissionsMirror(grant, row.permissions) });
   // No row updated: refuse with the text the raw RETURNING read threw, never a silent revision 0.
   if (written === null) throw new TypeError("undefined is not an object (evaluating 'written.grant_revision')");
+  // GST-2898: re-stamp the read-shared switch at the new revision (or clear it) in the same transaction. A brain
+  // without the column (migration pending) can only be cleared, which it already is.
+  if (readShared || row.read_shared_revision != null) {
+    await tx.executeRaw('UPDATE access_tokens SET read_shared_revision = $2 WHERE id = $1::uuid', [String(row.id), readShared ? Number(written) : null]);
+  }
   return Number(written);
 }
 
@@ -281,7 +298,7 @@ async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Pr
         + `Preview with gbrain auth rescope ${'id' in args.target ? `--id ${args.target.id}` : `--token ${args.target.name}`} --refresh-operations, then name each one with --add`);
     }
     const available = grantable.filter(op => !granted.includes(op));
-    const added = args.allNew ? available : args.add ?? [];
+    const added = args.allNew ? available.filter(op => !addedOnlyByName(op)) : args.add ?? [];
     const notAvailable = added.filter(op => !available.includes(op));
     if (notAvailable.length) throw new GrantError('invalid_grant', `Not a new operation for this token: ${notAvailable.join(', ')} (run --refresh-operations alone to preview)`);
     if (added.length) next.allowedOperations = [...granted, ...added];
@@ -296,15 +313,28 @@ async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Pr
 
   const privatePages = args.privatePages ?? current.privatePages;
   const privateFacts = args.privateFacts ?? current.privateFacts;
+  if (args.readShared === true && next.sources.kind === 'default') {
+    throw new GrantError('invalid_grant', `Token "${name}" has no source list, so it already reads every shared source and --read-shared on has no write source to add shared reads to. `
+      + `Ask the user which source the key writes to, then run gbrain auth rescope --token ${name} --sources <write-source> --read-shared on.`, ['read_shared_needs_source']);
+  }
+  const readShared = (args.readShared ?? current.readShared === true) && next.sources.kind !== 'default';
+  if (readShared && next.sources.kind === 'none') {
+    if (args.readShared !== true) throw (await import('./read-shared.ts')).readSharedNoSourceRefusal('token', name);
+    throw new GrantError('invalid_grant', `Token "${name}" has no source (--sources none), so --read-shared on has no write source to add shared reads to. `
+      + `Ask the user which source the key writes to, then run gbrain auth rescope --token ${name} --sources <write-source> --read-shared on.`, ['read_shared_needs_source']);
+  }
+  if (args.readShared !== undefined && !('read_shared_revision' in row)) {
+    throw new GrantError('grant_schema_required', 'this brain predates the read-shared switch (access_tokens.read_shared_revision); run `gbrain apply-migrations --yes` (no user decision needed), then retry');
+  }
   const edits = args.sources !== undefined || args.takesHolders !== undefined || opsEdited || args.reset.length > 0 || args.scopes !== undefined
-    || args.privatePages !== undefined || args.privateFacts !== undefined;
+    || args.privatePages !== undefined || args.privateFacts !== undefined || args.readShared !== undefined;
   if (edits && !args.adopt && current.drift.length) throw driftRefusal(name, id, current.drift);
   const before = grantView(current);
-  const after = grantView({ ...next, privatePages, privateFacts });
+  const after = grantView({ ...next, privatePages, privateFacts, readShared });
   const changed = JSON.stringify(before) !== JSON.stringify(after)
     || (args.scopes !== undefined && JSON.stringify(args.scopes) !== JSON.stringify(current.scopes));
   const write = !args.dryRun && (edits || Boolean(args.adopt));
-  const revision = write ? await writeTokenGrant(tx, row, next, args.scopes) : current.revision;
+  const revision = write ? await writeTokenGrant(tx, row, next, args.scopes, readShared) : current.revision;
   if (write && privatePages !== current.privatePages) {
     await (await import('../access/attest-sources.ts')).assertScopeSourceGrant(tx, { kind: 'token', id }, [], { privatePages: privatePages === 'granted_sources' });
     await tx.writeAccessTokenPrivateGrant(id, 'private_pages', privatePages);
@@ -318,7 +348,18 @@ async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Pr
     shape: current.shape, migrated: write && current.shape === 'legacy_permissions', written: write,
     revision: { before: current.revision, after: revision }, drift: current.drift,
     ...(refresh ? { refresh } : {}),
+    reads: await readsChange(tx, row, current, { ...current, ...next, scopes: args.scopes ?? current.scopes, readShared }),
   };
+}
+
+/** GST-2898: the token's resolved read set before and after a rescope, through the one resolver (credentialReadSources). */
+async function readsChange(tx: BrainEngine, row: Record<string, unknown>, before: PrincipalGrant, after: PrincipalGrant): Promise<RescopeTokenResult['reads']> {
+  const { credentialReadSources } = await import('./shared-exposure.ts');
+  const member = typeof row.member_id === 'string' ? row.member_id : null;
+  const [was, now] = [await credentialReadSources(tx, before, member), await credentialReadSources(tx, after, member)];
+  const shared = after.readShared === true && after.sources.kind !== 'none' && hasScope(after.scopes, 'read')
+    ? await sharedReadSources(sqlQueryForEngine(tx), member).catch(() => undefined) : undefined;
+  return { before: was, after: now, stops_reading: was.filter(s => !now.includes(s)), ...(shared ? { shared_now: shared } : {}) };
 }
 
 export interface MigrateLegacyResult {

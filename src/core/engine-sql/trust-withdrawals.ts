@@ -1,18 +1,29 @@
 /**
  * Trust: the fact withdrawal ledger (`fact_withdrawals`, facts/withdrawal-schema.ts). Each function runs the statement
  * its caller ran through `executeRaw`, with the same text and parameters, on the engine's own raw path; only its home
- * moved. Statements that also read `facts` stay with their callers. `isFactWithdrawn` and `isFactPurged` also read
+ * moved. `isFactWithdrawn` and `isFactPurged` also read
  * `fact_purges` (facts/purge-schema.ts): every writer runs them before it saves a claim (facts/withdrawal.ts).
+ * `readSourcePurgeFlags` is the per-source purge probe of the import overlay (facts/purge-overlay.ts): whether the
+ * source has any fact or take purge tombstone.
  *
  * `readFactCacheWatermark` is the hot-memory cache's watermark (facts/meta-hook.ts): the ledger's row count and newest
  * withdrawal, plus a digest of the folder access rules and pending coverage, so a forget or a rulebook install in any
  * process changes it. `readTrustGeneration` is the other half of that cache identity: the trust policy generation
  * (`trust_policy_state`, eligibility/generation-schema.ts), which moves whenever cached proactive content could turn
  * wrong.
+ *
+ * The forget commit (recordFactWithdrawal, facts/withdrawal.ts; forget-prepare.ts) and the `fact_withdrawn` refusal
+ * (factWithdrawnRefusal, facts/single-prepare.ts) also read and write `facts`, `pages` and `decide_review_queue`:
+ * `lockFactForWithdrawal` locks the claim, `queueWithdrawalReview` queues its overnight review,
+ * `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions` and `readPageRevisions` move the changed pages' revisions,
+ * `appendFactForgetReason` notes the reason, and `readFactWithdrawnRow` / `readFactWithdrawnBacking` read the
+ * withdrawal a refused save met. The lock and the two refusal reads are whole static texts from
+ * facts/withdrawal-statements.ts, passed as they are, because the refusal reads reuse placeholders.
  */
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
+import { FACT_WITHDRAWN_BACKING_SQL, FACT_WITHDRAWN_ROW_SQL, LOCK_FACT_FOR_WITHDRAWAL_FLOOR_SQL, LOCK_FACT_FOR_WITHDRAWAL_SQL } from '../facts/withdrawal-statements.ts';
 
 /** One claim of a fence: its row number, its text and its visibility. */
 export interface WithdrawalClaimRow { row_num: number; claim: string; visibility: string }
@@ -114,4 +125,72 @@ export async function readTrustGeneration(exec: LegacyUnscopedRead): Promise<str
     'SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1');
   if (row?.generation === undefined || row.generation === null) throw new Error('trust generation unreadable: trust_policy_state has no row');
   return String(row.generation);
+}
+
+/** Whether the source has any fact purge tombstone and any take purge tombstone (one indexed probe each). */
+export async function readSourcePurgeFlags(exec: LegacyUnscopedRead, sourceId: string): Promise<{ facts: boolean; takes: boolean }> {
+  const [row] = await exec.executeRaw<{ facts: boolean; takes: boolean }>(`SELECT
+    EXISTS (SELECT 1 FROM fact_purges WHERE source_id=$1) AS facts,
+    EXISTS (SELECT 1 FROM take_purges WHERE source_id=$1) AS takes`, [sourceId]);
+  return { facts: row?.facts === true, takes: row?.takes === true };
+}
+
+/** `lockFactForWithdrawal`: the fact a withdrawal admits (FactWithdrawalClaimSpec), locked; outcome markers too. */
+export interface WithdrawalLockSpec { id: number; sourceId: string; worldOnly: boolean; memberPage: string | null; remoteFloor: boolean }
+
+/** The locked claim: its visibility, text and withdrawal subject. */
+export interface WithdrawalLockRow { visibility: string; fact: string; subject: string }
+
+/** A page a withdrawal changed: its id, slug and knowledge revision. */
+export interface WithdrawnPageRevision { id: number; slug: string; knowledge_revision: string }
+
+/**
+ * `readFactWithdrawnRow` / `readFactWithdrawnBacking`: the claim a save met a withdrawal of, its entity, the owned
+ * memory page it is checked on (ownedPageWithdrawalSubject), and whether the caller cannot read private pages.
+ */
+export interface FactWithdrawnSpec { sourceId: string; visibility: string; fact: string; entitySlug: string | null; ownedPage: string | null; excludePrivate: boolean }
+
+/** The withdrawal a refusal names: its subject, visibility and time (timestamptz text). */
+export interface FactWithdrawnRow { subject: string; withdrawn_at: string; visibility: 'world' | 'private' }
+
+export async function lockFactForWithdrawal(exec: SqlExecutor, spec: WithdrawalLockSpec): Promise<WithdrawalLockRow | null> {
+  const [row] = await exec.executeRaw<WithdrawalLockRow>(spec.remoteFloor ? LOCK_FACT_FOR_WITHDRAWAL_FLOOR_SQL : LOCK_FACT_FOR_WITHDRAWAL_SQL,
+    [spec.id, spec.sourceId, spec.worldOnly, spec.memberPage ?? null]);
+  return row ?? null;
+}
+
+export async function queueWithdrawalReview(exec: SqlExecutor, sourceId: string, factRef: string): Promise<void> {
+  await exec.executeRaw(`INSERT INTO decide_review_queue(kind,source_id,a_ref) VALUES ('withdraw',$1,$2) ON CONFLICT DO NOTHING`, [sourceId, factRef]);
+}
+
+export async function listSegmentedPagesBySlug(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string }>> {
+  return exec.executeRaw<{ id: number; slug: string }>(`SELECT id,slug FROM pages
+        WHERE source_id=$1 AND slug=ANY($2::text[]) AND body_storage='segmented'`, [sourceId, slugs]);
+}
+
+export async function bumpWithdrawnPageRevisions(exec: SqlExecutor, sourceId: string, slugs: readonly string[]): Promise<WithdrawnPageRevision[]> {
+  return exec.executeRaw<WithdrawnPageRevision>(
+    `UPDATE pages SET knowledge_revision=gen_random_uuid(),text_projection_revision=NULL,embedding_signature=NULL
+          WHERE source_id=$1 AND slug=ANY($2::text[]) AND body_storage<>'segmented' RETURNING id,slug,knowledge_revision`, [sourceId, slugs]);
+}
+
+export async function readPageRevisions(exec: LegacyUnscopedRead, ids: readonly number[]): Promise<WithdrawnPageRevision[]> {
+  return exec.executeRaw<WithdrawnPageRevision>('SELECT id,slug,knowledge_revision FROM pages WHERE id=ANY($1::int[])', [ids]);
+}
+
+export async function appendFactForgetReason(exec: SqlExecutor, id: number, sourceId: string, note: string): Promise<void> {
+  await exec.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
+        WHERE id=$1 AND source_id=$2`, [id, sourceId, note]);
+}
+
+export async function readFactWithdrawnBacking(exec: LegacyUnscopedRead, spec: FactWithdrawnSpec): Promise<{ visible: boolean; hidden: boolean }> {
+  const [backing] = await exec.executeRaw<{ visible: boolean; hidden: boolean }>(FACT_WITHDRAWN_BACKING_SQL,
+    [spec.sourceId, spec.visibility, spec.fact, spec.entitySlug, spec.ownedPage]);
+  return { visible: backing?.visible === true, hidden: backing?.hidden === true };
+}
+
+export async function readFactWithdrawnRow(exec: LegacyUnscopedRead, spec: FactWithdrawnSpec): Promise<FactWithdrawnRow | null> {
+  const [row] = await exec.executeRaw<FactWithdrawnRow>(FACT_WITHDRAWN_ROW_SQL,
+    [spec.sourceId, spec.visibility, spec.fact, spec.entitySlug, spec.excludePrivate === true, spec.ownedPage]);
+  return row ?? null;
 }

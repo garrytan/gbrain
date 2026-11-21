@@ -1,8 +1,9 @@
 /**
  * iMessage source kind (`sources.config.kind = 'imessage'`): one page per chat per day, read from the GBrain Helper
- * running on the same Mac over 127.0.0.1. The source is always owner-only (access/owner-only.ts), every page is
- * `visibility: private` and the database is always its record, so message text never reaches a Git checkout, even
- * on a brain that has one. The text is other people's words, so the pages carry the external-untrusted tier.
+ * running on the same Mac over 127.0.0.1. The source is always owner-only (access/owner-only.ts) and every page is
+ * `visibility: private`. On a personal, unmanaged brain whose default source is a Git checkout the pages are also
+ * files under `.gbrain-owned/<id>/` there, committed before the rows (owned-folder/); anywhere else the database is
+ * the record. The text is other people's words, so the pages carry the external-untrusted tier.
  */
 
 export const IMESSAGE_DEFAULT_HISTORY_DAYS = 30;

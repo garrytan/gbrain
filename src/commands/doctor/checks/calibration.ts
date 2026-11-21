@@ -393,11 +393,8 @@ export async function checkCalibrationFreshness(engine: BrainEngine, opts: { sou
       configValue: await engine.getConfig('emotional_weight.user_holder'),
     });
     // A remote caller's grant reads only its own sources' profiles.
-    const rows = await engine.executeRaw<{ generated_at: Date | null }>(
-      `SELECT MAX(generated_at) AS generated_at FROM calibration_profiles WHERE holder = $1${opts.sourceIds ? ' AND source_id = ANY($2::text[])' : ''}`,
-      opts.sourceIds ? [ownerHolder, opts.sourceIds] : [ownerHolder],
-    );
-    const generated = rows[0]?.generated_at;
+    const latest = await engine.getLatestCalibrationProfile({ holder: ownerHolder, ...(opts.sourceIds ? { sourceIds: opts.sourceIds } : {}) });
+    const generated = latest?.generated_at;
     if (!generated) {
       return {
         name: 'calibration_freshness',
@@ -540,15 +537,7 @@ export async function checkSubagentHealth(engine: BrainEngine): Promise<Check> {
 export async function checkVoiceGateHealth(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
     // A remote caller's grant reads only its own sources' profiles.
-    const rows = await engine.executeRaw<{ total: number; failures: number }>(
-      `SELECT COUNT(*)::int AS total,
-              COALESCE(SUM(CASE WHEN voice_gate_passed = false THEN 1 ELSE 0 END), 0)::int AS failures
-         FROM calibration_profiles
-         WHERE generated_at >= (now() - INTERVAL '7 days')${opts.sourceIds ? ' AND source_id = ANY($1::text[])' : ''}`,
-      opts.sourceIds ? [opts.sourceIds] : undefined,
-    );
-    const total = rows[0]?.total ?? 0;
-    const failures = rows[0]?.failures ?? 0;
+    const { total, failures } = await engine.readVoiceGateHealth({ sourceIds: opts.sourceIds });
     if (total === 0) {
       return {
         name: 'voice_gate_health',

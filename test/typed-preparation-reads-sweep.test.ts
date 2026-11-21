@@ -46,6 +46,10 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   // A remote sync job's checks in validateSyncAuthority (sync-authority.ts): the source's creation time and a legacy token's row.
   ['readJobSourceState', 'SELECT archived, created_at, local_path, config FROM sources WHERE id = $1', e => e.readJobSourceState('default')],
   ['readJobPrincipal', 'FROM access_tokens WHERE id = $1', e => e.readJobPrincipal({ kind: 'legacy_token', id: '00000000-0000-4000-8000-000000000001' })],
+  ['hasLabelledOnlyMember', 'FROM access_members WHERE labelled_only', e => e.hasLabelledOnlyMember()],
+  ['readSegmentedPageHead', 'segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1', e => e.readSegmentedPageHead(1)],
+  ['readSourceIncarnation', 'SELECT config,incarnation FROM sources WHERE id=$1', e => e.readSourceIncarnation('default')],
+  ['readStoredPageTier', 'SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', e => e.readStoredPageTier('default', 'a')],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];

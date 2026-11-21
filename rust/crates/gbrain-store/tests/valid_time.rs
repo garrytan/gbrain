@@ -42,7 +42,7 @@ fn snapshot(b: &Brain, slug: &str) -> i64 {
 
 fn identities(b: &Brain, q: Value) -> Vec<Value> {
     let mut q = q;
-    q["world"] = json!({ "honorAliases": true, "entityPrivacy": true });
+    q["world"] = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     b.list_valid_time_identities(&args::<ValidTimeIdentityQuery>(q))
         .unwrap()
 }
@@ -100,14 +100,14 @@ fn identities_list_the_live_pages_with_the_slug_by_source_with_checkout_and_worl
     let public = identities(
         &b,
         json!({ "slug": "notes/shared", "sourceId": null, "sourceIds": null,
-                "excludePrivate": { "honorAliases": true, "entityPrivacy": true } }),
+                "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" } }),
     );
     assert_eq!(sources_of(&public), [("beta".into(), true)]);
     // Without the privacy part the policy only reads the reader list, which no page names.
     let readers_only = identities(
         &b,
         json!({ "slug": "notes/shared", "sourceId": null, "sourceIds": null,
-                "excludePrivate": { "honorAliases": false, "entityPrivacy": false } }),
+                "excludePrivate": { "honorAliases": false, "entityPrivacy": false, "ownerOnly": "fn" } }),
     );
     assert_eq!(readers_only.len(), 2);
     assert!(
@@ -144,28 +144,23 @@ fn page_id(b: &Brain, slug: &str) -> i64 {
         .unwrap()
 }
 
-fn pick_with(b: &Brain, page: i64, as_of: &str, pin: Option<i64>, prune: (i64, u64)) -> Value {
-    pick_policy(b, page, as_of, pin, prune, true)
-}
-
 fn pick_policy(
     b: &Brain,
     page: i64,
     as_of: &str,
     pin: Option<i64>,
-    prune: (i64, u64),
     privacy: bool,
+    exclude_private: bool,
 ) -> Value {
     b.pick_valid_time_edition(&args::<ValidTimePickQuery>(json!({
-        "pageId": page, "asOf": as_of, "excludePrivate": false, "pinOrd": pin, "inlineMaxBytes": 5,
-        "policy": { "honorAliases": true, "entityPrivacy": privacy },
-        "pruneMaxBytes": prune.0, "pruneKept": prune.1,
+        "pageId": page, "asOf": as_of, "excludePrivate": exclude_private, "pinOrd": pin, "inlineMaxBytes": 5,
+        "policy": { "honorAliases": true, "entityPrivacy": privacy, "ownerOnly": "fn" },
     })))
     .unwrap()
 }
 
 fn pick(b: &Brain, page: i64, as_of: &str, pin: Option<i64>) -> Value {
-    pick_with(b, page, as_of, pin, (1_000_000, 100))
+    pick_policy(b, page, as_of, pin, true, false)
 }
 
 /// Three editions: v1 from January, v2 from June, and the current page from March.
@@ -247,7 +242,7 @@ fn the_pick_takes_the_latest_edition_in_force_with_its_neighbours_and_competitor
     );
     assert_eq!(
         pick(&b, 987_654, "2026-07-01", None),
-        json!({ "row": null, "history_unpruned": false })
+        json!({ "row": null })
     );
 }
 
@@ -273,70 +268,97 @@ fn the_pick_counts_undated_rows_and_reads_null_columns_when_nothing_is_dated() {
 }
 
 #[test]
-fn the_pick_reports_history_pglite_would_have_pruned() {
+fn the_pick_reads_the_marks_a_large_page_prune_leaves() {
+    let b = brain("valid-time-pruned");
+    let slug = "notes/large";
+    put(
+        &b,
+        "default",
+        slug,
+        "Small.",
+        json!({ "valid_from": "2026-01-01" }),
+    );
+    let small = b
+        .create_version_with(slug, Some("default"), Some("grew"))
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let large = "x".repeat(1024 * 1024 + 1);
+    put(
+        &b,
+        "default",
+        slug,
+        &large,
+        json!({ "valid_from": "2026-03-01" }),
+    );
+    let page = page_id(&b, slug);
+    let ids: Vec<i64> = (0..6).map(|_| snapshot(&b, slug)).collect();
+    // Six large snapshots: the oldest goes, and the small version before it loses its successor.
+    let kept: Vec<i64> = b
+        .get_versions(slug, &args(json!({ "includeBody": false })))
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_i64().unwrap())
+        .collect();
+    let mut want: Vec<i64> = ids[1..].iter().rev().copied().collect();
+    want.push(small);
+    assert_eq!(kept, want);
+
+    let r = pick(&b, page, "2026-02-01", None)["row"].clone();
+    assert_eq!(r["version_id"], json!(small));
+    assert_eq!(r["successor_pruned"], json!(true));
+    assert_eq!(r["reason"], json!("grew"));
+    // The five kept large versions, and the small one: the read counts bodies over 5 bytes.
+    assert_eq!(r["large_versions"], json!(6));
+    assert!(r["gap_at"].is_string());
+    // A reader held to visible text never sees a reason whose successor is gone.
+    let hidden = pick_policy(&b, page, "2026-02-01", None, true, true)["row"].clone();
+    assert_eq!(hidden["reason"], Value::Null);
+    // The oldest kept large version was introduced by a pruned successor: no reason introduces it.
+    let next = pick(&b, page, "2026-04-01", Some(ids[1]))["row"].clone();
+    assert_eq!(next["version_id"], json!(ids[1]));
+    assert_eq!(next["introduced_because"], Value::Null);
+    assert_eq!(next["successor_pruned"], json!(false));
+}
+
+#[test]
+fn a_rename_that_prunes_keeps_the_gap_it_records() {
+    let b = brain("valid-time-rename-prune");
+    let large = "x".repeat(1024 * 1024 + 1);
+    put(
+        &b,
+        "default",
+        "notes/big",
+        &large,
+        json!({ "valid_from": "2026-01-01" }),
+    );
+    for _ in 0..5 {
+        snapshot(&b, "notes/big");
+    }
+    let page = page_id(&b, "notes/big");
+    assert_eq!(
+        pick(&b, page, "2026-07-01", None)["row"]["gap_at"],
+        Value::Null
+    );
+    // The rename's own snapshot is the sixth large version: it prunes the oldest, and the renamed
+    // page keeps the gap that prune recorded.
+    b.update_slug("notes/big", "notes/bigger", None).unwrap();
+    assert!(pick(&b, page, "2026-07-01", None)["row"]["gap_at"].is_string());
+}
+
+#[test]
+fn the_pick_reads_no_gap_on_a_history_no_prune_cut() {
     let b = brain("valid-time-unpruned");
     let (page, _, _) = seed_editions(&b);
-    // Two inline versions over three bytes: one kept is too few, two are enough.
-    assert_eq!(
-        pick_with(&b, page, "2026-07-01", None, (3, 1))["history_unpruned"],
-        json!(true)
-    );
-    assert_eq!(
-        pick_with(&b, page, "2026-07-01", None, (3, 2))["history_unpruned"],
-        json!(false)
-    );
-    assert_eq!(
-        pick_with(&b, page, "2026-07-01", None, (4, 1))["history_unpruned"],
-        json!(false)
-    );
-
-    put(
-        &b,
-        "default",
-        "memory/unattributed",
-        "A.",
-        json!({ "valid_from": "2026-01-01" }),
-    );
-    snapshot(&b, "memory/unattributed");
-    snapshot(&b, "memory/unattributed");
-    let holding = page_id(&b, "memory/unattributed");
-    assert_eq!(
-        pick_with(&b, holding, "2026-07-01", None, (1_000_000, 1))["history_unpruned"],
-        json!(true)
-    );
-    assert_eq!(
-        pick_with(&b, holding, "2026-07-01", None, (1_000_000, 2))["history_unpruned"],
-        json!(false)
-    );
-    // The same history on a page that is not a holding page keeps every version.
-    put(
-        &b,
-        "default",
-        "notes/memory/unattributed-not",
-        "A.",
-        json!({ "valid_from": "2026-01-01" }),
-    );
-    snapshot(&b, "notes/memory/unattributed-not");
-    snapshot(&b, "notes/memory/unattributed-not");
-    let plain = page_id(&b, "notes/memory/unattributed-not");
-    assert_eq!(
-        pick_with(&b, plain, "2026-07-01", None, (1_000_000, 1))["history_unpruned"],
-        json!(false)
-    );
-    put(
-        &b,
-        "default",
-        "team/memory/unattributed",
-        "A.",
-        json!({ "valid_from": "2026-01-01" }),
-    );
-    snapshot(&b, "team/memory/unattributed");
-    snapshot(&b, "team/memory/unattributed");
-    let nested = page_id(&b, "team/memory/unattributed");
-    assert_eq!(
-        pick_with(&b, nested, "2026-07-01", None, (1_000_000, 1))["history_unpruned"],
-        json!(true)
-    );
+    let r = pick(&b, page, "2026-07-01", None)["row"].clone();
+    assert_eq!(r["gap_at"], Value::Null);
+    // A history gap the caller records reads back as the page's gap.
+    b.create_version_opts(
+        "notes/policy",
+        &args(json!({ "sourceId": "default", "historyGap": true })),
+    )
+    .unwrap();
+    assert!(pick(&b, page, "2026-07-01", None)["row"]["gap_at"].is_string());
 }
 
 #[test]
@@ -365,7 +387,7 @@ fn the_pick_marks_a_private_edition_invisible() {
     );
     let now = pick(&b, page, "2026-07-01", None)["row"].clone();
     assert_eq!(now["visible"], json!(true));
-    let unjudged = pick_policy(&b, page, "2026-02-01", None, (1_000_000, 100), false);
+    let unjudged = pick_policy(&b, page, "2026-02-01", None, false, false);
     assert_eq!(unjudged["row"]["visible"], json!(true));
     // A version that names readers stays hidden under either policy.
     put(
@@ -384,7 +406,7 @@ fn the_pick_marks_a_private_edition_invisible() {
         json!({ "valid_from": "2026-06-01" }),
     );
     let listed = page_id(&b, "notes/listed");
-    let r = pick_policy(&b, listed, "2026-02-01", None, (1_000_000, 100), false);
+    let r = pick_policy(&b, listed, "2026-02-01", None, false, false);
     assert_eq!(r["row"]["visible"], json!(false));
     // The current page is judged by the page policy.
     put(
@@ -408,7 +430,6 @@ fn pick_as(b: &Brain, page: i64, policy: Value) -> bool {
     b.pick_valid_time_edition(&args::<ValidTimePickQuery>(json!({
         "pageId": page, "asOf": "2026-02-01", "excludePrivate": true, "pinOrd": null,
         "inlineMaxBytes": 1_000_000, "policy": policy,
-        "pruneMaxBytes": 1_000_000, "pruneKept": 100,
     })))
     .unwrap()["row"]["visible"]
         .as_bool()
@@ -516,7 +537,7 @@ fn the_pick_reads_the_reason_and_gap_a_sync_import_stamps() {
         json!({ "valid_from": "2026-01-01" }),
     );
     let v1 = b
-        .create_version_with(
+        .create_version_opts(
             "vt/reason",
             &args(json!({ "sourceId": "default", "reason": "imported from the notes export", "historyGap": true })),
         )

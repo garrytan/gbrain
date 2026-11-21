@@ -247,6 +247,17 @@ pub(crate) fn has_state(read: &dyn KvRead, source_id: &str) -> Result<bool> {
     Ok(read.get(&key(STATE, &[source_id.as_bytes()]))?.is_some())
 }
 
+/// Every source that holds access state (`access_policy_state`), in byte order of the id
+/// (`ORDER BY source_id COLLATE "C"`).
+pub(crate) fn policy_source_ids(read: &dyn KvRead) -> Result<Vec<String>> {
+    let mut sources = Vec::new();
+    scan_prefix(read, &[keys::ACCESS_RULES, STATE], false, &mut |k, _| {
+        sources.push(String::from_utf8_lossy(&k[2..]).into_owned());
+        true
+    })?;
+    Ok(sources)
+}
+
 /// The v283 foreign key: a rule, a pending prefix or a revision needs its source's access state.
 pub(crate) fn require_state(read: &dyn KvRead, op: &str, source_id: &str) -> Result<()> {
     if has_state(read, source_id)? {

@@ -50,7 +50,9 @@ import {
   remoteProvenanceFloorSql,
 } from '../../search/private-visibility.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
-import { ANY_OWNER_ONLY_SQL, ownerOnlyFactSql, ownerOnlyPageSql } from '../../access/owner-only.ts';
+import { ownerOnlyFactSql, ownerOnlyPageSql, ownerOnlyTakeSql, ownerOnlyTimelineSql } from '../../access/owner-only.ts';
+import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
+import type { PageReadScope } from '../../types.ts';
 import { refuseMember } from './common.ts';
 
 /** The policy flags the store reads (`PrivacyPolicy` in rust/crates/gbrain-store/src/facts/privacy.rs). */
@@ -88,14 +90,16 @@ export type StoreOwnerOnlyForm = 'fn' | 'closed' | 'off';
 
 /**
  * The form of the owner-only test in a rendered policy whose row alias is `alias` (`pages` for a page policy, `facts`
- * for a fact policy): the v320 function call, the closed test, or none. The same text never holds two forms (one
+ * for a fact policy, `takes` or `timeline_entries` for a row's own test): the v320 function call (or its v328 form with the login's read mode, always the exact lineage in the
+ * store), the closed test (any owner-only source or the held flag), or none. The same text never holds two forms (one
  * schema version renders both conjuncts), so the first match decides.
  */
-export function ownerOnlyFormIn(sql: string, table: 'pages' | 'facts', alias: string): StoreOwnerOnlyForm {
-  if (sql.includes(table === 'pages' ? ownerOnlyPageSql(alias, 'fn') : ownerOnlyFactSql(alias, 'fn'))) return 'fn';
-  return sql.includes(ANY_OWNER_ONLY_SQL) ? 'closed' : 'off';
+export function ownerOnlyFormIn(sql: string, table: 'pages' | 'facts' | 'takes' | 'timeline_entries', alias: string): StoreOwnerOnlyForm {
+  const render = { pages: ownerOnlyPageSql, facts: ownerOnlyFactSql, takes: ownerOnlyTakeSql, timeline_entries: ownerOnlyTimelineSql }[table];
+  const rendered = (form: 'mode' | 'fn' | 'closed') => render(alias, form);
+  if (sql.includes(rendered('fn')) || sql.includes(rendered('mode'))) return 'fn';
+  return sql.includes(rendered('closed')) ? 'closed' : 'off';
 }
-
 
 /** The page aliases the policies judge: the fact policy's two, and `p` of a page read. */
 const PAGE_ALIASES = ['pp', 'entity_pp', 'p'] as const;
@@ -265,7 +269,8 @@ export interface StoreCallerReaders {
 }
 
 /**
- * The widened-caller step every store privacy policy shares (page, member-access and fact policies). `judge` compares
+ * The widened-caller step of the member-access policy (page-visibility.ts), which the page and fact policies above do
+ * without: they send the short form as `open` and the store's flag decides. `judge` compares
  * the caller's rendered text with reference renderings (renderForStoreCaller) and returns the store policy for the
  * one it equals, or undefined. It runs with the caller's reader record (its reader identities and private-readable
  * sources), in the caller's context.
@@ -313,10 +318,41 @@ export function renderForStoreCaller<T>(record: Partial<CallerAccess>, render: (
 }
 
 /** The process-setting flags of a rendered page policy, and its owner-only form. */
-function pagePolicyFlags(sql: string): StorePrivacyPolicy {
+export function pagePolicyFlags(sql: string): StorePrivacyPolicy {
   return {
     honorAliases: sql.includes(privacyAliasSql('p')),
     entityPrivacy: sql.includes(privateSnapshotFilterFragment('p')),
     ownerOnly: ownerOnlyFormIn(sql, 'pages', 'p'),
   };
 }
+
+/**
+ * Every key hybridSearch's option bag carries that does not decide which pages a marker read may see: the search's own
+ * settings, callbacks and internal flags, and `takesHoldersAllowList`, which only the takes reads honour. hybridSearch
+ * hands the page-marker reads (stampContentFlags, stampUnverifiedExtractions) and the ranking reads
+ * (getBacklinkCounts, getAdjacencyBoosts, supersedingPageSlugs) that whole bag as their policy, and PGLite
+ * reads only the page policy out of it (src/core/search/read-policy-sql.ts), so these change nothing here. The list is
+ * checked against the two option types below: a new key in either one fails the type check until it is listed.
+ */
+export const HYBRID_BAG_KEYS = [
+  'expansion', 'anyWordFill', 'decide', 'aliasTokenHop', 'onRelationalMeta', 'mode', 'expandFn', 'expansionVariantBudget',
+  'keywordArmConfidenceFloor', 'metadataBoostGate', 'rerankGate', 'pageRankCut', 'explainTarget', 'explain', 'rrfK', 'dedupOpts',
+  'onMeta', 'onRerankPool', '_queryEmbedDeadline', '_queryPrefix', '_embeddingOptedOut', '_timings', 'queryEmbedFn',
+  'onQueryEmbedding', '_telemetryCacheStatus', '_searchModeInput', 'limit', 'offset', 'onVectorPoolMeta', 'vectorLegacyGuard',
+  'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn', 'autocut', 'type', 'types', 'where',
+  'exclude_slugs', 'exclude_slug_prefixes', 'source_boosts', 'include_slug_prefixes', 'detail', 'language', 'symbolKind',
+  'nearSymbol', 'walkDepth', 'orFallback', 'orFill', 'keywordTimeoutCache', 'rankQuery', 'keywordPhrase', 'embeddingColumn',
+  'afterDate', 'afterDateInclusive', 'beforeDate', 'beforeDateInclusive', 'recencyBoost', 'salience', 'recency', 'since',
+  'until', 'tokenBudget', 'useCache', 'intentWeighting', 'reranker', 'floorRatio', 'crossModal', 'graph_signals',
+  'relationalRetrieval', 'relationalRetrievalDepth', 'relationalRerankPin', 'relationalPlanner', 'relationalOrientOneHop',
+  'relationalChainSlots', 'takesHoldersAllowList', 'applyBacklinks', 'decayMap', 'fallback', 'graphSignalsEnabled',
+  'onGraphMeta', 'onScoreDistribution', 'query', 'titleBoost', 'skipMetadataBoosts',
+] as const;
+/** `WhoknowsOpts` keys whoknows passes with its read policy (src/commands/whoknows.ts) beyond the hybrid bag; the page reads never read them. */
+export const WHOKNOWS_KEYS = ['topic'] as const;
+type BagKey = Exclude<keyof HybridSearchOpts | keyof PostFusionOpts, keyof PageReadScope>;
+// Both directions: every listed key is a key of the bag, and every key of the bag that is not a page policy key is listed.
+const HYBRID_BAG_KEYS_CHECKED: readonly BagKey[] = HYBRID_BAG_KEYS;
+const HYBRID_BAG_KEYS_COMPLETE: [Exclude<BagKey, (typeof HYBRID_BAG_KEYS)[number]>] extends [never] ? true : never = true;
+void HYBRID_BAG_KEYS_CHECKED;
+void HYBRID_BAG_KEYS_COMPLETE;

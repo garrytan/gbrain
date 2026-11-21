@@ -33,6 +33,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `e2e.yml` | No `pull_request` trigger | Named exception ([below](#full-ci-on-pull-requests)) | The full-ci dispatch on the head before merge (merge-train requires `e2e-full-suite`), every push to master, the merge queue and the nightly E2E schedule |
 | `test.yml`, `e2e.yml` | A push to master skips its full lanes when it reuses a passed full-suite run of its exact tree | Named exception ([below](#master-push-reuse)) | The reused run (same tree, full profile); schedules never reuse |
 | `persistence-validation.yml` | `convergence` selected on pull requests by `scripts/ci-convergence-scope.sh` (test.yml `changes`; never by `package.json` alone) | Named exception | Every merge-queue run and every push to master; the nightly cell runs in `convergence-nightly.yml` |
+| `openclaw-skill-resolver-bench.yml` | The skill-resolver plugin's labelled-set bench in a real OpenClaw gateway (`scripts/bench/openclaw-skill-resolver-real.ts`), idle and loaded: dispatch only (run by hand after a resolver change), reports numbers and gates nothing | Named exception | Itself (a manual dispatch) |
 | `convergence-nightly.yml` | The convergence gate's nightly cell (2,000 pages, 50 ms, 20 kills, run-id seed): schedule and dispatch only, outside `test-status`; the PR cell (200 pages, 10 ms, 6 kills, seed 6650) runs in `persistence-validation.yml` | Named exception | Itself (nightly Convergence schedule) |
 | `persistence-validation.yml` | `SOAK_OPERATIONS` 2,500 vs 10,000 | Named exception | Every push to master and the nightly Test schedule |
 | `persistence-validation.yml` | Crash robot `--robot-scope=pr` (Postgres lease-bound seams skipped, 820 s PGLite and 620 s Postgres ceilings) vs `full` (1200 s PGLite, 880 s Postgres; [ceilings](#crash-robot-ceilings)); the nightly adds that day's exploration seeds | Named exception | The full-ci dispatch, every push to master (same fixed list, so it may reuse that run) and the nightly Test schedule |
@@ -40,11 +41,13 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `native-locks.yml` | darwin-arm64 and darwin-x64 cells and the darwin-x64 heartbeat finalize: never on a pull request | Named exception ([below](#macos-runners)) | The full-ci dispatch, every push to master, the merge queue and the nightly Test schedule |
 | `e2e.yml` | Doc-only merge-queue entry selects no E2E file | Named exception | Every push to master (whole corpus) and the nightly E2E schedule |
 | `e2e.yml` | Full-corpus coverage lanes and their `e2e-status` checks | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch) |
+| `e2e.yml` | `openclaw-skill-resolver` (keyless, real OpenClaw gateway, one cell per OpenClaw version) | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch); `scripts/require-executed-tests.ts` fails an all-skip run |
 | `e2e.yml` | Tier 2 (LLM Skills) runs keyed on the nightly only; other events skip it, and `e2e-status` prints "not run: keys withheld" instead of counting it green | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch), keyed; `scripts/require-executed-tests.ts` fails the job when any test skipped or none ran, and each test fails unless the agent called a gbrain MCP tool |
 | `heavy-tests.yml` | Label-gated jobs on pull requests | Named exception | Nightly Heavy Tests schedule |
 | `heavy-tests.yml` | `grok-door` (label or input only) | Recorded decision: no scheduled run until the `XAI_API_KEY` secret exists | None yet, by decision |
 | `heavy-tests.yml` | `opencode-door-canary` | Named exception: schedule-only, non-gating canary | Itself |
 | `macos-validation.yml` | Label-gated on pull requests | Named exception | Nightly macOS validation schedule |
+| `rust-cli-parity.yml` | Pushes to `rust-engine/**` lane branches and pull requests to any base, both on one broad path list (`src/**`, `rust/**`, the test, its fixture brain and the install inputs); not a required check | Parity: push, pull request and dispatch run the same job | Pushes to master run the same test in `rust-engine.yml`'s addon job |
 | `apple-helper.yml` | Pull requests and master pushes that touch `apple/**` or the workflow; not a required check | Named exception: the Swift helper is inert files to every other workflow | Every push to master that touches those paths |
 | `scale-tier.yml` | Path- or label-gated 10k on pull requests | Named exception | Nightly Scale tier schedule (10k-50k) |
 | `upgrade-matrix.yml` | Pull requests run N-1 and N-50, keyless repo-less cells only, against the head; the full matrix (N-1, N-10, N-50, 30 days, stable × both engines × keys × brain shapes) is schedule and dispatch only, and those refuse any ref but master ([docs](ci-upgrade-matrix.md)) | Named exception | Nightly Upgrade matrix schedule |
@@ -52,8 +55,9 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `osv-scanner.yml` | Pull requests scan only on a manifest change | Named exception | Weekly OSV schedule; `dependency-audit` on every PR |
 | `nightly-watch.yml` | `workflow_run` event guard | Not a test scope: it files issues from qualifying scheduled and push-to-master runs | — |
 | `fix-wave-gate.yml`, `fix-wave-closeout.yml` | Pull-request action and merge state | Not a test scope: merge-process automation | — |
+| `vorflux-notify.yml` | Comments, reviews, pushes, merge or close, and failed full runs on `rust-engine` pull requests from this repository | Not a test scope: notifies the Rust engine agent | — |
 | `harness-check.yml` | `pull_request` only; a missing `HARNESS_EVALS_READ_TOKEN` skips the job (succeeds with a notice); a fork head is refused | Named exception: advisory, non-required check ([below](#harness-check)) | None: pushes to master and schedules do not run it; the pin bump runs its steps by hand on master |
-| `full-ci.yml` | `full-ci` label, later pushes to a labeled pull request, same-repository head | Not a test scope: dispatches the full profile on the head | — |
+| `full-ci.yml` | `full-ci` label, same-repository head; the label comes off once both dispatches are accepted | Not a test scope: dispatches the full profile on the head | — |
 | `test.yml`, `scale-tier.yml` | `dynamic-ci` filter (Trunk Dynamic CI) on pull requests; its gated jobs run unless the verdict is exactly `'false'` | Named exception ([below](#trunk-dynamic-ci)): pull requests only, Learning mode skips nothing | The full-ci dispatch, every push to master, the merge queue and the nightly schedules, which never run the filter |
 
 ## Full CI on pull requests
@@ -73,8 +77,12 @@ The full suite runs on the exact head before merge, with the same shape as a
 push to master: every unit shard, serial, slow, both PostgreSQL arms and the
 whole E2E corpus. A maintainer adds the `full-ci` label (a label needs triage
 access, so contributors cannot add one). `full-ci.yml` then dispatches Test
-and E2E on the head branch, and again on every later push while the label
-stays. A fork's branch is never dispatched. A thread that wants the full suite
+and E2E on the head branch and removes the label once both dispatches were
+accepted, so a later push does not start a full run nobody asked for. A refused
+or failed dispatch leaves the label on, where it shows. To gate a later head, add
+the label again at that head. A head that moved after the label was added keeps
+the label, and the push that moved it dispatches and removes it. A fork's branch
+is never dispatched. A thread that wants the full suite
 earlier, for a risky change, dispatches it itself:
 `gh workflow run test.yml --ref <branch> && gh workflow run e2e.yml --ref <branch>`.
 
@@ -230,6 +238,9 @@ inventory:
   the same run, attempt and commit. Otherwise both are left out with a warning:
   the run still counts for merge, but gstack refuses it (`inventory_uncovered`).
   A push that reused a run has no `full-suite` job, so it is never evidence.
+- `tree.json` carries `os`, the runner's OS from `RUNNER_OS` (`Linux` for both
+  jobs). A run profile that sets `os` refuses a run whose `tree.json` records a
+  different OS or none (`os_mismatch`).
 - `bash scripts/pregate-remote-gate.sh --list` prints the inventory: the gate
   command with `--list` (`scripts/ci-ubicloud.ts --list`), the same lanes and
   discovery the gate runs, one file per line. It exits non-zero when the
@@ -242,18 +253,28 @@ inventory:
   gstack refuses that tree's own runs (`inventory_failed`) and the gate runs,
   as remote-gate reuse already does. The gate leaves out the keyed-only
   Tier 2 file (`test/e2e/skills.test.ts`): a VM has neither the keys nor
-  openclaw, so every test in it would skip.
+  openclaw, so every test in it would skip. It also leaves out
+  `test/e2e/openclaw-skill-resolver-real.test.ts`, which needs the OpenClaw
+  CLI and runs only in the full-corpus `openclaw-skill-resolver` job, so a
+  labelled head's E2E run never lists it.
 - gstack accepts only `push` and `workflow_dispatch` runs whose newest attempt
-  succeeded. **A flaky job means re-running the whole workflow.** "Re-run failed
-  jobs" carries every job that passed, the ledger job that writes the manifest
-  included, over from the older attempt, so the new attempt has no manifest of
-  its own and its `tree.json` has no `files` (`inventory_uncovered`); a
-  `tree.json` left from an older attempt is refused too (`artifact_mismatch`).
+  succeeded. After "Re-run failed jobs", the failed jobs and the jobs that need
+  them (the ledger job that writes the manifest included) run again; the
+  manifest counts each job at its newest attempt, so `tree.json` still lists
+  every test file, and it names the files that passed only on the re-run in
+  `rerun_files`, with the run's `attempts`. A failing test left in the newest
+  attempt of any job means `tree.json` has no `files` (`inventory_uncovered`);
+  a `tree.json` left from an older attempt is refused too (`artifact_mismatch`).
 - The profiles live in `.gstack/pregate.json`: `run_profiles` `test`
   (`test.yml`, job `full-suite`, artifact `full-suite-tree`) and `e2e`
   (`e2e.yml`, job `e2e-full-suite`, artifact `e2e-full-suite-tree`), each
   accepting `workflow_dispatch` and `push` runs from the last 24 hours, and
-  `remote_gate_runs` naming both with this inventory command. gstack reads them
+  `remote_gate_runs` naming both with this inventory command. Both profiles set
+  `os` to `Linux`, the OS of the runners that execute these jobs: gstack uses a
+  run only when its `tree.json` records that OS, and the final pregate's tests
+  stage reuses it only on a machine running the same OS (on macOS or Windows
+  that stage runs the selected tests locally; the lane carries below don't
+  need it). gstack reads the profiles
   only from `origin/<base>`, so a branch cannot loosen them. gstack accepts
   these keys from 1.91.377.0 on.
 

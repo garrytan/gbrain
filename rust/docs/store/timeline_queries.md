@@ -21,6 +21,7 @@ Code: `rust/crates/gbrain-store/src/timeline_queries.rs`, the napi methods in
 | `restoreEventProjection({ depthPageId, date, source, summary, detail, eventPageId })` | served, through `put_event_projection` (the upsert of `upsertEventProjection`); a missing depth or event page refuses `CONSTRAINT_VIOLATION` |
 | `removeTimelineRows(pageId, rows)` | served, through `remove_entry` and `recompute_latest` |
 | `updateTimelineDetails(pageId, rows)` | served, through `put_entry` |
+| `insertCanonicalTimelineRows(pageId, rows)` | served, through `insert_entry` |
 | `sampleEffectiveDates()` | served (site read) |
 | `sampleEffectiveDateSources()` | served (site read) |
 | `readMaxTimelineEntryId()` | served (site read) |
@@ -84,9 +85,9 @@ The SQL is `INSERT ... SELECT` from the depth page and the event page of one sou
   (`idx_timeline_dedup`), and the write keeps nothing.
 - Text with a NUL byte is `invalid_argument`.
 
-## removeTimelineRows and updateTimelineDetails
+## removeTimelineRows, updateTimelineDetails and insertCanonicalTimelineRows
 
-The fence projection's two statements over `jsonb_to_recordset` (`engine-sql/timeline.ts`). Both reach only the
+The fence projection's three statements over `jsonb_to_recordset` (`engine-sql/timeline.ts`). The delete and the update reach only the
 page's own entries (`event_page_id` is null) and find them by id: the store has no id index, so it scans the
 page's `E` keys.
 
@@ -103,6 +104,11 @@ page's `E` keys.
   (null equals nothing). A row named twice applies once, the first. A null `next` on a matching row is
   `constraint_violation` (`detail` is `NOT NULL`) and the call keeps nothing. The entry keeps its id, date,
   source, summary and `created_at`; the write goes through `put_entry`, so `G` is not lowered.
+- `insertCanonicalTimelineRows(pageId, rows)` inserts the rows as the page's own entries in `rows` order, through
+  `insert_entry` (the `ON CONFLICT (page_id, date, md5(summary), source) DO NOTHING` insert): a row equal on date,
+  summary and source to a stored entry, or to an earlier row of the call, is skipped and still takes an id. A
+  soft-deleted page takes rows. A missing page is `constraint_violation` (the foreign key), a null column
+  `constraint_violation` and a bad date `invalid_argument`; each writes nothing. An empty list changes nothing.
 - Text with a NUL byte is `invalid_argument`.
 
 ## The site reads

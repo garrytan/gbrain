@@ -261,7 +261,7 @@ fn core_rows_list_the_live_always_load_pages_by_source_then_slug() {
     assert!(other.contains(&"other:core/elsewhere".to_string()));
     let private = keys(&core_rows(
         &b,
-        json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true } }),
+        json!({ "excludePrivate": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" } }),
     ));
     assert_eq!(private.len(), 7);
     assert!(!private.contains(&"default:core/private".to_string()));

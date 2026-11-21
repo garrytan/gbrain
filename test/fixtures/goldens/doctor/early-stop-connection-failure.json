@@ -168,7 +168,7 @@
       "details": {
         "audience": "personal",
         "audience_reasons": [
-          "no shared declaration; 0 non-automation client(s) active in 30d"
+          "no shared declaration; 0 non-automation client(s) active in 30d, 0 people (0 member(s), 0 unbound client(s))"
         ],
         "backstop_visibility": "private",
         "capture_lanes": {

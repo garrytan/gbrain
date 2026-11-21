@@ -891,6 +891,56 @@ describe('engine parity: pages', () => {
     expect(sampleSlugs).toEqual(['wiki/bio/one', 'wiki/vc/one']);
     return { prefixedView, sampleSlugs };
   });
+  parityTest(
+    'listEntityKeyRows: live, unretired pages of the types, only the named keys, keyset-paged',
+    { methods: ['putPage', 'softDeletePage', 'listEntityKeyRows'] },
+    async (engine) => {
+      await seed(engine, [
+        ['people/alice-example', { ...ALICE, frontmatter: { email: 'alice@example.com', role: 'pm', emails: ['a@example.com'] } }],
+        ['people/bob-example', { type: 'person', title: 'Bob Example', compiled_truth: 'Bob.', frontmatter: { merged_into: 'people/alice-example', email: 'b@example.com' } }],
+        ['people/carol-example', { type: 'person', title: 'Carol Example', compiled_truth: 'Carol.', frontmatter: {} }],
+        ['companies/acme-example', ACME],
+        ['notes/acme-example', { type: 'note', title: 'Acme note', compiled_truth: 'Note.', frontmatter: { email: 'n@example.com' } }],
+      ]);
+      await engine.softDeletePage('people/carol-example');
+      const args = { types: ['company', 'person'], keys: ['email', 'emails'] };
+      const first = await engine.listEntityKeyRows({ ...args, limit: 1 });
+      const rest = await engine.listEntityKeyRows({ ...args, after: { source_id: first[0]!.source_id, slug: first[0]!.slug }, limit: 10 });
+      expect([...first, ...rest].map((r) => r.slug)).toEqual(['companies/acme-example', 'people/alice-example']);
+      expect(rest[0]!.keys).toEqual({ email: 'alice@example.com', emails: ['a@example.com'] });
+      expect([...first, ...rest].every(r => /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(r.created_at))).toBe(true);
+      const untimed = (rows: typeof first) => rows.map(({ created_at: _at, page_id: _id, generation: _gen, ...r }) => r);
+      return { first: untimed(first), rest: untimed(rest) };
+    },
+  );
+  parityTest(
+    'listIdentityDecisions / applyIdentityDecisions: decisions by (source, slug), confirmed members linked, missing pages pending',
+    { methods: ['putPage', 'applyIdentityDecisions', 'listIdentityDecisions', 'listRestrictedIdentityMembers'] },
+    async (engine) => {
+      await seed(engine, [['people/alice-example', ALICE], ['people/bob-example', { type: 'person', title: 'Bob Example', compiled_truth: 'Bob.', frontmatter: {} }]]);
+      const ref = (slug: string) => ({ source_id: 'default', slug });
+      const decision = (decision_id: string, verdict: 'same' | 'different', slugs: string[]) => ({
+        decision_id, verdict, members: slugs.map(ref), group_id: `dedupe/${decision_id}`, entity_id: verdict === 'same' ? `dedupe/${decision_id}` : null,
+        canonical: verdict === 'same' ? ref(slugs[0]!) : null, decided_by: 'owner', decided_at: '2026-11-18T00:00:00Z', origin: 'database' as const,
+        home_source_id: null, git_blob: null,
+      });
+      const applied = await engine.applyIdentityDecisions({ upsert: [
+        decision('0000000000000001', 'same', ['people/alice-example', 'people/bob-example']),
+        decision('0000000000000002', 'same', ['people/carol-example', 'people/dan-example']),
+        decision('0000000000000003', 'different', ['people/alice-example', 'people/erin-example']),
+      ] });
+      expect(applied).toEqual({ upserted: 3, removed: 0, linked: 2, unlinked: 0 });
+      const read = await engine.listIdentityDecisions();
+      expect(read.decisions.map(d => [d.decision_id, d.verdict, d.members.length, d.canonical?.slug ?? null]))
+        .toEqual([['0000000000000001', 'same', 2, 'people/alice-example'], ['0000000000000002', 'same', 2, 'people/carol-example'], ['0000000000000003', 'different', 2, null]]);
+      expect(read.pending.map(p => [p.decision_id, p.slug, p.reason])).toEqual([['0000000000000002', 'people/carol-example', 'page_missing'], ['0000000000000002', 'people/dan-example', 'page_missing']]);
+      expect(await engine.listRestrictedIdentityMembers([])).toEqual([]);
+      expect(await engine.listRestrictedIdentityMembers([ref('people/alice-example'), ref('people/carol-example')])).toEqual([]);
+      const removed = await engine.applyIdentityDecisions({ remove: ['0000000000000001'] });
+      expect(removed).toEqual({ upserted: 0, removed: 1, linked: 0, unlinked: 2 });
+      return { applied, decisions: read.decisions.map(d => ({ ...d, decided_at: d.decided_at.slice(0, 10) })), pending: read.pending, removed };
+    },
+  );
 
   parityTest('bumpPageRetrievals records a retrieval that the samplers read and staleBias ranks behind a never-retrieved page', { methods: ['bumpPageRetrievals', 'listPrefixSampledPages', 'listCorpusSample'] }, async (engine) => {
     await seed(engine, [['wiki/vc/a', NOTE], ['wiki/vc/b', NOTE]]);

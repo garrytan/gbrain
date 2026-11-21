@@ -145,7 +145,7 @@ fn filename_of(key: &str) -> Option<&str> {
 fn facts_absorb_json(row: &JobRecord) -> Value {
     json!({
         "id": row.id,
-        "idempotency_key": row.idempotency_key,
+        "idempotency_key": row.idempotency_key.clone(),
         "status": row.status,
         "error_text": row.error_text,
         "slug": row.data.get("slug").and_then(jsonb_field_text),
@@ -392,7 +392,7 @@ impl Store {
                 json!({
                     "id": r.id,
                     "status": r.status,
-                    "submission_authority": r.submission_authority.as_ref().map(jsonb),
+                    "submission_authority": r.submission_authority.as_ref().map(ordered),
                     "legacy_authority_is_null": r.submission_authority.is_none(),
                 })
             })
@@ -682,7 +682,7 @@ mod tests {
     }
 
     /// Rewrites a stored row in place, as a row from before the protocol trigger would look.
-    fn rewrite(store: &Store, id: i64, f: impl FnOnce(&mut JobRecord)) {
+    fn rewrite(store: &Store, id: i64, mut f: impl FnMut(&mut JobRecord)) {
         store
             .write(|tx| {
                 let mut row = load(tx, id)?.expect("the row exists");

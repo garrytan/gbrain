@@ -17,8 +17,7 @@
 //! strings with microseconds.
 //!
 //! `last_retrieved_at` is the page's retrieval record (`page_ops/retrievals.rs`, bumpPageRetrievals).
-//! What the store does not hold answers as empty: no chunk has an embedding (so
-//! `representative_chunk_id` is always null).
+//! A sampled page's `representative_chunk_id` is its lowest-index embedded chunk.
 //!
 //! Segmented pages (a NULL body, `pages::PageText`): `readPageSnapshotsBatch` sends the NULL body
 //! on and counts it as 0 bytes, as PGLite's `sum(octet_length(...))` skips it; the samplers leave
@@ -31,7 +30,7 @@
 
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, VersionRecord, all_pages, read_page, remove_page, write_page};
 use crate::sources::{SourceRecord, all_sources, read_source};
@@ -71,7 +70,8 @@ pub struct PageRef {
 
 /// The `PageReadScope` of the id and ref reads. `live` is true when the caller passed a scope at
 /// all: PGLite then adds its live filter (not deleted, not quarantined, source not archived).
-/// `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs` `page_hidden`);
+/// `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs` `page_hidden`; the
+/// owner-only sources are read once per read, `OwnerOnlyCache`);
 /// `min_trust` and `suppress_flagged` are `pageEligibleSql`'s trust floor and flagged-page filter
 /// over the page's stored tier and write-gate receipts (`trust::TrustPolicy`).
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -188,7 +188,7 @@ fn jsonb_text(value: &Value) -> String {
         }
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+            keys.sort_by(|a, b| crate::jsonb::key_cmp(a, b));
             let parts: Vec<String> = keys
                 .iter()
                 .map(|k| format!("{}: {}", Value::String((*k).clone()), jsonb_text(&map[*k])))
@@ -224,6 +224,7 @@ fn passes_read_scope(
     scope: &PageReadScope,
     trust: &TrustPolicy,
     sources: &HashMap<String, SourceRecord>,
+    owner_only: &mut OwnerOnlyCache,
 ) -> Result<bool> {
     if let Some(ids) = scope.source_ids.as_ref().filter(|ids| !ids.is_empty()) {
         if !ids.contains(&page.source_id) {
@@ -244,7 +245,7 @@ fn passes_read_scope(
         }
     }
     if let Some(policy) = &scope.exclude_private
-        && page_hidden(read, page, policy)?
+        && owner_only.page_hidden(read, page, policy)?
     {
         return Ok(false);
     }
@@ -666,8 +667,18 @@ fn domain_bank_row(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
         "compiled_truth": page.compiled_truth,
         "connection_count": connections,
         "last_retrieved_at": retrieved,
-        "representative_chunk_id": Value::Null,
+        "representative_chunk_id": representative_chunk(read, page.id)?,
     }))
+}
+
+/// The samplers' `representative_chunk_id`: the id of the page's lowest-index chunk that has an
+/// embedding (`cc.embedding IS NOT NULL ORDER BY cc.chunk_index LIMIT 1`), or null.
+fn representative_chunk(read: &dyn KvRead, page_id: u64) -> Result<Value> {
+    Ok(crate::chunks::read_chunks(read, page_id)?
+        .into_iter()
+        .filter(|c| c.embed.dims > 0)
+        .min_by_key(|c| c.chunk_index)
+        .map_or(Value::Null, |c| json!(c.id)))
 }
 
 /// The page index hook (`page_index::reindex_page`): keeps this family's index of page fields in
@@ -746,6 +757,7 @@ impl Store {
         let read = self.read()?;
         let sources = sources_by_id(&*read)?;
         let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+        let mut owner_only = OwnerOnlyCache::default();
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         for r in refs {
@@ -753,7 +765,7 @@ impl Store {
                 continue;
             }
             if let Some(page) = read_page(&*read, &r.source_id, &r.slug)?
-                && passes_read_scope(&*read, &page, scope, &trust, &sources)?
+                && passes_read_scope(&*read, &page, scope, &trust, &sources, &mut owner_only)?
             {
                 out.push(json!({
                     "slug": page.slug,
@@ -769,6 +781,7 @@ impl Store {
         let read = self.read()?;
         let sources = sources_by_id(&*read)?;
         let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+        let mut owner_only = OwnerOnlyCache::default();
         let wanted: BTreeSet<u64> = ids
             .iter()
             .filter_map(|id| u64::try_from(*id).ok())
@@ -776,7 +789,7 @@ impl Store {
         let mut out = Vec::new();
         for id in wanted {
             if let Some(page) = crate::pages::read_page_by_id(&*read, id)?
-                && passes_read_scope(&*read, &page, scope, &trust, &sources)?
+                && passes_read_scope(&*read, &page, scope, &trust, &sources, &mut owner_only)?
             {
                 out.push(page);
             }
@@ -948,7 +961,7 @@ impl Store {
     /// keeps (`PurgeHolds`), ordered by `deleted_at`, then slug. Each purged page goes through
     /// `remove_page` and `scrub_purged_slugs`, as `deletePages` does. A dry run returns
     /// `{ slugs, count, pages: [{ slug, source_id, deleted_at }] }`; a real run removes them in one
-    /// transaction and returns `{ slugs, count }`.
+    /// transaction and returns the same three fields.
     pub fn purge_deleted_pages(
         &self,
         older_than_hours: f64,
@@ -977,20 +990,26 @@ impl Store {
             });
             Ok(pages)
         };
-        if options.dry_run {
-            let read = self.read()?;
-            let pages = select(&*read, self.env.now_micros())?;
+        // Both paths name the pages (slug, source, deleted_at): the destructive caller scrubs their journal text.
+        let answer = |pages: &[PageRecord]| {
             let rows: Vec<Value> = pages
                 .iter()
                 .map(|p| json!({ "slug": p.slug, "source_id": p.source_id, "deleted_at": p.deleted_at_us.map(iso) }))
                 .collect();
             let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
-            return Ok(json!({ "slugs": slugs, "count": slugs.len(), "pages": rows }));
+            json!({ "slugs": slugs, "count": slugs.len(), "pages": rows })
+        };
+        if options.dry_run {
+            let read = self.read()?;
+            return Ok(answer(&select(&*read, self.env.now_micros())?));
         }
+        let trust = &self.write_trust()?;
         self.write(|tx| {
             let pages = select(&*tx, self.env.now_micros())?;
             let mut by_source: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            let mut texts = BTreeSet::new();
             for page in &pages {
+                texts.extend(crate::page_body::page_text_refs(&*tx, page.id)?);
                 remove_page(tx, page)?;
                 by_source
                     .entry(page.source_id.clone())
@@ -998,10 +1017,15 @@ impl Store {
                     .push(page.slug.clone());
             }
             for (source, slugs) in &by_source {
-                scrub_purged_slugs(tx, source, slugs)?;
+                crate::page_body::delete_slug_stagings(tx, source, slugs)?;
             }
-            let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
-            Ok(json!({ "slugs": slugs, "count": slugs.len() }))
+            crate::page_body::delete_purged_texts(tx, &texts)?;
+            let now = self.env.now_micros();
+            for (source, slugs) in &by_source {
+                scrub_purged_slugs(tx, source, slugs)?;
+                crate::facts::expire_gone_page_facts(tx, trust, source, slugs, now)?;
+            }
+            Ok(answer(&pages))
         })
     }
 
@@ -1079,8 +1103,9 @@ impl Store {
         if let Some(scope) = &query.untrusted {
             let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
             let mut kept = Vec::with_capacity(found.len());
+            let mut owner_only = OwnerOnlyCache::default();
             for page in found {
-                if passes_read_scope(&*read, &page, scope, &trust, &sources)? {
+                if passes_read_scope(&*read, &page, scope, &trust, &sources, &mut owner_only)? {
                     kept.push(page);
                 }
             }
@@ -1488,6 +1513,86 @@ mod tests {
         assert!(after.compiled_truth.is_null());
         assert_eq!(after.updated_at_us, before.updated_at_us);
         assert_eq!(after.knowledge_revision, before.knowledge_revision);
+    }
+
+    #[test]
+    fn the_samplers_name_the_first_embedded_chunk() {
+        let store = store();
+        store.set_config("embedding_dimensions", "3").unwrap();
+        put(&store, "notes/a/1", None);
+        put(&store, "notes/b/1", None);
+        let chunk = |index: u32, vector: Option<[f32; 3]>| {
+            let mut rest = serde_json::Map::new();
+            if let Some(v) = vector {
+                rest.insert("embedding".into(), json!(v));
+                rest.insert("model".into(), json!("embed-m1"));
+            }
+            crate::chunks::ChunkInput {
+                chunk_index: index,
+                chunk_text: format!("text {index}"),
+                rest,
+                ..crate::chunks::ChunkInput::default()
+            }
+        };
+        store
+            .upsert_chunks(
+                "notes/a/1",
+                &[
+                    chunk(0, None),
+                    chunk(1, Some([1.0, 0.0, 0.0])),
+                    chunk(2, Some([0.0, 1.0, 0.0])),
+                ],
+                &crate::chunks::UpsertChunksOptions::default(),
+            )
+            .unwrap();
+        store
+            .upsert_chunks(
+                "notes/b/1",
+                &[chunk(0, None)],
+                &crate::chunks::UpsertChunksOptions::default(),
+            )
+            .unwrap();
+        let a = page(&store, DEFAULT_SOURCE, "notes/a/1");
+        let read = store.read().unwrap();
+        let first_embedded = crate::chunks::read_chunks(&*read, a.id)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.chunk_index == 1)
+            .unwrap()
+            .id;
+        drop(read);
+        let representatives = |rows: Vec<Value>| -> Vec<(String, Value)> {
+            let mut out: Vec<(String, Value)> = rows
+                .iter()
+                .map(|r| {
+                    (
+                        r["slug"].as_str().unwrap().to_string(),
+                        r["representative_chunk_id"].clone(),
+                    )
+                })
+                .collect();
+            out.sort_by(|x, y| x.0.cmp(&y.0));
+            out
+        };
+        let want = vec![
+            ("notes/a/1".to_string(), json!(first_embedded)),
+            ("notes/b/1".to_string(), Value::Null),
+        ];
+        let picked = store
+            .list_prefix_sampled_pages(&PrefixSampleOptions {
+                prefixes: vec!["notes/a".into(), "notes/b".into()],
+                ..PrefixSampleOptions::default()
+            })
+            .unwrap();
+        assert_eq!(representatives(picked), want);
+        let sample = store
+            .list_corpus_sample(&CorpusSampleOptions {
+                n: 10.0,
+                seed: Some(0.5),
+                ..CorpusSampleOptions::default()
+            })
+            .unwrap();
+        assert_eq!(representatives(sample), want);
     }
 
     #[test]

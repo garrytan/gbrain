@@ -1,15 +1,25 @@
 /**
  * The fence guard's read of a page's fact rows with their trust tier (BrainEngine listFenceFactRows;
- * engine-sql/trust-fence.ts on the SQL engines), fence-guard's held timeline rows and takes (listHeldTimelineRows, listHeldTakeRows; the same module), the held fence cells of a world-only fact read (listHeldFenceCells;
- * engine-sql/cli-reads-ops.ts), and the fence overlay's read of one page (readFenceOverlayRows; engine-sql/cli-reads-ops.ts).
+ * engine-sql/trust-fence.ts on the SQL engines), the held fence cells of a world-only fact read (listHeldFenceCells;
+ * engine-sql/cli-reads-ops.ts), and the fence overlay's read of one page (readFenceOverlayRows; engine-sql/cli-reads-ops.ts),
+ * and the fence append's restore of its page's tier and origin (restorePageTrust, trust/fence-append.ts withPageTierKept):
+ * the store applies the same trust stamp as an UPDATE that sets both columns, so a raise back needs the promotion the
+ * caller opens.
  *
  * The store reads the writer's tier and the opened fact ids from its write trust context (rust/docs/store/write_trust.md),
  * which the engine's transaction sets in place of `gbrain.write_trust_tier` and `gbrain.write_open_facts`; with none set,
  * the writer is undeclared (`unknown`) and nothing is opened. Every stored fact reads as `unknown` (Rust facts store no
  * tier yet), so only an opened row, or a writer below `unknown`, lists a row. What the read answers and why:
  * rust/docs/store/facts.md, "The fence guard's reads".
+ *
+ * `listHeldRows` (the held-row read of trust/fence-guard.ts `heldRows`) is served for take and timeline rows, which the
+ * store stamps with their tier (rust/docs/store/takes.md, rust/docs/store/timeline.md). The store runs one write at a time,
+ * so the SQL's `FOR UPDATE` lock has nothing to add.
+ *
+ * `listGuardedTakeRows` (the batch guard of trust/fence-guard.ts `guardTakeRows`) reads the same stamped take tiers, with
+ * the writer's tier from the write trust context.
  */
-import type { FenceFactRow, HeldTakeRow, HeldTakeRowsSpec, HeldTimelineRow, HeldTimelineRowsSpec } from '../../engine-sql/trust-fence.ts';
+import type { FenceFactRow, GuardedTakeRow, GuardedTakeRowsQuery, HeldRowsQuery, PageTrustRestore } from '../../engine-sql/trust-fence.ts';
 import type { FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow } from '../../engine-sql/cli-reads-ops.ts';
 import { callerMember, grantedPrivateFactSql, memberFactAdmitSql, memberPageSlug } from '../../access/member-facts.ts';
 import { privateFactSources, privatePagesFilterForCaller } from '../../search/private-visibility.ts';
@@ -22,30 +32,12 @@ export const listFenceFactRows: StoreMember<[target: { sourceId: string; slug: s
   return rows.map((row) => ({ ...row, id: Number(row.id), row_num: Number(row.row_num) }));
 };
 
-/**
- * Fence-guard's held timeline rows (BrainEngine listHeldTimelineRows; engine-sql/trust-fence.ts on the SQL engines): of
- * the listed ids, the rows more trusted than the writer and, with `pending`, the rows a pending `forget` proposal targets.
- * The store compares each row's stamped tier; without `writer` the writer is its write trust context's tier.
- * rust/docs/store/timeline_queries.md, "Held timeline rows".
- */
-export const listHeldTimelineRows: StoreMember<[spec: HeldTimelineRowsSpec], HeldTimelineRow[]> = async (brain, spec) => {
-  if (!spec.ids.length) return [];
-  const input = { ids: [...spec.ids], ...(spec.writer !== undefined ? { writer: spec.writer } : {}), ...(spec.pending ? { pending: true } : {}) };
-  const rows = await storeCall({ member: 'listHeldTimelineRows' }, () => brain.listHeldTimelineRows(input)) as HeldTimelineRow[];
-  return rows.map((row) => ({ id: Number(row.id), trust_tier: row.trust_tier }));
-};
-
-/**
- * Fence-guard's held takes (BrainEngine listHeldTakeRows; engine-sql/trust-fence.ts on the SQL engines): of the listed
- * ids, the takes more trusted than the writer and, with `pending`, the takes a pending `forget` proposal targets. The
- * store compares each take's stamped tier; without `writer` the writer is its write trust context's tier.
- * rust/docs/store/takes.md, "Held takes".
- */
-export const listHeldTakeRows: StoreMember<[spec: HeldTakeRowsSpec], HeldTakeRow[]> = async (brain, spec) => {
-  if (!spec.ids.length) return [];
-  const input = { ids: [...spec.ids], ...(spec.writer !== undefined ? { writer: spec.writer } : {}), ...(spec.pending ? { pending: true } : {}) };
-  const rows = await storeCall({ member: 'listHeldTakeRows' }, () => brain.listHeldTakeRows(input)) as HeldTakeRow[];
-  return rows.map((row) => ({ id: Number(row.id), trust_tier: row.trust_tier }));
+export const restorePageTrust: StoreMember<[spec: PageTrustRestore], void> = async (brain, spec) => {
+  const member = 'restorePageTrust';
+  if (!Number.isSafeInteger(spec.pageId)) refuseMember(member, 'a page id that is not an integer');
+  if (typeof spec.trustTier !== 'string') refuseMember(member, 'a trust tier that is not text');
+  if (spec.writeOrigin !== null && typeof spec.writeOrigin !== 'string') refuseMember(member, 'a write origin that is not JSON text or null');
+  await storeCall({ member }, () => brain.restorePageTrust({ pageId: spec.pageId, trustTier: spec.trustTier, writeOrigin: spec.writeOrigin }));
 };
 
 /**
@@ -76,9 +68,8 @@ export const listHeldFenceCells: StoreMember<[keys: readonly HeldFenceCellKey[]]
 
 /**
  * #5575 ENG-1: the fence overlay's read of one page (BrainEngine readFenceOverlayRows), one row per incoming row in
- * incoming order. `purged` is always false: fact purges are written through `executeRaw` only, which this engine refuses,
- * so the store keeps none. With `hideHeld`, `narrower` is listHeldFenceCells' rule for an uncut claim, and a member caller
- * or a private-facts grant refuses here as it does there. rust/docs/store/facts.md, "The fence overlay".
+ * incoming order. `purged` reads the store's fact purge ledger (`facts/purge_ledger.rs` `purged_claim`). With `hideHeld`, `narrower` is listHeldFenceCells' rule for an uncut claim for the caller with no
+ * member page and no private-facts grant; a member caller or a private-facts grant refuses here (listHeldFenceCells serves both). rust/docs/store/facts.md, "The fence overlay".
  */
 export const readFenceOverlayRows: StoreMember<[page: { sourceId: string; slug: string }, incoming: readonly FenceOverlayIncomingRow[], opts: { hideHeld: boolean }], FenceOverlayRow[]> =
   async (brain, page, incoming, opts) => {
@@ -91,3 +82,32 @@ export const readFenceOverlayRows: StoreMember<[page: { sourceId: string; slug: 
       () => brain.readFenceOverlayRows({ sourceId: page.sourceId, slug: page.slug, incoming, hideHeld: opts.hideHeld === true })) as FenceOverlayRow[];
     return rows.map((row) => ({ ...row, row_num: Number(row.row_num) }));
   };
+
+/**
+ * The page's take or timeline rows a write may not delete or overwrite (BrainEngine listHeldRows; engine-sql/trust-fence.ts):
+ * the store keeps a trust tier on timeline rows only, so any other table refuses.
+ */
+export const listHeldRows: StoreMember<[q: HeldRowsQuery], Array<{ id: number; trust_tier: string }>> = async (brain, q) => {
+  const member = 'listHeldRows';
+  if (q.table !== 'takes' && q.table !== 'timeline_entries') refuseMember(member, `table ${String(q.table)}: the store keeps no trust tier on it`);
+  if (!Number.isSafeInteger(q.pageId) || !q.ids.every(Number.isSafeInteger)) refuseMember(member, 'a page or row id that is not an integer');
+  if (q.writer !== undefined && typeof q.writer !== 'string') refuseMember(member, 'a writer tier that is not text');
+  if (!q.ids.length) return [];
+  const rows = await storeCall({ member }, () => brain.listHeldRows({
+    table: q.table, pageId: q.pageId, ids: [...q.ids], ...(q.writer !== undefined ? { writer: q.writer } : {}), pending: q.pending === true,
+  })) as Array<{ id: number; trust_tier: string }>;
+  return rows.map(row => ({ id: Number(row.id), trust_tier: row.trust_tier }));
+};
+
+export const listGuardedTakeRows: StoreMember<[q: GuardedTakeRowsQuery], GuardedTakeRow[]> = async (brain, q) => {
+  const member = 'listGuardedTakeRows';
+  const nums = [...q.incoming.flatMap(r => [r.page_id, r.row_num]), ...q.gone.flatMap(r => [r.page_id, r.row_num])];
+  if (!nums.every(Number.isSafeInteger)) refuseMember(member, 'a page id or row number that is not an integer');
+  if (!q.incoming.length && !q.gone.length) return [];
+  const rows = await storeCall({ member }, () => brain.listGuardedTakeRows({
+    incoming: q.incoming.map(r => ({ page_id: r.page_id, row_num: r.row_num, claim: r.claim, kind: r.kind, holder: r.holder, active: r.active })),
+    gone: q.gone.map(r => ({ page_id: r.page_id, row_num: r.row_num })),
+    pending: q.pending === true,
+  })) as GuardedTakeRow[];
+  return rows.map(r => ({ id: Number(r.id), page_id: Number(r.page_id), row_num: Number(r.row_num), trust_tier: r.trust_tier, change: r.change }));
+};

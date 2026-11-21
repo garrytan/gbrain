@@ -35,7 +35,7 @@ export interface GrantMutationOptions {
   servingBrainId?: string;
 }
 export interface GrantMutationResult { before: ClientGrant; after: ClientGrant; revision: number; dryRun: boolean }
-const PATCH_FIELDS = new Set<keyof GrantPatch>(['scopes', 'sourceId', 'federatedRead', 'sourcesNone', 'takesHolders', 'boundSlugPrefixes', 'allowedOperations', 'boundTools', 'boundSourceId', 'boundBrainId', 'delegatedSlugPrefixes', 'delegatedNamespace', 'boundMaxConcurrent', 'budgetUsdPerDay', 'surface', 'surfaceSetBy', 'tokenTtlSeconds', 'profile', 'repairReasons', 'privatePages', 'privateFacts']);
+const PATCH_FIELDS = new Set<keyof GrantPatch>(['scopes', 'sourceId', 'federatedRead', 'sourcesNone', 'takesHolders', 'boundSlugPrefixes', 'allowedOperations', 'boundTools', 'boundSourceId', 'boundBrainId', 'delegatedSlugPrefixes', 'delegatedNamespace', 'boundMaxConcurrent', 'budgetUsdPerDay', 'surface', 'surfaceSetBy', 'tokenTtlSeconds', 'profile', 'repairReasons', 'privatePages', 'privateFacts', 'readShared']);
 export function assertGrantPatch(patch: GrantPatch): void {
   for (const key of Object.keys(patch)) {
     if (!PATCH_FIELDS.has(key as keyof GrantPatch)) throw new GrantError('invalid_grant', `Unknown grant field: ${key}`);
@@ -113,6 +113,7 @@ export async function insertClientGrant(sql: SqlQuery, grant: ClientGrant, metad
     ) INSERT INTO oauth_grant_audit (client_id, actor, action, revision, before_grant, after_grant)
       SELECT client_id, ${actor}, 'register', ${grant.revision}, NULL, ${auditDocument(grant, null)}::text::jsonb FROM created
   `;
+  await stampReadShared(sql, grant.clientId, grant.readShared === true, grant.revision, false);
 }
 
 /**
@@ -146,6 +147,7 @@ export async function rescopeClientGrantInTransaction(db: GrantDatabase, clientI
   if (!('grant_revision' in row) || !('takes_holders' in row)) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing client grants');
   if (patch.privatePages !== undefined && !('private_pages' in row)) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing the private-pages grant');
   if (patch.privateFacts !== undefined && !('private_facts' in row)) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing the private-facts grant');
+  if (patch.readShared !== undefined && !('read_shared_revision' in row)) throw new GrantError('grant_schema_required', 'Run gbrain apply-migrations --yes before changing the read-shared switch');
   const before = grantFromRow(row);
   if (opts.expectedRevision !== undefined && before.revision !== opts.expectedRevision) {
     throw new GrantError('grant_conflict', `Grant changed (expected revision ${opts.expectedRevision}, current ${before.revision}); review a fresh preview`);
@@ -168,6 +170,7 @@ export async function rescopeClientGrantInTransaction(db: GrantDatabase, clientI
   const after: ClientGrant = { ...before, ...changes, revision: before.revision + 1, repairReasons: [] };
   if (changes.sourceId != null && changes.sourcesNone === undefined) after.sourcesNone = false;
   after.boundBrainId = normalizeGrantBrain(after.boundBrainId);
+  if (after.sourcesNone === true && after.readShared === true && patch.readShared !== true) throw (await import('./read-shared.ts')).readSharedNoSourceRefusal('client', before.clientId);
   validateClientGrant(after, await grantValidationContext(db, opts.servingBrainId));
   if (JSON.stringify({ ...after, revision: before.revision }) === JSON.stringify(before)) {
     return { before, after: before, revision: before.revision, dryRun: opts.dryRun === true };
@@ -241,6 +244,7 @@ export async function persistGrant(db: GrantDatabase, before: ClientGrant, after
   });
   if (typeof db !== 'function') {
     if (!await db.persistOauthClientGrant(grantPersist(before, after, actor, action))) throw new GrantError('grant_conflict', 'Client grant changed; review a fresh preview');
+    await stampReadShared(db, before.clientId, after.readShared === true, after.revision, before.readShared === true);
     return;
   }
   const sql = db;
@@ -292,6 +296,21 @@ export async function persistGrant(db: GrantDatabase, before: ClientGrant, after
   if ((after.privateFacts ?? 'none') !== (before.privateFacts ?? 'none')) {
     await sql`UPDATE oauth_clients SET private_facts = ${after.privateFacts} WHERE client_id = ${before.clientId}`;
   }
+  await stampReadShared(sql, before.clientId, after.readShared === true, after.revision, before.readShared === true);
+}
+
+/**
+ * GST-2898: re-stamp the client's read-shared switch at its new grant revision, or clear it, beside the grant write
+ * that moved the revision. Skipped when the switch is off before and after, so a brain without the column (migration
+ * pending) is never touched.
+ */
+export async function stampReadShared(db: GrantDatabase, clientId: string, on: boolean, revision: number, wasOn: boolean): Promise<void> {
+  if (!on && !wasOn) return;
+  if (typeof db !== 'function') {
+    await db.executeRaw('UPDATE oauth_clients SET read_shared_revision = $2 WHERE client_id = $1', [clientId, on ? revision : null]);
+    return;
+  }
+  await db`UPDATE oauth_clients SET read_shared_revision = ${on ? revision : null} WHERE client_id = ${clientId}`;
 }
 
 function grantPersist(before: ClientGrant, after: ClientGrant, actor: string, action: string): OauthClientGrantPersist {

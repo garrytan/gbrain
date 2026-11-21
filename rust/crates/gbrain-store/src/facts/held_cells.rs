@@ -206,53 +206,24 @@ fn granted(read: &dyn KvRead, input: &HeldFenceCellsInput, row: &FactRecord) -> 
 }
 
 /// A live fact of the page as `heldRowSql` reads it: the row and whether the caller's reads admit it.
-struct LiveRow {
-    row: FactRecord,
-    admitted: bool,
+pub(super) struct LiveRow {
+    pub(super) row: FactRecord,
+    pub(super) admitted: bool,
 }
 
-/// `heldRowSql` over the page's live rows, with each row's caller admission.
-fn held_admitted(rows: &[LiveRow], key: &HeldFenceCellKey, row_num: i32) -> bool {
-    held_where(
-        rows,
-        live_record,
-        |r| r.row.visibility != "world" && !r.admitted,
-        key,
-        row_num,
-    )
-}
-
-/// `heldRowSql` with both caller admissions `FALSE`, over the page's live rows.
-pub(super) fn held(rows: &[FactRecord], key: &HeldFenceCellKey, row_num: i32) -> bool {
-    held_where(rows, fact_record, |r| r.visibility != "world", key, row_num)
-}
-
-fn live_record(r: &LiveRow) -> &FactRecord {
-    &r.row
-}
-
-fn fact_record(r: &FactRecord) -> &FactRecord {
-    r
-}
-
-/// `heldRowSql`: the cell's own row is narrower, or a narrower row states the cell's claim and no world row does.
-fn held_where<T>(
-    rows: &[T],
-    record: fn(&T) -> &FactRecord,
-    narrower: impl Fn(&T) -> bool,
-    key: &HeldFenceCellKey,
-    row_num: i32,
-) -> bool {
+/// `heldRowSql` over the page's live rows. The fence overlay (`fence_overlay.rs`) passes rows no caller admits.
+pub(super) fn held(rows: &[LiveRow], key: &HeldFenceCellKey, row_num: i32) -> bool {
+    let narrower = |r: &&LiveRow| r.row.visibility != "world" && !r.admitted;
     rows.iter()
         .filter(|r| narrower(r))
-        .any(|r| record(r).row_num == Some(row_num))
+        .any(|r| r.row.row_num == Some(row_num))
         || (rows
             .iter()
             .filter(|r| narrower(r))
-            .any(|r| states(record(r), key))
+            .any(|r| states(&r.row, key))
             && !rows
                 .iter()
-                .any(|r| record(r).visibility == "world" && states(record(r), key)))
+                .any(|r| r.row.visibility == "world" && states(&r.row, key)))
 }
 
 impl Store {
@@ -304,7 +275,7 @@ impl Store {
                     e.insert(live)
                 }
             };
-            if !held_admitted(live, key, row_num) {
+            if !held(live, key, row_num) {
                 continue;
             }
             if seen.insert((page.0, page.1, row_num, key.claim.as_str())) {

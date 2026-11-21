@@ -30,17 +30,17 @@ describe('page purge requests', () => {
     async (engine, backend) => {
       const empty = await engine.listRecentPurgeRequests(30, 100);
       await createSource(engine, backend, 'wiki');
-      await recordPagePurge(engine, backend, 'default', ['h1', 'h2'], 'notes/a', A);
-      await recordPagePurge(engine, backend, 'wiki', ['h1'], 'notes/b', B);
-      await recordPagePurge(engine, backend, 'wiki', ['h3'], 'notes/c', C);
-      await recordPagePurge(engine, backend, 'wiki', ['h4'], 'notes/d', null);
+      await recordPagePurge(engine, backend, 'default', 'notes/a', ['h1', 'h2'], undefined, A);
+      await recordPagePurge(engine, backend, 'wiki', 'notes/b', ['h1'], undefined, B);
+      await recordPagePurge(engine, backend, 'wiki', 'notes/c', ['h3'], undefined, C);
+      await recordPagePurge(engine, backend, 'wiki', 'notes/d', ['h4'], undefined, null);
       const all = (await engine.listRecentPurgeRequests(30, 100)).slice().sort();
       const capped = await engine.listRecentPurgeRequests(30, 2);
       expect(empty).toEqual([]);
       expect(all).toEqual([A, B, C]);
       expect(capped).toHaveLength(2);
       // A later purge of the same page replaces the row, so the request that purged it before no longer counts.
-      await recordPagePurge(engine, backend, 'wiki', ['h3'], 'notes/c', A);
+      await recordPagePurge(engine, backend, 'wiki', 'notes/c', ['h3'], undefined, A);
       const replaced = (await engine.listRecentPurgeRequests(30, 100)).slice().sort();
       expect(replaced).toEqual([A, B]);
       // A fact purge's request counts too (the fact_purges arm of the union); one with no request does not.

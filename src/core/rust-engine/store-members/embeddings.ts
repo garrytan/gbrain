@@ -4,7 +4,7 @@
  * invalidate that state as PGLite's shared SQL does. Built by the core store work; other families do not edit this
  * file.
  *
- * Members: getEmbeddingsByChunkIds, countStaleChunks, sumStaleChunkChars, setPageEmbeddingSignature,
+ * Members: getEmbeddingsByChunkIds, cosinesByChunkIds, countStaleChunks, sumStaleChunkChars, setPageEmbeddingSignature,
  * invalidateStaleSignatureEmbeddings, invalidateContentDriftEmbeddings, listStaleChunks, readEmbeddingStateCounts,
  * listEmbeddingStateRows, getChunksWithEmbeddings, updateTakeEmbeddings, getTakeEmbeddings, countStaleTakes,
  * listStaleTakes.
@@ -41,6 +41,19 @@ export const getEmbeddingsByChunkIds: StoreMember<[ids: number[], column?: strin
     if (!COLUMN_NAME_REGEX.test(column)) throw new EmbeddingColumnNotRegisteredError(column, []);
     if (column !== 'embedding') refuseMember('getEmbeddingsByChunkIds', `column ${column}`);
     return vectorMap(await storeCall({ member: 'getEmbeddingsByChunkIds' }, () => brain.getEmbeddingsByChunkIds(ids)));
+  };
+
+/**
+ * The text-space cosine of each served chunk's vector and `query`, an exact scan in the store (rust/docs/store/vectors.md):
+ * 0 for another dimension count or a zero vector or query, no row for an id that is no served chunk with a vector.
+ */
+export const cosinesByChunkIds: StoreMember<[ids: number[], column: string, query: Float32Array], Map<number, number>> =
+  async (brain, ids, column, query) => {
+    if (!COLUMN_NAME_REGEX.test(column)) throw new EmbeddingColumnNotRegisteredError(column, []);
+    if (column !== 'embedding') refuseMember('cosinesByChunkIds', `column ${column}`);
+    const rows: { id: number; cosine: number }[] =
+      await storeCall({ member: 'cosinesByChunkIds' }, () => brain.cosinesByChunkIds(ids, Array.from(query)));
+    return new Map(rows.map((row) => [row.id, row.cosine]));
   };
 
 export const countStaleChunks: StoreMember<[opts?: StaleChunkOpts], number> = async (brain, opts) => {

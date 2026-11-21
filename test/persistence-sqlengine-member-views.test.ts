@@ -16,8 +16,8 @@
  *  - Seam: none; the views are plain objects built here.
  */
 import { describe, expect, test } from 'bun:test';
-import { folderAccessFor, memberIdentityFor, type FolderAccessEngine, type MemberLookupEngine } from '../src/core/access/caller.ts';
-import type { FolderAccessRows, LiveMemberRow, MemberBindingVia } from '../src/core/engine-sql/access-control.ts';
+import { folderAccessFor, memberIdentityFor, type FolderAccessEngine, type LiveMemberEngine } from '../src/core/access/caller.ts';
+import type { FolderAccessRows, LiveMemberRow, LiveMemberVia } from '../src/core/engine-sql/access-control.ts';
 import type { SqlEngine } from '../src/core/persistence/model.ts';
 
 const AUTH = { principal: { kind: 'oauth_client', id: 'client-example' } };
@@ -26,7 +26,7 @@ function members() {
   const reads: string[] = [];
   return {
     reads,
-    readLiveMember: async (via: MemberBindingVia, param: string): Promise<LiveMemberRow | null> => {
+    readLiveMember: async (via: LiveMemberVia, param: string): Promise<LiveMemberRow | null> => {
       reads.push(`member ${via} ${param}`);
       return { id: 'alice-example', groups: ['team-a'] };
     },
@@ -55,18 +55,20 @@ describe('persistence SqlEngine views carry the caller record reads', () => {
   test('a SqlEngine view reads through its members and runs no statement over its executeRaw', async () => {
     const sql = recordingSql();
     const view: SqlEngine = { ...members(), executeRaw: sql.executeRaw };
-    const lookup: MemberLookupEngine & FolderAccessEngine = view;
+    const lookup: LiveMemberEngine & FolderAccessEngine = view;
     const identity = await memberIdentityFor(lookup, AUTH);
     expect(identity).toContain('member:alice-example');
     expect((await folderAccessFor(lookup, identity)).satisfiedRuleIds).toEqual(['default:r1']);
     expect(sql.statements).toEqual([]);
   });
 
-  test('an executeRaw-only view runs no member or folder statement', async () => {
+  test('an executeRaw-only view runs the member statement only; the folder read has no statement to run', async () => {
     const sql = recordingSql();
     const bare = { executeRaw: sql.executeRaw };
-    // @ts-expect-error an executeRaw-only view is not a member lookup engine
+    // A member lookup accepts a narrow executeRaw caller (LiveMemberEngine) and sends its one statement over it.
     await expect(memberIdentityFor(bare, AUTH)).rejects.toThrow();
+    expect(sql.statements).toHaveLength(1);
+    sql.statements.length = 0;
     // @ts-expect-error an executeRaw-only view is not a folder access engine
     expect(await folderAccessFor(bare, ['member:alice-example'])).toEqual({ satisfiedRuleIds: [], folderCoverage: [{ source_id: '!unreadable', prefix: '' }] });
     expect(sql.statements).toEqual([]);

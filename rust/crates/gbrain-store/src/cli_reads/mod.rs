@@ -18,6 +18,7 @@ pub mod doctor_search;
 pub mod doctor_sources;
 pub mod doctor_terminal;
 pub mod entities;
+pub mod export;
 pub mod import;
 mod pg_case;
 pub(crate) mod pg_jsonb;

@@ -421,20 +421,6 @@
           }
         ]
       },
-      "writeReasonPurgeTombstones": {
-        "default": [
-          {
-            "lane": "pool",
-            "params": [
-              "string",
-              "array<string>",
-              "array<string>"
-            ],
-            "sql": "INSERT INTO reason_purge_tombstones(source_id, commit_sha, path) SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1",
-            "textSha256": "2ab69214bd925579e0d8c99815705bef88e0801fcdf600f6f875563acc631ba4"
-          }
-        ]
-      },
       "writeSourceSyncHeartbeat": {
         "default": [
           {

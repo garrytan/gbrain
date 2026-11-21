@@ -291,7 +291,7 @@ const RECORDED_WRITES: Array<{ args: string[]; rust: 'equal' } | { args: string[
 // publication's effects (insertPublicationEffects) and the receipt says committed. Its `write-request` receipt is then
 // read on both brains: the same, but for the effects, which the Rust brain stores and does not run yet.
 
-type State = 'equal' | 'refused' | 'queued' | 'running' | 'diverged' | 'no-engine' | 'runs';
+type State = 'equal' | 'refused' | 'queued' | 'diverged' | 'no-engine' | 'runs';
 interface Row { command: string; state: State; note: string }
 const table: Row[] = [];
 const setupRows: Row[] = [];
@@ -304,7 +304,7 @@ function printTable(): void {
     '[rust cli parity] commands:', ...table.map((r) => `  ${r.command} | ${r.state}${r.note ? ` (${r.note})` : ''}`)];
   const count = (s: State) => table.filter((r) => r.state === s).length;
   if (useMirror) lines.push('[rust cli parity] a Rust setup write was refused: reads were compared with the mirror (PGLite with the same completed writes)');
-  lines.push(`[rust cli parity] ${count('equal')} equal, ${count('refused')} refused, ${count('queued')} queued, ${count('running')} running, ${count('diverged')} diverged, ${count('no-engine')} without a Rust engine`);
+  lines.push(`[rust cli parity] ${count('equal')} equal, ${count('refused')} refused, ${count('queued')} queued, ${count('diverged')} diverged, ${count('no-engine')} without a Rust engine`);
   console.log(lines.join('\n'));
 }
 
@@ -508,9 +508,15 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // (none: only the credential re-seal migration writes them, through executeRaw).
       // person_title_duplicates is gone from this list: the stub, candidate, retirement and link-count reads are typed
       // members the store answers, so it reports what PGLite reports.
-      // unwithdrawn_facts stays refused: the store writes facts-fence generations, so listUnwithdrawnFacts is not
-      // answered with no row; it stays unserved until the store reads the generation tables.
-      typedRefusals: ['unwithdrawn_facts'],
+      // unwithdrawn_facts is gone from this list: listUnwithdrawnFacts reads the facts-fence generation ledger the store
+      // writes (facts/generations.rs), so the check runs on a Rust brain.
+      // synopsis_tier_coverage is not here: readSynopsisTierConfig reads the typed listSynopsisSourceIds and
+      // hasSynopsisFrontmatterOverride, which the store serves.
+      // These checks come from rust-engine/main and read through members the Rust engine does not serve yet, so each warns
+      // with the typed refusal and says its health is unknown: access_pages_read_by_nobody and owner_identity read through
+      // executeRaw (raw_sql), owner_only_marks_triggers through ownerOnlyMarkTriggers (raw_sql: it reads and installs
+      // triggers), entity_duplicates through listIdentityDecisions (the store keeps no identity decisions).
+      typedRefusals: ['access_pages_read_by_nobody', 'entity_duplicates', 'owner_identity', 'owner_only_marks_triggers'],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });

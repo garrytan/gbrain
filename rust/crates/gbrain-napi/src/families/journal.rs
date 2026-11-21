@@ -792,6 +792,73 @@ impl Brain {
         })
     }
 
+    /// `claimSegmentedProjection({ sourceId, slug }, claim)`: `claimed`, `held` or `absent`.
+    #[napi]
+    pub fn claim_segmented_projection<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.claim_segmented_projection(&source_id, &slug, &claim)
+        })
+    }
+
+    /// `renewSegmentedProjectionClaim({ sourceId, slug }, claim)`: false when the job no longer
+    /// carries the claim.
+    #[napi]
+    pub fn renew_segmented_projection_claim<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.renew_segmented_projection_claim(&source_id, &slug, &claim)
+        })
+    }
+
+    /// `releaseSegmentedProjectionClaim({ sourceId, slug }, claim)`.
+    #[napi]
+    pub fn release_segmented_projection_claim<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.release_segmented_projection_claim(&source_id, &slug, &claim)
+        })
+    }
+
+    /// `deleteProjectionJob({ sourceIncarnation, slug, revision })`.
+    #[napi]
+    pub fn delete_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_projection_job(&required(job, "deleteProjectionJob job")?)
+        })
+    }
+
+    /// `markProjectionRebuildFailed({ sourceIncarnation, slug, revision })`.
+    #[napi]
+    pub fn mark_projection_rebuild_failed<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.mark_projection_rebuild_failed(&required(job, "markProjectionRebuildFailed job")?)
+        })
+    }
+
     /// `insertTopologyChange(input)`: the stored row.
     #[napi]
     pub fn insert_topology_change<'env>(

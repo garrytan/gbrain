@@ -5,7 +5,7 @@
  * identity, timeout reaping, env hermeticity.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from './with-env.ts';
@@ -60,6 +60,27 @@ describe('runCli', () => {
         expect(r.stdout.trim()).toBe('unset|unset|1');
       },
     );
+  });
+
+  test('PATH: an entry holding a gbrain binary outside the repo is dropped; other entries stay', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-cli-spawn-path-'));
+    try {
+      const foreign = join(root, 'global-bin');
+      const plain = join(root, 'plain-bin');
+      mkdirSync(foreign);
+      mkdirSync(plain);
+      writeFileSync(join(foreign, 'gbrain'), '#!/bin/sh\nexit 0\n');
+      chmodSync(join(foreign, 'gbrain'), 0o755);
+      await withEnv({ PATH: [foreign, plain, process.env.PATH ?? ''].join(':') }, async () => {
+        const r = await runCli([`console.log(process.env.PATH);`]);
+        expect(r.exitCode).toBe(0);
+        const entries = r.stdout.trim().split(':');
+        expect(entries).not.toContain(foreign);
+        expect(entries).toContain(plain);
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test('opts.home sets HOME and GBRAIN_HOME; opts.env undefined deletes a key', async () => {

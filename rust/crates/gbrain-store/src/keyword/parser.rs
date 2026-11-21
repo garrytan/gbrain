@@ -1,6 +1,7 @@
 //! Port of the PostgreSQL default text-search parser (`src/backend/tsearch/wparser_def.c`, PG 18),
 //! so the Rust engine tokenizes exactly as `select tokid, token from ts_parse('default', $1)` does
 //! in PGLite.
+//! Derived from PostgreSQL 18.6; licence and notice: third-party/postgresql/NOTICE.md
 //!
 //! The state machine is a literal transcription: `actions.rs` holds the `actionTPS_*` tables
 //! (generated from the C source, one item per C row), and `Parser::get` below is `TParserGet`.

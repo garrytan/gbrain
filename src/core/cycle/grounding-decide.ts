@@ -22,6 +22,7 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { embed, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
+import { embeddingSendBlocked } from '../embedding-disabled.ts';
 import { cosineSimilarity } from '../facts/classify.ts';
 import { driftReason } from '../ai/decide/policy.ts';
 import { writeReceipts } from '../ai/decide/receipts.ts';
@@ -158,8 +159,8 @@ export interface GroundingDecide extends GroundingPass {
 
 const unitRef = (subject: string, text: string) => `${subject}#${createHash('sha256').update(normForGrounding(text)).digest('hex').slice(0, 16)}`;
 
-async function embedWindows(index: IndexedWindow[], claims: string[], deadlineAt: number): Promise<Float32Array[] | null> {
-  if (!isAvailable('embedding')) return null;
+async function embedWindows(engine: BrainEngine, index: IndexedWindow[], claims: string[], deadlineAt: number): Promise<Float32Array[] | null> {
+  if (!isAvailable('embedding') || await embeddingSendBlocked(engine)) return null;
   const missing = index.filter((w) => !w.embedding);
   const left = deadlineAt - Date.now();
   if (left < 200) return null;
@@ -213,7 +214,7 @@ export function groundingDecideFor(slot: CycleDecideSlot, opts: { pageMs?: numbe
         if (!idx) { idx = indexSourceWindows([s]); indexes.set(s.path, idx); }
         return idx;
       });
-      const claimVectors = await embedWindows(index, units.map((u) => u.text), deadlineAt);
+      const claimVectors = await embedWindows(engine, index, units.map((u) => u.text), deadlineAt);
       const questions = units.map((u, i) => groundingQuestion(i, u.text, selectSourceWindows(u.text, index, claimVectors?.[i]), transcriptRef));
       let result: UnpackedResult | undefined;
       let reason: string | undefined;

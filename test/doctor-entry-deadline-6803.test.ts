@@ -56,12 +56,17 @@ function ctxFor(engine: BrainEngine | null, args: string[]): DoctorContext {
  * The engine with executeRaw delayed for statements matching `slow›, and statements matching `count› counted.
  * `settled()` resolves once every delayed statement has finished, so none outlives its test.
  */
-function instrumented(engine: BrainEngine, opts: { slow?: { match: RegExp; ms: number }; count?: RegExp } = {}): BrainEngine & { counted: number; settled: () => Promise<void> } {
+function instrumented(engine: BrainEngine, opts: { slow?: { match: RegExp; ms: number }; count?: RegExp; countMember?: keyof BrainEngine } = {}): BrainEngine & { counted: number; settled: () => Promise<void> } {
   const state = { counted: 0, delayed: new Set<Promise<unknown>>() };
   const proxy: BrainEngine = new Proxy(engine, {
     get(target, key) {
       if (key === 'counted') return state.counted;
       if (key === 'settled') return async () => { await Promise.allSettled([...state.delayed]); };
+      // A read that moved behind a typed engine member runs its SQL on the target, out of this proxy's executeRaw: count the member call.
+      if (opts.countMember && key === opts.countMember) {
+        const member = Reflect.get(target, key, target) as (...args: unknown[]) => unknown;
+        return (...args: unknown[]) => { state.counted++; return member.apply(target, args); };
+      }
       if (key === 'executeRaw') {
         return (sql: string, params?: unknown[], o?: unknown) => {
           if (opts.count?.test(sql)) state.counted++;
@@ -362,7 +367,8 @@ for (const kind of testBackends()) {
     }, 30_000);
 
     test('Postgres: entry A out of time mid-forecast never makes entry B report a counter-only ok, and the run forecasts once', async () => {
-      const counting = instrumented(engine, { count: /FROM persistence_topology_changes/ });
+      // The forecast reads persistence_topology_changes inside the typed readCapacityForecastInputs member, once per forecast.
+      const counting = instrumented(engine, { countMember: 'readCapacityForecastInputs' });
       const lock = await lockTable(databaseUrl, 'persistence_requests', 1_500);
       try {
         const a = { ...persistenceCapacityEntry, name: 'capacity_a' };

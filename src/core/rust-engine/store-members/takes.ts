@@ -131,24 +131,6 @@ export const searchTakes: StoreMember<
   return storeCall({ member: 'searchTakes' }, () => brain.searchTakes(options));
 };
 
-export const searchTakesVector: StoreMember<
-  [embedding: Float32Array, opts?: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility }],
-  TakeHit[]
-> = async (brain, embedding, opts = {}) => {
-  const o = takeOptions('searchTakesVector', opts, ['limit', 'takesHoldersAllowList', 'sourceId', 'sourceIds', 'eligibility', 'excludePrivate'], SEARCH_IGNORED) as
-    { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility; excludePrivate?: boolean };
-  const options = {
-    // A NaN element crosses as null; the store refuses it as the `::vector` cast does.
-    embedding: Array.from(embedding, (v) => (Number.isNaN(v) ? null : v)),
-    limit: clampSearchLimit(o.limit, 30, 100),
-    allow_list: allowList(o.takesHoldersAllowList),
-    source_ids: sourceScope(o),
-    ...eligibilityScope(o.eligibility),
-    exclude_private: storePagePolicy('searchTakesVector', o.excludePrivate, { callerReaders: true }) ?? null,
-  };
-  return storeCall({ member: 'searchTakesVector' }, () => brain.searchTakesVector(options));
-};
-
 export const updateTake: StoreMember<[pageId: number, rowNum: number, fields: { weight?: number; since_date?: string; source?: string }], void> =
   async (brain, pageId, rowNum, fields) => {
     let weight = fields.weight;

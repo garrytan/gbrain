@@ -48,7 +48,7 @@ no-ops: the store runs one write transaction at a time, so no read overlaps a wr
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.lockPersistenceCounters(keys)` | the counter rows `{ key, outstanding_count, intent_bytes, lifetime_ids, terminal_bytes }`, sorted by key; a missing row is created at zero | `lockPersistenceCounters` |
-| `brain.insertWriteRequest(row)` | the stored `WriteRequest`. It charges each counter (one outstanding request, its intent bytes, one lifetime id, its terminal reservation) in the same write. `constraint_violation` for a principal kind, state, target kind or protocol version the table refuses, a null slug, a worktree or refresh id (this engine keeps no worktrees), or a request id the principal already used | `insertWriteRequest` |
+| `brain.insertWriteRequest(row)` | the stored `WriteRequest`. It charges each counter (one outstanding request, its intent bytes, one lifetime id, its terminal reservation) in the same write. `constraint_violation` for a principal kind, state, target kind or protocol version the table refuses, a null slug, a worktree or refresh id (this engine keeps no worktrees), or a request id the principal already used; `invalid_argument` for a principal id holding a NUL byte | `insertWriteRequest` |
 | `brain.readWriteRequest({ kind, id }, requestId)` | the `WriteRequest` or `null` | `readWriteRequest` |
 | `brain.listWriteRequestsByRequestId(requestId)` | at most two `WriteRequest` rows with that request id, across every principal (no order is promised; the Postgres statement has no ORDER BY); `invalid_input` for an id that is not a UUID. Two rows tell the caller the id is shared, so the host operator gets `not_found` instead of one principal's request | `readWriteRequestsByRequestId` |
 | `brain.readWriteRequestById(id)` | the `WriteRequest` or `null` | `readWriteRequestById`, `lockWriteRequest`, `readWriteRequestProgress` (the TS member picks the nine progress columns from this row) |
@@ -56,7 +56,7 @@ no-ops: the store runs one write transaction at a time, so no read overlaps a wr
 | `brain.readCounterRows(keys)` | the `persistence_counters` rows that exist for the keys, in byte order of the key, without creating or locking any; a missing key has no row | `readCounterRows` |
 | `brain.readAdmissionRate(principalKind, principalId)` | `{ first_request_id, admissions, age_seconds, gross, net }`: the id of the brain's first request (lowest sequence), then over the latest 1000 requests of the principal (all principals when both are null) their count, the age in seconds of the oldest of them, the mean terminal reservation and the mean compacted receipt size (authority, outcome, error detail and client request id, plus each of its effects' data and kind and 1 KiB of headroom, at most the reservation). The means and the age are null when there are no requests | `readAdmissionRate` |
 | `brain.stampWriteClaim({ id, token, leaseMs, phaseJson })` | the claimed row with `passed_sync` and `seen_sequence`, or `null` when the refresh barrier holds it | `stampWriteClaim` |
-| `brain.completeWriteRow(completion)` | the ended row (with `purge_has_facts`, `purge_has_pages` when `probePurges`), or `null` when the result and the request's effects do not fit the reservation. The whole reservation stays charged while an effect is unfinished; otherwise the result and effect bytes are kept. Releases the counters; a terminal counter shorter than the release is clamped to zero and counted in config `persistence.true_up.clamped`. A completion that would take a counter below zero changes nothing and rejects with `constraint_violation` | `completeWriteRow` |
+| `brain.completeWriteRow(completion)` | the ended row (with `purge_has_facts`, whether the source holds a fact purge tombstone, and `purge_has_pages`, always false, when `probePurges`), or `null` when the result and the request's effects do not fit the reservation. The whole reservation stays charged while an effect is unfinished; otherwise the result and effect bytes are kept. Releases the counters; a terminal counter shorter than the release is clamped to zero and counted in config `persistence.true_up.clamped`. A completion that would take a counter below zero changes nothing and rejects with `constraint_violation`. The outcome and error detail are stored with their object keys in jsonb order (shorter keys first, then bytes, at every depth), as a `jsonb` column keeps them | `completeWriteRow` |
 | `brain.cancelWriteRow(cancellation)` | `null` when the request does not exist; `{ status: 'kept', row }` with the row unchanged when it is terminal, publishing, in recovery, or no longer in `expectState` under `expectExecutionToken`; `{ status: 'too_large', row }` when the result does not fit the reservation; else `{ status: 'cancelled', row }` with the row `completeWriteRow` ends. The read, the check and the completion run in one store write, so of two cancels of one request exactly one ends it. A state other than `cancelled` rejects with `constraint_violation` | `cancelWriteRow` |
 | `brain.releaseUnpublishedClaim({ id, token, reason, charge })` | `true` when the request was `running` under that token with no recovery record and no publication begun; it is back in `queued` with `reason` as its blocked reason, no token and no lease. `charge` counts one preparation attempt and keeps the claim phase; otherwise the phase is cleared | `releaseUnpublishedClaim` |
 | `brain.renewWriteClaim({ id, token, leaseMs, phaseJson })` | `true` when the claim is still `running` under that token; the lease is extended and the phase replaced when one is given | `renewWriteClaim` |
@@ -152,20 +152,11 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.readCapacityForecastInputs(light)` | the counters, the per-day rows (the principal rows, then the lifecycle receipts grouped by writer and UTC day), the history and, unless `light`, the reclaim rows. `tableBytes` is `null` (no relation size) | `readCapacityForecastInputs` |
 | `brain.listPendingSegmentedProjections(filter)` | the queued jobs of segmented pages that a projector can take now, as `listPendingSegmentedProjections` returns them | `listPendingSegmentedProjections` |
 | `brain.selectProjectionWindowJobs(cursor, retryCooldown)` | the window rows (the recency lane, then the wrapped key-order lane), with `high_water` as Postgres prints a `timestamptz`; the one row of nulls for an empty queue | `selectProjectionWindowJobs` |
-
-## Writer versions
-
-Which binaries admitted and published the retained requests (`writer-versions.ts`), from the
-`admitter_*` and `consumer_*` stamps on each request. Postgres reads its cutoff from
-`persistence_brain.writer_version_cutoff`, the moment migration 178 started stamping requests. This
-engine stamps every request from the brain's creation, so its cutoff is the brain's creation time. No
-request is bound to a worktree here, so an unstamped consumer has no owner host to fall back to.
-
-| JS | Resolves | Mirrors |
-| --- | --- | --- |
-| `brain.readWriterVersionCutoff()` | the brain's creation time as ISO text, `null` without a format record | `readWriterVersionCutoff` |
-| `brain.listWriterVersions(limit)` | per role, the latest request of each host and principal (a consumer only for a committed request), newest first (null times first, ties by role, host, principal), at most `limit` | `listWriterVersions` |
-| `brain.recentWriterVersions(days)` | the committed requests published in the last `days`, grouped per role, host, principal and version with a `requests` count; admitters count from the cutoff by admission, consumers by publication; newest first | `recentWriterVersions` |
+| `brain.claimSegmentedProjection(sourceId, slug, claim)` | `claimed` when the page's job takes `claim` (no live `segmented_projecting` claim younger than 60 seconds holds it), `held` when one does, `absent` when the source or the job is missing | `claimSegmentedProjection` |
+| `brain.renewSegmentedProjectionClaim(sourceId, slug, claim)` | `true` and the job's time set to now when the job still carries `claim`; `false` otherwise, changing nothing | `renewSegmentedProjectionClaim` |
+| `brain.releaseSegmentedProjectionClaim(sourceId, slug, claim)` | a job still carrying `claim` back to `canonical_change` at now | `releaseSegmentedProjectionClaim` |
+| `brain.deleteProjectionJob({ sourceIncarnation, slug, revision })` | the job deleted when it is queued at `revision`; a non-uuid incarnation or revision is refused | `deleteProjectionJob` |
+| `brain.markProjectionRebuildFailed({ sourceIncarnation, slug, revision })` | a job queued at `revision` and not under a live claim marked `rebuild_failed` at now | `markProjectionRebuildFailed` |
 
 ## Op checkpoints
 
@@ -220,7 +211,7 @@ NUL byte reads nothing and refuses a write with `invalid_input`.
 | `brain.putOpCheckpointRow(op, fingerprint, completedKeys)` | the row created or replaced, stamped now; its paths stay | `writeGitHoldRow`, `lockGitHoldSummary` (a new summary), `writeSyncPassRow` (a new row) |
 | `brain.replaceOpCheckpointRow(op, fingerprint, expected, completedKeys)` | `true` when the row held `expected` and now holds `completedKeys`, stamped now; `false`, writing nothing, when the row is gone or holds anything else | `replaceGitHoldRow`, `adjustGitHoldSummary`, `writeSyncPassRow` (an existing row) |
 | `brain.listOpCheckpointRows(op, fingerprintPrefix)` | the op's rows whose fingerprint starts with the prefix (every row for `""`), in fingerprint byte order | `readGitHoldRecords`, `readHeldPageRows`, `readLiveSyncPassRows` |
-| `brain.readPageRevisions(ids)` | `{ id, revision }` of each listed page, deleted or not, once each in id order; an unknown or negative id answers nothing | the page join of `readHeldPageRows` |
+| `brain.readPageRevisions(ids)` | `{ id, slug, knowledge_revision }` of each listed page, deleted or not, once each in id order; an unknown or negative id answers nothing (`trust/withdrawal_commit.rs`; `readHeldPageRows` joins its page by id through it and reads `knowledge_revision`) | `readPageRevisions` |
 
 Differences from the SQL engines:
 
@@ -274,6 +265,20 @@ A source delete removes its notifier row and its wanted markers. The drain lease
 the notifier's live-job read are in [jobs.md](jobs.md); the source's `last_commit` read is in
 [sources.md](sources.md).
 
+## Writer versions
+
+Which binaries admitted and published the retained requests (`writer-versions.ts`), from the
+`admitter_*` and `consumer_*` stamps on each request. Postgres reads its cutoff from
+`persistence_brain.writer_version_cutoff`, the moment migration 178 started stamping requests. This
+engine stamps every request from the brain's creation, so its cutoff is the brain's creation time. No
+request is bound to a worktree here, so an unstamped consumer has no owner host to fall back to.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readWriterVersionCutoff()` | the brain's creation time as ISO text, `null` without a format record | `readWriterVersionCutoff` |
+| `brain.listWriterVersions(limit)` | per role, the latest request of each host and principal (a consumer only for a committed request), newest first (null times first, ties by role, host, principal), at most `limit` | `listWriterVersions` |
+| `brain.recentWriterVersions(days)` | the committed requests published in the last `days`, grouped per role, host, principal and version with a `requests` count; admitters count from the cutoff by admission, consumers by publication; newest first | `recentWriterVersions` |
+
 ## Effect scans
 
 The effect worker's reads before and when it claims effects (`persistence-effect-scans.ts`). Each one joins
@@ -290,21 +295,6 @@ for type bigint`), a fractional limit with the same bigint syntax message and a 
 | `brain.listEffectRecoveries(hostId, after, limit)` | `[]`: no effect carries a recovery on a worktree here | `listEffectRecoveries` |
 | `brain.selectClaimableEffect(hostId, deadOwners)` | the effect row the worker claims next, or `null` (see "Effect worker") | `selectClaimableEffect` |
 
-## Owner scans
-
-The write owner's housekeeping reads on each scan tick (`persistence-owner-scans.ts`). Each one joins a
-write request to a worktree the host owns. This engine keeps no worktree (a request here always has a
-null `worktree_id`, and an insert that names a refresh hold refuses), so each list answers no row and no
-hold stands. An id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`; a hold
-kind other than `refresh` or `import` refuses.
-
-| JS | Resolves | Mirrors |
-| --- | --- | --- |
-| `brain.listOverdueHeldWrites(hostId, hold)` | `[]`: no write here waits behind a refresh or a worktree import. The wait limit only narrows the rows, so it is not sent | `listOverdueHeldWrites` |
-| `brain.lockOverdueHold(hold, id)` | `false`: no refresh row or worktree import hold exists here. `id` is the refresh id (may be null) or the request id | `lockOverdueHold` |
-| `brain.listOwnerRecoveryHeads(hostId)` | `[]`: no write here carries a recovery record (those live only on worktree-owned writes). The excluded worktree ids only narrow the rows, so they are not sent | `listOwnerRecoveryHeads` |
-| `brain.listResumableRefreshes(hostId)` | `[]`: no refresh row exists here (refreshes live only on managed worktrees). The sync budget only marks rows stale, so it is not sent | `listResumableRefreshes` |
-| `brain.getSource(id)`, once per named source | `listSourceLastCommits` answers each named source that exists, in id order; its `last_commit` reads null because the store keeps none | `listSourceLastCommits` |
 
 ## Publication effects
 
@@ -414,6 +404,23 @@ embedding effects whose chunks already carry current vectors. Its four members:
 - `brain.settleNoopEmbeddingRows(ids)`: each `queued` effect with no recovery among `ids` becomes
   `committed` with no error, one more attempt, no claim, outcome `{}` and the data keys `retry_slugs`,
   `target_failures` and `failing_target` removed; it returns `{ id, request_id }` for each.
+
+## Owner scans
+
+The write owner's housekeeping reads on each scan tick (`persistence-owner-scans.ts`). Each one joins a
+write request to a worktree the host owns. This engine keeps no worktree (a request here always has a
+null `worktree_id`, and an insert that names a refresh hold refuses), so each list answers no row and no
+hold stands. An id that is not a uuid refuses with `invalid input syntax for type uuid: "<id>"`; a hold
+kind other than `refresh` or `import` refuses.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listOverdueHeldWrites(hostId, hold)` | `[]`: no write here waits behind a refresh or a worktree import. The wait limit only narrows the rows, so it is not sent | `listOverdueHeldWrites` |
+| `brain.lockOverdueHold(hold, id)` | `false`: no refresh row or worktree import hold exists here. `id` is the refresh id (may be null) or the request id | `lockOverdueHold` |
+| `brain.listOwnerRecoveryHeads(hostId)` | `[]`: no write here carries a recovery record (those live only on worktree-owned writes). The excluded worktree ids only narrow the rows, so they are not sent | `listOwnerRecoveryHeads` |
+| `brain.listResumableRefreshes(hostId)` | `[]`: no refresh row exists here (refreshes live only on managed worktrees). The sync budget only marks rows stale, so it is not sent | `listResumableRefreshes` |
+| `brain.getSource(id)`, once per named source | `listSourceLastCommits` answers each named source that exists, in id order; its `last_commit` reads null because the store keeps none | `listSourceLastCommits` |
+
 
 ## Projection queue
 

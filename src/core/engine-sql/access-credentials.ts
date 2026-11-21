@@ -135,6 +135,12 @@ export type AccessTokenListRow = {
   private_pages?: unknown;
   private_facts?: unknown;
   member_id: string | null;
+  /** GST-2898: the write source grant and read-shared switch, present when the column exists (`gbrain auth list` shows a switched key). */
+  source_grant?: unknown;
+  source_id?: unknown;
+  federated_read?: unknown;
+  grant_revision?: unknown;
+  read_shared_revision?: unknown;
 };
 
 const dateOrNull = (v: unknown): Date | null => (v == null ? null : v instanceof Date ? v : new Date(String(v)));
@@ -146,6 +152,7 @@ export function normalizeAccessTokenListRow(r: Record<string, unknown>): AccessT
     last_used_at: dateOrNull(r.last_used_at), revoked_at: dateOrNull(r.revoked_at),
     ...('private_pages' in r ? { private_pages: r.private_pages } : {}),
     ...('private_facts' in r ? { private_facts: r.private_facts } : {}),
+    ...Object.fromEntries(['source_grant', 'source_id', 'federated_read', 'grant_revision', 'read_shared_revision'].filter(key => key in r).map(key => [key, r[key]])),
     member_id: r.member_id == null ? null : String(r.member_id),
   };
 }

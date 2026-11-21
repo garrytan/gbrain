@@ -11,7 +11,8 @@ use gbrain_store::embeddings::{
     StaleChunkOptions, StaleTakeOptions, StateCountOptions, StateRowOptions, TakeEmbeddingInput,
 };
 use gbrain_store::pages::{PageInput, PutPageOptions};
-use gbrain_store::takes::{SearchTakesVectorOptions, TakeInput};
+use gbrain_store::takes::TakeInput;
+use gbrain_store::vectors::TakesVectorOptions;
 use memory_env::{T0, brain};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -453,8 +454,8 @@ fn take_vector_search_ranks_current_vectors_by_cosine_distance_and_refuses_a_bad
     // A reworded claim leaves its vector stale, so it is not searched.
     b.add_takes_batch(&[take(open, 3, "reworded again", "garry")])
         .unwrap();
-    let search = |v: Value| -> Vec<Value> {
-        b.search_takes_vector(&de::<SearchTakesVectorOptions>(v))
+    let search = |embedding: &[f64], options: Value| -> Vec<Value> {
+        b.search_takes_vector(embedding, &de::<TakesVectorOptions>(options))
             .unwrap()
     };
     let query: Vec<f64> = basis(0, 1536);
@@ -463,40 +464,129 @@ fn take_vector_search_ranks_current_vectors_by_cosine_distance_and_refuses_a_bad
             .map(|h| h["claim"].as_str().unwrap().to_string())
             .collect()
     };
-    let all = search(json!({ "embedding": query }));
+    let all = search(&query, json!({}));
     assert_eq!(claims(&all), ["held", "near", "far"]);
     assert_eq!(all[1]["take_id"], json!(ids["near"]));
     assert_eq!(all[1]["page_slug"], json!("notes/open"));
     assert_eq!(all[1]["weight"], json!(0.5));
     // (1 - distance)::real of [1, .., 0.1 on axis 2] against axis 0: 1/sqrt(1.01) as f32.
     assert_eq!(all[1]["score"], json!(0.9950372));
+    assert_eq!(claims(&search(&query, json!({ "limit": 1 }))), ["held"]);
     assert_eq!(
-        claims(&search(json!({ "embedding": query, "limit": 1 }))),
-        ["held"]
-    );
-    assert_eq!(
-        claims(&search(
-            json!({ "embedding": query, "allow_list": ["alice"] })
-        )),
+        claims(&search(&query, json!({ "allow_list": ["alice"] }))),
         ["far"]
     );
     assert_eq!(
-        claims(&search(
-            json!({ "embedding": query, "eligible_only": true })
-        )),
+        claims(&search(&query, json!({ "eligible_only": true }))),
         ["near", "far"]
     );
-    let refused = |v: Value| {
-        b.search_takes_vector(&de::<SearchTakesVectorOptions>(v))
+    let refused = |embedding: &[f64]| {
+        b.search_takes_vector(embedding, &TakesVectorOptions::default())
             .unwrap_err()
             .to_string()
     };
-    assert!(
-        refused(json!({ "embedding": basis(0, 3) }))
-            .contains("different vector dimensions 1536 and 3")
-    );
-    assert!(refused(json!({ "embedding": [1.0, null] })).contains("NaN not allowed in vector"));
-    assert!(refused(json!({ "embedding": [] })).contains("at least 1 dimension"));
+    assert!(refused(&basis(0, 3)).contains("different vector dimensions 3 and 1536"));
+    assert!(refused(&[1.0, f64::NAN]).contains("NaN not allowed in vector"));
+    assert!(refused(&[]).contains("at least 1 dimension"));
     // No candidate take means no distance is computed, so another width finds nothing.
-    assert!(search(json!({ "embedding": basis(0, 3), "allow_list": [] })).is_empty());
+    assert!(search(&basis(0, 3), json!({ "allow_list": [] })).is_empty());
+}
+
+/// `cosinesByChunkIds`: ids of a page's chunks, in chunk index order.
+fn chunk_ids(store: &Store, slug: &str) -> Vec<u64> {
+    chunks_of(store, slug)
+        .iter()
+        .map(|r| r["id"].as_u64().unwrap())
+        .collect()
+}
+
+/// The `(id, cosine)` rows of one `cosinesByChunkIds` read.
+fn cosines(store: &Store, ids: &[u64], query: &[f64]) -> Vec<(u64, f64)> {
+    store
+        .cosines_by_chunk_ids(ids, query)
+        .unwrap()
+        .iter()
+        .map(|r| (r["id"].as_u64().unwrap(), r["cosine"].as_f64().unwrap()))
+        .collect()
+}
+
+#[test]
+fn cosines_are_the_text_space_cosine_of_the_served_chunks_with_a_vector() {
+    let b = brain("emb-cosines");
+    let (_, rev) = page(&b, "notes/a", json!({}));
+    let diagonal: Vec<f64> = (0..1536).map(|i| if i < 2 { 1.0 } else { 0.0 }).collect();
+    let opposite: Vec<f64> = basis(0, 1536).iter().map(|x| -x).collect();
+    seal(
+        &b,
+        "notes/a",
+        &rev,
+        json!([
+            {"chunk_index": 0, "chunk_text": "same axis", "model": "m1", "embedding": basis(0, 1536)},
+            {"chunk_index": 1, "chunk_text": "other axis", "model": "m1", "embedding": basis(1, 1536)},
+            {"chunk_index": 2, "chunk_text": "diagonal", "model": "m1", "embedding": diagonal},
+            {"chunk_index": 3, "chunk_text": "opposite", "model": "m1", "embedding": opposite},
+            {"chunk_index": 4, "chunk_text": "no vector", "model": "m1"},
+        ]),
+    );
+    // A page whose text projection is not sealed serves no chunk.
+    let (_, rev_unsealed) = page(&b, "notes/unsealed", json!({}));
+    b.upsert_chunks(
+        "notes/unsealed",
+        &de::<Vec<ChunkInput>>(json!([
+            {"chunk_index": 0, "chunk_text": "pending", "model": "m1", "embedding": basis(0, 1536)},
+        ])),
+        &UpsertChunksOptions {
+            expected_revision: Some(rev_unsealed),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let ids = chunk_ids(&b, "notes/a");
+    assert_eq!(ids.len(), 5);
+    let mut asked = ids.clone();
+    asked.push(u64::MAX - 1);
+    asked.extend(chunk_ids(&b, "notes/unsealed"));
+    let got = cosines(&b, &asked, &basis(0, 1536));
+    // Rows come back for the four vectors only, in page then chunk order; the id that is no chunk and
+    // the unsealed page's chunk have none.
+    assert_eq!(
+        got.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        ids[..4].to_vec()
+    );
+    let values: Vec<f64> = got.iter().map(|(_, c)| *c).collect();
+    assert_eq!(values[0], 1.0);
+    assert_eq!(values[1], 0.0);
+    assert!((values[2] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-7);
+    assert_eq!(values[3], -1.0);
+    // A longer query of the same direction scores the same, within rounding.
+    let scaled: Vec<f64> = basis(0, 1536).iter().map(|x| x * 3.0).collect();
+    let rescaled = cosines(&b, &ids, &scaled);
+    assert_eq!(
+        rescaled.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        ids[..4].to_vec()
+    );
+    for ((_, a), (_, c)) in rescaled.iter().zip(&got) {
+        assert!((a - c).abs() < 1e-12);
+    }
+    // Another width and a zero query score 0 for every served chunk.
+    for query in [vec![1.0, 2.0, 3.0], vec![0.0; 1536]] {
+        let zeros = cosines(&b, &ids, &query);
+        assert_eq!(zeros.len(), 4);
+        assert!(zeros.iter().all(|(_, c)| *c == 0.0));
+    }
+    // Nothing asked, nothing read.
+    assert!(cosines(&b, &[], &basis(0, 1536)).is_empty());
+}
+
+#[test]
+fn cosines_refuse_a_query_pgvector_cannot_parse_before_reading_any_row() {
+    let b = brain("emb-cosines-bad");
+    for (query, message) in [
+        (vec![], "vector must have at least 1 dimension"),
+        (vec![f64::NAN], "NaN not allowed in vector"),
+        (vec![f64::INFINITY], "infinite value not allowed in vector"),
+    ] {
+        let err = b.cosines_by_chunk_ids(&[1], &query).unwrap_err();
+        assert_eq!(err.message, message);
+    }
 }

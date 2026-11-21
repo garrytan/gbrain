@@ -17,10 +17,10 @@
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::jsonb;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
-use crate::raw_files::jsonb_order;
 use crate::sources::require_source;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,7 @@ struct LoopRecord {
     counterparty_source_id: Option<String>,
     counterparty_email: Option<String>,
     summary: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     evidence: Value,
     thread_id: Option<String>,
     page_slug: Option<String>,
@@ -178,7 +179,7 @@ fn row_json(id: u64, r: &LoopRecord) -> Value {
     m.insert("counterparty_slug".into(), json!(r.counterparty_slug));
     m.insert("counterparty_email".into(), json!(r.counterparty_email));
     m.insert("summary".into(), json!(r.summary));
-    m.insert("evidence".into(), r.evidence.clone());
+    m.insert("evidence".into(), jsonb::ordered(&r.evidence));
     m.insert("thread_id".into(), json!(r.thread_id));
     m.insert("page_slug".into(), json!(r.page_slug));
     m.insert("due_at".into(), json!(r.due_at_us.map(iso)));
@@ -250,7 +251,21 @@ impl Store {
         let now = self.env.now_micros();
         let last_activity_at_us = last.unwrap_or(now);
         let opened_at_us = opened.unwrap_or(now);
-        let confidence = input.confidence.unwrap_or(1.0) as f32;
+        let confidence = input.confidence.unwrap_or(1.0);
+        let narrowed = confidence as f32;
+        // JSON cannot carry a NaN or an infinity, but a direct Rust caller can; either one, like a
+        // finite value past the REAL range, would store a row that no longer deserializes.
+        if !narrowed.is_finite() {
+            return Err(StoreError::new(
+                crate::error::INVALID_ARGUMENT,
+                if confidence.is_finite() {
+                    format!("{op}: \"{confidence}\" is out of range for type real")
+                } else {
+                    format!("{op}: confidence {confidence} is not a finite number")
+                },
+            ));
+        }
+        let confidence = narrowed;
         self.write(|tx| {
             require_source(tx, &input.source_id)?;
             let new_id = next_id(tx, COUNTER)?;
@@ -270,7 +285,7 @@ impl Store {
                     counterparty_source_id: input.counterparty_source_id.clone(),
                     counterparty_email: input.counterparty_email.clone(),
                     summary: input.summary.clone(),
-                    evidence: jsonb_order(input.evidence.clone()),
+                    evidence: jsonb::order(input.evidence.clone()),
                     thread_id: input.thread_id.clone(),
                     page_slug: input.page_slug.clone(),
                     due_at_us,
@@ -324,7 +339,7 @@ impl Store {
             r.counterparty_slug = input.counterparty_slug.clone().or(r.counterparty_slug);
             r.counterparty_email = input.counterparty_email.clone().or(r.counterparty_email);
             r.summary = input.summary.clone();
-            r.evidence = jsonb_order(input.evidence.clone());
+            r.evidence = jsonb::order(input.evidence.clone());
             r.page_slug = input.page_slug.clone().or(r.page_slug);
             r.due_at_us = due_at_us.or(r.due_at_us);
             r.confidence = confidence;
@@ -587,6 +602,25 @@ mod tests {
             "detector": "deterministic_thread", "lastActivityAt": at, "openedAt": at,
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn a_confidence_past_the_real_range_refuses_and_leaves_the_row() {
+        let s = store();
+        source(&s, "src");
+        s.upsert_open_loop(&input("src", "k", T1)).unwrap();
+        for bad in [1e39, -1e39, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let mut again = input("src", "k", T2);
+            again.confidence = Some(bad);
+            let err = s.upsert_open_loop(&again).unwrap_err();
+            assert_eq!(err.code, INVALID_ARGUMENT, "{err:?}");
+            assert!(err.message.contains("for type real") || err.message.contains("finite"));
+            let mut fresh = input("src", "other", T2);
+            fresh.confidence = Some(bad);
+            assert!(s.upsert_open_loop(&fresh).is_err());
+        }
+        // the stored row still reads, and so does the listing
+        assert_eq!(s.upsert_open_loop(&input("src", "k", T2)).unwrap().id, 1);
     }
 
     #[test]

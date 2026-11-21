@@ -118,6 +118,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_members_read_lineage',
   // GBRA-108 design 1: labelled-only members (doctor/checks/access-labelled-only.ts).
   'access_labelled_only_members',
+  // GBRA-582 item 9: pages no enabled member reads (doctor/checks/access-pages-read-by-nobody.ts).
+  'access_pages_read_by_nobody',
   // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
   'attest_read_shared_scope',
   // GBRA-504: guest sources, their writers and the owner credentials that read them (doctor/checks/guest-source.ts).
@@ -273,6 +275,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'memory_proposals_pending',
   // #7160: title-prefixed person pages that likely duplicate an unprefixed page (preview only).
   'person_title_duplicates',
+  // plan autoplan-20261117192252 PR 1: likely duplicate person and company pages (read-only, gbrain dedupe --preview).
+  'entity_duplicates',
   // Git-canonical G1: the database compared with the commit at HEAD per source, informational (doctor/checks/db-ahead-of-git.ts).
   'db_ahead_of_git',
   // Git-canonical G3: how far each strict source's index trails HEAD (doctor/checks/git-index-lag.ts).
@@ -288,6 +292,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'timeline_history',
   // #6147: imported conversation pages that may still carry a typed credential (cached audit).
   'transcript_secret_exposure',
+  // GST-2988 PR 3: the secret store's entries, backups, keys, spool and held-back commits (doctor/checks/secret-store.ts).
+  'secret_store',
   // GST-2768: the conversation archive keeping up with the harness sessions (doctor/checks/transcript-archive.ts).
   'transcript_archive_freshness',
   // GST-2731: facts pages with undated fact lines (doctor/checks/facts-pages.ts).
@@ -482,6 +488,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   // #7117: the content-drift sweep's latest batch failed.
   'content_drift_sweep',
   'connector_account_mismatch',
+  // GST-3216: owner identifiers and the owner page (doctor/checks/owner-identity.ts).
+  'owner_identity',
   // #5157: queued jobs from before the v0.50 authority cutover block every worker.
   'legacy_job_authority',
   // F3: legacy tokens on the JSONB-only grant shape (info) and grant drift (warn).
@@ -501,6 +509,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'function_search_path',
   // GST-2885: every purge and withdrawal guard carries its row_security_active ledger check (#7632/#7659).
   'guard_ledger_checks',
+  // GST-3032: the owner-only delete triggers that mark rows derived from a removed owner-only origin (v322).
+  'owner_only_marks_triggers',
   // A Postgres brain whose server_encoding is not UTF8 (doctor/checks/database-encoding.ts).
   'database_encoding',
   'rls_event_trigger',

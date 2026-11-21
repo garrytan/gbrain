@@ -49,7 +49,7 @@ does.
 | Postgres trigger | Store |
 | --- | --- |
 | `access_members_mark_restricted` (v282, after insert) | a member insert sets config `access.restrictions_present` to `'1'` unless it already is ([access-flag.md](access-flag.md)) |
-| `access_members_refresh_serves` (v309, per statement, after insert, delete or an update of `disabled_at` / `tombstoned_at`) | a member insert, a disable or enable and a tombstone run `gbrain_access_refresh_serves()` at read committed: `access.serves_derived` is `several` while two or more members are enabled, else `one` (written as `one` only when the key exists and differs); `access.serves_since` is set once, to the write's `now()` in whole UTC seconds (`YYYY-MM-DDTHH:MM:SSZ`), when the explicit `access.serves` (`one` or `several`, trimmed and lower-cased) or else the derived value is `several` |
+| `access_members_refresh_serves` (v309, per statement, after insert, delete or an update of `disabled_at` / `tombstoned_at`) | a member insert, a disable or enable and a tombstone run `gbrain_access_refresh_serves()` at read committed: `access.serves_derived` is `several` while two or more members are enabled, else `one` (written as `one` only when the key exists and differs); `access.serves_since` is set once, to the write's `now()` in UTC to the microsecond (`YYYY-MM-DDTHH:MM:SS.UUUUUUZ`, v329), when the explicit `access.serves` (`one` or `several`, trimmed and lower-cased) or else the derived value is `several` |
 | `ON DELETE CASCADE` on `access_group_members.group_id` | `deleteAccessGroup` deletes the group's member keys |
 
 The statement trigger also fires on an update that changes no row (an absent id), so the store refreshes on every

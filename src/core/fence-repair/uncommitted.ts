@@ -22,7 +22,8 @@ import { gitChildEnv } from '../git-env.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
-export const FENCE_UNCOMMITTED_OP = 'fence-repair-uncommitted';
+import { FENCE_UNCOMMITTED_OP } from './uncommitted-op.ts';
+export { FENCE_UNCOMMITTED_OP };
 
 export interface UncommittedFenceRepair {
   source_id: string;

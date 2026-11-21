@@ -25,7 +25,7 @@ import type { PageRefRow, RelationalPageRow } from '../../engine-sql/relational-
 import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
-import { storePagePolicy } from './private-provenance.ts';
+import { HYBRID_BAG_KEYS, WHOKNOWS_KEYS, storePagePolicy } from './private-provenance.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
 function checkBatch(member: string, n: number): void {
@@ -43,17 +43,13 @@ void READ_POLICY_KEYS_COMPLETE;
  * PGLite's live filter (not deleted, not quarantined, source not archived), so `live` says one was passed.
  * `excludePrivate` applies the page policy (private-provenance.ts `storePagePolicy`), a caller's reader identity and
  * private-readable grant included; `minTrust` and `suppressFlagged`
- * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` and
- * `takesHoldersAllowList` change nothing on these reads. Hybrid search passes its whole option object (limit, offset,
- * detail, type...) as the scope; `pageReadFilter` reads only the policy keys, so only those are taken here, and the
- * other keys change nothing but the live filter, as on PGLite.
+ * apply the page's stored trust tier and its write-gate flag receipts (`pageEligibleSql`). `requireSafeChunks` changes
+ * nothing on these reads. The marker reads (every member that uses this) are handed hybridSearch's whole option bag as
+ * their policy, so they also accept and ignore the bag's own keys (`HYBRID_BAG_KEYS`, and whoknows' `WHOKNOWS_KEYS`); any other key still refuses.
  */
 function readScope(member: string, opts: PageReadScope | undefined): Record<string, unknown> {
   if (opts === undefined || opts === null) return {};
-  const policy: Record<string, unknown> = {};
-  for (const key of READ_POLICY_KEYS) policy[key] = (opts as PageReadPolicy)[key];
-  const taken = takeOptions(member, policy, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'],
-    ['requireSafeChunks', 'takesHoldersAllowList']);
+  const taken = takeOptions(member, opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...HYBRID_BAG_KEYS, ...WHOKNOWS_KEYS]);
   return {
     sourceId: taken.sourceId, sourceIds: taken.sourceIds, live: true,
     excludePrivate: storePagePolicy(member, taken.excludePrivate, { callerReaders: true }) ?? null,
@@ -294,7 +290,6 @@ export const getEffectiveDates: StoreMember<[refs: Array<{ slug: string; source_
   opts,
 ) => {
   if (!refs.length) return new Map();
-  // whoknows passes its whole options object (src/commands/whoknows.ts); readEffectiveDates reads only the page scope.
   const scope = readScope('getEffectiveDates', opts);
   const rows: Array<{ slug: string; source_id: string; ts: string }> = await storeCall({ member: 'getEffectiveDates' }, () =>
     brain.getEffectiveDates(refs.map((r) => ({ slug: r.slug, source_id: r.source_id })), scope));

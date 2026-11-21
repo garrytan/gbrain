@@ -16,7 +16,7 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress, HeldCoverageRow } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
@@ -288,6 +288,12 @@ export const readLedgerSource: StoreMember<[sourceId: string, opts?: { batch?: b
   return { incarnation: String(membership.incarnation), purgeEpoch: Number(epoch ?? 0), coverage: null, purgesPossible,
     ...(opts?.batch ? { managedRows: [{ enabled: false }], planModePrev: PLAN_CACHE_MODE } : {}) };
 };
+
+/**
+ * The store records no belief events (they are written only through `executeRaw`, which this engine refuses), so no
+ * source is covered for any subject, as `readLedgerSource` answers `coverage: null`.
+ */
+export const listCoveredSources: StoreMember<[subjectKey: string], string[]> = async () => [];
 
 /** `current_setting('plan_cache_mode')` on a PGLite brain that never set it. */
 const PLAN_CACHE_MODE = 'auto';

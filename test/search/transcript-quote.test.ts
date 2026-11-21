@@ -493,7 +493,7 @@ describe('#8042: what is quoted, and the page body fence round trip', () => {
   });
 
   test('quoteFacts quotes an extractor fact and one the store links to a chat page; others come back as they are', async () => {
-    const engine = { executeRaw: async () => [{ id: '9' }] } as never;
+    const engine = { listFactsFromQuotedPages: async () => [9] } as never;
     const out = await quoteFacts(engine, [{ id: 7, fact: 'x', source: 'cli:extract-conversation-facts' }, { id: 8, fact: 'y', source: 'mcp:remember' },
       { id: 9, fact: 'z', source: 'sync:import' }, { id: 10, fact: 'w', source: 'sync:import', collapsed_ids: [10, 9] }]);
     expect(out.map(f => f.quoted)).toEqual(['transcript', undefined, 'transcript', 'transcript']);

@@ -343,8 +343,8 @@ export async function fillCommitMarks(engine: BrainEngine, sourceId: string, opt
 }
 
 /** Sources with any coverage event in their current incarnation. */
-export function coveredSources(engine: BrainEngine): Promise<string[]> {
-  return engine.listBeliefCoveredSources(COVERAGE_KEY);
+export async function coveredSources(engine: BrainEngine): Promise<string[]> {
+  return engine.listCoveredSources(COVERAGE_KEY);
 }
 
 /** The cycle's extract phase: a sampled drift reconcile and commit-mark fill on each covered source (or the cycle's source); failures become details. */

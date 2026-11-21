@@ -2,7 +2,7 @@
  * BrainEngine parity — versions + raw_files families.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: page version snapshots (create / list / revert), raw sidecar
+ *  - Contract: page version snapshots (create / list / revert / newest at a tier), raw sidecar
  *    data and file metadata rows (listFiles' order included) behave identically on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; a Rust arm later through
  *    test/engine-parity/harness.ts).
@@ -134,6 +134,43 @@ describe('engine parity: versions', () => {
   );
 
   parityTest(
+    'readLatestVersionIdAtTier answers the page\'s newest version stamped with the tier, or null',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'getPage', 'createVersion', 'readLatestVersionIdAtTier'] },
+    async (engine) => {
+      const body = { type: 'note' as const, title: 'Tiered', compiled_truth: 'Body.', timeline: '' };
+      await engine.putPage('notes/tiered', body);
+      const plain = await engine.createVersion('notes/tiered');
+      await engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings(
+          ['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'],
+          ['operator_curated', 'operator_curated', JSON.stringify({ channel: 'import' })],
+        );
+        await tx.putPage('notes/tiered', { ...body, compiled_truth: 'Curated body.' });
+      });
+      const curatedOne = await engine.createVersion('notes/tiered');
+      const curatedTwo = await engine.createVersion('notes/tiered');
+      await engine.putPage('notes/other', { ...body, title: 'Other' });
+      await engine.createVersion('notes/other');
+      const pageId = (await engine.getPage('notes/tiered'))!.id;
+      const otherId = (await engine.getPage('notes/other'))!.id;
+      const curated = await engine.readLatestVersionIdAtTier(pageId, 'operator_curated');
+      const unknown = await engine.readLatestVersionIdAtTier(pageId, 'unknown');
+      expect(curated).toBe(curatedTwo.id);
+      // putPage may snapshot the prior body too, so the newest unknown version is the plain snapshot or a later one.
+      expect(unknown).not.toBeNull();
+      expect(unknown!).toBeGreaterThanOrEqual(plain.id);
+      expect(unknown!).toBeLessThan(curatedOne.id);
+      return {
+        curatedIsNewest: curated === curatedTwo.id,
+        unknownBeforeCurated: unknown !== null && unknown >= plain.id && unknown < curatedOne.id,
+        agentWritten: await engine.readLatestVersionIdAtTier(pageId, 'agent_written'),
+        otherCurated: await engine.readLatestVersionIdAtTier(otherId, 'operator_curated'),
+        missingPage: await engine.readLatestVersionIdAtTier(pageId + otherId + 1000, 'operator_curated'),
+      };
+    },
+  );
+
+  parityTest(
     'createVersion on a missing page throws; getVersions of a missing page is empty',
     { methods: ['createVersion', 'getVersions'] },
     async (engine) => {
@@ -201,6 +238,33 @@ describe('engine parity: versions', () => {
     },
   );
 
+  parityTest(
+    'a change reason stamps the versions after a mark; getVersions reads it as replaced_because',
+    { methods: ['putPage', 'getPage', 'createVersion', 'readLatestVersionId', 'stampVersionChangeReason', 'getVersions'] },
+    async (engine) => {
+      const write = (body: string) => engine.putPage('notes/why', { type: 'note', title: 'Why', compiled_truth: body, timeline: '' });
+      await write('Body one.');
+      const pageId = Number((await engine.getPage('notes/why'))!.id);
+      const none = await engine.readLatestVersionId(pageId);
+      const v1 = await engine.createVersion('notes/why');
+      const latestIsV1 = (await engine.readLatestVersionId(pageId)) === Number(v1.id);
+      const first = await engine.stampVersionChangeReason({ pageId, afterVersionId: 0, reason: 'first edit' });
+      await write('Body two.');
+      const v2 = await engine.createVersion('notes/why');
+      const second = await engine.stampVersionChangeReason({ pageId, afterVersionId: Number(v1.id), reason: 'second edit' });
+      await write('Body three.');
+      const v3 = await engine.createVersion('notes/why', { reason: 'imported reason' });
+      const nothing = await engine.stampVersionChangeReason({ pageId, afterVersionId: Number(v3.id), reason: 'too late' });
+      const missing = { latest: await engine.readLatestVersionId(987_654), stamped: await engine.stampVersionChangeReason({ pageId: 987_654, afterVersionId: 0, reason: 'none' }) };
+      const latestIsV3 = (await engine.readLatestVersionId(pageId)) === Number(v3.id);
+      const history = (await engine.getVersions('notes/why')).map(v => [v.compiled_truth, v.replaced_because ?? null]);
+      expect({ none, latestIsV1, first, second, nothing, latestIsV3 }).toEqual({ none: null, latestIsV1: true, first: 1, second: 1, nothing: 0, latestIsV3: true });
+      expect(history).toEqual([['Body three.', 'imported reason'], ['Body two.', 'second edit'], ['Body one.', 'first edit']]);
+      expect(missing).toEqual({ latest: null, stamped: 0 });
+      return { none, latestIsV1, first, second, nothing, latestIsV3, missing, history, created: [v2, v3].map(v => (v as { change_reason?: string | null }).change_reason ?? null) };
+    },
+  );
+
   /** A page whose snapshots differ in privacy: private, named readers, world, pinned question, then a world live page. */
   async function privateHistory(engine: Parameters<Parameters<typeof parityTest>[2]>[0]): Promise<void> {
     const edits: Array<[string, Record<string, unknown>]> = [
@@ -248,6 +312,34 @@ describe('engine parity: versions', () => {
       expect(teamLive).toEqual([]);
       const reasons = (await engine.getVersions('notes/hist', { excludePrivate: true })).map((v) => v.replaced_because ?? null);
       return { open, hidden, limited, meta, privateLive, teamLive, reasons };
+    },
+  );
+
+  parityTest(
+    'pruneHoldingPageVersions keeps the newest five versions, deletes the older ones and records the history gap',
+    { methods: ['putPage', 'getPage', 'createVersion', 'getVersions', 'pruneHoldingPageVersions', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const slug = 'memory/unattributed';
+      const labels = new Map<string, string>();
+      await engine.putPage(slug, { type: 'note', title: 'Held', compiled_truth: 'Held body.', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
+      for (let i = 1; i <= 8; i++) labels.set(String((await engine.createVersion(slug, { sourceId: 'default' })).id), `v${i}`);
+      const pageId = Number((await engine.getPage(slug, { sourceId: 'default' }))!.id);
+      const gap = async () => (await engine.pickValidTimeEdition({ pageId, asOf: '2026-07-01', excludePrivate: false, pinOrd: null, inlineMaxBytes: 1_000_000 }))?.gap_at instanceof Date;
+      const kept = async () => (await engine.getVersions(slug, { sourceId: 'default', includeBody: false })).map((v) => labels.get(String(v.id)) ?? 'unlabelled');
+      const gapBefore = await gap();
+      const pruned = await engine.pruneHoldingPageVersions(pageId);
+      const afterFirst = await kept();
+      const again = await engine.pruneHoldingPageVersions(pageId);
+      const unknown = await engine.pruneHoldingPageVersions(987_654);
+      await engine.putPage('notes/few', { type: 'note', title: 'Few', compiled_truth: 'Few.', timeline: '' });
+      await engine.createVersion('notes/few');
+      const fewId = Number((await engine.getPage('notes/few'))!.id);
+      const few = await engine.pruneHoldingPageVersions(fewId);
+      const result = { gapBefore, pruned, afterFirst, again, unknown, few, gapAfter: await gap(), fewVersions: (await engine.getVersions('notes/few')).length };
+      expect(result).toEqual({
+        gapBefore: false, pruned: 3, afterFirst: ['v8', 'v7', 'v6', 'v5', 'v4'], again: 0, unknown: 0, few: 0, gapAfter: true, fewVersions: 1,
+      });
+      return result;
     },
   );
 

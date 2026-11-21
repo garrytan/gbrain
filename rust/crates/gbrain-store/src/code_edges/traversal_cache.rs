@@ -30,9 +30,10 @@
 //! JSON float; a whole float in the `int8` range is the exact integer it names, so the store
 //! takes it as that integer (`whole_i64`), as Postgres binds it.
 
-use crate::dream::{jsonb, jsonb_check};
+use crate::dream::jsonb_check;
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
+use crate::jsonb::ordered;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
@@ -53,6 +54,7 @@ pub(crate) struct CacheRecord {
     pub symbol_qualified: String,
     pub depth: i32,
     pub source_id: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub response_json: Value,
     pub max_chunk_updated_at_us: i64,
     pub xmin_max: i64,
@@ -202,7 +204,7 @@ impl Store {
             .filter(|row| row.cluster_generation == key.cluster_generation)
             .map(|row| {
                 json!({
-                    "response_json": row.response_json,
+                    "response_json": crate::jsonb::ordered(&row.response_json),
                     "computed_at": iso(row.computed_at_us),
                     "cluster_generation": row.cluster_generation,
                 })
@@ -228,7 +230,7 @@ impl Store {
                 input.max_chunk_updated_at
             ))
         })?;
-        let response_json = jsonb(&input.response_json);
+        let response_json = ordered(&input.response_json);
         let now = self.env.now_micros();
         self.write(|tx| {
             // The SERIAL default runs before the conflict check, so the id is taken either way.
@@ -240,7 +242,7 @@ impl Store {
                 symbol_qualified: input.symbol_qualified.clone(),
                 depth,
                 source_id: input.source_id.clone(),
-                response_json,
+                response_json: response_json.clone(),
                 max_chunk_updated_at_us,
                 xmin_max: input.xmin_max,
                 cluster_generation: input.cluster_generation,

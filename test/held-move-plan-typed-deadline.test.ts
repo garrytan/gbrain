@@ -27,12 +27,21 @@ function recordingEngine() {
     executeRaw: async (sql: string, _params?: unknown[], opts?: { timeoutMs?: number }) => {
       raw.push({ sql, timeoutMs: opts?.timeoutMs });
       if (/\bAS due\b/.test(sql)) return [{ due: true }];
+      // The unmanaged writer's mode read (managed-mode.ts) meets the singleton row of an unmanaged brain.
+      if (/FROM persistence_brain\b/.test(sql)) return [{ enabled: false }];
       // One held row on the shared holding page whose entity is a bare two-word name (heldFactTarget resolves it).
       if (/FROM facts f WHERE/.test(sql) && /expired_at IS NULL ORDER BY/.test(sql)) return [{ id: 1, source_id: 'default', entity_slug: 'Acme Example',
         fact: 'A held fact.', kind: 'fact', visibility: 'world', page_exists: true, from_slug: 'memory/unattributed' }];
       return [];
     },
     resolveAliases: async () => new Map(),
+    readManagedModeRows: async () => [{ enabled: false }], // an unmanaged brain, as the raw mode read answered before
+    // No live page carries the bare name, so the plan goes on to the strict resolver (heldFactTarget).
+    heldTargetPageLive: async () => { typed.push({ member: 'heldTargetPageLive', deadline: readDeadline() }); return false; },
+    // The due check and the held rows are typed members on rust-engine/main (heldMoveDue, listHeldMoveRows) whose SQL runs on
+    // the engine's own executeRaw; the plan binds them to its view, so their statement carries the deadline like a raw read.
+    async heldMoveDue(this: BrainEngine) { return (await this.executeRaw<{ due: boolean }>('SELECT true AS due'))[0]?.due === true; },
+    async listHeldMoveRows(this: BrainEngine) { return this.executeRaw('SELECT * FROM facts f WHERE f.expired_at IS NULL ORDER BY f.id'); },
     getWorktreeBinding: async () => { typed.push({ member: 'getWorktreeBinding', deadline: readDeadline() }); throw new Stop('stop after the resolver'); },
   };
   const engine = new Proxy(own, { get(target, key) {
@@ -54,7 +63,11 @@ describe('the held-move plan bounds the strict resolver typed reads (planningVie
     // Positive control: the binding read (intercepted) runs under the deadline.
     expect(typed.find(t => t.member === 'getWorktreeBinding')?.deadline).toEqual(expect.any(Number));
     // The resolver reads were reached ...
-    const resolver = typed.filter(t => t.member !== 'getWorktreeBinding');
+    // The held-move reads the plan binds to its view (DEADLINE_BOUND in held-fact-move.ts: their SQL runs on the view's
+    // executeRaw, checked through `raw` above) are not resolver reads.
+    const viewBound = new Set(['heldMoveDue', 'listHeldMoveRows', 'listStruckHeldRows', 'heldTargetPageLive', 'readHeldRowVisibility',
+      'heldEntityPageDeleted', 'readHeldAccessState', 'readHeldConfigValue']);
+    const resolver = typed.filter(t => t.member !== 'getWorktreeBinding' && !viewBound.has(t.member));
     expect(resolver.map(t => t.member)).toEqual(expect.arrayContaining(['readLivePageTypes', 'readTrigramCandidates']));
     // ... and each ran under the plan's deadline.
     expect(resolver.filter(t => t.deadline === undefined).map(t => t.member)).toEqual([]);

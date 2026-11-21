@@ -34,7 +34,7 @@
  */
 import type { BrainEngine, NewFact } from '../engine.ts';
 import { currentWriteTrust } from '../persistence/context.ts';
-import { WRITER_RANK_SQL as WRITER_RANK } from '../engine-sql/trust-fence.ts';
+import { WRITER_RANK_SQL as WRITER_RANK, type HeldTable } from '../engine-sql/trust-fence.ts';
 import type { WriteGateConfig } from '../write-gate.ts';
 import { decideFactWrite, recordFlaggedRow, recordWriteGateHold, type GatedRowDecision } from '../write-gate-store.ts';
 import { gateInput } from './gate-outcomes.ts';
@@ -190,22 +190,19 @@ export async function factsAboveWriter(tx: BrainEngine, sourceId: string, slug: 
 
 /** What a lower-tier write would have done to a held take or timeline row. */
 export type HeldChange = 'removed' | 'replaced' | 'deactivated' | 'detail_changed';
-export type HeldTable = 'takes' | 'timeline_entries';
+export type { HeldTable } from '../engine-sql/trust-fence.ts';
 export interface HeldRow { id: number; tier: TrustTier; change: HeldChange }
 
-const OPEN_CONTEST = (table: HeldTable) => `EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'forget'
-  AND tp.target_table = '${table}' AND tp.target_id = x.id)`;
 
 /**
- * Of `ids`, the rows a write may not delete or overwrite, locked: rows more trusted than `writer` (the transaction's
- * declared tier when omitted) and, with `pending`, rows an open contest already holds. A reconcile that restates the
- * page text passes `pending`: the held row is absent from that text by design. Both tables are read through typed members
- * (engine-sql/trust-fence.ts `listHeldTimelineRows` and `listHeldTakeRows`; served by the Rust store too).
+ * Of the page's rows `ids`, the rows a write may not delete or overwrite, locked: rows more trusted than `writer` (the
+ * transaction's declared tier when omitted) and, with `pending`, rows an open contest already holds. A reconcile that
+ * restates the page text passes `pending`: the held row is absent from that text by design. The read is the typed
+ * engine member `listHeldRows` (engine-sql/trust-fence.ts).
  */
-export async function heldRows(tx: BrainEngine, table: HeldTable, ids: readonly number[], opts: { writer?: TrustTier; pending?: boolean } = {}): Promise<Map<number, TrustTier>> {
+export async function heldRows(tx: BrainEngine, table: HeldTable, pageId: number, ids: readonly number[], opts: { writer?: TrustTier; pending?: boolean } = {}): Promise<Map<number, TrustTier>> {
   if (!ids.length) return new Map();
-  const spec = { ids, ...(opts.writer ? { writer: opts.writer } : {}), ...(opts.pending ? { pending: true } : {}) };
-  const rows = table === 'timeline_entries' ? await tx.listHeldTimelineRows(spec) : await tx.listHeldTakeRows(spec);
+  const rows = await tx.listHeldRows({ table, pageId, ids, ...(opts.writer ? { writer: opts.writer } : {}), ...(opts.pending ? { pending: true } : {}) });
   return new Map(rows.map(r => [Number(r.id), storedTrustTier(r.trust_tier)]));
 }
 
@@ -222,19 +219,7 @@ export async function guardFenceTakes(tx: BrainEngine, pageId: number, incoming:
 /** guardFenceTakes over several pages' rows at once (a reconcile batch); `pending` also holds rows an open contest holds. */
 export async function guardTakeRows(tx: BrainEngine, incoming: ReadonlyArray<{ page_id: number; row_num: number; claim: string; kind: string; holder: string; active: boolean }>,
   gone: ReadonlyArray<{ page_id: number; row_num: number }>, opts: { pending?: boolean } = {}): Promise<Array<HeldRow & { page_id: number; row_num: number }>> {
-  if (!incoming.length && !gone.length) return [];
-  const rows = await tx.executeRaw<{ id: number; page_id: number; row_num: number; trust_tier: string; change: HeldChange }>(`SELECT x.id, x.page_id, x.row_num, x.trust_tier,
-      CASE WHEN n.row_num IS NULL THEN 'removed' WHEN (x.claim, x.kind, x.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder) THEN 'replaced'
-        ELSE 'deactivated' END AS change
-    FROM takes x
-    LEFT JOIN jsonb_to_recordset($1::text::jsonb) AS n(page_id integer, row_num integer, claim text, kind text, holder text, active boolean)
-      ON n.page_id = x.page_id AND n.row_num = x.row_num
-    LEFT JOIN jsonb_to_recordset($2::text::jsonb) AS g(page_id integer, row_num integer) ON g.page_id = x.page_id AND g.row_num = x.row_num
-    WHERE x.page_id = ANY($3::integer[]) AND (${trustRankSql('x.trust_tier')} > ${WRITER_RANK}${opts.pending ? ` OR ${OPEN_CONTEST('takes')}` : ''})
-      AND (g.row_num IS NOT NULL OR (n.row_num IS NOT NULL
-        AND ((x.claim, x.kind, x.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder) OR (x.active AND NOT n.active))))
-    ORDER BY x.page_id, x.row_num FOR UPDATE OF x`,
-  [JSON.stringify(incoming), JSON.stringify(gone), [...new Set([...incoming, ...gone].map(r => r.page_id))]]);
+  const rows = await tx.listGuardedTakeRows({ incoming, gone, pending: opts.pending === true });
   return rows.map(r => ({ id: Number(r.id), page_id: Number(r.page_id), row_num: Number(r.row_num), tier: storedTrustTier(r.trust_tier), change: r.change }));
 }
 

@@ -18,6 +18,10 @@ import { notePending } from '../src/core/git/commit-push.ts';
 import { stagedScanPublishRefusal } from '../src/core/git/range-secret-scan.ts';
 import { workspacePush } from '../src/core/workspace-push.ts';
 import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
+import { envForFile } from './helpers/with-env.ts';
+
+/** GST-2988: these tests pin the publish refusal, which secrets.on_push refuse keeps. */
+envForFile({ GBRAIN_SECRETS_ON_PUSH: 'refuse' });
 
 const T = 90_000;
 const TOKEN = 'ghp_' + 'Rk3w'.repeat(9);

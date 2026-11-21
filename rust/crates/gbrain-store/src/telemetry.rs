@@ -228,6 +228,7 @@ pub(crate) struct LogRecord {
     pub latency_ms: Option<i32>,
     pub status: String,
     pub error_message: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub params: Option<Value>,
     pub created_us: i64,
 }
@@ -420,10 +421,10 @@ impl Store {
                     row
                 }
                 None => SearchRecord {
-                    date,
-                    mode,
-                    intent,
-                    counters: values,
+                    date: date.clone(),
+                    mode: mode.clone(),
+                    intent: intent.clone(),
+                    counters: values.clone(),
                     sum_rank1_score: score,
                     first_seen_us: now,
                     last_seen_us: now,
@@ -536,11 +537,11 @@ impl Store {
                 id,
                 token_name: input.token_name.clone(),
                 agent_name: input.agent_name.clone(),
-                operation,
+                operation: operation.clone(),
                 latency_ms,
-                status,
+                status: status.clone(),
                 error_message: input.error_message.clone(),
-                params,
+                params: params.clone(),
                 created_us,
             };
             put_json(tx, &log_key(created_us, id), &record)

@@ -69,8 +69,11 @@ import { scrubPurgedSlugStores } from './purge-slug-stores.ts';
 import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, derivedStreamSlugs, pageLifetimesOf, pagePurgeClaims, redactCarryingFields, redactPurgedKeys, registerLiveCarriers,
   sourceHasBeliefEvents, type LedgerPurgeReport } from '../belief/purge.ts';
 
+/** #9743: the most unreferenced segment text one claim-sweep statement lowers and scans (one text is at most 1 MiB). */
+const CLAIM_SWEEP_CHUNK_BYTES = 4 * 1024 * 1024;
+
 export const PURGE_RESIDUALS = 'Removed from live stores: the page row with its chunks, versions, takes, timeline, links and raw data, the facts filed on it (tombstoned), '
-  + 'its take proposals, open loops and core notices, the retrieval feedback and captured eval results naming the slug, the volunteer log rows and mention-gazetteer names for it, stored write intents for the slug and its attached file records. Still out of reach: the brain repository\'s '
+  + 'its take proposals, open loops and core notices, the retrieval feedback and captured eval results naming the slug, the volunteer log rows and mention-gazetteer names for it, stored write intents for the slug and its attached file records, and the sealed secret store originals only this page referenced. Still out of reach: the brain repository\'s '
   + 'git history and every other clone or remote, Markdown exports and compiled context files, backups, provider copies (embeddings, decisions), and deleted rows '
   + 'in database pages and the write-ahead log until vacuum. Rotate any exposed credential.';
 
@@ -280,8 +283,50 @@ async function tombstonePage(tx: BrainEngine, sourceId: string, slug: string, pa
 }
 
 /** Inside the coordinated delete transaction, before the page row is deleted. */
-/** The page's add_timeline_entry receipts one purge redacts; a page with more leaves `journal_sweep.complete` false. */
+/** The page's add_timeline_entry and edit_page receipts one purge redacts; a page with more leaves `journal_sweep.complete` false. */
 const TIMELINE_RECEIPT_CAP = 10_000;
+
+type TimelineReceipt = IntentRedactionTarget & { sequence: string; summary: string | null; source: string | null; bullet: string | null; diff: string | null };
+
+/**
+ * The add_timeline_entry receipts of `slugs`, compacted ones included, in sequence order after `after`; their outcome keeps the
+ * entry text. `withDiffs` adds the edit_page receipts, whose outcome keeps the edit's unified diff of the page text.
+ */
+async function timelineReceipts(tx: BrainEngine, sourceId: string, slugs: readonly string[], limit: number, after = '0', withDiffs = false): Promise<TimelineReceipt[]> {
+  return tx.executeRaw<TimelineReceipt>(`SELECT id::text AS id, principal_kind, principal_id, sequence::text AS sequence, outcome->'entry'->>'summary' AS summary,
+    outcome->'entry'->>'source' AS source, outcome->>'bullet' AS bullet, outcome->>'diff' AS diff FROM persistence_requests
+    WHERE source_id=$1 AND slug=ANY($2::text[]) AND ((operation='add_timeline_entry' AND outcome ? 'entry') OR ($5::boolean AND operation='edit_page' AND outcome ? 'diff'))
+    AND sequence > $4::bigint ORDER BY sequence LIMIT $3`, [sourceId, [...slugs], limit, after, withDiffs]);
+}
+
+const receiptText = (rows: readonly TimelineReceipt[]) => rows.flatMap(t => [t.summary, t.source, t.bullet, t.diff]).map(text => text?.trim() ?? '').filter(Boolean);
+
+/** Rows one lookup of the unmanaged expiry's journal redaction reads at a time. */
+const EXPIRY_JOURNAL_BATCH = 1_000;
+
+/**
+ * F4: on a brain without a write owner, the journal redaction of pages a purge hard-deletes, in its transaction (which
+ * declared the persistence protocol first). The pages' add_timeline_entry and edit_page receipts lose their entry text and
+ * edit diffs, compacted ones included, and their own requests lose their intents and any of that text, batch by batch until every row is read. A
+ * request still pending keeps its intent and fails on the missing page; other pages' requests that quote these are not swept.
+ */
+export async function redactExpiredPageJournal(tx: BrainEngine, sourceId: string, slugs: readonly string[]): Promise<void> {
+  if (!slugs.length) return;
+  const exact = new Set<string>();
+  for (let after = '0'; ;) {
+    const batch = await timelineReceipts(tx, sourceId, slugs, EXPIRY_JOURNAL_BATCH, after, true);
+    for (const text of receiptText(batch)) exact.add(text);
+    await redactRequestIntents(tx, batch, undefined, { skipPending: true, exact });
+    if (batch.length < EXPIRY_JOURNAL_BATCH) break;
+    after = batch[batch.length - 1]!.sequence;
+  }
+  for (let after = '0'; ;) {
+    const batch = await findRequestsForSlugs(tx, sourceId, slugs, EXPIRY_JOURNAL_BATCH, after);
+    await redactRequestIntents(tx, batch, undefined, { skipPending: true, exact });
+    if (batch.length < EXPIRY_JOURNAL_BATCH) break;
+    after = batch[batch.length - 1]!.sequence;
+  }
+}
 
 /** The journal census a page purge redacts: the requests carrying its claims, and whether the search covered every one. */
 export interface PurgeCensus { targets: IntentRedactionTarget[]; complete: boolean }
@@ -298,7 +343,7 @@ export interface PurgedPageSweep {
   census: () => Promise<PurgeCensus>;
   /** The live purge's typed timeout wrapper around journal lookups; the restore replay passes none. */
   lookup?: <T>(point: PurgeLookupPoint, fn: () => Promise<T>) => Promise<T>;
-  /** The most add_timeline_entry receipts redacted; more leaves the sweep incomplete. */
+  /** The most add_timeline_entry and edit_page receipts redacted; more leaves the sweep incomplete. */
   timelineCap?: number;
   /** A restored archive older than some stores: the stores it has. Absent means every store exists (the live database). */
   present?: ReadonlySet<string>;
@@ -345,18 +390,16 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
   if (cleared === null) missingCaches.push('query_cache');
   removed.query_cache = cleared ?? 0;
   removed.facts = await count(`DELETE FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} RETURNING 1`, [sourceId, slug]);
-  Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug], { ifPresent: !!input.present }));
+  Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug], { ifPresent: !!input.present, pageIds: [pageId] }));
   let complete = true;
   if (has('persistence_requests')) {
     const census = await input.census();
-    // The page's add_timeline_entry receipts keep the entry text in their outcome (`entry` summary and source, `bullet`), compacted
-    // ones included. That text is matched whole in the page's own requests (a set lookup, linear in their strings). A page past
+    // The page's add_timeline_entry receipts keep the entry text in their outcome (`entry` summary and source, `bullet`) and its
+    // edit_page receipts the edit's diff, compacted ones included. That text is matched whole in the page's own requests (a set lookup, linear in their strings). A page past
     // the cap leaves the journal sweep incomplete instead of claiming every receipt.
-    const timelineRows = await lookup('slug_lookup', () => tx.executeRaw<IntentRedactionTarget & { summary: string | null; source: string | null; bullet: string | null }>(`SELECT id::text AS id,
-      principal_kind, principal_id, outcome->'entry'->>'summary' AS summary, outcome->'entry'->>'source' AS source, outcome->>'bullet' AS bullet FROM persistence_requests
-      WHERE source_id=$1 AND slug=$2 AND operation='add_timeline_entry' AND outcome ? 'entry' ORDER BY sequence LIMIT $3`, [sourceId, slug, timelineCap + 1]));
+    const timelineRows = await lookup('slug_lookup', () => timelineReceipts(tx, sourceId, [slug], timelineCap + 1, '0', true));
     const timeline = timelineRows.slice(0, timelineCap);
-    const timelineText = new Set(timeline.flatMap(t => [t.summary, t.source, t.bullet]).map(text => text?.trim() ?? '').filter(Boolean));
+    const timelineText = new Set(receiptText(timeline));
     const forSlug = await lookup('slug_lookup', async () => [...await findRequestsForSlugs(tx, sourceId, [slug]), ...reasons.length ? await requestsRecordingReasons(tx, sourceId, slug) : [], ...timeline]);
     const own = new Set(forSlug.map(r => r.id));
     const requests = [...new Map([...forSlug, ...census.targets].map(r => [r.id, r])).values()];
@@ -564,11 +607,30 @@ export async function deletePageWithSegments(tx: BrainEngine, sourceId: string, 
   const texts = shas.length ? (await tx.executeRaw(`DELETE FROM page_segment_texts t WHERE t.source_id=$1 AND t.sha256=ANY(SELECT decode(h,'hex') FROM unnest($2::text[]) AS h)
     AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) AND NOT ${stagingNeedsTextSql('t')} RETURNING 1`, [sourceId, shas])).length : 0;
   const forms = claimTextForms(claims), carrying: string[] = [];
-  for (let at = 0; at < forms.length; at += CLAIM_FORMS_BATCH) {
-    carrying.push(...(await tx.executeRaw<{ sha: string }>(`DELETE FROM page_segment_texts d WHERE (d.source_id,d.sha256) IN (SELECT t.source_id,t.sha256
-      FROM page_segment_texts t WHERE t.source_id=$1 AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) OFFSET 0)
-    AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS n WHERE strpos(lower(convert_from(d.body,'UTF8')),n)>0) AND NOT ${stagingNeedsTextSql('d')}
-    RETURNING encode(d.sha256,'hex') AS sha`, [sourceId, forms.slice(at, at + CLAIM_FORMS_BATCH)])).map(r => r.sha));
+  // #9743: sweep the unreferenced texts CLAIM_SWEEP_CHUNK_BYTES at a time in sha order, each text lowered once per
+  // statement (MATERIALIZED) instead of once per claim form, so every statement fits the publication's statement_timeout.
+  // Each statement picks its chunk after `cursor` and re-checks unreferenced and staging status, as the single sweep did;
+  // every form batch re-runs on the same cursor, so each text meets every form.
+  for (let cursor: string | null = forms.length ? '' : null; cursor !== null;) {
+    let next: string | null = null;
+    for (let at = 0; at < forms.length; at += CLAIM_FORMS_BATCH) {
+      const [swept] = await tx.executeRaw<{ last: string | null; deleted: string[] }>(`WITH chunk AS MATERIALIZED (
+          SELECT u.sha256 FROM (SELECT t.sha256, sum(t.byte_len) OVER (ORDER BY t.sha256) - t.byte_len AS before
+            FROM (SELECT t.sha256, t.byte_len FROM page_segment_texts t WHERE t.source_id=$1 AND t.sha256 > decode($2,'hex')
+              AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) ORDER BY t.sha256 LIMIT 4096) t) u
+          WHERE u.before < $4),
+        lowered AS MATERIALIZED (SELECT t.sha256, lower(convert_from(t.body,'UTF8')) AS body FROM page_segment_texts t
+          WHERE t.source_id=$1 AND t.sha256 IN (SELECT sha256 FROM chunk)),
+        gone AS (DELETE FROM page_segment_texts d WHERE d.source_id=$1
+            AND d.sha256 IN (SELECT l.sha256 FROM lowered l WHERE EXISTS (SELECT 1 FROM unnest($3::text[]) AS n WHERE strpos(l.body,n)>0))
+            AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=d.source_id AND m.sha256=d.sha256) AND NOT ${stagingNeedsTextSql('d')}
+          RETURNING d.sha256)
+        SELECT (SELECT encode(sha256,'hex') FROM chunk ORDER BY sha256 DESC LIMIT 1) AS last, ARRAY(SELECT encode(sha256,'hex') FROM gone) AS deleted`,
+        [sourceId, cursor, forms.slice(at, at + CLAIM_FORMS_BATCH), CLAIM_SWEEP_CHUNK_BYTES]);
+      carrying.push(...(swept?.deleted ?? []));
+      if (at === 0) next = swept?.last ?? null;
+    }
+    cursor = next;
   }
   return { shas: [...shas, ...carrying], page_body_manifest: manifest, page_body_stagings: stagings, page_segment_texts: texts + carrying.length };
 }

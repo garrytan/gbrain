@@ -441,6 +441,62 @@ fn a_flip_retires_inline_chunks_or_defers_past_the_cap() {
     );
 }
 
+/// Minder's row 1 on #9730: after a deferred retirement and a seal, a title hit must not carry a retired chunk's text.
+/// PGLite picks the representative chunk with `chunkGenerationFilter` (title-statement.ts), which drops an inline chunk
+/// left on a segmented page; the hit then has no chunk (`chunk_id` 0, empty text).
+#[test]
+fn a_title_hit_does_not_show_a_chunk_a_deferred_retire_left() {
+    use gbrain_store::keyword::{KeywordOptions, TitleAttempt, TitleAttemptKind};
+    let dir = TempDir::new("pb-title-retired");
+    let store = open(&dir);
+    let input: PageInput = serde_json::from_value(
+        json!({"type": "note", "title": "A", "compiled_truth": "retired inline body"}),
+    )
+    .unwrap();
+    store
+        .put_page("notes/b", &input, &PutPageOptions::default())
+        .unwrap();
+    let id = page(&store, "notes/b")["id"].as_i64().unwrap();
+    let mut s = staging(STAGING, Some(id), "66666666-6666-4666-8666-666666666666");
+    s.slug = "notes/b".into();
+    store.open_body_staging(&s).unwrap();
+    store
+        .stage_segment_texts(
+            "default",
+            &[text("one\n")],
+            &serde_json::from_value(json!({"stagingId": STAGING})).unwrap(),
+        )
+        .unwrap();
+    store
+        .stage_manifest_rows(&[row(id, 1, 0, 0, "one\n", Some(STAGING))])
+        .unwrap();
+    let deferred = store
+        .flip_body_generation(&flip(
+            id,
+            0,
+            STAGING,
+            4,
+            json!({"retireInlineChunks": true, "retireMaxRows": 0}),
+        ))
+        .unwrap();
+    assert!(deferred.retire_deferred);
+    store.seal_segmented_page(id, "", None).unwrap();
+    let attempts = [TitleAttempt {
+        texts: vec!["Flipped".into()],
+        kind: TitleAttemptKind::Title,
+        limit: 10.0,
+        offset: 0.0,
+    }];
+    let result = store
+        .search_titles_attempts(&attempts, "flipped", 100.0, &KeywordOptions::default())
+        .unwrap();
+    let rows = result[0]["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{result:?}");
+    assert_eq!(rows[0]["slug"], json!("notes/b"));
+    assert_eq!(rows[0]["chunk_text"], json!(""), "{result:?}");
+    assert_eq!(rows[0]["chunk_id"], json!(0));
+}
+
 #[test]
 fn manifest_rows_refuse_broken_checks_and_keys() {
     let dir = TempDir::new("pb-manifest");
@@ -775,4 +831,93 @@ fn staging_segment_chunks_refuses_a_stale_or_unpublished_generation() {
     assert_eq!(chunk_texts(&store, "notes/inline"), before);
     // Nothing was written by the refusals.
     assert!(chunk_texts(&store, "notes/a").is_empty());
+}
+
+fn version_ids(store: &Store, slug: &str) -> Vec<i64> {
+    store
+        .get_versions(
+            slug,
+            &serde_json::from_value(json!({"includeBody": false})).unwrap(),
+        )
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_i64().unwrap())
+        .collect()
+}
+
+fn snapshot(store: &Store, slug: &str) -> i64 {
+    store.create_version(slug, Some("default")).unwrap()["id"]
+        .as_i64()
+        .unwrap()
+}
+
+#[test]
+fn segmented_versions_past_the_count_cap_are_pruned_and_the_page_records_the_gap() {
+    let dir = TempDir::new("pb-prune-count");
+    let store = open(&dir);
+    published(&store);
+    store
+        .set_config("versions.segmented_max_per_page", " 2 ")
+        .unwrap();
+    let ids: Vec<i64> = (0..3).map(|_| snapshot(&store, "notes/a")).collect();
+    assert_eq!(version_ids(&store, "notes/a"), vec![ids[2], ids[1]]);
+    // A malformed cap reads as the default (50): nothing more is pruned.
+    store
+        .set_config("versions.segmented_max_per_page", "2.5")
+        .unwrap();
+    let more = snapshot(&store, "notes/a");
+    assert_eq!(version_ids(&store, "notes/a"), vec![more, ids[2], ids[1]]);
+}
+
+#[test]
+fn a_segmented_version_pinning_more_than_the_byte_cap_is_pruned_and_its_rows_swept() {
+    let dir = TempDir::new("pb-prune-bytes");
+    let store = open(&dir);
+    let id = published(&store);
+    let old = snapshot(&store, "notes/a");
+    store
+        .set_config("versions.segmented_max_pinned_bytes", "1")
+        .unwrap();
+    store
+        .open_body_staging(&staging(
+            STAGING_2,
+            Some(id),
+            "55555555-5555-4555-8555-555555555555",
+        ))
+        .unwrap();
+    store
+        .stage_segment_texts(
+            "default",
+            &[text("x\n")],
+            &serde_json::from_value(json!({"stagingId": STAGING_2})).unwrap(),
+        )
+        .unwrap();
+    // Generation 2 replaces both segments with one 2-byte segment.
+    let mut replacement = row(id, 3, 0, 0, "x\n", Some(STAGING_2));
+    replacement.gen_from = 2;
+    store.stage_manifest_rows(&[replacement]).unwrap();
+    let body = json!({
+        "content_hash": "hash-2", "body_bytes": 2, "truth_bytes": 2, "body_lines": 1,
+        "segment_count": 1, "segmenter_version": 1, "truth_lead": "x", "timeline_lead": "",
+        "body_flags": {},
+    });
+    store
+        .flip_body_generation(&flip(
+            id,
+            1,
+            STAGING_2,
+            2,
+            json!({"closeOccurrences": [1, 2], "body": body}),
+        ))
+        .unwrap();
+    let generation_one: ReadManifestOptions =
+        serde_json::from_value(json!({"generation": 1})).unwrap();
+    // The old version still keeps generation 1's closed row.
+    assert_eq!(store.read_manifest(id, &generation_one).unwrap().len(), 2);
+    let new = snapshot(&store, "notes/a");
+    // The old version pins 8 closed bytes, over max(1, the page's 2 body bytes): it goes, and the
+    // sweep drops the rows only it kept.
+    assert_eq!(version_ids(&store, "notes/a"), vec![new]);
+    assert!(store.read_manifest(id, &generation_one).unwrap().is_empty());
+    assert_ne!(old, new);
 }

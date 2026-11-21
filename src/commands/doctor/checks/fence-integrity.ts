@@ -190,7 +190,8 @@ export async function fenceIntegrityResult(engine: BrainEngine, opts: { timeoutM
   };
   // Decision #10: the census judges a stored page by its body columns, which are NULL on a page stored in segments;
   // only the checkout walk judges its file, so a segmented page without a walked file is skipped.
-  const skipped = await engine.countSegmentedFencePages(census.map(c => c.source_id), runs.filter(run => run.files !== 'none').map(run => run.source_id)).catch(() => 0);
+  const segmented = await engine.countSegmentedCensusPages(census.map(c => c.source_id), runs.filter(run => run.files !== 'none').map(run => run.source_id)).catch(() => null);
+  const skipped = Number(segmented?.n ?? 0);
   if (!total && !partial.length && !noisy.length && !uncommitted.length && !unrenderable.total && unrenderable.complete && !unbound.length) {
     return withSkippedSegmented({ status: 'ok', details, message: census.length ? `No malformed facts or takes fence is held, stored or waiting in a checkout (${census.length} source(s) scanned).` : 'No sources to scan.' }, skipped);
   }
