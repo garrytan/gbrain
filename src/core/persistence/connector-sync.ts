@@ -473,17 +473,22 @@ export class ManagedConnectorSync {
     this.lease.signal.throwIfAborted();
   }
   async load(): Promise<void> {
-    await this.recover('__managed_sync_checkpoint__');
-    if (this.retryFailed) {
-      const blocked = await this.retryBlocker(this.engine);
-      if (blocked) {
-        await this.authorizeRetryReceipt(this.engine, blocked);
-        if (!isTerminal(blocked) && !blocked.recovery) {
-          writeResponse(await waitForWrite(this.engine, blocked, loadConfig() ?? { engine: this.engine.kind }, maintenancePublishWaitMs()));
-          await this.recover('__managed_sync_checkpoint__');
+    try {
+      await this.recover('__managed_sync_checkpoint__');
+      if (this.retryFailed) {
+        const blocked = await this.retryBlocker(this.engine);
+        if (blocked) {
+          await this.authorizeRetryReceipt(this.engine, blocked);
+          if (!isTerminal(blocked) && !blocked.recovery) {
+            writeResponse(await waitForWrite(this.engine, blocked, loadConfig() ?? { engine: this.engine.kind }, maintenancePublishWaitMs()));
+            await this.recover('__managed_sync_checkpoint__');
+          }
+          await this.refuseRetryBlocker(this.engine);
         }
-        await this.refuseRetryBlocker(this.engine);
       }
+    } catch (error) {
+      if (error instanceof OperationError && error.writeError === 'recovery_required') await this.recordRefusal(error).catch(() => {});
+      throw error;
     }
     const limits = await readJournalLimits(this.engine);
     this.outstandingCap = Math.max(1, Math.min(90, limits.principalOutstanding - 10));
@@ -1013,6 +1018,15 @@ export class ManagedConnectorSync {
     const written = await writeManagedConnectorState(this.engine, this.sourceId, this.source.incarnation, this.connectorState,
       { id: handle.id, token: handle.acquisitionToken, acquiredAt: handle.acquiredAt });
     if (!written) throw new LockStolenError(handle.id);
+  }
+  /** #9968: a sync refused before its sweep on a retained publication records that refusal as its failure; the rest of the stored state is kept. */
+  private async recordRefusal(error: OperationError): Promise<void> {
+    const state = await readManagedConnectorState(this.engine, this.sourceId, this.source.incarnation);
+    const requestId = error.writeRequest?.request_id ?? null;
+    this.connectorState = { ...state, last_failure: { code: 'recovery_required', message: error.message,
+      slug: requestId && requestId === this.lastFailedItem?.requestId ? this.lastFailedItem.slug : null, request_id: requestId,
+      at: new Date().toISOString(), consecutive: (state.last_failure?.consecutive ?? 0) + 1 } };
+    await this.writeState();
   }
   /** The last run's counts, for the caller's result. */
   runCounts(): ConnectorRunCounts | null { return this.connectorState.last_run; }

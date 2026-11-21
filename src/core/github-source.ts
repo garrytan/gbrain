@@ -1231,6 +1231,10 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
           const filePath = itemPagePath(cfg.dir, repo, item.number);
           keepPaths.add(relative(cfg.dir, filePath).replace(/\\/g, '/'));
           summary.itemsSeen++;
+          if (opts.signal?.aborted) {
+            summary.status = 'partial';
+            continue;
+          }
           if (!holds.shouldAttempt(`${repo}#${item.number}`, item.updated_at)) {
             progress.tick(1, `${repo}#${item.number} held`);
             continue;
