@@ -11,7 +11,7 @@ Agents that use gbrain sometimes invent an answer when the history holds none, b
 ## What was tried
 
 - A preregistered counted run in gbrain-evals on gbrain v0.60.743.0, the newest release at launch, from 2026-11-19 to 2026-11-20, with five dated amendments.
-- An oracle stub, not a real signal: the test, which knows the answer key, added one line (`gbrain found no evidence for this question`) to gbrain's recorded retrieval. Arm B got the retrieval as delivered; arm O got B's exact context plus the line on the 22 unanswerable questions; arm F got it plus the line on the 198 answerable ones, to price a false alarm.
+- An oracle stub, not a real signal: the test, which knows the answer key, added one line, "gbrain found no evidence for this question", to gbrain's recorded retrieval. Arm B got the retrieval as delivered; arm O got B's exact context plus the line on the 22 unanswerable questions; arm F got it plus the line on the 198 answerable ones, to price a false alarm.
 - Readers: claude-opus-5-5, gpt-6.2-sol and particle-1, on BEAM-500K's 11 public dev conversations. BEAM's rubric judge graded answers, and a judge from another model family labelled each answer declined, hedged or committed.
 - Bars set in advance: a material cut is at least 13 points. The build condition needs a relative cut of at least 8/18 with an interval excluding 0, and anything under 25% relative means no build.
 
