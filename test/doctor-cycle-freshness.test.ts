@@ -190,19 +190,22 @@ describe('doctor checkCycleFreshness', () => {
     expect(result.message).toMatch(/No federated sources/);
   });
 
-  test('sync-disabled sources still report stale maintenance cycles', async () => {
+  test('GST-3337: a sync-disabled source reads sync off, never stale or failing, and is never the fix target', async () => {
     await seed('disabled-example', agoH(72), { syncEnabled: false });
     await seed('enabled-example', agoH(1), { syncEnabled: true });
     const result = await checkCycleFreshness(engine, { nowMs: NOW });
-    expect(result.status).toBe('fail');
-    expect(result.message).toContain("'disabled-example' last cycled 72h ago");
-    expect(result.message).not.toContain('enabled-example');
+    expect(result.status).toBe('ok');
+    expect(result.message).toBe("All 1 federated source(s) cycled recently. Sync off (not checked; only an explicit gbrain sync --source <id> syncs it): 'disabled-example'.");
+    expect(result.fix).toBeUndefined();
   });
 
-  test('sync-disabled sources with fresh maintenance cycles remain healthy', async () => {
-    await seed('disabled-example', agoH(1), { syncEnabled: false });
+  test('GST-3337: a stale enabled source is still the fix target beside a sync-disabled one', async () => {
+    await seed('disabled-example', undefined, { syncEnabled: false });
+    await seed('stale-example', agoH(72));
     const result = await checkCycleFreshness(engine, { nowMs: NOW });
-    expect(result.status).toBe('ok');
-    expect(result.message).toBe('All 1 federated source(s) cycled recently');
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain("'stale-example' last cycled 72h ago");
+    expect(result.message).toContain("Sync off (not checked; only an explicit gbrain sync --source <id> syncs it): 'disabled-example'.");
+    expect(result.fix?.argv).toEqual(expect.arrayContaining(['gbrain', 'dream', '--source', 'stale-example']));
   });
 });

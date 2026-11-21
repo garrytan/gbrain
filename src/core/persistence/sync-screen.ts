@@ -21,7 +21,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { loadImportSanityConfig, screenNormalized, type ContentRefusal, type ImportSanityConfig, type ImportScreenResult } from '../import-screen.ts';
 import { fencesNormalizeEnabled } from '../fence-repair/config.ts';
 import type { FenceFix } from '../fence-repair/types.ts';
-import { parseMarkdown, RECOVERY_VERSION, type IntendedRefusal } from '../markdown.ts';
+import { parseMarkdown, RECOVERY_VERSION, RESERVED_FRONTMATTER_KEYS, type IntendedRefusal } from '../markdown.ts';
 import { fenceMessage, type FenceMessageLocation } from '../fence-repair/reasons.ts';
 import { completeFenceLocation, FENCE_VERSION, type ReceiptFenceLocation } from '../fence-repair/refusal.ts';
 import { QUOTE_SCREEN_VERSION } from '../fence-repair/quote-markers.ts';
@@ -124,15 +124,19 @@ export function driftBaselineContent(gitRoot: string, entry: Pick<SyncEntry, 'dr
 }
 
 /**
- * GST-2568: whether the stored frontmatter differs from a file's only by keys gbrain itself wrote to the database: a copy of
- * the reserved `type` key (older imports) and the grandfather's `validate: false` (#6429), each absent from the file. A
- * page with any other difference (a protected key, a label) is not treated as unchanged since that file.
+ * GST-2568: whether the stored frontmatter differs from a file's only by keys gbrain itself wrote to the database: copies of
+ * the parser's reserved keys (`type`, `title`, `tags`, `slug`, kept by older imports, #6454; the columns hold them), the
+ * grandfather's `validate: false` (#6429), and (GST-3328) a schema-pack retype's `legacy_type` and `subtype` while the
+ * file still names the `legacy_type` (align-stored.ts keepRetypeStamp), each absent from the file. A page with any other
+ * difference (a protected key, a label) is not treated as unchanged since that file.
  */
 export function onlyDerivedKeysAdded(content: string, stored: Record<string, unknown> | null | undefined): boolean {
-  const file = parseMarkdown(content, 'derived-keys.md').frontmatter;
+  const { frontmatter: file, type } = parseMarkdown(content, 'derived-keys.md');
   const page = stored ?? {};
+  const retyped = typeof page.legacy_type === 'string' && page.legacy_type === type && !Object.hasOwn(file, 'legacy_type');
   return [...new Set([...Object.keys(file), ...Object.keys(page)])].every(key => digest(file[key] ?? null) === digest(page[key] ?? null)
-    || !Object.hasOwn(file, key) && (key === 'type' || key === 'validate' && page[key] === false));
+    || !Object.hasOwn(file, key) && ((RESERVED_FRONTMATTER_KEYS as readonly string[]).includes(key) || key === 'validate' && page[key] === false
+      || retyped && (key === 'legacy_type' || key === 'subtype')));
 }
 
 /** #7199: whether the page still holds what the entry's baseline or one of its earlier committed versions (`driftHistory`) imports, tried in order. */
