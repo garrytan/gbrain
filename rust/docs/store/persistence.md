@@ -664,8 +664,8 @@ worktree refresh rows (`gbrain sources refresh` refuses before it writes one). `
 host binding first and keeps an existing one, as `ON CONFLICT DO NOTHING` does. `markTopologyChange` does nothing: no
 trigger guards this engine's source records. The receipts' counter changes go through `addPersistenceCounters`.
 A managed clone commits on this engine, and the owner's recovery finishes or rolls back an interrupted clone or
-reclone here too. A worktree refresh another engine recorded still refuses here (docs/designs/RUST_ENGINE.md, row
-L7-1).
+reclone here too. This engine resumes no worktree refresh: `listResumableRefreshes` ignores the refresh keyspace,
+and no shipped path writes or imports a refresh row (docs/designs/RUST_ENGINE.md, row L7-1).
 
 ## TypeScript members with no stored state
 

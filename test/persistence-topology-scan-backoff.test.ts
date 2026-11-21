@@ -5,7 +5,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on an engine with or without `raw_sql` (the Rust shape) the scan runs on every tick and reports nothing
  *    when no change is recovering, since topology recovery needs no raw SQL (topology-recovery.ts). A capability
- *    refusal from a step the scan reaches (the Rust engine resuming a refresh another engine recorded) is reported once
+ *    refusal from a step the scan reaches is reported once
  *    and parks the scan for TOPOLOGY_STOP_BACKOFF_MS: the next tick neither scans nor reports again, and it does not
  *    throw. Any other scan error is reported and the next tick scans again.
  *  - Regression: the scan refused on every scanning tick of a Rust owner while a change was recovering; it now

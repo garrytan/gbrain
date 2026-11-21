@@ -952,9 +952,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
   }
   /**
    * Starts the topology recovery scan unless one runs. The scan converges clone and reclone changes on every engine. A
-   * capability refusal from a step it reaches (the Rust engine resuming a worktree refresh another engine recorded,
-   * worktree-refresh.ts) is reported once and parks the scan for TOPOLOGY_STOP_BACKOFF_MS, so the owner neither spins
-   * on the refusal nor logs it every tick; the recorded rows stay as they are.
+   * capability refusal from a step it reaches is reported once and parks the scan for TOPOLOGY_STOP_BACKOFF_MS, so the
+   * owner neither spins on the refusal nor logs it every tick; the recorded rows stay as they are.
    */
   private scanTopologies(): void {
     if (this.topologyWorker || Date.now() < this.topologyStoppedUntil) return;
