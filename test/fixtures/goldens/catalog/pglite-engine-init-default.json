@@ -1425,7 +1425,6 @@
       "git_canonical_brain_pkey": "CREATE UNIQUE INDEX git_canonical_brain_pkey ON public.git_canonical_brain USING btree (singleton)",
       "guest_marks_audience_saved_idx": "CREATE INDEX guest_marks_audience_saved_idx ON public.guest_marks USING btree (audience_member, saved_at)",
       "guest_marks_pkey": "CREATE UNIQUE INDEX guest_marks_pkey ON public.guest_marks USING btree (page_id)",
-      "guest_promotions_guest_page_idx": "CREATE INDEX guest_promotions_guest_page_idx ON public.guest_promotions USING btree (guest_page_id)",
       "guest_promotions_link_key": "CREATE UNIQUE INDEX guest_promotions_link_key ON public.guest_promotions USING btree (guest_page_id, target_source_id, target_slug)",
       "guest_promotions_pkey": "CREATE UNIQUE INDEX guest_promotions_pkey ON public.guest_promotions USING btree (id)",
       "guest_sources_pkey": "CREATE UNIQUE INDEX guest_sources_pkey ON public.guest_sources USING btree (source_id)",

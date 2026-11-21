@@ -83,6 +83,9 @@ for (const backendName of testBackends()) {
       const [index] = await engineOf().executeRaw<{ def: string }>(
         `SELECT indexdef AS def FROM pg_indexes WHERE tablename = 'guest_marks' AND indexdef LIKE '%audience_member%'`);
       expect(index?.def).toContain('(audience_member, saved_at)');
+      const promotionIndexes = await engineOf().executeRaw<{ indexname: string }>(
+        `SELECT indexname FROM pg_indexes WHERE schemaname='public' AND tablename='guest_promotions' ORDER BY indexname`);
+      expect(promotionIndexes.map(row => row.indexname)).toEqual(['guest_promotions_link_key', 'guest_promotions_pkey']);
     });
 
     test('a guest mark refuses UPDATE, survives soft delete and restore, and leaves with its page', async () => {
