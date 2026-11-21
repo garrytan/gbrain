@@ -202,7 +202,9 @@ statements (`src/core/engine-sql/sync-admission.ts`): the requests a principal a
 
 Differences from the SQL engines:
 
-- `set_at` is the store clock, not the database's `clock_timestamp()`.
+- `set_at` is the store clock at the moment of the write (`Env::clock_micros`), as `clock_timestamp()` is, not the
+  transaction's start (`now_micros`, as `now()`). A request queued earlier in the same transaction carries the start
+  as its `created_at`, which the stamp never dates before.
 - An unparsable `setAt`, or a pinned pass whose `started_at` does not parse, refuses with `invalid_input`, as the
   `::timestamptz` casts refuse.
 - `syncAdmissionStatus` reads the setting itself with raw SQL first, so `sync status` still refuses on this engine
