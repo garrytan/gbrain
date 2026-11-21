@@ -138,19 +138,19 @@ function declinedReason(error: unknown): DeclinedWindow['reason'] | null {
 /**
  * GST-3251: one whole-page window, where a window the model declines does not fail the page. A declined window of two or
  * more messages is retried once as its two halves (at most two more calls, over the same text once more); what still
- * declines is returned in `declined` with the facts of everything that read. Every other failure, BudgetExhausted
- * included, is thrown as before.
+ * declines is returned in `declined` with the facts of everything that read, and `read` says whether any of the window
+ * read (GST-3347). Every other failure, BudgetExhausted included, is thrown as before.
  */
 export async function extractConversationWindowOrHalves(run: ConversationWindowRun, page: Page, seg: ConversationSegment, rowNum: number,
-  entityHints: ExtractInput['entityHints']): Promise<{ extracted: number; rows: ConversationFactRow[]; resolution: SaveTimeResolutionCounts; declined: DeclinedWindow[] }> {
+  entityHints: ExtractInput['entityHints']): Promise<{ extracted: number; rows: ConversationFactRow[]; resolution: SaveTimeResolutionCounts; declined: DeclinedWindow[]; read: boolean }> {
   const title = page.title || page.slug;
   const attempt = async (part: ConversationSegment, at: number) => {
     try {
-      return { ...(await extractConversationWindow(run, page, part, renderSegmentForExtraction(title, part), at, entityHints)), declined: [] as DeclinedWindow[] };
+      return { ...(await extractConversationWindow(run, page, part, renderSegmentForExtraction(title, part), at, entityHints)), declined: [] as DeclinedWindow[], read: true };
     } catch (error) {
       const reason = run.signal?.aborted ? null : declinedReason(error);
       if (!reason) throw error;
-      return { extracted: 0, rows: [] as ConversationFactRow[], resolution: emptySaveTimeResolutionCounts(), declined: [{ start: part.startIso, end: part.endIso, reason }] };
+      return { extracted: 0, rows: [] as ConversationFactRow[], resolution: emptySaveTimeResolutionCounts(), declined: [{ start: part.startIso, end: part.endIso, reason }], read: false };
     }
   };
   const whole = await attempt(seg, rowNum);
@@ -161,7 +161,7 @@ export async function extractConversationWindowOrHalves(run: ConversationWindowR
   const resolution = emptySaveTimeResolutionCounts();
   mergeSaveTimeResolutionCounts(resolution, first.resolution);
   mergeSaveTimeResolutionCounts(resolution, second.resolution);
-  return { extracted: first.extracted + second.extracted, rows: [...first.rows, ...second.rows], resolution, declined: [...first.declined, ...second.declined] };
+  return { extracted: first.extracted + second.extracted, rows: [...first.rows, ...second.rows], resolution, declined: [...first.declined, ...second.declined], read: first.read || second.read };
 }
 
 /**

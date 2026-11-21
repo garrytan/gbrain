@@ -64,7 +64,7 @@
  *   `--override-disabled` to force-run.
  */
 
-import { extractExitCode, extractRunStatus, listRunPage, recordFailedPage, unparsedCause } from '../core/facts/conversation-run-status.ts';
+import { extractExitCode, extractRunStatus, listRunPage, recordFailedPage, unparsedCause, type UnparsedReason } from '../core/facts/conversation-run-status.ts';
 import type { BrainEngine, NewFact } from '../core/engine.ts';
 import type { Page } from '../core/types.ts';
 import {
@@ -327,10 +327,11 @@ export interface ExtractConversationFactsResult {
   pages_failed: number;
   /** The failed pages (first 50) with the error each one hit; they stay unfinished and retry next run. */
   failed_pages: Array<{ slug: string; error: string }>;
-  /** GST-3251: the pages counted in pages_skipped_unparsed (first 50), each with why no speaker turns parsed. */
-  unparsed_pages: Array<{ slug: string; cause: string }>;
-  /** GST-3251: windows the model declined after one retry as halves (first 50); their pages stay unfinished (failed_pages). */
+  /** GST-3251: the pages counted in pages_skipped_unparsed (first 50), each with why no speaker turns parsed (GST-3347: `reason` is its code). */
+  unparsed_pages: Array<{ slug: string; reason: UnparsedReason; cause: string }>;
+  /** GST-3347: windows still declined after the halves retry (first 50), dropped while their page completes; a page where nothing read fails. */
   declined_windows: Array<{ slug: string } & DeclinedWindow>;
+  windows_declined: number;
   /**
    * Pages whose built-in parse returned `no_match` and whose messages were
    * recovered by the explicitly enabled LLM fallback.
@@ -933,8 +934,8 @@ async function processPage(
     state.result.pages_skipped++;
     if (!declinedUnrecognizedSpeaker && !skip) {
       if (messages.length === 0) {
-        const cause = unparsedCause(parseResult, Boolean(state.llmFallbackModel));
-        state.result.pages_skipped_unparsed++; listRunPage(state.result.unparsed_pages, { slug: page.slug, cause });
+        const { reason, cause } = unparsedCause(parseResult, Boolean(state.llmFallbackModel));
+        state.result.pages_skipped_unparsed++; listRunPage(state.result.unparsed_pages, { slug: page.slug, reason, cause });
         process.stderr.write(`[extract-conversation-facts] SKIP ${page.slug}: no speaker turns parsed (${cause}); retried next run\n`);
       }
       else if (allSegments.length === 0) state.result.pages_skipped_insufficient_turns++;
@@ -994,12 +995,14 @@ async function processPage(
   const entityHints = await conversationEntityHints(state.engine, state.sourceId, page.slug, factVisibility); // #6731
 
   const declined: DeclinedWindow[] = [];
+  let anyRead = false;
   for (const seg of segments) {
     if (state.segmentLimit > 0 && segmentsThisPage >= state.segmentLimit) break;
     if (state.signal?.aborted) throw new Error('aborted');
 
     const window = await extractConversationWindowOrHalves(state, page, seg, rowNum, entityHints);
     declined.push(...window.declined);
+    anyRead ||= window.read;
     state.result.segments_processed++;
     segmentsThisPage++;
     state.result.facts_extracted += window.extracted;
@@ -1013,18 +1016,21 @@ async function processPage(
     if (state.sleepMs > 0) await sleep(state.sleepMs);
   }
 
-  // GST-3251: a declined window leaves the page unfinished (no terminal row, no checkpoint) so the next run retries it;
-  // an unmanaged brain publishes the other windows' facts as a partial batch, which retires no prior facts. A managed
-  // brain publishes nothing: its committed batch would replay the generation without a model call, never retrying.
-  if (declined.length > 0) {
-    for (const window of declined) listRunPage(state.result.declined_windows, { slug: page.slug, ...window });
-    const published = !state.managed && pageRows.length > 0 ? await publishPageFacts(state, page.slug, pageRows, 'partial') : null;
-    state.result.facts_inserted += published?.facts_inserted ?? 0; state.result.orphan_facts_cleaned += published?.deleted ?? 0;
-    const note = `the extraction model declined ${declined.length} window(s): ${declined.map(w => `${w.start}..${w.end} (${w.reason})`).join(', ')}; `
-      + `${state.managed ? 'no facts were published (managed brain)' : `${published?.facts_inserted ?? 0} new fact(s) from the other windows were published`}; the page stays unfinished and retries next run`;
+  // GST-3347: a window the model still declines after its halves is dropped. The page completes with the facts of every
+  // window that read, published as a `window` batch that retires no prior facts; only a page where nothing read stays
+  // unfinished (no terminal row, no checkpoint), so the next run tries it again.
+  for (const window of declined) listRunPage(state.result.declined_windows, { slug: page.slug, ...window });
+  state.result.windows_declined += declined.length;
+  const declinedSpans = declined.map(w => `${w.start}..${w.end} (${w.reason})`).join(', ');
+  const retry = `gbrain extract-conversation-facts --source-id ${state.sourceId} --slug ${page.slug}`;
+  if (declined.length > 0 && !anyRead) {
+    const note = `the extraction model declined every window: ${declinedSpans}; the page stays unfinished and retries next run`;
     state.result.pages_failed++; recordFailedPage(state.result, page.slug, note);
-    process.stderr.write(`[extract-conversation-facts] ${page.slug}: ${note}; retry: gbrain extract-conversation-facts --source-id ${state.sourceId} --slug ${page.slug}\n`);
+    process.stderr.write(`[extract-conversation-facts] ${page.slug}: ${note}; retry: ${retry}\n`);
     return { newEndIso: null };
+  }
+  if (declined.length > 0) {
+    process.stderr.write(`[extract-conversation-facts] ${page.slug}: the extraction model declined ${declined.length} window(s), left out of this page's facts: ${declinedSpans}; retry them: ${retry} --force\n`);
   }
 
   // Eng-v2 C7 / E16: write terminal audit row after all segments commit
@@ -1033,7 +1039,7 @@ async function processPage(
   // previously missed the terminal row and re-extracted on every run.
   const fullyProcessed = segmentsThisPage === segments.length;
   const inScope = (list: typeof segments) => list.reduce((n, seg) => n + seg.messages.length, 0);
-  const scope: ConversationScope = !fullyProcessed ? 'partial' : inScope(segments) < inScope(allSegments) ? 'window' : 'full';
+  const scope: ConversationScope = !fullyProcessed ? 'partial' : declined.length > 0 || inScope(segments) < inScope(allSegments) ? 'window' : 'full';
   if (
     fullyProcessed &&
     newestEnd !== null &&
@@ -1091,7 +1097,7 @@ export function emptyExtractConversationFactsResult(): ExtractConversationFactsR
     pages_considered: 0, pages_processed: 0, pages_skipped: 0, pages_skipped_unparsed: 0, pages_skipped_type_mismatch: 0,
     pages_skipped_insufficient_turns: 0, pages_skipped_since: 0, pages_skipped_too_large: 0, pages_skipped_disappeared: 0,
     pages_skipped_completed: 0, pages_skipped_non_extractable: 0, pages_marked_non_extractable: 0, pages_skipped_unrecognized_speaker: 0,
-    pages_failed: 0, failed_pages: [], unparsed_pages: [], declined_windows: [], pages_llm_fallback: 0, pages_lock_skipped: 0, orphan_facts_cleaned: 0, segments_processed: 0,
+    pages_failed: 0, failed_pages: [], unparsed_pages: [], declined_windows: [], windows_declined: 0, pages_llm_fallback: 0, pages_lock_skipped: 0, orphan_facts_cleaned: 0, segments_processed: 0,
     facts_extracted: 0, facts_inserted: 0, fallback_slugify_count: 0, resolution_errors: 0,
   };
 }
@@ -1823,6 +1829,7 @@ export async function runExtractConversationFacts(
       for (const failed of perSource.failed_pages) recordFailedPage(aggregate, failed.slug, failed.error);
       for (const unparsed of perSource.unparsed_pages) listRunPage(aggregate.unparsed_pages, unparsed);
       for (const declined of perSource.declined_windows) listRunPage(aggregate.declined_windows, declined);
+      aggregate.windows_declined += perSource.windows_declined;
       aggregate.pages_llm_fallback += perSource.pages_llm_fallback;
       aggregate.pages_lock_skipped += perSource.pages_lock_skipped;
       aggregate.orphan_facts_cleaned += perSource.orphan_facts_cleaned;
@@ -1896,6 +1903,7 @@ export async function runExtractConversationFacts(
     if (aggregate.pages_skipped_unrecognized_speaker > 0) {
       console.log(`  Declined ${aggregate.pages_skipped_unrecognized_speaker} page(s) with unrecognized speaker headings (attribution would be wrong; retried next run).`);
     }
+    if (aggregate.windows_declined > 0) console.log(`  Left out ${aggregate.windows_declined} window(s) the extraction model declined; their pages kept the facts of their other windows (--json declined_windows).`);
     if (aggregate.pages_marked_non_extractable > 0) {
       console.log(`  Marked ${aggregate.pages_marked_non_extractable} page(s) as scanned, not extractable.`);
     }
