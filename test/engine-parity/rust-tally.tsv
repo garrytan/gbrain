@@ -31,7 +31,7 @@ test/engine-parity/decide-store.test.ts	35	0
 test/engine-parity/delegated-grant.test.ts	2	0
 test/engine-parity/delete-page.test.ts	4	1
 test/engine-parity/derivation-purge-record.test.ts	4	0
-test/engine-parity/derivation-sweep.test.ts	3	0
+test/engine-parity/derivation-sweep.test.ts	4	0
 test/engine-parity/dream-config-members.test.ts	5	0
 test/engine-parity/dream-cycle-sites.test.ts	1	9
 test/engine-parity/effect-scans.test.ts	3	0

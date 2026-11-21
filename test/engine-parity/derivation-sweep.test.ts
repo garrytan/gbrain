@@ -16,6 +16,9 @@
  *  - A page that enters the sweep's scope after the walk passed it (here: soft-deleted while the verify walk is past its row) is noted,
  *    and the end of the walk checks the noted pages again before the record is deleted: the row it still holds the claim in goes, and the
  *    record stays until that check passes.
+ *    The same holds when the scope is entered by deleting a live published manifest row (a row published above the page's generation backs
+ *    a derivation until `sweepSegments` removes it): the delete notes the page, whatever source the row names.
+ *    While the noted pages are checked again the record shows them: the table probe finds the page ids of its `recheck` as `int[]` text.
  *  - Regression: the Rust store deleted the record at the end of a verify walk without that check, leaving a claim-holding row of a page
  *    deleted behind the walk and no write guard; before that, the sweep ran through raw SQL, so the Rust arm refused it and the record of a fact purge stayed `pending` for
  *    good, with the rows still holding the claim.
@@ -30,8 +33,10 @@ import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { PurgeProbe } from '../../src/core/engine-sql/facts-purge-plan.ts';
+import { boundedProbe } from '../../src/core/facts/purge-verify.ts';
 import { __setDerivationSweepLimitsForTests, continueDerivationPurges, derivationPurgeState, recordDerivationPurge } from '../../src/core/page-body/segment-derive.ts';
-import { publishSegmentedPage, segmentText, sha256 } from '../helpers/page-body-fixtures.ts';
+import { manifestRow, publishSegmentedPage, segmentText, sha256 } from '../helpers/page-body-fixtures.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -42,6 +47,15 @@ const REQ2 = 'd0000000-0000-4000-8000-0000000000d2';
 const REQ3 = 'd0000000-0000-4000-8000-0000000000d3';
 const CLAIM = 'Alice likes tea';
 const OTHER_CLAIM = 'Bob owns a boat';
+
+const TABLE = 'page_segment_derivation_purges';
+
+/** The count the table probe finds in the sweep records (a needle in any text column of them), or the way it was left unverified. */
+async function count(engine: BrainEngine, needles: readonly string[]): Promise<number | string> {
+  const probe: PurgeProbe = { kind: 'table', table: TABLE, sourceId: SRC, needles };
+  const result = await boundedProbe(engine, probe, performance.now() + 60_000);
+  return 'unverified' in result ? result.unverified : result.count;
+}
 
 type Kind = 'links' | 'timeline';
 const row = (pageId: number, kind: Kind, occurrenceId: number, segmentSha256: ReturnType<typeof sha256>, output: unknown, receipt: unknown = {}) =>
@@ -140,7 +154,7 @@ describe('engine parity: the derivation sweep of a fact purge', () => {
   parityTest('a page soft-deleted behind the verify walk is checked again before the record is deleted: its claim-holding row goes first', {
     methods: ['transaction', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration',
       'setBodyStagingState', 'upsertSegmentDerivations', 'readSegmentDerivations', 'readDerivationPurgeState', 'recordDerivationPurgeRow', 'listDerivationClaimForms',
-      'softDeletePage'],
+      'softDeletePage', 'countPurgeProbe', 'setPurgeProbeTimeout'],
     timeout: 120_000,
   }, async (engine) => {
     const a = [segmentText('# One\nfirst segment\n')];
@@ -149,6 +163,7 @@ describe('engine parity: the derivation sweep of a fact purge', () => {
     await engine.upsertSegmentDerivations([row(pa.pageId, 'links', pa.occurrences[0]!, a[0]!.sha256, { excerpt: 'Alice likes tea' })]);
     await engine.transaction(tx => recordDerivationPurge(tx, REQ, SRC, [], [CLAIM]));
     const steps: Array<{ call: number; deleted: number; state: unknown; rows: number }> = [];
+    const probes: Record<string, number | string> = {};
     __setDerivationSweepLimitsForTests({ batchRows: 1, totalMs: 0 });
     try {
       for (let call = 1; call <= 12; call++) {
@@ -158,15 +173,56 @@ describe('engine parity: the derivation sweep of a fact purge', () => {
         const deleted = await continueDerivationPurges(engine, SRC, { first: REQ });
         const state = await derivationPurgeState(engine, REQ);
         steps.push({ call, deleted, state, rows: (await engine.readSegmentDerivations(pa.pageId)).length });
+        // The noted page is being checked again: the record's `recheck` holds its id, as `int[]` prints it.
+        if (call === 4) probes.during = await count(engine, [`{${pa.pageId}}`]);
         if (state === null) break;
       }
     } finally {
       __setDerivationSweepLimitsForTests(null);
     }
+    probes.after = await count(engine, [`{${pa.pageId}}`]);
+    expect(probes).toEqual({ during: 1, after: 0 });
     // The record ends only after the noted page was checked again, and by then the row is gone.
     expect(steps.at(-1)).toMatchObject({ state: null, rows: 0 });
     expect(steps.reduce((n, step) => n + step.deleted, 0)).toBe(0);
     expect(steps.slice(0, -1).every(step => (step.state as { state: string }).state === 'pending')).toBe(true);
-    return { steps };
+    return { steps, probes };
+  });
+
+  parityTest('a live manifest row deleted behind the verify walk (sweepSegments) notes its page: the derivation it backed is checked again before the record is deleted', {
+    methods: ['transaction', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration',
+      'setBodyStagingState', 'upsertSegmentDerivations', 'readSegmentDerivations', 'readDerivationPurgeState', 'recordDerivationPurgeRow', 'listDerivationClaimForms',
+      'sweepSegments', 'readManifest'],
+    timeout: 120_000,
+  }, async (engine) => {
+    const a = [segmentText('# One\nfirst segment\n')];
+    const future = segmentText('# Future\na row above the page generation\n');
+    const pa = await publishSegmentedPage(engine, 'notes/future-a', a);
+    // A published row (no staging) above the page's generation: no read of the page sees it, but the sweep's scope counts it as backing a
+    // derivation of its occurrence, so the walk keeps a claim-holding row it backs. Sweeping the segments deletes it.
+    const [occurrence] = await engine.allocateBodyOccurrenceIds(1);
+    await engine.stageSegmentTexts(SRC, [future]);
+    await engine.stageManifestRows([manifestRow({ pageId: pa.pageId, occurrenceId: occurrence!, genFrom: 7, seq: 40, text: future, byteStart: 500, stagingId: null })]);
+    await engine.upsertSegmentDerivations([row(pa.pageId, 'links', occurrence!, future.sha256, { excerpt: 'Alice likes tea' })]);
+    await engine.transaction(tx => recordDerivationPurge(tx, REQ, SRC, [], [CLAIM]));
+    const steps: Array<{ call: number; deleted: number; state: unknown; rows: number; manifest: number }> = [];
+    let swept: unknown = null;
+    __setDerivationSweepLimitsForTests({ batchRows: 1, totalMs: 0 });
+    try {
+      for (let call = 1; call <= 12; call++) {
+        // Calls 1 and 2 are the first walk (the row, then the end); call 3 is the verify walk reading the row, which the future row backs.
+        // The future row is swept after it, so the row loses its backing behind the walk, whose next batch finds the end.
+        if (call === 4) swept = await engine.sweepSegments({ sourceId: SRC, graceMs: 0 });
+        const deleted = await continueDerivationPurges(engine, SRC, { first: REQ });
+        const state = await derivationPurgeState(engine, REQ);
+        steps.push({ call, deleted, state, rows: (await engine.readSegmentDerivations(pa.pageId)).length, manifest: (await engine.readManifest(pa.pageId, { generation: 7 })).length });
+        if (state === null) break;
+      }
+    } finally {
+      __setDerivationSweepLimitsForTests(null);
+    }
+    expect(steps.at(-1)).toMatchObject({ state: null, rows: 0 });
+    expect(steps.slice(0, -1).every(step => (step.state as { state: string }).state === 'pending')).toBe(true);
+    return { steps, swept };
   });
 });
