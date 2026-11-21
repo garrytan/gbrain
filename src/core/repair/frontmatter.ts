@@ -43,6 +43,7 @@ import { execFileSync } from '../spawn.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { join } from 'node:path';
+import { scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
@@ -116,7 +117,7 @@ function heldElsewhere(hold: GitHoldRecord): string {
   const side = hold.code === 'file_drift' ? fileDriftSide(hold.meta) : undefined;
   const what = `${hold.code}${side ? ` (side ${side}${hold.meta.state ? `, state ${hold.meta.state}` : ''})` : ''}`;
   return `${hold.path} is held ${what}, which is not a frontmatter problem, so frontmatter repair does not import it (that would decide the hold without the user). `
-    + `${fix.argv ? `Next: ${shellQuote(fix.argv)}. ` : ''}${fix.why}`;
+    + `${fix.user_message ? `${fix.user_message} ` : ''}${fix.argv ? `Next: ${shellQuote(fix.argv)}. ` : ''}${fix.why}`;
 }
 
 const RESCUE_KEYS = new Set(['title', 'name', 'description', 'summary']);
@@ -393,7 +394,7 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
   if (page && 'ambiguous' in page) return { source_id: src.sourceId, path, code: 'origin_conflict', resolution: originConflictMessage(src.sourceId, sourcePath, page.ambiguous) };
   const slug = page?.slug ?? (proposal.rename_from ? resolveSlugForPath(sourcePath) : hold?.slug ?? resolveSlugForPath(sourcePath));
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: src.sourceId, includeDeleted: true });
-  const revives = await revivesDeletedPage(engine, src, path, sourcePath, slug, snapshot);
+  const revives = await revivesDeletedPage(engine, src, { path, sourcePath, slug, snapshot, content: proposal.content, bound: !!page });
   if (revives) return revives;
   // Wave B decision #1: the re-import compares the stored body whole, which a page stored in segments allows up to 24 MiB.
   if (proposal.reimport && snapshot && segmentedOverCeiling(snapshot.page)) {
@@ -422,18 +423,38 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
  * and on a managed source a deletion marker at the origin (its page was purged) would come back as a new page. Either is
  * the user's decision, made through the file-drift consent step (or `gbrain restore`), never by a frontmatter repair.
  */
-async function revivesDeletedPage(engine: BrainEngine, src: SourceRoot, path: string, sourcePath: string, slug: string, snapshot: PageSnapshot | null): Promise<NeedsReview | null> {
+async function revivesDeletedPage(engine: BrainEngine, src: SourceRoot,
+  target: { path: string; sourcePath: string; slug: string; snapshot: PageSnapshot | null; content: string; bound: boolean }): Promise<NeedsReview | null> {
+  const { path, sourcePath, slug, snapshot } = target;
   const managed = src.mode === 'managed';
+  // With no hold naming it, the origin sync records is the Git-root spelling when the source pins slug_root_mode git-root.
+  const origins = [...new Set([sourcePath, managed && sourcePath === path
+    ? scannerSourcePath(src.root, join(src.root, path), await scannerSlugRootMode(engine, src.sourceId, src.root)) : sourcePath])];
+  // With no live page at the origin, the import may write another slug: the file's own `slug:` (as importFromFile honors it) or the origin's.
+  const slugs = target.bound ? [slug] : [...new Set([slug, ...origins.map(origin => resolveSlugForPath(origin)), ...declaredImportSlug(target.content, path)])];
   const drift = (state: 'tombstone_edited' | 'purged_differs') => `gbrain sync --source ${src.sourceId} --no-pull holds the file file_drift when it differs from the deleted page, and `
     + `${shellQuote(['gbrain', 'repair', 'file-drift', '--source', src.sourceId, '--held', '--side', 'deleted', '--state', state, '--only', path, '--prefer', 'file'])} previews `
     + `${state === 'tombstone_edited' ? 'restoring the page' : 'importing it as a new page'} (--prefer database keeps the deletion and removes the file); decide with the user.`;
-  if (snapshot?.page.deleted_at) {
-    return { source_id: src.sourceId, path, code: 'page_deleted', resolution: `Page ${slug} is deleted, so importing ${path} would restore it, and that is the user's decision, which frontmatter repair never makes. `
-      + `${managed ? `${drift('tombstone_edited')} ` : ''}If the user wants the page back, restore it with gbrain restore ${slug} --source-id ${src.sourceId} --force, then preview again; to keep the deletion, remove ${path}.` };
+  for (const candidate of slugs) {
+    const found = candidate === slug ? snapshot : await engine.readPageSnapshot(candidate, { sourceId: src.sourceId, includeDeleted: true });
+    if (!found?.page.deleted_at) continue;
+    return { source_id: src.sourceId, path, code: 'page_deleted', resolution: `Page ${candidate} is deleted, so importing ${path} would restore it, and that is the user's decision, which frontmatter repair never makes. `
+      + `${managed ? `${drift('tombstone_edited')} ` : ''}If the user wants the page back, restore it with gbrain restore ${candidate} --source-id ${src.sourceId} --force, then preview again; to keep the deletion, remove ${path}.` };
   }
   if (snapshot || !managed) return null;
-  if (!await readOriginDeletedMarker(engine, src.sourceId, src.incarnation, sourcePath)) return null;
-  return { source_id: src.sourceId, path, code: 'page_purged', resolution: `The page of ${path} was purged, so importing it would bring purged content back as a new page, and only the user decides that. ${drift('purged_differs')}` };
+  for (const origin of origins) {
+    if (!await readOriginDeletedMarker(engine, src.sourceId, src.incarnation, origin)) continue;
+    return { source_id: src.sourceId, path, code: 'page_purged', resolution: `The page of ${path} was purged, so importing it would bring purged content back as a new page, and only the user decides that. ${drift('purged_differs')}` };
+  }
+  return null;
+}
+
+/** The frontmatter `slug:` importFromFile writes instead of the path's slug: a normalization-equivalent spelling, or any slug when the path has none. */
+function declaredImportSlug(content: string, path: string): string[] {
+  const expected = slugifyPath(path);
+  let declared: string;
+  try { declared = parseMarkdown(content, path).slug; } catch { return []; }
+  return declared && declared !== expected && (expected === '' || slugifyPath(declared) === expected) ? [declared] : [];
 }
 
 interface ScanResult { prepared: Prepared[]; pending: FileDiff[]; review: NeedsReview[]; unknownOnly: string[] }
