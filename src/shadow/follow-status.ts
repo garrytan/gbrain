@@ -44,6 +44,7 @@ export interface PassRecord {
   repaired_by_relation: Record<string, number>;
   /** Repaired rows found while the watermark claimed coverage through the pass's snapshot. */
   follower_misses: number;
+  nonterminal_refresh_rows?: number; // full passes: primary refresh rows a swap must drain first
   error?: string;
 }
 
@@ -69,17 +70,13 @@ export const followerPath = (dir: string): string => join(dir, 'follower.json');
 export const passesPath = (dir: string): string => join(dir, 'reconcile', 'passes.jsonl');
 
 export function readFollowerFile(dir: string): FollowerFile | null {
-  try {
-    const parsed = JSON.parse(readFileSync(followerPath(dir), 'utf8')) as FollowerFile;
-    return parsed?.version === 1 ? parsed : null;
-  } catch { return null; }
+  try { const parsed = JSON.parse(readFileSync(followerPath(dir), 'utf8')) as FollowerFile; return parsed?.version === 1 ? parsed : null; } catch { return null; }
 }
 
 export function writeFollowerFile(dir: string, file: FollowerFile): void {
-  const path = followerPath(dir);
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = `${followerPath(dir)}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(file) + '\n', { mode: 0o600 });
-  renameSync(tmp, path);
+  renameSync(tmp, followerPath(dir));
 }
 
 export function appendPass(dir: string, pass: PassRecord): void {
@@ -89,11 +86,8 @@ export function appendPass(dir: string, pass: PassRecord): void {
 
 export function readPasses(dir: string): PassRecord[] {
   if (!existsSync(passesPath(dir))) return [];
-  const out: PassRecord[] = [];
-  for (const line of readFileSync(passesPath(dir), 'utf8').split('\n')) {
-    try { if (line) out.push(JSON.parse(line) as PassRecord); } catch { /* a torn last line */ }
-  }
-  return out;
+  // A torn last line is skipped.
+  return readFileSync(passesPath(dir), 'utf8').split('\n').flatMap((line) => { try { return line ? [JSON.parse(line) as PassRecord] : []; } catch { return []; } });
 }
 
 export interface FollowStatus {
@@ -113,6 +107,7 @@ export interface FollowStatus {
   fingerprints: { checked_rows: number; mismatches: number; probe: ProbeRecord };
   seed: { seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null };
   allocators: { verified: boolean; checked_at: string | null };
+  primary_refreshes: { nonterminal_rows: number | null; checked_at: string | null };
 }
 
 /** The follower, reconcile, write-comparison, fingerprint, seed and allocator fields of `status --json`. */
@@ -137,7 +132,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   else if (!watermark.valid) followerState = 'invalid';
   else if (queue > 0 || (live?.lag_ms ?? 0) > 0) followerState = 'behind';
   const lastFull = fulls.at(-1);
-  const { error, ...lastPass } = last ?? ({} as PassRecord);
+  const { error, nonterminal_refresh_rows: _refreshes, ...lastPass } = last ?? ({} as PassRecord);
   return {
     epoch_id: seed?.seed_id ?? null,
     epoch_started_at: seed?.finished_at ?? null,
@@ -155,6 +150,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
     fingerprints: { checked_rows: live?.fingerprints.checked_rows ?? 0, mismatches: live?.fingerprints.mismatches ?? 0, probe: live?.probe ?? NOT_RUN_PROBE },
     seed: { seed_id: seed?.seed_id ?? null, finished_at: seed?.finished_at ?? null, unseeded_gap_rows_total: seed?.unseeded_gap_rows_total ?? null },
     allocators: live?.allocators ?? { verified: false, checked_at: null },
+    primary_refreshes: { nonterminal_rows: lastFull?.nonterminal_refresh_rows ?? null, checked_at: lastFull?.nonterminal_refresh_rows === undefined ? null : lastFull.finished_at },
   };
 }
 

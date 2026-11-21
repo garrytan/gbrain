@@ -258,5 +258,23 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(s.allocators.checked_at).not.toBeNull();
       } finally { await r.close(); }
     }, 90_000);
+
+    test('a full pass counts the primary refresh rows a swap must drain first', async () => {
+      const r = await rig();
+      try {
+        expect(status(r).primary_refreshes).toMatchObject({ nonterminal_rows: 0 });
+        const primary = ctx.primary();
+        const [wt] = await primary.executeRaw<{ id: string }>('INSERT INTO persistence_worktrees(owner_host_id) VALUES(gen_random_uuid()) RETURNING id::text AS id');
+        await primary.executeRaw(`INSERT INTO persistence_worktree_refreshes(worktree_id,source_ids,principal_id,owner_epoch,topology_generation,state,old_head,target_head,upstream_ref)
+          VALUES($1::uuid,ARRAY['default'],gen_random_uuid(),1,1,'fenced',$2,$3,'origin/main')`, [wt!.id, 'a'.repeat(40), 'b'.repeat(40)]);
+        expect((await r.reconciler.run('full')).nonterminal_refresh_rows).toBe(1);
+        const s = status(r);
+        expect(s.primary_refreshes.nonterminal_rows).toBe(1);
+        expect(s.primary_refreshes.checked_at).toBe(s.reconcile.last_pass!.finished_at);
+        await primary.executeRaw("UPDATE persistence_worktree_refreshes SET state='aborted', completed_at=now()");
+        await r.reconciler.run('full');
+        expect(status(r).primary_refreshes.nonterminal_rows).toBe(0);
+      } finally { await r.close(); }
+    }, 90_000);
   });
 }

@@ -1913,7 +1913,9 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `error`), `last_pass` (with `repaired_rows`, `repaired_by_relation` and `follower_misses`: repaired rows found while the
   watermark claimed coverage), `consecutive_clean_full_passes`, `next_full_pass_due`; `fingerprints` (`checked_rows`,
   `mismatches`, and a `probe` that runs a fixed text corpus through the primary's fingerprint SQL); `allocators`;
-  `seed`; and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
+  `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
+  aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
+  this is a reading, not the swap's own check); and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
   `write_comparisons` and `fingerprints` counts are totals for the current epoch; one epoch is one seed.
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, write comparisons
   are not built yet, and the readiness decision come in later phases of the plan

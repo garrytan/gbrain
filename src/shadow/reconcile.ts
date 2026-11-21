@@ -24,6 +24,7 @@ import { appendPass, NIGHTLY_MS, readPasses, type PassRecord, type Watermark } f
 import { intervalDigest, rowDigest, sortKey, sortKeyUnsupported } from './follow-digest.ts';
 import { nextGeneration, type ShadowFollower } from './follower.ts';
 import { primaryTables } from './seed-gaps.ts';
+import { ACTIVE_REFRESH_STATES_SQL } from '../core/persistence/worktree-refresh-schema.ts';
 import type { ReadSource } from './read-pool.ts';
 import { relationRead } from './seed.ts';
 
@@ -145,6 +146,7 @@ export class Reconciler {
       if (kind === 'full') {
         try { await this.o.rpc('allocatorCheck', { primaryMax: maxima }, 60_000); } catch (error) { rec.error = `allocator_check:${(error as { code?: string }).code ?? 'failed'}`; }
         try { await this.probe(); } catch (error) { rec.error ??= `probe:${(error as { code?: string }).code ?? 'failed'}`; }
+        try { rec.nonterminal_refresh_rows = !tables.has('persistence_worktree_refreshes') ? 0 : Number((await this.read((_, query) => query(`SELECT count(*)::int AS n FROM persistence_worktree_refreshes WHERE state IN ${ACTIVE_REFRESH_STATES_SQL}`)))[0]?.n); } catch (error) { rec.error ??= `refresh_count:${(error as { code?: string }).code ?? 'failed'}`; }
       }
     } catch (error) {
       repairFailed = true;

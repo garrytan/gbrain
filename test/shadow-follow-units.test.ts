@@ -334,7 +334,7 @@ describe('status --json', () => {
     const json = JSON.parse(out.join('\n')) as FollowStatus & Record<string, unknown>;
     expect(Object.keys(json)).toEqual(expect.arrayContaining([
       'schema_version', 'brain', 'enabled', 'state', 'directory', 'totals', 'by_op', 'serving', 'child_shed', 'children', 'recent_faults',
-      'epoch_id', 'epoch_started_at', 'follower', 'reconcile', 'write_comparisons', 'fingerprints', 'seed', 'allocators',
+      'epoch_id', 'epoch_started_at', 'follower', 'reconcile', 'write_comparisons', 'fingerprints', 'seed', 'allocators', 'primary_refreshes',
     ]));
     expect(json.epoch_id).toBe('seed-1');
     expect(json.follower).toEqual({
@@ -346,6 +346,7 @@ describe('status --json', () => {
     expect(json.fingerprints).toEqual({ checked_rows: 0, mismatches: 0, probe: { state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0 } });
     expect(json.seed).toEqual({ seed_id: 'seed-1', finished_at: SEED.finished_at, unseeded_gap_rows_total: 0 });
     expect(json.allocators).toEqual({ verified: false, checked_at: null });
+    expect(json.primary_refreshes).toEqual({ nonterminal_rows: null, checked_at: null });
   });
 });
 
@@ -355,11 +356,12 @@ describe('status --json', () => {
  * watermark, no unseeded gap rows may remain, and the fingerprint probe must have run and passed.
  */
 function shadowReadiness(s: Partial<FollowStatus>): 'ready' | 'not_ready' | 'follower_behind' | 'fingerprint_semantics_differ' {
-  if (!s.follower || !s.write_comparisons || !s.fingerprints || !s.seed || !s.reconcile || !s.allocators) return 'not_ready';
+  if (!s.follower || !s.write_comparisons || !s.fingerprints || !s.seed || !s.reconcile || !s.allocators || !s.primary_refreshes) return 'not_ready';
   if (s.write_comparisons.state === 'capability_missing') return 'not_ready';
   const f = s.follower;
   if ((f.lag_ms ?? 1) > 0 || f.queue_depth > 0 || !f.coverage_watermark.valid) return 'follower_behind';
   if ((s.seed.unseeded_gap_rows_total ?? 1) > 0) return 'not_ready';
+  if ((s.primary_refreshes.nonterminal_rows ?? 1) > 0) return 'not_ready'; // drain refreshes first; unknown counts as open
   if (s.fingerprints.probe.state === 'fail') return 'fingerprint_semantics_differ';
   if (s.fingerprints.probe.state === 'not_run') return 'not_ready';
   return 'ready';
@@ -373,6 +375,7 @@ describe('shadowReadiness (the S5a reading rules)', () => {
     write_comparisons: { state: 'capability_missing', sample_rate: 1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
     fingerprints: { checked_rows: 1, mismatches: 0, probe: { state: 'pass', checked_at: 't', server_version: '17', collation: 'C', mismatches: 0 } },
     seed: { seed_id: 'e', finished_at: 't', unseeded_gap_rows_total: 0 }, allocators: { verified: true, checked_at: 't' },
+    primary_refreshes: { nonterminal_rows: 0, checked_at: 't' },
   });
   test('each rule', () => {
     expect(shadowReadiness(good())).toBe('not_ready'); // the write-comparison half is not built
@@ -389,6 +392,10 @@ describe('shadowReadiness (the S5a reading rules)', () => {
     expect(shadowReadiness(fail)).toBe('fingerprint_semantics_differ');
     const notRun = ready(good()); notRun.fingerprints.probe.state = 'not_run';
     expect(shadowReadiness(notRun)).toBe('not_ready');
+    const refreshing = ready(good()); refreshing.primary_refreshes.nonterminal_rows = 1;
+    expect(shadowReadiness(refreshing)).toBe('not_ready');
+    const unknown = ready(good()); unknown.primary_refreshes.nonterminal_rows = null;
+    expect(shadowReadiness(unknown)).toBe('not_ready');
   });
 });
 
