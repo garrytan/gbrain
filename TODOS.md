@@ -1,5 +1,9 @@
 # TODOS
 
+## Rust engine parity harness follow-ups (filed 2026-11-21)
+
+- [ ] **P3 — parity-harness-pg-deadlock-repro (owner: Rust trunk owner): the Postgres reset deadlock is fixed against its cause, not against its original repro.** **What:** the harness now stops the write-queue consumer after every parity case (`test/engine-parity/harness.ts`), and `test/engine-parity/harness-consumer-stop.test.ts` went red (6 of 12 consumer-open checks) before the fix and green on all 3 arms after it. The 1-in-10 Postgres deadlock on `DELETE FROM sources` from PR #9944 did not reproduce in 10 runs before or after the fix. **Next:** if a lane sees a reset deadlock again, capture `pg_stat_activity` at reset time and attach it here.
+
 ## Rust engine fact-append-unified follow-ups (filed 2026-11-19)
 
 - [ ] **P2 — rust-entity-prefix-candidates (owner: lane 11, entity): entity lookup hides a Rust refusal.** **What:** `findPrefixCandidates` (`src/core/entities/resolve.ts`) still sends raw SQL (`engine.executeRaw`, the link and chunk counts of `people/<token>` and `companies/<token>-%` pages). The Rust engine refuses it with `raw_sql`, and the `try`/`catch` around the read turns the refusal into "no candidates". This is a hidden refusal: a strict entity reference (`resolveStrictEntityReference`) on a Rust brain resolves fewer names than on PGLite, and nothing reports it. **Fix:** a typed engine member for the prefix candidate read, served by the Rust store, with a parity case; then let a refusal surface instead of being swallowed. **Effort:** S. **Priority:** P2.

@@ -183,6 +183,7 @@
   "test/engine-parity/forget-commit.test.ts": 6020,
   "test/engine-parity/forget-reach-reads.test.ts": 8194,
   "test/engine-parity/forget-remember.test.ts": 5994,
+  "test/engine-parity/harness-consumer-stop.test.ts": 5000,
   "test/engine-parity/held-fence-cells.test.ts": 10059,
   "test/engine-parity/hot-memory-watermark.test.ts": 7737,
   "test/engine-parity/import-members.test.ts": 10454,

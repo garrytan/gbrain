@@ -61,6 +61,7 @@ test/engine-parity/files-ops-sites.test.ts	0	4
 test/engine-parity/forget-commit.test.ts	3	0
 test/engine-parity/forget-reach-reads.test.ts	4	1
 test/engine-parity/forget-remember.test.ts	2	0
+test/engine-parity/harness-consumer-stop.test.ts	2	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/holding-page-purges.test.ts	2	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0

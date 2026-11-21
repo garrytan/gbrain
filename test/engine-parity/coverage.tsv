@@ -92,7 +92,7 @@ transaction	lifecycle	yes	145	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	131	yes	yes	yes	serves
+getPage	pages	yes	132	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
