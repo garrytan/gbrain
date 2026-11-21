@@ -28,6 +28,7 @@ import type { WorktreeBinding } from './ownership.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { writeThroughConfigured } from './switches.ts';
+import { recordPlainImportBaseline } from './plain-import-baseline.ts';
 
 /** One file of a managed import batch: its path and the source-relative path its slug is derived from. */
 export interface ManagedImportFile { filePath: string; sourcePath: string }
@@ -312,6 +313,9 @@ async function unchangedManagedImport(ctx: OperationContext, binding: WorktreeBi
     const prepared = await prepareManagedImportMutation(ctx.engine, row, ctx.config, { snapshot });
     if ((await inspectUnchanged(ctx.engine, { prepared, snapshot, sourcePath: intent.sourcePath, databaseOnly: false })).admitReason) return false;
     await prepared.validate?.(ctx.engine);
+    // Equal reviewed bytes also adopt a baseline. Store the observed revision,
+    // never a later read: a concurrent database edit must remain detectable.
+    await recordPlainImportBaseline(ctx.engine, binding.source_id, intent.path ?? intent.sourcePath, snapshot);
     return true;
   } catch {
     return false;

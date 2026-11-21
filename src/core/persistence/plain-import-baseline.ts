@@ -17,11 +17,13 @@ export async function assertPlainImportBaseline(engine: BrainEngine, sourceId: s
     { detail: 'file_database_drift' });
 }
 
-/** Called in the same guarded publication transaction, after the final page write. */
+/** After the final page write in its publication transaction, or for a validated
+ * equal-content no-op using only the observed snapshot (never a fresh read). */
 export async function recordPlainImportBaseline(engine: BrainEngine, sourceId: string, path: string, snapshot: PageSnapshot | null): Promise<void> {
   if (!snapshot) return;
   await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
     SELECT $3,id||':'||incarnation::text||':'||$2,jsonb_build_array(jsonb_build_object('source_id',id,'incarnation',incarnation::text,'page_id',$4::bigint,'revision',$5::text)) FROM sources WHERE id=$1
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()
+    WHERE op_checkpoints.completed_keys IS DISTINCT FROM EXCLUDED.completed_keys`,
   [sourceId, path, OP, snapshot.page.id, snapshot.revision]);
 }

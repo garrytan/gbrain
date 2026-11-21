@@ -81,6 +81,11 @@ describe.each(backends.map(url => [engineName(url), url] as const))('plain-direc
     await engine.executeRaw("DELETE FROM op_checkpoints WHERE op='plain-directory-import'");
     expect(await sync()).toMatchObject({ status: 'blocked_by_failures', failedFiles: 1 });
     expect((await engine.getPage('people/alice-example', { sourceId: 'source-a' }))?.compiled_truth).toContain('after GC');
+    // Matching the database is an explicit resolution even without a content write.
+    writeFileSync(file, person('Alice Example', 'A file-only edit after GC.'));
+    expect(await sync()).toMatchObject({ status: 'synced', added: 0 });
+    writeFileSync(file, person('Alice Example', 'A file edit after equal-content adoption.'));
+    expect(await sync()).toMatchObject({ status: 'synced', added: 1 });
   }), 180_000);
 
   test('a forced plain directory syncs its files into the source without Git', () => withPlainSource(url, async ({ engine }, dir) => {
