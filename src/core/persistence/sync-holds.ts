@@ -1284,9 +1284,8 @@ export interface SyncImportProvenance {
 /**
  * The version of the Markdown import's reading of a file: the frontmatter recovery rules and the fence screen, plus a
  * leading import counter to bump when the import's own parsing or canonical form changes. It deliberately leaves out the
- * release, so a parser fingerprint holds across releases that change no parsing.
+ * release, so a parser fingerprint holds across releases that change no parsing. import=2 (pages-03): frontmatter values are kept as written, so every Markdown file is read once more after the upgrade.
  */
-// import=2 (pages-03): frontmatter values are kept as written, so every Markdown file is read once more after the upgrade.
 export const SYNC_IMPORT_PARSER_VERSION = `import=2;frontmatter=${RECOVERY_VERSION};fence=${FENCE_VERSION}`;
 
 /** The provenance a preparation knows before its page is written; page id, revision and disk bytes come from the publication or the waiver that settles it. */
