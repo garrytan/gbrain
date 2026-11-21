@@ -50,6 +50,8 @@ export class ShadowSupervisor implements MirrorTransport {
   private lastStateCheck = 0;
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private controlBuffer = '';
+  private nextRequestId = 0;
+  private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled'>;
 
   constructor(opts: ShadowSupervisorOptions) {
@@ -88,9 +90,36 @@ export class ShadowSupervisor implements MirrorTransport {
     return true;
   }
 
+  /**
+   * Calls a follow method in the child (`{t:'rpc'}` out, `{t:'resp'}` back). Rejects with the child's error code, or
+   * `child_unavailable` (not accepted, child exit) or `timeout`.
+   */
+  request<T = unknown>(method: string, args: Record<string, unknown> = {}, timeoutMs = 60_000): Promise<T> {
+    const id = ++this.nextRequestId;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('timeout')); }, timeoutMs);
+      (timer as { unref?: () => void }).unref?.();
+      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timer });
+      if (!this.send(JSON.stringify({ t: 'rpc', id, method, args }) + '\n')) this.settleRequest(id, null, new Error('child_unavailable'));
+    });
+  }
+
+  private settleRequest(id: number, value: unknown, error?: Error): void {
+    const entry = this.pending.get(id);
+    if (!entry) return;
+    this.pending.delete(id);
+    clearTimeout(entry.timer);
+    if (error) entry.reject(error); else entry.resolve(value);
+  }
+
+  private rejectRequests(reason: string): void {
+    for (const id of [...this.pending.keys()]) this.settleRequest(id, null, new Error(reason));
+  }
+
   /** Ends the child's stdin (it flushes and exits) without waiting. */
   stop(): void {
     this.disabledReason ??= 'stopped';
+    this.rejectRequests('child_unavailable');
     this.clearWatchdog();
     const child = this.child;
     this.child = null;
@@ -149,18 +178,23 @@ export class ShadowSupervisor implements MirrorTransport {
     while ((nl = this.controlBuffer.indexOf('\n')) >= 0) {
       const line = this.controlBuffer.slice(0, nl);
       this.controlBuffer = this.controlBuffer.slice(nl + 1);
-      let msg: { t?: string; reason?: string };
+      let msg: { t?: string; reason?: string; id?: number; ok?: boolean; value?: unknown; error?: { code?: string; message?: string } };
       try { msg = JSON.parse(line); } catch { continue; }
       if (msg.t === 'hb') this.lastHeartbeat = this.o.now();
+      else if (msg.t === 'resp' && typeof msg.id === 'number') {
+        this.settleRequest(msg.id, msg.value, msg.ok ? undefined : Object.assign(new Error(msg.error?.message ?? 'rpc failed'), { code: msg.error?.code ?? 'rpc_failed' }));
+      }
       else if (msg.t === 'pause') this.disable('privacy_diverged', msg.reason ?? 'child requested a pause');
     }
-    if (this.controlBuffer.length > 64 * 1024) this.controlBuffer = '';
+    // A `resp` line can carry thousands of digest entries; only a runaway partial line is dropped.
+    if (this.controlBuffer.length > 16 * 1024 * 1024) this.controlBuffer = '';
   }
 
   private onExit(child: ChildProcess | null, code: number | null, signal: string | null): void {
     if (child && this.child !== child) return;
     this.child = null;
     this.clearWatchdog();
+    this.rejectRequests('child_unavailable');
     if (this.disabledReason) return;
     const now = this.o.now();
     this.fault('child_exit', `code=${code ?? 'none'} signal=${signal ?? 'none'}`);
