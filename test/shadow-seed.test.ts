@@ -122,7 +122,7 @@ function fakeTarget(plan: SeedPlan): SeedTarget & { sent: Record<string, SeedRow
   };
 }
 
-const PAGES_ONLY: SeedPlan = { relations: [{ relation: 'pages', key: ['id'] }], carried: [], not_copied: [], gap_columns: [] };
+const PAGES_ONLY: SeedPlan = { relations: [{ relation: 'pages', key: ['id'], removable: true }], carried: [], not_copied: [], gap_columns: [] };
 
 describe('shadow seed reads', () => {
   test('pages rows carry their projection job, read in key order across batches', async () => {

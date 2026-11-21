@@ -30,7 +30,29 @@ export interface RustStore {
    * Copies one batch of a primary relation into this store for the shadow seed (rust/docs/store/seed.md).
    * Every value is the column's text form (`::text`, UTC) or null. Not a BrainEngine member.
    */
-  importRelation(seedId: string, relation: string, rows: SeedRow[]): Promise<SeedImportResult>;
+  importRelation(seedId: string, relation: string, rows: SeedRow[], digests?: SeedDigest[]): Promise<SeedImportResult>;
+  /**
+   * Applies one batch of the primary's changes to a relation: the rows `keys` name are stored (with the digests in
+   * `digests`, by sort key) or, when `rows` has none for a key, deleted. One write transaction; an entry written at a
+   * later `generation` than this call's is left as it is (`skipped_older`). Rejects `invalid_state` for another
+   * seed's store and `unsupported` for a relation whose rows cannot be removed (rust/docs/store/seed.md, "Follow
+   * and reconcile").
+   */
+  replaceRelationRows(
+    seedId: string, relation: string, generation: number, keys: SeedFollowKey[], rows: SeedRow[], digests: SeedDigest[],
+  ): Promise<SeedFollowResult>;
+  /**
+   * Makes the rows with a sort key in `[lo, hi)` (hex; null is unbounded) exactly `rows`: other entries in the
+   * interval are deleted. Atomic.
+   */
+  replaceInterval(
+    seedId: string, relation: string, generation: number, lo: string | null, hi: string | null,
+    rows: SeedRow[], digests: SeedDigest[],
+  ): Promise<SeedFollowResult>;
+  /** The entry count and digest of the digest entries with a sort key in `[lo, hi)` (hex; null is unbounded). */
+  relationDigest(seedId: string, relation: string, lo: string | null, hi: string | null): Promise<SeedIntervalDigest>;
+  /** The store's fact fingerprints of `texts`: the normalized one and the earlier raw-text one. */
+  factFingerprints(texts: string[]): Promise<FactFingerprints[]>;
   /**
    * The seed plan: the relations `importRelation` takes in import order (with the key columns to read each
    * by), the tables carried inside them, and the tables the seed leaves behind on purpose. Any other primary
@@ -47,6 +69,42 @@ export type SeedRow = Record<string, string | null>;
 export interface SeedRelationPlan {
   relation: string;
   key: string[];
+  /** Whether `replaceRelationRows` can delete this relation's rows. `false`: it rejects `unsupported`. */
+  removable: boolean;
+}
+
+/** A row's sort key and digest, both lowercase hex (src/shadow/follow-digest.ts). */
+export interface SeedDigest {
+  sort: string;
+  digest: string;
+}
+
+/** A primary key `replaceRelationRows` applies: its sort key (hex) and its columns' `::text` values. */
+export interface SeedFollowKey {
+  sort: string;
+  key: Record<string, string>;
+}
+
+/** What `replaceRelationRows` and `replaceInterval` did. */
+export interface SeedFollowResult {
+  upserted: number;
+  deleted: number;
+  /** Entries left as they were: written at a later generation than the call's. */
+  skipped_older: number;
+  dropped: number;
+  unmapped_columns: string[];
+  losses: Record<string, number>;
+}
+
+export interface SeedIntervalDigest {
+  rows: number;
+  /** Lowercase hex sha256. */
+  digest: string;
+}
+
+export interface FactFingerprints {
+  fingerprint: string;
+  fingerprint_v1: string;
 }
 
 /** A primary table the seed leaves behind on purpose, and the read that differs on the seeded store. */
@@ -95,11 +153,39 @@ export async function openRustStore(addon: object, databasePath: string): Promis
   }
   return {
     brain,
-    async importRelation(seedId, relation, rows) {
+    async importRelation(seedId, relation, rows, digests) {
       try {
-        return await brain.importRelation(seedId, relation, rows) as SeedImportResult;
+        return await brain.importRelation(seedId, relation, rows, digests ?? null) as SeedImportResult;
       } catch (error) {
         throw mapStoreError(error, { member: 'importRelation' });
+      }
+    },
+    async replaceRelationRows(seedId, relation, generation, keys, rows, digests) {
+      try {
+        return await brain.replaceRelationRows(seedId, relation, generation, keys, rows, digests) as SeedFollowResult;
+      } catch (error) {
+        throw mapStoreError(error, { member: 'replaceRelationRows' });
+      }
+    },
+    async replaceInterval(seedId, relation, generation, lo, hi, rows, digests) {
+      try {
+        return await brain.replaceInterval(seedId, relation, generation, lo, hi, rows, digests) as SeedFollowResult;
+      } catch (error) {
+        throw mapStoreError(error, { member: 'replaceInterval' });
+      }
+    },
+    async relationDigest(seedId, relation, lo, hi) {
+      try {
+        return await brain.relationDigest(seedId, relation, lo, hi) as SeedIntervalDigest;
+      } catch (error) {
+        throw mapStoreError(error, { member: 'relationDigest' });
+      }
+    },
+    async factFingerprints(texts) {
+      try {
+        return await brain.factFingerprints(texts) as FactFingerprints[];
+      } catch (error) {
+        throw mapStoreError(error, { member: 'factFingerprints' });
       }
     },
     async seedPlan() {
