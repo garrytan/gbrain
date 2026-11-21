@@ -762,6 +762,7 @@ test/physical-root-birth-tolerance-6501.test.ts
 test/physical-root-copied-brain-fix-7671.test.ts
 test/physical-root-moved-8625.test.ts
 test/privacy-label-ignored.test.ts
+test/projection-readiness-postgres.test.ts
 test/projection-readiness-repeatable-read-postgres.test.ts
 test/projection-rebuild-progress-9192.test.ts
 test/provenance-drift-7891.test.ts

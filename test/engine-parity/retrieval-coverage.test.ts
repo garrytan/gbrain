@@ -19,11 +19,13 @@
  *    counts refused on Rust and the probe read `unknown` there.
  *  - Why existing coverage misses it: test/projection-readiness.test.ts and
  *    test/search-coverage-*.test.ts run on PGLite only and never compare arms.
- *  - Seam: none. Typed members and the site functions only. Page ids are
+ *  - Seam: none. Typed members and the site functions only; on Postgres one case
+ *    holds a transaction open in another database through a second connection. Page ids are
  *    serial and engine-dependent: a case passes ids it read with `getPage` and
  *    never returns them.
  */
 import { describe, expect } from 'bun:test';
+import postgres from '#postgres';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { PageInput } from '../../src/core/types.ts';
 import {
@@ -46,6 +48,17 @@ const { parityTest } = parityArms(testBackends());
 const ALL: CoverageRelevance = { all: true, types: [], patterns: [], pageIds: [], exactTopPageId: null, imageArm: false };
 const NONE: CoverageRelevance = { ...ALL, all: false };
 const PROTECTED_BODY = 'Scan of a receipt\n\n<!--- gbrain:facts:begin -->\n| fact |\n<!--- gbrain:facts:end -->';
+
+/** On the Postgres arm, runs `body` while the server's DATABASE_URL database holds an open transaction with an id. */
+async function withOtherDatabaseBusy<T>(backend: string, body: () => Promise<T>): Promise<T> {
+  if (backend !== 'postgres') return body();
+  const other = postgres(process.env.DATABASE_URL!, { max: 1, prepare: false });
+  try {
+    await other.unsafe('BEGIN');
+    await other.unsafe('SELECT txid_current()');
+    return await body();
+  } finally { await other.unsafe('ROLLBACK').catch(() => undefined); await other.end(); }
+}
 
 function page(title: string, extra: Partial<PageInput> = {}): PageInput {
   return { type: 'note', title, compiled_truth: `${title} body`, timeline: '', ...extra };
@@ -249,9 +262,11 @@ describe('engine parity: retrieval coverage', () => {
   parityTest(
     'search/projection-readiness: with the cache on, a probe with no write since the last reuses its answer',
     { methods: ['putPage', 'readProjectionReadinessGeneration', 'readProjectionReadiness'] },
-    async (engine) => {
+    async (engine, backend) => {
       __resetProjectionReadinessCacheForTests();
-      return withEnv({ [PROJECTION_READINESS_CACHE_ENV]: undefined }, async () => {
+      // On Postgres a transaction stays open in another database on the same server (the server's own database), as
+      // on a server shared with other brains or a busy job queue: it must not turn this brain's cache off.
+      return withOtherDatabaseBusy(backend, () => withEnv({ [PROJECTION_READINESS_CACHE_ENV]: undefined }, async () => {
         await engine.putPage('notes/a', page('A'));
         const first = await probeProjectionReadiness(engine);
         const again = await probeProjectionReadiness(engine);
@@ -259,7 +274,7 @@ describe('engine parity: retrieval coverage', () => {
         const afterWrite = await probeProjectionReadiness(engine);
         const generation = await engine.readProjectionReadinessGeneration();
         return { status: first.status, reused: again === first, rereadAfterWrite: afterWrite !== again, named: typeof generation === 'string' };
-      });
+      }));
     },
   );
 

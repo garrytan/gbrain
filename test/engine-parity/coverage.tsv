@@ -495,7 +495,7 @@ settleFreshnessMarker	persistence_journal	yes	2	no	yes	yes	serves
 listSourceWantedMarkers	persistence_journal	yes	2	no	yes	yes	serves
 readSourceSyncShape	persistence_journal	yes	3	no	yes	yes	serves
 readNotifierFirstDue	persistence_journal	yes	2	no	yes	yes	serves
-readDrainHolderProgress	persistence_journal	yes	1	no	yes	yes	serves
+readDrainHolderProgress	persistence_journal	yes	2	no	yes	yes	serves
 readSourceLastCommit	persistence_journal	yes	1	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	23	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
@@ -643,10 +643,10 @@ settleNoopEmbeddingRows	persistence_journal	yes	1	no	yes	yes	serves
 readWriterVersionCutoff	persistence_journal	yes	1	no	yes	yes	serves
 listWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 recentWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
-readDrainLeaseBeacon	persistence_journal	yes	1	no	yes	yes	serves
-writeDrainLeaseHolder	persistence_journal	yes	1	no	yes	yes	serves
+readDrainLeaseBeacon	persistence_journal	yes	2	no	yes	yes	serves
+writeDrainLeaseHolder	persistence_journal	yes	2	no	yes	yes	serves
 refreshDrainLeaseHolder	persistence_journal	no	0	no	-	-	-
-releaseDrainLeaseHolder	persistence_journal	yes	1	no	yes	yes	serves
+releaseDrainLeaseHolder	persistence_journal	yes	2	no	yes	yes	serves
 readLiveJobIds	persistence_journal	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 readMentionIndexStatus	entity_reads	yes	2	no	yes	yes	serves
@@ -673,7 +673,7 @@ readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	12	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
-readCycleLocks	cycle_locks	yes	10	no	yes	yes	serves
+readCycleLocks	cycle_locks	yes	11	no	yes	yes	serves
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	serves
 takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves

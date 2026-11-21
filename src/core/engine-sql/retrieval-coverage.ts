@@ -109,16 +109,27 @@ export async function projectionRebuildProgress(exec: Exec, scope: ProjectionRea
 
 /**
  * The generation the probe's cached answer depends on: the page clock (every page insert, update or delete advances
- * it), the pages relation file (TRUNCATE replaces it) and the archived flag of every source. Null when a transaction
- * is in flight (a page write that advanced the clock but has not committed would otherwise be cached as ready under
- * the clock it moved) or the read fails.
+ * it), the pages relation file (TRUNCATE replaces it) and the archived flag of every source. Null when the read fails
+ * or a page write may be in flight: a write that advanced the clock but has not committed would otherwise be cached
+ * as ready under the clock it moved. In flight means this transaction has an id (it wrote, and may write pages, then
+ * roll back), or another session holds a write lock on this database's `pages` (the clock moves only from the
+ * statement trigger on `pages`, so that lock is held from before the clock moves until the write is visible).
+ * Transactions elsewhere on the server, and ones here that write no page, leave the cache on. The clock is read in a
+ * materialized step before the lock check, so a write that starts between them is either seen holding its lock or
+ * has not moved the clock this read returns.
  */
 export async function readProjectionReadinessGeneration(raw: EngineRawRead): Promise<string | null> {
   try {
     const [row] = await raw<{ generation: string | null; quiescent: boolean }>(
-      `SELECT (SELECT last_value FROM page_generation_clock_seq)::text || '/' || pg_relation_filenode('pages')::text || '/'
-          || md5(COALESCE((SELECT string_agg(id || ':' || archived::text, ',' ORDER BY id COLLATE "C") FROM sources), '')) AS generation,
-        pg_snapshot_xmin(pg_current_snapshot()) = pg_snapshot_xmax(pg_current_snapshot()) AS quiescent`);
+      `WITH g AS MATERIALIZED (SELECT (SELECT last_value FROM page_generation_clock_seq)::text || '/' || pg_relation_filenode('pages')::text || '/'
+          || md5(COALESCE((SELECT string_agg(id || ':' || archived::text, ',' ORDER BY id COLLATE "C") FROM sources), '')) AS generation)
+      SELECT g.generation,
+        pg_current_xact_id_if_assigned() IS NULL AND NOT EXISTS (SELECT 1 FROM pg_locks l
+          WHERE l.locktype = 'relation' AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+            AND l.relation = 'pages'::regclass
+            AND l.mode IN ('RowExclusiveLock', 'ShareRowExclusiveLock', 'ExclusiveLock', 'AccessExclusiveLock')
+            AND l.pid IS DISTINCT FROM pg_backend_pid()) AS quiescent
+      FROM g`);
     return row?.quiescent === true && typeof row.generation === 'string' ? row.generation : null;
   } catch {
     return null;
