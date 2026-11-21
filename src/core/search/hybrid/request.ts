@@ -10,7 +10,7 @@ import { perArmPoolLimit } from '../eval-pool-depth.ts';
 import type { DegradedStageEntry, HybridSearchMeta, SearchOpts, SearchResult } from '../../types.ts';
 import { type GBrainConfig, loadConfigWithEngine } from '../../config.ts';
 import { type HybridSearchOpts, PRE_FUSION_POOL_FLOOR, compiledTruthFusionBoost } from '../hybrid.ts';
-import type { IdentityTierOpts } from '../alias-hop.ts';
+import type { IdentityTierOpts, AliasGateOpts } from '../alias-hop.ts';
 import { type IntentWeights, applyAliasMentionBoost, applyExactMatchBoost, applyQualifiedTitleBoost, applyTitleMentionBoost, weightsForIntent } from '../intent-weights.ts';
 import { type QuerySuggestions, classifyQueryWithBrainPatterns } from '../query-intent.ts';
 import type { ResolveSearchModeInput, ResolvedSearchKnobs } from '../mode.ts';
@@ -71,7 +71,7 @@ export interface HybridRequest {
   ctBoost: boolean | number;
   searchOpts: SearchOpts;
   identityTierOpts: IdentityTierOpts;
-  aliasHopOpts: IdentityTierOpts & { tokenHop: boolean; qualified: boolean };
+  aliasHopOpts: AliasGateOpts & { tokenHop: boolean; qualified: boolean };
   /** WP2/T3 degradation stamp, appended by every stage. */
   degraded: DegradedStageEntry[];
   /** v0.46.15: max-escalations searchVector exhaustion event, accumulated across vector calls. */

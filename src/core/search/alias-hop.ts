@@ -63,7 +63,7 @@ export interface IdentityTierOpts {
 }
 
 /** Identity opts plus the caller's type filters: a page of another type is never injected (same gate as exact-lookup). */
-type AliasGateOpts = IdentityTierOpts & { type?: string; types?: string[] };
+export type AliasGateOpts = IdentityTierOpts & { type?: string; types?: string[] };
 
 /** True when an identity injection must skip `slug` under the caller's excludes. */
 export function isExcludedIdentity(slug: string, opts: Pick<IdentityTierOpts, 'excludeSlugs' | 'excludeSlugPrefixes'>): boolean {
@@ -145,7 +145,7 @@ export async function applyAliasHop(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   query: string,
-  opts: IdentityTierOpts & { tokenHop?: boolean; qualified?: boolean },
+  opts: AliasGateOpts & { tokenHop?: boolean; qualified?: boolean },
 ): Promise<SearchResult[]> {
   return applyAliasHopLookup(engine, results, await lookupAliasHop(engine, query, opts), opts);
 }
@@ -155,7 +155,7 @@ export async function applyAliasHopLookup(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   lookup: AliasHopLookup | null,
-  opts: IdentityTierOpts,
+  opts: AliasGateOpts,
 ): Promise<SearchResult[]> {
   if (!lookup) return results;
   const refs = lookup.fullQuery ? lookup.aliasMap.get(lookup.qNorm) : undefined;
@@ -221,7 +221,7 @@ async function applyQualifiedAliasHop(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   lookup: AliasHopLookup,
-  opts: IdentityTierOpts,
+  opts: AliasGateOpts,
 ): Promise<SearchResult[] | null> {
   const ref = qualifiedAliasCanonical(lookup, opts);
   if (!ref) return null;
@@ -252,7 +252,7 @@ async function applyAliasTokenHop(
   results: SearchResult[],
   tokens: string[],
   aliasMap: Map<string, Array<{ slug: string; source_id: string }>>,
-  opts: IdentityTierOpts,
+  opts: AliasGateOpts,
 ): Promise<SearchResult[]> {
   const out = [...results];
   let injectScore = topOrganicScore(out);
