@@ -29,7 +29,7 @@ import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid',
   '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-const note = (slug: string, body: string) => `---\ntype: concept\ntitle: ${slug}\n---\n\n${body}\n`;
+const note = (slug: string, body: string) => `---\ntype: concept\ntitle: ${slug}\ntags: [zeta, alpha]\n---\n\n${body}\n`;
 const OPTS = { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true };
 const logger = { info() {}, warn() {}, error() {} };
 
@@ -91,6 +91,24 @@ for (const backend of testBackends()) {
     await performManagedSync(engine, OPTS);
     expect(await body(engine, 'notes/a')).toContain('A first Git edit of notes/a.');
     expect(await held(engine)).toEqual(['notes/b.md']);
+  }, { databaseUrl, setup }), 240_000);
+
+  test(`[${backend}] a record-less page with an older import's stored keys and a schema-pack retype stamp still imports the Git edit when it equals an earlier version`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await unrecorded(engine);
+    // An older import kept the reserved keys (tags sorted) in the stored frontmatter, the grandfather stamped validate: false, and
+    // unify-types retyped the page in the database only: a new type, the old one kept as legacy_type, and a subtype.
+    await coordinated(engine, `UPDATE pages SET type='note', frontmatter = COALESCE(frontmatter,'{}'::jsonb)
+      || '{"type":"note","title":"notes/a","tags":["alpha","zeta"],"legacy_type":"concept","subtype":"idea","validate":false}'::jsonb
+      WHERE source_id='default' AND slug='notes/a'`);
+    edit(root, ['notes/a'], 'A first Git edit'); git(root, 'commit', '-qam', 'first edit');
+    edit(root, ['notes/a'], 'A second Git edit'); git(root, 'commit', '-qam', 'second edit');
+    await coordinated(engine, "UPDATE sources SET last_commit='0123456789abcdef0123456789abcdef01234567' WHERE id='default'");
+    await performManagedSync(engine, OPTS);
+    expect(await held(engine)).toEqual([]);
+    expect(await body(engine, 'notes/a')).toContain('A second Git edit of notes/a.');
+    const [page] = await engine.executeRaw<{ type: string; legacy: string }>("SELECT type, frontmatter->>'legacy_type' AS legacy FROM pages WHERE source_id='default' AND slug='notes/a'");
+    expect(page).toEqual({ type: 'note', legacy: 'concept' });
   }, { databaseUrl, setup }), 240_000);
 
   test(`[${backend}] a drift check that cannot read the file keeps the refusal's message, not only its code`, () => managedBrain(async ({ engine, root }) => {
