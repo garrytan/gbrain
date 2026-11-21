@@ -116,26 +116,38 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
       try {
         const sql = db.getConnection();
         const rows = await sql`
-          SELECT schemaname, relname AS table, indexrelname AS index,
-                 idx_scan, pg_size_pretty(pg_relation_size(indexrelid)) AS size
-            FROM pg_stat_user_indexes
-           WHERE schemaname = 'public'
-             AND idx_scan = 0
-           ORDER BY pg_relation_size(indexrelid) DESC
-           LIMIT 21
+          WITH zero_scan AS (
+            SELECT s.indexrelname AS name, pg_relation_size(s.indexrelid) AS bytes,
+                   i.indisvalid AND i.indisready AND i.indislive AND EXISTS (
+                     SELECT 1 FROM pg_constraint c
+                      WHERE c.conindid = s.indexrelid AND c.conrelid = s.relid
+                        AND c.contype IN ('p', 'u') AND c.convalidated
+                   ) AS backs_key
+              FROM pg_stat_user_indexes s JOIN pg_index i USING (indexrelid)
+             WHERE s.schemaname = 'public' AND s.idx_scan = 0
+          )
+          SELECT name, pg_size_pretty(bytes) AS size, backs_key,
+                 (count(*) OVER ())::int AS total,
+                 (count(*) FILTER (WHERE backs_key) OVER ())::int AS key_count
+            FROM zero_scan
+           ORDER BY backs_key, bytes DESC, name
+           LIMIT 20
         `;
         if (rows.length === 0) {
           checks.push({ name: 'index_audit', status: 'ok', message: 'All public indexes have recorded scans' });
         } else {
-          // #7145: 21 rows means more than the 20 listed.
-          const list = rows.slice(0, 20).map((r: any) => `${r.index}(${r.size})`).join(', ');
+          const { total, key_count } = rows[0]!;
+          const other = total - key_count;
+          const list = rows.map(r => `${r.name}(${r.size}${r.backs_key ? ', backs a key' : ''})`).join(', ');
           checks.push({
             name: 'index_audit',
             status: 'warn',
-            details: { exact: rows.length <= 20 },
-            message: `${rows.length > 20 ? '20+' : rows.length} zero-scan index(es): ${list}. ` +
-                     `Consider investigating whether they're used on YOUR workload (fresh brains naturally show zero scans until queries accumulate). ` +
-                     `Do not drop without confirming.`,
+            details: { exact: total === rows.length, zero_scan_total: total, supporting_primary_or_unique: key_count,
+                       other_zero_scan: other },
+            message: `${total} zero-scan index(es), ${key_count} backing PRIMARY KEY or UNIQUE constraints. ` +
+                     `Read counters do not measure constraint enforcement. ` +
+                     (other ? `Review the other ${other} against the workload. ` : '') +
+                     `${rows.length === total ? 'Indexes' : 'First 20'}: ${list}. Do not drop without confirming.`,
           });
         }
       } catch (e) {
