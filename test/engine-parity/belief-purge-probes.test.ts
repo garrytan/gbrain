@@ -14,7 +14,9 @@
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines.
  *  - Seam: none in the cases. Typed members only (no executeRaw: D18). Sources and the belief ledger's coverage come
- *    through the harness fixtures; suppressions are read back through the typed readBeliefRedactions, the epoch through
+ *    through the harness fixtures; the receipt case runs facts/purge-verify.ts ledgerReports through a view of the engine
+ *    whose listFactContextsForPurgeProbe answers no live facts on every arm (the fixture has none; Rust still refuses that
+ *    read, and the whole receipt case with a fact_context quote waits for it); suppressions are read back through the typed readBeliefRedactions, the epoch through
  *    readSourcePurgeEpoch and the tombstones through countPagePurgeTombstones. Generated values (suppression ids) are
  *    never compared.
  */
@@ -24,6 +26,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { BeliefEventInsertRow } from '../../src/core/engine-sql/belief-ledger.ts';
 import { PURGE_SWEEP_STORES } from '../../src/core/persistence/page-purge.ts';
+import { __ledgerReportsForTests as ledgerReports } from '../../src/core/facts/purge-verify.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -177,6 +180,35 @@ describe('engine parity: the belief side of a purge', () => {
     expect(answers.all.map(r => r.id)).toEqual([0, 1, 2, 3]);
     expect(answers.afterSecond.map(r => r.subject_key)).toEqual(['fact:3', 'fact:4']);
     expect({ afterAll: answers.afterAll, other: answers.other, nobody: answers.nobody }).toEqual({ afterAll: [], other: ['fact:6'], nobody: [] });
+    return answers;
+  });
+
+  parityTest('the receipt\'s belief_events report is byte-equal when a recorded JSON null sits next to the events that quote the claim', {
+    methods: ['readLedgerSource', 'insertBeliefEvents', 'listBeliefEventsForPurgeProbe'],
+  }, async (engine) => {
+    const inc = (await engine.readLedgerSource(SRC))!.incarnation;
+    const LONGER = 'Acme rents its warehouse';
+    // Postgres keeps a recorded JSON null as a value (null) and the Rust store keeps it as no value; the report must not tell.
+    const jsonNull = (ord: number) => event(SRC, inc, ord, null, { value: 'null', value_hash: `vh${ord}` });
+    await engine.insertBeliefEvents([
+      jsonNull(1),
+      event(SRC, inc, 2, { fact: 'Acme sells widgets', context: `memo: ${CLAIM}` }),
+      jsonNull(3),
+      event(SRC, inc, 4, { fact: `${LONGER} by the month` }),
+      jsonNull(5),
+    ]);
+    const view = new Proxy(engine, {
+      get(target, key) {
+        if (key === 'listFactContextsForPurgeProbe') return async () => [];
+        const value = Reflect.get(target, key, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const report = async (claim: string) => JSON.stringify(await ledgerReports(view, SRC, [claim], null, performance.now() + 20_000));
+    const answers = { missed: await report(CLAIM), other: await report(LONGER), absent: await report('Acme has no warehouse') };
+    expect(JSON.parse(answers.missed)).toEqual([{ store: 'belief_events', status: 'incomplete', remaining: 1, removed: 0, items: ['context@fact:2'] }]);
+    expect(JSON.parse(answers.other)).toMatchObject([{ store: 'belief_events', status: 'out_of_scope', remaining: 1, items: ['fact@fact:4'] }]);
+    expect(JSON.parse(answers.absent)).toEqual([{ store: 'belief_events', status: 'not_present', removed: 0 }]);
     return answers;
   });
 });
