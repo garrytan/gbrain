@@ -68,6 +68,7 @@ import { isEngineDegraded } from '../core/degraded-marker.ts';
 import { admittedPendingReceipt, isWriteReceipt, publicWriteReceipt, type WriteReceipt } from '../core/persistence/types.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withRequestIdentityMemo, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
 import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
+import { withRemoteCaller } from '../core/remote-caller.ts';
 import { isAIInvocationPolicyError } from '../core/ai/invocation-guard.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
@@ -247,7 +248,7 @@ export interface DispatchOpts {
    */
   localFederatedSourceIds?: string[];
   /** GBRA-585: the trusted local CLI named no source (OperationContext.localSourceImplicit); ignored unless remote is false. */
-  localSourceImplicit?: boolean;
+  localSourceImplicit?: boolean; localSourceFromCheckout?: boolean; // the implicit source came from the cwd checkout (OperationContext.localSourceFromCheckout)
   /**
    * #5081: explicit-read admission for a stdio connection bound by
    * GBRAIN_SOURCE or a .gbrain-source pin. Stdio transport only; see
@@ -982,7 +983,7 @@ export function buildOperationContext(
     sourceId: opts.sourceId ?? 'default',
     ...(sessionId ? { sessionId } : {}),
     ...(opts.localFederatedSourceIds ? { localFederatedSourceIds: opts.localFederatedSourceIds } : {}),
-    ...(opts.localSourceImplicit && opts.remote === false ? { localSourceImplicit: true } : {}),
+    ...(opts.localSourceImplicit && opts.remote === false ? { localSourceImplicit: true, ...(opts.localSourceFromCheckout ? { localSourceFromCheckout: true } : {}) } : {}),
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}), ...(opts.surface ? { surface: opts.surface } : {}),
     ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
@@ -1409,7 +1410,7 @@ async function dispatchResolvedCall(
         if (!(error instanceof OperationError) || error.code !== 'writer_registration_required' || op.requiredScopes?.length) throw error;
       }
     }
-    const result = registration
+    const result = await withRemoteCaller(ctx.remote !== false, async () => registration
       ? await withVerifiedLocalRegistration(engine, registration, async verified => {
         if (!verified.remote) throw opError('permission_denied', 'This registration is not an agent-facing connection.',
           `${name} on this stdio connection needs the agent-facing stdio writer registration, which only the user can create in a terminal on the brain host.`,
@@ -1417,7 +1418,7 @@ async function dispatchResolvedCall(
             'Previews the agent-facing stdio registration; the user reruns it without --dry-run (with --replace and the complete grant when a registration exists).') });
         return op.handler(ctx, safeParams);
       })
-      : await op.handler(ctx, safeParams);
+      : await op.handler(ctx, safeParams));
     if (emptyRead(name, result)) await assertUnscopedReadReachesPages(name, safeParams, ctx);
     // Hot memory built before a write (forget, remember, …) is never served after it, on every transport;
     // #6696 (A4): the write's receipt carries the capacity notices (60 s snapshot, at most hourly per scope).

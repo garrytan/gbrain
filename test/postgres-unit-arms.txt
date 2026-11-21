@@ -160,8 +160,10 @@ test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/private-page-reads.test.ts
+test/engine-parity/put-source-fork.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
+test/engine-parity/repair-frontmatter-holds.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts
@@ -640,6 +642,7 @@ test/projection-rebuild-progress-9192.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
 test/publish-redact-unpushed-gst2988.test.ts
+test/purge-age-coordinated.test.ts
 test/purge-context-facts-8859.test.ts
 test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts

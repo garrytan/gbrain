@@ -14,7 +14,7 @@ secondary indexes yet.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.readPageSnapshot(slug, { sourceId?, sourceIds?, includeDeleted? }?)` | `{ page, tags, revision, sourceIncarnation, withdrawals: [] }` or `null`. `sourceIds` wins over `sourceId`; with neither, the first match, `default` first | `readPageSnapshot` |
+| `brain.readPageSnapshot(slug, { sourceId?, sourceIds?, includeDeleted? }?)` | `{ page, tags, revision, sourceIncarnation, withdrawals }` or `null`. `withdrawals` lists the source's withdrawals whose subject is `*` or the page's slug, one `{ visibility, fact_hash, withdrawn_at }` per visibility and fact hash at the earliest time, ordered by visibility then fact hash (the store has no ledger of `fact_purges` rows, which the SQL snapshot also lists). `sourceIds` wins over `sourceId`; with neither, the first match, `default` first | `readPageSnapshot` |
 | `brain.putPage(slug, page, { sourceId?, allowEmptyOverwrite?, expectedRevision?, force?, chunks?, index? }?)` | the stored `Page`. By default the store also installs chunks and seals the page (see "Chunks and keyword search"); `index: false` writes the page alone, which is what the TypeScript engine always passes, as PGLite's `putPage` writes no chunks | `putPage` |
 | `brain.listPages(filters?)` | `Page[]` (default `limit` 100). Filters: `type`, `tag`, `updated_after`, `updatedAfterKeyset { updatedAt, slug }`, `slugPrefix` (literal), `excludeSlugPrefixes`, `slugAfter`, `sourceId`, `sourceIds`, `includeDeleted`, `sort` (`updated_desc` default, `updated_asc`, `created_desc`, `slug`) | `listPages` |
 | `brain.countPages({ sourceId? }?)` | number of live pages | `countPages` |

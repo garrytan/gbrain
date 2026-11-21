@@ -398,11 +398,8 @@ async function pickSoleNonDefaultSource(
       // misroute is diagnosable; same suppression knob as the routing nudge.
       // GST-2732: a federated side source is in default search already, so the routing loses nothing and stays quiet.
       const federated = (parseSourceConfig(rows[0].config) as { federated?: unknown }).federated === true;
-      if (!opts.quiet && !federated && process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE !== '1') {
-        console.error(
-          `[gbrain] sole non-default source '${rows[0].id}' exists, but 'default' is non-empty — routing to 'default' (#3070 emptiness guard). Pass --source ${rows[0].id} or set sources.default to target it.`,
-        );
-      }
+      const flip = formatSoleNonDefaultFlip(rows[0].id);
+      if (!opts.quiet && !federated && flip !== null) console.error(flip);
       return null;
     }
   } catch {
@@ -452,6 +449,17 @@ export async function resolveImplicitDefaultSourceId(engine: BrainEngine): Promi
     }
   }
   return pickSoleNonDefaultSource(engine, { quiet: true });
+}
+
+/**
+ * The one-line stderr notice for the #3070 flip: the sole non-default source
+ * exists, but 'default' holds pages, so an unsourced command goes to 'default'.
+ * Null under GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE=1. Printed by the resolver, and
+ * by an unsourced put_page when the resolver stayed quiet (a federated source).
+ */
+export function formatSoleNonDefaultFlip(sourceId: string): string | null {
+  if (process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE === '1') return null;
+  return `[gbrain] sole non-default source '${sourceId}' exists, but 'default' is non-empty — routing to 'default' (#3070 emptiness guard). Pass --source ${sourceId} or set sources.default to target it.`;
 }
 
 /**
