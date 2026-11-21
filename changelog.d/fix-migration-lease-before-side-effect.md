@@ -1,0 +1,4 @@
+**An embedding migration no longer loses its own lease during the config step or a schema transition on a brain whose retained-vector census is slow.**
+
+### Fixed
+- The migration's file-config step and `runSchemaTransition` checked the lease with its rows locked `FOR SHARE` before running the retained-vector census, so on a large or slow database the 15 s heartbeat's refresh waited past its 30 s limit and the run stopped as lease-lost, every time it was resumed. Both now check the lease without holding its rows, run the census, and lock the rows before their side effect, as `withMigrationLeaseTransaction` already does for the other steps (#6587). The config file is still written only after ownership is confirmed. New `withMigrationLeaseBeforeEffect` covers work whose effect reaches outside the transaction.

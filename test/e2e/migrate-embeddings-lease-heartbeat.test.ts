@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 import { tryAcquireDbLock, type DbLockHandle } from '../../src/core/db-lock.ts';
-import { assertMigrationLeases, withMigrationLeaseTransaction, type MigrationLeaseAssert } from '../../src/core/embedding-migration-budget.ts';
+import { assertMigrationLeases, withMigrationLeaseBeforeEffect, withMigrationLeaseTransaction, type MigrationLeaseAssert } from '../../src/core/embedding-migration-budget.ts';
 
 const skip = !hasDatabase();
 beforeAll(async () => { if (!skip) await setupDB(); }, 120_000);
@@ -58,6 +58,33 @@ describe.skipIf(skip)('migration lease transactions (#6587)', () => {
         await engine.executeRaw(`UPDATE gbrain_cycle_locks SET acquisition_token=gen_random_uuid() WHERE id=$1`, [lock.id]);
       })).rejects.toThrow('Migration lease lost');
       expect(await engine.executeRaw(`SELECT value FROM config WHERE key=$1`, ['w17.6587.marker'])).toEqual([]);
+    } finally {
+      await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id=$1`, [lock.id]);
+    }
+  }, 30_000);
+
+  test('a census before a side effect (the config-file step) lets the heartbeat refresh, then runs the effect', async () => {
+    const engine = getEngine();
+    const lock = (await tryAcquireDbLock(engine, 'w17-6587-before-effect', 60))!;
+    try {
+      let effects = 0;
+      const step = withMigrationLeaseBeforeEffect(engine, owned(lock),
+        tx => tx.executeRaw('SELECT pg_sleep(4)'), async () => { effects++; });
+      expect(await refreshDuring(step, lock)).toBe(true);
+      await step;
+      expect(effects).toBe(1);
+    } finally { await lock.release(); }
+  }, 30_000);
+
+  test('a lease lost during the census never reaches the side effect', async () => {
+    const engine = getEngine();
+    const lock = (await tryAcquireDbLock(engine, 'w17-6587-effect-stolen', 60))!;
+    try {
+      let effects = 0;
+      await expect(withMigrationLeaseBeforeEffect(engine, owned(lock), async () => {
+        await engine.executeRaw(`UPDATE gbrain_cycle_locks SET acquisition_token=gen_random_uuid() WHERE id=$1`, [lock.id]);
+      }, async () => { effects++; })).rejects.toThrow('Migration lease lost');
+      expect(effects).toBe(0);
     } finally {
       await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id=$1`, [lock.id]);
     }
