@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+A rename of an older page whose frontmatter id an earlier release stored as a number (id: 007 stored as 7) is accepted only when that page's sync import record shows it was imported by the earlier reader and has not been written since. Such a page keeps its identity across a rename or a same-slug replacement whose file says id: 007 or id: 7, as before. A page with no import record (one imported by the classic sync, or before import records existed) is not treated that way: a file that takes over its slug must carry the id as the page stores it, so a file saying id: 007 against a stored 7 is refused as page_identity_changed (sync holds the file and keeps the page). To keep the page, write the id in the file as the page stores it (id: 7), commit, and sync again. A page imported by this release that stores id: 7 is a different document from a file that says id: 007.

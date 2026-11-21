@@ -78,7 +78,7 @@ import { buildSegmentedProjection } from './projection.ts';
 import { prepareSegmentedBody, segmentWriteScope, utf8Prefix, type SegmentedStagingOwner } from './ingest.ts';
 import { readGarbageCollector } from './segment-blocks.ts';
 import type { JsonObject } from './types.ts';
-import { carryHashKeyedPageState, legacyHashToCarry, mayHoldLegacyTyped } from '../frontmatter-legacy.ts';
+import { carryHashKeyedPageState, legacyHashToCarry, mayHoldLegacyTyped, provenLegacyCarry } from '../frontmatter-legacy.ts';
 import { hasCapability } from '../engine-capabilities.ts';
 
 const READ_BYTES = 1024 * 1024;
@@ -451,8 +451,11 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
       validate: async () => {}, apply: async () => {} }) : skipped;
   }
   // pages-03: a re-read that changes only how values are kept carries the paid phases' records to the new hash.
-  const carryHashFrom = existing && !existing.deleted_at && prepared.hashWith && mayHoldLegacyTyped(existing.frontmatter)
-    ? legacyHashToCarry(existing, parsed.frontmatter, await frontmatterHeadText(file, bom, prefix, size), hash, prepared.hashWith) : null;
+  // A title the old typing changed is lifted out of the frontmatter, so a differing title also reads the file's head.
+  // Only a page the old importer stored can hold that importer's reading of this file (provenLegacyCarry).
+  const legacyCarry = existing && !existing.deleted_at && prepared.hashWith && (mayHoldLegacyTyped(existing.frontmatter) || existing.title !== parsed.title)
+    ? legacyHashToCarry(existing, parsed, await frontmatterHeadText(file, bom, prefix, size), hash, prepared.hashWith) : null;
+  const carryHashFrom = await provenLegacyCarry(engine, sourceId, existing?.id, legacyCarry || null);
   const identity = opts.coordinated?.moved || opts.content ? { kind: 'none' as const }
     : await decideImportIdentity(engine, { sourceId, slug, hash, frontmatterId: null, sourcePath: relativePath, sourceRoot, body: { title: parsed.title, compiled_truth: '', timeline: '' } });
   if (identity.kind === 'shared_hash') process.stderr.write(`[import] WARNING: ${relativePath} shares content_hash with ${identity.dupSlug} in source ${sourceId}. Indexing both.\n`);

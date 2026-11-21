@@ -90,7 +90,7 @@ describe('pages-03: the one-time re-read after the upgrade', () => {
         for (const slug of TYPED) await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,revision}',to_jsonb($2::text)) WHERE op=$1 AND fingerprint LIKE '%:' || $3`,
           [SYNC_IMPORT_PROVENANCE_OP, await revisionOf(engine, slug), String((await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.page.id)]);
         expect((await engine.getPage('people/d'))!.frontmatter).toMatchObject({ born: '1990-05-01T00:00:00.000Z', zip: 2134, version: 1.1 });
-        await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
+        await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"import=1;frontmatter=1;fence=1"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
         await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged,parser_fp}','\"an-older-parser\"'::jsonb) WHERE op='managed-sync-pass'");
         const revisions = new Map(await Promise.all([...PLAIN, ...TYPED].map(async slug => [slug, await revisionOf(engine, slug)] as const)));
         const effectsBefore = await effectCounts(engine);
@@ -141,7 +141,7 @@ describe('pages-03: the one-time re-read after the upgrade', () => {
     });
     for (const slug of MEETINGS) await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,revision}',to_jsonb($2::text)) WHERE op=$1 AND fingerprint LIKE '%:' || $3`,
       [SYNC_IMPORT_PROVENANCE_OP, await revisionOf(engine, slug), String((await pageRow(engine, slug)).id)]);
-    await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
+    await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"import=1;frontmatter=1;fence=1"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
     await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged,parser_fp}','\"an-older-parser\"'::jsonb) WHERE op='managed-sync-pass'");
     return oldHash;
   };
