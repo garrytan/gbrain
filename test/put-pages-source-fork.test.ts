@@ -160,17 +160,21 @@ describe('put_pages and uploads that name no source do not fork a page that live
 
 describe('the fork check names the single holder among many sources (PGLite)', () => {
   let engine: BrainEngine;
+  // A snapshot-restored PGLite carries the snapshot's brain id, so an earlier engine in this file already left a writer
+  // credential file for that id in the shared home. A private home keeps this engine from reading that file.
+  let home: string;
   beforeAll(async () => {
+    home = mkdtempSync(join(tmpdir(), 'pages02-holder-'));
     engine = new PGLiteEngine();
     await engine.connect({ engine: 'pglite' } as never);
     await engine.initSchema();
     for (const id of ['s1', 's2', 's3', 's4', 's5']) await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{}'::jsonb)`, [id]);
     await engine.putPage('notes/held-in-s4', { type: 'note', title: 'Held', compiled_truth: 'Held in s4.', timeline: '' }, { sourceId: 's4' });
   }, 240_000);
-  afterAll(async () => { await engine?.disconnect(); }, 60_000);
+  afterAll(async () => { await engine?.disconnect(); rmSync(home, { recursive: true, force: true }); }, 60_000);
 
-  const unsourced = (slug: string) => operationsByName.put_page!.handler({ engine, config: { engine: 'pglite', embedding_disabled: true } as never, remote: false, sourceId: 'default',
-    localSourceImplicit: true, dryRun: true, logger: { info() {}, warn() {}, error() {} } } as OperationContext, { slug, content: '# held' });
+  const unsourced = (slug: string) => withEnv({ GBRAIN_HOME: home }, () => operationsByName.put_page!.handler({ engine, config: { engine: 'pglite', embedding_disabled: true } as never, remote: false, sourceId: 'default',
+    localSourceImplicit: true, dryRun: true, logger: { info() {}, warn() {}, error() {} } } as OperationContext, { slug, content: '# held' }));
 
   test('the single holder among five sources is named', async () => {
     await expect(unsourced('notes/held-in-s4')).rejects.toMatchObject({ message: expect.stringContaining('lives in source s4.') });
