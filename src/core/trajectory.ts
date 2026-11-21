@@ -69,7 +69,7 @@ export interface TrajectoryRegression {
   to_date: string;
   /**
    * Relative change over abs(from_value): negative for a drop, positive for a rise; may be < -1 across zero.
-   * For a lower-is-better metric with two negative values it is the change in magnitude (-50000 -> -100000 is +1).
+   * For a lower-is-better metric whose older value is negative it is the change in magnitude (-50000 -> -100000 is +1; -50000 -> 100000 is -3).
    */
   delta_pct: number;
   /**
@@ -179,8 +179,9 @@ export function detectRegressions(
     if (oldVal === 0) continue;
     const lowerIsBetter = isLowerIsBetter(older.metric!);
     // A lower-is-better metric stored as a negative outflow (a loss of -50000, a burn of -150) compares by
-    // magnitude, so -50000 -> -100000 is a +100% rise; every other pair uses the plain signed change.
-    const magnitude = lowerIsBetter && oldVal < 0 && newVal < 0;
+    // magnitude, so -50000 -> -100000 is a +100% rise and a loss that turns into a profit (-50000 -> 100000) is
+    // an improvement, never a rise; a positive older value uses the plain signed change.
+    const magnitude = lowerIsBetter && oldVal < 0;
     const delta = (magnitude ? oldVal - newVal : newVal - oldVal) / Math.abs(oldVal);
     // A tiny tolerance keeps a change of exactly the threshold from slipping under it through float
     // rounding ((0.055 - 0.05) / 0.05 is 0.09999999999999995).

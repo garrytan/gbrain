@@ -328,6 +328,17 @@ describe('computeFounderScorecard — lower-is-better metrics', () => {
 
 // A loss stored as a negative number is a loss of that size: a deeper loss is a rise.
 describe('computeFounderScorecard — signed lower-is-better values', () => {
+  test('a net_loss that turns from -50000 into a profit raises no red flag', () => {
+    const card = computeFounderScorecard({
+      entitySlug: 'companies/acme-example', windowSince: null, windowUntil: null, takes: [],
+      points: [
+        pt({ id: 1, metric: 'net_loss', value: -50000, date: '2026-01-01' }),
+        pt({ id: 2, metric: 'net_loss', value: 100000, date: '2026-02-01' }),
+      ],
+    });
+    expect(card.red_flags).toEqual([]);
+  });
+
   function card(metric: string, a: number, b: number) {
     return computeFounderScorecard({
       entitySlug: 'companies/acme-example', windowSince: null, windowUntil: null, takes: [],

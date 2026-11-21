@@ -199,6 +199,12 @@ describe('detectRegressions — lower-is-better metrics', () => {
     expect(detectRegressions(series('net_loss', 'USD', 100000, 50000))).toEqual([]);
   });
 
+  test('a signed loss that crosses zero into a profit is an improvement, not a rise', () => {
+    expect(detectRegressions(series('net_loss', 'USD', -50000, 100000))).toEqual([]);
+    expect(detectRegressions(series('net_loss', 'USD', -50000, 0))).toEqual([]);
+    expect(detectRegressions(series('burn', 'USD', -150, 50))).toEqual([]);
+  });
+
   test('a rise of exactly the threshold is flagged whatever the float rounding (0.05 -> 0.055 churn)', () => {
     // (0.055 - 0.05) / 0.05 is 0.09999999999999995 in floating point.
     expect(detectRegressions(series('churn', 'pct', 0.05, 0.055))).toHaveLength(1);
