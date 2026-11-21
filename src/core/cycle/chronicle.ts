@@ -37,6 +37,7 @@ import { CHRONICLE_TYPES, RESCUE_SLUG_PREFIXES } from '../chronicle/eligibility.
 import { claimChronicleRow, executeChronicleRow } from '../chronicle/execute.ts';
 import { retireOrphanedChronicleEvents } from '../chronicle/publish.ts';
 import { failExhaustedCampaignRows } from '../chronicle/campaign.ts';
+import { isCarriedRowSql, settleChronicleCarries } from '../chronicle/carry.ts';
 import { defaultJudge, type ChronicleDropReason, type ChronicleJudge } from '../chronicle/extract-events.ts';
 import {
   RETIRE_REASONS, chronicleDailyRemaining, decideChronicle, pruneChronicleReservations, upsertChronicleRow,
@@ -148,10 +149,14 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
   if (!dryRun) {
     await pruneChronicleReservations(engine);
     await failExhaustedCampaignRows(engine);
+    // pages-03: a row the upgrade re-read left at its old hash moves to the new one once its lease or retry delay ended;
+    // one still held there (its judge follows it) is not superseded.
+    await settleChronicleCarries(engine);
     await engine.executeRaw(
       `UPDATE chronicle_page_state c SET state='skipped', reason='superseded', next_attempt_at=NULL, updated_at=now()
         WHERE c.state IN ('pending','failed') AND NOT EXISTS (SELECT 1 FROM pages p
-          WHERE p.id=c.page_id AND p.content_hash=c.content_hash AND p.deleted_at IS NULL)`);
+          WHERE p.id=c.page_id AND p.content_hash=c.content_hash AND p.deleted_at IS NULL)
+          AND NOT ${isCarriedRowSql('c')}`);
   }
   const { withoutGuestSources } = await import('../guests/derived.ts');
   const sources = await withoutGuestSources(engine, 'chronicle',

@@ -10,7 +10,7 @@ import { managedForbiddenFlag, managedSyncFlagRefusal } from './managed-sync-fla
 import type { Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import { buildDetachedWorkingTreeManifest, computeSyncDelta } from '../sync-delta.ts';
-import { confirmedSyncDelta, confirmRenameIdentities, explicitIdVeto, frontmatterIdentity, identityHeadDigest } from '../sync-rename-identity.ts';
+import { confirmedSyncDelta, confirmRenameIdentities, explicitIdVeto, fileIdAgainstStored, frontmatterIdentity, identityHeadDigest } from '../sync-rename-identity.ts';
 import { isSyncable, isSyncMetafile, isCodeFilePath, isImageFilePath, matchesAnyGlob, readMetafilePagesMode, resolveSlugForPath, slugifyPath, type DowngradedRename, type SyncManifest } from '../sync.ts';
 import { diskMetafileHeads, firstMetafileHead, gitMetafileHeads, listMetafileNamedBlobs, metafilePagePredicate, type GitMetafileHeads } from '../sync-metafile-pages.ts';
 import { databaseOnlyPageSql } from './unbound-pages.ts';
@@ -745,7 +745,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     // #5988: a held rename destination (or a held one renamed again) still owes its page the move; the deletion of a held path stays to clear its hold.
     const held = holdByPath.get(winner.path)?.meta.rename_from ?? (deletion ? holdByPath.get(deletion.path)?.meta.rename_from : undefined);
     const origin = held ? identities.find(page => page.id === held.pageId) : undefined;
-    if (held && origin && !deleted.has(origin.id) && origin.source_path != null && sameSyncOrigin(origin.source_path, held.sourcePath, originScope, origin.slug) && !explicitIdVeto(incomingId(discovered, winner), origin.fm_id)) {
+    if (held && origin && !deleted.has(origin.id) && origin.source_path != null && sameSyncOrigin(origin.source_path, held.sourcePath, originScope, origin.slug) && !explicitIdVeto(incomingId(discovered, winner, origin.fm_id), origin.fm_id)) {
       if (origin.knowledge_revision === held.revision) winner.renameFrom = held;
       else winner.renameHeld = held;
     }
@@ -792,7 +792,7 @@ export async function adoptLegacyPage(engine: BrainEngine, discovery: SyncDiscov
   const legacy = (await folded).get(slug) ?? [];
   const writable = () => { try { return validateSlug(legacy[0]!) === legacy[0]; } catch { return false; } };
   const legacyId = legacy.length === 1 ? identities.find(page => page.slug === legacy[0] && page.deleted_at == null)?.fm_id ?? null : null;
-  const vetoed = legacyId !== null && explicitIdVeto(incomingId(discovery, entry), legacyId);
+  const vetoed = legacyId !== null && explicitIdVeto(incomingId(discovery, entry, legacyId), legacyId);
   if (legacy.length === 1 && writable() && !vetoed) return legacy[0]!;
   if (vetoed) entry.legacyIdVeto = true;
   if (legacy.length) entry.legacySlugs = [...legacy].sort();
@@ -810,7 +810,7 @@ function identityDowngradesOf(manifests: Array<SyncManifest | null>, eligible: (
  * happen to map to one slug. The sync is refused before any write, naming both.
  */
 export function assertTakeoverIdentity(discovery: SyncDiscovery, winner: SyncEntry, holder: { slug: string; fm_id: string | null }): void {
-  const incoming = holder.fm_id ? incomingId(discovery, winner) : null;
+  const incoming = holder.fm_id ? incomingId(discovery, winner, holder.fm_id) : null;
   if (!explicitIdVeto(incoming, holder.fm_id)) return;
   throw opError('page_identity_changed', 'A file would take over a page whose frontmatter id differs from its own.',
     `${winner.sourcePath} in ${discovery.sourceId} maps to page ${holder.slug}, whose file is gone, but its frontmatter id '${incoming}' differs from the page's id '${holder.fm_id}', so it is a different document and must not inherit that page's facts, links and history; nothing was written. `
@@ -821,9 +821,13 @@ export function assertTakeoverIdentity(discovery: SyncDiscovery, winner: SyncEnt
 function readableId(discovery: SyncDiscovery, entry: SyncEntry): string | null | undefined {
   try { return frontmatterIdentity(readSyncContent(discovery, entry)).id; } catch { return undefined; }
 }
-/** #6729: the frontmatter id of the file an entry imports (null when it has none or cannot be read). */
-export function incomingId(discovery: SyncDiscovery, entry: SyncEntry): string | null {
-  try { return frontmatterIdentity(readSyncContent(discovery, entry)).id; } catch { return null; }
+/**
+ * #6729: the frontmatter id of the file an entry imports (null when it has none or cannot be read), read against
+ * `storedId`, the id of the page it is compared with: an id an older gbrain stored under the old typing (`id: 007` as 7)
+ * reads as that stored id (pages-03, `fileIdAgainstStored`).
+ */
+export function incomingId(discovery: SyncDiscovery, entry: SyncEntry, storedId: string | null): string | null {
+  try { return fileIdAgainstStored(readSyncContent(discovery, entry), storedId); } catch { return null; }
 }
 /**
  * #6948: the conflict record of an entry several live pages claim: the claimants (with the verdict inputs, read only on

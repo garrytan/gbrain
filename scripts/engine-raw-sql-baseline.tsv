@@ -346,6 +346,7 @@ src/core/calibration/think-ab.ts	execute_raw	2
 src/core/calibration/undo-wave.ts	execute_raw	9
 src/core/chronicle/backfill.ts	execute_raw	1
 src/core/chronicle/campaign.ts	execute_raw	3
+src/core/chronicle/carry.ts	execute_raw	6	pages-03: a chronicle_page_state row the one-time re-read leaves at a page's old content_hash (a judge holds its lease or it waits out a retry delay) is recorded in op_checkpoints inside the import's page write and moved to the new hash when its judge publishes or its wait ends; no typed engine method for the ledger exists yet, and the Rust engine does not run the re-read (raw_sql capability check)
 src/core/chronicle/event-identity.ts	execute_raw	1
 src/core/chronicle/execute.ts	execute_raw	9
 src/core/chronicle/ledger-stats.ts	execute_raw	5

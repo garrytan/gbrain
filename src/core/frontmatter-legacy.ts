@@ -14,6 +14,7 @@
 import { dataFrontmatter, LEGACY_TYPED_SCHEMA } from './data-frontmatter.ts';
 import { coerceFrontmatterString, comparableFrontmatter, parseMarkdownHead } from './markdown.ts';
 import type { BrainEngine } from './engine.ts';
+import { recordChronicleCarry } from './chronicle/carry.ts';
 
 /** parseMarkdown keeps the text it read here, so alignWithStored can read the same file the old way. */
 export const PARSED_FILE_TEXT = Symbol.for('gbrain.parsed-file-text');
@@ -71,7 +72,13 @@ export function alignLegacyTyped(parsed: { frontmatter: Record<string, unknown>;
   const text = (parsed as { [PARSED_FILE_TEXT]?: string })[PARSED_FILE_TEXT];
   if (typeof text !== 'string') return;
   if (stored) for (const key of legacyWrittenValues(parsed.frontmatter, text, stored).keys()) parsed.frontmatter[key] = stored[key];
-  if (typeof storedTitle === 'string' && typeof parsed.title === 'string' && parsed.title !== storedTitle && legacyTypedTitle(text) === storedTitle) parsed.title = storedTitle;
+  const title = legacyStoredTitle(parsed.title, text, storedTitle);
+  if (title !== null) parsed.title = title;
+}
+
+/** The stored title when the file's frontmatter `title:` differs from it only by the old typing (`title: 1.10` stored as '1.1'); else null. */
+export function legacyStoredTitle(title: string | undefined, fileText: string, storedTitle: string | null | undefined): string | null {
+  return typeof storedTitle === 'string' && typeof title === 'string' && title !== storedTitle && legacyTypedTitle(fileText) === storedTitle ? storedTitle : null;
 }
 
 /** The title the old typing gave a typed frontmatter `title:` (a number, a date's UTC day); null for a text title or none. */
@@ -130,12 +137,18 @@ export function legacyStoredFrontmatter(current: Record<string, unknown>, fileTe
 /**
  * The stored hash to carry the paid page phases' records from, or null: a page stored under the old frontmatter typing
  * whose one-time re-read changes its hash and nothing it means (`hashWith` of the file's old typing is the stored hash).
+ * The hash covers the title lifted out of the frontmatter too, so a `title:` the old typing changed is read as stored
+ * (alone or with other values); a title the file changed reads differently under the old typing and is never carried.
+ * `hashWith` returns null when it cannot hash that reading (the streamed body differs from the live one).
  */
-export function legacyHashToCarry(existing: { content_hash?: string | null; deleted_at?: unknown; frontmatter?: unknown } | null | undefined,
-  frontmatter: Record<string, unknown>, fileText: string, hash: string, hashWith: (frontmatter: Record<string, unknown>) => string): string | null {
+export function legacyHashToCarry(existing: { content_hash?: string | null; deleted_at?: unknown; frontmatter?: unknown; title?: string | null } | null | undefined,
+  parsed: { frontmatter: Record<string, unknown>; title: string }, fileText: string, hash: string,
+  hashWith: (frontmatter: Record<string, unknown>, title: string) => string | null): string | null {
   if (!existing?.content_hash || existing.content_hash === hash || existing.deleted_at) return null;
-  const storedMeaning = legacyStoredFrontmatter(frontmatter, fileText, comparableFrontmatter(existing.frontmatter as Record<string, unknown> | null | undefined));
-  return storedMeaning && hashWith(storedMeaning) === existing.content_hash ? existing.content_hash : null;
+  const storedMeaning = legacyStoredFrontmatter(parsed.frontmatter, fileText, comparableFrontmatter(existing.frontmatter as Record<string, unknown> | null | undefined));
+  const storedTitle = legacyStoredTitle(parsed.title, fileText, existing.title);
+  if (!storedMeaning && storedTitle === null) return null;
+  return hashWith(storedMeaning ?? parsed.frontmatter, storedTitle ?? parsed.title) === existing.content_hash ? existing.content_hash : null;
 }
 
 /**
@@ -145,7 +158,9 @@ export function legacyHashToCarry(existing: { content_hash?: string | null; dele
  * hash. The scan state and the managed atom checkpoints (a partial or held page's disposition lives only there) are
  * copied; the chronicle ledger row moves (it holds recorded spend and failed attempts, which campaign and ledger totals
  * sum), except while a judge holds its lease or it waits out a retry delay: that judge's outcome and spend are keyed to
- * the old hash, so the row stays there. None replaces a record the new hash already has. Runs inside the page write.
+ * the old hash, so the row stays there, recorded as carried (chronicle/carry.ts): the new hash's row is not judged while
+ * it waits, and the row moves to the new hash when its judge finds the page moved or its wait ends, so the page is paid
+ * for once. None replaces a record the new hash already has. Runs inside the page write.
  */
 export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string, pageId: number, fromHash: string, toHash: string): Promise<void> {
   await tx.executeRaw(
@@ -157,15 +172,24 @@ export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string,
         AND atom.deleted_at IS NULL))
      ON CONFLICT DO NOTHING`,
     [pageId, fromHash, toHash, sourceId]);
-  // Keyed by content (managedAtomIdentitySql); a copy under its own fingerprint, so a run keyed to the old hash keeps its row.
-  await tx.executeRaw(
-    `INSERT INTO op_checkpoints (op, fingerprint, completed_keys)
-     SELECT ac.op, ac.fingerprint || ':carried:' || $3, jsonb_set(ac.completed_keys, '{0,contentHash}', to_jsonb($3::text))
-       FROM op_checkpoints ac
-      WHERE ac.op='managed-atoms' AND ac.completed_keys->0->>'sourceId'=$4 AND ac.completed_keys->0->>'kind'='page'
-        AND ac.completed_keys->0->>'pageId'=$1::text AND ac.completed_keys->0->>'contentHash'=$2
-     ON CONFLICT DO NOTHING`,
-    [String(pageId), fromHash, toHash, sourceId]);
+  // Keyed by content (managedAtomIdentitySql). A drain key's row (a failure's attempt count, a hold, a cut) is copied to
+  // the drain key of the new hash, which the drain and the held page's retry read; any other row is copied under its own
+  // fingerprint. Either way a run keyed to the old hash keeps its row.
+  const { carriedAtomDrainKey } = await import('./persistence/atom-maintenance.ts');
+  const checkpoints = await tx.executeRaw<{ fingerprint: string }>(
+    `SELECT ac.fingerprint FROM op_checkpoints ac
+      WHERE ac.op='managed-atoms' AND ac.completed_keys->0->>'sourceId'=$3 AND ac.completed_keys->0->>'kind'='page'
+        AND ac.completed_keys->0->>'pageId'=$1 AND ac.completed_keys->0->>'contentHash'=$2
+      ORDER BY ac.fingerprint`,
+    [String(pageId), fromHash, sourceId]);
+  for (const { fingerprint } of checkpoints) {
+    const carried = await carriedAtomDrainKey(tx, pageId, fingerprint, fromHash, toHash) ?? `${fingerprint}:carried:${toHash}`;
+    await tx.executeRaw(
+      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys)
+       SELECT ac.op, $2, jsonb_set(ac.completed_keys, '{0,contentHash}', to_jsonb($3::text)) FROM op_checkpoints ac WHERE ac.op='managed-atoms' AND ac.fingerprint=$1
+       ON CONFLICT DO NOTHING`,
+      [fingerprint, carried, toHash]);
+  }
   // The chronicle ledger row moves: it carries recorded spend and failed attempts, which a copy would count twice.
   await tx.executeRaw(
     `UPDATE chronicle_page_state c SET content_hash=$3 WHERE c.source_id=$4 AND c.page_id=$1 AND c.content_hash=$2
@@ -173,4 +197,6 @@ export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string,
        AND NOT EXISTS (SELECT 1 FROM chronicle_page_state n WHERE n.source_id=c.source_id AND n.page_id=c.page_id
          AND n.content_hash=$3 AND n.extractor_version=c.extractor_version)`,
     [pageId, fromHash, toHash, sourceId]);
+  // A row that stays (leased or waiting) is recorded as carried: the new hash's row waits for it, and it follows later.
+  await recordChronicleCarry(tx, sourceId, pageId, fromHash, toHash);
 }

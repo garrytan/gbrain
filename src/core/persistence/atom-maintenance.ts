@@ -188,10 +188,12 @@ export async function managedAtomSession(engine: BrainEngine, sourceId: string, 
     if (!rows.some(row => row.state !== 'committed' || row.outcome?.failure)) throw opError('invalid_params', 'This atom batch already completed successfully.',
       `Every request in atom batch ${retry.requestId} for source ${sourceId} committed without a failure, so there is nothing to retry. Its receipt shows the outcome; new content is extracted by the regular atom drain.`,
       { fix: receiptFix(retry.requestId) });
-    const checkpointKey = p.checkpointKey ?? p.runKey;
+    // pages-03: a held page the one-time re-read moved to a new content hash is retried at that hash (carriedRetryCheckpoint).
+    const carried = await carriedRetryCheckpoint(engine, session, prior.request_id, p);
+    const checkpointKey = carried?.checkpointKey ?? p.checkpointKey ?? p.runKey;
     const [checkpoint] = await engine.executeRaw<{ completed_keys: unknown }>("SELECT completed_keys FROM op_checkpoints WHERE op='managed-atoms' AND fingerprint=$1", [checkpointKey]);
     session.retry = { runKey: digest([checkpointKey, prior.id, retry.retryId]), checkpointKey,
-      expectedCheckpoint: checkpoint?.completed_keys ?? null, rows, origin: p.origin };
+      expectedCheckpoint: checkpoint?.completed_keys ?? null, rows, origin: carried?.origin ?? p.origin };
   }
   return session;
 }
@@ -290,6 +292,58 @@ function drainKey(session: ManagedAtomSession, origin: AtomOrigin): string {
   // run extracts again instead of replaying the batch the claim refused (claiming keeps the incarnation).
   const key = atomInputKey(session, origin);
   return session.authority.databaseOnlyReason === 'connector_database' ? digest([key, 'connector_database']) : key;
+}
+
+/**
+ * pages-03: the fingerprint the drain reads for a page's `managed-atoms` checkpoint `fingerprint` once a one-time
+ * re-read moved the page from `fromHash` to `toHash` (its meaning unchanged): the same drain key (cut, connector run)
+ * over the new content hash, at the generation the drain reads for it. Null when `fingerprint` is not a drain key of
+ * `fromHash` (a run's own record, or one whose cut is unknown because its receipt was compacted).
+ */
+export async function carriedAtomDrainKey(engine: BrainEngine, pageId: number, fingerprint: string, fromHash: string, toHash: string): Promise<string | null> {
+  const [row] = await engine.executeRaw<{ incarnation: string; locator: string; page_id: number; request_id: string | null; partial: string | null; slug: string | null }>(
+    `SELECT ac.completed_keys->0->>'incarnation' AS incarnation, ac.completed_keys->0->>'locator' AS locator, ac.completed_keys->0->'pageId' AS page_id,
+        ac.completed_keys->0->>'requestId' AS request_id, ac.completed_keys->0->>'partial' AS partial, p.slug
+       FROM op_checkpoints ac LEFT JOIN pages p ON p.id=$2
+      WHERE ac.op='managed-atoms' AND ac.fingerprint=$1 AND ac.completed_keys->0->>'kind'='page'
+        AND ac.completed_keys->0->>'pageId'=$2::text AND ac.completed_keys->0->>'contentHash'=$3`, [fingerprint, pageId, fromHash]);
+  if (!row?.slug) return null;
+  const [intent] = row.request_id ? await engine.executeRaw<{ partial: string | null; generation: string | null }>(
+    `SELECT intent->'origin'->>'partialInputChars' AS partial, intent->'origin'->>'generation' AS generation
+       FROM persistence_requests WHERE request_id::text=$1 LIMIT 1`, [row.request_id]) : [];
+  const partials = [...new Set([undefined, Number(row.partial) || undefined, Number(intent?.partial) || undefined])];
+  const generations = [...new Set([0, await atomGeneration(engine, pageId, fromHash), Number(intent?.generation) || 0])];
+  const origin = (locator: string, contentHash: string, partialInputChars: number | undefined, generation: number): AtomOrigin => ({ kind: 'page', locator,
+    contentHash, textHash: '', pageId: row.page_id, revision: null, visibility: 'private', ...(partialInputChars ? { partialInputChars } : {}), ...(generation ? { generation } : {}) });
+  for (const connector of [false, true]) {
+    const session = { incarnation: row.incarnation, authority: { databaseOnlyReason: connector ? 'connector_database' : undefined } } as unknown as ManagedAtomSession;
+    for (const partial of partials) for (const generation of generations) {
+      if (drainKey(session, origin(row.locator, fromHash, partial, generation)) !== fingerprint) continue;
+      return drainKey(session, origin(row.slug, toHash, partial, await atomGeneration(engine, pageId, toHash)));
+    }
+  }
+  return null;
+}
+
+/**
+ * pages-03: an explicit retry of a held page's batch after a one-time re-read moved the page to a new content hash:
+ * the checkpoint the re-read carried names the held request at the drain key of the new hash, so the retry runs
+ * against the page's current content (the same text and meaning) and advances that checkpoint. Null otherwise.
+ */
+async function carriedRetryCheckpoint(engine: BrainEngine, session: ManagedAtomSession, requestId: string, p: AtomIntent): Promise<{ origin: AtomOrigin; checkpointKey: string } | null> {
+  if (p.origin.kind !== 'page' || p.origin.pageId === null) return null;
+  const [page] = await engine.executeRaw<{ content_hash: string | null }>('SELECT content_hash FROM pages WHERE id=$1 AND source_id=$2 AND deleted_at IS NULL',
+    [p.origin.pageId, session.sourceId]);
+  if (!page?.content_hash || page.content_hash === p.origin.contentHash) return null;
+  const checkpointKey = await carriedAtomDrainKey(engine, Number(p.origin.pageId), p.checkpointKey ?? p.runKey, p.origin.contentHash, page.content_hash);
+  if (!checkpointKey) return null;
+  const [carried] = await engine.executeRaw<{ fingerprint: string }>(`SELECT ac.fingerprint FROM op_checkpoints ac
+    WHERE ac.fingerprint=$4 AND ${managedAtomIdentitySql({ sourceId: '$1', pageId: '$2', contentHash: '$3' })} AND ac.completed_keys->0->>'requestId'=$5`,
+  [session.sourceId, p.origin.pageId, page.content_hash, checkpointKey, requestId]);
+  if (!carried) return null;
+  const generation = await atomGeneration(engine, Number(p.origin.pageId), page.content_hash);
+  const { generation: _old, ...rest } = p.origin;
+  return { origin: { ...rest, contentHash: page.content_hash, ...(generation ? { generation } : {}) }, checkpointKey };
 }
 
 function atomRequestId(key: string, slug: string): string {

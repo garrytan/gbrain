@@ -101,8 +101,12 @@ export interface PreparedSegmentedBody {
   rows: { texts: number; manifest: number; chunks: number };
   /** `chunk_index` of every chunk row this preparation staged; the flip drops any other row staged under `newGeneration` (a dead preparation's). */
   stagedChunkIndexes: number[];
-  /** The body's content_hash with this frontmatter in place of the staged one (a full import's staging only). */
-  hashWith?: (frontmatter: Record<string, unknown>) => string;
+  /**
+   * The body's content_hash with this frontmatter (and title) in place of the staged ones (a full import's staging only).
+   * Another title changes the hash's prefix, so it is hashed only over a body identical to the live page's under the
+   * live title and type (from the live rows' state); otherwise null.
+   */
+  hashWith?: (frontmatter: Record<string, unknown>, title?: string) => string | null;
 }
 
 /**
@@ -304,7 +308,14 @@ async function stageBody(engine: BrainEngine, input: SegmentedBodyInput, staging
   await faultPoint('segmented:texts_staged', { sourceId: input.sourceId });
   const finalHasher = hasher ?? resume(prefixIntact ? rows.length : 0);
   const contentHash = finalHasher.finish({ frontmatter: input.frontmatter, tags: [...input.tags] });
-  const hashWith = (frontmatter: Record<string, unknown>) => finalHasher.finish({ frontmatter: frontmatter as JsonObject, tags: [...input.tags] });
+  const bodyAsLive = !!live && rows.length === liveRows.length && rows.every((row, i) => liveRows[i]!.region === row.region
+    && Number(liveRows[i]!.byteStart) === row.byteStart && liveRows[i]!.byteLen === row.byteLen && sameBytes(liveRows[i]!.sha256, row.sha256));
+  const hashWith = (frontmatter: Record<string, unknown>, title = input.title) => {
+    const meta = { frontmatter: frontmatter as JsonObject, tags: [...input.tags] };
+    if (title === input.title) return finalHasher.finish(meta);
+    if (!bodyAsLive || title !== live!.title || live!.type !== input.type) return null;
+    return (liveRows.length ? ContentHashStream.fromState(liveRows[liveRows.length - 1]!.hashState) : ContentHashStream.begin({ title, type: input.type })).finish(meta);
+  };
 
   const fresh = rows.filter((_, i) => !matched[i]);
   const ids = fresh.length ? await engine.allocateBodyOccurrenceIds(fresh.length) : [];

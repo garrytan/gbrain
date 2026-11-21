@@ -487,7 +487,7 @@ export async function importFromContent(
       tags: parsed.tags,
     });
 
-    const carryHashFrom = legacyHashToCarry(existing, parsed.frontmatter, content, hash, frontmatter => contentHash({ ...parsed, frontmatter })); // pages-03
+    const carryHashFrom = legacyHashToCarry(existing, parsed, content, hash, (frontmatter, title) => contentHash({ ...parsed, frontmatter, title })); // pages-03
     const parsedPage: ParsedPage = {
       type: parsed.type,
       title: parsed.title,

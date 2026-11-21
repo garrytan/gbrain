@@ -44,6 +44,7 @@ import { CAMPAIGN_PRICING_POLICY, rowMaxAttempts } from './campaign.ts';
 import { CHRONICLE_RETIRED_BY, pinDepth, publishChronicleGeneration, type ChronicleDepthPin } from './publish.ts';
 import { describeMalformedProposals, diagnoseMalformedProposals, type MalformedProposalDiagnostics } from './proposal-diagnostics.ts';
 import { sha256 } from '../persistence/digest.ts';
+import { awaitsCarriedRowSql, followChronicleCarry } from './carry.ts';
 
 export interface ChronicleExecContext {
   engine: BrainEngine;
@@ -81,15 +82,17 @@ function key(row: ChronicleLedgerRow) {
  * Lease one claimable row so a second executor (another host's cycle, a job) skips it. A
  * `--max-usd` campaign row (#6199) consumes its attempt here, atomically with the lease, and is
  * not claimable once its stamped attempts are used, so a crash between claim and outcome never
- * yields an extra paid attempt.
+ * yields an extra paid attempt. A row whose page's earlier hash is still held by a judge across the upgrade re-read
+ * (carry.ts) is not claimable until that row follows or its wait ends, so the same meaning is never judged twice.
  */
 export async function claimChronicleRow(engine: BrainEngine, row: ChronicleLedgerRow): Promise<ChronicleLedgerRow | null> {
   const [claimed] = await engine.executeRaw<ChronicleLedgerRow>(
-    `UPDATE chronicle_page_state SET next_attempt_at = now() + ($5::int * interval '1 millisecond'),
-       attempts = attempts + CASE WHEN campaign_id IS NOT NULL AND state IN ('pending','failed') THEN 1 ELSE 0 END
-      WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND state=$6
-        AND (next_attempt_at IS NULL OR next_attempt_at <= now())
-        AND NOT (campaign_id IS NOT NULL AND state IN ('pending','failed') AND attempts >= COALESCE(max_attempts, $7))
+    `UPDATE chronicle_page_state c SET next_attempt_at = now() + ($5::int * interval '1 millisecond'),
+       attempts = c.attempts + CASE WHEN c.campaign_id IS NOT NULL AND c.state IN ('pending','failed') THEN 1 ELSE 0 END
+      WHERE c.source_id=$1 AND c.page_id=$2 AND c.content_hash=$3 AND c.extractor_version=$4 AND c.state=$6
+        AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= now())
+        AND NOT (c.campaign_id IS NOT NULL AND c.state IN ('pending','failed') AND c.attempts >= COALESCE(c.max_attempts, $7))
+        AND NOT ${awaitsCarriedRowSql('c')}
       RETURNING *`, [...key(row), LEASE_MS, row.state, CHRONICLE_DEFAULTS.maxAttempts]);
   return claimed ?? null;
 }
@@ -243,10 +246,15 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
     return done('skipped', 'page_missing');
   }
   if (String(snapshot.page.content_hash ?? '') !== row.content_hash) {
-    await finish(engine, row, row.attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, keepJudged: true });
-    return done('skipped', 'superseded');
+    // pages-03: the upgrade re-read moved the page to a hash with the same meaning while this row was leased.
+    const carried = await followChronicleCarry(engine, row, row.attempts);
+    if (!carried) {
+      await finish(engine, row, row.attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, keepJudged: true });
+      return done('skipped', 'superseded');
+    }
+    row = { ...row, content_hash: carried };
   }
-  const pin = await pinDepth(engine, snapshot);
+  let pin = await pinDepth(engine, snapshot);
 
   // An ineligible revision of a page that once produced events retires them (E8). No model call.
   if (row.state === 'skipped') {
@@ -343,23 +351,43 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   }
 
   const proposals = result?.events ?? [];
-  const built = buildChronicleEvents(proposals, judgeCtx,
-    { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash }, { tz: ctx.tz, now, maxEvents: settings.maxEventsPerPage });
-  const { events, dropped } = built;
-  // #8972: a truncated generation that re-read the text of every live event is complete for what the page has produced.
-  const truncated = bodyTruncated && !(replacesPreviousGeneration(built, false) && await windowCoversLiveEvents(engine, row, pin.slug, judgedInput.window));
-  let generation;
-  try {
-    generation = await publishChronicleGeneration(engine, {
-      sourceId: row.source_id, pin, decisionRequestId: row.request_id, maintenance: ctx.maintenance, signal: ctx.signal,
-      events: invite ? markInviteEvents(events) : events, replaces: replacesPreviousGeneration(built, truncated),
+  const build = (depth: ChronicleDepthPin) => buildChronicleEvents(proposals, judgeCtx,
+    { slug: depth.slug, visibility: depth.visibility, contentHash: depth.contentHash }, { tz: ctx.tz, now, maxEvents: settings.maxEventsPerPage });
+  const publish = async (depth: ChronicleDepthPin) => {
+    // #8972: a truncated generation that re-read the text of every live event is complete for what the page has produced.
+    const truncated = bodyTruncated && !(replacesPreviousGeneration(built, false) && await windowCoversLiveEvents(engine, row, depth.slug, judgedInput.window));
+    return publishChronicleGeneration(engine, {
+      sourceId: row.source_id, pin: depth, decisionRequestId: row.request_id, maintenance: ctx.maintenance, signal: ctx.signal,
+      events: invite ? markInviteEvents(built.events) : built.events, replaces: replacesPreviousGeneration(built, truncated),
     });
+  };
+  let built = build(pin);
+  let generation: Awaited<ReturnType<typeof publishChronicleGeneration>>;
+  try {
+    generation = await publish(pin);
+    // pages-03: the upgrade re-read moved the page to a hash with the same meaning while the judge ran. What this
+    // attempt paid for is published against the new revision when the row follows and the page's privacy and
+    // incarnation (part of the judged input) did not change.
+    if (generation.superseded) {
+      const live = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
+      const livePin = live && Number(live.page.id) === Number(row.page_id) && String(live.page.content_hash ?? '') !== row.content_hash
+        ? await pinDepth(engine, live) : null;
+      const carried = livePin && livePin.visibility === pin.visibility && livePin.incarnation === pin.incarnation
+        ? await followChronicleCarry(engine, row, attempts) : null;
+      if (carried && livePin) {
+        row = { ...row, content_hash: carried };
+        pin = livePin;
+        built = build(pin);
+        generation = await publish(pin);
+      }
+    }
   } catch (error) {
     if ((error as Error)?.name === 'AbortError') throw error;
     console.warn(`[chronicle] ${row.slug}: publishing events failed (${error instanceof Error ? error.message : String(error)}); the row retries with backoff. Run now: gbrain dream --phase chronicle`);
     await finish(engine, row, attempts, { state: 'failed', reason: 'publish_error', nextAttemptAt: backoff(attempts, now, maxAttempts), ...spend });
-    return done('failed', 'publish_error', { ...judged, dropped });
+    return done('failed', 'publish_error', { ...judged, dropped: built.dropped });
   }
+  const { events, dropped } = built;
   if (generation.superseded) {
     await finish(engine, row, attempts, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, events: generation.written, judged: invite ? undefined : judgedInput, ...spend });
     return done('skipped', 'superseded', { ...judged, written: generation.written.length, dropped });

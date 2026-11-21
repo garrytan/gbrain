@@ -283,7 +283,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
     if (holder) {
       // #6729: a file whose frontmatter id differs from the page's is another document; it inherits nothing. GBRA-130 B-4: it is
       // held alone and the page keeps its slug (its origin's deletion waits with it); discovery still refuses the source.
-      const incoming = holder.fm_id ? incomingId(discovery, named(winner)) : null;
+      const incoming = holder.fm_id ? incomingId(discovery, named(winner), holder.fm_id) : null;
       if (explicitIdVeto(incoming, holder.fm_id)) {
         identity.push({ entry: winner, origin: deletes.find(entry => entry.path === holderPath) ?? null, slug, ids: { page: holder.fm_id!, file: incoming! } });
         if (holderPath !== null) deleteEntries.delete(holderPath);
@@ -306,7 +306,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
     const origin = held ? (await engine.executeRaw<{ source_path: string | null; revision: string; deleted: boolean; fm_id: string | null }>(
       "SELECT source_path, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, frontmatter->>'id' AS fm_id FROM pages WHERE source_id=$1 AND id=$2", [level.sourceId, held.pageId]))[0] : undefined;
     if (held && origin && !origin.deleted && origin.source_path !== null && syncOriginPath(origin.source_path) === syncOriginPath(held.sourcePath)
-      && !explicitIdVeto(incomingId(discovery, named(winner)), origin.fm_id)) {
+      && !explicitIdVeto(incomingId(discovery, named(winner), origin.fm_id), origin.fm_id)) {
       entries.push({ ...base, pageId: null, revision: null, ...(origin.revision === held.revision ? { renameFrom: held } : { renameHeld: held }) });
       continue;
     }
