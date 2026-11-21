@@ -473,6 +473,7 @@ test/n3-sql-move-parity.test.ts
 test/n4-sql-move-parity.test.ts
 test/n5-sql-move-parity.test.ts
 test/n6-sql-move-parity.test.ts
+test/n7-sql-move-parity.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
