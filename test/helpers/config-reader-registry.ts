@@ -167,8 +167,10 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   // loaders, whose getConfig reads (direct or in the helpers they call) carry the keys and are scanned there.
   { file: 'src/core/rust-engine/store-members/stats.ts', expr: 'brain', why: P },
   { file: 'src/core/rust-engine/store-members/stats.ts', expr: 'brain', why: P },
-  // readMayActFor's key is the stdio may_act_for config key its caller (access/caller.ts) names.
-  { file: 'src/core/rust-engine/store-members/write-misc.ts', expr: 'key', why: P },
+  // readLiveMember's and readMayActFor's key is the stdio member or may_act_for config key their caller
+  // (access/caller.ts) names.
+  { file: 'src/core/rust-engine/store-members/access-members.ts', expr: 'key', why: P },
+  { file: 'src/core/rust-engine/store-members/access-members.ts', expr: 'key', why: P },
   { file: 'src/core/search/evidence-delivery.ts', expr: 'key', why: P },
   { file: 'src/core/search/evidence-delivery.ts', expr: 'input.configKey ?? RETURN_UNIT_CONFIG_KEY', why: 'per-op return-unit key option (search. prefix), else the registered default' },
   { file: 'src/core/search/mode.ts', expr: 'k', why: P },

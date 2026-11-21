@@ -413,6 +413,21 @@ for (const kind of testBackends()) {
       }) as typeof engine.executeRaw;
       return { restore: () => { engine.executeRaw = original; }, result: () => race };
     };
+    // The same race, held just before the typed binding write (writeCredentialBinding runs the UPDATE of the
+    // credential's binding columns that members.ts bindCredential ran through executeRaw before).
+    const raceBeforeBinding = (kind: 'token' | 'client', racer: () => Promise<unknown>) => {
+      const original = engine.writeCredentialBinding;
+      let race: Promise<Error | null> | null = null;
+      engine.writeCredentialBinding = (async function (this: BrainEngine, ...args: Parameters<typeof engine.writeCredentialBinding>) {
+        if (!race && args[0].kind === kind) {
+          let settled = false;
+          race = refusal(racer()).finally(() => { settled = true; });
+          for (let i = 0; i < 30 && !settled; i++) await new Promise(r => setTimeout(r, 50));
+        }
+        return original.apply(this, args);
+      }) as typeof engine.writeCredentialBinding;
+      return { restore: () => { engine.writeCredentialBinding = original; }, result: () => race };
+    };
 
     test('a stored scope write is refused once its OAuth client or legacy token is rescoped to no sources', async () => {
       const NONE_SCOPE = 'qm-scope-none';
@@ -460,7 +475,7 @@ for (const kind of testBackends()) {
     test('a read grant widened while --attest-sources drops that source never leaves the credential reading an unlisted scope', async () => {
       const [D1, D2] = ['qm-scope-drop-1', 'qm-scope-drop-2'];
       const c = await scopeClient('droprace', [D1, D2], [HOME, D1]);
-      const race = raceWhile(sql => sql.includes('UPDATE oauth_clients SET member_id'),
+      const race = raceBeforeBinding('client',
         () => rescopeClientGrant(engine, c.id, { federatedRead: [HOME, D1, D2] }, { actor: 'test' }));
       let dropped: Error | null;
       try {
