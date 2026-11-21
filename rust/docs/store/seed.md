@@ -24,7 +24,27 @@ The first call of a seed writes the manifest. It is refused (`invalid_state`) un
 records a new store holds (`Mformat`, `Cversion`, `Sdefault`). A later call is refused (`invalid_state`) unless it
 carries the same seed id. So a second seed never lands on top of a first, and a retried batch of the same seed skips
 the rows it already stored. A refused batch stores nothing, the manifest included. To seed again, the caller opens a
-new store directory (`--reseed`).
+new store directory: `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed` (the command refuses
+`--reseed` and a second seed with that step).
+
+## The command and `seed.json`
+
+`gbrain engine shadow seed [--json]` (`src/commands/engine-shadow.ts`, reads in `src/shadow/seed.ts`) refuses while
+shadow mode is on or the store is locked (the shadow child holds it): stop shadow mode first. It opens the primary
+without the shadow wrapper and reads every relation of `seedPlan()` in key order, in batches of 500 rows, inside one
+read-only transaction (`REPEATABLE READ` on Postgres), so a write during the seed is neither copied nor counted. The
+`pages` read joins each page's `page_projection_jobs` row (on the source incarnation and slug) as the
+`projection_job_*` columns; generated and `tsvector` columns are not read (the store derives its own). The seed stops
+with a refusal after 30 minutes (`SeedBudgetError`); the store it began is then used only through a new directory.
+
+After the copy, in the same snapshot, it counts the unseeded gap rows (`countSeedGaps`, below), the rows of each
+`not_copied` table, the unfinished `minion_jobs` (status other than `completed`, `failed`, `dead`, `cancelled`) and
+the segmented pages, and writes `<shadow dir>/seed.json` (0600): `seed_id`, `started_at`, `finished_at`,
+`primary_engine`, per relation `{ rows_read, imported, skipped, dropped, unmapped_columns }`, `losses { values,
+not_copied, gaps }`, `unseeded_gap_rows` and its total, `non_terminal_jobs` and `segmented_pages`. `status --json`
+shows `seed { seed_id, finished_at, unseeded_gap_rows_total }` (nulls before a seed), and the provisional report names
+the seed, its age, the segmented pages and each gap that holds rows. `seedSwapCheck` refuses a swap with no seed
+(`not_seeded`) or while any gap holds a row (`unseeded_gaps`).
 
 ## Rows
 
@@ -127,6 +147,17 @@ relation when that family reaches master, in the same PR as the store bridge tha
 | `retrieval_weights` | key tag only on `rust-engine/main` | ranking: every page weight reads 0.5, so the feedback boost is off |
 | `belief_*`, `core_edit_notices`, `derived_generation_activations`, `derived_generation_attempts`, `derived_generation_valve`, `drift_decisions`, `entity_identity_reviews`, `git_canonical_brain`, `ingest_applied_captures`, `link_edge_proposals`, `loop_suppressions`, `memory_proposals`, `page_derivation_spend`, `page_extraction_state`, `page_label_guards`, `page_write_guards`, `pinned_questions`, `question_evidence`, `secret_store`, `secret_store_occurrence`, `shared_skill_*`, `source_ingestion_receipts`, `take_domain_assignments`, `take_horizons`, `take_proposals`, `trust_allow_rules` | none on master or `rust-engine/main` | each is user data, security or spend state the primary reads |
 
+### Gap columns (`seed::GAP_COLUMNS`)
+
+A column of a copied relation that the store cannot keep yet is a gap too: a row that holds a value there blocks a
+swap, counted under the gap name. `seedPlan().gap_columns` lists `{ table, column, gap }`; a column the primary lacks
+(an older schema) counts nothing.
+
+| Column | Gap | What reads differently without it |
+| --- | --- | --- |
+| `pages.frontmatter_raw` | `pages.frontmatter_raw` | the page's stored raw frontmatter text is missing (the column arrives with the frontmatter change; the store keeps it once its Rust field lands) |
+| `page_versions.frontmatter_raw` | `page_versions.frontmatter_raw` | the same, for a page version |
+
 ### Swap readiness: the gaps a real-shaped brain fills (measured 2026-11-20)
 
 The gap count (`src/shadow/seed-gaps.ts`) ran on three PGLite brains built at commit `fb2c18687f`:
@@ -195,5 +226,5 @@ ids, chunk `created_at`). `losses` counts, by reason, the rows dropped and the v
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.seedPlan()` | `{ relations: [{ relation, key }], carried: [[table, relation]], not_copied: [{ table, kind, read, gap_rows }] }`: the relations in import order with their key columns, the tables carried in them, and the tables left behind on purpose | none |
+| `brain.seedPlan()` | `{ relations: [{ relation, key }], carried: [[table, relation]], not_copied: [{ table, kind, read, gap_rows }], gap_columns: [{ table, column, gap }] }`: the relations in import order with their key columns, the tables carried in them, the tables left behind on purpose, and the gap columns | none |
 | `brain.importRelation(seedId, relation, rows)` | `{ imported, skipped, dropped, unmapped_columns, losses }` for the batch. `imported` counts rows stored (for `sources` and `config`, also rows that replaced a different value), `skipped` rows already held, `dropped` rows the store cannot hold. `invalid_argument` for an unknown relation, an empty seed id or a NUL byte; `invalid_state` for a store another seed owns or a store that is not fresh | none (the seed reads the primary's tables) |

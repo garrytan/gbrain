@@ -5915,6 +5915,7 @@ ledger. Nothing is written to the brain database, the config table or the brain 
 **Say to your agent:** *"Turn on Rust engine shadow mode for my brain and show me the report."*
 
 ```bash
+gbrain engine shadow seed [--json]                 # copy the brain into the Rust store once (shadow mode off)
 gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing
 gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
 gbrain engine shadow status [--json]
@@ -5932,8 +5933,13 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   and `gbrain doctor` only use an addon that is already installed; without one they record `addon_unavailable`
   (`rust_engine_addon_missing`, reason `not_installed`).
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
-- **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, the Rust store is not
-  seeded from your brain yet, and writes and the readiness decision come in later phases of the plan
+- **Seed.** `seed` copies the brain into the Rust store once, from one read-only snapshot, and writes
+  `seed.json`: what it copied, the values the store could not keep, the unfinished jobs and segmented pages it left
+  behind, and the unseeded gap rows (tables the Rust store cannot serve yet; a swap is refused while any remain).
+  It refuses while shadow mode is on. To seed again, `stop --delete` and seed into the new directory.
+  Rust store layout: [rust/docs/store/seed.md](../rust/docs/store/seed.md).
+- **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, the seeded store does
+  not follow later writes yet, and writes and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
   `capability_missing`.
 
