@@ -390,12 +390,13 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   const proposals = result?.events ?? [];
   const build = (depth: ChronicleDepthPin) => buildChronicleEvents(proposals, judgeCtx,
     { slug: depth.slug, visibility: depth.visibility, contentHash: depth.contentHash }, { tz: ctx.tz, now, maxEvents: settings.maxEventsPerPage });
-  const publish = async (depth: ChronicleDepthPin) => {
+  const publish = async (depth: ChronicleDepthPin, owned?: Array<{ slug: string; hash: string }>) => {
     // #8972: a truncated generation that re-read the text of every live event is complete for what the page has produced.
     const truncated = bodyTruncated && !(replacesPreviousGeneration(built, false) && await windowCoversLiveEvents(engine, row, depth.slug, judgedInput.window));
     return publishChronicleGeneration(engine, {
       sourceId: row.source_id, pin: depth, decisionRequestId: row.request_id, maintenance: ctx.maintenance, signal: ctx.signal,
       events: invite ? markInviteEvents(built.events) : built.events, replaces: replacesPreviousGeneration(built, truncated),
+      ...(owned?.length ? { owned: owned.map(e => e.hash) } : {}),
     });
   };
   let built = build(pin);
@@ -412,10 +413,15 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
       const carried = livePin && livePin.visibility === pin.visibility && livePin.incarnation === pin.incarnation
         ? await followChronicleCarry(engine, row, attempts) : null;
       if (carried && livePin && carried === String(live!.page.content_hash ?? '')) {
+        // Events the superseded publication already wrote are this attempt's: the retry adopts them, and the ledger
+        // keeps any it no longer proposes (a rename moved their slugs), so later extraction still owns them.
+        const first = generation.written;
         row = { ...row, content_hash: carried };
         pin = livePin;
         built = build(pin);
-        generation = await publish(pin);
+        generation = await publish(pin, first);
+        const kept = new Set(generation.written.map(e => e.slug));
+        generation = { ...generation, written: [...generation.written, ...first.filter(e => !kept.has(e.slug))] };
       }
     }
   } catch (error) {

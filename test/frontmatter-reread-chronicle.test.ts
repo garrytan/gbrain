@@ -25,7 +25,10 @@
  *    - a judge whose lease ended just before the re-read moved its row at once keeps its spend and outcome on the moved
  *      row (it fails when the move leaves no forwarding record);
  *    - a judge whose row moved does not overwrite a newer decision on the moved row (it fails when the late outcome
- *      replaces a skip), and its spend still lands.
+ *      replaces a skip), and its spend still lands;
+ *    - events a publication wrote before the re-read superseded it are owned by the row after the judge follows it (it
+ *      fails when the retry treats them as operator edits and the ledger records none), also when the re-read renamed
+ *      the page so the retry proposes other slugs.
  * 4. Runs on PGLite and, with DATABASE_URL, on Postgres (the managed-brain fixture). The Rust engine serves no raw SQL,
  *    so the managed sync and the chronicle phase stop there with engine_capability_missing. The judge is the phase's
  *    injected judge, recording spend on the ambient BudgetTracker; the embedding provider is a stub. No network, no
@@ -301,6 +304,92 @@ describe(`pages-03: the upgrade re-read while a chronicle judge is calling the m
       expect(judge.calls).toBe(1);
       await expectJudgedOnceInCampaign(engine, id, liveHash);
       expect(await ledger(engine, id)).toHaveLength(1);
+    });
+  }, { setup, databaseUrl }), 240_000);
+
+  test('events a publication wrote before the re-read moved its page are owned by the row after the judge follows it', () => managedBrain(async ({ engine, root }) => {
+    await inGateway(async () => {
+      const { id, oldHash } = await campaignBrain(engine, '-1 second');
+      const judge = Object.assign((async () => {
+        recordOnTracker(getCurrentBudgetTracker(), { modelId: CHAT, ...CALL, label: 'chronicle', kind: 'chat' });
+        judge.calls++;
+        return { events: [{ when: '2024-03-01T12:00:00Z', who: [], what: 'The team agreed on the plan for acme-example', kind: 'decision' }] };
+      }) as ChronicleJudge, { calls: 0 });
+      // The re-read lands after the publication committed its event pages and before it activates them.
+      let liveHash: string | null = null;
+      const rereadBeforeActivation = new Proxy(engine, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target);
+          if (prop !== 'readPageSnapshot') return typeof value === 'function' ? value.bind(target) : value;
+          return async (slug: string, opts?: { includeDeleted?: boolean }) => {
+            if (liveHash === null && slug === SLUG && opts?.includeDeleted
+              && (await target.executeRaw(`SELECT 1 FROM pages WHERE type='event' AND deleted_at IS NULL`)).length) {
+              liveHash = await upgradeReread(target, root, oldHash);
+            }
+            return target.readPageSnapshot(slug, opts as never);
+          };
+        },
+      }) as BrainEngine;
+      await runPhaseChronicle(rereadBeforeActivation, { judge });
+      expect(liveHash).not.toBeNull();
+      await drainEffects(engine);
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(1);
+      const live = (await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE type='event' AND deleted_at IS NULL ORDER BY slug`)).map(r => r.slug);
+      expect(live.length).toBeGreaterThan(0);
+      const [row] = await engine.executeRaw<{ state: string; event_slugs: string[] | null }>(
+        `SELECT state, event_slugs FROM chronicle_page_state WHERE page_id=$1 AND content_hash=$2`, [id, liveHash]);
+      expect(row?.state).toBe('extracted');
+      expect([...(row?.event_slugs ?? [])].sort()).toEqual(live);
+    });
+  }, { setup, databaseUrl }), 240_000);
+
+  test('events a publication wrote before a re-read that also renamed its page stay owned by the row after the judge follows it', () => managedBrain(async ({ engine, root }) => {
+    await inGateway(async () => {
+      const MOVED = 'meetings/moved';
+      const { id, oldHash } = await campaignBrain(engine, '-1 second');
+      const judge = Object.assign((async () => {
+        recordOnTracker(getCurrentBudgetTracker(), { modelId: CHAT, ...CALL, label: 'chronicle', kind: 'chat' });
+        judge.calls++;
+        return { events: [{ when: '2024-03-01T12:00:00Z', who: [], what: 'The team agreed on the plan for acme-example', kind: 'decision' }] };
+      }) as ChronicleJudge, { calls: 0 });
+      // The re-read lands after the publication committed its event pages and before it activates them, and it also
+      // moves the page to another slug: an event's slug hashes its depth page, so the retry proposes other slugs.
+      let liveHash: string | null = null, firstEvents: string[] = [];
+      const renameBeforeActivation = new Proxy(engine, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target);
+          if (prop !== 'readPageSnapshot') return typeof value === 'function' ? value.bind(target) : value;
+          return async (slug: string, opts?: { includeDeleted?: boolean }) => {
+            if (liveHash === null && slug === SLUG && opts?.includeDeleted) {
+              firstEvents = (await target.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE type='event' AND deleted_at IS NULL`)).map(r => r.slug);
+              if (firstEvents.length) {
+                git(root, 'mv', `${SLUG}.md`, `${MOVED}.md`);
+                git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'move');
+                expect(await performManagedSync(target, OPTS)).toMatchObject({ status: 'synced' });
+                const [moved] = await target.executeRaw<{ id: number; content_hash: string }>('SELECT id, content_hash FROM pages WHERE slug=$1', [MOVED]);
+                expect(moved?.id).toBe(id);
+                expect(moved?.content_hash).not.toBe(oldHash);
+                liveHash = moved!.content_hash;
+              }
+            }
+            return target.readPageSnapshot(slug, opts as never);
+          };
+        },
+      }) as BrainEngine;
+      await runPhaseChronicle(renameBeforeActivation, { judge });
+      expect(liveHash).not.toBeNull();
+      expect(firstEvents.length).toBeGreaterThan(0);
+      await drainEffects(engine);
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(1);
+      const live = (await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE type='event' AND deleted_at IS NULL ORDER BY slug`)).map(r => r.slug);
+      const [row] = await engine.executeRaw<{ state: string; event_slugs: string[] | null }>(
+        `SELECT state, event_slugs FROM chronicle_page_state WHERE page_id=$1 AND content_hash=$2`, [id, liveHash]);
+      expect(row?.state).toBe('extracted');
+      // Every live event the page produced, the first publication's included, is the row's.
+      expect([...(row?.event_slugs ?? [])].sort()).toEqual(live);
+      expect(live).toEqual(expect.arrayContaining(firstEvents));
     });
   }, { setup, databaseUrl }), 240_000);
 

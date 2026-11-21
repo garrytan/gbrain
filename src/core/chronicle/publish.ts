@@ -139,6 +139,8 @@ export interface ChronicleGenerationResult {
 export async function publishChronicleGeneration(engine: BrainEngine, opts: {
   sourceId: string; pin: ChronicleDepthPin | null; depthSlug?: string; events: BuiltChronicleEvent[]; decisionRequestId: string | null;
   replaces: boolean; proof?: EmptySourceProof; maintenance?: MaintenanceAuthority | null; signal?: AbortSignal;
+  /** Hashes of events this attempt already wrote in a publication the re-read superseded (pages-03): its own. */
+  owned?: readonly string[];
 }): Promise<ChronicleGenerationResult> {
   const { sourceId, pin } = opts;
   const depthSlug = pin?.slug ?? opts.depthSlug!;
@@ -156,6 +158,7 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
     input = await chronicleEventAdapter.readInput(engine, key, context);
     if (input?.pin !== depthInputPin(pin)) return { ...result, superseded: 'superseded' };
     const owned = await ownedEventHashes(engine, sourceId, pin.pageId);
+    for (const hash of opts.owned ?? []) owned.add(hash);
     for (const event of await resolveChronicleEventSlugs(engine, sourceId, opts.events)) {
       const verdict = await judgeTarget(engine, sourceId, await engine.readPageSnapshot(event.slug, { sourceId, includeDeleted: true }), owned);
       if (!verdict.write) { result.protected.push({ slug: event.slug, reason: verdict.reason }); continue; }
@@ -170,7 +173,7 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
   const request = { key, items, input, partial: !opts.replaces, ...(opts.proof ? { proof: opts.proof } : {}), context };
   let outcome: PublishOutcome | null;
   try {
-    outcome = maintenance ? await publishManagedChronicle(engine, maintenance, request, pin, members, opts.decisionRequestId)
+    outcome = maintenance ? await publishManagedChronicle(engine, maintenance, request, pin, members, opts.decisionRequestId, opts.owned)
       : await publishGeneration(engine, chronicleEventAdapter, request);
   } catch (error) {
     if (!isSupersession(error)) throw error;
@@ -197,12 +200,13 @@ async function writtenEvents(engine: BrainEngine, sourceId: string, items: reado
  */
 async function publishManagedChronicle(engine: BrainEngine, maintenance: MaintenanceAuthority, request: PublishRequest<ChronicleGenerationContext>,
   pin: ChronicleDepthPin | null, members: Map<string, { event: BuiltChronicleEvent; verdict: Extract<TargetVerdict, { write: true }>; markdown: string }>,
-  decisionRequestId: string | null): Promise<PublishOutcome | null> {
+  decisionRequestId: string | null, extraOwned: readonly string[] = []): Promise<PublishOutcome | null> {
   const plan = await planManagedGeneration(engine, chronicleEventAdapter, request, { scope: decisionRequestId });
   if (plan.kind === 'held') return plan.outcome;
   if (plan.kind === 'unchanged') return { state: 'unchanged', generation: null, retired: [], protected: [] };
   await engine.transaction(tx => recordActivation(tx, plan.intent));
   const owned = pin ? await ownedEventHashes(engine, request.key.sourceId, pin.pageId) : new Set<string>();
+  for (const hash of extraOwned) owned.add(hash);
   const derivation = pin ? await deriveTrust(engine, [{ table: 'pages', id: pin.pageId }], { channel: 'derive:chronicle' }) : null;
   const gateCfg = pin ? await derivedGateConfig(engine) : null;
   for (const member of plan.members) {
