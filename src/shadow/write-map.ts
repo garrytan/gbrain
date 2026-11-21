@@ -165,6 +165,22 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   addCodeEdges: { tables: ['code_edges_chunk', 'code_edges_symbol'] },
   deleteCodeEdgesForChunks: { tables: ['code_edges_chunk', 'code_edges_symbol'] },
   ownerOnlyMarkTriggers: { tables: ['owner_only_marks'], plan: (a) => (a[0]?.ensure ? null : []) },
+  // Decide store (members master added after this map was written; relation-level, reconcile settles the rows)
+  applyDecideReviewQueue: { tables: ['decide_review_queue'] },
+  applyDecideSweepDeferred: { tables: ['decide_sweep_deferred'] },
+  deleteDecideState: { tables: ['decide_state'] },
+  ensureDecideState: { tables: ['decide_state'] },
+  upsertDecideState: { tables: ['decide_state'] },
+  insertDecideCalibration: { tables: ['decide_calibrations'] },
+  setDecideCalibrationRetired: { tables: ['decide_calibrations'] },
+  storeDecideQualification: { tables: ['decide_calibrations'] },
+  insertDecideProposal: { tables: ['decide_proposals'] },
+  transitionDecideProposal: { tables: ['decide_proposals'] },
+  insertDecideReviewProposal: { tables: ['decide_review_proposals'] },
+  transitionDecideReviewProposal: { tables: ['decide_review_proposals'] },
+  insertDecideReceipts: { tables: ['decision_receipts'] },
+  insertDecideSpend: { tables: ['decide_spend'] },
+  pruneDecideReceipts: { tables: ['decide_spend', 'decision_receipts'] },
 };
 
 /** A schema change: the copied tables may no longer match what the follower expects. */
@@ -194,7 +210,7 @@ const READ_PREFIX = /^(get|list|count|find|search|read|resolve|has|is|sum|cosine
 /** Read-only members whose names do not start with a read prefix (search-read helpers). */
 export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'activeEmbeddingColId', 'aliasCanonicalRefs', 'generatedPagesIn', 'livePageIdsAt', 'pageCollapseFacts', 'pagesLinkingTo',
-  'slugsEndingIn', 'supersedingPageSlugs',
+  'slugsEndingIn', 'supersedingPageSlugs', 'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
