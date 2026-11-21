@@ -357,6 +357,63 @@ fn delete_receipt(tx: &mut dyn KvWrite, record: &ReceiptRecord) -> Result<()> {
     tx.delete(&by_id(RECEIPT, record.id))
 }
 
+/// `deletePurgeWriteGateHolds` (a fact purge): deletes the holds of `source_id` whose
+/// `COALESCE(payload->>'fact', payload->>'claim', '')` has fingerprint `fact_hash`, with their
+/// dedupe entries; the ids deleted, as text, in id order.
+pub(crate) fn purge_holds(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_hash: &str,
+) -> Result<Vec<String>> {
+    let mut deleted = Vec::new();
+    for h in all_holds(tx)? {
+        if h.source_id != source_id {
+            continue;
+        }
+        let field = |name: &str| h.payload.get(name).and_then(jsonb_field_text);
+        let text = field("fact").or_else(|| field("claim")).unwrap_or_default();
+        if crate::facts::fact_fingerprint(&text) != fact_hash {
+            continue;
+        }
+        let version = h.detector_version.to_string();
+        let index = tagged(
+            HOLD_DEDUPE,
+            &[&h.source_id, &h.slug, &h.fingerprint, &version],
+        );
+        if read_id(tx, &index)? == Some(h.id) {
+            tx.delete(&index)?;
+        }
+        tx.delete(&by_id(HOLD, h.id))?;
+        deleted.push(h.id);
+    }
+    deleted.sort_unstable();
+    Ok(deleted.into_iter().map(|id| id.to_string()).collect())
+}
+
+/// `deletePurgeWriteGateReceipts` (a fact purge): deletes the receipts on a purged fact, take or
+/// hold (`target_id` in the matching id list); how many.
+pub(crate) fn purge_receipts(
+    tx: &mut dyn KvWrite,
+    facts: &std::collections::HashSet<String>,
+    takes: &std::collections::HashSet<String>,
+    holds: &std::collections::HashSet<String>,
+) -> Result<u64> {
+    let mut deleted = 0;
+    for r in all_receipts(tx)? {
+        let ids = match r.target_table.as_str() {
+            "facts" => facts,
+            "takes" => takes,
+            "write_gate_holds" => holds,
+            _ => continue,
+        };
+        if ids.contains(&r.target_id) {
+            delete_receipt(tx, &r)?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
 fn all_receipts(read: &dyn KvRead) -> Result<Vec<ReceiptRecord>> {
     let mut out = Vec::new();
     let mut failure = None;

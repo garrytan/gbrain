@@ -61,6 +61,7 @@ pub mod purge;
 pub mod purge_ledger;
 pub mod purge_plan;
 pub(crate) mod purge_probe;
+pub mod purge_writes;
 pub mod quote;
 pub mod reconcile;
 pub mod relink;

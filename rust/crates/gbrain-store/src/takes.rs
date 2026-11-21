@@ -615,6 +615,19 @@ fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     tx.delete(&take_key(take.id))
 }
 
+/// `deletePurgedTakes` (a fact purge): deletes the takes with these ids, each with its evidence
+/// and embedding (`ON DELETE CASCADE`); how many existed.
+pub(crate) fn delete_takes_by_id(tx: &mut dyn KvWrite, ids: &BTreeSet<u64>) -> Result<u64> {
+    let mut deleted = 0;
+    for id in ids {
+        if let Some(take) = read_take(&*tx, *id)? {
+            delete_take(tx, &take)?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
 /// Deletes evidence rows by their `A 0x03` keys, with their reverse index rows.
 fn delete_evidence(tx: &mut dyn KvWrite, evidence_keys: &[Vec<u8>]) -> Result<()> {
     for key in evidence_keys {

@@ -257,7 +257,8 @@ export async function rewritePageBodies(tx: BrainEngine, sourceId: string, pages
     const timeline = await dropPurgedFenceRows(tx, sourceId, page.timeline ?? '', page.slug);
     if (compiled === page.compiled_truth && timeline === (page.timeline ?? '')) continue;
     const preimage = await tx.readPageSnapshot(page.slug, { sourceId, includeDeleted: true });
-    if (preimage) await createPageVersion(tx, page.slug, sourceId, preimage);
+    // The engine member versions the preimage as createPageVersion does on PGLite and Postgres, and the Rust store serves it.
+    if (preimage) await tx.createVersion(page.slug, { sourceId, preimage });
     const hash = contentHash({ ...page, compiled_truth: compiled, timeline, tags: row.purge_tags as string[] });
     // #5575 ENG-1: dropping a fence row is a gbrain-managed fence edit, not authorship: the page keeps its tier and origin.
     await withPageTierKept(tx, { sourceId, slug: page.slug }, () => tx.updatePageBodyForPurge(sourceId, page.id, compiled, timeline, hash));

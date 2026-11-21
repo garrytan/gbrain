@@ -204,6 +204,33 @@ fn read_row(read: &dyn KvRead, id: u64) -> Result<Option<LoopRecord>> {
     get_json::<LoopRecord>(read, &row_key(id))
 }
 
+/// `deletePurgeOpenLoops` (a fact purge): deletes the loops of `source_id` on a purged fact
+/// (`fact_id` in `fact_ids`), with their dedup entries; how many.
+pub(crate) fn purge_rows(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_ids: &std::collections::HashSet<i64>,
+) -> Result<u64> {
+    let mut found = Vec::new();
+    scan_prefix(tx, &source_prefix(source_id), false, &mut |k, v| {
+        found.push((k.to_vec(), keys::be8(v)));
+        true
+    })?;
+    let mut deleted = 0;
+    for (k, id) in found {
+        let Some(id) = id else { continue };
+        let Some(row) = read_row(tx, id)? else {
+            continue;
+        };
+        if row.fact_id.is_some_and(|f| fact_ids.contains(&f)) {
+            tx.delete(&k)?;
+            tx.delete(&row_key(id))?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
 /// Removes every loop of a source, for the source delete.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     let mut doomed = Vec::new();

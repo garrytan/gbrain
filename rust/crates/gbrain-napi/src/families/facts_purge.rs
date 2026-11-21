@@ -280,3 +280,158 @@ impl Brain {
         self.run(env, move |s| s.has_fact_purges(&source_id))
     }
 }
+
+/// The writes a fact purge runs in its transaction (`gbrain_store::facts::purge_writes`).
+#[napi]
+impl Brain {
+    /// `deletePurgedTakes(takeIds)`: resolves how many takes were deleted.
+    #[napi]
+    pub fn delete_purged_takes<'env>(
+        &self,
+        env: &'env Env,
+        take_ids: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_purged_takes(&take_ids))
+    }
+
+    /// `deletePurgeReviewQueue(sourceId, refs)`: resolves how many review-queue rows were deleted.
+    #[napi]
+    pub fn delete_purge_review_queue<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        refs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_purge_review_queue(&source_id, &refs))
+    }
+
+    /// `deletePurgeReviewProposals(sourceId, refs)`: resolves how many review proposals were deleted.
+    #[napi]
+    pub fn delete_purge_review_proposals<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        refs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_purge_review_proposals(&source_id, &refs)
+        })
+    }
+
+    /// `deletePurgeDecideProposals(sourceId, factIds)`: resolves how many supersede proposals were deleted.
+    #[napi]
+    pub fn delete_purge_decide_proposals<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        fact_ids: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_purge_decide_proposals(&source_id, &fact_ids)
+        })
+    }
+
+    /// `deletePurgeTrustProposals(sourceId, factIds, takeIds)`: resolves how many trust proposals were deleted.
+    #[napi]
+    pub fn delete_purge_trust_proposals<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        fact_ids: Vec<i64>,
+        take_ids: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_purge_trust_proposals(&source_id, &fact_ids, &take_ids)
+        })
+    }
+
+    /// `deletePurgeOpenLoops(sourceId, factIds)`: resolves how many open loops were deleted.
+    #[napi]
+    pub fn delete_purge_open_loops<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        fact_ids: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_purge_open_loops(&source_id, &fact_ids)
+        })
+    }
+
+    /// `deletePurgeWriteGateHolds(sourceId, factHash)`: resolves the ids of the deleted holds, as text.
+    #[napi]
+    pub fn delete_purge_write_gate_holds<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        fact_hash: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_purge_write_gate_holds(&source_id, &fact_hash)
+        })
+    }
+
+    /// `deletePurgeWriteGateReceipts(factIds, takeIds, holdIds)`: resolves how many receipts were deleted.
+    #[napi]
+    pub fn delete_purge_write_gate_receipts<'env>(
+        &self,
+        env: &'env Env,
+        fact_ids: Vec<String>,
+        take_ids: Vec<String>,
+        hold_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_purge_write_gate_receipts(&fact_ids, &take_ids, &hold_ids)
+        })
+    }
+
+    /// `deletePurgedFacts(factIds, sourceId)`: resolves how many facts were deleted.
+    #[napi]
+    pub fn delete_purged_facts<'env>(
+        &self,
+        env: &'env Env,
+        fact_ids: Vec<i64>,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_purged_facts(&fact_ids, &source_id))
+    }
+
+    /// `deletePurgedChunks(pageIds)`: resolves how many chunk rows were deleted.
+    #[napi]
+    pub fn delete_purged_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_ids: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_purged_chunks(&page_ids))
+    }
+
+    /// `listPagesForPurgeRewrite(sourceId, pageIds)`: resolves the page rows with `body_storage` and `purge_tags`, in slug order.
+    #[napi]
+    pub fn list_pages_for_purge_rewrite<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        page_ids: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_pages_for_purge_rewrite(&source_id, &page_ids)
+        })
+    }
+
+    /// `updatePageBodyForPurge(sourceId, pageId, compiled, timeline, hash)`: resolves null.
+    #[napi]
+    pub fn update_page_body_for_purge<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        page_id: i64,
+        compiled: String,
+        timeline: String,
+        hash: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.update_page_body_for_purge(&source_id, page_id, &compiled, &timeline, &hash)
+        })
+    }
+}
