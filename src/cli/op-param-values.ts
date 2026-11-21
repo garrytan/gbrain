@@ -36,8 +36,9 @@ export function opParamValue(op: OperationMeta, key: string, def: ParamDef | und
  * value is refused, never read as on, because `delete --purge=0` read as on
  * is an irreversible hard delete. The refusal names the flag, not the value.
  */
-export function opBooleanValue(op: OperationMeta, flag: string, raw: string): boolean {
+export function opBooleanValue(op: OperationMeta, key: string, raw: string): boolean {
   if (isBooleanLiteral(raw)) return raw === 'true';
+  const flag = `--${key.replace(/_/g, '-')}`;
   throw usageError(`${flag}=… takes only true or false; nothing ran.`,
     `Write ${flag}=true or ${flag}=false (e.g. gbrain ${op.cliHints?.name ?? op.name} ${flag}=false).`);
 }

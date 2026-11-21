@@ -1099,20 +1099,17 @@ export function parseOpArgs(op: OperationMeta, args: string[]): Record<string, u
       const eq = arg.indexOf('=');
       if (eq > 2) {
         const key = arg.slice(2, eq).replace(/-/g, '_');
-        // CLI-local booleans: `--json=<v>` / `--dry-run=<v>` must parse as
-        // booleans, not fall through to the junk-key path (which would
-        // consume the NEXT token as a value and corrupt positional parsing).
-        // #9918: an inline boolean takes only true or false; any other value
-        // is refused (it used to read as true, so `--purge=0` hard-deleted).
-        const flag = `--${key.replace(/_/g, '-')}`;
+        // CLI-local booleans `--json=<v>` / `--dry-run=<v>` parse here, not on the junk-key
+        // path (which would eat the NEXT token). #9918: an inline boolean takes only true or
+        // false; any other value is refused (it read as true, so `--purge=0` hard-deleted).
         if (key === 'json' || key === 'dry_run') {
-          params[key] = opBooleanValue(op, flag, arg.slice(eq + 1));
+          params[key] = opBooleanValue(op, key, arg.slice(eq + 1));
           continue;
         }
         const def = op.params[key];
         if (def) {
           const raw = arg.slice(eq + 1);
-          params[key] = def.type === 'boolean' ? opBooleanValue(op, flag, raw) : opFlagValue(op, key, def, raw, params[key]);
+          params[key] = def.type === 'boolean' ? opBooleanValue(op, key, raw) : opFlagValue(op, key, def, raw, params[key]);
           continue;
         }
       }
