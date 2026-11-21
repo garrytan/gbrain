@@ -6,6 +6,7 @@ test/engine-parity/access-tokens.test.ts	3	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
+test/engine-parity/bench-save-repro.test.ts	1	0
 test/engine-parity/bound-write.test.ts	3	0
 test/engine-parity/calibration-profiles.test.ts	5	0
 test/engine-parity/chunk-page-segmented.test.ts	7	0
@@ -154,7 +155,7 @@ test/engine-parity/trust-tier-reads.test.ts	20	2
 test/engine-parity/trust-withdrawals.test.ts	7	0
 test/engine-parity/trust-write-gate.test.ts	5	1
 test/engine-parity/typed-config-reads.test.ts	3	0
-test/engine-parity/unbound-claim.test.ts	0	3
+test/engine-parity/unbound-claim.test.ts	1	2
 test/engine-parity/unrestricted-caller-reads.test.ts	2	0
 test/engine-parity/unrestricted-fact-list-reads.test.ts	2	0
 test/engine-parity/unrestricted-member-page-reads.test.ts	1	0
