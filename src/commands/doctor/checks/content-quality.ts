@@ -14,6 +14,7 @@ import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { agentFix, checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
 import { scanDeadline } from '../budget.ts';
+import { isMissingSchemaObject } from '../../../core/utils.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
 
 /** Oversized pages `oversized_pages` lists before it reports a floor. */
@@ -307,8 +308,13 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
         : 'No quarantined pages',
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    checks.push({ name: 'quarantined_pages', status: 'ok', message: `Skipped (${msg})` });
+    // Only a missing pages table is a clean skip; any other failure is not a clean result.
+    if (isMissingSchemaObject(err, 'table', 'pages')) {
+      const msg = err instanceof Error ? err.message : String(err);
+      checks.push({ name: 'quarantined_pages', status: 'ok', message: `Skipped (${msg})` });
+    } else {
+      checks.push(checkError('quarantined_pages', 'read quarantined pages', err));
+    }
   }
 
   progress.heartbeat('flagged_pages');
@@ -327,8 +333,13 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
         : 'No flagged pages',
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    checks.push({ name: 'flagged_pages', status: 'ok', message: `Skipped (${msg})` });
+    // Only a missing pages table is a clean skip; any other failure is not a clean result.
+    if (isMissingSchemaObject(err, 'table', 'pages')) {
+      const msg = err instanceof Error ? err.message : String(err);
+      checks.push({ name: 'flagged_pages', status: 'ok', message: `Skipped (${msg})` });
+    } else {
+      checks.push(checkError('flagged_pages', 'read flagged pages', err));
+    }
   }
 
   // issue #160: extraction quarantine lane review nudge.
