@@ -10,6 +10,15 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.759.0] - 2026-11-21
+
+**Sync now finds the earlier committed version a held note still matches by looking through that file's own history, so the `gbrain sources retry-held` route clears what `gbrain repair file-drift --held` says it will. On a read-only mirror, the preview also says why it couldn't read a held file.**
+
+### Fixed
+- To check whether a note with no import record still holds an earlier version of its file, sync used to read the file at each of the last 50 commits of the whole repository. On a busy repository, the version a note matched was often thousands of commits back, so sync kept the note held even though `gbrain repair file-drift --held` listed it as "an earlier version" that `retry-held` would clear. Sync now reads the versions from the last 50 commits that changed that file, as the preview does.
+- When a held note's file on a read-only mirror can't be read losslessly (invalid UTF-8, or frontmatter YAML that only parses through recovery), the preview now shows the reason after the code, such as `invalid_params: Canonical file metadata cannot be parsed losslessly; repair its syntax before previewing.`, instead of `invalid_params` alone.
+- The preview no longer says a committed sync leaves a file with uncommitted bytes in place. It says sync holds such a file `worktree_dirty` until the bytes are committed or restored.
+
 ## [0.60.758.0] - 2026-11-21
 
 **Conversation fact extraction no longer skips short transcripts whose answers lead many lines with bold text, and one window the model declines no longer fails its page.**
