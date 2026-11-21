@@ -283,7 +283,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/page-state/materialize.ts` (1): coordinated maintenance.
 - `src/core/page-state/rename-alias.ts` (5): the fact slug rewrite runs inside its caller's `updateSlug` transaction, and `movePageIdReferences` (#5431: page_versions, timeline_entries and links moved to the row that materialized under a fallback rename) runs inside `carryRenameIdentity`'s `maintenanceTransaction`; every caller is attributed.
 - `src/core/page-state/versions.ts` (3): `createVersion` itself, its segmented-page twin and the pruned-history marks (`successor_pruned`, `version_history_gap_at`); the caller's scope supplies the actor.
-- `src/core/persistence/canonical-projections.ts` (7): fence projection inside the request's publication.
+- `src/core/persistence/canonical-projections.ts` (7): fence projection inside the request's publication; the body timeline rows go in through the typed `insertCanonicalTimelineRows` (the same INSERT it ran through `executeRaw`), still inside that publication.
 - `src/core/persistence/change-reason.ts` (1): stamps a page write's `reason` on the snapshot its publication archived, inside that request's publication apply.
 - `src/core/persistence/connector-google-receipts.ts` (2): request preparer.
 - `src/core/persistence/connector-sync.ts` (2): connector publication inside `withCoordinatedWrite`.

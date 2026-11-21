@@ -252,6 +252,7 @@ describe('Rust transaction settings: the names the shell keeps', () => {
   const SETTINGS_FILE = join(import.meta.dir, '..', 'src/core/rust-engine/store-members/transactions.ts');
   /** The names of one `const <name>: ReadonlySet<string> = new Set([...])` in transactions.ts. */
   function setNames(constName: string): string[] {
+    // test-reads-source-ok[structural]: which list a name sits in is not observable (scope and custom names behave alike), and transactions.ts may export only engine members.
     const match = readFileSync(SETTINGS_FILE, 'utf8').match(new RegExp(`const ${constName}: ReadonlySet<string> = new Set\\(\\[([^\\]]*)\\]\\)`));
     expect(match).not.toBeNull();
     return [...match![1]!.matchAll(/'([^']+)'/g)].map((m) => m[1]!);
