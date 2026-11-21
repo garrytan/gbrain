@@ -5958,12 +5958,15 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   and sheds when full; reads inside a transaction are skipped; `--sample-rate` (default 0.1) picks which reads are
   mirrored. Only sampled reads are copied, at the moment the primary answers, so a caller that changes a result
   afterwards cannot cause a false difference. The copy stops as soon as a call's arguments or result pass about
-  1 MiB, so a huge result is counted as too large and never built. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  1 MiB (every value counts, even a null), so a huge result is counted as too large and never built. A
+  call that stays stuck in the Rust engine holds one of four slots; past that new reads are shed and the child goes
+  quiet so it is restarted. Reads still queued when a process closes are delivered, not dropped. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
   child silent for 60 seconds is killed, and a privacy divergence (Rust returns something the primary hid) pauses
   comparison.
 - **Brains and deleting.** Each brain gets its own directory, keyed by its engine, host, port, database and user name
   (two Supabase projects behind one pooler differ by user name; the password is never part of it). `stop --delete`
-  removes the directory, and a child that is still running cannot write it back.
+  removes the directory, and a child that is still running cannot write it back. The commands cover the host brain only:
+  with `--brain <id>` or `GBRAIN_BRAIN_ID` naming another brain they refuse and change nothing.
 - **No network in the background.** gbrain downloads no addon. `start --yes`, the child
   and `gbrain doctor` only use an addon that is already installed; without one they record `addon_unavailable`
   (`rust_engine_addon_missing`, reason `not_installed`).

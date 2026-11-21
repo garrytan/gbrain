@@ -58,6 +58,15 @@ export function wrapShadowEngine<E extends BrainEngine>(engine: E, sink: ShadowS
   return buildProxy(engine, sink, opts, false);
 }
 
+/** A real method, not an accessor: `get sql()` hands out the driver client, a function with its own properties that a bound copy would lose. */
+function isMethod(target: object, prop: PropertyKey): boolean {
+  for (let o: object | null = target; o; o = Object.getPrototypeOf(o)) {
+    const d = Object.getOwnPropertyDescriptor(o, prop);
+    if (d) return !d.get && !d.set;
+  }
+  return true;
+}
+
 function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions, inTransaction: boolean): E {
   const random = opts.random ?? Math.random;
   const now = opts.now ?? (() => performance.now());
@@ -112,7 +121,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
   const proxy = new Proxy(engine, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target);
-      if (typeof value !== 'function') return value;
+      if (typeof value !== 'function' || !isMethod(target, prop)) return value;
       const hit = cache.get(prop);
       if (hit && hit.original === value) return hit.wrapped;
       let wrapped: Function;

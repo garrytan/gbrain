@@ -4,13 +4,15 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path
 import { OperationError } from '../ops/contract.ts';
 import type { SqlEngine } from './model.ts';
 import { readManagedMode, readPersistenceBrain } from './managed-mode.ts';
+import { viewedEngine } from './switches.ts';
 import { canonicalFilesystemPath, checkoutGitMetadata, managedRootMarkerFor, recordManagedRoots, registeredManagedRootRecords, type ManagedRootRecord } from './root-registry.ts';
 
 interface FileCapability { roots: string[]; active: boolean; }
 const active = new AsyncLocalStorage<FileCapability>();
 const managedRoots = new Map<string, Map<string, string | undefined>>();
 const datastorePaths = new WeakMap<SqlEngine, string>();
-export function managedFilesystemDatastorePath(engine: SqlEngine): string | undefined { return datastorePaths.get(engine); }
+/** The path is recorded on the engine that connected; a read-through view (the shadow wrapper) asks for the engine it reads through. */
+export function managedFilesystemDatastorePath(engine: SqlEngine): string | undefined { return datastorePaths.get(viewedEngine(engine)); }
 /** Record the selected engine path, never a guessed default from ambient config. */
 export async function registerManagedFilesystemEngine(engine: SqlEngine, databasePath?: string): Promise<void> {
   if (!databasePath) return;
@@ -22,7 +24,7 @@ function encloses(root: string, path: string): boolean {
   const rel = relative(canonicalFilesystemPath(root), canonicalFilesystemPath(path));
   return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
 }
-export async function refreshManagedFilesystemRoots(engine: SqlEngine, databasePath = datastorePaths.get(engine), signal?: AbortSignal): Promise<void> {
+export async function refreshManagedFilesystemRoots(engine: SqlEngine, databasePath = datastorePaths.get(viewedEngine(engine)), signal?: AbortSignal): Promise<void> {
   // Mode and epoch come from one snapshot, so roots are never recorded under the epoch of a concurrent deactivation.
   const brain = await readPersistenceBrain(engine, { signal });
   if (!brain.enabled) { managedRoots.set(brain.brain_id, new Map()); return; }

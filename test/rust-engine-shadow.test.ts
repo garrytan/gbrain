@@ -13,13 +13,14 @@ import { PassThrough } from 'node:stream';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { classifyError, classifyResult } from '../src/shadow/classify.ts';
 import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, canonicalJson, decodeValue, encodeArgs, encodeValue } from '../src/shadow/codec.ts';
-import { runShadowChild } from '../src/shadow/child.ts';
+import { runShadowChild, SHADOW_CHILD_STALL_LIMIT } from '../src/shadow/child.ts';
 import { appendFault, appendLedgerRows, readFaults, readShadowSummary, writeSummaryFile, type ShadowFault } from '../src/shadow/ledger.ts';
 import { readShadowState, shadowBrainKey, SHADOW_STATE_VERSION, writeShadowState } from '../src/shadow/state.ts';
 import { runBrainBench } from '../src/eval/brainbench/harness.ts';
 import { TRUST_SUITES } from '../src/eval/brainbench/types.ts';
 import { buildRunConfig, retrievalConfigHash } from '../src/eval/longmemeval/run-config.ts';
 import { MirrorQueue, newMirrorCounters, type CapturedRead } from '../src/shadow/mirror.ts';
+import { managedFilesystemDatastorePath, registerManagedFilesystemEngine } from '../src/core/persistence/filesystem-guard.ts';
 import { SHADOW_READ_MEMBERS } from '../src/shadow/reads.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
 import { ShadowSupervisor } from '../src/shadow/supervisor.ts';
@@ -147,6 +148,28 @@ describe('wrapper', () => {
     expect(q.counters.shed_too_large).toBe(2);
   });
 
+  test('a function-valued accessor such as the Postgres sql client keeps its identity and properties, on the engine and in a transaction', async () => {
+    const client = Object.assign(() => 'tag', { unsafe: async () => [], options: { max: 7 }, reserve: async () => ({}) });
+    const primary = fakePrimary();
+    Object.defineProperty(primary, 'sql', { get: () => client });
+    const engine = wrapShadowEngine(primary, sink(), { sampleRate: 1 });
+    expect((engine as unknown as { sql: unknown }).sql).toBe(client);
+    await engine.transaction(async (tx) => {
+      const inner = (tx as unknown as { sql: typeof client }).sql;
+      expect(inner).toBe(client);
+      expect(inner.options.max).toBe(7);
+      expect(typeof inner.unsafe).toBe('function');
+    });
+  });
+
+  test('a path the engine recorded when it connected is found through the shadow view', async () => {
+    const primary = Object.assign(fakePrimary(), { executeRaw: async () => [{ present: false }] });
+    await registerManagedFilesystemEngine(primary as never, '/brains/main.pglite');
+    const view = wrapShadowEngine(primary, sink(), { sampleRate: 1 });
+    expect(managedFilesystemDatastorePath(primary as never)).toBe('/brains/main.pglite');
+    expect(managedFilesystemDatastorePath(view as never)).toBe('/brains/main.pglite');
+  });
+
   test('never mirrors writes, and passes a primary rejection through unchanged', async () => {
     const s = sink();
     const engine = wrapShadowEngine(fakePrimary(), s, { sampleRate: 1 });
@@ -215,6 +238,20 @@ describe('mirror queue', () => {
     expect(JSON.parse(lines[0])).toMatchObject({ t: 'read', op: 'getPage', args: ['a'] });
   });
 
+  test('stop delivers what is queued instead of dropping it, so a short-lived process still reports its reads', () => {
+    const sent: string[] = [];
+    const q = new MirrorQueue({ bound: 8, transport: { send: (l) => { sent.push(l); return true; } }, schedule: () => {} });
+    q.offer(() => ({ op: 'getPage', args: ['a'], result: { slug: 'a' }, primary_ms: 1, at: 1 }));
+    q.offer(() => ({ op: 'getPage', args: ['b'], result: { slug: 'b' }, primary_ms: 1, at: 2 }));
+    expect(sent).toHaveLength(0);
+    q.stop();
+    expect(sent).toHaveLength(2);
+    expect(q.counters.offered).toBe(2);
+    expect(q.counters.sent).toBe(2);
+    q.offer(() => ({ op: 'getPage', args: [], result: null, primary_ms: 1, at: 3 }));
+    expect(q.counters.offered).toBe(2);
+  });
+
   test('counts a refused send and an oversize line', async () => {
     const q = new MirrorQueue({ bound: 10, maxLineBytes: 200, transport: { send: () => false } });
     q.offer(read);
@@ -259,6 +296,21 @@ describe('codec', () => {
     expect(() => encodeValue(new Float32Array(200_000), undefined, { left: CAPTURE_BUDGET_BYTES })).toThrow(CaptureTooLargeError);
     expect(() => encodeValue({ a: 'x'.repeat(CAPTURE_BUDGET_BYTES + 1) }, undefined, { left: CAPTURE_BUDGET_BYTES })).toThrow(CaptureTooLargeError);
     expect(encodeValue({ a: 'small', v: new Float32Array(8) }, undefined, { left: CAPTURE_BUDGET_BYTES })).toEqual({ a: 'small', v: { $typed: 'Float32Array', v: Array.from(new Float32Array(8)) } });
+  });
+
+  test('the capture budget charges every node, so nulls, booleans and empty objects cannot slip past it', () => {
+    const budget = () => ({ left: CAPTURE_BUDGET_BYTES });
+    expect(() => encodeValue(new Array(2_000_000).fill(null), undefined, budget())).toThrow(CaptureTooLargeError);
+    expect(() => encodeValue(new Array(2_000_000).fill(true), undefined, budget())).toThrow(CaptureTooLargeError);
+    expect(() => encodeValue({ frontmatter: Array.from({ length: 400_000 }, () => ({})) }, undefined, budget())).toThrow(CaptureTooLargeError);
+    expect(encodeValue({ a: [null, true, {}] }, undefined, budget())).toEqual({ a: [null, true, {}] });
+  });
+
+  test('an option left undefined stays absent instead of becoming null', () => {
+    expect(encodeValue({ sourceId: 'a', takesHoldersAllowList: undefined })).toEqual({ sourceId: 'a' });
+    const args = decodeValue(JSON.parse(JSON.stringify(encodeArgs(['x', { visibility: undefined, limit: 3 }])))) as unknown[];
+    expect(args[1]).toEqual({ limit: 3 });
+    expect('visibility' in (args[1] as object)).toBe(false);
   });
 
   test('drops signals and functions, and canonical JSON ignores key order', () => {
@@ -486,6 +538,50 @@ describe('child loop', () => {
     expect(counts.match).toBe(1);
     expect(Object.values(counts).reduce((a, b) => a + (b ?? 0), 0)).toBe(2);
     rmSync(r.dir, { recursive: true, force: true });
+  });
+
+  test('timed-out calls are capped: past the limit new reads are shed unstarted and the heartbeat goes quiet', async () => {
+    let started = 0;
+    const fake = { async connect() {}, async disconnect() {}, getTags() { started++; return new Promise(() => {}); } };
+    const dir = tmp();
+    const input = new PassThrough();
+    const hb: string[] = [];
+    const done = runShadowChild(dir, {
+      input, writeControl: (l) => { if (l.includes('"hb"')) hb.push(l); }, heartbeatMs: 5, childId: 'c1', timeoutMs: 5,
+      loadAddon: async () => ({ ok: true, addon: {} as never }), openEngine: () => fake as never,
+    });
+    for (let i = 0; i < SHADOW_CHILD_STALL_LIMIT + 3; i++) input.write(event('getTags', ['a'], []));
+    await new Promise((r) => setTimeout(r, 150));
+    const quiet = hb.length;
+    await new Promise((r) => setTimeout(r, 60));
+    expect(hb.length).toBe(quiet);
+    input.end();
+    await done;
+    expect(started).toBe(SHADOW_CHILD_STALL_LIMIT);
+    expect(readShadowSummary(dir).by_op.getTags).toEqual({ timeout: SHADOW_CHILD_STALL_LIMIT + 3 });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a shadow directory deleted while the child starts is not recreated', async () => {
+    const during = async (where: 'load' | 'connect') => {
+      const dir = tmp();
+      writeShadowState(dir, { version: SHADOW_STATE_VERSION, enabled: true, started_at: 'x', sample_rate: 1, queue_bound: 8, plan_hash: 'p', brain: 'b', primary_engine: 'pglite' });
+      let opened = 0;
+      const fake = { async connect() { opened++; rmSync(dir, { recursive: true, force: true }); mkdirSync(join(dir, 'store'), { recursive: true }); }, async disconnect() {} };
+      const input = new PassThrough();
+      const done = runShadowChild(dir, {
+        input, writeControl: () => {}, heartbeatMs: 60_000, childId: 'c1',
+        loadAddon: async () => { if (where === 'load') rmSync(dir, { recursive: true, force: true }); return { ok: true, addon: {} as never }; },
+        openEngine: () => fake as never,
+      });
+      input.write(event('getPage', ['a'], { slug: 'a' }));
+      input.end();
+      await done;
+      expect(existsSync(dir), where).toBe(false);
+      return opened;
+    };
+    expect(await during('load')).toBe(0); // never opened
+    expect(await during('connect')).toBe(1); // opened, found the directory gone, cleaned up
   });
 
   test('stats events update the serving counters in the summary', async () => {

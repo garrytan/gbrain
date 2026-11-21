@@ -36,11 +36,12 @@ function isAbortSignal(value: object): boolean {
 
 /** Plain-JSON form of a value; never throws on cycles (a repeated object becomes `{ "$cycle": true }`). */
 export function encodeValue(value: unknown, seen: WeakSet<object> = new WeakSet(), budget?: CaptureBudget): unknown {
+  spend(budget, 4); // every node costs at least its `null`: a million nulls or empty objects is not free
   if (value === null || value === undefined) return value ?? null;
   switch (typeof value) {
     case 'string': spend(budget, value.length); return value;
     case 'boolean': return value;
-    case 'number': spend(budget, 10); return Number.isFinite(value) ? value : { $number: String(value) };
+    case 'number': spend(budget, 6); return Number.isFinite(value) ? value : { $number: String(value) };
     case 'bigint': return { $bigint: value.toString() };
     case 'function': case 'symbol': return undefined;
   }
@@ -65,6 +66,7 @@ export function encodeValue(value: unknown, seen: WeakSet<object> = new WeakSet(
     for (const [key, item] of Object.entries(obj)) {
       if (key === 'signal') continue;
       spend(budget, key.length + 4);
+      if (item === undefined) continue; // an option left undefined stays absent, as JSON would have it; a null would be a different option
       const e = encodeValue(item, seen, budget);
       if (e !== undefined) out[key] = e;
     }

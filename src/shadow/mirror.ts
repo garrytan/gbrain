@@ -110,10 +110,10 @@ export class MirrorQueue {
     this.kick();
   }
 
-  /** Stops accepting and drops what is queued. */
+  /** Delivers what is queued now (a short-lived process disconnects before the next tick), then stops accepting. */
   stop(): void {
+    while (this.items.length > 0) this.drain();
     this.stopped = true;
-    this.items.length = 0;
   }
 
   /** Sends a stats event now (also used at shutdown). */
