@@ -326,6 +326,35 @@ describe('computeFounderScorecard — lower-is-better metrics', () => {
   });
 });
 
+// A loss stored as a negative number is a loss of that size: a deeper loss is a rise.
+describe('computeFounderScorecard — signed lower-is-better values', () => {
+  function card(metric: string, a: number, b: number) {
+    return computeFounderScorecard({
+      entitySlug: 'companies/acme-example', windowSince: null, windowUntil: null, takes: [],
+      points: [
+        pt({ id: 1, metric, value: a, date: '2026-01-01' }),
+        pt({ id: 2, metric, value: b, date: '2026-02-01' }),
+      ],
+    });
+  }
+
+  test('a net_loss deepening from -50000 to -100000 is a red flag that says it rose', () => {
+    expect(card('net_loss', -50000, -100000).red_flags).toEqual([
+      { kind: 'regression', metric: 'net_loss', text: 'net_loss rose 100.0% (2026-01-01 → 2026-02-01)' },
+    ]);
+  });
+
+  test('a net_loss shrinking from -100000 to -50000 raises no red flag', () => {
+    expect(card('net_loss', -100000, -50000).red_flags).toEqual([]);
+  });
+
+  test('a debt_service_coverage_ratio falling from 2 to 1 is a red flag that says it fell', () => {
+    expect(card('debt_service_coverage_ratio', 2, 1).red_flags).toEqual([
+      { kind: 'regression', metric: 'debt_service_coverage_ratio', text: 'debt_service_coverage_ratio fell 50.0% (2026-01-01 → 2026-02-01)' },
+    ]);
+  });
+});
+
 // Savings and recovery metrics hold a lower-is-better word but are good news going up.
 describe('computeFounderScorecard — savings and recovery metrics', () => {
   function card(metric: string, a: number, b: number) {

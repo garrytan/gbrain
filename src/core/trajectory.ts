@@ -35,13 +35,14 @@ export const TRAJECTORY_SCHEMA_VERSION = 1;
  * The lower-is-better rule, in one place: for these metrics a rise is the regression and a drop is an improvement.
  * `metrics` are exact names; `words` make any metric lower-is-better when one of its parts is that whole word
  * (`lossless`, `costco`, `debtor` do not match); `exceptWords` take that back for a name that also holds one of
- * them, because it counts the good thing (`cost_savings`, `revenue_loss_recovered`), which is good news going up.
+ * them, because it counts the good thing (`cost_savings`, `revenue_loss_recovered`) or a ratio that is higher-is-better
+ * (`debt_service_coverage_ratio`), which is good news going up.
  * Change the list here and nowhere else.
  */
 export const LOWER_IS_BETTER = {
   metrics: ['burn_rate', 'churn_rate', 'cac', 'burn', 'churn'],
   words: ['cost', 'costs', 'expense', 'expenses', 'loss', 'losses', 'latency', 'payback', 'debt', 'debts'],
-  exceptWords: ['saving', 'savings', 'saved', 'recovered', 'recovery', 'reduction', 'reduced', 'avoided'],
+  exceptWords: ['saving', 'savings', 'saved', 'recovered', 'recovery', 'reduction', 'reduced', 'avoided', 'coverage'],
 } as const;
 
 /**
@@ -66,7 +67,10 @@ export interface TrajectoryRegression {
   from_date: string;   // YYYY-MM-DD
   to_value: number;
   to_date: string;
-  /** Relative change over abs(from_value): negative for a drop, positive for a rise; may be < -1 across zero. */
+  /**
+   * Relative change over abs(from_value): negative for a drop, positive for a rise; may be < -1 across zero.
+   * For a lower-is-better metric with two negative values it is the change in magnitude (-50000 -> -100000 is +1).
+   */
   delta_pct: number;
   /**
    * Which way the metric moved: 'down' for a regression on an ordinary metric, 'up' for one on a
@@ -151,6 +155,9 @@ export function comparablePairs(points: TrajectoryPoint[]): Array<[TrajectoryPoi
   return pairs;
 }
 
+/** Float slack for the threshold comparison in detectRegressions. */
+const THRESHOLD_EPSILON = 1e-9;
+
 /**
  * Detect chronological regressions in a sorted trajectory: every
  * comparablePairs pair whose newer value is lower than the older one by at
@@ -170,9 +177,14 @@ export function detectRegressions(
     // Guard against division-by-zero: a metric starting at exactly 0
     // can't compute a relative delta. Skip.
     if (oldVal === 0) continue;
-    const delta = (newVal - oldVal) / Math.abs(oldVal);
     const lowerIsBetter = isLowerIsBetter(older.metric!);
-    if (lowerIsBetter ? delta >= threshold : delta <= -threshold) {
+    // A lower-is-better metric stored as a negative outflow (a loss of -50000, a burn of -150) compares by
+    // magnitude, so -50000 -> -100000 is a +100% rise; every other pair uses the plain signed change.
+    const magnitude = lowerIsBetter && oldVal < 0 && newVal < 0;
+    const delta = (magnitude ? oldVal - newVal : newVal - oldVal) / Math.abs(oldVal);
+    // A tiny tolerance keeps a change of exactly the threshold from slipping under it through float
+    // rounding ((0.055 - 0.05) / 0.05 is 0.09999999999999995).
+    if (lowerIsBetter ? delta >= threshold - THRESHOLD_EPSILON : delta <= -threshold + THRESHOLD_EPSILON) {
       out.push({
         metric: older.metric!,
         from_value: oldVal,

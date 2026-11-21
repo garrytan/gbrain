@@ -179,12 +179,42 @@ describe('detectRegressions — lower-is-better metrics', () => {
     expect(detectRegressions(series('burn', 'USD', 150000, 200000))[0].direction).toBe('up');
   });
 
-  test('a lower-is-better metric with a negative value uses the abs() denominator', () => {
-    // The relative delta divides by abs(older), so a rise from -150 to -100 is +33.3%.
-    expect(detectRegressions(series('burn', 'USD', -100, -150))).toEqual([]);
-    const regs = detectRegressions(series('burn', 'USD', -150, -100));
+  test('a lower-is-better metric stored as a negative outflow compares magnitudes (abs denominator)', () => {
+    // burn -150 is a burn of 150: -150 -> -100 is a cut (no regression), -100 -> -150 is a 50% rise.
+    expect(detectRegressions(series('burn', 'USD', -150, -100))).toEqual([]);
+    const regs = detectRegressions(series('burn', 'USD', -100, -150));
     expect(regs).toHaveLength(1);
-    expect(regs[0].delta_pct).toBeCloseTo(50 / 150, 6);
+    expect(regs[0]).toMatchObject({ metric: 'burn', direction: 'up' });
+    expect(regs[0].delta_pct).toBeCloseTo(0.5, 6);
+  });
+
+  test('a signed loss deepening from -50000 to -100000 is a regression, a shrinking one is not', () => {
+    const regs = detectRegressions(series('net_loss', 'USD', -50000, -100000));
+    expect(regs).toHaveLength(1);
+    expect(regs[0]).toMatchObject({ metric: 'net_loss', from_value: -50000, to_value: -100000, direction: 'up' });
+    expect(regs[0].delta_pct).toBeCloseTo(1, 6);
+    expect(detectRegressions(series('net_loss', 'USD', -100000, -50000))).toEqual([]);
+    // A positive loss figure still reads as before.
+    expect(detectRegressions(series('net_loss', 'USD', 50000, 100000))).toHaveLength(1);
+    expect(detectRegressions(series('net_loss', 'USD', 100000, 50000))).toEqual([]);
+  });
+
+  test('a rise of exactly the threshold is flagged whatever the float rounding (0.05 -> 0.055 churn)', () => {
+    // (0.055 - 0.05) / 0.05 is 0.09999999999999995 in floating point.
+    expect(detectRegressions(series('churn', 'pct', 0.05, 0.055))).toHaveLength(1);
+    expect(detectRegressions(series('churn', 'pct', 5, 5.5))).toHaveLength(1);
+    // A drop of exactly the threshold on an ordinary metric is flagged the same way from either side.
+    expect(detectRegressions(series('arr', 'USD', 0.05, 0.045))).toHaveLength(1);
+    expect(detectRegressions(series('arr', 'USD', 0.1, 0.09))).toHaveLength(1);
+    // Just under the threshold is still not a regression.
+    expect(detectRegressions(series('churn', 'pct', 0.05, 0.0549))).toEqual([]);
+  });
+
+  test('debt_service_coverage_ratio is higher-is-better: a fall is the regression, a rise is not', () => {
+    const regs = detectRegressions(series('debt_service_coverage_ratio', 'ratio', 2, 1));
+    expect(regs).toHaveLength(1);
+    expect(regs[0]).toMatchObject({ metric: 'debt_service_coverage_ratio', direction: 'down' });
+    expect(detectRegressions(series('debt_service_coverage_ratio', 'ratio', 1, 2))).toEqual([]);
   });
 });
 
@@ -249,11 +279,11 @@ describe('isLowerIsBetter', () => {
       'churn_rate_target', 'latencyz', 'paybacks']) no(m);
   });
 
-  test('a name that also holds saving, savings, saved, recovered, recovery, reduction, reduced or avoided is not lower-is-better', () => {
+  test('a name that also holds saving, savings, saved, recovered, recovery, reduction, reduced, avoided or coverage is not lower-is-better', () => {
     for (const m of ['cost_savings', 'revenue_loss_recovered', 'cost_saving', 'costs_saved', 'loss_recovery', 'cost_reduction',
-      'expense_reduced', 'losses_avoided', 'debt_reduction', 'Cost-Savings', 'cloud cost recovered', 'latency_reduction_ms']) no(m);
+      'expense_reduced', 'losses_avoided', 'debt_reduction', 'debt_service_coverage_ratio', 'interest_coverage_debt', 'Cost-Savings', 'cloud cost recovered', 'latency_reduction_ms']) no(m);
     expect(trajectory.LOWER_IS_BETTER.exceptWords).toEqual(
-      ['saving', 'savings', 'saved', 'recovered', 'recovery', 'reduction', 'reduced', 'avoided']);
+      ['saving', 'savings', 'saved', 'recovered', 'recovery', 'reduction', 'reduced', 'avoided', 'coverage']);
   });
 
   test('the exception words do not touch the exact names or a name with no lower-is-better word', () => {
