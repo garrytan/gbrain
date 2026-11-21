@@ -24,6 +24,8 @@
  * deleted or private page refuses and the fact stays held; a segmented page over the ceiling, a malformed fence or a
  * row that no longer reads back refuse at preparation the same way.
  */
+import { nonUserSpeaker } from '../facts/attribution.ts';
+import { assertHeldRestatementCurrent } from './dated-restatement.ts';
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -222,7 +224,7 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
   const fact: NewFact & { valid_from: Date } = {
     fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as NewFact['kind'], entity_slug: str(p.entity_slug) ?? (isHoldingSlug(row.slug) ? null : row.slug),
     visibility: p.visibility === 'world' ? 'world' : 'private', source: str(p.source) ?? `trust release h${hold.id}`, context: str(p.context),
-    source_session: str(p.source_session), confidence: 1, valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : new Date(),
+    source_session: str(p.source_session), attributed_to: nonUserSpeaker(p.replacement_speaker), confidence: 1, valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : new Date(),
     valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null, embedding: null, embedding_model: null, ...claimColumns(p as never),
   };
   const claim = { fact: fact.fact, kind: fact.kind ?? 'fact', visibility: fact.visibility ?? 'private', entity_slug: fact.entity_slug ?? null };
@@ -245,6 +247,7 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
   const lockHold = async (tx: BrainEngine) => {
     await tx.executeRaw('SELECT id FROM write_gate_holds WHERE id = $1 FOR UPDATE', [intent.hold_id]);
     if (!current(await getWriteGateHold(tx, intent.hold_id))) throw decidedMeanwhile(intent.hold_id);
+    await assertHeldRestatementCurrent(tx, hold, true);
   };
   const page = append.prepared;
   return {

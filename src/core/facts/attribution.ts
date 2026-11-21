@@ -24,3 +24,8 @@ export const ENTITY_LINKABLE_SQL = `(f.attributed_to IS NULL OR f.attributed_to 
 export function attributionCompatible(a: FactAttribution | null | undefined, b: FactAttribution | null | undefined): boolean {
   return !a || !b || a === b;
 }
+
+/** Only existing third-party or assistant speech is carried through a dated restatement. */
+export function nonUserSpeaker(value: unknown): 'assistant' | 'other' | null {
+  return value === 'assistant' || value === 'other' ? value : null;
+}

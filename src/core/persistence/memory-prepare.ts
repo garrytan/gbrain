@@ -4,6 +4,7 @@ import { opError } from '../ops/contract.ts';
 import { pageIdentityError, rememberAcceptsPageCreatedSince } from './page-identity.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { assertFactNotWithdrawn, decideReplacement, decideSingleFact, prepareFactEmbedding, type SingleFactIntent } from '../facts/single-prepare.ts';
+import { nonUserSpeaker } from '../facts/attribution.ts';
 import { supersededValidUntil } from '../facts/supersede-interval.ts';
 import { factEmbeddingDisabled } from '../embedding-disabled.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
@@ -36,7 +37,7 @@ function conflict(row: WriteRequest): never {
 }
 function candidateState(value: Awaited<ReturnType<typeof decideSingleFact>>): string {
   const c = value.candidate;
-  return JSON.stringify([value.status, c?.id, c?.fact, c?.kind, c?.visibility,
+  return JSON.stringify([value.status, c?.id, c?.fact, c?.kind, c?.visibility, c?.entity_slug, c?.attributed_to, storedClaim(c),
     c?.valid_until ? new Date(c.valid_until).toISOString() : null, c?.source_markdown_slug, c?.row_num, c?.trust_tier ?? null]);
 }
 export const NO_ENTITY_HINT = 'Saved without an entity, so entity-scoped recall will not find it. To link it, remember the same claim again with `entity` (the person, company or project it is about): that replaces this copy, so there is nothing to forget. Do not forget it: a claim forgotten without an entity is withdrawn for every entity and cannot be saved again.';
@@ -157,13 +158,21 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const validUntil = p.valid_until ? new Date(String(p.valid_until)) : null;
   const validFrom = new Date(String(p.valid_from));
   const context = p.entity_inferred ? appendContextNote(null, inferenceNote(p.entity_inferred as InferredVia)) : undefined;
+  // An explicit same-subject correction may add the event day to a verbatim statement.
+  // The existing target alone supplies the speaker; changed wording is a new assertion.
+  const target = decision.candidate;
+  const datedSpeaker = replaces !== null && p.explicit_event_date === true && status === 'superseded' && target && target.kind === input.kind
+    && target.entity_slug === input.entity_slug && JSON.stringify(storedClaim(target)) === JSON.stringify(claim)
+    && (target.valid_until ? new Date(target.valid_until).toISOString() : null) === (validUntil?.toISOString() ?? null)
+    && input.fact === `${validFrom.toISOString().slice(0, 10)}: ${target.fact}` ? nonUserSpeaker(target.attributed_to) : null;
   const fact: NewFact & { valid_from: Date } = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
     confidence: 1, embedding, embedding_model, source_session: typeof p.session_id === 'string' ? p.session_id : null,
-    ...(context ? { context } : {}), ...claimColumns(p) };
+    ...(datedSpeaker ? { attributed_to: datedSpeaker } : {}), ...(context ? { context } : {}), ...claimColumns(p) };
   // #5575 B3: the row-level write gate at the request's declared tier (ENG-18); a held fact inserts nothing.
   const gate = decideFactWrite({ fact: input.fact, context: context ?? null, source: fact.source }, { sourceId: row.source_id, slug: row.slug,
     payload: { fact: input.fact, kind: input.kind, visibility: input.visibility, entity_slug: input.entity_slug, source: fact.source, context: context ?? null,
-      valid_from: validFrom.toISOString(), valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session, ...claimColumns(p) },
+      valid_from: validFrom.toISOString(), valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session,
+      ...(datedSpeaker ? { replacement_speaker: datedSpeaker, replaces } : {}), ...claimColumns(p) },
     input: gateInput(requestChannelTrust(row) ?? { tier: 'unknown', origin: null }, row.id), cfg: await loadWriteGateConfig(engine) });
   if (gate.action === 'reject') throw writeGateRejectedError(gate.assessment);
   if (gate.action === 'hold') return { observedRevision, noop: true, validate, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
