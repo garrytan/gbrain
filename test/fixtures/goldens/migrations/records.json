@@ -5401,8 +5401,8 @@
         "idempotent": true,
         "name": "guest_promotion_prefix_index",
         "sql": {
-          "length": 945,
-          "sha256": "8f5b2d2b787ffb4f8040e559274c8799b7bb54085c6c014992896f3bdfc0bfee"
+          "length": 1220,
+          "sha256": "c1ac001fc1e645fc5d38e79f00270d4c9df34475e9924c8d1186ad09f1d4d214"
         },
         "sqlFor": "absent",
         "transaction": "absent",

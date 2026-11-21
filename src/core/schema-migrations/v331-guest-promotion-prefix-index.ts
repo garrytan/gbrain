@@ -13,8 +13,14 @@ export const v331: Migration = {
       RETURN;
     END IF;
     LOCK TABLE public.guest_promotions IN ACCESS EXCLUSIVE MODE;
-    IF pg_get_indexdef(to_regclass('public.guest_promotions_guest_page_idx')) =
-        'CREATE INDEX guest_promotions_guest_page_idx ON public.guest_promotions USING btree (guest_page_id)'
+    IF EXISTS (
+          SELECT 1 FROM pg_index i
+          WHERE i.indexrelid = to_regclass('public.guest_promotions_guest_page_idx')
+            AND i.indisvalid AND i.indisready AND i.indislive AND NOT i.indisclustered
+            AND obj_description(i.indexrelid, 'pg_class') IS NULL
+            AND pg_get_indexdef(i.indexrelid) =
+                'CREATE INDEX guest_promotions_guest_page_idx ON public.guest_promotions USING btree (guest_page_id)'
+        )
         AND EXISTS (
           SELECT 1 FROM pg_index i
           WHERE i.indexrelid = to_regclass('public.guest_promotions_link_key')

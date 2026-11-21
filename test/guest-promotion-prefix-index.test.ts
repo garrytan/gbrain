@@ -50,3 +50,10 @@ test('keeps a customized guest-page index even with the canonical unique key', a
   await db.exec(v331.sql);
   expect(await indexExists('guest_promotions_guest_page_idx')).toBe(true);
 });
+
+test('preserves a guest-page index designated for CLUSTER', async () => {
+  await db.exec(`ALTER TABLE guest_promotions CLUSTER ON guest_promotions_guest_page_idx;
+    CREATE UNIQUE INDEX guest_promotions_link_key ON guest_promotions (guest_page_id,target_source_id,target_slug)`);
+  await db.exec(v331.sql);
+  expect(await indexExists('guest_promotions_guest_page_idx')).toBe(true);
+});
