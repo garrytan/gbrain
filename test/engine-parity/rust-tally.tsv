@@ -48,7 +48,7 @@ test/engine-parity/fact-future-order.test.ts	1	0
 test/engine-parity/fact-pool-widening.test.ts	2	0
 test/engine-parity/fact-purge-commit.test.ts	0	1
 test/engine-parity/fact-purge-ledger.test.ts	3	0
-test/engine-parity/fact-purge-probes.test.ts	0	3
+test/engine-parity/fact-purge-probes.test.ts	2	1
 test/engine-parity/fact-purge-sites.test.ts	1	13
 test/engine-parity/fact-relink-attempts.test.ts	3	0
 test/engine-parity/fact-relink-writes.test.ts	4	0
@@ -134,7 +134,7 @@ test/engine-parity/purge-dry-run.test.ts	2	0
 test/engine-parity/purge-plan.test.ts	13	0
 test/engine-parity/purge-receipt-members.test.ts	3	0
 test/engine-parity/purge-slug-stores.test.ts	0	2
-test/engine-parity/purge-verify.test.ts	1	2
+test/engine-parity/purge-verify.test.ts	2	1
 test/engine-parity/raw-sql.test.ts	0	4
 test/engine-parity/reads-privacy.test.ts	51	0
 test/engine-parity/reason-tombstones.test.ts	2	0

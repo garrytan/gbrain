@@ -9,7 +9,8 @@
  *    same observable result on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with
  *    GBRAIN_TEST_RUST_ARM=1). verifyPagePurge builds the same receipt on PGLite and Postgres; the Rust arm serves
  *    the page purge's store probes, so the receipt stops there on the typed `engine_capability_missing` refusal naming
- *    listPageProseHits (lane 4). The all-kinds count case stops on the fact purge's `fingerprint` probe (countPurgeProbe).
+ *    listPageProseHits (lane 4). The all-kinds count case runs on the Rust arm: its `fingerprint` and `claim_text` probes are served
+ *    (rust/crates/gbrain-store/src/facts/purge_claim_probe.rs; test/engine-parity/fact-purge-probes.test.ts pins them in full).
  *  - Regression: an engine that counts a probe differently reports a purged page or claim as gone while a store still
  *    holds it (or the reverse); the Rust engine has no SQL, so each probe has to exist as a typed member it can
  *    implement or refuse.

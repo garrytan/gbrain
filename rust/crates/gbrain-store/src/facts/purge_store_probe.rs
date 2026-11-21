@@ -9,16 +9,19 @@
 //!   source still holds does not count), `files` (detached, naming the slug) and `write_gate_holds`;
 //! - `page_rows`: the page's chunks, versions, takes and timeline entries;
 //! - `fact_refs`: the decide proposals and the review queue and proposals that name a fact id;
-//! - `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and `effect_payload`.
+//! - `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and `effect_payload`;
+//! - `fingerprint` (facts, takes, take proposals) and `claim_text` (pages, content chunks, page versions, journal requests).
 //!
 //! The stores this crate keeps no rows of (`core_edit_notices`, `context_volunteer_events`, `mention_gazetteer_entries`,
 //! `query_cache`, and the retrieval event, link, feedback and weight stores) are answered by the TypeScript member; a probe
-//! of one that reaches this module refuses. `fingerprint` and `claim_text` are the fact purge's probes and refuse too.
+//! of one that reaches this module refuses. `fingerprint` and `claim_text` are the fact purge's probes, served by
+//! `purge_claim_probe.rs` (its `claim_text` serves every store but `core_edit_notices`, which the TypeScript member answers).
 //!
 //! Text matching follows the SQL: `strpos(lower(COALESCE(x::text, '')), n) > 0` is `pg_lower(text).contains(n)` with a NULL
 //! column read as the empty text, and a jsonb column's text is `jsonb_text`. The caller lowers the needles.
 
 use super::invalid;
+use super::purge_claim_probe::{Claim, Fingerprint, count_claim_text, count_fingerprint};
 use crate::Store;
 use crate::cli_reads::pg_text::{jsonb_text, pg_lower};
 use crate::error::Result;
@@ -103,16 +106,31 @@ pub enum StoreProbe {
         #[serde(default)]
         page: Option<EffectPage>,
     },
+    Fingerprint {
+        store: String,
+        source_id: String,
+        fact_hash: String,
+        visibility: String,
+        subject: String,
+    },
+    ClaimText {
+        store: String,
+        source_id: String,
+        claim: String,
+        json: String,
+        reason: String,
+        reason_json: String,
+    },
 }
 
 /// `COALESCE(x::text, '')` of a nullable jsonb column.
-fn jsonb_or_empty(value: Option<&Value>) -> String {
+pub(super) fn jsonb_or_empty(value: Option<&Value>) -> String {
     value
         .filter(|v| !v.is_null())
         .map_or_else(String::new, jsonb_text)
 }
 
-fn any_in(text: &str, needles: &[String]) -> bool {
+pub(super) fn any_in(text: &str, needles: &[String]) -> bool {
     let lowered = pg_lower(text);
     needles.iter().any(|n| lowered.contains(n.as_str()))
 }
@@ -305,10 +323,38 @@ impl StoreProbe {
                 }
                 Ok(())
             }
+            StoreProbe::Fingerprint {
+                store,
+                source_id,
+                fact_hash,
+                visibility,
+                subject,
+            } => nul(&[
+                ("store", store),
+                ("sourceId", source_id),
+                ("factHash", fact_hash),
+                ("visibility", visibility),
+                ("subject", subject),
+            ]),
+            StoreProbe::ClaimText {
+                store,
+                source_id,
+                claim,
+                json,
+                reason,
+                reason_json,
+            } => nul(&[
+                ("store", store),
+                ("sourceId", source_id),
+                ("claim", claim),
+                ("json", json),
+                ("reason", reason),
+                ("reasonJson", reason_json),
+            ]),
         }
     }
 
-    /// How many rows match. The scans of requests, effects and segment texts stop at `cap`; the others count all of theirs.
+    /// How many rows match. The scans of requests, effects, segment texts and the fact purge's two probes stop at `cap`; the others count all of theirs.
     fn count(&self, read: &dyn KvRead, op: &str, cap: usize) -> Result<usize> {
         match self {
             StoreProbe::SlugKey {
@@ -386,6 +432,44 @@ impl StoreProbe {
                 forms,
                 page,
             } => count_effects(read, source_id, forms, page.as_ref(), cap),
+            StoreProbe::Fingerprint {
+                store,
+                source_id,
+                fact_hash,
+                visibility,
+                subject,
+            } => count_fingerprint(
+                read,
+                store,
+                &Fingerprint {
+                    source_id,
+                    fact_hash,
+                    visibility,
+                    subject,
+                },
+                op,
+                cap,
+            ),
+            StoreProbe::ClaimText {
+                store,
+                source_id,
+                claim,
+                json,
+                reason,
+                reason_json,
+            } => count_claim_text(
+                read,
+                store,
+                &Claim {
+                    source_id,
+                    claim,
+                    json,
+                    reason,
+                    reason_json,
+                },
+                op,
+                cap,
+            ),
         }
     }
 }

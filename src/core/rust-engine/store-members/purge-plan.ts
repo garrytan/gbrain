@@ -21,7 +21,9 @@
  * holds), `page_rows`, `fact_refs`, `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and
  * `effect_payload`. It keeps no rows of `core_edit_notices`, the retrieval event, link, feedback and weight stores,
  * `context_volunteer_events`, `mention_gazetteer_entries` or `query_cache`, so a probe of one finds nothing without a store
- * call. The fact purge's `fingerprint` and `claim_text` probes are not served: they refuse naming their kind.
+ * call. The fact purge receipt's `fingerprint` probe (the fact, take and take proposal stores) and `claim_text` probe (pages,
+ * chunks, versions and journal requests; facts/purge_claim_probe.rs) run there too. A `claim_text` probe of `core_edit_notices`
+ * finds nothing without a store call, as a `slug_key` probe of it does.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { escapeFenceCell } from '../../fence-shared.ts';
@@ -62,8 +64,7 @@ export const RECEIPT_ABSENT_SLUG_STORES: ReadonlySet<string> = new Set([
 
 /**
  * The store's arguments for a page purge receipt's store probe (facts/purge_store_probe.rs `StoreProbe`), or none when the
- * store keeps no row of it. A probe of a store the store keeps must reach it: it never answers 0 for one. The fact
- * purge's `fingerprint` and `claim_text` probes are not served and refuse naming their kind.
+ * store keeps no row of it. A probe of a store the store keeps must reach it: it never answers 0 for one.
  */
 function receiptRoute(member: string, probe: Exclude<PurgeProbe, { kind: 'table' | 'named' }>): ProbeRoute {
   switch (probe.kind) {
@@ -88,7 +89,15 @@ function receiptRoute(member: string, probe: Exclude<PurgeProbe, { kind: 'table'
       return { kind: 'receipt', probe: {
         kind: 'effect_payload', sourceId: probe.sourceId, forms: [...probe.forms],
         ...(probe.page ? { page: { slug: probe.page.slug, reasonForms: [...probe.page.reasonForms] } } : {}) } };
-    case 'fingerprint': case 'claim_text': return refuseMember(member, `the ${probe.kind} probe`);
+    case 'fingerprint':
+      return { kind: 'receipt', probe: {
+        kind: 'fingerprint', store: probe.store, sourceId: probe.sourceId, factHash: probe.factHash,
+        visibility: probe.visibility, subject: probe.subject } };
+    case 'claim_text':
+      return probe.store === 'core_edit_notices' ? { kind: 'none' }
+        : { kind: 'receipt', probe: {
+          kind: 'claim_text', store: probe.store, sourceId: probe.sourceId, claim: probe.claim, json: probe.json,
+          reason: probe.reason, reasonJson: probe.reasonJson } };
   }
 }
 
@@ -174,6 +183,8 @@ export const listNearestFactsForPurge: Member<'listNearestFactsForPurge'> = (bra
 export const setPurgeProbeTimeout: Member<'setPurgeProbeTimeout'> = async () => {};
 
 export const countPurgeProbe: Member<'countPurgeProbe'> = async (brain, probe, rows) => {
+  // The SQL arms refuse a bad bound before they build a statement (boundedCountSql); so does a probe the store never sees.
+  if (!Number.isSafeInteger(rows) || rows < 0) throw new Error('purge probe: the row bound must be a non-negative integer');
   const route = probeRoute('countPurgeProbe', probe);
   if (route.kind === 'none') return 0;
   if (route.kind === 'receipt') return storeCall({ member: 'countPurgeProbe' }, () => brain.countPurgeStoreProbe({ probe: route.probe, rows }));

@@ -204,6 +204,28 @@ fn all_proposals(read: &dyn KvRead) -> Result<Vec<ProposalRecord>> {
         .collect()
 }
 
+/// Calls `f` with the source and claim text of each take proposal, in id order, until it returns false: the scan stops there, so
+/// a bounded count leaves the later rows unread.
+pub(crate) fn for_each_claim(
+    read: &dyn KvRead,
+    f: &mut dyn FnMut(&str, &str) -> bool,
+) -> Result<()> {
+    let mut failure = None;
+    scan_prefix(
+        read,
+        &[keys::TAKE, PROPOSAL],
+        false,
+        &mut |_, v| match serde_json::from_slice::<ProposalRecord>(v) {
+            Ok(r) => f(&r.source_id, &r.claim_text),
+            Err(e) => {
+                failure = Some(StoreError::from(e));
+                false
+            }
+        },
+    )?;
+    failure.map_or(Ok(()), Err)
+}
+
 /// Deletes a proposal with its idempotency entry and its nudges.
 fn delete_proposal(tx: &mut dyn KvWrite, r: &ProposalRecord) -> Result<()> {
     let prefix = page_key_prefix(

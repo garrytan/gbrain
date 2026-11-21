@@ -39,7 +39,7 @@ use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::facts::PrivacyPolicy;
 use crate::facts::take_purges::refuse_purged_take;
 use crate::keyword::{TRGM_WORD_SIMILARITY_THRESHOLD, trgm_word_similarity};
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
 use crate::trust::{RowTrust, TrustTable, stamp_row};
@@ -571,6 +571,17 @@ pub(crate) fn all_takes(read: &dyn KvRead) -> Result<Vec<TakeRecord>> {
     raw.iter()
         .map(|v| serde_json::from_slice(v).map_err(StoreError::from))
         .collect()
+}
+
+/// Calls `f` with each take of every page, in id order, until it returns false or fails: the rows are read a page at a time, so
+/// `f` may read the store and a stop leaves the later rows unread.
+pub(crate) fn for_each_take(
+    read: &dyn KvRead,
+    f: &mut dyn FnMut(&TakeRecord) -> Result<bool>,
+) -> Result<()> {
+    for_each_prefix_paged(read, &[keys::TAKE, TAKE], 8, &mut |_, v| {
+        f(&serde_json::from_slice::<TakeRecord>(v).map_err(StoreError::from)?)
+    })
 }
 
 /// Writes a take's record (its row index never changes: `page_id` and `row_num` are fixed),

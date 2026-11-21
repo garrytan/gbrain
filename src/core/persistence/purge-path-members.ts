@@ -127,8 +127,8 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   { site: '<anonymous> (persistence/coordinator.ts)', owner: publicationStamp, stop: 'the publication transaction of a recovered purge stamps publication_started through raw SQL (UPDATE persistence_requests ... RETURNING *)' },
   // sweepPurgedPage: the generation-ledger scrub.
   { site: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: ledgerScrub, stop: 'the generation-ledger scrub runs through raw SQL' },
-  // verifyPagePurge: the receipt. Its store probes (`countPurgeProbe`) are served; the store refuses
-  // only the fact purge's `fingerprint` and `claim_text` probes, which a page purge's receipt does not run.
+  // verifyPagePurge: the receipt. Its store probes (`countPurgeProbe`) are served, the fact purge's `fingerprint` and
+  // `claim_text` probes included.
   // ledgerReports: runs for every purge whose page has fact claims, belief ledger or not.
   { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
   { member: 'listFactContextsForPurgeProbe', owner: factContextProbe, stop: 'the receipt pages the live fact contexts that quote the purged claims; not served' },

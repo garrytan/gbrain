@@ -61,6 +61,7 @@ pub(crate) mod page_purges;
 pub use page_purges::PagePurgeUpsert;
 mod privacy;
 pub mod purge;
+mod purge_claim_probe;
 pub mod purge_ledger;
 pub mod purge_plan;
 pub(crate) mod purge_probe;
@@ -105,7 +106,7 @@ use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::keyword::{
     or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd, with_query_stack,
 };
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
 use crate::sources::read_source;
@@ -751,6 +752,22 @@ pub(crate) fn count_unexpired(read: &dyn KvRead) -> Result<u64> {
 
 pub(crate) fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_SOURCE, &[source_id]))
+}
+
+/// Calls `f` with each fact of the source, in index order, until it returns false: the rows are read a page of ids at a time, so
+/// a stop leaves the later ones unread (the purge receipt's bounded probes stop at their cap).
+pub(crate) fn for_each_source_fact(
+    read: &dyn KvRead,
+    source_id: &str,
+    f: &mut dyn FnMut(&FactRecord) -> bool,
+) -> Result<()> {
+    for_each_prefix_paged(read, &text_key(BY_SOURCE, &[source_id]), 8, &mut |k, _| {
+        let id = k.get(k.len().saturating_sub(8)..).and_then(keys::be8);
+        match id.map(|id| read_fact(read, id)).transpose()?.flatten() {
+            Some(row) => Ok(f(&row)),
+            None => Ok(true),
+        }
+    })
 }
 
 /// Whether some fact of the source is keyed under an entity slug `pred` accepts (the `BY_ENTITY` index).

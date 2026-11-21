@@ -12,9 +12,12 @@
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that counts a store differently reports a purged claim as gone while a store still holds it (or the
  *    reverse), so the fact purge receipt's store report is wrong. The Rust engine refused both probe kinds by name, so a fact purge on
- *    a Rust brain printed no receipt.
+ *    a Rust brain printed no receipt. The two probe cases now run equal on the Rust arm. The whole-receipt case still stops there on a
+ *    typed refusal, or here on `executeRaw` (a raw read the receipt makes, derivationNeedles in page-body/segment-derive.ts), and
+ *    behind it on the belief-ledger probe and the table probes of the swept inventory (files, open loops, aliases, ...): the gaps are
+ *    listed in the commit message and the report, each with its owner.
  *  - Why existing coverage misses it: the one parity case that counted these probes (purge-verify.test.ts) seeds one row per store and
- *    stopped on the first fingerprint probe on the Rust arm; no case seeded the near misses (another subject, visibility or source, a
+ *    stopped on the first fingerprint probe on the Rust arm (before this file); no case seeded the near misses (another subject, visibility or source, a
  *    segmented page, a JSON-escaped claim, an outcome marker).
  *  - Seam: `boundedProbe` of facts/purge-verify.ts, called with the arm's engine (it opens its own transaction, as the receipt does),
  *    and `verifyFactPurge` for the whole receipt. Every row is seeded through typed writers: putPage, insertFacts, addTakesBatch,
