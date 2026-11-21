@@ -1779,6 +1779,7 @@ describe('v0.42 (#1699) — quarantined_pages + flagged_pages checks', () => {
     expect(source).toContain("progress.heartbeat('flagged_pages')");
     // quarantine HIDES (JSONB existence scan), content_flag WARNS.
     // The two counts moved into engine-sql/doctor-pages.ts (countMarkedPages) in lane 14.
+    // test-reads-source-ok[structural]: pins the two marked-page predicates in the typed countMarkedPages statement.
     const pagesSql = fs.readFileSync(path.join(import.meta.dir, '../src/core/engine-sql/doctor-pages.ts'), 'utf8');
     expect(pagesSql).toContain("p.frontmatter ? 'quarantine'");
     expect(pagesSql).toContain("p.frontmatter ? 'content_flag'");

@@ -5,9 +5,10 @@
  * rust/docs/store/cli-reads-doctor-src.md).
  *
  * `readDoctorSources(variant, scope)` is every statement that reads the `sources` table alone. Each variant is one or
- * more constant statements (no SQL is composed), pinned against the text the caller built before by
+ * more constant statements (only the constant connector kind list CONNECTOR_KIND_LIST_SQL is spliced in), pinned against the text the caller built before by
  * test/doctor-reads-sql.test.ts. A variant that had a catch-and-retry fallback keeps it here, in order.
  */
+import { CONNECTOR_KIND_LIST_SQL } from '../persistence/connector-kinds.ts';
 import type { EngineRawRead } from './doctor-reads.ts';
 
 export type { EngineRawRead } from './doctor-reads.ts';
@@ -139,15 +140,15 @@ const PLANS: { readonly [V in DoctorSourceVariant]: Plan } = {
   brain_writer_by_id: (scope) => one("SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE id = $1", [requireSourceId('brain_writer_by_id', scope)]),
   brain_writer_live: () => [[KIND_LIVE], [KIND_ANY]],
   live_incarnations: () => one('SELECT id,incarnation::text AS incarnation,local_path,config FROM sources WHERE archived IS NOT TRUE'),
-  connector_keys: () => one("SELECT id,incarnation::text,local_path,config,archived FROM sources WHERE config->>'kind' IN ('google','github','meetings','slack','imessage')"),
+  connector_keys: () => one(`SELECT id,incarnation::text,local_path,config,archived FROM sources WHERE config->>'kind' IN ${CONNECTOR_KIND_LIST_SQL}`),
   freshness: (scope) => (scope.sourceIds
     ? [[FRESH_UPSTREAM_SCOPED, [scope.sourceIds]], [FRESH_BARE_SCOPED, [scope.sourceIds]], [FRESH_ANY_SCOPED, [scope.sourceIds]]]
     : [[FRESH_UPSTREAM], [FRESH_BARE], [FRESH_ANY]]),
   shared_skills_view: (scope) => one('SELECT config,incarnation FROM sources WHERE id=$1 AND NOT archived', [requireSourceId('shared_skills_view', scope)]),
   detached: (scope) => one("SELECT local_path, config->>'strategy' AS strategy, last_commit FROM sources WHERE id=$1 AND archived IS NOT TRUE", [requireSourceId('detached', scope)]),
   synopsis_ids: () => one("SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id COLLATE \"C\""),
-  claim_candidates: () => one("SELECT s.id, (s.config ? 'trust_claimed_at' AND s.config->>'trust_tier' = 'operator_curated' AND COALESCE(s.config->>'kind', '') NOT IN ('google','github','meetings','slack','imessage')) AS claimed, "
-    + "(s.config ? 'trust_claim_lifted_at') AS lifted FROM sources s WHERE NOT s.archived AND COALESCE(s.config->>'kind', '') NOT IN ('google','github','meetings','slack','imessage') ORDER BY s.id COLLATE \"C\""),
+  claim_candidates: () => one(`SELECT s.id, (s.config ? 'trust_claimed_at' AND s.config->>'trust_tier' = 'operator_curated' AND COALESCE(s.config->>'kind', '') NOT IN ${CONNECTOR_KIND_LIST_SQL}) AS claimed, `
+    + `(s.config ? 'trust_claim_lifted_at') AS lifted FROM sources s WHERE NOT s.archived AND COALESCE(s.config->>'kind', '') NOT IN ${CONNECTOR_KIND_LIST_SQL} ORDER BY s.id COLLATE "C"`),
 };
 
 /** The statements a variant runs, in fallback order (the first that does not throw answers), for the test that pins them. */

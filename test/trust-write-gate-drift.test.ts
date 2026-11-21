@@ -55,7 +55,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/repair/consolidate-ties.ts': 'owner repair reopening the validity of existing facts (lifecycle)',
   'src/core/repair/duplicate-facts.ts': 'owner repair behind a preview hash: supersedes exact copies of an existing fact with its oldest row (expired_at, superseded_by; lifecycle, no new text); fenced copies are struck through put_page, which runs the gate',
   'src/core/generations/adapters/extracted-facts.ts': 'callers gate first and pass only rows the gate inserts or flags (the conversation lane and the backstop decide in conversation-publication.ts and backstop.ts); restore puts back a row\'s own recorded state',
-  'src/core/generations/adapters/fact-rows.ts': 'generation restore puts back a fact row\'s own recorded before-state (lifecycle); no new text',
   'src/core/repair/fact-claim-dates.ts': 'owner repair moving the valid_from of existing database-only facts to the date their claim states (lifecycle)',
   'src/core/repair/extractor-facts.ts': 'owner repair of existing rows',
   'src/core/repair/purged-page-facts.ts': 'owner repair behind a preview hash: only sets expired_at and clears row_num on existing fact rows (lifecycle); writes no new text',

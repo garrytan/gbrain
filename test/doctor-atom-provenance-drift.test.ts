@@ -248,6 +248,7 @@ describe('computeAtomProvenanceDriftCheck', () => {
     // over an unindexed substring(content_hash) expression — O(atoms x pages),
     // which blew a 60s health-monitor budget on a 27k-page / 7k-atom brain.
     // The statement moved out of the check into engine-sql/doctor-derived.ts (readAtomProvenanceCounts).
+    // test-reads-source-ok[structural]: pins the semi-join shape of the readAtomProvenanceCounts statement (#4937).
     const src = readFileSync(new URL('../src/core/engine-sql/doctor-derived.ts', import.meta.url), 'utf8');
     const start = src.indexOf('), drift AS (');
     expect(start).toBeGreaterThan(0);

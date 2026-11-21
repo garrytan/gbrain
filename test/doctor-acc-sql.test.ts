@@ -35,6 +35,7 @@ afterAll(async () => { await engine.disconnect(); });
 
 describe('doctor reads, second set: statement text', () => {
   test('the live-page batch is the provenance scan batch', () => {
+    // test-reads-source-ok[structural]: pins the drift scan's batch constant to the typed doctor read's batch.
     const source = readFileSync(new URL('../src/core/trust/provenance-drift.ts', import.meta.url), 'utf8');
     expect(source).toContain(`const BATCH = ${DRIFT_BATCH};`);
     expect(DRIFT_BATCH).toBe(500);
@@ -42,6 +43,7 @@ describe('doctor reads, second set: statement text', () => {
 
   test('the feedback weight bounds are the neutral weight', () => {
     expect(NEUTRAL_WEIGHT).toBe(0.5);
+    // test-reads-source-ok[structural]: pins the feedback weight bound in the typed doctor-acc statement to NEUTRAL_WEIGHT.
     const source = readFileSync(new URL('../src/core/engine-sql/doctor-acc.ts', import.meta.url), 'utf8');
     expect(source).toContain(`abs(weight - ${NEUTRAL_WEIGHT}) > 0.01`);
     expect(source).toContain(`w.weight < ${NEUTRAL_WEIGHT}`);

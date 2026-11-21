@@ -51,6 +51,7 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   GUEST_SOURCES_HIDDEN_SQL: 'src/core/guests/note.ts: constant row-security probe of guest_sources (no input)',
   ANY_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant any-owner-only-source EXISTS over sources read_source; the kinds and flag key are module constants (no input)',
   READ_SOURCE_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant owner-only row test of the sources alias read_source; the kinds and flag key are module constants (no input)',
+  CONNECTOR_KIND_LIST_SQL: 'src/core/persistence/connector-kinds.ts: constant parenthesized list of the code-constant connector kinds (no input)',
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
 };
 

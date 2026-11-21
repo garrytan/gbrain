@@ -1,11 +1,14 @@
 /**
  * Doctor facts, fence and trust reads: the statements `gbrain doctor` checks (and the readers they share) ran through
  * `executeRaw`, each with the same text and parameters, on the engine's own `executeRaw`; only their home moved.
- * PGLite and Postgres run these exact statements. Nothing here is composed: every variant is one literal constant.
+ * PGLite and Postgres run these exact statements. Each variant is one constant; the connector kind list is the constant
+ * CONNECTOR_KIND_LIST_SQL, and the named claim read binds its ids through sqlFragment.
  *
  * The Rust engine answers each member from its store or, where the store keeps no writer of the relation, with the
  * empty value (rust/docs/store/cli-reads-doctor-facts-trust.md).
  */
+import { CONNECTOR_KIND_LIST_SQL } from '../persistence/connector-kinds.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
 export type { EngineRawRead } from './cli-reads-ops.ts';
@@ -114,14 +117,21 @@ export type TrustClaimTargetMode = 'owned' | 'named' | 'claimed';
 /** A non-connector source and whether it is claimed. */
 export interface TrustClaimTargetRow { id: string; claimed: boolean }
 
-const TRUST_OWNED_SQL = "SELECT s.id, (s.config ? 'trust_claimed_at' AND s.config->>'trust_tier' = 'operator_curated' AND COALESCE(s.config->>'kind', '') NOT IN ('google','github','meetings','slack','imessage')) AS claimed FROM sources s WHERE COALESCE(s.config->>'kind', '') NOT IN ('google','github','meetings','slack','imessage')";
-const TRUST_NAMED_SQL = `SELECT s.id, (s.config ? 'trust_claimed_at' AND s.config->>'trust_tier' = 'operator_curated' AND COALESCE(s.config->>'kind', '') NOT IN ('google','github','meetings','slack','imessage')) AS claimed FROM sources s
-        WHERE s.id = ANY($1::text[]) AND COALESCE(s.config->>'kind', '') NOT IN ('google','github','meetings','slack','imessage') ORDER BY s.id COLLATE "C"`;
-const TRUST_CLAIMED_SQL = "SELECT s.id, true AS claimed FROM sources s WHERE (s.config ? 'trust_claimed_at' AND s.config->>'trust_tier' = 'operator_curated' AND COALESCE(s.config->>'kind', '') NOT IN ('google','github','meetings','slack','imessage')) ORDER BY s.id COLLATE \"C\"";
+const TRUST_OWNED_SQL = `SELECT s.id, (s.config ? 'trust_claimed_at' AND s.config->>'trust_tier' = 'operator_curated' AND COALESCE(s.config->>'kind', '') NOT IN ${CONNECTOR_KIND_LIST_SQL}) AS claimed FROM sources s WHERE COALESCE(s.config->>'kind', '') NOT IN ${CONNECTOR_KIND_LIST_SQL}`;
+const TRUST_CLAIMED_COLUMN_SQL = `(s.config ? 'trust_claimed_at' AND s.config->>'trust_tier' = 'operator_curated' AND COALESCE(s.config->>'kind', '') NOT IN ${CONNECTOR_KIND_LIST_SQL})`;
+const TRUST_NOT_CONNECTOR_SQL = `COALESCE(s.config->>'kind', '') NOT IN ${CONNECTOR_KIND_LIST_SQL}`;
+function trustNamedStatement(sourceIds: readonly string[]): { text: string; params: unknown[] } {
+  return renderFragment(sqlFragment`SELECT s.id, ${trustedSql(TRUST_CLAIMED_COLUMN_SQL)} AS claimed FROM sources s
+        WHERE s.id = ANY(${[...sourceIds]}::text[]) AND ${trustedSql(TRUST_NOT_CONNECTOR_SQL)} ORDER BY s.id COLLATE "C"`);
+}
+const TRUST_CLAIMED_SQL = `SELECT s.id, true AS claimed FROM sources s WHERE (s.config ? 'trust_claimed_at' AND s.config->>'trust_tier' = 'operator_curated' AND COALESCE(s.config->>'kind', '') NOT IN ${CONNECTOR_KIND_LIST_SQL}) ORDER BY s.id COLLATE "C"`;
 
 /** Non-connector sources (`owned`, archived ones too, in no order), the named ones among them (`named`), or the claimed ones (`claimed`), by id; each with whether it is claimed. */
 export async function listTrustClaimTargets(raw: EngineRawRead, mode: TrustClaimTargetMode, sourceIds?: readonly string[]): Promise<TrustClaimTargetRow[]> {
-  if (mode === 'named') return raw<TrustClaimTargetRow>(TRUST_NAMED_SQL, [[...(sourceIds ?? [])]]);
+  if (mode === 'named') {
+    const { text, params } = trustNamedStatement(sourceIds ?? []);
+    return raw<TrustClaimTargetRow>(text, params);
+  }
   return raw<TrustClaimTargetRow>(mode === 'owned' ? TRUST_OWNED_SQL : TRUST_CLAIMED_SQL);
 }
 
