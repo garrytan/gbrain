@@ -81,7 +81,8 @@ const PASS_HEARTBEAT_MS = 30_000;
  * GST-3328 follow-up: the Git time one pass spends reading re-screened holds' file histories. Each read walks every commit
  * that changed its paths, so on a deep repository a pass over many holds would otherwise spend minutes there. A path whose
  * history the budget left unread, or read in part, is screened with what was read, is counted in the pass's
- * `driftHistoryUnread`, and a hold it gets is marked `history_unread`, so the next sync screens it again.
+ * `driftHistoryUnread`, and a hold it gets is marked `history_unread`, so the next sync screens it again; a hold that was
+ * already due a screen (marked, or written by an older screen) is not marked again, so it settles after that one retry.
  */
 const DRIFT_HISTORY_BUDGET_MS = 120_000;
 
@@ -173,7 +174,10 @@ async function readDriftHistories(level: ShadowLevel, chunk: PassEntry[], owed: 
     delete value.telemetry.step;
   });
   for (const [entry, shadow] of due) {
-    if (!read.has(shadow.path) || partial.has(shadow.path)) { entry.driftHistoryUnread = true; counts.driftHistoryUnread = (counts.driftHistoryUnread ?? 0) + 1; }
+    if (!read.has(shadow.path) || partial.has(shadow.path)) {
+      counts.driftHistoryUnread = (counts.driftHistoryUnread ?? 0) + 1;
+      if (!shadow.state.hold?.unscreened) entry.driftHistoryUnread = true;
+    }
     const versions = [...new Set(read.get(shadow.path) ?? [])].filter(oid => oid !== shadow.state.level && oid !== shadow.state.baseline).slice(0, DRIFT_HISTORY_VERSIONS);
     if (versions.length) entry.driftHistory = versions;
   }

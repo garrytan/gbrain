@@ -5,7 +5,8 @@
  *   - no group starts once the deadline has passed;
  *   - the caller hears a beat while a long group read streams, not only when it ends;
  *   - a path listed twice still ends its group's walk early, and a blob counts once however often it recurs;
- *   - a sync whose history read is cut short marks the hold `history_unread`, and the next plain sync screens it again
+ *   - a sync whose history read is cut short marks the hold `history_unread`, and the next plain sync screens it again;
+ *     a read cut short again on that retry leaves an ordinary hold, so sync settles
  *     (real PGLite, and Postgres when DATABASE_URL is set, with a managed worktree).
  */
 import { afterAll, afterEach, expect, test } from 'bun:test';
@@ -59,6 +60,9 @@ test('a history read that is cut short keeps the versions it already read', asyn
   expect(read.get('notes/a.md')).toEqual([...blobs].reverse());
   expect(read.has('notes/missing.md')).toBe(false);
   expect([...partial]).toEqual(['notes/a.md']);
+  const full = new Set<string>();
+  expect((await pathBlobHistories(root, head, ['notes/a.md', 'notes/missing.md'], 3, undefined, { partial: full })).get('notes/a.md')).toHaveLength(3);
+  expect(full.size).toBe(0);
 });
 
 test('no history group starts once the deadline has passed, and a group read before it keeps its versions', async () => {
@@ -115,6 +119,11 @@ test('a path listed twice still ends its group\'s walk early, and a recurring bl
 
 const note = (slug: string, body: string) => `---\ntype: concept\ntitle: ${slug}\n---\n\n${body}\n`;
 const OPTS = { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true };
+const setup = ({ root }: { root: string }) => {
+  mkdirSync(join(root, 'notes'), { recursive: true }); git(root, 'init', '-q');
+  writeFileSync(join(root, 'notes/a.md'), note('notes/a', 'The committed body.'));
+  git(root, 'add', '-A'); git(root, 'commit', '-qm', 'notes');
+};
 
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
@@ -139,9 +148,19 @@ for (const backend of testBackends()) {
     expect(await holds(engine)).toEqual([]);
     const [page] = await engine.executeRaw<{ t: string }>("SELECT compiled_truth AS t FROM pages WHERE source_id='default' AND slug='notes/a'");
     expect(page!.t).toContain('A Git edit.');
-  }, { databaseUrl, setup: ({ root }) => {
-    mkdirSync(join(root, 'notes'), { recursive: true }); git(root, 'init', '-q');
-    writeFileSync(join(root, 'notes/a.md'), note('notes/a', 'The committed body.'));
-    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'notes');
-  } }), 240_000);
+  }, { databaseUrl, setup }), 240_000);
+
+  test(`[${backend}] a held note whose history read is cut short again on its retry keeps an ordinary hold, so sync settles`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await coordinated(engine, "DELETE FROM op_checkpoints WHERE op='sync-import-provenance'");
+    await coordinated(engine, `UPDATE pages SET knowledge_revision = $1::uuid, revision_write_request_id = NULL, updated_at = now() - interval '1 hour'
+      WHERE source_id='default' AND slug='notes/a'`, [randomUUID()]);
+    writeFileSync(join(root, 'notes/a.md'), note('notes/a', 'A Git edit.')); git(root, 'commit', '-qam', 'edit');
+    await coordinated(engine, "UPDATE sources SET last_commit='0123456789abcdef0123456789abcdef01234567' WHERE id='default'");
+    __setSyncGitStreamForTests(async (gitRoot, args, opts) => args[0] === 'log' ? { ok: false, reason: 'timeout' } : hardenedGitStream(gitRoot, args, opts));
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual([{ path: 'notes/a.md', unread: 'true' }]);
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual([{ path: 'notes/a.md', unread: null }]);
+  }, { databaseUrl, setup }), 240_000);
 }

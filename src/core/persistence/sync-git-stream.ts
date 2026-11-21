@@ -254,8 +254,8 @@ class HistoryRead extends Error {}
  * once every path of the group holds `depth` blobs. `onPath` runs for each path that got an entry as its group's read ends;
  * `beat` runs at most every HISTORY_BEAT_MS while a group streams, so a long walk still reports progress. A throw from either
  * (an abort) rejects. No group starts at or after `deadline` (epoch ms), and a group's read ends by it. A group whose read is
- * incomplete (a timeout, the deadline, a Git failure) keeps the blobs it read for the paths that got some, and adds them to
- * `partial`: each is a version that path held, so a match against it is as sound as after a full walk, and a path with none
+ * incomplete (a timeout, the deadline, a Git failure) keeps the blobs it read for the paths that got some, and adds those with
+ * fewer than `depth` to `partial`: each is a version that path held, so a match against it is as sound as after a full walk, and a path with none
  * has no entry. A path a pathspec cannot carry has no entry.
  */
 export async function pathBlobHistories(gitRoot: string, commit: string, paths: readonly string[], depth: number,
@@ -295,7 +295,7 @@ export async function pathBlobHistories(gitRoot: string, commit: string, paths: 
     for (const path of wanted) {
       const list = found.get(path);
       if (!complete && !list) continue;
-      if (!complete) options.partial?.add(path);
+      if (!complete && (list?.length ?? 0) < depth) options.partial?.add(path);
       histories.set(path, list ?? []);
       onPath?.(path);
     }
