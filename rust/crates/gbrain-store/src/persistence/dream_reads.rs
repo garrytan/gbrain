@@ -69,7 +69,7 @@ pub(crate) fn list_committed_output_requests_in(
                 && wanted.contains(&r.request_id.to_lowercase())
         })
         .collect();
-    rows.sort_by(|a, b| b.sequence.cmp(&a.sequence));
+    rows.sort_by_key(|a| std::cmp::Reverse(a.sequence));
     Ok(rows
         .iter()
         .map(|r| json!({ "request": r.to_row() }))
