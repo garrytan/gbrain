@@ -7,8 +7,8 @@
  *
  * The probe is typed: a caller names the store and passes values, never SQL text. Every value binds as a parameter;
  * table and column names come from the constant maps below, so nothing a caller passes is spliced. The Rust engine
- * does not serve these probes yet, so a receipt that reaches one refuses there with `engine_capability_missing`
- * naming the member.
+ * answers each kind but `fingerprint` and `claim_text` from its own stores (rust-engine/store-members/purge-plan.ts); a
+ * receipt that reaches those two refuses there with `engine_capability_missing` naming the member.
  */
 import { outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { stagingNeedsTextSql } from '../page-body/schema.ts';

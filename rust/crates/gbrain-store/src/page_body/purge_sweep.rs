@@ -47,7 +47,7 @@ fn page_stagings(
 }
 
 /// `(source_id, sha256 hex)` of every text a manifest row names, on any page.
-fn named_texts(read: &dyn KvRead) -> Result<HashSet<(String, String)>> {
+pub(super) fn named_texts(read: &dyn KvRead) -> Result<HashSet<(String, String)>> {
     Ok(collect::<ManifestRow>(read, &kind_key(MANIFEST))?
         .into_iter()
         .map(|(_, row)| (row.source_id, row.sha256.to_lowercase()))
@@ -55,7 +55,7 @@ fn named_texts(read: &dyn KvRead) -> Result<HashSet<(String, String)>> {
 }
 
 /// `(source_id, sha256 hex)` of every text a live staging recorded.
-fn recorded_by_live(read: &dyn KvRead) -> Result<HashSet<(String, String)>> {
+pub(super) fn recorded_by_live(read: &dyn KvRead) -> Result<HashSet<(String, String)>> {
     let live = live_staging_ids(read, &request_held_staging_ids(read)?)?;
     let mut out = HashSet::new();
     for (_, staging) in collect::<StagingRecord>(read, &kind_key(STAGING))? {

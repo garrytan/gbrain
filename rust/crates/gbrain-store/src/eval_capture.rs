@@ -339,6 +339,41 @@ pub(crate) fn remove_retrieved_slugs(
     Ok(updated)
 }
 
+/// A page purge receipt's probe of the candidates (`countPurgeStoreProbe` on `eval_candidates.retrieved_slugs`): how many
+/// candidates cover `source_id` and retrieved `slug`, with no page of that slug in another source they cover (the
+/// candidates `remove_retrieved_slugs` would rewrite for it).
+pub(crate) fn count_retrieved_slug(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<usize> {
+    let mut count = 0;
+    for candidate in read_all::<CandidateRecord>(read, CANDIDATE)? {
+        let covers = |s: &Option<String>| s.as_deref() == Some(source_id);
+        if !candidate.source_ids.iter().any(covers)
+            || !candidate.retrieved_slugs.iter().any(|s| s == slug)
+        {
+            continue;
+        }
+        let mut elsewhere = false;
+        for other in candidate
+            .source_ids
+            .iter()
+            .filter_map(|s| s.as_deref())
+            .filter(|s| *s != source_id)
+        {
+            if read_page(read, other, slug)?.is_some() {
+                elsewhere = true;
+                break;
+            }
+        }
+        if !elsewhere {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 impl Store {
     /// `scrubEvalCandidateSlugs(sourceId, slugs)`: strips the purged slugs from the `retrieved_slugs` of the candidates that
     /// cover `source_id` (the `eval_candidates` statement of `deletePurgedFeedbackRows`), in the caller's transaction; how many

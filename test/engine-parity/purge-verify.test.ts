@@ -7,9 +7,9 @@
  *  - Contract: countPurgeProbe counts each receipt probe kind's rows within the source and stops one row past its row
  *    bound; listPurgeProbeItems names the rows a named-row or effect probe matches, in item order. Both return the
  *    same observable result on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with
- *    GBRAIN_TEST_RUST_ARM=1). verifyPagePurge builds the same receipt on PGLite and Postgres; the Rust arm does not
- *    serve the receipt probes yet, so the receipt stops on the typed `engine_capability_missing` refusal naming
- *    countPurgeProbe.
+ *    GBRAIN_TEST_RUST_ARM=1). verifyPagePurge builds the same receipt on PGLite and Postgres; the Rust arm serves
+ *    the page purge's store probes, so the receipt stops there on the typed `engine_capability_missing` refusal naming
+ *    listPageProseHits (lane 4). The all-kinds count case stops on the fact purge's `fingerprint` probe (countPurgeProbe).
  *  - Regression: an engine that counts a probe differently reports a purged page or claim as gone while a store still
  *    holds it (or the reverse); the Rust engine has no SQL, so each probe has to exist as a typed member it can
  *    implement or refuse.
@@ -98,7 +98,7 @@ describe('engine parity: purge receipt reads', () => {
     return { links, timeline };
   });
 
-  parityTest('verifyPagePurge builds the same receipt; the Rust arm refuses naming the probe', {
+  parityTest('verifyPagePurge builds the same receipt; the Rust arm refuses naming the source-prose scan', {
     methods: ['countPurgeProbe', 'listPurgeProbeItems', 'listPageProseHits', 'countPagePurgeTombstones'] }, async (engine) => {
     const { pageId, factId } = await seed(engine);
     const receipt = await verifyPagePurge(engine, { sourceId: SRC, slug: 'notes/gone', requestId: randomUUID(), removed: {}, blobsRemaining: [],

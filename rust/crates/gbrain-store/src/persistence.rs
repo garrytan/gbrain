@@ -64,7 +64,7 @@ mod checkpoint_rows;
 mod checkpoint_validation;
 mod effect_scans;
 mod effect_worker;
-mod effects;
+pub(crate) mod effects;
 mod head_blocker;
 mod housekeeping;
 mod idle_probe;

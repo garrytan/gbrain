@@ -32,7 +32,7 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-mod purge;
+pub(crate) mod purge;
 
 const PROPOSAL: u8 = 0x06;
 const PENDING: u8 = 0x07;

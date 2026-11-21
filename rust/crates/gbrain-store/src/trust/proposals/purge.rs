@@ -5,6 +5,7 @@
 use super::{ProposalRecord, all_records, remove_record};
 use crate::Store;
 use crate::error::Result;
+use crate::kv::KvRead;
 use crate::links::no_nul;
 use std::collections::HashSet;
 
@@ -15,6 +16,25 @@ impl ProposalRecord {
             || (self.related_table.as_deref() == Some(table)
                 && self.related_id.is_some_and(|id| ids.contains(&id)))
     }
+}
+
+/// A page purge receipt's probe of the trust proposals (`countPurgeStoreProbe` on `trust_proposals`): how many proposals of
+/// `source_id` name the page, or one of the facts, as target or related row.
+pub(crate) fn count_naming(
+    read: &dyn KvRead,
+    source_id: &str,
+    page_id: i64,
+    fact_ids: &[i64],
+) -> Result<usize> {
+    let pages: HashSet<i64> = HashSet::from([page_id]);
+    let facts: HashSet<i64> = fact_ids.iter().copied().collect();
+    Ok(all_records(read)?
+        .iter()
+        .filter(|r| {
+            r.source_id == source_id
+                && (r.names_any("pages", &pages) || r.names_any("facts", &facts))
+        })
+        .count())
 }
 
 impl Store {

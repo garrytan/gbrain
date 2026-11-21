@@ -7,7 +7,24 @@ use super::{FILE, FileRecord, collect_values, file_page_key};
 use crate::Store;
 use crate::error::Result;
 use crate::keys;
+use crate::kv::KvRead;
 use crate::links::no_nul;
+
+/// A page purge receipt's probe of the file records (`countPurgeStoreProbe` on `files`): the files with no page that name
+/// `slug` in `source_id`. The store keeps every file's source, so the SQL's `source_id IS NULL` arm matches none.
+pub(crate) fn count_detached_named(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<usize> {
+    let files: Vec<(Vec<u8>, FileRecord)> = collect_values(read, &[keys::RAW_FILES, FILE])?;
+    Ok(files
+        .iter()
+        .filter(|(_, f)| {
+            f.page_id.is_none() && f.page_slug.as_deref() == Some(slug) && f.source_id == source_id
+        })
+        .count())
+}
 
 impl Store {
     /// `deletePurgedPageFiles(sourceId, slug, pageId)`: deletes the files with `page_id = pageId`, and those with no page whose

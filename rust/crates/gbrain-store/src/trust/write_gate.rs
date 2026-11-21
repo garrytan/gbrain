@@ -464,6 +464,15 @@ fn all_holds(read: &dyn KvRead) -> Result<Vec<HoldRecord>> {
     failure.map_or(Ok(out), Err)
 }
 
+/// A page purge receipt's probe of the write-gate holds (`countPurgeStoreProbe` on `write_gate_holds`): how many holds of
+/// `source_id` name `slug`, in any status.
+pub(crate) fn count_for_slug(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<usize> {
+    Ok(all_holds(read)?
+        .iter()
+        .filter(|h| h.source_id == source_id && h.slug == slug)
+        .count())
+}
+
 /// The fingerprints of the holds with `kind = 'fact'` and `status = 'held'` on page (`source_id`,
 /// `slug`), as the fence overlay (`engine-sql/cli-reads-ops.ts` `readFenceOverlayRows`) matches a
 /// fence row's fingerprint against them.

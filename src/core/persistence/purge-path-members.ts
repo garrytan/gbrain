@@ -57,7 +57,7 @@ export interface PurgePathMember extends Base { member: keyof BrainEngine & stri
 export interface PurgePathSite extends Base { site: string; guarded?: string; stop?: string }
 export type PurgePathEntry = PurgePathMember | PurgePathSite;
 
-const { ours, receipts, receiptReads, publicationStamp, ledgerScrub, beliefProbe, factContextProbe, repairOriginTwin, requestIndexes } = PURGE_OWNERS;
+const { ours, receiptReads, publicationStamp, ledgerScrub, beliefProbe, factContextProbe, repairOriginTwin, requestIndexes } = PURGE_OWNERS;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
 /** Retention-only raw sites: the carry's parks and the candidate selection of purgeDeletedPagesCoordinated. */
@@ -127,8 +127,8 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   { site: '<anonymous> (persistence/coordinator.ts)', owner: publicationStamp, stop: 'the publication transaction of a recovered purge stamps publication_started through raw SQL (UPDATE persistence_requests ... RETURNING *)' },
   // sweepPurgedPage: the generation-ledger scrub.
   { site: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: ledgerScrub, stop: 'the generation-ledger scrub runs through raw SQL' },
-  // verifyPagePurge: the receipt.
-  { member: 'countPurgeProbe', owner: receipts, refuses: 'the store refuses the receipt probes it does not serve (slug_key, page_rows, fact_refs, trust_proposals, page_requests)' },
+  // verifyPagePurge: the receipt. Its store probes (`countPurgeProbe`) are served; the store refuses
+  // only the fact purge's `fingerprint` and `claim_text` probes, which a page purge's receipt does not run.
   // ledgerReports: runs for every purge whose page has fact claims, belief ledger or not.
   { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
   { member: 'listFactContextsForPurgeProbe', owner: factContextProbe, stop: 'the receipt pages the live fact contexts that quote the purged claims; not served' },
@@ -143,7 +143,7 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'deletePurgedPageGateReceipts',
     'deletePurgedPageHolds', 'deletePurgedPageTrustProposals', 'deletePurgedSlugStoreRows', 'deleteOriginHoldRows', 'insertPageFactPurges',
     'insertTakePurge', 'upsertPagePurges', 'countPageCascadeRows', 'countPageManifestRows', 'countPagePurgeTombstones', 'setPurgeProbeTimeout',
-    'bumpSourcePurgeEpoch', 'clearQueryCache', 'hasBeliefEvents', 'relationExists', 'readDerivationPurgeState',
+    'bumpSourcePurgeEpoch', 'clearQueryCache', 'hasBeliefEvents', 'relationExists', 'readDerivationPurgeState', 'countPurgeProbe',
     // what the purge reads of the page
     'listDerivedRows', 'listPageChangeReasons', 'listPageGitEffectsForStrip', 'listPageMirrorFacts', 'listPageMirrorTakeHashes',
     'listPageSecretOccurrences', 'listPageSegmentShas', 'listPageTimelineReceipts', 'listPageVersionBodiesForPurge', 'listPageVersionSourcePaths',

@@ -52,7 +52,7 @@ async function count(engine: BrainEngine, probe: PurgeProbe): Promise<number | s
 }
 
 /** One journal row of the page: admitted, claimed and completed with `outcome` (null: left queued). */
-async function journal(engine: BrainEngine, requestId: string, operation: string, slug: string, opts: { intent?: unknown; outcome?: unknown; sourceId?: string; state?: string } = {}): Promise<string> {
+async function journal(engine: BrainEngine, requestId: string, operation: string, slug: string, opts: { intent?: unknown; outcome?: unknown; sourceId?: string; state?: 'committed' | 'conflict' | 'failed' | 'cancelled' } = {}): Promise<string> {
   const sourceId = opts.sourceId ?? SRC;
   const source = await engine.readSourceMembership(sourceId);
   await engine.lockPersistenceCounters(KEYS);

@@ -14,6 +14,14 @@
  * table it keeps (facts/purge_probe.rs `table_rows`, plus `wanted_links`); a table the store does not keep at all
  * holds no row (0, or no item). A named `raw_data` probe names its rows by the `raw_data.id` the store keeps; it refuses
  * its item list only when a matching record was written before the store kept that id (its next putRawData adds one).
+ *
+ * A page purge receipt's store probes (engine-sql/purge-verify.ts) run through the same two members, as
+ * `countPurgeStoreProbe` and `listPurgeStoreProbeItems` (facts/purge_store_probe.rs). The store answers `slug_key` for the
+ * stores it keeps (pages, facts, take proposals, open loops, page and slug aliases, eval candidates, files, write-gate
+ * holds), `page_rows`, `fact_refs`, `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and
+ * `effect_payload`. It keeps no rows of `core_edit_notices`, the retrieval event, link, feedback and weight stores,
+ * `context_volunteer_events`, `mention_gazetteer_entries` or `query_cache`, so a probe of one finds nothing without a store
+ * call. The fact purge's `fingerprint` and `claim_text` probes are not served: they refuse naming their kind.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { escapeFenceCell } from '../../fence-shared.ts';
@@ -39,14 +47,57 @@ const STORE_ABSENT_PROBE_TABLES: ReadonlySet<string> = new Set([
   'source_ingestion_receipts', 'sync_notifier_sources', 'take_grade_cache', 'think_ab_results',
 ]);
 
-type ProbeRoute = { kind: 'none' } | { kind: 'store'; args: Record<string, unknown> };
+type ProbeRoute = { kind: 'none' } | { kind: 'store'; args: Record<string, unknown> } | { kind: 'receipt'; probe: Record<string, unknown> };
+
+/**
+ * The slug-keyed stores of a page purge receipt the store keeps no rows of, so a probe of one finds nothing:
+ * `core_edit_notices` (no edit notices), the retrieval event, link, feedback and weight stores (reserved keyspaces that
+ * hold no record), `context_volunteer_events` and `mention_gazetteer_entries` (not kept). `query_cache` is the same:
+ * the store keeps no query cache, as `clearQueryCache` answering 0 says.
+ */
+const RECEIPT_ABSENT_SLUG_STORES: ReadonlySet<string> = new Set([
+  'core_edit_notices', 'retrieval_event_pages', 'retrieval_event_links', 'retrieval_feedback', 'retrieval_weights',
+  'context_volunteer_events', 'mention_gazetteer_entries',
+]);
+
+/**
+ * The store's arguments for a page purge receipt's store probe (facts/purge_store_probe.rs `StoreProbe`), or none when the
+ * store keeps no row of it. A probe of a store the store keeps must reach it: it never answers 0 for one. The fact
+ * purge's `fingerprint` and `claim_text` probes are not served and refuse naming their kind.
+ */
+function receiptRoute(member: string, probe: Exclude<PurgeProbe, { kind: 'table' | 'named' }>): ProbeRoute {
+  switch (probe.kind) {
+    case 'query_cache': return { kind: 'none' };
+    case 'slug_key':
+      return RECEIPT_ABSENT_SLUG_STORES.has(probe.store) ? { kind: 'none' }
+        : { kind: 'receipt', probe: { kind: 'slug_key', store: probe.store, sourceId: probe.sourceId, slug: probe.slug } };
+    case 'page_rows': return { kind: 'receipt', probe: { kind: 'page_rows', store: probe.store, pageId: probe.pageId } };
+    case 'fact_refs':
+      return { kind: 'receipt', probe: { kind: 'fact_refs', store: probe.store, sourceId: probe.sourceId, factIds: [...probe.factIds] } };
+    case 'trust_proposals':
+      return { kind: 'receipt', probe: { kind: 'trust_proposals', sourceId: probe.sourceId, pageId: probe.pageId, factIds: [...probe.factIds] } };
+    case 'page_requests':
+      return { kind: 'receipt', probe: {
+        kind: 'page_requests', sourceId: probe.sourceId, slug: probe.slug, requestId: probe.requestId,
+        needles: probe.needles.map(n => n.toLowerCase()), reasons: probe.reasons.map(n => n.toLowerCase()) } };
+    case 'page_segment_texts':
+      return { kind: 'receipt', probe: { kind: 'page_segment_texts', sourceId: probe.sourceId, shas: [...probe.shas], forms: [...probe.forms] } };
+    case 'segment_texts':
+      return { kind: 'receipt', probe: { kind: 'segment_texts', sourceId: probe.sourceId, needles: [...probe.needles], referenced: probe.referenced } };
+    case 'effect_payload':
+      return { kind: 'receipt', probe: {
+        kind: 'effect_payload', sourceId: probe.sourceId, forms: [...probe.forms],
+        ...(probe.page ? { page: { slug: probe.page.slug, reasonForms: [...probe.page.reasonForms] } } : {}) } };
+    case 'fingerprint': case 'claim_text': return refuseMember(member, `the ${probe.kind} probe`);
+  }
+}
 
 /**
  * Where a probe runs. An inventory probe of a table the store keeps runs there; one of a table it keeps no rows of
- * finds nothing. A purge receipt's store probe (engine-sql/purge-verify.ts) is not served yet: it refuses naming its kind.
+ * finds nothing. A purge receipt's store probe (engine-sql/purge-verify.ts) runs there too, except the stores above.
  */
 function probeRoute(member: string, probe: PurgeProbe): ProbeRoute {
-  if (probe.kind !== 'table' && probe.kind !== 'named') refuseMember(member, `the ${probe.kind} probe`);
+  if (probe.kind !== 'table' && probe.kind !== 'named') return receiptRoute(member, probe);
   const shape = purgeProbeShape(probe);
   if (!shape) return { kind: 'none' };
   if (STORE_ABSENT_PROBE_TABLES.has(shape.table)) return { kind: 'none' };
@@ -125,12 +176,14 @@ export const setPurgeProbeTimeout: Member<'setPurgeProbeTimeout'> = async () => 
 export const countPurgeProbe: Member<'countPurgeProbe'> = async (brain, probe, rows) => {
   const route = probeRoute('countPurgeProbe', probe);
   if (route.kind === 'none') return 0;
+  if (route.kind === 'receipt') return storeCall({ member: 'countPurgeProbe' }, () => brain.countPurgeStoreProbe({ probe: route.probe, rows }));
   return storeCall({ member: 'countPurgeProbe' }, () => brain.countPurgeProbe({ ...route.args, rows }));
 };
 
 export const listPurgeProbeItems: Member<'listPurgeProbeItems'> = async (brain, probe) => {
   const route = probeRoute('listPurgeProbeItems', probe);
   if (route.kind === 'none') return [];
+  if (route.kind === 'receipt') return storeCall({ member: 'listPurgeProbeItems' }, () => brain.listPurgeStoreProbeItems({ probe: route.probe })) as Promise<string[]>;
   const items = await storeCall({ member: 'listPurgeProbeItems' }, () => brain.listPurgeProbeItems(route.args)) as string[] | null;
   if (items == null) return refuseMember('listPurgeProbeItems', `naming the ${probe.kind === 'named' ? probe.table : probe.kind} rows`);
   return items;

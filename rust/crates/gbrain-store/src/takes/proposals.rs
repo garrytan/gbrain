@@ -251,6 +251,15 @@ pub(crate) fn remove_for_slugs(
     Ok(removed)
 }
 
+/// A page purge receipt's probe of the proposal queue (`countPurgeStoreProbe` on `take_proposals`): how many proposals of
+/// `source_id` are filed under `slug`.
+pub(crate) fn count_for_slug(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<usize> {
+    Ok(all_proposals(read)?
+        .iter()
+        .filter(|r| r.source_id == source_id && r.page_slug == slug)
+        .count())
+}
+
 /// Updates a proposal when `pick` accepts it; the updated record, or `None`.
 fn update_proposal(
     tx: &mut dyn KvWrite,

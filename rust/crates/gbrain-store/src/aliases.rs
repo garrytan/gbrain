@@ -446,6 +446,28 @@ pub(crate) fn scrub_purged_slug_stores(
     Ok(counts)
 }
 
+/// A page purge receipt's probe of the alias stores (`countPurgeStoreProbe`): the `page_aliases` rows of the page at
+/// (`source`, `slug`) and the `slug_aliases` rows that name it as their canonical slug.
+pub(crate) fn count_alias_rows(
+    read: &dyn KvRead,
+    source: &str,
+    slug: &str,
+    canonical: bool,
+) -> Result<usize> {
+    if has_nul(&[source, slug]) {
+        return Ok(0);
+    }
+    if !canonical {
+        return Ok(page_alias_rows(read, source, slug)?.len());
+    }
+    Ok(
+        scan_tails(read, &prefix(SLUG_ALIAS_BY_CANONICAL, &[source, slug]))?
+            .iter()
+            .filter(|(_, parts)| parts.len() == 1)
+            .count(),
+    )
+}
+
 /// `scrubPurgedSlugStores` on `slug_rename_history`: drops the rows of `source` that end at a
 /// purged slug (a row from a purged slug to another page stays).
 pub(crate) fn scrub_purged_rename_history(

@@ -248,6 +248,25 @@ pub(crate) fn remove_for_slugs(
     Ok(removed)
 }
 
+/// A page purge receipt's probe of the loops (`countPurgeStoreProbe` on `open_loops`): how many loops of `source_id` are
+/// filed under `slug`.
+pub(crate) fn count_for_slug(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<usize> {
+    let mut ids = Vec::new();
+    scan_prefix(read, &source_prefix(source_id), false, &mut |_, v| {
+        if let Some(id) = keys::be8(v) {
+            ids.push(id);
+        }
+        true
+    })?;
+    let mut count = 0;
+    for id in ids {
+        if read_row(read, id)?.is_some_and(|row| row.page_slug.as_deref() == Some(slug)) {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 impl Store {
     /// `upsertOpenLoop`: inserts the loop, or updates the row with its `(source_id, dedup_key)`
     /// when that row is open, the new activity is newer, or an unmute queued it, and a mute does

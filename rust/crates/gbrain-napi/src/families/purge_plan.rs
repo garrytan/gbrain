@@ -15,6 +15,7 @@ use gbrain_store::facts::purge_plan::{
     PurgeProbeArgs, PurgeSourceArgs, ReviewCountArgs, SegmentedBodiesArgs, SourcePageIdsArgs,
     StagingNeedleArgs,
 };
+use gbrain_store::facts::purge_store_probe::StoreProbeArgs;
 
 #[napi]
 impl Brain {
@@ -197,6 +198,32 @@ impl Brain {
         self.run(env, move |s| {
             let a: PurgeProbeArgs = required(args, "listPurgeProbeItems args")?;
             s.list_purge_probe_items(&a)
+        })
+    }
+
+    /// `countPurgeStoreProbe(args)`: resolves the bounded row count of a page purge receipt's store probe.
+    #[napi]
+    pub fn count_purge_store_probe<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: StoreProbeArgs = required(args, "countPurgeStoreProbe args")?;
+            s.count_purge_store_probe(&a)
+        })
+    }
+
+    /// `listPurgeStoreProbeItems(args)`: resolves the first 20 items of an effect probe.
+    #[napi]
+    pub fn list_purge_store_probe_items<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: StoreProbeArgs = required(args, "listPurgeStoreProbeItems args")?;
+            s.list_purge_store_probe_items(&a)
         })
     }
 }
