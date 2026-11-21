@@ -11,7 +11,7 @@
  *
  * Classes: a member listed in WRITE_MAP is mapped. IGNORED_MEMBERS never change data the shadow copies (lifecycle,
  * locks, logs, caches, the segmented-body staging tables). A name starting with a read prefix is a read and not a
- * write, except READ_NAMED_WRITES. Any other member is unmapped: the wrapper publishes `invalid`. Getters such as
+ * write (`resolveTake` starts with one, and is in WRITE_MAP, which is checked first). Any other member is unmapped: the wrapper publishes `invalid`. Getters such as
  * `db` and `engineSql` cannot be intercepted, so SQL run on those escapes the wrapper; reconcile covers it.
  */
 export class PageRef {
@@ -182,9 +182,6 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'activeEmbeddingColId', 'aliasCanonicalRefs', 'generatedPagesIn', 'livePageIdsAt', 'pageCollapseFacts', 'pagesLinkingTo',
   'slugsEndingIn', 'supersedingPageSlugs',
 ]);
-/** Read-prefixed names that write. */
-export const READ_NAMED_WRITES: ReadonlySet<string> = new Set(['resolveTake']);
-
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
 /** How the follow wrapper treats a member name (mirrored reads and transactions are decided before this). */
@@ -195,6 +192,6 @@ export function memberKind(name: string): MemberKind {
   if (IGNORED_MEMBERS.has(name)) return 'ignored';
   if (SCHEMA_MEMBERS.has(name)) return 'schema';
   if (Object.prototype.hasOwnProperty.call(WRITE_MAP, name)) return 'mapped';
-  if (READ_ONLY_MEMBERS.has(name) || (READ_PREFIX.test(name) && !READ_NAMED_WRITES.has(name))) return 'read_name';
+  if (READ_ONLY_MEMBERS.has(name) || (READ_PREFIX.test(name))) return 'read_name';
   return 'unmapped';
 }

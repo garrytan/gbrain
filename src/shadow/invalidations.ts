@@ -7,8 +7,6 @@
  * one per batch in this process; a gap means a batch was lost, and the follower marks its watermark invalid.
  * Publishing never throws and nothing awaits it.
  */
-import { DEFAULT_MAX_LINE_BYTES, type MirrorTransport } from './mirror.ts';
-
 export type Invalidation =
   /** Rows of `relation` whose columns equal `selector` (compared as text). `before_keys` are the primary-key tuples
    *  (text) of the rows that matched before the write, or null when the write only inserts or updates in place. */
@@ -52,38 +50,9 @@ export function mergeItems(items: readonly Invalidation[]): Invalidation[] {
 }
 
 /** Publishes `items` as one batch; nothing when empty. Never throws. */
-export function publishItems(sink: InvalidationSink, items: readonly Invalidation[], now: () => number = Date.now): void {
+export function publishItems(sink: InvalidationSink, items: readonly Invalidation[]): void {
   try {
     if (items.length === 0) return;
-    sink.publish({ seq: nextSeq(), committed_at: now(), items: mergeItems(items) });
+    sink.publish({ seq: nextSeq(), committed_at: Date.now(), items: mergeItems(items) });
   } catch { /* the follower never fails a write */ }
-}
-
-export interface InvalidationLineCounters { sent: number; shed_transport: number; shed_too_large: number }
-
-/**
- * Sends batches as `{"t":"inv", ...batch}` NDJSON lines through the mirror transport. A line the transport refuses is
- * shed and the next batch carries `shed_before: n` (how many were lost just before it). A batch over the size cap is
- * replaced by one `invalid` item so the follower still learns something changed.
- */
-export class InvalidationLines implements InvalidationSink {
-  readonly counters: InvalidationLineCounters = { sent: 0, shed_transport: 0, shed_too_large: 0 };
-  private pendingShed = 0;
-
-  constructor(private readonly transport: MirrorTransport, private readonly maxLineBytes: number = DEFAULT_MAX_LINE_BYTES) {}
-
-  publish(batch: InvalidationBatch): void {
-    try {
-      const shed = this.pendingShed > 0 ? { shed_before: this.pendingShed } : {};
-      let line = JSON.stringify({ t: 'inv', ...batch, ...shed }) + '\n';
-      if (Buffer.byteLength(line) > this.maxLineBytes) {
-        this.counters.shed_too_large++;
-        line = JSON.stringify({ t: 'inv', ...batch, items: [{ kind: 'invalid', reason: 'batch_too_large' }], ...shed }) + '\n';
-      }
-      if (this.transport.send(line)) { this.counters.sent++; this.pendingShed = 0; }
-      else { this.counters.shed_transport++; this.pendingShed++; }
-    } catch {
-      this.pendingShed++;
-    }
-  }
 }

@@ -14,11 +14,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { followHarness, PAGE, restoreFollowProbes } from './helpers/follow-producer.ts';
-import { InvalidationLines, mergeItems, type Invalidation } from '../src/shadow/invalidations.ts';
+import { failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from './helpers/follow-producer.ts';
+import { mergeItems, type Invalidation } from '../src/shadow/invalidations.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from '../src/shadow/reads.ts';
 import { sqlWrites } from '../src/shadow/sql-writes.ts';
-import { IGNORED_MEMBERS, READ_ONLY_MEMBERS, memberKind, RAW_MEMBERS, READ_NAMED_WRITES, SCHEMA_MEMBERS, WRITE_MAP } from '../src/shadow/write-map.ts';
+import { IGNORED_MEMBERS, READ_ONLY_MEMBERS, memberKind, RAW_MEMBERS, SCHEMA_MEMBERS, WRITE_MAP } from '../src/shadow/write-map.ts';
 
 let engine: PGLiteEngine;
 
@@ -248,30 +248,10 @@ describe('invalidation items and lines', () => {
       { kind: 'relation', relation: 'links', reason: 'raw_sql' },
     ]);
   });
+});
 
-  test('a refused line is shed and the next batch carries shed_before', () => {
-    const sent: string[] = [];
-    let accept = false;
-    const lines = new InvalidationLines({ send: (line) => { if (accept) sent.push(line); return accept; } });
-    lines.publish({ seq: 1, committed_at: 1, items: [] });
-    lines.publish({ seq: 2, committed_at: 2, items: [] });
-    accept = true;
-    lines.publish({ seq: 3, committed_at: 3, items: [] });
-    lines.publish({ seq: 4, committed_at: 4, items: [] });
-    const [first, second] = sent.map((l) => JSON.parse(l));
-    expect(first).toMatchObject({ t: 'inv', seq: 3, shed_before: 2 });
-    expect(second.shed_before).toBeUndefined();
-    expect(lines.counters).toEqual({ sent: 2, shed_transport: 2, shed_too_large: 0 });
-  });
-
-  test('a batch over the size cap is replaced by one invalid item', () => {
-    const sent: string[] = [];
-    const lines = new InvalidationLines({ send: (line) => { sent.push(line); return true; } }, 200);
-    const items: Invalidation[] = Array.from({ length: 20 }, (_, i) => ({ kind: 'relation', relation: `r${i}`, reason: 'raw_sql' }));
-    lines.publish({ seq: 9, committed_at: 1, items });
-    expect(JSON.parse(sent[0]!).items).toEqual([{ kind: 'invalid', reason: 'batch_too_large' }]);
-    expect(lines.counters.shed_too_large).toBe(1);
-  });
+describe('a failed pre-read', () => {
+  test('does not abort the transaction around it', async () => { await failedPreReadKeepsTransaction(engine); });
 });
 
 describe('raw SQL write targets', () => {
@@ -290,6 +270,19 @@ describe('raw SQL write targets', () => {
     ['two statements', 'UPDATE a SET x = 1; DELETE FROM b', rel('a', 'b')],
     ['keyword inside a string and a comment', `SELECT 'DELETE FROM pages' AS t /* UPDATE pages */ -- INSERT INTO pages`, []],
     ['dollar-quoted text', `SELECT $q$ INSERT INTO pages $q$`, []],
+    ['comment markers inside a string', `SELECT '--'; DELETE FROM facts WHERE id = 1`, rel('facts')],
+    ['block comment marker inside a string', `SELECT '/*' AS a; UPDATE facts SET fact = 'x'; SELECT '*/'`, rel('facts')],
+    ['doubled quote inside a string', `SELECT 'it''s -- not a comment'; DELETE FROM tags`, rel('tags')],
+    ['backslash escape in an E string', `SELECT E'a\\'--'; DELETE FROM links`, rel('links')],
+    ['a backslash is plain in a normal string', `SELECT 'a\\'; DELETE FROM links`, rel('links')],
+    ['dollar quote with a tag around a comment marker', `SELECT $t$ -- $t$; DELETE FROM takes`, rel('takes')],
+    ['a $1 parameter is not a dollar quote', `UPDATE pages SET title = $1 WHERE id = $2; DELETE FROM tags WHERE a = $1`, rel('pages', 'tags')],
+    ['nested block comment', `/* a /* DELETE FROM pages */ still comment */ DELETE FROM tags`, rel('tags')],
+    ['comment marker inside a quoted name', `DELETE FROM "a--b"`, rel('a--b')],
+    ['unterminated string', `SELECT 'oops; DELETE FROM facts`, [{ kind: 'invalid', reason: 'unparsable:error' }]],
+    ['unterminated block comment', `SELECT 1 /* DELETE FROM facts`, [{ kind: 'invalid', reason: 'unparsable:error' }]],
+    ['unterminated dollar quote', `SELECT $q$ DELETE FROM facts`, [{ kind: 'invalid', reason: 'unparsable:error' }]],
+    ['unterminated quoted name', `DELETE FROM "facts`, [{ kind: 'invalid', reason: 'unparsable:error' }]],
     ['plain select', 'SELECT * FROM pages WHERE id = 1', []],
     ['select for update', 'SELECT id FROM pages WHERE id = 1 FOR UPDATE', []],
     ['select for no key update', 'SELECT id FROM pages FOR NO KEY UPDATE SKIP LOCKED', []],
@@ -374,7 +367,7 @@ describe('write map coverage', () => {
 
   test('every mapped, ignored, raw, schema and read-named-write entry names a real engine member', () => {
     const real = new Set(protoMembers());
-    const listed = [...Object.keys(WRITE_MAP), ...IGNORED_MEMBERS, ...RAW_MEMBERS, ...SCHEMA_MEMBERS, ...READ_NAMED_WRITES, ...READ_ONLY_MEMBERS, 'withReservedConnection'];
+    const listed = [...Object.keys(WRITE_MAP), ...IGNORED_MEMBERS, ...RAW_MEMBERS, ...SCHEMA_MEMBERS, ...READ_ONLY_MEMBERS, 'withReservedConnection'];
     expect(listed.filter((name) => !real.has(name))).toEqual([]);
   });
 

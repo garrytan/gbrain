@@ -3,6 +3,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import type { InvalidationBatch } from '../../src/shadow/invalidations.ts';
 import { wrapShadowEngine, type ShadowSink } from '../../src/shadow/wrapper.ts';
+import { WRITE_MAP } from '../../src/shadow/write-map.ts';
 
 export interface FollowHarness<E extends BrainEngine> {
   engine: E;
@@ -40,3 +41,25 @@ export function followHarness<E extends BrainEngine>(primary: E, opts: { failRaw
 }
 
 export const PAGE = (title: string) => ({ type: 'person' as const, title, compiled_truth: `${title} body.`, timeline: '' });
+
+/**
+ * A write member whose pre-read selects a column that does not exist, so the pre-read query fails. Run it inside a
+ * transaction after a real write: the transaction must still commit (the failed read must not abort it) and the batch
+ * must carry a relation-level item for the member's table.
+ */
+export async function failedPreReadKeepsTransaction(primary: BrainEngine): Promise<void> {
+  const proto = Object.getPrototypeOf(primary) as Record<string, unknown>;
+  proto.testBadPreRead = async () => undefined;
+  WRITE_MAP.testBadPreRead = { tables: ['pages'], plan: () => [{ relation: 'pages', sel: { no_such_column: '1' }, del: true }] };
+  restorers.push(() => { delete proto.testBadPreRead; delete WRITE_MAP.testBadPreRead; });
+  const h = followHarness(primary);
+  await h.engine.transaction(async (tx) => {
+    await tx.putPage('people/savepoint', PAGE('Savepoint'));
+    await (tx as unknown as { testBadPreRead(): Promise<void> }).testBadPreRead();
+    await tx.addTag('people/savepoint', 'after');
+  });
+  if (!(await primary.getPage('people/savepoint'))) throw new Error('the transaction did not commit');
+  if (!(await primary.getTags('people/savepoint')).includes('after')) throw new Error('the write after the failed pre-read was lost');
+  const items = h.batches.flatMap((b) => b.items);
+  if (!items.some((i) => i.kind === 'relation' && i.relation === 'pages' && i.reason === 'pre_read_failed')) throw new Error(`no relation-level item: ${JSON.stringify(items)}`);
+}

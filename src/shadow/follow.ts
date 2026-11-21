@@ -4,7 +4,7 @@
  *
  * A write member is planned from its arguments (write-map.ts) BEFORE the primary call: page refs become page ids and,
  * for a member that can delete or re-key rows, the primary keys of the rows its selector matches are read first, on the
- * same engine object (the transaction engine inside a transaction). The primary call then runs untouched and its
+ * same engine object (the transaction engine inside a transaction, in a nested transaction, which is a savepoint, so a failed read cannot abort it). The primary call then runs untouched and its
  * outcome is returned as is. Items go to the innermost open frame: a nested transaction frame merges into its parent
  * when it resolves and is dropped when it rejects, and the outermost frame publishes after the commit. A write outside
  * any transaction publishes right after it resolves; if it rejects it publishes the relation-level answer for the
@@ -21,16 +21,12 @@ import { memberKind, PageRef, WRITE_MAP, type Target, type WriteSpec } from './w
 
 export interface FollowOptions {
   sink: InvalidationSink;
-  /** Extra switch, e.g. the follower's own state; the shadow sink's `active()` is always required as well. */
-  active?: () => boolean;
-  /** Seam for tests; default Date.now. */
-  now?: () => number;
 }
 
 /** Items collected inside one open transaction (or reserved connection). */
-export class Frame {
-  readonly items: Invalidation[] = [];
-  constructor(readonly parent: Frame | null) {}
+export interface Frame {
+  readonly items: Invalidation[];
+  readonly parent: Frame | null;
 }
 
 export interface FollowContext {
@@ -52,7 +48,7 @@ const quote = (ident: string): string => `"${ident.replace(/"/g, '""')}"`;
 const relationItems = (relations: readonly string[], reason: string): Invalidation[] => relations.map((relation) => ({ kind: 'relation', relation, reason }));
 
 export const isFollowActive = (ctx: FollowContext): boolean => {
-  try { return ctx.shadowActive() && (ctx.follow.active?.() ?? true); } catch { return false; }
+  try { return ctx.shadowActive(); } catch { return false; }
 };
 
 /** Whether a call on this context may collect (a transaction engine without a frame was opened while follow was off). */
@@ -62,7 +58,7 @@ function collect(ctx: FollowContext, items: Invalidation[]): void {
   try {
     if (items.length === 0) return;
     if (ctx.frame) ctx.frame.items.push(...items);
-    else publishItems(ctx.follow.sink, items, ctx.follow.now);
+    else publishItems(ctx.follow.sink, items);
   } catch { /* fail open */ }
 }
 
@@ -134,7 +130,9 @@ function plan(ctx: FollowContext, spec: WriteSpec, args: unknown[]): Invalidatio
         ? { kind: 'rows', relation: t.relation, selector: t.sel as Record<string, string>, before_keys: null }
         : { kind: 'relation', relation: t.relation, reason: 'relation_level' });
     }
-    return resolveTargets(ctx.engine, targets).catch(() => fallback('pre_read_failed'));
+    // Inside a transaction a failed pre-read would abort it and fail the caller's write: it runs in a nested transaction (a savepoint).
+    const read = ctx.inTransaction ? ctx.engine.transaction((savepoint: unknown) => resolveTargets(savepoint, targets)) as Promise<Invalidation[]> : resolveTargets(ctx.engine, targets);
+    return read.catch(() => fallback('pre_read_failed'));
   } catch {
     return fallback('plan_failed');
   }
@@ -167,9 +165,8 @@ export function followWrite(ctx: FollowContext, name: string, fn: Function): Fun
     const call = () => fn.apply(ctx.engine, args);
     if (!collecting(ctx)) return call();
     const kind = memberKind(name);
-    if (kind === 'schema') return track(ctx, call, [{ kind: 'invalid', reason: `schema_change:${name}` }], () => [], [{ kind: 'invalid', reason: `schema_change:${name}` }]);
     if (kind !== 'mapped') {
-      const item: Invalidation = { kind: 'invalid', reason: `unmapped_write:${name}` };
+      const item: Invalidation = { kind: 'invalid', reason: `${kind === 'schema' ? 'schema_change' : 'unmapped_write'}:${name}` };
       return track(ctx, call, [item], () => [], [item]);
     }
     const spec = WRITE_MAP[name]!;
@@ -209,11 +206,11 @@ export function followRaw(ctx: FollowContext, fn: Function): Function {
  */
 export function followScope(ctx: FollowContext, keepOnReject: boolean, run: (frame: Frame | null) => unknown): unknown {
   if (!isFollowActive(ctx)) return run(null);
-  const frame = new Frame(ctx.frame);
+  const frame: Frame = { items: [], parent: ctx.frame };
   const flush = (): void => {
     try {
       if (frame.parent) frame.parent.items.push(...frame.items);
-      else publishItems(ctx.follow.sink, frame.items, ctx.follow.now);
+      else publishItems(ctx.follow.sink, frame.items);
     } catch { /* fail open */ }
   };
   let out: unknown;

@@ -183,64 +183,26 @@ export async function openRustStore(addon: object, databasePath: string): Promis
     await pool.shutdown(0).catch(() => undefined);
     throw mapStoreError(error, { member: 'connect' });
   }
+  /** Runs one addon call, mapping its failure to the store error `member` names. */
+  const call = async <T>(member: string, run: () => Promise<unknown>): Promise<T> => {
+    try {
+      return await run() as T;
+    } catch (error) {
+      throw mapStoreError(error, { member });
+    }
+  };
   return {
     brain,
-    async importRelation(seedId, relation, rows, digests) {
-      try {
-        return await brain.importRelation(seedId, relation, rows, digests ?? null) as SeedImportResult;
-      } catch (error) {
-        throw mapStoreError(error, { member: 'importRelation' });
-      }
-    },
-    async replaceRelationRows(seedId, relation, generation, keys, rows, digests) {
-      try {
-        return await brain.replaceRelationRows(seedId, relation, generation, keys, rows, digests) as SeedFollowResult;
-      } catch (error) {
-        throw mapStoreError(error, { member: 'replaceRelationRows' });
-      }
-    },
-    async replaceInterval(seedId, relation, generation, lo, hi, rows, digests) {
-      try {
-        return await brain.replaceInterval(seedId, relation, generation, lo, hi, rows, digests) as SeedFollowResult;
-      } catch (error) {
-        throw mapStoreError(error, { member: 'replaceInterval' });
-      }
-    },
-    async relationDigest(seedId, relation, lo, hi) {
-      try {
-        return await brain.relationDigest(seedId, relation, lo, hi) as SeedIntervalDigest;
-      } catch (error) {
-        throw mapStoreError(error, { member: 'relationDigest' });
-      }
-    },
-    async relationEntries(seedId, relation, lo, hi, limit) {
-      try {
-        return await brain.relationEntries(seedId, relation, lo, hi, limit) as SeedEntry[];
-      } catch (error) {
-        throw mapStoreError(error, { member: 'relationEntries' });
-      }
-    },
-    async allocatorCheck(seedId, primaryMax) {
-      try {
-        return await brain.allocatorCheck(seedId, primaryMax) as SeedAllocatorCheck[];
-      } catch (error) {
-        throw mapStoreError(error, { member: 'allocatorCheck' });
-      }
-    },
-    async factFingerprints(texts) {
-      try {
-        return await brain.factFingerprints(texts) as FactFingerprints[];
-      } catch (error) {
-        throw mapStoreError(error, { member: 'factFingerprints' });
-      }
-    },
-    async seedPlan() {
-      try {
-        return await brain.seedPlan() as SeedPlan;
-      } catch (error) {
-        throw mapStoreError(error, { member: 'seedPlan' });
-      }
-    },
+    importRelation: (seedId, relation, rows, digests) => call('importRelation', () => brain.importRelation(seedId, relation, rows, digests ?? null)),
+    replaceRelationRows: (seedId, relation, generation, keys, rows, digests) =>
+      call('replaceRelationRows', () => brain.replaceRelationRows(seedId, relation, generation, keys, rows, digests)),
+    replaceInterval: (seedId, relation, generation, lo, hi, rows, digests) =>
+      call('replaceInterval', () => brain.replaceInterval(seedId, relation, generation, lo, hi, rows, digests)),
+    relationDigest: (seedId, relation, lo, hi) => call('relationDigest', () => brain.relationDigest(seedId, relation, lo, hi)),
+    relationEntries: (seedId, relation, lo, hi, limit) => call('relationEntries', () => brain.relationEntries(seedId, relation, lo, hi, limit)),
+    allocatorCheck: (seedId, primaryMax) => call('allocatorCheck', () => brain.allocatorCheck(seedId, primaryMax)),
+    factFingerprints: (texts) => call('factFingerprints', () => brain.factFingerprints(texts)),
+    seedPlan: () => call('seedPlan', () => brain.seedPlan()),
     async close() {
       try { await brain.close(); } finally { await pool.shutdown(STORE_SHUTDOWN_WAIT_MS).catch(() => undefined); }
     },

@@ -2,9 +2,9 @@
  * Finds the tables a raw SQL string writes (shadow follow, plan PR 1). The wrapper runs this on every `executeRaw`
  * call so a raw write the engine members do not cover still reaches the follower as a relation-level invalidation.
  *
- * Comments and string literals (quoted, E'..', dollar-quoted) are blanked first, so a keyword inside text never
- * counts. Every statement is then scanned for the write forms INSERT INTO, UPDATE, DELETE FROM, MERGE INTO and
- * TRUNCATE, at any depth, so a data-modifying CTE is found. `FOR UPDATE`, `DO UPDATE` and `THEN UPDATE/DELETE` are
+ * One lexer pass drops comments and turns string literals (quoted, E'..', dollar-quoted) into plain tokens, so a keyword
+ * inside text never counts and a `--` inside a string does not hide the statement after it. Every statement is then
+ * scanned for the write forms INSERT INTO, UPDATE, DELETE FROM, MERGE INTO and TRUNCATE, at any depth, so a data-modifying CTE is found. `FOR UPDATE`, `DO UPDATE` and `THEN UPDATE/DELETE` are
  * not writes to a table of their own. Names may be quoted and schema-qualified; unquoted names fold to lower case and
  * `public.` is dropped. DDL, a `SELECT ... INTO`, `TRUNCATE ... CASCADE`, and a statement whose leading keyword is
  * not known to be read-only (EXECUTE, CALL, DO, COPY ...) are `invalid`: the follower cannot know what they changed.
@@ -21,22 +21,55 @@ const NO_WRITE_LEAD = new Set([
 ]);
 const DDL_LEAD = new Set(['CREATE', 'ALTER', 'DROP', 'COMMENT', 'GRANT', 'REVOKE', 'REINDEX', 'VACUUM', 'CLUSTER', 'REFRESH', 'SECURITY', 'IMPORT']);
 
-/** Blanks comments and string literals; keeps quoted identifiers. */
-function blank(sql: string): string {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/--[^\n]*/g, ' ')
-    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)?\$[\s\S]*?\$\1\$/g, "''")
-    .replace(/[eE]'(?:[^'\\]|\\[\s\S]|'')*'/g, "''")
-    .replace(/'(?:[^']|'')*'/g, "''");
-}
+const WORD_START = /[A-Za-z_\u0080-\uffff]/;
+const WORD_PART = /[A-Za-z0-9_$\u0080-\uffff]/;
+const LITERAL: Token = { text: "'", quoted: false };
 
+/**
+ * One left-to-right pass over the SQL, so what is inside a string, a comment or a quoted name is never mistaken for
+ * anything else. A string, an `E'..'` string (backslash escapes) and a dollar-quoted string each become one literal token
+ * that is not a name; comments vanish; `;` ends a statement. Anything left open (a string, a quoted name, a comment or a
+ * dollar quote with no end) throws, which the caller reports as unparsable.
+ */
 function tokenize(sql: string): Token[][] {
   const statements: Token[][] = [[]];
-  for (const m of blank(sql).matchAll(/"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*|[.,;()]|\S/g)) {
-    const text = m[0];
-    if (text === ';') { statements.push([]); continue; }
-    statements[statements.length - 1]!.push(text[0] === '"' ? { text: text.slice(1, -1).replace(/""/g, '"'), quoted: true } : { text, quoted: false });
+  const push = (t: Token): void => { statements[statements.length - 1]!.push(t); };
+  const end = (index: number): number => { if (index < 0) throw new Error('unterminated'); return index; };
+  /** The index after the closing `quote` of a string or name that starts after `from`; `''` and `""` are escaped quotes. */
+  const closing = (from: number, quote: string, backslash: boolean): number => {
+    for (let i = from; ; i++) {
+      if (i >= sql.length) throw new Error('unterminated');
+      if (backslash && sql[i] === '\\') i++;
+      else if (sql[i] === quote) { if (sql[i + 1] !== quote) return i + 1; i++; }
+    }
+  };
+  let i = 0;
+  while (i < sql.length) {
+    const c = sql[i]!;
+    if (/\s/.test(c)) i++;
+    else if (c === '-' && sql[i + 1] === '-') { const nl = sql.indexOf('\n', i); i = nl < 0 ? sql.length : nl + 1; }
+    else if (c === '/' && sql[i + 1] === '*') {
+      for (let depth = 1, at = i + 2; depth > 0;) {
+        const open = sql.indexOf('/*', at);
+        const close = end(sql.indexOf('*/', at));
+        if (open >= 0 && open < close) { depth++; at = open + 2; } else { depth--; at = close + 2; }
+        i = at;
+      }
+    } else if (c === "'") { i = closing(i + 1, "'", false); push(LITERAL); }
+    else if (c === '"') { const stop = closing(i + 1, '"', false); push({ text: sql.slice(i + 1, stop - 1).replace(/""/g, '"'), quoted: true }); i = stop; }
+    else if (c === '$' && /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.test(sql.slice(i, i + 130))) {
+      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i, i + 130))![0];
+      i = end(sql.indexOf(tag, i + tag.length)) + tag.length;
+      push(LITERAL);
+    } else if (WORD_START.test(c)) {
+      let j = i + 1;
+      while (j < sql.length && WORD_PART.test(sql[j]!)) j++;
+      const word = sql.slice(i, j);
+      if (sql[j] === "'" && word.toLowerCase() === 'e') { i = closing(j + 1, "'", true); push(LITERAL); } else { push({ text: word, quoted: false }); i = j; }
+    } else {
+      if (c === ';') statements.push([]); else push({ text: c, quoted: false });
+      i++;
+    }
   }
   return statements.filter((s) => s.length > 0);
 }

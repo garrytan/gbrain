@@ -14,7 +14,7 @@ import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import type { Invalidation } from '../../src/shadow/invalidations.ts';
 import { hasDatabase } from './helpers.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
-import { followHarness, PAGE, restoreFollowProbes } from '../helpers/follow-producer.ts';
+import { failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from '../helpers/follow-producer.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
 
@@ -51,6 +51,8 @@ d('shadow follow producer on Postgres', () => {
     expect(rows(items, 'facts')).toHaveLength(1);
     expect(items.filter((i) => i.kind !== 'rows')).toEqual([]);
   }, 60_000);
+
+  test('a failed pre-read does not abort the transaction around it', async () => { await failedPreReadKeepsTransaction(engine); }, 60_000);
 
   test('a rolled-back transaction and a rolled-back savepoint publish nothing for the undone work', async () => {
     const h = followHarness(engine);
