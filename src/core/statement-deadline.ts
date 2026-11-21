@@ -91,10 +91,10 @@ function refuse(scope: StatementDeadline): never {
 
 /**
  * The typed reads that replaced statements this wrapper bounded through executeRaw: decide_health (engine-sql/decide-store.ts),
- * the queue-health reads (engine-sql/jobs-health.ts) and the belief-coverage source read (engine-sql/belief.ts).
+ * the queue-health reads (engine-sql/jobs-health.ts), the belief-coverage source read (engine-sql/belief.ts) and the export withdrawal-ledger reads (engine-sql/export-reads.ts).
  */
 export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations',
-  'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth', 'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName', 'listCoveredSources']);
+  'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth', 'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName', 'listCoveredSources', 'listExportWithdrawals', 'readExportWithdrawalLedgerBytes']);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
 

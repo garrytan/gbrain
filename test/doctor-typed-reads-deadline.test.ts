@@ -47,6 +47,9 @@ const CASES: Case[] = [
   { member: 'readOldestWaitingAge', table: 'minion_jobs', call: (e) => e.readOldestWaitingAge('default') },
   { member: 'listStuckActiveJobsByName', table: 'minion_jobs', call: (e) => e.listStuckActiveJobsByName() },
   { member: 'listCoveredSources', table: 'belief_events', call: (e) => e.listCoveredSources('doctor_deadline_probe') },
+  // The export withdrawal-ledger reads the sync_rows_behind_checkpoint check reaches.
+  { member: 'listExportWithdrawals', table: 'fact_withdrawals', call: (e) => e.listExportWithdrawals('default') },
+  { member: 'readExportWithdrawalLedgerBytes', table: 'fact_withdrawals', call: (e) => e.readExportWithdrawalLedgerBytes('default') },
 ];
 
 test('the bounded typed reads are exactly the members a doctor check reaches', () => {

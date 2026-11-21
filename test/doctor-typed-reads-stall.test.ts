@@ -40,6 +40,8 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   readOldestWaitingAge: (e) => e.readOldestWaitingAge('default'),
   listStuckActiveJobsByName: (e) => e.listStuckActiveJobsByName(),
   listCoveredSources: (e) => e.listCoveredSources('doctor_deadline_probe'),
+  listExportWithdrawals: (e) => e.listExportWithdrawals('default'),
+  readExportWithdrawalLedgerBytes: (e) => e.readExportWithdrawalLedgerBytes('default'),
 };
 
 test('every bounded typed read has a stall case', () => {
@@ -49,7 +51,7 @@ test('every bounded typed read has a stall case', () => {
 for (const [member, call] of Object.entries(CALLS)) {
   test(`${member} stalled on its connection under the doctor deadline ends by the deadline and gives back its connection and gauge slot`, async () => {
     const counts = { discards: 0, releases: 0 };
-    const fake = makeFakeSql(stmt => (/decide_|decision_receipts|minion_jobs|belief_events/.test(stmt.text) ? never() : undefined));
+    const fake = makeFakeSql(stmt => (/decide_|decision_receipts|minion_jobs|belief_events|fact_withdrawals/.test(stmt.text) ? never() : undefined));
     const reserve = fake.sql.reserve;
     fake.sql.reserve = async () => {
       const r = await reserve();

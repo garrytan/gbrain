@@ -7,6 +7,7 @@
  * Protects:
  * - each member that routes through `engineRead` refuses inside an aborted request with the request's AbortError and
  *   sends no statement, as `executeRaw` does;
+ * - a request that aborts while a multi-statement read's first statement runs sends no second statement;
  * - the pin: the members that route through `engineRead` are exactly the members this file covers;
  * - the queue-health reads and the belief-coverage source read are in BOUNDED_TYPED_READS (the doctor deadline cases for
  *   them are in test/doctor-typed-reads-deadline.test.ts and doctor-typed-reads-stall.test.ts);
@@ -36,6 +37,8 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   listForcedCutSeqs: (e) => e.listForcedCutSeqs(1, 1),
   readSegmentedVersionBodyBytes: (e) => e.readSegmentedVersionBodyBytes(1, 1),
   listCoveredSources: (e) => e.listCoveredSources('subject'),
+  listExportWithdrawals: (e) => e.listExportWithdrawals('default'),
+  readExportWithdrawalLedgerBytes: (e) => e.readExportWithdrawalLedgerBytes('default'),
   readQueueHealthSignals: (e) => e.readQueueHealthSignals(SPEC),
   listWaitingByQueue: (e) => e.listWaitingByQueue(),
   readQueueDivergence: (e) => e.readQueueDivergence({ windowHours: 24, ttlReasonPrefix: 'ttl:' }),
@@ -46,9 +49,17 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   listStuckActiveJobsByName: (e) => e.listStuckActiveJobsByName(),
 };
 /** The members a doctor check reaches. */
-const DOCTOR = ['listCoveredSources', 'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth', 'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName'];
+const DOCTOR = ['listCoveredSources', 'listExportWithdrawals', 'readExportWithdrawalLedgerBytes', 'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth', 'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName'];
 /** The members a segmented-page preparation reaches. */
 const PREPARATION = ['listForcedCutSeqs', 'readSegmentedVersionBodyBytes'];
+
+test('a request that aborts while the first statement of a multi-statement read runs sends no second statement', async () => {
+  const controller = new AbortController();
+  const { fake, engine } = fakeEngine(() => { controller.abort(new Error('client went away')); return []; });
+  const error = await withRequestSignal(controller.signal, () => engine.readQueueHealthSignals(SPEC)).then(() => null, (e: unknown) => e);
+  expect((error as Error | null)?.name).toBe('AbortError');
+  expect(fake.statements().length).toBe(1);
+});
 
 function aborted(): AbortSignal {
   const controller = new AbortController();
