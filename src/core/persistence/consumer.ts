@@ -65,7 +65,7 @@ const DRAIN_NOTICE_EVERY_MS = 10_000;
 const CONNECTION_LOSS_RELEASE_MS = 30_000;
 /** #6650: how often a consumer looks for claims held by an owner it can prove dead. */
 export const DEAD_OWNER_SCAN_MS = 5_000;
-/** How long a named capability stop (topology-stop.ts) parks the owner's topology recovery scan before it asks again. */
+/** How long a capability refusal (an engine without a step the scan reaches) parks the owner's topology recovery scan before it asks again. */
 export const TOPOLOGY_STOP_BACKOFF_MS = 600_000;
 /** #5801: the phase a connection checkout belongs to, carried through its async chain. */
 const phaseScope = new AsyncLocalStorage<{ observation: PhaseObservation; startedAt: number }>();
@@ -951,9 +951,10 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     finally { clearTimeout(timer); this.abort.signal.removeEventListener('abort', stop); this.phaseObservation = undefined; }
   }
   /**
-   * Starts the topology recovery scan unless one runs. A named capability stop (topology-stop.ts: the Rust engine while a
-   * change is recovering) is reported once and parks the scan for TOPOLOGY_STOP_BACKOFF_MS, so the owner neither spins
-   * on the refusal nor logs it every tick; the change stays recorded and doctor names the stop.
+   * Starts the topology recovery scan unless one runs. The scan converges clone and reclone changes on every engine. A
+   * capability refusal from a step it reaches (the Rust engine resuming a worktree refresh another engine recorded,
+   * worktree-refresh.ts) is reported once and parks the scan for TOPOLOGY_STOP_BACKOFF_MS, so the owner neither spins
+   * on the refusal nor logs it every tick; the recorded rows stay as they are.
    */
   private scanTopologies(): void {
     if (this.topologyWorker || Date.now() < this.topologyStoppedUntil) return;

@@ -1,18 +1,19 @@
 /**
- * The owner's topology recovery scan in the persistence consumer (persistence/consumer.ts `scanTopologies`) against the
- * named Rust stop (persistence/topology-stop.ts).
+ * The owner's topology recovery scan in the persistence consumer (persistence/consumer.ts `scanTopologies`) and its
+ * capability backoff.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: on an engine without `raw_sql` (the Rust engine) with a recovering change on this host, the first scan
- *    reports the named stop once (`member=source_topology_recovery`) and parks the scan for TOPOLOGY_STOP_BACKOFF_MS:
- *    the next tick neither scans nor reports again, and it does not throw. Any other scan error is reported and the
- *    next tick scans again, as before. With raw SQL the scan runs every tick.
- *  - Regression: the scan refused on every scanning tick of a Rust owner (topology-locks.ts raw SQL), so the owner
- *    asked again each tick and reported a generic `member=executeRaw` refusal that named no step.
+ *  - Contract: on an engine with or without `raw_sql` (the Rust shape) the scan runs on every tick and reports nothing
+ *    when no change is recovering, since topology recovery needs no raw SQL (topology-recovery.ts). A capability
+ *    refusal from a step the scan reaches (the Rust engine resuming a refresh another engine recorded) is reported once
+ *    and parks the scan for TOPOLOGY_STOP_BACKOFF_MS: the next tick neither scans nor reports again, and it does not
+ *    throw. Any other scan error is reported and the next tick scans again.
+ *  - Regression: the scan refused on every scanning tick of a Rust owner, then stopped by name
+ *    (`member=source_topology_recovery`) while a change was recovering; it now converges the change on every engine.
  *  - Why existing coverage misses it: the parity case (test/engine-parity/topology-named-stop.test.ts) runs the scan
  *    function itself; the consumer's tick wiring and its backoff are only reachable through the consumer.
- *  - Seam: a proxy over a real PGLite engine; the Rust shape drops raw_sql from its capability set and answers one
- *    recovering change from listTopologyRecoveries, so the stop is the real requireTopologyRawSql refusal.
+ *  - Seam: a proxy over a real PGLite engine; the Rust shape drops raw_sql from its capability set, and `scanError`
+ *    makes listTopologyRecoveries throw (the capability refusal is the real capabilityMissing error).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -20,12 +21,9 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PersistenceConsumer, TOPOLOGY_STOP_BACKOFF_MS } from '../src/core/persistence/consumer.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 
-const RECOVERING = { id: randomUUID(), principal_id: randomUUID(), request_id: randomUUID(), digest: 'e'.repeat(64), operation: 'reclone',
-  source_id: 'work', source_incarnation: randomUUID(), worktree_ids: [], state: 'recovering', recovery: { worktreeId: randomUUID() },
-  recovery_bytes: 0, intent_bytes: 0, terminal_bytes: 0, outcome: null };
-
-/** The real engine; `rustShape` drops raw_sql and answers one recovering change; `scanError` makes the list throw it. */
+/** The real engine; `rustShape` drops raw_sql; `scanError` makes the list throw it. */
 function shaped(engine: BrainEngine, opts: { rustShape: boolean; scanError?: Error }) {
   const scans: unknown[][] = [];
   const capabilities = new Set([...engine.capabilities].filter(c => !opts.rustShape || c !== 'raw_sql'));
@@ -35,7 +33,7 @@ function shaped(engine: BrainEngine, opts: { rustShape: boolean; scanError?: Err
       if (key === 'listTopologyRecoveries') return async (...args: unknown[]) => {
         scans.push(args);
         if (opts.scanError) throw opts.scanError;
-        return opts.rustShape ? [RECOVERING] : (target.listTopologyRecoveries as (...a: unknown[]) => unknown).apply(target, args);
+        return (target.listTopologyRecoveries as (...a: unknown[]) => unknown).apply(target, args);
       };
       const value = Reflect.get(target, key, target);
       return typeof value === 'function' ? value.bind(target) : value;
@@ -54,7 +52,7 @@ function owner(engine: BrainEngine) {
   return { errors, tick };
 }
 
-describe('the consumer topology scan and the named Rust stop', () => {
+describe('the consumer topology scan and its capability backoff', () => {
   let engine: BrainEngine;
   beforeAll(async () => {
     engine = new PGLiteEngine();
@@ -63,16 +61,14 @@ describe('the consumer topology scan and the named Rust stop', () => {
   }, 120_000);
   afterAll(async () => { await engine.disconnect(); });
 
-  test('without raw SQL a recovering change reports the named stop once and parks the scan', async () => {
-    const { engine: seen, scans } = shaped(engine, { rustShape: true });
+  test('a capability refusal from the scan is reported once and parks the scan', async () => {
+    const { engine: seen, scans } = shaped(engine, { rustShape: true, scanError: capabilityMissing('raw_sql', 'fixture step') });
     const { errors, tick } = owner(seen);
     await tick();
     await tick();
     await tick();
-    const detail = (errors[0] as { detail?: string } | undefined)?.detail ?? '';
-    expect({ scans: scans.length, reports: errors.length, code: (errors[0] as { code?: string } | undefined)?.code,
-      member: /member=(\w+)/.exec(detail)?.[1], written: /written=(\w+)/.exec(detail)?.[1] })
-      .toEqual({ scans: 1, reports: 1, code: 'engine_capability_missing', member: 'source_topology_recovery', written: 'nothing' });
+    expect({ scans: scans.length, reports: errors.length, code: (errors[0] as { code?: string } | undefined)?.code })
+      .toEqual({ scans: 1, reports: 1, code: 'engine_capability_missing' });
     expect(TOPOLOGY_STOP_BACKOFF_MS).toBe(600_000);
   });
 
@@ -84,12 +80,13 @@ describe('the consumer topology scan and the named Rust stop', () => {
     expect({ scans: scans.length, reports: errors.length }).toEqual({ scans: 2, reports: 2 });
   });
 
-  test('with raw SQL the scan runs on every tick and reports nothing when no change is recovering', async () => {
-    const { engine: seen, scans } = shaped(engine, { rustShape: false });
-    const { errors, tick } = owner(seen);
-    await tick();
-    await tick();
-    // An empty scan asks twice per tick: after its rotating cursor, then from the start (topology-recovery.ts).
-    expect({ scans: scans.length, reports: errors.length }).toEqual({ scans: 4, reports: 0 });
-  });
+  test.each([['with raw SQL', false], ['without raw SQL (the Rust shape)', true]] as const)(
+    '%s the scan runs on every tick and reports nothing when no change is recovering', async (_label, rustShape) => {
+      const { engine: seen, scans } = shaped(engine, { rustShape });
+      const { errors, tick } = owner(seen);
+      await tick();
+      await tick();
+      // An empty scan asks twice per tick: after its rotating cursor, then from the start (topology-recovery.ts).
+      expect({ scans: scans.length, reports: errors.length }).toEqual({ scans: 4, reports: 0 });
+    });
 });

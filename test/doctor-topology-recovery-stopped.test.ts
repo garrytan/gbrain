@@ -1,13 +1,15 @@
 /**
- * topology_recovery_stopped doctor check: a topology change recovering on this host that the Rust engine stops by name.
+ * topology_recovery_stopped doctor check: the topology changes recovering on this host, which the owner converges on
+ * every engine.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: ok on a real brain with nothing recovering and on an engine with no managed worktrees; on an engine
- *    without raw_sql (the Rust shape) a recovering change on this host is a warn that names the change, its source and
- *    the stop `source_topology_recovery`; with raw SQL the same row is ok (the owner converges it); a pre-journal
- *    schema is ok and any other read failure is a warn with its error, never swallowed.
- *  - Why new: the stop itself is pinned on three arms in test/engine-parity/topology-named-stop.test.ts; this pins the
- *    doctor wording and status that tell an operator about it.
+ *  - Contract: ok on a real brain with nothing recovering and on an engine with no managed worktrees; a recovering
+ *    change on this host is ok and counted with `stop: null` on an engine with or without raw_sql (the Rust shape),
+ *    because the owner converges it on both; a pre-journal schema is ok and any other read failure is a warn with its
+ *    error, never swallowed.
+ *  - Regression: the check warned on the Rust shape that the change could not converge (the retired named stop
+ *    `source_topology_recovery`), which is no longer true; the owner's recovery is pinned on three arms in
+ *    test/engine-parity/topology-named-stop.test.ts.
  *  - Seam: stub engines answer listTopologyRecoveries and carry a capability set; the host id is given with
  *    setEngineHostId. no_claim: the SQL of the list (pinned in the parity case).
  *
@@ -46,12 +48,11 @@ describe('topology_recovery_stopped doctor check', () => {
     expect(categorizeCheck('topology_recovery_stopped')).toBe('ops');
   }, 60_000);
 
-  test('without raw SQL a recovering change warns and names the change, its source and the stop', async () => {
+  test('without raw SQL a recovering change is ok and counted, since the owner converges it', async () => {
     const check = await run(stub(['managed_persistence'], recovering));
-    expect(check).toMatchObject({ name: 'topology_recovery_stopped', status: 'warn', details: { count: 1, more: false, stop: 'source_topology_recovery' } });
-    expect(check.message).toContain(`reclone of source work (change ${CHANGE})`);
-    expect(check.message).toContain('stops source_topology_recovery by name');
-    expect(check.message).toContain('nothing was moved or deleted');
+    expect(check).toMatchObject({ name: 'topology_recovery_stopped', status: 'ok', details: { count: 1, more: false, stop: null,
+      recovering: [{ change_id: CHANGE, source_id: 'work', operation: 'reclone', stop: null }] } });
+    expect(check.message).toBe('1 topology change(s) are recovering on this host; the owner converges them.');
   });
 
   test('with raw SQL the same change is ok; with no managed worktrees nothing is read', async () => {

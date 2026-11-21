@@ -343,7 +343,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       worktree_refreshes: await (await import('./worktree-refresh.ts')).activeWorktreeRefreshes(engine, params.source_id as string | undefined),
       // #8984: stopped remove/purge requests (retire admissions) and the ones a later lifecycle change superseded.
       topology_requests: topologyRequests,
-      // This host's recovering topology changes, and the named Rust stop that keeps them from converging (topology-stop.ts).
+      // This host's recovering topology changes (topology-stop.ts); the owner converges each one on every engine.
       topology_recoveries: await readTopologyRecoveryStops(engine, existingHostIdFor(engine)),
       // Q1: each canonical checkout on this host against its last fetched upstream: commits it holds that the upstream lacks, and its porcelain.
       checkouts: await writerStatusCheckouts(bindings as Array<{ source_id: string; local_path: string | null }>),

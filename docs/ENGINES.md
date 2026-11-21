@@ -1840,11 +1840,13 @@ runs on PGLite alone without the flag.
 
 ### Topology recovery on the Rust engine
 
-The recovery of an interrupted source lifecycle change needs raw SQL, which the Rust engine never serves. It refuses
-it by name (`member=source_topology_recovery`, `written=nothing`) before any lock, row or directory is touched. Doctor
-warns `topology_recovery_stopped`; `sources writer status --json` lists `topology_recoveries`. Finish that change
-from a pglite or postgres engine. A managed clone (`sources add --url`, `sources reclone`) runs on the Rust engine
-as on the SQL engines: its reads, writes and receipts go through the typed topology store.
+A managed clone (`sources add --url`, `sources reclone`) runs on the Rust engine as on the SQL engines: its reads,
+writes and receipts go through the typed topology store. The owner's recovery of an interrupted clone or reclone
+does too, so the write owner finishes or rolls back such a change on every engine. Doctor `topology_recovery_stopped`
+and `sources writer status --json` (`topology_recoveries`) count the changes still recovering on this host; their
+`stop` field is always null. The scan first resumes interrupted worktree refreshes. The Rust engine records none
+(`gbrain sources refresh` refuses before it writes one), so a refresh another engine left on the same brain refuses
+there with a capability error, and the owner parks its scan for 10 minutes before it asks again.
 
 ## Adding a new engine
 

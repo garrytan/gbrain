@@ -663,8 +663,8 @@ worktree refresh rows (`gbrain sources refresh` refuses before it writes one). `
 `insertCloneWorktree`, `bindCloneSource` are `insertWorktree` and `insertSourceBinding`; `bindCloneHost` reads the
 host binding first and keeps an existing one, as `ON CONFLICT DO NOTHING` does. `markTopologyChange` does nothing: no
 trigger guards this engine's source records. The receipts' counter changes go through `addPersistenceCounters`.
-A managed clone commits on this engine; the owner's recovery of an interrupted change still stops by name (see
-docs/ENGINES.md, "Topology recovery on the Rust engine").
+A managed clone commits on this engine, and the owner's recovery finishes or rolls back an interrupted clone or
+reclone here too (docs/ENGINES.md, "Topology recovery on the Rust engine").
 
 ## TypeScript members with no stored state
 

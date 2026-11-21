@@ -20,8 +20,7 @@ import { flushTopologyDirectory, topologyDirectoryIdentity } from './topology-fi
 import { assertPhysicalRoot } from './physical-root.ts';
 import { assertPhysicalRootStamp, readPhysicalRootReservation } from './physical-root-record.ts';
 import { resumeWorktreeRefreshes } from './worktree-refresh.ts';
-import { managesWorktrees, servesRawSql } from '../rust-engine/errors.ts';
-import { requireTopologyRawSql } from './topology-stop.ts';
+import { managesWorktrees } from '../rust-engine/errors.ts';
 
 const cloneStatusFix=(sourceId:string):Action=>readFix(
   `Shows source ${sourceId}'s owner, worktree state (recovering while a clone is unresolved) and blocking effects, read-only.`,
@@ -224,9 +223,6 @@ export async function recoverSourceTopologies(engine:BrainEngine,opts:{hostId?:s
   // Every topology recovery record names a managed worktree; an engine without one has none to converge.
   if(!managesWorktrees(engine))return 0;
   const host=opts.hostId??hostIdFor(engine),limit=Math.max(1,Math.min(16,opts.limit??2));
-  // The named Rust stop (topology-stop.ts): finishing a change locks through raw SQL, so an engine without it refuses by
-  // name while a change is recovering here, before any lock or refresh step; the change stays exactly as recorded.
-  if(!servesRawSql(engine)&&(await engine.listTopologyRecoveries(host,null,1)).length)requireTopologyRawSql(engine,'source_topology_recovery');
   await resumeWorktreeRefreshes(engine,{hostId:host});
   const scan=(after:string|null)=>engine.listTopologyRecoveries(host,after,limit);
   let rows=await scan(recoveryCursors.get(engine)??null);

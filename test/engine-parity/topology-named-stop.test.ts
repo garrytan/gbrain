@@ -1,29 +1,28 @@
 /**
- * BrainEngine parity: the Rust stops for source topology changes. The owner's topology recovery
- * (topology-recovery.ts `recoverSourceTopologies`) still locks through raw SQL and refuses by name
- * (persistence/topology-stop.ts). The managed clone (topology-clone.ts `runManagedSourceClone`, reached by
- * `sources add --url` and `sources reclone`) reads, locks and writes through the typed `topologyStore` member, so it
- * commits on every engine.
+ * BrainEngine parity: source topology changes on every engine. The owner's topology recovery (topology-recovery.ts
+ * `recoverSourceTopologies`) and the managed clone (topology-clone.ts `runManagedSourceClone`, reached by
+ * `sources add --url` and `sources reclone`) read, lock and write through the typed `topologyStore` member, so both
+ * converge on every engine. (The file keeps its name from the retired named Rust stop.)
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: on PGLite and Postgres the recovery scan reaches a recovering change under its topology locks and the
- *    clone runs its own checks; both arms agree. On the Rust engine the recovery scan refuses by name
- *    (`member=source_topology_recovery`, capability raw_sql, written=nothing) before any lock, and the typed status
- *    read (`readTopologyRecoveryStops`) names the stop for the change. A managed clone commits on every engine: the
- *    checkout is at its target with no staging directory left, the source is registered and bound to the clone's
- *    worktree, no change is recovering, and the receipt says `cloned`. Before its first write every engine
- *    runs the same checks: a loopback remote refuses `internal_target` and a reclone of a source this host does not
- *    own refuses `owner_unavailable`, with no lock or directory taken.
- *  - Regression: on the Rust engine the recovery scan reached topology-locks.ts `withTopologyLocks` and the clone its
- *    first raw read (topology-clone.ts), so each refused as the generic `member=executeRaw` before its own checks; doctor
- *    and status could not say why a recovering change never converged; then the clone stopped at its first
- *    clone-transaction write (the `persistence_worktrees` INSERT). Case 3 pins that the clone now commits there too.
+ *  - Contract: the recovery scan reaches a recovering change under its topology locks on every engine, leaves a record
+ *    it does not recognize as recorded, and the typed status read (`readTopologyRecoveryStops`) lists it with no stop.
+ *    A managed clone commits on every engine: the checkout is at its target with no staging directory left, the source
+ *    is registered and bound to the clone's worktree, no change is recovering, and the receipt says `cloned`. Before
+ *    its first write every engine runs the same checks: a loopback remote refuses `internal_target` and a reclone of a
+ *    source this host does not own refuses `owner_unavailable`, with no lock or directory taken. An interrupted clone
+ *    and an interrupted reclone stay recovering, and the owner's next recovery pass rolls each back the same way on
+ *    every engine: the add leaves nothing registered and no staging, the reclone keeps the committed checkout bound.
+ *  - Regression: on the Rust engine the recovery scan refused by name (`member=source_topology_recovery`, capability
+ *    raw_sql) whenever a change was recovering, so an interrupted clone or reclone never converged there; case 4
+ *    failed on the Rust arm with that refusal before the stop was retired. Earlier, the scan reached topology-locks.ts
+ *    `withTopologyLocks` and the clone its first raw read, each refusing as the generic `member=executeRaw`.
  *  - Why existing coverage misses it: owner-recovery-scans.test.ts runs the scan with no recovering change, and
  *    journal-typed-sites.test.ts lists a recovering change without running the scan.
- *  - Seam: case 3 passes the `hooks.clone` seam (a local bare repository) instead of a network clone. Cases 1 and 2
- *    use the real scan and lifecycle.
+ *  - Seam: cases 3 and 4 pass the `hooks.clone` seam (a local bare repository) instead of a network clone; case 4 also
+ *    passes `hooks.boundary` to stop the run once the clone is prepared. Cases 1 and 2 use the real scan and lifecycle.
  */
-import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
@@ -71,17 +70,9 @@ async function caught(run: () => Promise<unknown>): Promise<unknown> {
   return run().then(() => null, (error: unknown) => error);
 }
 
-/** The code and the named member of a capability refusal, as the Rust arm must report it. */
-function named(error: unknown): { code: unknown; member: string | null; written: string | null } {
-  const e = error as { code?: unknown; detail?: unknown } | null;
-  const detail = typeof e?.detail === 'string' ? e.detail : '';
-  return { code: e?.code, member: /member=(\w+)/.exec(detail)?.[1] ?? null, written: /written=(\w+)/.exec(detail)?.[1] ?? null };
-}
-
-describe('engine parity: the named Rust stop for source topology changes', () => {
-  parityTest('the owner topology recovery stops by name on Rust before any lock, and leaves the recovering change as recorded', {
+describe('engine parity: source topology changes on every engine', () => {
+  parityTest('the owner topology recovery reaches a recovering change under its locks on every engine and keeps a record it does not recognize', {
     methods: ['worktreeClaimStore', 'getWorktreeBinding', 'readLedgerSource', 'insertTopologyChange', 'listTopologyRecoveries'],
-    requires: 'raw_sql',
     timeout: 60_000,
   }, async (engine, backend) => withCheckout(engine, backend, async (_home, root) => {
     await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) });
@@ -93,19 +84,12 @@ describe('engine parity: the named Rust stop for source topology changes', () =>
       recoveryBytes: 12, intentBytes: 34, terminalBytes: 4096, outcome: null });
     const text = (rows: unknown) => JSON.stringify(rows, bigintToStringReplacer);
     const before = text(await engine.listTopologyRecoveries(host, null, 16));
-    let recovered: number | null = null;
-    const refusal = await caught(async () => { recovered = await recoverSourceTopologies(engine, { hostId: host }); });
+    const recovered = await recoverSourceTopologies(engine, { hostId: host });
     const after = await engine.listTopologyRecoveries(host, null, 16);
     const stops = await readTopologyRecoveryStops(engine, host);
     const listed = stops.recovering.map(row => ({ source: row.source_id, operation: row.operation, stop: row.stop }));
-    if (backend === 'rust') {
-      expect({ refusal: named(refusal), unchanged: text(after) === before, listed, stop: stops.stop }).toEqual({
-        refusal: { code: 'engine_capability_missing', member: 'source_topology_recovery', written: 'nothing' }, unchanged: true,
-        listed: [{ source: 'work', operation: 'writer_claim', stop: 'source_topology_recovery' }], stop: 'source_topology_recovery' });
-      throw refusal;
-    }
-    if (refusal) throw refusal;
-    expect({ listed, stop: stops.stop }).toEqual({ listed: after.map(() => ({ source: 'work', operation: 'writer_claim', stop: null })), stop: null });
+    expect({ recovered, unchanged: text(after) === before, listed, stop: stops.stop }).toEqual({
+      recovered: 0, unchanged: true, listed: [{ source: 'work', operation: 'writer_claim', stop: null }], stop: null });
     return { recovered, recovering: after.map(row => ({ source: row.source_id, state: row.state })), listed };
   }));
 
@@ -140,5 +124,57 @@ describe('engine parity: the named Rust stop for source topology changes', () =>
       bound: binding ? { local_path: binding.local_path === target, state: binding.state, generation: String(binding.topology_generation) } : null };
     expect(left).toMatchObject({ target: true, staging: [], registered: true, recovering: 0 });
     return { state: result.state, cloned: result.cloned, local_path: result.local_path === target, left };
+  }));
+
+  parityTest('the owner recovers an interrupted clone and reclone the same way on every engine', {
+    methods: ['topologyStore', 'addPersistenceCounters', 'readSourceMembership', 'listTopologyRecoveries', 'getWorktreeBinding'],
+    timeout: 90_000,
+  }, async (engine, backend) => withCheckout(engine, backend, async (home) => {
+    await registerLocalWriter(engine, 'cli');
+    const bare = largeBareRepository(home, 3);
+    const target = join(home, 'cloned');
+    const host = localHostId();
+    const principal = await topologyPrincipal(engine);
+    const clone = async (_url: string, stage: string) => { execFileSync('git', ['clone', '--quiet', bare, stage], { stdio: ['ignore', 'ignore', 'pipe'] }); };
+    const run = (operation: 'add' | 'reclone', requestId: string, boundary?: (name: string) => Promise<void>) => {
+      const input = operation === 'add'
+        ? { operation, sourceId: 'cloned', path: target, remoteUrl: 'https://example.invalid/example.git', requestId }
+        : { operation, sourceId: 'cloned', requestId };
+      return runManagedSourceClone(engine, input, principal, requestId, { ...input, requestId: undefined }, { clone, boundary });
+    };
+    const state = async () => {
+      const binding = await engine.getWorktreeBinding('cloned', host);
+      return { checkout: existsSync(join(target, '.git')), staging: readdirSync(home).filter(name => name.startsWith('.gbrain-clone-') || name.includes('.gbrain-old-')),
+        registered: (await engine.readSourceMembership('cloned')) !== null, recovering: (await engine.listTopologyRecoveries(host, null, 16)).length,
+        bound: binding ? { local_path: binding.local_path === target, state: binding.state } : null };
+    };
+    // The process stops once the clone is prepared, and a tracked staged file was edited meanwhile, so the run's own
+    // finish keeps the change recovering. The edit is undone; the owner's recovery pass then rolls the change back.
+    const interrupted = async (operation: 'add' | 'reclone', requestId: string) => {
+      let edited: { path: string; bytes: string } | null = null;
+      const refusal = await caught(() => run(operation, requestId, async name => {
+        if (name !== 'prepared') return;
+        const [row] = await engine.listTopologyRecoveries(host, null, 16);
+        const stage = (row.recovery as { stage: string }).stage;
+        const path = join(stage, execFileSync('git', ['ls-files'], { cwd: stage, encoding: 'utf8' }).split('\n')[0]);
+        edited = { path, bytes: readFileSync(path, 'utf8') };
+        writeFileSync(path, 'uncoordinated staging edit');
+        throw new Error('fixture: the process stopped after the clone was prepared');
+      }));
+      const recovering = (await engine.listTopologyRecoveries(host, null, 16)).map(row => ({ operation: row.operation, state: row.state }));
+      const restore = edited as { path: string; bytes: string } | null;
+      if (restore) writeFileSync(restore.path, restore.bytes);
+      const recovered = await recoverSourceTopologies(engine, { hostId: host });
+      return { refusal: (refusal as { code?: unknown } | null)?.code ?? null, recovering, recovered, after: await state() };
+    };
+    const add = await interrupted('add', RECOVERY);
+    expect(add).toMatchObject({ refusal: 'recovery_required', recovering: [{ operation: 'add', state: 'recovering' }], recovered: 1,
+      after: { checkout: false, staging: [], registered: false, recovering: 0, bound: null } });
+    const committed = await run('add', 'd0000000-0000-4000-8000-0000000000f3');
+    expect(committed.state).toBe('committed');
+    const reclone = await interrupted('reclone', WRITER);
+    expect(reclone).toMatchObject({ refusal: 'recovery_required', recovering: [{ operation: 'reclone', state: 'recovering' }], recovered: 1,
+      after: { checkout: true, staging: [], registered: true, recovering: 0, bound: { local_path: true, state: 'active' } } });
+    return { add, reclone };
   }));
 });
