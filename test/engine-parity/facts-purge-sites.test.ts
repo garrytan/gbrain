@@ -475,6 +475,49 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
     return answers;
   });
 
+  parityTest('listFactContextsForPurgeProbe is a keyset read: the lowest 1000 live ids with a context above the cursor, in id order', {
+    methods: ['insertFacts', 'expireFact', 'listFactContextsForPurgeProbe'],
+    timeout: 120_000,
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const label = (n: number) => `ctx ${String(n).padStart(4, '0')}`;
+    const batch = async (from: number, to: number, sourceId = SRC) => {
+      const out = [];
+      for (let n = from; n <= to; n++) {
+        // Row 5 has a blank context and row 7 none, so the probe passes them by.
+        const context = n === 5 ? '' : n === 7 ? null : sourceId === SRC ? label(n) : `other ${n}`;
+        out.push({ fact: `fact ${n} of ${sourceId}`, entity_slug: null, kind: 'fact', visibility: 'world', source: 'fence', source_markdown_slug: 'notes/contexts', row_num: nextRow(engine), context });
+      }
+      const res = await engine.insertFacts(out as never, { source_id: sourceId });
+      expect(res.inserted).toBe(to - from + 1);
+      return res.ids.map(Number);
+    };
+    // The other source's ids sit inside the range of this source's ids, so a read that drops the source test fails.
+    const low = await batch(1, 500);
+    const other = await batch(1, 3, 'other');
+    await batch(501, 1010);
+    await engine.expireFact(low[9]!); // row 10
+    const page = async (after: number) => {
+      const got = await engine.listFactContextsForPurgeProbe(SRC, after);
+      const ids = got.map(r => Number(r.id));
+      expect(ids.every((id, i) => i === 0 || id > ids[i - 1]!)).toBe(true);
+      expect(ids.every(id => id > after)).toBe(true);
+      return { contexts: got.map(r => r.context), last: ids.at(-1) ?? null };
+    };
+    const first = await page(0);
+    const second = await page(first.last!);
+    const third = await page(second.last!);
+    // A cursor that is another source's id starts after it, with this source's next row.
+    const fromOther = await page(other[0]!);
+    const live = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i).filter(n => n !== 5 && n !== 7 && n !== 10).map(label);
+    expect(first.contexts).toEqual(live(1, 1003));
+    expect(second.contexts).toEqual(live(1004, 1010));
+    expect(third.contexts).toEqual([]);
+    expect(fromOther.contexts.slice(0, 2)).toEqual([label(501), label(502)]);
+    expect(fromOther.contexts.length).toBe(510);
+    return { first: first.contexts, second: second.contexts, third: third.contexts, fromOther: fromOther.contexts };
+  });
+
   // Named Rust stop: the purge dry run refuses first on countPurgeVersionsCarryingClaim, served by lane 3's purge-sweep
   // commit 77bea7e975 (not on this base). The next stop is listBeliefEventsForPurgeProbe, which stays refused on Rust
   // (an empty answer would report belief_events clean on a store that records them); lane 3 serves it as a keyset read

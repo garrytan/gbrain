@@ -415,9 +415,9 @@ listLiveTakesByIds	contradictions	yes	1	no	yes	yes	serves
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	serves
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	115	yes	yes	yes	serves
-insertFacts	facts	yes	142	no	yes	yes	serves
+insertFacts	facts	yes	143	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	77	no	yes	yes	serves
+expireFact	facts	yes	78	no	yes	yes	serves
 listFactsByEntity	facts	yes	37	yes	yes	yes	serves
 listFactsSince	facts	yes	16	yes	yes	yes	serves
 listFactsKeyset	facts	yes	3	no	yes	yes	serves
@@ -869,7 +869,7 @@ listSegmentedVersionBodies	facts_purge	yes	1	no	yes	yes	serves
 setPurgeProbeTimeout	facts_purge	yes	2	no	yes	yes	serves
 probePurgeDerivations	facts_purge	yes	2	no	yes	yes	serves
 listBeliefEventsForPurgeProbe	facts_purge	yes	3	no	yes	yes	refuses:facts
-listFactContextsForPurgeProbe	facts_purge	yes	2	no	yes	yes	serves
+listFactContextsForPurgeProbe	facts_purge	yes	3	no	yes	yes	serves
 listPageSourcePathsForPurge	facts_purge	yes	1	no	yes	yes	serves
 listNearestFactsForPurge	facts_purge	yes	1	no	yes	yes	serves
 countLegacyDerivedPages	facts_purge	yes	1	no	yes	yes	serves
