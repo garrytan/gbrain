@@ -107,7 +107,7 @@
    "DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])",
    "UPDATE pages SET chunker_version=$1, text_projection_revision=CASE WHEN knowledge_revision=$2::uuid THEN knowledge_revision ELSE text_projection_revision END, search_vector=CASE WHEN knowledge_revision=$3::uuid THEN setweight(to_tsvector('english',gbrain_fts_input(COALESCE(title,''))),'A') || setweight(to_tsvector('english',gbrain_fts_input(left(v.seal_input::text,65536))),'C') ELSE search_vector END FROM (SELECT $4::text AS seal_input) v WHERE pages.source_id=$5 AND pages.slug=$6 RETURNING pages.id",
    "SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count FROM op_checkpoints WHERE op=$1 AND fingerprint=$2",
-   "INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()",
+   "INSERT INTO op_checkpoints(op,fingerprint,completed_keys) SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()",
    "SAVEPOINT gbrain_nested_1",
    "SELECT 1 FROM gbrain_cycle_locks WHERE id=$1 AND acquisition_token=$2::uuid AND ttl_expires_at > now() FOR KEY SHARE",
    "SELECT completed_keys->0 AS value, updated_at, now() AS read_at FROM op_checkpoints WHERE op=$1 AND fingerprint=$2",

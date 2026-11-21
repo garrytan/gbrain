@@ -47,7 +47,7 @@ async function pass(engine: BrainEngine, incarnation: string, token: string, sta
 }
 
 /** One request of the source incarnation with intent kind `kind`, in `state` (queued unless named). */
-async function request(engine: BrainEngine, n: number, kind: string, incarnation: string, state = 'queued'): Promise<void> {
+async function request(engine: BrainEngine, n: number, kind: string, incarnation: string, state: 'queued' | 'deferred' = 'queued'): Promise<void> {
   const keys = ['principal:local_cli:parity-admission', 'brain'];
   await engine.lockPersistenceCounters(keys);
   await engine.insertWriteRequest({
