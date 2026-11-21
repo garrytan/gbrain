@@ -153,10 +153,35 @@ function enclosingFunction(node: ts.Node): ts.Node {
 
 /** The reason text of a `// <marker>: <reason>` comment on the line or the line above; null when no marker. */
 function markerReason(lines: readonly string[], lineIdx: number, marker: string): string | null {
-  const re = new RegExp('(?://|/\\*)\\s*' + marker + '\\b(?::[ \\t]*(.*?))?[ \\t]*(?:\\*/)?[ \\t]*$');
   for (const i of [lineIdx, lineIdx - 1]) {
-    const m = i >= 0 && i < lines.length ? re.exec(lines[i]) : null;
-    if (m) return (m[1] ?? '').replace(/\*\/\s*$/, '').trim();
+    const reason = i >= 0 && i < lines.length ? lineMarkerReason(lines[i], marker) : null;
+    if (reason !== null) return reason;
+  }
+  return null;
+}
+
+/**
+ * One line's marker reason, parsed with string operations instead of a RegExp built from `marker`
+ * (semgrep's detect-non-literal-regexp). Accepts `//` or `/*`, optional whitespace, the marker as a
+ * whole word, then either nothing or `: <reason>`, then an optional closing `*\/`.
+ */
+function lineMarkerReason(line: string, marker: string): string | null {
+  for (let p = 0; p < line.length - 1; p++) {
+    const opener = line.slice(p, p + 2);
+    if (opener !== '//' && opener !== '/*') continue;
+    const rest = line.slice(p + 2).replace(/^\s+/, '');
+    if (!rest.startsWith(marker) || /^\w/.test(rest.slice(marker.length))) continue;
+    let tail = rest.slice(marker.length);
+    if (/[\r\u2028\u2029]/.test(tail)) continue;
+    const colon = tail.startsWith(':');
+    if (colon) tail = tail.slice(1);
+    tail = tail.replace(/[ \t]+$/, '');
+    if (tail.endsWith('*/')) tail = tail.slice(0, -2).replace(/[ \t]+$/, '');
+    if (!colon) {
+      if (tail.trim() === '') return '';
+      continue;
+    }
+    return tail.replace(/\*\/\s*$/, '').trim();
   }
   return null;
 }
