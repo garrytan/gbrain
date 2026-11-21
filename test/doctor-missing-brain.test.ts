@@ -365,4 +365,28 @@ describe('the guard follows what the connector really opens', () => {
       renameSync(`${store}.moved`, store);
     }
   }, 240_000);
+
+  test('an empty mount point that still holds a stale, unreadable .gbrain-lock beside the kernel-v1 owner marker: refused, nothing created', async () => {
+    // The unmounted drive leaves its mount point; the sibling `<brain>.gbrain-owner.json` init wrote stays on the parent.
+    // The leftover lock folder's metadata is unreadable, so the status probe calls the lock held, but no process holds it.
+    expect(JSON.parse(readFileSync(`${store}.gbrain-owner.json`, 'utf8')).protocol).toBe('kernel-v1');
+    renameSync(store, `${store}.moved`);
+    mkdirSync(join(store, '.gbrain-lock'), { recursive: true });
+    writeFileSync(join(store, '.gbrain-lock', 'lock'), '{not json');
+    try {
+      const before = tree();
+      const { r, out } = await doctorJson();
+      expect(r.exitCode).toBe(1);
+      expect(out.code).toBe('brain_missing');
+      expect(out.reason).toBe('missing_brain');
+      expect(out.health_score).toBeUndefined();
+      expect(existsSync(join(store, 'PG_VERSION'))).toBe(false);
+      expect(readdirSync(store)).toEqual(['.gbrain-lock']);
+      expect(readFileSync(join(store, '.gbrain-lock', 'lock'), 'utf8')).toBe('{not json');
+      expect(tree()).toEqual(before);
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+      renameSync(`${store}.moved`, store);
+    }
+  }, 240_000);
 });
