@@ -11,7 +11,7 @@
 
 use super::{FactRecord, read_fact};
 use crate::Store;
-use crate::error::Result;
+use crate::error::{Result, StoreError};
 use crate::generations::inputs_of;
 use crate::kv::KvRead;
 use crate::links::no_nul;
@@ -116,11 +116,18 @@ impl Store {
     }
 
     /// `listOwnerTierFacts`: the ids of `ids` whose stored tier ranks at or above `floor`;
-    /// ascending. A floor that names no tier matches nothing (the SQL compares with NULL).
+    /// ascending. An empty id list reads nothing; a floor that names no tier is refused, as
+    /// engine-sql/facts-trust.ts `assertOwnerTierFloor` refuses it.
     pub fn list_owner_tier_facts(&self, q: &OwnerTierQuery) -> Result<Vec<u64>> {
-        let Some(floor) = TrustTier::parse(&q.floor) else {
+        if q.ids.is_empty() {
             return Ok(Vec::new());
-        };
+        }
+        let floor = TrustTier::parse(&q.floor).ok_or_else(|| {
+            StoreError::invalid(format!(
+                "listOwnerTierFacts: unknown trust tier {:?}",
+                q.floor
+            ))
+        })?;
         let read = self.read()?;
         Ok(fact_rows(&*read, &q.ids)?
             .into_iter()

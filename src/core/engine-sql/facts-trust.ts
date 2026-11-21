@@ -5,7 +5,7 @@
  * remaining raw reads (`poolWhere`, `FactPoolScope`, `FactPoolFilters`) live here too: search/fact-relevance.ts renders them.
  */
 import type { TrustTier } from '../trust/tier.ts';
-import { TRUST_TIER_RANK, trustRankSql } from '../trust/tier.ts';
+import { isTrustTier, TRUST_TIER_RANK, trustRankSql } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { claimBucketSql } from '../facts/typed-claim.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
@@ -361,9 +361,18 @@ export async function listFactsFromQuotedPages(raw: EngineRawRead,
   return rows.map(r => Number(r.id));
 }
 
-/** Of `ids`, the facts whose stored tier ranks at or above `floor`; an id with no row is not among them. */
+/**
+ * Refuses an owner-tier floor that names no trust tier. Without this, Postgres refuses the missing rank in its driver
+ * (UNDEFINED_VALUE) while PGLite binds NULL and returns no fact, so one call answers differently per engine.
+ */
+export function assertOwnerTierFloor(floor: unknown): asserts floor is TrustTier {
+  if (!isTrustTier(floor)) throw new Error(`listOwnerTierFacts: unknown trust tier ${JSON.stringify(floor)}`);
+}
+
+/** Of `ids`, the facts whose stored tier ranks at or above `floor`; an id with no row is not among them. An unknown floor is refused. */
 export async function listOwnerTierFacts(raw: EngineRawRead, opts: { ids: readonly number[]; floor: TrustTier }): Promise<number[]> {
   if (!opts.ids.length) return [];
+  assertOwnerTierFloor(opts.floor);
   const ids = [...new Set(opts.ids.map(Number))];
   const { text, params } = renderFragment(sqlFragment`SELECT id FROM facts WHERE id = ANY(${ids}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))} >= ${TRUST_TIER_RANK[opts.floor]}::int`);
   const rows = await raw<{ id: number | string }>(text, params);

@@ -30,6 +30,7 @@ import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 import { withDates } from '../store-codec.ts';
 import { poolArgs } from './fact-codec.ts';
+import { assertOwnerTierFloor } from '../../engine-sql/facts-trust.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type Row = Record<string, unknown>;
@@ -90,5 +91,8 @@ export const listFactsFromQuotedPages: Member<'listFactsFromQuotedPages'> = (bra
   storeCall({ member: 'listFactsFromQuotedPages' }, () => brain.listFactsFromQuotedPages({
     ids: [...new Set(q.ids.map(Number))], pageTypes: [...q.pageTypes], backstop: q.backstop.map(([source, prefix]) => [source, prefix]) }));
 
-export const listOwnerTierFacts: Member<'listOwnerTierFacts'> = (brain, q) =>
-  storeCall({ member: 'listOwnerTierFacts' }, () => brain.listOwnerTierFacts({ ids: [...new Set(q.ids.map(Number))], floor: q.floor }));
+export const listOwnerTierFacts: Member<'listOwnerTierFacts'> = async (brain, q) => {
+  if (!q.ids.length) return [];
+  assertOwnerTierFloor(q.floor);
+  return storeCall({ member: 'listOwnerTierFacts' }, () => brain.listOwnerTierFacts({ ids: [...new Set(q.ids.map(Number))], floor: q.floor }));
+};

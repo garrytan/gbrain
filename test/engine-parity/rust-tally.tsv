@@ -41,6 +41,7 @@ test/engine-parity/fact-insert-guard.test.ts	2	0
 test/engine-parity/fact-pool-widening.test.ts	2	0
 test/engine-parity/fact-purge-ledger.test.ts	3	0
 test/engine-parity/fact-purge-sites.test.ts	0	14
+test/engine-parity/fact-recall-pool-widening.test.ts	2	0
 test/engine-parity/fact-relink-attempts.test.ts	3	0
 test/engine-parity/fact-relink-writes.test.ts	4	0
 test/engine-parity/fact-trajectory-widening.test.ts	3	0
@@ -52,7 +53,7 @@ test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	14	0
 test/engine-parity/facts-purge-sites.test.ts	25	6
 test/engine-parity/facts-purge.test.ts	26	2
-test/engine-parity/facts-quoted.test.ts	4	0
+test/engine-parity/facts-quoted.test.ts	5	0
 test/engine-parity/facts-repair-sites.test.ts	21	0
 test/engine-parity/facts-repair.test.ts	16	1
 test/engine-parity/facts-rest-sites.test.ts	23	5
@@ -144,7 +145,7 @@ test/engine-parity/sync-aliases.test.ts	10	0
 test/engine-parity/takes.test.ts	28	0
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/timeline-reads.test.ts	4	0
-test/engine-parity/timeline.test.ts	33	0
+test/engine-parity/timeline.test.ts	34	0
 test/engine-parity/title-fuzzy-like-bound.test.ts	1	0
 test/engine-parity/title-fuzzy-unicode.test.ts	1	0
 test/engine-parity/transaction-settings.test.ts	9	1

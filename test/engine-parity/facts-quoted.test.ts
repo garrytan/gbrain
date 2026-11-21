@@ -140,6 +140,19 @@ describe('engine parity: quote and slot-history reads', () => {
     return answers;
   });
 
+  parityTest('listOwnerTierFacts refuses a floor that names no trust tier on every engine, and reads nothing for no ids', {
+    methods: ['listOwnerTierFacts', 'insertFact'],
+  }, async (engine) => {
+    // Before the refusal, Postgres stopped in its driver (UNDEFINED_VALUE for the missing rank) while PGLite and the Rust
+    // store returned no fact: one call, two answers.
+    const { id } = await engine.insertFact({ fact: 'f', source: 'mcp:remember', entity_slug: null, visibility: 'world', embedding: null } as never, { source_id: SRC });
+    const refused = await engine.listOwnerTierFacts({ ids: [Number(id)], floor: 'bogus' as TrustTier }).then(
+      (rows) => ({ rows }), (e: unknown) => ({ error: (e as Error).message }));
+    const answers = { refused, noIds: await engine.listOwnerTierFacts({ ids: [], floor: 'bogus' as TrustTier }) };
+    expect(answers).toEqual({ refused: { error: 'listOwnerTierFacts: unknown trust tier "bogus"' }, noIds: [] });
+    return answers;
+  });
+
   parityTest('listReadablePageSlugs keeps the live pages the read scope admits in the asked source, at most the limit', {
     methods: ['listReadablePageSlugs', 'putPage', 'softDeletePage'],
   }, async (engine, backend) => {
