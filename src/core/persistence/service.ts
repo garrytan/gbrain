@@ -412,6 +412,13 @@ function sharedOwnerRead(engine: BrainEngine, worktreeId: string): SharedOwnerRe
   reads.set(worktreeId, read);
   return read;
 }
+/** The caller's reason and detail for a stored capability refusal (publication-failure.ts `capabilityRefusalDetail`), or undefined. */
+export function capabilityReceiptFields(stored: unknown): { reason: string; detail: string } | undefined {
+  const d = stored as { origin?: unknown; member?: unknown; capability?: unknown; stage?: unknown } | null | undefined;
+  if (d?.origin !== 'engine_capability' || typeof d.capability !== 'string') return undefined;
+  const member = typeof d.member === 'string' ? d.member : 'unknown';
+  return { reason: d.capability, detail: `member=${member} capability=${d.capability}${typeof d.stage === 'string' ? ` stage=${d.stage}` : ''}` };
+}
 export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number | null; waiterOnlyOwner?: ElectedOwner | null } = {}): Record<string, unknown> {
   const owner = isTerminal(row) ? undefined : observedOwners.get(row);
   const receipt = receiptFor(row, owner ? { owner } : undefined);
@@ -429,6 +436,9 @@ export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number 
       ? pendingWriteHint(receipt, row.operation)
       : delivered?.suggestion ?? content?.suggestion ?? held?.suggestion ?? terminalReceiptHint(row, reason), delivered?.docs);
   if (delivered?.detail ?? held?.reason) error.detail = delivered?.detail ?? held?.reason;
+  // A write the brain's engine refused (the Rust engine): name the capability and where, from the stored refusal detail.
+  const refused = reason === 'engine_capability_missing' ? capabilityReceiptFields(row.error_detail) : undefined;
+  if (refused) Object.assign(error, refused);
   // #7671: a copied or restored checkout; the receipt kept only the message, so name the relocated-root self-transfer here.
   if (isTerminal(row) && reason === 'recovery_required' && isPhysicalRootDirectoryChangedMessage(row.error_message)) {
     Object.assign(error, { detail: 'physical_root_directory_changed', fix: relocatedRootTransferFix(row.source_id) });

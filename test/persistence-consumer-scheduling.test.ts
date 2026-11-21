@@ -15,7 +15,7 @@ import { admission, assertCommittedSnapshot, assertConservation, fixtures, initi
 import { withEnv } from './helpers/with-env.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { waitFor } from './helpers/wait-for.ts';
-import { awaitWrite, disposePersistenceConsumer, registerMutationPreparer, startPersistenceConsumer, waitForWrite, WRITE_POLL_START_MS } from '../src/core/persistence/service.ts';
+import { awaitWrite, disposePersistenceConsumer, registerMutationPreparer, startPersistenceConsumer, waitForWrite, writeResponse, WRITE_POLL_START_MS } from '../src/core/persistence/service.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-consumer-scheduling-'));
 const config: HarnessConfig = {
@@ -767,6 +767,9 @@ test('a capability refusal ends the write failed in one attempt; a lock timeout 
     expect(attempts.get(refused.id)).toBe(1);
     expect(failed).toMatchObject({ state: 'failed', error_code: 'engine_capability_missing',
       error_detail: { origin: 'engine_capability', member: 'executeRaw', capability: 'raw_sql', stage: 'preparation' } });
+    // The caller's receipt error names the capability and the refused member, read from that row.
+    const delivered = (() => { try { writeResponse(failed); } catch (error) { return error as Record<string, unknown>; } throw new Error('expected a refusal'); })();
+    expect(delivered).toMatchObject({ code: 'engine_capability_missing', reason: 'raw_sql', detail: 'member=executeRaw capability=raw_sql stage=preparation' });
     // The transient failure stayed pending, was released, and committed on its retry.
     expect(attempts.get(locked.id)).toBe(2);
     await assertCommittedSnapshot(engine, (await getWriteRequestById(engine, locked.id))!);
