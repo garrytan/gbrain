@@ -142,6 +142,9 @@ describe('remember replaces', () => {
     expect(holds.map(h => h.payload.replaces)).toEqual([first, second]);
     const action = { action: 'release' as const, ref: `h${holds[0]!.id}` };
     const { binding } = await previewOwnerAction(engine, action);
+    await engine.executeRaw("UPDATE facts SET valid_until='2099-01-01T00:00:00.000001Z' WHERE id=$1", [first]);
+    await expect(applyOwnerAction(engine, action, { binding, confirmation: { via: 'tty' }, by: { kind: 'local_cli', id: 'fixture' } })).rejects.toThrow('changed');
+    await engine.executeRaw("UPDATE facts SET valid_until=NULL WHERE id=$1", [first]);
     await engine.executeRaw("UPDATE facts SET claim_metric='attendance',claim_value=90 WHERE id=$1", [first]);
     await expect(applyOwnerAction(engine, action, { binding, confirmation: { via: 'tty' }, by: { kind: 'local_cli', id: 'fixture' } })).rejects.toThrow('changed');
     await engine.executeRaw("UPDATE facts SET claim_metric=NULL,claim_value=NULL WHERE id=$1", [first]);
