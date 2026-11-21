@@ -155,7 +155,7 @@ export interface PageBodyPolicy {
   versionsMaxPinnedBytes: number;
 }
 
-type PolicyEngine = Pick<BrainEngine, 'getConfig' | 'kind' | 'executeRaw'>;
+type PolicyEngine = Pick<BrainEngine, 'getConfig' | 'kind' | 'readSegmentedGateEvidence'>;
 
 function positiveInt(raw: string | null, fallback: number): number {
   if (raw === null || raw.trim() === '') return fallback;
@@ -184,7 +184,7 @@ export const segmentedWriterGateWork = { reads: 0 };
  * `SEGMENTED_WRITER_FLOOR`, writer-floor.ts). Any one keeps segmented storage off. Cached per engine for
  * `SEGMENTED_WRITER_GATE_TTL_MS`; `fresh` (doctor) reads through.
  */
-export async function segmentedWriterBlockers(engine: Pick<BrainEngine, 'executeRaw'>, opts: { fresh?: boolean } = {}): Promise<SegmentedGateWriter[]> {
+export async function segmentedWriterBlockers(engine: Pick<BrainEngine, 'readSegmentedGateEvidence'>, opts: { fresh?: boolean } = {}): Promise<SegmentedGateWriter[]> {
   let root: object = engine;
   for (let proto = Object.getPrototypeOf(root); proto && !Object.hasOwn(proto, 'constructor'); proto = Object.getPrototypeOf(proto)) root = proto;
   const cached = writerGate.get(root);

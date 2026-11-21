@@ -270,6 +270,32 @@ export async function listPageRefsByIds(tx: Raw, ids: readonly number[]): Promis
   return got.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
 }
 
+/** A page named by source and slug. */
+export interface PageKeyRef { source_id: string; slug: string }
+
+/**
+ * The id and stored trust tier of each named page, deleted or not, in no set order; a key no page has answers nothing
+ * and a key named twice answers twice.
+ * Timeline projection (trust/timeline-projection.ts) stamps each row with its page's tier.
+ */
+export async function listPageTrustTiersByKey(tx: Raw, refs: readonly PageKeyRef[]): Promise<Array<{ id: number; source_id: string; slug: string; trust_tier: string | null }>> {
+  const got = await tx.executeRaw<{ id: number | string; source_id: string; slug: string; trust_tier: string | null }>(
+    `SELECT p.id,p.source_id,p.slug,p.trust_tier FROM pages p
+      JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug`,
+    [JSON.stringify(refs)]);
+  return got.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, trust_tier: r.trust_tier }));
+}
+
+/**
+ * The named pages that are live, in no set order, each held `FOR SHARE` until the transaction ends so a concurrent
+ * delete cannot slip between this check and the write that follows (timeline projection's `requirePages`).
+ */
+export async function lockLivePagesByKey(tx: Raw, refs: readonly PageKeyRef[]): Promise<PageKeyRef[]> {
+  return tx.executeRaw<PageKeyRef>(`SELECT p.source_id,p.slug FROM pages p
+          JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug
+          WHERE p.deleted_at IS NULL FOR SHARE OF p`, [JSON.stringify(refs)]);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Valid time
 

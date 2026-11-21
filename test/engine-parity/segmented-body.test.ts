@@ -614,9 +614,6 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
     },
   );
 
-  // Review finding specialist-batched#2: updateSlug versions the page before it moves it. SQL versions a segmented page as
-  // a reference to its live body generation; the Rust store keeps no such reference, so it must refuse the rename (as
-  // createVersion does) instead of writing a version with no body and moving the page.
   parityTest(
     'pageCollapseFacts reads a segmented page through its stored truth lead',
     { methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'flipBodyGeneration', 'pageCollapseFacts', 'putPage'] },
@@ -641,18 +638,20 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
   );
 
   parityTest(
-    'updateSlug of a segmented page versions it by reference on PGLite and is a typed refusal on the Rust store',
+    'updateSlug of a segmented page versions it by reference to its live body generation, then moves it',
     { methods: ['updateSlug', 'getVersions', 'getPage'] },
     async (engine) => {
+      // Review finding specialist-batched#2: updateSlug versions the page before it moves it. A segmented page's version
+      // is a reference (body_storage, body_generation, body_bytes) with NULL body columns, never a version with no body.
       await publishApart(engine, 'notes/renamed-big');
-      // Rust: the typed refusal ends the case, and nothing was renamed or versioned (checked in the store's unit test).
       const moved = await engine.updateSlug('notes/renamed-big', 'notes/renamed-big-2');
       const versions = await engine.getVersions('notes/renamed-big-2');
       const page = await engine.getPage('notes/renamed-big-2');
       return {
         moved,
         page: page ? { slug: page.slug, title: page.title } : null,
-        versions: versions.map((v) => ({ title: v.title, compiled_truth: v.compiled_truth, timeline: v.timeline, content_hash: v.content_hash ?? null })),
+        versions: versions.map((v) => ({ title: v.title, compiled_truth: v.compiled_truth, timeline: v.timeline, content_hash: v.content_hash ?? null,
+          body_storage: v.body_storage ?? null, body_generation: v.body_generation ?? null, body_bytes: v.body_bytes ?? null })),
       };
     },
   );

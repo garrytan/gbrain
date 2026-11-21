@@ -47,15 +47,13 @@ import { readSyncFile, resolveManagedSyncContext } from './sync-discovery.ts';
 import { sha256 } from './digest.ts';
 import { passResumeArgs } from './sync-pass-readers.ts';
 import { abandonedPasses, openPassRowsStill, passBanked, passConvergence, passStatusNext, passStatusState } from './sync-pass-status.ts';
-import { ABANDONED_REPORT_STREAK, MANAGED_SYNC_PASS_OP, passReadClock, readPassRow, SYNC_DELETES_WITHHELD_OP, type PassRow } from './sync-pass-row.ts';
-import { SYNC_ADMISSION_SETTING_PARAMS, syncAdmissionEffectParams, syncAdmissionEffectSql, syncAdmissionSettingSql, syncAdmissionStatus } from './sync-admission.ts';
+import { ABANDONED_REPORT_STREAK, passReadClock, readPassRow, type PassRow } from './sync-pass-row.ts';
+import { syncAdmissionStatus } from './sync-admission.ts';
 import type { DeletesWithheld } from './sync-markers.ts';
 import { listIdentityDowngrades, withIdentityRemedies } from '../sync-identity-downgrades.ts';
-import { GIT_PUSH_CODES, readGitPushHolds, type GitPushHold } from './git-push-holds.ts';
+import { readGitPushHolds, type GitPushHold } from './git-push-holds.ts';
 import { holderStalled, readDrainLease, type DrainHolder } from './sync-lease.ts';
-import { syncLockId } from '../db-lock.ts';
-import { ACTIVE_REFRESH_STATES_SQL } from './worktree-refresh-schema.ts';
-import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP, heldDeletesStatus, identityReviewStatus, type HeldDeletesStatus, type IdentityReviewStatus } from '../apple-contacts/review-status.ts';
+import { heldDeletesStatus, identityReviewStatus, type HeldDeletesStatus, type IdentityReviewStatus } from '../apple-contacts/review-status.ts';
 
 export interface SyncStatusHold extends SyncFaultVerdict {
   code: string;
@@ -305,17 +303,12 @@ interface CursorHeader { runId: string; index: number; total: number; target: st
  * #6643: the cursor the recorded failure belongs to comes first, so the shown cursor, its error and `next` agree.
  */
 async function cursorHeader(engine: BrainEngine, sourceId: string, incarnation: string, failedKey: string | null): Promise<{ header: CursorHeader; key: string } | null> {
-  const rows = await engine.executeRaw<{ header: CursorHeader; key: string }>(
-    `SELECT completed_keys->0 AS header, fingerprint AS key FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'incarnation'=$2
-      ORDER BY (fingerprint=$3) DESC, updated_at DESC LIMIT 1`, [sourceId, incarnation, failedKey ?? '']);
-  return rows[0] ?? null;
+  return engine.readManagedSyncCursorHeader<CursorHeader>(sourceId, incarnation, failedKey ?? '');
 }
 
 /** #6518: whether an unfinished cursor of the source stands under an incarnation it no longer has (nothing current resumes it). */
 async function retiredCursorStands(engine: BrainEngine, sourceId: string, incarnation: string): Promise<{ first_seen: string } | null> {
-  const [row] = await engine.executeRaw<{ first_seen: string }>(`SELECT to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS first_seen FROM op_checkpoints
-    WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'incarnation'<>$2 AND COALESCE(completed_keys->0->>'done','false')<>'true' ORDER BY updated_at LIMIT 1`, [sourceId, incarnation]);
-  return row ?? null;
+  return engine.readRetiredManagedSyncCursor(sourceId, incarnation);
 }
 
 /**
@@ -369,36 +362,13 @@ function holdStatus(record: GitHoldRecord, auto?: FenceAutoRepair): SyncStatusHo
 export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts: { detail?: boolean } = {}): Promise<SyncStatus> {
   const detail = opts.detail !== false;
   // #6712 PR 4b (design §9): the pass row and the withheld-delete record ride the source read (primary-key probes), so the plain status keeps its statement budget.
-  const admissionSql = syncAdmissionSettingSql(4);
-  const [source] = await engine.executeRaw<{ incarnation: string; last_commit: string | null; last_sync_at: Date | string | null; drain_lock: boolean; pass_value: PassRow['value'] | null; pass_updated_at: Date | string | null; pass_read_at: Date | string; withheld: DeletesWithheld | null;
-    admission_stored: string | null; admission_row_value: string | null; admission_set_at: string | null; admission_pinned: boolean | null; admission_destructive: boolean | null;
-    writeback_failed: string | null; refresh: RefreshProbeRow | string | null; identity_reviews: unknown; held_deletes: unknown; config: unknown }>(
-    `SELECT s.incarnation::text AS incarnation, s.last_commit, s.last_sync_at, EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE l.id=$7) AS drain_lock,
-      p.completed_keys->0 AS pass_value, p.updated_at AS pass_updated_at, now() AS pass_read_at, w.completed_keys->0 AS withheld, ${admissionSql.columns}, ${syncAdmissionEffectSql(7, 's')},
-      (SELECT r.request_id::text FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.kind='git' AND e.state='failed' AND NOT (e.data ? 'settled')
-        AND e.request_id IN (SELECT id::uuid FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.completed_keys->0->'obligations'->'converged'->'writeback')='array'
-          THEN p.completed_keys->0->'obligations'->'converged'->'writeback' ELSE '[]'::jsonb END) AS w(id)) ORDER BY e.id LIMIT 1) AS writeback_failed,
-      (SELECT row_to_json(f) FROM (SELECT r.id,r.worktree_id,r.state,r.source_ids,r.outcome,r.old_head,r.target_head,r.barrier_sequence,r.updated_at,w.owner_host_id FROM persistence_worktree_refreshes r
-        LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE s.id=ANY(r.source_ids) AND r.state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh,
-      (SELECT ir.completed_keys FROM op_checkpoints ir WHERE ir.op='${APPLE_CONTACTS_REVIEW_OP}' AND ir.fingerprint=s.id) AS identity_reviews,
-      (SELECT hd.completed_keys FROM op_checkpoints hd WHERE hd.op='${APPLE_CONTACTS_PENDING_DELETES_OP}' AND hd.fingerprint=s.id) AS held_deletes, s.config FROM sources s
-      LEFT JOIN op_checkpoints p ON p.op=$2 AND p.fingerprint=s.id||':'||s.incarnation::text
-      LEFT JOIN op_checkpoints w ON w.op=$3 AND w.fingerprint=s.id||':'||s.incarnation::text
-      ${admissionSql.joins}
-      WHERE s.id=$1 AND s.archived IS NOT TRUE`, [sourceId, MANAGED_SYNC_PASS_OP, SYNC_DELETES_WITHHELD_OP, ...SYNC_ADMISSION_SETTING_PARAMS, ...syncAdmissionEffectParams(sourceId)]);
+  const source = await engine.readSyncStatusSourceRow<PassRow['value'], DeletesWithheld, RefreshProbeRow>(sourceId);
   if (!source) throw Object.assign(new Error(`Source ${sourceId} does not exist.`), { code: 'not_found' });
   const failures = (await readManagedSyncFailures(engine, [sourceId])).filter(failure => failure.code !== 'sync_incomplete');
   const selected = await cursorHeader(engine, sourceId, source.incarnation, failures[0]?.cursor_key ?? null);
   const header = selected?.header ?? null;
   // #7010: the push-hold probe rides this statement, so a source with no held Git effect costs no extra round trip (GBRA-161 PR 2: so does the fence-hold probe).
-  const [committed] = await engine.executeRaw<{ n: number | string; git_push_held: boolean; fence_held: boolean; last_committed_at: Date | string | null }>(`SELECT count(*) AS n, EXISTS (SELECT 1 FROM persistence_effects e
-      WHERE e.source_id=$1 AND e.kind='git' AND e.state IN ('queued','running','failed') AND e.error_code IN ('targets_parked', ${GIT_PUSH_CODES.map(code => `'${code}'`).join(',')})
-        AND NOT (e.data ? 'settled')) AS git_push_held,
-      EXISTS (SELECT 1 FROM derived_generations g WHERE g.source_id=$1 AND g.kind IN ('fact_fence','take_fence') AND g.state='held') AS fence_held,
-      (SELECT max(r.completed_at) FROM persistence_source_bindings b JOIN persistence_requests r ON r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
-        WHERE b.source_id=$1 AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS last_committed_at
-    FROM persistence_requests WHERE source_id=$1 AND state='committed'
-    AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND completed_at > now() - interval '10 minutes'`, [sourceId]);
+  const committed = await engine.readSyncStatusCommittedRow(sourceId);
   const records = await observeDirtyEditors(engine, sourceId, source.incarnation,
     ((await readGitSourceHolds(engine, { sourceIds: [sourceId] }))[0]?.holds ?? []).filter(hold => hold.incarnation === source.incarnation));
   const auto = await fenceAutoRepairFor(engine, records);
@@ -609,11 +579,7 @@ async function oldestBlocker(engine: BrainEngine, sourceId: string): Promise<Syn
 /** #6712 PR 2: the source's requests holding a publication recovery record, bounded; it needs no cursor. */
 async function recoveryProbe(engine: BrainEngine, sourceId: string): Promise<SyncStatus['recovery']> {
   try {
-    const rows = await engine.executeRaw<{ n: number | string; request_id: string | null; slug: string | null; blocked: boolean | null }>(
-      `SELECT (SELECT count(*) FROM persistence_requests WHERE source_id=$1 AND recovery IS NOT NULL) AS n, f.request_id::text AS request_id, f.slug,
-         f.blocked_reason IN ('unexpected_staging_bytes','unexpected_file_bytes') AS blocked
-       FROM (SELECT 1) one LEFT JOIN LATERAL (SELECT request_id, slug, blocked_reason FROM persistence_requests WHERE source_id=$1 AND recovery IS NOT NULL ORDER BY sequence LIMIT 1) f ON true`, [sourceId], { timeoutMs: SYNC_STATUS_PROBE_MS, signal: AbortSignal.timeout(SYNC_STATUS_PROBE_MS + 500) });
-    const row = rows[0];
+    const row = await engine.readSyncRecoveryProbeRow(sourceId, { timeoutMs: SYNC_STATUS_PROBE_MS, signal: AbortSignal.timeout(SYNC_STATUS_PROBE_MS + 500) });
     const count = Number(row?.n ?? 0);
     return { status: 'ok', count, first: count && row?.request_id ? { request_id: row.request_id, slug: row.slug ?? '', blocked: row.blocked === true } : null };
   } catch (error) {

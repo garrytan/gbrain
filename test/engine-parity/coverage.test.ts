@@ -55,13 +55,15 @@ describe('engine parity coverage list', () => {
     }
   });
 
-  test('arm capabilities: SQL arms run raw SQL and managed persistence, only Postgres holds the schema lock, Rust has none yet', () => {
+  test('arm capabilities: SQL arms run raw SQL, managed persistence and OAuth writes, only Postgres holds the schema lock, Rust has none yet', () => {
     expect(PARITY_ARMS.map((arm) => [arm, [...armCapabilities(arm)].sort()])).toEqual([
-      ['pglite', ['managed_persistence', 'raw_sql']], ['postgres', ['managed_persistence', 'raw_sql', 'schema_migration_lock']], ['rust', []],
+      ['pglite', ['managed_persistence', 'oauth_write_grant', 'raw_sql']],
+      ['postgres', ['managed_persistence', 'oauth_write_grant', 'raw_sql', 'schema_migration_lock']], ['rust', []],
     ]);
-    expect([missingCapability('raw_sql'), missingCapability('schema_migration_lock'), missingCapability('managed_persistence')]).toEqual([
+    expect([missingCapability('raw_sql'), missingCapability('schema_migration_lock'), missingCapability('managed_persistence'),
+      missingCapability('oauth_write_grant')]).toEqual([
       { kind: 'refuses', label: 'refuses:raw_sql' }, { kind: 'n/a', label: 'n/a:postgres-only' },
-      { kind: 'refuses', label: 'refuses:managed_persistence' },
+      { kind: 'refuses', label: 'refuses:managed_persistence' }, { kind: 'n/a', label: 'n/a:waiting-lane-8' },
     ]);
   });
 

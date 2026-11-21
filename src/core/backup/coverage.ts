@@ -109,11 +109,7 @@ function yieldLoop(): Promise<void> {
 /** E7: live pages + active facts, and the brain's first source/page timestamp. Null when unreadable. */
 async function brainMaturity(engine: BrainEngine): Promise<BackupStatus['maturity'] | undefined> {
   try {
-    const [row] = await engine.executeRaw<{ pages: number; facts: number; since: string | Date | null }>(
-      `SELECT (SELECT COUNT(*)::int FROM pages WHERE deleted_at IS NULL) AS pages,
-              (SELECT COUNT(*)::int FROM facts WHERE expired_at IS NULL) AS facts,
-              LEAST((SELECT MIN(created_at) FROM sources), (SELECT MIN(created_at) FROM pages)) AS since`,
-    );
+    const row = await engine.readBrainMaturity();
     const items = Number(row?.pages) + Number(row?.facts);
     if (!row || !Number.isFinite(items)) return undefined;
     const sinceMs = row.since ? new Date(row.since).getTime() : NaN;
@@ -125,13 +121,9 @@ async function brainMaturity(engine: BrainEngine): Promise<BackupStatus['maturit
 
 async function countLivePages(engine: BrainEngine): Promise<number | null> {
   try {
-    const rows = await engine.executeRaw<{ n: number }>(
-      'SELECT COUNT(*)::int AS n FROM pages WHERE deleted_at IS NULL',
-    );
-    const n = rows[0]?.n;
-    // An empty rowset / non-numeric n is UNESTABLISHED, not zero — returning 0
+    // An empty rowset / non-numeric n is UNESTABLISHED (null), not zero — returning 0
     // would fabricate a "no pages at risk" all-clear and skip the degraded flag.
-    return typeof n === 'number' && Number.isFinite(n) ? n : null;
+    return await engine.countBrainLivePages();
   } catch {
     return null;
   }
