@@ -26,6 +26,8 @@ We audited the main gbrain flows from the docs and code outward. We confirmed ea
 
 Everything else is listed below in harm order. Next in line: `access who-can-read` and `access serves` report wrong readers on any brain that has or ever had an owner-only source such as iMessage (privacy-1; the actual reads stay correct). Other themes: graph-query `--direction both` drops incoming edges; edits drop or keep tags and timeline rows without a word; delta never reports deletions; NFD text cannot be found by search; aggregate counts leak restricted pages to members; doctor turns errors into "ok"; empty results come back for typo slugs instead of `page_not_found`.
 
+**Added Nov 20 from Vega** (the gbrain-evals bench bot, a black-box audit on master 7ef3d53a47 with an embedding key, on PGLite and Postgres 16). Vega found 7 more findings, rechecked here on master 0ffa58d24e: [LC-12](#lc-12), [graph-18](#graph-18), [graph-17](#graph-17), [RET-16](#ret-16), [LC-13](#lc-13), [health-12](#health-12) and [contract-11](#contract-11). All 7 change Rust goldens. The worst is LC-12: a keyed brain saves pages without embeddings, says success, and doctor scores it 100/100. Vega's N7, a not-found hint that names another source, is real on the local CLI but is not a leak: MCP gives the same response for a hidden page and a missing slug ([verdict](#vega-n7-verdict)). The 96 counts above do not include these 7. See [the Vega section](#vega-black-box-audit-source-vega-master-7ef3d53a47).
+
 ## Scope and method
 
 - Base: `origin/master` at `fbf608cf86` (v0.60.753.0), Bun 1.4.4, PGLite only, keyless (`init --pglite --no-embedding`, provider keys unset, `TZ=UTC`). Postgres-only behavior is marked "code evidence".
@@ -317,6 +319,7 @@ B=/var/tmp/audit/brain.sh; H=/var/tmp/audit/memory/rX; $B $H init --pglite --no-
 - Area: Pages and the markdown format (put / get (get_page), CLI and MCP)
 - Severity 4/5, evidence: reproduced, rerun: yes
 - Rust goldens: **yes**. Changes get_page output (page vs page_not_found envelope and its suggestion/fix text) for mixed-case slugs; Rust must match whichever TS settles on.
+- Vega: Confirmed black-box on master 7ef3d53a47, PGLite and Postgres 16: `get People/Alice-Example` returns page_not_found. Also reproduced on master 0ffa58d24e. See [the Vega section](#vega-black-box-audit-source-vega-master-7ef3d53a47).
 
 **Repro:**
 
@@ -535,6 +538,7 @@ Setup (fresh brain): /var/tmp/audit/contract/seed.sh /var/tmp/audit/contract/hx 
 - Area: Links, graph, timeline, tags (gbrain graph-query (local) vs traverse_graph / graph / get_links temporal policy)
 - Severity 3/5, evidence: reproduced
 - Rust goldens: **no**. Fix is in the TS command layer (which options it passes to traversePathsDetailed); engine semantics for a given option set do not change. Rust goldens of graph-query CLI output would change.
+- Vega: Extended: prose in the past tense ("previously worked at") still shows as a current works_at in `graph-query`. Filed as part of [graph-18](#graph-18).
 
 **Repro:**
 
@@ -606,6 +610,7 @@ H=/var/tmp/audit/graph/r-graph-04; B="/var/tmp/audit/brain.sh $H"; $B init --pgl
 - Area: Links, graph, timeline, tags (timeline extraction from page body on put; gbrain lint)
 - Severity 3/5, evidence: reproduced, rerun: yes
 - Rust goldens: **yes**. Accepting more forms changes stored timeline_entries; a receipt field changes put_page output bytes.
+- Vega: Confirmed black-box (Vega is the gbrain-evals bench bot) on master 7ef3d53a47, PGLite and Postgres 16: a person page's plain timeline bullets are dropped. See [the Vega section](#vega-black-box-audit-source-vega-master-7ef3d53a47).
 
 **Repro:**
 
@@ -1121,7 +1126,7 @@ B=/var/tmp/audit/brain.sh; H=/var/tmp/audit/pages/b3; $B $H init --pglite --no-e
 **Repro:**
 
 ```bash
-/var/tmp/audit/brain.sh /var/tmp/audit/retrieval/b1 call context_pack '{"entities":"Alice Example,acme-example,nobody-example","budget_tokens":400}'; MCP: bun scripts/mcp.ts <brain> context_pack '{"entities":"Alice Exampel,Acme Example"}'
+/var/tmp/audit/brain.sh /var/tmp/audit/retrieval/b1 call context_pack '{"entities":"Alice Example,acme-example,nobody-example","budget_tokens":400}'; MCP: bun docs/research/gbrain-behavior-audit/retrieval/scripts/mcp.ts <brain> context_pack '{"entities":"Alice Exampel,Acme Example"}'
 ```
 
 **Expected:** An unresolved name is reported (an `unresolved` list or a notice with near matches, like the entity verb's found:false + 'Did you mean').
@@ -1142,6 +1147,7 @@ B=/var/tmp/audit/brain.sh; H=/var/tmp/audit/pages/b3; $B $H init --pglite --no-e
 - Area: Search, query, recall (delta (CLI `gbrain delta`, MCP delta))
 - Severity 3/5, evidence: reproduced, rerun: yes
 - Rust goldens: **yes**. Changes delta JSON/text output and cursor arms.
+- Vega: Confirmed black-box on master 7ef3d53a47, PGLite and Postgres 16: `delta` does not list the delete. See [the Vega section](#vega-black-box-audit-source-vega-master-7ef3d53a47).
 
 **Repro:**
 
@@ -1305,6 +1311,7 @@ H=/var/tmp/audit/graph/r-graph-10; B="/var/tmp/audit/brain.sh $H"; $B init --pgl
 - Area: Doctor, health, onboarding (stats / get_stats after delete and purge)
 - Severity 2/5, evidence: reproduced
 - Rust goldens: **yes**. get_stats/stats numbers are output the Rust engine must match.
+- Vega: Not reproduced, but Vega compared only the page count (35 live pages against 36 rows), which this finding says is correct. The chunk, link and timeline counts were not compared, so the finding stands.
 
 **Repro:**
 
@@ -1314,7 +1321,7 @@ $B $K delete people/alice-example --force
 $B $K stats --json   # page_count 4, chunk_count 10, link_count 20, timeline_entry_count 5
 $B $K delete people/bob-example --force --purge
 $B $K stats --json   # page_count 3, chunk_count 8, link_count 12, timeline_entry_count 4
-# live rows by SQL (scripts/sql.sh): chunks on live pages 6, links between live pages 6, timeline rows on live pages 3
+# live rows by SQL (docs/research/gbrain-behavior-audit/health/scripts/sql.sh): chunks on live pages 6, links between live pages 6, timeline rows on live pages 3
 ```
 
 **Expected:** All counters describe the same live brain (soft-deleted pages are hidden from search, list, backlinks), or the output says which counters include soft-deleted rows.
@@ -1756,7 +1763,7 @@ $B $K doctor --remediate --yes --include-repairs --max-usd 0 --target-score 65 -
 
 **Actual:** The plan hashes its selection with the default target_score 90 (from the --remediation-plan args), but because the target is unreachable it rewrites combined_command to --target-score 65 (max_reachable_score). --remediate re-hashes with target_score 65, so the hash never matches and the run refuses preview_changed. The fix it then names (`--remediation-plan --target-score 65`) gives a different hash. An agent following the plan verbatim always fails once and is told "the plan changed" when nothing changed.
 
-**Evidence:** src/commands/doctor/remediate.ts:190 planHash = remediationPlanHash(engine, args, plan) (args lack --target-score); :198 combinedRemediateCommand(plan, plan.target_unreachable ? plan.max_reachable_score : targetScore, {planHash}); src/commands/doctor/remediate-consent.ts:79 parameters {target_score: flags.targetScore, ...} are hashed. scripts/planhash.ts output: plan ph_5d31f…, recomputed ph_86d8… MISMATCH.
+**Evidence:** src/commands/doctor/remediate.ts:190 planHash = remediationPlanHash(engine, args, plan) (args lack --target-score); :198 combinedRemediateCommand(plan, plan.target_unreachable ? plan.max_reachable_score : targetScore, {planHash}); src/commands/doctor/remediate-consent.ts:79 parameters {target_score: flags.targetScore, ...} are hashed. docs/research/gbrain-behavior-audit/health/scripts/planhash.ts output: plan ph_5d31f…, recomputed ph_86d8… MISMATCH.
 
 **Docs say:** help: "--expect: With --include-repairs: the plan_hash the user approved; a changed plan asks again." remediate-consent.ts header: plan_hash binds the brain, repair kinds, job steps and parameters.
 
@@ -2300,6 +2307,7 @@ B=/var/tmp/audit/brain.sh; H=/var/tmp/audit/pages/b4; (chunk 1092 belongs to not
 - Area: Privacy and access control (MCP get_page miss over stdio)
 - Severity 2/5, evidence: reproduced
 - Rust goldens: **yes**. Error envelope suggestion/fix text for get_page misses changes on stdio.
+- Vega: Rechecked for N7 on master 0ffa58d24e: the same "may be soft-deleted" hint goes to unbound stdio, stdio `--stdio-member`, and an HTTP token scoped to `default`. It is the same for a page in another source and for a missing slug, so it does not leak. See [the N7 verdict](#vega-n7-verdict).
 
 **Repro:**
 
@@ -2346,6 +2354,7 @@ Stop serve; CALLS=calls3.jsonl python3 -I /var/tmp/audit/privacy/scripts/stdio.p
 - Area: Search, query, recall (search/query evidence + create_safety labels)
 - Severity 2/5, evidence: reproduced
 - Rust goldens: **yes**. Changes the evidence field in search/query JSON and MCP rows.
+- Vega: Extended to keyed brains: a nonsense search returns every page, labelled `weak_semantic` only in JSON. Filed as [RET-16](#ret-16).
 
 **Repro:**
 
@@ -2571,6 +2580,354 @@ MCP recall {"query":"tea"} on /var/tmp/audit/retrieval/b1 (embedding_disabled); 
 **Docs say:** MEMORY_VERBS_v1.md:150-151 'When candidates were found and none cleared the admission rule, the response carries facts_below_floor'.
 
 **Proposed fix:** Pass the real reason through; render 'N fact(s) matched some words but scored below the floor' in the CLI.
+
+## Vega black-box audit (source: Vega, master 7ef3d53a47)
+
+Source: Vega, the gbrain-evals bench bot. Vega ran a black-box audit on master `7ef3d53a47` (v0.60.753.0) on PGLite and on Postgres 16.14 with pgvector 0.8.2, with an OpenAI embedding key and a chat key. Rust did not run. Vega named eight findings, N1 to N8. This section maps each one to an audit ID and records a second check on master `0ffa58d24e`.
+
+- **Second check.** Master `0ffa58d24e` is 4 commits after this audit's base `fbf608cf86`. Those commits change only Apple Contacts code, CLI help and registries, and experiment docs, so the 96 findings above stand. On `0ffa58d24e` we reran N1 to N8 on PGLite in fresh brains (keyed for N1, N4 and N8, keyless for the rest) and spot-checked pages-01. Postgres was not rerun here; Vega reports that the two engines differ only in N1 (1 of 33 chunks embedded on Postgres, 0 on PGLite).
+- **Result.** Seven are new findings and get new IDs. N7 is not a new finding: the CLI hint is real, but it does not leak, and MCP gives no hint (see the N7 verdict).
+- **Spend.** About $0.01: one `think` call ($0.009) and embeddings for 10 chunks.
+- **Helpers.** The repros use [gbrain-behavior-audit/vega/](gbrain-behavior-audit/README.md). Copy that directory to `/var/tmp/audit/vega/` first. In the repros, `K` is the keyed wrapper, `B` the keyless wrapper and `C` the 9-page corpus.
+
+### Mapping
+
+| Vega | Audit ID | Harm | Sev | Finding | Recheck on 0ffa58d24e | Rust goldens |
+|---|---|---|---|---|---|---|
+| N1 | [LC-12](#lc-12) (new) | Wrong answer | 5 | A keyed brain saves pages without embeddings and reports success; doctor says healthy | reproduced: 0 of 9 chunks embedded, doctor 100/100 | yes |
+| N3 | [graph-18](#graph-18) (new; tense part extends [graph-02](#graph-02)) | Wrong answer | 4 | Auto-link types and directions are often wrong | reproduced: passive reversal, role confusion, missed verb; verb carry-over seen by Vega only | yes |
+| N2 | [graph-17](#graph-17) (new; related to [graph-07](#graph-07), [LC-6](#lc-6)) | Wrong answer | 4 | `import` creates no links; `sync` of the same files does | reproduced: 0 links after import, 13 after `extract all` or `sync` | yes |
+| N4 | [RET-16](#ret-16) (new; extends [RET-12](#ret-12)) | Confusing | 3 | Nonsense search returns every page with no text warning | reproduced: 10 of 10 pages, top score 0.7566 | yes |
+| N6 | [LC-13](#lc-13) (new) | Confusing | 3 | `recovery_required` on a shared checkout does not name the owning brain or a command | reproduced | yes |
+| N8 | [health-12](#health-12) (new) | Confusing | 3 | CLI `think` spend is missing from the budget audit file | reproduced: `cost_usd` 0.009, 0 new audit rows | yes |
+| N5 | [contract-11](#contract-11) (new) | Confusing | 2 | After `sources unfederate`, every command prints the #3070 routing notice | reproduced | yes |
+| N7 | none: not a leak | none | none | The CLI not-found hint names the source that has the page | real on the CLI; MCP gives no hint ([verdict](#vega-n7-verdict)) | no (keep as a parity guard) |
+
+Vega's other results, recorded on the existing entries:
+
+- Confirmed black-box by Vega: [graph-05](#graph-05), [pages-01](#pages-01) (decision C1) and [RET-05](#ret-05). pages-01 also reproduces on `0ffa58d24e`.
+- Extended by Vega: [RET-12](#ret-12) (to keyed brains, as RET-16) and [graph-02](#graph-02) (past-tense prose, as part of graph-18).
+- Not reproduced by Vega: [health-7](#health-7). Vega compared only the page count (35 live pages against 36 rows). health-7 is about chunk, link and timeline counts, which still include soft-deleted pages, so Vega's check does not test it. health-7 stays open.
+- Vega's minor notes (timeline prints ISO timestamps; `delta --since 1h` is refused while `query --since 30d` works; read commands print a backup reminder; a fresh 28-page brain scores 40; new sources are federated by default) were not rechecked here and get no ID.
+
+<a id="vega-n7-verdict"></a>
+### N7 verdict: the hint is real, it is not a leak, and MCP does not leak
+
+**Verdict.** N7 is real as a behavior and false as a leak.
+
+- The local CLI names the source that holds the page, but the local CLI caller is the trusted owner, who can read that source.
+- Every MCP caller that must not see the page gets a response that is byte-for-byte the same as for a slug that does not exist, once the slug is replaced. We checked four MCP callers:
+  - an HTTP token scoped to `default`;
+  - an HTTP token bound to member bob-example;
+  - unbound stdio;
+  - stdio bound with `--stdio-member bob-example`.
+- MCP does not leak.
+
+**Repro (PGLite, keyless):**
+
+```bash
+V=/var/tmp/audit/vega; B=$V/brain-keyless.sh; H=$V/n7; mkdir -p $V/n7src
+$B $H init --pglite --no-embedding
+$B $H sources add work --path $V/n7src --no-federated
+printf -- '---\ntype: project\ntitle: Kumquat Protocol\n---\nKumquat is a secret work project.\n' | $B $H put projects/kumquat-protocol --source work
+printf -- '---\ntitle: Open note D\n---\nopen body\n' | $B $H put notes/open-d --source default
+$B $H access member add alice-example; $B $H access member add bob-example
+printf -- '---\ntitle: Alice only D\nreadable_by: [alice-example]\n---\nalice secret body\n' | $B $H put notes/alice-only-d --source default
+$B $H auth create tok-bob --member bob-example            # save the token to $V/tok-bob
+$B $H auth create tok-def --sources default --reads-unscoped --yes   # save the token to $V/tok-def
+# CLI (trusted local owner)
+$B $H get projects/kumquat-protocol --source default
+$B $H get projects/nope-xyz --source default
+# HTTP MCP
+$B $H serve --http --port 31871 --suppress-bootstrap-token &
+cd $V; ./call.sh tok-def get_page '{"slug":"projects/kumquat-protocol"}'; ./call.sh tok-def get_page '{"slug":"projects/nope-xyz"}'
+./call.sh tok-bob get_page '{"slug":"projects/kumquat-protocol"}'; ./call.sh tok-bob get_page '{"slug":"projects/nope-xyz"}'
+# stop serve, then stdio MCP (calls.jsonl holds ["get_page",{"slug":...}] lines)
+CALLS=calls.jsonl python3 -I stdio.py $H; CALLS=calls.jsonl python3 -I stdio.py $H --stdio-member bob-example
+```
+
+**CLI output, page only in `work`:**
+
+```
+Error [page_not_found]: Page not found: projects/kumquat-protocol
+Fix: gbrain get projects/kumquat-protocol --source work --brain host
+```
+
+With `--json`, the CLI suggestion reads: `"Page exists in source 'work' — pass --source work. Page may be soft-deleted; pass --include-deleted to verify. Next: gbrain get projects/kumquat-protocol --source work --brain host"`.
+
+**CLI output, slug that does not exist:**
+
+```
+Error [page_not_found]: Page not found: projects/nope-xyz
+Fix: gbrain get projects/nope-xyz --include-deleted --brain host --source default
+```
+
+**HTTP MCP, token scoped to `default`:** both slugs answer `isError: true` with the suggestion below. The full responses are identical after the slug is replaced (`diff` exit 0).
+
+```
+"message": "Page not found: projects/kumquat-protocol",
+"suggestion": "Page may be soft-deleted; pass include_deleted: true to verify. Next: get_page {\"slug\":\"projects/kumquat-protocol\",\"include_deleted\":true}",
+```
+
+**HTTP MCP, member token bob-example:** the hidden page in `work`, a page kept to alice-example in `default`, and a missing slug all answer with the text below. The responses are identical after the slug is replaced.
+
+```
+"suggestion": "This connection reads no page with this slug: it may not exist, or it may not be readable by this connection, since a page can be kept to other members. Do not create it to find out; ask the user whether the page exists and who can read it."
+```
+
+**stdio MCP, unbound and `--stdio-member bob-example`:** both answer with the "may be soft-deleted" suggestion, and with `fix.command` `gbrain get <slug> --include-deleted --brain host --source default`. The response is the same for the hidden page, the alice-only page and the missing slug. No response names `work`. This is the misleading hint of [privacy-5](#privacy-5), not a leak.
+
+- **Search.** `search {"query":"kumquat"}` returns `[]` for both tokens.
+- **Rust goldens.** No change is needed. Keep this as a parity guard: for a remote caller, a hidden page and a missing slug must give the same response, and the response must not name another source.
+- **Decision for the owner.** Should the local CLI name another source? We recommend keeping it, because the CLI caller is the owner. This matches Vega's bb9-006 rule.
+
+<a id="lc-12"></a>
+### LC-12: A keyed brain saves pages without embeddings and reports success; doctor says healthy (Vega N1)
+
+- Area: Import, sync, delete, purge (import, sync and put on a brain with an embedding key)
+- Severity 5/5, evidence: reproduced (Vega on PGLite and Postgres at 7ef3d53a47; rechecked on PGLite at 0ffa58d24e)
+- Rust goldens: **yes**. The import JSON, the put receipt's `embedding_state`, `stats` and the doctor output are parity surfaces. The Rust write path must embed the pages or report the pending count in the same shape.
+- Source: Vega N1.
+
+**Repro:**
+
+```bash
+V=/var/tmp/audit/vega; K=$V/brain-keyed.sh; H=$V/k1
+$K $H init --pglite                       # keyed: embedding_model openai:text-embedding-3-large
+$K $H import $V/corpus --json
+$K $H stats                               # Embedded / Chunks
+$K $H doctor --only embedding_state
+printf -- '---\ntype: note\ntitle: Lemon note\n---\nA note about lemon trees.\n' | $K $H put notes/lemon --json
+$K $H jobs list
+$K $H embed --stale; echo rc=$?
+# Hypothesis check: same import with spend.posture tokenmax on a fresh brain
+$K $V/k2 init --pglite; $K $V/k2 config set spend.posture tokenmax; $K $V/k2 import $V/corpus --json; $K $V/k2 stats
+```
+
+**Expected:** import embeds the 9 chunks, or it reports how many chunks are pending and how to finish. A `put` that says `embedding_state: queued` has a job or worker that empties the queue. Doctor warns when every chunk is unembedded. `embed --stale` with a $0.0000 estimate runs, or the consent prompt says why it must ask at $0.
+
+**Actual:**
+
+- **Import:** `{"status":"success","duration_s":0.7,"imported":9,...,"chunks":9,...}`. Then `stats` shows `Chunks: 9`, `Embedded: 0`, `Links: 0`. The run makes no provider call and writes no budget audit file.
+- **Doctor:** `Overall health score: 100/100. All checks passed.`, then `Tip: 9 missing embeddings. Run 'gbrain features' to fix.` With `--json`, `embedding_state` is `ok` with `0 embedded, 9 pending ... 9 unsearchable`, although keyword search still finds those pages.
+- **Put:** the receipt has `"embedding_state": "queued"`, and `jobs list` prints `No jobs found.`. Nothing empties the queue: the page stayed unembedded until a manual `embed --stale --yes`.
+- **Embed:** `embed --stale` exits 3 with `confirmation_required` and the prompt "costs money (about $0.0000). OK to run it?". `embed --stale --yes` then embedded 10 chunks across 10 pages.
+- **Sync:** Vega saw `sync --source work` print "Below cost gate floor ($0.5), proceeding" and then embed 0 of 4 chunks. Not rerun here.
+- **Hypothesis refuted:** Vega suspected the unset `spend.posture`, which defaults to gated. With `spend.posture tokenmax` the import still embeds 0 of 9 chunks, so that is not the cause.
+
+**Evidence:** src/core/import-file.ts:640 computes `noEmbed` from `--no-embed`, frontmatter and `embeddingSendBlocked`; none of these is set here. The comment above it says that a prepared (persistence) import defers embedding to its effect worker. Every brain in this run is a managed brain (`persistence.mode: filesystem`), and src/commands/import.ts:747 sends managed brains through `importManagedFile`. Our unproven hypothesis is that the deferred embedding has no worker that runs after a CLI import or put.
+
+**Proposed fix:** when a write defers embedding, start the work, or say so in the receipt with the pending count and the command that finishes it. Doctor should warn (not ok) when a keyed brain has pending chunks older than a few minutes. A $0 estimate under the preapproved limit should not need consent.
+
+**gbrain-evals:** Vega's draft scenarios bb9-001 and bb9-002.
+
+<a id="graph-18"></a>
+### graph-18: Auto-link types and directions are often wrong (Vega N3)
+
+- Area: Links, graph, timeline, tags (link extraction from prose on put, sync and `extract all`)
+- Severity 4/5, evidence: reproduced (3 of Vega's 4 patterns; verb carry-over seen by Vega only)
+- Rust goldens: **yes**. The stored `link_type` and direction feed `links`, `backlinks`, `graph-query`, the entity card and the parity fixtures.
+- Source: Vega N3. The tense part extends [graph-02](#graph-02).
+
+**Repro:**
+
+```bash
+V=/var/tmp/audit/vega; B=$V/brain-keyless.sh; H=$V/n2
+$B $H init --pglite --no-embedding; $B $H import $V/corpus --no-embed; $B $H extract all
+for s in companies/acme-example people/carol-example companies/fund-a people/olive-example; do $B $H links $s --json; done
+$B $H backlinks companies/acme-example --json
+$B $H graph-query companies/acme-example --type works_at --direction in
+```
+
+**Expected:** "Acme was founded in 2021 by [[people/alice-example]]" gives alice →founded→ acme. "Carol is a partner at [[companies/fund-a]]" gives a role link such as works_at, not invested_in. "Fund A invested $2.5M in [[companies/acme-example]]" gives fund-a →invested_in→ acme. "Erin previously worked at [[companies/acme-example]]" is not shown as a current works_at.
+
+**Actual:**
+
+| Sentence | Stored edge |
+|---|---|
+| "Acme was founded in 2021 by [[people/alice-example]]" | `companies/acme-example - founded -> people/alice-example` (passive voice reverses the direction) |
+| "Carol is a partner at [[companies/fund-a]]" | `people/carol-example - invested_in -> companies/fund-a` |
+| "She holds a board seat at [[companies/acme-example]]" | `people/carol-example - invested_in -> companies/acme-example` |
+| "Fund A invested $2.5M in [[companies/acme-example]]" | `companies/fund-a - mentions -> companies/acme-example` (verb missed) |
+| "Erin previously worked at [[companies/acme-example]]" | `backlinks` hides this edge, but `graph-query ... --type works_at --direction in` lists `<-works_at-- people/erin-example` next to alice-example and olive-example, as current |
+
+- **Verb carry-over, Vega only.** Vega saw verbs carry from one sentence to the next: "previously ran finance at" gave works_at for three people, and kestrel got works_at Acme, company to company. Our corpus did not reproduce it: Olive's second sentence got `mentions`.
+- **Effect.** The entity card shows these edges. Vega found that `think --anchor` still answered correctly because it read the page text.
+
+**Evidence:** the outputs above, with the 9-page corpus in `vega/corpus/`. The link-type inference reads the sentence around each wikilink.
+
+**Proposed fix:** detect the passive voice (`by [[x]]`) and swap the direction. Map role phrases ("partner at", "board seat at") to role types, not invested_in. Score only the verb that governs the link's own clause. Let past-tense cues set the link's end, and make `graph-query` hide ended links, as `backlinks` does (see graph-02).
+
+**gbrain-evals:** Vega's draft scenario bb9-004.
+
+<a id="graph-17"></a>
+### graph-17: `import` creates no links; `sync` of the same files does (Vega N2)
+
+- Area: Links, graph, timeline, tags (link extraction on import)
+- Severity 4/5, evidence: reproduced
+- Rust goldens: **yes**. Link rows after an import, the `stats` link count and the `backlinks` output are parity surfaces.
+- Source: Vega N2. Related to [graph-07](#graph-07) and [LC-6](#lc-6), where other write paths also skip link derivation.
+
+**Repro:**
+
+```bash
+V=/var/tmp/audit/vega; B=$V/brain-keyless.sh
+$B $V/n2 init --pglite --no-embedding; $B $V/n2 import $V/corpus --no-embed --json; $B $V/n2 stats; $B $V/n2 backlinks companies/acme-example
+$B $V/n2 extract all; $B $V/n2 stats
+# same files through sync
+R=$V/n5repo; mkdir -p $R; cp -r $V/corpus/* $R/; git -C $R init -q; git -C $R add -A; git -C $R commit -qm init
+$B $V/n5 init --pglite --no-embedding; $B $V/n5 sources add work --path $R; $B $V/n5 sync --source work --no-embed; $B $V/n5 stats
+```
+
+**Expected:** an import derives the links in the files, as sync does. Otherwise the import JSON says how many links are pending and names `extract all`.
+
+**Actual:**
+
+- **Import:** the JSON says `"status":"success"` with no link field. `stats` shows `Links: 0`, and `backlinks companies/acme-example` prints `[]` with no hint.
+- **Extract:** `extract all` prints `Done: 13 links, 0 timeline entries from 9 pages`, and `stats` then shows `Links: 13`.
+- **Sync:** the same files print `Links: 13 created, 0 removed across 9 page(s).`.
+- **Count mismatch, Vega only.** Vega saw `extract all` report 62 links while `stats` then showed 86. On our 9-page corpus the two counts agree (13 and 13), so that part is not reproduced.
+
+**Evidence:** the outputs above. Vega reports that doctor `graph_coverage` names the fix.
+
+**Proposed fix:** run the same link pass on import as on sync, or report `links_pending` in the import JSON with the `extract all` command.
+
+**gbrain-evals:** Vega's draft scenario bb9-003.
+
+<a id="ret-16"></a>
+### RET-16: A nonsense search returns every page, with no warning in the text output (Vega N4)
+
+- Area: Search, query, recall (hybrid search on a keyed brain)
+- Severity 3/5, evidence: reproduced
+- Rust goldens: **yes**. The result set and the text output of `search` and `query` are parity surfaces.
+- Source: Vega N4. Extends [RET-12](#ret-12), which covers the `weak_semantic` label on keyless brains.
+
+**Repro:**
+
+```bash
+V=/var/tmp/audit/vega; K=$V/brain-keyed.sh; H=$V/k1    # the LC-12 brain after `embed --stale --yes`
+$K $H search "zzqxvplomb"
+$K $H search "zzqxvplomb" --json
+$K $H query "zzqxvplomb" --no-expand
+```
+
+**Expected:** a word that is in no page gives "no results", or the text output marks the hits as weak matches.
+
+**Actual:**
+
+- **Text:** `search` prints 10 results, with no warning on stdout or stderr. It starts:
+  - `[0.7566] companies/widget-co`
+  - `[0.7319] people/olive-example`
+  - `[0.7207] people/erin-example`
+  - `[0.6996] companies/fund-a`
+- **JSON:** `--json` returns 10 rows, and every row has evidence `weak_semantic`. That label is the only sign.
+- **Query:** `query` prints the same ranked list.
+- **Vega:** on a 28-page brain, Vega saw 10 or more unrelated pages at about 0.77.
+
+**Evidence:** the outputs above. A grep of stdout and stderr for "weak", "no strong", "match" finds nothing.
+
+**Proposed fix:** when every hit is `weak_semantic`, print one line in the text output, for example "No page contains these words; showing the nearest meanings." Or apply a relevance floor.
+
+**gbrain-evals:** Vega's draft scenario bb9-005.
+
+<a id="lc-13"></a>
+### LC-13: `recovery_required` on a shared checkout does not name the owning brain or a command (Vega N6)
+
+- Area: Import, sync, delete, purge (`sources add` on a checkout that another brain owns)
+- Severity 3/5, evidence: reproduced
+- Rust goldens: **yes**. The error envelope (`message`, `suggestion`, `fix`) is a parity surface.
+- Source: Vega N6.
+
+**Repro:**
+
+```bash
+V=/var/tmp/audit/vega; B=$V/brain-keyless.sh       # $V/n5repo is owned by brain $V/n5 (graph-17 repro)
+$B $V/n6 init --pglite --no-embedding
+$B $V/n6 sources add work2 --path $V/n5repo --json; echo rc=$?
+```
+
+**Expected:** the refusal names the brain that owns the checkout (its home or brain id and source id) and gives the exact transfer or recovery command.
+
+**Actual:** exit 1, and the JSON contains:
+
+```
+"error": "recovery_required",
+"message": "The physical checkout identity changed or belongs to another owner.",
+"suggestion": "Use verified writer transfer or source recovery; do not remove ownership markers to claim this path.",
+"class": "host_only",
+```
+
+The JSON has no `fix` command and names no owner. Vega saw a different text on its brain ("an earlier write left state…"), with the same gap.
+
+**Evidence:** the output above.
+
+**Proposed fix:** add the owner's brain id and source id when they can be read, and add a `fix` with the transfer or recovery command.
+
+**gbrain-evals:** Vega's draft scenario bb9-009.
+
+<a id="health-12"></a>
+### health-12: CLI `think` spend is missing from the budget audit file (Vega N8)
+
+- Area: Doctor, health, onboarding (spend accounting)
+- Severity 3/5, evidence: reproduced (the cause is not proven)
+- Rust goldens: **yes**. The budget audit rows are stored data that spend reports read.
+- Source: Vega N8.
+
+**Repro:**
+
+```bash
+V=/var/tmp/audit/vega; K=$V/brain-keyed.sh; H=$V/k1; A=$H/.gbrain/audit/budget-2026-W47.jsonl
+wc -l < $A
+$K $H think "Where is Acme moving its HQ?" --json    # one paid chat call
+wc -l < $A; grep -c '"kind":"embed"' $A
+```
+
+**Expected:** the `think` call adds reserve and record rows for its chat model, as embedding calls do.
+
+**Actual:**
+
+- **Think:** the call reports `"cost_usd": 0.009` with `input_tokens` 1269 and `output_tokens` 87. It answered correctly: "Acme decided to move its headquarters to **Austin**. [meetings/2026-04-03]".
+- **Audit file:** it has 20 lines before the call and 20 after, and every row is `"kind":"embed"`.
+- **Vega:** 18 `think` calls cost $0.42 and added 0 chat events.
+
+**Evidence:** the outputs above. Vega's hypothesis is that CLI `think` runs with no budget tracker attached, and recording without a tracker does nothing. We did not prove it.
+
+**Proposed fix:** attach the budget tracker to CLI `think` (and to every chat call), so that each paid call writes reserve and record rows.
+
+**gbrain-evals:** none yet; Vega's report proposes one.
+
+<a id="contract-11"></a>
+### contract-11: After `sources unfederate`, every command prints the #3070 routing notice (Vega N5)
+
+- Area: CLI/MCP output and error contract (source routing notices)
+- Severity 2/5, evidence: reproduced
+- Rust goldens: **yes**. The stderr text of every unsourced CLI command changes.
+- Source: Vega N5.
+
+**Repro:**
+
+```bash
+V=/var/tmp/audit/vega; B=$V/brain-keyless.sh; H=$V/n5        # brain from the graph-17 repro: default has a page, work is federated
+$B $H stats 2>&1 | grep -c '#3070'                            # 0
+$B $H sources unfederate work
+for c in stats list "search acme"; do $B $H $c 2>&1 | grep -c '#3070'; done   # 1 each
+```
+
+**Expected:** the routing notice prints once, or only on a write whose target source it changes.
+
+**Actual:** every command, including read-only `stats`, `list` and `search`, prints:
+
+```
+[gbrain] sole non-default source 'work' exists, but 'default' is non-empty — routing to 'default' (#3070 emptiness guard). Pass --source work or set sources.default to target it.
+```
+
+The same notice prints when `work` is added with `--no-federated`, and once more in the `serve --http` log.
+
+**Evidence:** the outputs above.
+
+**Proposed fix:** print the notice only on writes, or once per brain until `sources.default` is set. Leave reads quiet.
+
+**gbrain-evals:** Vega's draft scenario bb9-008.
 
 ## What works (checked and correct)
 
