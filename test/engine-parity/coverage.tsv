@@ -433,7 +433,7 @@ readEmbeddingIdentity	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
 listEmbeddingStores	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
 hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
 countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	refuses:raw_sql
-listFenceHoldRows	fence_holds	yes	1	no	yes	yes	refuses:persistence_journal
+listFenceHoldRows	fence_holds	yes	1	no	yes	yes	refuses:raw_sql
 listVersionTrustTiers	trust_tier_reads	no	0	no	-	-	-
 listVersionReasonWriters	trust_tier_reads	no	0	no	-	-	-
 listPageTypesByIds	trust_tier_reads	yes	1	no	yes	yes	refuses:raw_sql

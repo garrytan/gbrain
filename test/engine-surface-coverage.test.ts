@@ -90,6 +90,11 @@ const INTERFACE_METHODS: readonly string[] = [
   // N4 reads (engine-sql/cli-reads-import.ts, cli-reads-ops.ts, entity-reads.ts, jobs-insight.ts; master text pinned by test/n4-sql-move-parity.test.ts)
   'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows',
   'filterPagesAtRevision', 'nextLivePageAfter', 'readMentionLastPass', 'findExactBasenameCandidates', 'readJobInsight',
+  // N5 reads: the embedding catalog, held fence results and job status reads (engine-sql/embedding-catalog.ts, fence-holds.ts, jobs-status.ts). Not listed on the N5 head, where this test fails the same way.
+  'readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage', 'listFenceHoldRows',
+  'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+  'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
+  'readEmbedBackfillBySource',
   // N6 reads and the carried memory-mutation reads (engine-sql/link-reads.ts, facts-doctor.ts, writer-versions.ts, memory-mutation-reads.ts; master text pinned by test/n6-sql-move-parity.test.ts)
   'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges', 'listLivePageSummaries',
   'countInboundLinks', 'readEntityInboundEdges', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes', 'readLinkContextMatches',
