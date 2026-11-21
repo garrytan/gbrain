@@ -63,6 +63,7 @@ describe('engine parity: sync status reads', () => {
       expect(result as unknown).toEqual({
         source: {
           incarnation: true, last_commit: null, drain_lock: false, pass_value: null, pass_updated: false, read_at: true, withheld: null, synced: false,
+          identity_reviews: null, held_deletes: null,
           admission_stored: null, admission_row_value: null, admission_set_at: null, admission_pinned: null, admission_destructive: null,
           writeback_failed: null, refresh: null,
         },
