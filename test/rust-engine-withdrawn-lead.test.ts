@@ -23,8 +23,8 @@ import { overlaidBoundedRows } from '../src/core/page-window/bounded-lead.ts';
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
 const HAVE_ADDON = TARGET !== null && existsSync(BUILT);
-if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
-  throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${BUILT} does not exist; run bun run rust:build`);
+if (!HAVE_ADDON && process.env.GBRAIN_TEST_REQUIRE_RUST_ADDON === '1') {
+  throw new Error(`GBRAIN_TEST_REQUIRE_RUST_ADDON=1 but ${BUILT} does not exist; run bun run rust:build`);
 }
 const withAddon = test.skipIf(!HAVE_ADDON);
 
