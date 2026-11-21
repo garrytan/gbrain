@@ -1864,6 +1864,7 @@ ledger. Nothing is written to the brain database, the config table or the brain 
 gbrain engine shadow seed [--json]                 # copy the brain into the Rust store once (shadow mode off)
 gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing
 gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
+gbrain engine shadow reconcile [--full] [--json]   # compare the whole brain with the Rust store and repair differences
 gbrain engine shadow status [--json]
 gbrain engine shadow report [--json]               # writes reports/provisional.{json,md}
 gbrain engine shadow stop [--delete]               # turn it off; --delete removes the shadow directory
@@ -1884,8 +1885,26 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   behind, and the unseeded gap rows (tables the Rust store cannot serve yet; a swap is refused while any remain).
   It refuses while shadow mode is on. To seed again, `stop --delete` and seed into the new directory.
   Rust store layout: [rust/docs/store/seed.md](../rust/docs/store/seed.md).
-- **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, the seeded store does
-  not follow later writes yet, and writes and the readiness decision come in later phases of the plan
+- **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
+  read back from the brain, in one read-only `REPEATABLE READ` transaction, and applied to the Rust store, so stored
+  ids and fact fingerprints stay identical. A rolled-back transaction changes nothing. A shed, a gap in the write
+  sequence, a failed read or a restarted child invalidates the follower's coverage watermark until a reconcile pass
+  restores it. Only the process that owns the Rust store applies writes; a second serving process cannot apply, and its
+  writes are caught by reconcile.
+- **Reconcile.** `reconcile` compares every seeded relation with the Rust store in 500-row key intervals and replaces
+  any interval that differs, then checks allocators and the fingerprint probe. `reconcile` and `reconcile --full` both
+  run a full pass. It needs the Rust store to be free (stop the serving process first). A full pass also runs on its own
+  every 24 hours while the follower runs, and again when the watermark is invalid and the last pass is over an hour old.
+- **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `stopped`, `invalid`, `behind`,
+  `following`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
+  value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,
+  `error`), `last_pass` (with `repaired_rows`, `repaired_by_relation` and `follower_misses`: repaired rows found while the
+  watermark claimed coverage), `consecutive_clean_full_passes`, `next_full_pass_due`; `fingerprints` (`checked_rows`,
+  `mismatches`, and a `probe` that runs a fixed text corpus through the primary's fingerprint SQL); `allocators`;
+  `seed`; and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
+  `write_comparisons` and `fingerprints` counts are totals for the current epoch; one epoch is one seed.
+- **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, write comparisons
+  are not built yet, and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
   `capability_missing`.
 
