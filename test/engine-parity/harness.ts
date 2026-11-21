@@ -265,7 +265,7 @@ export async function archiveSource(engine: BrainEngine, backend: ParityBackend,
  */
 export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityBackend, sourceId: string): Promise<void> {
   switch (backend) {
-    // The Rust arm runs the same production path; it stops on the engine's typed refusal until the ledger is served.
+    // The Rust arm runs the same production path, a page's baseline included.
     case 'rust':
     case 'pglite':
     case 'postgres':
@@ -339,22 +339,11 @@ export async function seedAccessPolicy(
 }
 
 /**
- * Fixture: a `page_purges` tombstone, as the page purge sweep (`persistence/page-purge.ts`) and the restore replay
- * (`belief/purge-mirror.ts`) write it inside the write journal's transaction. Neither has a typed writer, so this is
- * harness-only SQL behind the backend switch; `purgedAt` (ISO) replaces the default `now()`.
+ * Fixture: a `page_purges` tombstone of one content hash, written through the typed `upsertPagePurges` the page purge
+ * sweep (`persistence/page-purge.ts`) uses, so every arm stores it at its own clock.
  */
-export async function recordPagePurge(engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, contentHash: string, purgedAt?: string): Promise<void> {
-  switch (backend) {
-    // The Rust store reads the ledger but has no writer for it: the same SQL stops on the engine's typed raw_sql refusal.
-    case 'rust':
-    case 'pglite':
-    case 'postgres':
-      await engine.executeRaw('INSERT INTO page_purges (source_id, content_hash, slug, purged_at) VALUES ($1, $2, $3, COALESCE($4::timestamptz, now()))',
-        [sourceId, contentHash, slug, purgedAt ?? null]);
-      return;
-    default:
-      return assertNever(backend);
-  }
+export async function recordPagePurge(engine: BrainEngine, _backend: ParityBackend, sourceId: string, slug: string, contentHash: string): Promise<void> {
+  await engine.upsertPagePurges({ sourceId, contentHashes: [contentHash], slug, requestId: null });
 }
 
 /**

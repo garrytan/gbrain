@@ -34,6 +34,15 @@ pub(crate) struct SourceRecord {
     /// The newest synced content's commit time (`sources.newest_content_at`), or `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub newest_content_at_us: Option<i64>,
+    /// `sources.purge_epoch`: purge raises it, and the belief ledger refuses a payload prepared
+    /// under an older one. Records written before the field existed, and every record still at 0,
+    /// read and write as 0 with no bytes of their own.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub purge_epoch: i64,
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
 }
 
 /// A source as JavaScript sees it: `SourceRow` of `src/core/engine.ts`, with `last_sync_at` as an
@@ -160,6 +169,7 @@ pub(crate) fn seed_default_source(tx: &mut dyn KvWrite, env: &dyn Env) -> Result
         chunker_version: None,
         last_commit: None,
         newest_content_at_us: None,
+        purge_epoch: 0,
     };
     put_json(tx, &source_key(DEFAULT_SOURCE), &record)
 }
@@ -235,6 +245,7 @@ impl Store {
                     chunker_version: None,
                     last_commit: None,
                     newest_content_at_us: None,
+                    purge_epoch: 0,
                 },
             };
             if input.name.is_some() {
@@ -356,6 +367,12 @@ impl Store {
             .count() as u64)
     }
 
+    /// `readSourcePurgeEpoch(id)`: the source's stored purge epoch (0 until a purge raises it), or
+    /// `None` for an unknown source. Archived sources answer too, as the SQL reads the row as is.
+    pub fn read_source_purge_epoch(&self, id: &str) -> Result<Option<i64>> {
+        Ok(read_source(&*self.read()?, id)?.map(|r| r.purge_epoch))
+    }
+
     /// `listSourceLocalPaths()`: the local path of every source that has a non-empty one,
     /// archived sources included, in id order. Mirrors `listSourceLocalPaths`.
     pub fn list_source_local_paths(&self) -> Result<Vec<String>> {
@@ -370,5 +387,52 @@ impl Store {
     pub fn get_source_strictness(&self, id: &str) -> Result<bool> {
         Ok(read_source(&*self.read()?, id)?
             .is_some_and(|r| r.config.get("canonical").and_then(Value::as_str) == Some("git")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::OpenOptions;
+    use std::path::PathBuf;
+
+    struct Dir(PathBuf);
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// `readSourcePurgeEpoch` reads the stored field, not a constant: a fresh source reads 0, a
+    /// raised epoch reads as stored, another source keeps its own, and an unknown source has none.
+    #[test]
+    fn read_source_purge_epoch_reads_the_stored_epoch_of_the_named_source() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/unit-tmp")
+            .join(format!("source-purge-epoch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let _guard = Dir(dir.clone());
+        let store = Store::open_dir(&dir.join("brain"), OpenOptions::default()).unwrap();
+        let team: SourceInput =
+            serde_json::from_value(serde_json::json!({ "id": "team" })).unwrap();
+        store.upsert_source(&team).unwrap();
+        assert_eq!(store.read_source_purge_epoch("team").unwrap(), Some(0));
+        store
+            .write(|tx| {
+                let mut record = require_source(&*tx, "team")?;
+                record.purge_epoch = 3;
+                put_json(tx, &source_key("team"), &record)
+            })
+            .unwrap();
+        assert_eq!(store.read_source_purge_epoch("team").unwrap(), Some(3));
+        assert_eq!(
+            store.read_source_purge_epoch(DEFAULT_SOURCE).unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            store.read_source_purge_epoch("no-such-source").unwrap(),
+            None
+        );
     }
 }

@@ -30,6 +30,9 @@
  *    case, the mixed-case read returned one row twice; before the window start was checked, a day count of -1e100
  *    overflowed and refused as internal_error. While the links effect read through raw SQL, the Rust arm refused both
  *    remote admissions (`engine_capability_missing`, raw_sql) with no row and no charge.
+ *    While the store did not serve the dream cycle's three journal reads (readDreamDeferralReceipt,
+ *    listLaterPersistenceRequests, listCommittedOutputRequests), it withheld `persistence_journal` and the three
+ *    admission, owner-binding and gate-evidence cases failed on the Rust arm at the capability check.
  *  - Why existing coverage misses it: the owner and admission parity cases admit one write at a time with no managed
  *    worktree; nothing admitted a group, read the owner binding, listed a recovery row, or read the gate evidence.
  *  - Seam: none. Real engines and the real sites; each case runs under its own GBRAIN_HOME. Generated ids and paths are

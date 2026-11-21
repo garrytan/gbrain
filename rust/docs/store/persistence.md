@@ -174,6 +174,25 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.releaseSegmentedProjectionClaim(sourceId, slug, claim)` | a job still carrying `claim` back to `canonical_change` at now | `releaseSegmentedProjectionClaim` |
 | `brain.deleteProjectionJob({ sourceIncarnation, slug, revision })` | the job deleted when it is queued at `revision`; a non-uuid incarnation or revision is refused | `deleteProjectionJob` |
 | `brain.markProjectionRebuildFailed({ sourceIncarnation, slug, revision })` | a job queued at `revision` and not under a live claim marked `rebuild_failed` at now | `markProjectionRebuildFailed` |
+| `brain.listQueuedPageProjections(filter)` | the queued jobs of unsegmented pages a rebuild can take now (`{ jobs, pages }`), with `filter` `{ sourceId?, slug?, slugs?, keys?, after?, limit, model, dims, staleText?, served? }` as `listQueuedPageProjections` (engine-sql/projection-rebuild.ts) reads it; `served: 'waiting'` keeps the pages the activation has not served | `listQueuedPageProjections` |
+| `brain.readProjectionJobReason(key)` | the job's reason, or `null` (the rebuild deletes the job with `deleteProjectionJob` above) | `readProjectionJobReason` |
+| `brain.readChunkKeepState(pageId, model, dims)` / `brain.clearUnkeptChunkVectors(pageId, model, dims, currentIds)` | the chunk ids whose vector the rebuild keeps for the model and dimensions; the clear drops the vector of every other chunk of the page, in one write | `readChunkKeepState`, `clearUnkeptChunkVectors` |
+| `brain.hasDrainableProjectionJob()` | whether a job of a live inline page of an active source is queued with a reason other than `rebuild_failed`; the TypeScript member refuses the `media` option | `hasDrainableProjectionJob` |
+| `brain.readChunkRowsFingerprint(pageId)` | an opaque text that changes when the page's chunk rows (their ids and indexes) change: the row count and the sha256 of the `id:index` pairs. It is compared only with itself, never with the Postgres `hashtext` sum | `readChunkRowsFingerprint` |
+| `brain.deleteUnkeptChunks(pageId, keptIds)` | every chunk row of the page whose id is not in `keptIds` deleted | `deleteUnkeptChunks` |
+| `brain.listStaleChunkVectors(pageId, model, dims, currentIds)` | in chunk order, the ids of the page's chunks that hold a vector the page no longer accepts: another model (or the bare name at other dimensions), embedded from other text, or not in `currentIds` | `listStaleChunkVectors` |
+| `brain.clearChunkVectors(pageId, ids)` | the vector and embedding record of the page's chunks `ids` cleared and marked pending at the transaction clock | `clearChunkVectors` |
+| `brain.readProjectionHead(sourceId, slug)` | `{ id, revision, sealed }` of the live page (`sealed`: its text projection is at its knowledge revision), or `null` | `readProjectionHead` |
+| `brain.isDeferredReplacementHeld(sourceId, slug, revision, claim)` | whether the page's job at `revision` carries a `chunk_replacement_continuing` claim other than `claim` younger than 60 seconds | `isDeferredReplacementHeld` |
+| `brain.renewDeferredReplacementClaim(job, claim)` | the job at its revision given reason `claim` at now | `renewDeferredReplacementClaim` |
+| `brain.releaseDeferredReplacementClaim(slug, claim)` | every job of `slug` still at reason `claim` back to `chunk_replacement_deferred`, its time kept | `releaseDeferredReplacementClaim` |
+| `brain.hasSegmentedPage(sourceId, slug)` | whether the live page stores a segmented body | `hasSegmentedPage` |
+| `brain.rekeyProjectionJob(job, revision)` | the job at its revision moved to `revision` at now; a non-uuid revision is refused | `rekeyProjectionJob` |
+| `brain.stampDeferredProjectionJob(job, requeue)` | the job at its revision stamped now, and with `requeue` given reason `canonical_change` | `stampDeferredProjectionJob` |
+| `brain.touchUnclaimedProjectionJob(job)` | the job at its revision stamped now unless a live `segmented_projecting` claim holds it | `touchUnclaimedProjectionJob` |
+| `brain.deferProjectionJob(job)` | `true` and the job stamped now when it is queued at its revision; `false` otherwise | `deferProjectionJob` |
+| `brain.countPendingTextChunks(pageId)` | `{ chunks, chars }`: how many of the page's text chunks have no vector, and their length in characters (as Postgres `length` counts) | `countPendingTextChunks` |
+| `brain.probeProjectionWindowCandidates(candidates)` | one `{ i, source_id, archived, page_kind, body_storage }` row per `{ source_incarnation, slug }` candidate, at its index `i`: the source of that incarnation (archived or not) and its live page at the slug (`body_storage` `segmented` or `inline`); each part is `null` when missing; a non-uuid incarnation is refused | `probeProjectionWindowCandidates` |
 
 ## Op checkpoints
 
@@ -336,6 +355,21 @@ request is bound to a worktree here, so an unstamped consumer has no owner host 
 | `brain.listWriterVersions(limit)` | per role, the latest request of each host and principal (a consumer only for a committed request), newest first (null times first, ties by role, host, principal), at most `limit` | `listWriterVersions` |
 | `brain.recentWriterVersions(days)` | the committed requests published in the last `days`, grouped per role, host, principal and version with a `requests` count; admitters count from the cutoff by admission, consumers by publication; newest first. A `days` out of range refuses as `readSegmentedGateEvidence` does | `recentWriterVersions` |
 | `brain.readSegmentedGateEvidence(days)` | every writer seen in the last `days`, grouped per role, host, principal, version and segment-reader mark, with `requests`, `first_seen` and `last_seen`, newest first: admitters in any state, consumers of committed requests published in the window (the worktree owner for an unstamped host) and importers per ingest log row (`ingest:<source_type>`, from the `logIngest` writer stamp). No consumer row is stored here, so no `resident` row is answered. A `days` that is not finite or past the interval's 32-bit day field refuses with `interval out of range`, and a window start before 4714 BC (or past this clock's range) with `timestamp out of range`, as the SQL refuses them | `readSegmentedGateEvidence` (writer-versions.ts `segmentedGateEvidence`) |
+
+## Purge effect statements
+
+A purge's Git effect statements (`persistence/purge_effects.rs`, src/core/engine-sql/facts-purge.ts). A fact purge
+redacts the Git effects whose commit message quotes the claim (src/core/facts/purge-reasons.ts
+`redactGitEffectReasons`); a page purge strips the commit lines of the slug's Git effects (`stripPageGitNotes`). Both
+reads join `persistence_effects` to `persistence_requests` and answer the request's client `request_id`, so an effect
+whose request record is gone is not listed, as the inner join drops it. `FOR UPDATE OF e` changes nothing here: the
+purge runs in a store transaction, which holds the writer until it ends. Rows come in effect id order.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listGitEffectsCarryingReason({ sourceId, needle, escaped, foldedJson })` | the source's Git effects whose data, as jsonb text lowered as Postgres `lower()` does, holds one of the three needles | `listGitEffectsCarryingReason` |
+| `brain.listPageGitEffectsForStrip({ sourceId, slug })` | the slug's Git effects whose data holds a `commit_line`, `commit_trailers` or `commit_trailer` key (a JSON null counts) | `listPageGitEffectsForStrip` |
+| `brain.setPurgeEffectData({ effectId, data })` | replaces one effect's data (`data` is JSON text); an id no effect holds changes nothing, an id that is not a bigint or data with a NUL refuses as Postgres does | `setPurgeEffectData` |
 
 ## Effect scans
 
@@ -574,7 +608,7 @@ over no rows gives. Two parts differ from a SQL brain:
 
 | Member | Answer | Why |
 | --- | --- | --- |
-| `readLedgerSource(sourceId, opts?)` | `{ incarnation, purgeEpoch: 0, coverage: null, purgesPossible }`, `purgesPossible` true when the source holds a fact purge tombstone (`hasFactPurges`, rust/docs/store/facts.md "The fact purge ledger"); a batch adds `managedRows: [{ enabled: false }]` and `planModePrev: 'auto'` | Belief events, the purge epoch and take and page purges are written only through `executeRaw`, which this engine refuses. |
+| `readLedgerSource(sourceId, opts?)` | `{ incarnation, purgeEpoch: 0, coverage: null, purgesPossible }`, `purgesPossible` true when the source holds a fact purge tombstone (`hasFactPurges`, rust/docs/store/facts.md "The fact purge ledger"); a batch adds `managedRows: [{ enabled: false }]` and `planModePrev`, the transaction's `plan_cache_mode` before the probe (`'auto'` when unset), and inside a transaction with coverage active sets it to `force_generic_plan` | Belief events, the purge epoch and take and page purges are written only through `executeRaw`, which this engine refuses. |
 | `listHostConsumerRows(hostId, opts?)`, `probeLiveConsumerRows(probe, opts?)` | `[]` | One process owns this engine's brain, so it keeps no consumer heartbeat rows. PGLite, which also admits one process, answers the same in its callers (`listHostConsumers`, `probeLiveFullConsumer`) without a read. |
 | `renewConsumerRow(renewal, opts?)`, `deleteConsumerRow(key, opts?)` | resolve with no effect | The heartbeat has no row to renew or delete. `stampWorktreeHeartbeats` is served; see "Worktree bindings". |
 | `lockEffectGuard(worktreeId)` | resolves `null` | The store is single-writer, so the brain-row share lock has nothing to wait on, and this engine has no worktree to read. A worktree id that is not a uuid refuses with the uuid syntax message. |

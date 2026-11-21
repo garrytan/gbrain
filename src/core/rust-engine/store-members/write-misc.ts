@@ -1,14 +1,14 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals, readAccessMembers, readAccessCredentials, listAudienceAccessMembers and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals, readJobPrincipal, readAccessMembers, readAccessCredentials, listAudienceAccessMembers and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
  * gbrain-store `write_misc`, the binding reads by gbrain-store `persistence::worktrees`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia } from '../../engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia, JobPrincipalKind } from '../../engine-sql/access-control.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -162,3 +162,6 @@ export const listMemoryProposalRows: StoreMember<[query: ProposalListQuery], Arr
 
 /** No memory proposals exist on this engine, so no request id names one: show, approve and deny answer not_found. */
 export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Record<string, unknown>>> = async () => [];
+
+/** The store keeps no access tokens and no OAuth clients, so a remote job's principal has no row: the job is denied as revoked. */
+export const readJobPrincipal: StoreMember<[principal: { kind: JobPrincipalKind; id: string }], Record<string, unknown> | null> = async () => null;

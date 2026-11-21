@@ -9,12 +9,12 @@
  *    listVersionTrustTiers and listVersionReasonWriters read the snapshot tier of a version and the writer that replaced
  *    it; listValidTimeIdentities lists the live pages with a slug in the source scope by source; pickValidTimeEdition
  *    picks the edition in force on a date with its competing ordinals and counts; readBeliefHistoryRows and
- *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres; pageAwaitsRederive says whether a purge hid the
+ *    listVisibleBeliefLifetimes answer the same on every arm (belief-ledger.test.ts writes their events); pageAwaitsRederive says whether a purge hid the
  *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end; listPageRefsByIds names
  *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads;
  *    listPageTrustTiersByKey reads each named page's stored tier (deleted pages included) and lockLivePagesByKey names
  *    the live ones, so a page's own timeline lands through addProjectedPageTimeline and a missing page refuses. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
- *    the page, fact, version and valid-time reads, refuses the belief reads, and stops typed where the pick would need a
+ *    the page, fact, version, valid-time and belief reads, and stops typed where the pick would need a
  *    change reason or a history gap the store does not keep.
  *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
  *    members; an engine that drops an option shows a page the reader may not see or a row the scan should skip.
@@ -291,19 +291,10 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
-    'readBeliefHistoryRows and listVisibleBeliefLifetimes answer an empty ledger and an unknown lifetime, and Rust refuses both for its missing ledger',
+    'readBeliefHistoryRows and listVisibleBeliefLifetimes answer an empty ledger and an unknown lifetime',
     { methods: ['readBeliefHistoryRows', 'listVisibleBeliefLifetimes'] },
-    async (engine, backend) => {
+    async (engine) => {
       const base = { sourceId: 'default', slug: null, subjectKey: null, afterId: 0, limit: 10, recordedAfter: null, recordedUntil: null, subjectKeys: null, beforeId: null };
-      if (backend === 'rust') {
-        // The store keeps no belief ledger, so no input, an empty lifetime list included, may answer an empty list.
-        const refusals = [await engine.readBeliefHistoryRows({ ...base, descending: false }).then(() => null, (e: unknown) => e),
-          await engine.listVisibleBeliefLifetimes([]).then(() => null, (e: unknown) => e),
-          await engine.listVisibleBeliefLifetimes(['00000000-0000-4000-8000-000000000001']).then(() => null, (e: unknown) => e)];
-        expect(refusals.map(e => (e instanceof Error ? /the belief ledger, which the store does not keep/.test(e.message) : e)))
-          .toEqual([true, true, true]);
-        throw refusals[0];
-      }
       const asc = await engine.readBeliefHistoryRows({ ...base, descending: false });
       const desc = await engine.readBeliefHistoryRows({ ...base, slug: 'x', subjectKeys: ['k'], beforeId: 5, recordedAfter: '2026-01-01T00:00:00Z', descending: true });
       const lifetimes = await engine.listVisibleBeliefLifetimes(['00000000-0000-4000-8000-000000000001']);

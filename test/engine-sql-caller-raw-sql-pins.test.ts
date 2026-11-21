@@ -52,6 +52,21 @@ const PINS: Pin[] = [
           ORDER BY r.revision DESC LIMIT 1) AS rev FROM access_policy_state s ORDER BY s.source_id`],
   },
   {
+    from: 'src/core/reason-trailers.ts:262 cachedSyncReasonScan',
+    case: { method: 'readSourcePurgeEpoch', variant: 'default', run: e => e.readSourcePurgeEpoch('default') },
+    texts: ['SELECT purge_epoch FROM sources WHERE id = $1'],
+  },
+  {
+    from: 'src/core/minions/submission-authority.ts:144 assertCurrentRemoteJobPrincipal (OAuth client)',
+    case: { method: 'readJobPrincipal', variant: 'oauth-client', run: e => e.readJobPrincipal({ kind: 'oauth_client', id: 'client-1' }) },
+    texts: ['SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/minions/submission-authority.ts:160 assertCurrentRemoteJobPrincipal (legacy token)',
+    case: { method: 'readJobPrincipal', variant: 'legacy-token', run: e => e.readJobPrincipal({ kind: 'legacy_token', id: 'tok-1' }) },
+    texts: ['SELECT * FROM access_tokens WHERE id = $1'],
+  },
+  {
     from: 'src/core/access/caller.ts:196 mayActForOf (legacy token)',
     case: { method: 'readMayActFor', variant: 'legacy-token', run: e => e.readMayActFor('legacy_token', 'tok-1') },
     texts: ['SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'],

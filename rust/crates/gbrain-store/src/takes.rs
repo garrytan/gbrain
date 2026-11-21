@@ -25,6 +25,7 @@
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::facts::PrivacyPolicy;
+use crate::facts::take_purges::refuse_purged_take;
 use crate::keyword::{TRGM_WORD_SIMILARITY_THRESHOLD, trgm_word_similarity};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
@@ -910,6 +911,8 @@ impl Store {
             let mut touched: HashSet<(i32, i32)> = HashSet::new();
             let mut missing_page = false;
             for (r, (page_id, row_num, weight, superseded_by)) in rows.iter().zip(parsed.iter()) {
+                // The purge trigger runs BEFORE INSERT on every proposed row, an upsert's too.
+                refuse_purged_take(&*tx, *page_id, r.claim.as_deref())?;
                 let id = next_id(tx, NEXT_TAKE_ID)?;
                 let page_id = page_id.ok_or_else(|| not_null(TAKES, "page_id"))?;
                 let row_num = row_num.ok_or_else(|| not_null(TAKES, "row_num"))?;
@@ -1300,6 +1303,7 @@ impl Store {
                 .checked_add(1)
                 .ok_or_else(|| int_out_of_range(OP))?;
             let now = self.env.now_micros();
+            refuse_purged_take(&*tx, Some(page_id), input.claim.as_deref())?;
             let id = next_id(tx, NEXT_TAKE_ID)?;
             let claim = input
                 .claim
@@ -1796,6 +1800,114 @@ mod tests {
         }))
         .unwrap();
         store.add_takes_batch(&[input]).unwrap();
+    }
+
+    #[test]
+    fn a_take_tombstone_refuses_its_claim_under_star_or_the_page_and_goes_with_its_source() {
+        use crate::facts::take_purges::{TakePurgeInsert, has_take_purges, tombstoned_hashes};
+        let store = store();
+        source(&store, "team");
+        let page = put(&store, "team", "people/a");
+        let other = put(&store, "team", "people/b");
+        let hash = |c: &str| crate::facts::fact_fingerprint(c);
+        let purge = |subject: &str, claim: &str| {
+            let row = TakePurgeInsert {
+                source_id: "team".into(),
+                subject: subject.into(),
+                claim_hash: hash(claim),
+                request_id: None,
+            };
+            store.insert_take_purge(&row).unwrap()
+        };
+        add(&store, page, 1);
+        assert!(purge("*", &format!("c{page}-1")));
+        assert!(purge("people/a", "page only"));
+        let row = |page: u64, row: i32, claim: &str| -> TakeInput {
+            serde_json::from_value(json!({
+                "page_id": page, "row_num": row, "claim": claim, "kind": "take",
+                "holder": "garry", "weight": 0.5, "active": true,
+            }))
+            .unwrap()
+        };
+        let code = |r: Result<u64>| r.unwrap_err().code;
+        // An unchanged upsert row is refused: the trigger runs BEFORE INSERT on every proposed row.
+        let same = row(page, 1, &format!("c{page}-1"));
+        assert_eq!(code(store.add_takes_batch(&[same])), "purged_content");
+        assert_eq!(
+            code(store.add_takes_batch(&[row(page, 2, "ok"), row(page, 3, "page only")])),
+            "purged_content"
+        );
+        assert!(take_at(&*store.read().unwrap(), page, 2).unwrap().is_none());
+        assert_eq!(
+            store
+                .add_takes_batch(&[row(other, 1, "page only")])
+                .unwrap(),
+            1
+        );
+        let read = store.read().unwrap();
+        let asked = [hash("page only"), hash("nothing")];
+        assert_eq!(
+            tombstoned_hashes(&*read, "team", &asked).unwrap(),
+            BTreeSet::from([hash("page only")])
+        );
+        drop(read);
+        store
+            .write(|tx| crate::cascade::remove_source_rows(tx, "team"))
+            .unwrap();
+        assert!(!has_take_purges(&*store.read().unwrap(), "team").unwrap());
+    }
+
+    #[test]
+    fn a_page_take_purge_tombstones_each_distinct_claim_of_the_page_once() {
+        use crate::facts::take_purges::{PageTakePurgeInsert, TakePurgeRow, tombstoned_hashes};
+        let store = store();
+        source(&store, "team");
+        let page = put(&store, "team", "people/a");
+        let other = put(&store, "team", "people/b");
+        let claim = |page: u64, row: i32, claim: &str| -> TakeInput {
+            serde_json::from_value(json!({
+                "page_id": page, "row_num": row, "claim": claim, "kind": "take",
+                "holder": "garry", "weight": 0.5, "active": true,
+            }))
+            .unwrap()
+        };
+        store
+            .add_takes_batch(&[
+                claim(page, 1, "Acme will win"),
+                claim(page, 2, "  ACME will win. "),
+                claim(page, 3, "Rates fall"),
+                claim(other, 1, "Other page claim"),
+            ])
+            .unwrap();
+        let purge = |page_id: i64, request_id: Option<&str>| {
+            let row = TakePurgeRow::Page(PageTakePurgeInsert {
+                source_id: "team".into(),
+                subject: "people/a".into(),
+                page_id,
+                request_id: request_id.map(str::to_string),
+            });
+            store.insert_take_purge_row(&row)
+        };
+        assert!(purge(page as i64, None).unwrap());
+        assert!(!purge(page as i64, Some("6f9619ff-8b86-4d01-b42d-00cf4fc964aa")).unwrap());
+        assert!(!purge(987_654, None).unwrap());
+        assert!(!purge(-1, None).unwrap());
+        assert!(
+            purge(page as i64, Some("not-a-uuid"))
+                .unwrap_err()
+                .message
+                .contains("requestId is not a UUID")
+        );
+        let hash = |c: &str| crate::facts::fact_fingerprint(c);
+        let asked = [
+            hash("Acme will win"),
+            hash("Rates fall"),
+            hash("Other page claim"),
+        ];
+        assert_eq!(
+            tombstoned_hashes(&*store.read().unwrap(), "team", &asked).unwrap(),
+            BTreeSet::from([hash("Acme will win"), hash("Rates fall")])
+        );
     }
 
     fn cite(store: &Store, synth: u64, page: u64, row: i32) {

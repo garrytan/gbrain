@@ -6,6 +6,7 @@
  * They live outside engine-sql because they splice those builders' hand-numbered placeholders
  * (docs/ci-guards.md#engine-sql-dynamic-sql, CONSTANT_ALLOWLIST).
  */
+import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../apple-contacts/review-status.ts';
 import { MANAGED_SYNC_PASS_OP } from '../engine-sql/sync-hold-store.ts';
 import { SYNC_DELETES_WITHHELD_OP } from './sync-pass-row.ts';
 import { SYNC_ADMISSION_SETTING_PARAMS, syncAdmissionEffectParams, syncAdmissionEffectSql, syncAdmissionSettingSql } from './sync-admission.ts';

@@ -27,12 +27,10 @@
  *  - Seam: none. Real engines, the real dispatcher and the in-process persistence consumer; each case runs under its own
  *    GBRAIN_HOME.
  *
- * Known stop on Rust: "projection rebuild raw_sql, projections.ts:664 selectWindowJobs, lane 3 cut 1". After the links
- * and facts effects commit, the consumer's projection rebuild (persistence/projections.ts rebuildPendingPageProjections
- * -> selectWindowJobs) still reads through executeRaw and refuses raw_sql, which the consumer catches. So on Rust the
- * stdio cases (put_page, put_pages and capture) check the same pages and edges as the SQL arms, then pin that every raw-SQL refusal they caught came from
- * selectWindowJobs, and end on the first one: the harness counts them stopped. The pin fails as soon as another site
- * refuses, and lane 3 removes it when its cut 1 types the projection rebuild.
+ *  - Every arm, stdio cases included, now catches no raw_sql refusal on the way: the consumer's projection rebuild
+ *    (persistence/projections.ts rebuildPendingPageProjections -> selectWindowJobs) reads through typed members, so the
+ *    pages, the edges and an empty refusal list are compared on all three arms. Fail-first: with selectWindowJobs back on
+ *    executeRaw, the Rust stdio cases catch its raw_sql refusal and fail on the empty refusal list.
  */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -55,8 +53,10 @@ const MENTION = 'mcp-remote-mention';
 const BATCH = { stdio: 'd0000000-0000-4000-8000-0000000000f1', http: 'd0000000-0000-4000-8000-0000000000f2' } as const;
 const body = (i: number) => `---\ntype: note\ntitle: Remote links ${i}\n---\n\nMet [[people/alice-example]] of [[companies/acme-example]], and [[people/ghost-example]].\n`;
 
-/** The one raw-SQL site the stdio cases still reach on Rust (see the known stop above). */
-const RUST_KNOWN_STOP = 'selectWindowJobs';
+/** Where each kept raw-SQL refusal came from: the first stack frame below the refusal, for a readable diff. */
+function refusalSites(refusals: unknown[]): string[] {
+  return refusals.map(error => String((error as Error).stack).split('\n').find(line => /\bat\b/.test(line) && !/rust-engine|errors\.ts/.test(line))?.trim() ?? String(error));
+}
 
 /** `engine`, keeping every raw-SQL refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
 function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {
@@ -166,7 +166,7 @@ describe('engine parity: remote mention links', () => {
   parityTest('a remote capture over stdio commits its mention links', {
     methods: ['getLinks', 'readWriteRequestById'],
     timeout: 90_000,
-  }, async (recorded, backend) => withHome(async () => {
+  }, async (recorded) => withHome(async () => {
     const refusals: unknown[] = [];
     const engine = keepingRefusals(recorded, refusals);
     await engine.putPage('people/alice-example', { type: 'person', title: 'people/alice-example', compiled_truth: 'Fixture.', timeline: '', frontmatter: {} }, { sourceId: 'default' });
@@ -184,11 +184,7 @@ describe('engine parity: remote mention links', () => {
     } finally {
       await disposePersistenceConsumer(engine);
     }
-    if (backend === 'rust') {
-      const sites = refusals.map(error => (String((error as Error).stack).includes(RUST_KNOWN_STOP) ? RUST_KNOWN_STOP : String((error as Error).stack)));
-      expect({ refused: refusals.length > 0, sites: [...new Set(sites)] }).toEqual({ refused: true, sites: [RUST_KNOWN_STOP] });
-      throw refusals[0];
-    }
+    expect(refusalSites(refusals)).toEqual([]);
     return answers;
   }));
 
@@ -198,7 +194,7 @@ describe('engine parity: remote mention links', () => {
         methods: ['getLinks', 'addLinksBatch', 'insertOauthClient'],
         timeout: 90_000,
         ...(transport === 'http' ? { requires: 'oauth_write_grant' as const } : {}),
-      }, async (recorded, backend) => withHome(async () => {
+      }, async (recorded) => withHome(async () => {
         const refusals: unknown[] = [];
         const engine = keepingRefusals(recorded, refusals);
         const page = (slug: string, type: string) => engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `${slug} fixture.`, timeline: '', frontmatter: {} }, { sourceId: 'default' });
@@ -225,11 +221,7 @@ describe('engine parity: remote mention links', () => {
         } finally {
           await disposePersistenceConsumer(engine);
         }
-        if (backend === 'rust' && transport === 'stdio') {
-          const sites = refusals.map(error => (String((error as Error).stack).includes(RUST_KNOWN_STOP) ? RUST_KNOWN_STOP : String((error as Error).stack)));
-          expect({ refused: refusals.length > 0, sites: [...new Set(sites)] }).toEqual({ refused: true, sites: [RUST_KNOWN_STOP] });
-          throw refusals[0];
-        }
+        expect(refusalSites(refusals)).toEqual([]);
         return answers;
       }));
     }

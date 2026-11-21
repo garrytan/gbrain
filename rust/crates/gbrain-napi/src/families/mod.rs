@@ -3,6 +3,8 @@
 //! so building a family never edits this list.
 
 mod access_rules;
+mod belief_ledger;
+mod belief_purge;
 mod chunks;
 mod cli_entities;
 mod cli_reads_export;
@@ -13,6 +15,7 @@ mod cli_sources;
 mod config;
 mod fact_relink;
 mod fact_relink_writes;
+mod facts_holding_purges;
 mod field_usage;
 mod graph;
 mod import_members;
@@ -58,7 +61,6 @@ mod facts;
 mod facts_cycle;
 mod facts_doctor;
 mod facts_extraction;
-mod facts_holding_purges;
 mod facts_loops;
 mod facts_purge;
 mod facts_repair;
@@ -74,6 +76,8 @@ mod ontology;
 mod page_body;
 mod page_embedding_budget;
 mod page_ops;
+mod purge_effects;
+mod purge_plan;
 mod raw_files;
 mod relations;
 mod remote_links;

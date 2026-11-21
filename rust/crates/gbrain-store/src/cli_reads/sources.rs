@@ -487,6 +487,7 @@ impl Store {
                 chunker_version: None,
                 last_commit: None,
                 newest_content_at_us: None,
+                purge_epoch: 0,
             };
             put_json(tx, &keys::text(keys::SOURCE, &[id]), &record)?;
             Ok(SourceRow::from(record))

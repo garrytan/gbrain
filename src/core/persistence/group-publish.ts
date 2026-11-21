@@ -36,6 +36,7 @@
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SourceStateOptions } from '../engine-sql/write-misc.ts';
+import { SOURCE_PURGE_EPOCH_SQL } from '../engine-sql/sync-reason-reads.ts';
 import { OperationError } from '../ops/contract.ts';
 import { withoutReadDeadline } from '../read-deadline.ts';
 import { authorizeStoredRequest, sharedWriterRow, storedAuthorizationReads } from './authority.ts';
@@ -216,6 +217,12 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) =>
       stable.has(flat(sql)) && (!opts?.signal || opts.timeoutMs !== undefined)
         ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params)) : target.executeRaw(sql, params, opts);
+    // The typed purge-epoch read (reason-trailers.ts) shares the SOURCE_PURGE_EPOCH_SQL answer when that read is stable here,
+    // so a screen reads the epoch once whichever way it is asked first.
+    if (key === 'readSourcePurgeEpoch' && stable.has(flat(SOURCE_PURGE_EPOCH_SQL))) return (sourceId: string) =>
+      once<{ purge_epoch: string | number }[]>(JSON.stringify([flat(SOURCE_PURGE_EPOCH_SQL), [sourceId]]),
+        () => target.readSourcePurgeEpoch(sourceId).then(epoch => epoch === null ? [] : [{ purge_epoch: epoch }]))
+        .then(rows => rows[0]?.purge_epoch ?? null);
     // GBRA-75 wave 10: every config key a member reads comes from one config read for the group (the same value per key).
     if (key === 'getConfig') return (name: string) => once('config:*', () => target.getAllConfig()).then(all => Object.hasOwn(all, name) ? all[name]! : null);
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);

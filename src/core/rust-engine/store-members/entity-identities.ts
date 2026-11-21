@@ -105,7 +105,7 @@ export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsI
       decision_id: d.decision_id, verdict: d.verdict, members: d.members, group_id: d.group_id ?? null, entity_id: d.entity_id ?? null,
       canonical: d.canonical ? { source_id: d.canonical.source_id, slug: d.canonical.slug } : null, decided_by: d.decided_by,
       decided_at: d.decided_at ?? null, origin: d.origin, home_source_id: d.home_source_id ?? null, git_blob: d.git_blob ?? null,
-      evidence: d.evidence ? [...d.evidence] : null,
+      evidence: d.evidence?.length ? [...d.evidence] : null,
     })),
     remove: [...(input.remove ?? [])],
     expect_revision: input.expectRevision ?? null,

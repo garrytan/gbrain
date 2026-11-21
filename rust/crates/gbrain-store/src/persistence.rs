@@ -78,10 +78,13 @@ mod notifier;
 mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
+mod projection_rebuild;
+mod purge_effects;
 mod receipt_list;
 mod sync_pass_pages;
 mod sync_run_reads;
 mod topology;
+pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod worktree_admission;
 #[cfg(test)]
 mod worktree_claim_tests;
@@ -103,7 +106,14 @@ pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
-pub use receipt_list::WriteRequestListFilter;
+pub use projection_rebuild::{
+    ProjectionJobKey, ProjectionWindowCandidate, QueuedProjectionFilter, QueuedProjectionKey,
+    QueuedProjectionPages,
+};
+pub use purge_effects::{
+    GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,
+};
+pub use receipt_list::{IncarnationRequestFilter, WriteRequestListFilter};
 pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;

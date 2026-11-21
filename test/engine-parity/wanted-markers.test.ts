@@ -182,6 +182,7 @@ describe('engine parity: commit notifier wanted markers', () => {
     await engine.pruneSatisfiedWantedMarkers(['alpha']);
     const afterPrune = order(await readMarkers(engine, ['alpha']));
     // A freshness marker naming another head settles when the source reached the checkout head the drainer saw.
+    await tick();
     const other = await upsertMarker(engine, { sourceId: 'alpha', intent: 'freshness', wantedHead: 'c9', requestedBy: 'notifier' });
     await engine.settleFreshnessMarker('alpha', other.generation, 'c8');
     const unsettled = order(await readMarkers(engine, ['alpha']));

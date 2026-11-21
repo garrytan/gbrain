@@ -405,20 +405,29 @@ fn shuffle_seed(seed: Option<f64>, env: &dyn Env) -> u64 {
     }
 }
 
-/// `{ page, tags, revision, sourceIncarnation, withdrawals }`, as `Store::read_page_snapshot`.
+/// `{ page, tags, revision, sourceIncarnation, withdrawals }` (and the global purge fields), as
+/// `Store::read_page_snapshot`.
 fn snapshot_json(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
     let incarnation = read_source(read, &page.source_id)?
         .map(|s| s.incarnation)
         .unwrap_or_default();
     let mut tags = page.tags.clone();
     tags.sort();
-    Ok(json!({
+    let mut snapshot = json!({
         "page": page.to_page_with_columns(read)?,
         "tags": tags,
         "revision": page.knowledge_revision,
         "sourceIncarnation": incarnation,
-        "withdrawals": crate::trust::withdrawals::page_withdrawals(read, &page.source_id, &page.slug)?,
-    }))
+    });
+    if let Value::Object(fields) = &mut snapshot {
+        fields.extend(crate::page_withdrawals::snapshot_withdrawals(
+            read,
+            &page.source_id,
+            &page.slug,
+            false,
+        )?);
+    }
+    Ok(snapshot)
 }
 
 /// A canonical field changed: a new knowledge revision, and the chunks no longer match the text

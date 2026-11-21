@@ -202,13 +202,9 @@ export async function recheckRequestsCarrying(tx: Pick<BrainEngine, 'executeRaw'
  * returns the text.
  */
 export async function findRequestsCarrying(engine: BrainEngine, sourceId: string, claim: string, reason = claim, limit = 10_000): Promise<IntentRedactionTarget[]> {
-  const needle = claim.toLowerCase();
   // The claim as it appears inside a JSON string (quotes and backslashes escaped), lowercased.
-  const jsonNeedle = JSON.stringify(claim).slice(1, -1).toLowerCase();
-  const carries = (column: string) => `(${column} IS NOT NULL AND (strpos(lower(${column}::text),$2)>0 OR strpos(lower(${column}::text),$3)>0 OR strpos(lower(${column}::text),$4)>0))`;
-  return engine.executeRaw<IntentRedactionTarget>(`SELECT id::text AS id,principal_kind,principal_id FROM persistence_requests
-    WHERE source_id=$1 AND (${carries('intent')} OR ${carries('outcome')} OR ${carries('error_detail')} OR ${carries('error_message')})
-    ORDER BY sequence LIMIT $5`, [sourceId, needle, jsonNeedle, JSON.stringify(reason).slice(1, -1).toLowerCase(), limit]);
+  return engine.listRequestsCarryingClaim({ sourceId, claimLower: claim.toLowerCase(), claimJson: JSON.stringify(claim).slice(1, -1).toLowerCase(),
+    reason: JSON.stringify(reason).slice(1, -1).toLowerCase(), limit });
 }
 
 /** Replace every JSON string that carries one of `needles` (case-insensitive) with "[purged]"; structure and other values stay. */
@@ -231,10 +227,9 @@ export async function findRequestsForSlugs(engine: BrainEngine, sourceId: string
  * Wave B (spec 11): unfinished requests of `sourceId` whose intent references one of `stagingIds` by
  * `body_ref` (the request publishes that staged body, so its text lives in the staging, not the intent).
  */
-export async function findRequestsHoldingStagings(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, stagingIds: readonly string[]): Promise<IntentRedactionTarget[]> {
+export async function findRequestsHoldingStagings(engine: Pick<BrainEngine, 'listRequestsHoldingStagings'>, sourceId: string, stagingIds: readonly string[]): Promise<IntentRedactionTarget[]> {
   if (!stagingIds.length) return [];
-  return engine.executeRaw<IntentRedactionTarget>(`SELECT id::text AS id,principal_kind,principal_id FROM persistence_requests
-    WHERE source_id=$1 AND state IN ('queued','deferred','running','recovering') AND intent->'body_ref'->>'staging_id'=ANY($2::text[]) ORDER BY sequence`, [sourceId, [...stagingIds]]);
+  return engine.listRequestsHoldingStagings(sourceId, stagingIds);
 }
 
 /**

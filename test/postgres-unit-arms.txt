@@ -155,6 +155,8 @@ test/engine-parity/access-tokens.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
+test/engine-parity/belief-ledger.test.ts
+test/engine-parity/belief-purge-probes.test.ts
 test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
 test/engine-parity/chunk-reads.test.ts
@@ -183,11 +185,13 @@ test/engine-parity/entity-basename.test.ts
 test/engine-parity/entity-fuzzy.test.ts
 test/engine-parity/entity-identities.test.ts
 test/engine-parity/entity-reads.test.ts
+test/engine-parity/export-bytes.test.ts
 test/engine-parity/extract-takes-reads.test.ts
 test/engine-parity/extract-takes.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/fact-future-order.test.ts
 test/engine-parity/fact-pool-widening.test.ts
+test/engine-parity/fact-purge-commit.test.ts
 test/engine-parity/fact-purge-ledger.test.ts
 test/engine-parity/fact-purge-sites.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
@@ -208,10 +212,13 @@ test/engine-parity/facts-trust.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/family-tail-sites.test.ts
 test/engine-parity/fence-overlay.test.ts
+test/engine-parity/fenced-import-purge.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/files-ops-sites.test.ts
+test/engine-parity/floor-folder-rule.test.ts
 test/engine-parity/forget-commit.test.ts
 test/engine-parity/forget-reach-reads.test.ts
+test/engine-parity/forget-rebuild.test.ts
 test/engine-parity/forget-remember.test.ts
 test/engine-parity/git-holds.test.ts
 test/engine-parity/harness-consumer-stop.test.ts
@@ -260,6 +267,9 @@ test/engine-parity/pages.test.ts
 test/engine-parity/persistence-declaration.test.ts
 test/engine-parity/persistence.test.ts
 test/engine-parity/private-page-reads.test.ts
+test/engine-parity/projection-rebuild-steps.test.ts
+test/engine-parity/purge-dry-run.test.ts
+test/engine-parity/purge-plan.test.ts
 test/engine-parity/put-source-fork.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
@@ -271,6 +281,7 @@ test/engine-parity/remote-links.test.ts
 test/engine-parity/remote-policy.test.ts
 test/engine-parity/repair-frontmatter-holds.test.ts
 test/engine-parity/request-tools-persist.test.ts
+test/engine-parity/resident-projection.test.ts
 test/engine-parity/resolve-reads.test.ts
 test/engine-parity/restriction-flag-reads.test.ts
 test/engine-parity/retrieval-coverage.test.ts
@@ -296,6 +307,8 @@ test/engine-parity/sync-pass-pages.test.ts
 test/engine-parity/sync-route.test.ts
 test/engine-parity/sync-run-reads.test.ts
 test/engine-parity/sync-status-reads.test.ts
+test/engine-parity/take-purge-ledger.test.ts
+test/engine-parity/take-purge-overlay.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/telemetry.test.ts
 test/engine-parity/timeline-reads.test.ts

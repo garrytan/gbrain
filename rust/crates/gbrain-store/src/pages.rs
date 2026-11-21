@@ -612,6 +612,9 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 ///
 /// The record's `trust_tier` and `write_origin` are stamped first, as PGLite's
 /// `trust_tier_stamp` trigger stamps every row written to `pages` (see [`stamp_page_trust`]).
+/// Before that, a write that stores a content hash tombstoned in its source is refused with
+/// `purged_content`, as the `pages_refuse_purged` trigger refuses it
+/// (`facts::page_purges::refuse_purged_page`).
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
     write_page_as(tx, record, false)
 }
@@ -626,6 +629,7 @@ pub(crate) fn write_page_setting_vector(tx: &mut dyn KvWrite, record: &PageRecor
 
 fn write_page_as(tx: &mut dyn KvWrite, record: &PageRecord, sets_vector: bool) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
+    crate::facts::page_purges::refuse_purged_page(&*tx, before.as_ref(), record)?;
     let mut stamped = stamp_page_trust(before.as_ref(), record)?;
     // `gbrain_stamp_revision_attribution`: the actor of the write that set the live revision.
     stamped.revision_receipt = crate::write_receipt::stamp_revision(
@@ -1296,6 +1300,9 @@ pub(crate) fn put_page_in(
     };
     // PGLite's `trg_pages_search_vector` (BEFORE INSERT OR UPDATE OF title, timeline) rewrites the
     // page keyword vector on every `putPage`, also when the values are unchanged.
+    // `putPage` is `INSERT ... ON CONFLICT DO UPDATE`: the `BEFORE INSERT` purge trigger fires for the
+    // insert attempt, so a tombstoned hash is refused here even when the page already holds it.
+    crate::facts::page_purges::refuse_purged_page(&*tx, None, &record)?;
     write_page_setting_vector(tx, &record)?;
     if let Some(stamp) = &options.contextual_retrieval {
         crate::aliases::stamp_contextual_retrieval(tx, record.id, stamp)?;
@@ -1416,7 +1423,8 @@ fn cmp_updated(a: &PageRecord, b: &PageRecord) -> Ordering {
 
 impl Store {
     /// `readPageSnapshot(slug, opts)`: `{page, tags, revision, sourceIncarnation, withdrawals}`
-    /// or `None` when the page is not visible in the scope.
+    /// (with `globalPurges` and `globalPurgeRows` when the source has a `*` tombstone,
+    /// `page_withdrawals.rs`) or `None` when the page is not visible in the scope.
     pub fn read_page_snapshot(&self, slug: &str, scope: &ReadScope) -> Result<Option<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
@@ -1428,17 +1436,21 @@ impl Store {
             .unwrap_or_default();
         let mut tags = page.tags.clone();
         tags.sort();
-        Ok(Some(json!({
+        let mut snapshot = json!({
             "page": page.to_page_with_columns(&*read)?,
             "tags": tags,
             "revision": page.knowledge_revision,
             "sourceIncarnation": incarnation,
-            "withdrawals": crate::trust::withdrawals::page_withdrawals(
+        });
+        if let Value::Object(fields) = &mut snapshot {
+            fields.extend(crate::page_withdrawals::snapshot_withdrawals(
                 &*read,
                 &page.source_id,
                 &page.slug,
-            )?,
-        })))
+                scope.exclude_private.is_some(),
+            )?);
+        }
+        Ok(Some(snapshot))
     }
 
     /// `putPage(slug, page, opts)`: the stored `Page`.
