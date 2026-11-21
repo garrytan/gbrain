@@ -40,6 +40,8 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['findByTitleFuzzy', 'SELECT slug, similarity(title,', e => e.findByTitleFuzzy('A title', undefined, 0.55, 'default')],
   ['readSegmentTexts', 'FROM page_segment_texts t', e => e.readSegmentTexts('default', [new Uint8Array(32)])],
   ['readManifest', 'FROM page_body_manifest m', e => e.readManifest(1)],
+  // Page preparation reads an OAuth client's member binding (persistence/page-visibility.ts defaultSourceMemberWriter).
+  ['readOauthClient', 'FROM oauth_clients WHERE client_id', e => e.readOauthClient('a-client')],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];

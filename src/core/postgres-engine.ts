@@ -4161,7 +4161,7 @@ export class PostgresEngine implements BrainEngine {
   async insertOauthClient(row: spendLog.OauthClientInsert) { return spendLog.insertOauthClient(this, row); }
   async updateOauthClientBudget(clientId: string, usd: number | null) { return spendLog.updateOauthClientBudget(this, clientId, usd); }
   async readAgentClientSpend() { return spendLog.readAgentClientSpend(this); }
-  async readOauthClient(clientId: string) { return oauthClients.readOauthClient(this, clientId); }
+  readOauthClient(clientId: string) { return this.ownRawRead(exec => oauthClients.readOauthClient(exec, clientId)); }
   async listOauthClients() { return oauthClients.listOauthClients(this); }
   async patchOauthClient(clientId: string, patch: oauthClients.OauthClientPatch, guard?: oauthClients.OauthClientPatchGuard) { return oauthClients.patchOauthClient(this, clientId, patch, guard); }
   async insertAccessToken(row: accessTokens.AccessTokenInsert) { return accessTokens.insertAccessToken(this, row); }
