@@ -575,6 +575,9 @@ impl Store {
         let mut state = lock(&tx.state);
         Self::top_savepoint(&state, depth)?;
         state.savepoints.pop();
+        // The dropped writes take the vector generation back with them; the cached index was
+        // built from them.
+        self.vectors.clear();
         state.restore_counters()
     }
 
@@ -612,6 +615,7 @@ impl Store {
                 return Ok(());
             };
             drop(base);
+            self.vectors.clear();
             state.savepoints.clear();
             state.statement = None;
             state.root_locks.clear();

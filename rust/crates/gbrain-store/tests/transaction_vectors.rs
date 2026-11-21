@@ -1,5 +1,6 @@
 //! Vector reads inside an explicit transaction (`transactions.rs`): a read that scans stored vectors
-//! and reads each take's row returns instead of waiting on itself.
+//! and reads each take's row returns instead of waiting on itself, and a savepoint rollback takes
+//! its vectors out of what the transaction's vector search sees.
 
 mod common;
 
@@ -10,6 +11,7 @@ use common::TempDir;
 use gbrain_store::embeddings::TakeEmbeddingInput;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::takes::TakeInput;
+use gbrain_store::vectors::TakesVectorOptions;
 use gbrain_store::{OpenOptions, Store};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -66,6 +68,14 @@ fn embed(store: &Store, take_id: u64, vector: Vec<f64>) {
         .unwrap();
 }
 
+/// The best score of `query` over the takes `store` sees.
+fn best_score(store: &Store, query: &[f64]) -> f64 {
+    let rows = store
+        .search_takes_vector(query, &TakesVectorOptions::default())
+        .unwrap();
+    rows[0]["score"].as_f64().unwrap()
+}
+
 /// With one take vector stored, `hasStoredVectors('takes')` inside a transaction scans the vectors
 /// and reads the take of each one. It answers, and the transaction still commits.
 #[test]
@@ -87,4 +97,34 @@ fn a_take_vector_read_inside_a_transaction_answers_instead_of_waiting_on_itself(
     assert!(committed);
     // The writer is free again.
     assert!(store.has_stored_vectors("takes").unwrap());
+}
+
+/// A take vector written inside a savepoint that rolls back is gone from the transaction's vector
+/// search, also once a later write moves the vector generation to the number it had before.
+#[test]
+fn a_savepoint_rollback_takes_its_vectors_out_of_the_transaction_search() {
+    let dir = TempDir::new("tx-vector-savepoint");
+    let (store, take_id) = brain_with_take(&dir);
+    let tx = store.begin_transaction(false).unwrap();
+    let depth = tx.savepoint().unwrap();
+    embed(&tx, take_id, axis(0));
+    assert_eq!(
+        best_score(&tx, &axis(0)),
+        1.0,
+        "the savepoint's vector is seen"
+    );
+    tx.rollback_savepoint(depth).unwrap();
+    embed(&tx, take_id, axis(1));
+    assert_eq!(
+        best_score(&tx, &axis(1)),
+        1.0,
+        "the vector written after the rollback is the one searched"
+    );
+    assert_eq!(
+        best_score(&tx, &axis(0)),
+        0.0,
+        "the rolled-back vector is gone"
+    );
+    tx.commit_transaction().unwrap();
+    assert_eq!(best_score(&store, &axis(1)), 1.0);
 }
