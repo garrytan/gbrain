@@ -25,11 +25,10 @@ const { parityTest } = parityArms(testBackends());
  * Each form writes 2026-02-01 (or an instant at midnight UTC on that day). `dated` says whether the read takes it as a
  * date: PR 9908 (af0ec1146e) reads a `YYYY-MM-DD` day as written, and a YAML timestamp (`STAMP_FORM`) by its instant,
  * which must be midnight UTC. The rest are refusals: an instant that is not midnight UTC, or a spelling outside the
- * form. `9999-12-31T24:00:00Z` rolls into year 10000: `validDate` refuses it, but the pick reads `validDateSql`, which
- * dates the edition 10000-01-01. That is after the as-of date, so the read picks the January edition and, as the
- * February edition's only change is its date, marks it `ambiguous_edition_dates`. Rust mirrors `validDateSql`.
+ * form. An instant that rolls into year 10000 (`9999-12-31T24:00:00Z`, `9999-12-31T23:00:00-01:00`) is no date:
+ * `validDate` and `validDateSql` both take years 1000 to 9999 only (PR 9908, 102ea0030f), and Rust mirrors them.
  */
-const FORMS: Array<{ label: string; value: string; dated: boolean; why?: string }> = [
+const FORMS: Array<{ label: string; value: string; dated: boolean }> = [
   { label: 'date', value: '2026-02-01', dated: true },
   { label: 'T Z', value: '2026-02-01T00:00:00Z', dated: true },
   { label: 'T .000Z', value: '2026-02-01T00:00:00.000Z', dated: true },
@@ -84,13 +83,14 @@ const FORMS: Array<{ label: string; value: string; dated: boolean; why?: string 
   { label: 'x separator', value: '2026-02-01x00:00:00', dated: false },
   { label: 'T and no time', value: '2026-02-01T', dated: false },
   { label: 'five-digit year', value: '20260-02-01T00:00:00Z', dated: false },
-  { label: 'rolls into year 10000', value: '9999-12-31T24:00:00Z', dated: false, why: 'ambiguous_edition_dates' },
+  { label: 'rolls into year 10000', value: '9999-12-31T24:00:00Z', dated: false },
+  { label: 'offset rolls into year 10000', value: '9999-12-31T23:00:00-01:00', dated: false },
 ];
 
 /** A dated edition picked in March: the form's edition when its date reads, else the January edition before it. */
-const expected = (form: { dated: boolean; why?: string }) => form.dated
+const expected = (form: { dated: boolean }) => form.dated
   ? { body: 'february edition', status: 'in_force', valid_from: '2026-02-01', why: null }
-  : { body: 'january edition', status: 'in_force', valid_from: '2026-01-01', why: form.why ?? null };
+  : { body: 'january edition', status: 'in_force', valid_from: '2026-01-01', why: null };
 
 describe('engine parity: valid_from forms under get_page as_of', () => {
   parityTest('get_page as_of dates an edition by each written valid_from form', {

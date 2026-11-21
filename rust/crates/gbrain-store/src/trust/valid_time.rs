@@ -114,9 +114,9 @@ pub struct ValidTimePickQuery {
 ///   with digits, and an optional zone (spaces or tabs, then `Z` or `+H`, `+HH`, `+HH:MM`, or the
 ///   same with `-`). The written day must be a real calendar date from year 1000. The instant is
 ///   built as js-yaml builds it (the first three fraction digits are milliseconds, a field out of
-///   range rolls over, the zone is subtracted); it must be midnight UTC on a day from year 1000, and
-///   that day is the answer. A day that rolls into year 10000 reads as `validDateSql` reads it
-///   (`10000-01-01`), where `validDate` answers null.
+///   range rolls over, the zone is subtracted); it must be midnight UTC on a day of a year from 1000
+///   to 9999 (`BETWEEN 1000 AND 9999`), and that day is the answer. A day that rolls into year 10000
+///   is no date, as in `validDate`.
 pub(crate) fn valid_date(value: Option<&Value>) -> Option<String> {
     let s = value?.as_str()?;
     let mut c = Cursor {
@@ -182,7 +182,9 @@ pub(crate) fn valid_date(value: Option<&Value>) -> Option<String> {
         return None;
     }
     let (y, m, d) = civil_from_days(instant.div_euclid(DAY_MS));
-    (y >= 1000).then(|| format!("{y:04}-{m:02}-{d:02}"))
+    (1000..=9999)
+        .contains(&y)
+        .then(|| format!("{y:04}-{m:02}-{d:02}"))
 }
 
 const DAY_MS: i64 = 86_400_000;
@@ -719,8 +721,9 @@ mod tests {
             ("2026-02-30T00:00:00Z", None),
             ("2026-02-01T00:00:00+0100", None),
             ("2026-02-01 00:00:00\n", None),
-            // validDate answers null here; the pick reads validDateSql, which the store mirrors.
-            ("9999-12-31T24:00:00Z", Some("10000-01-01")),
+            // A rollover into year 10000 is no date, in validDate and validDateSql alike.
+            ("9999-12-31T24:00:00Z", None),
+            ("9999-12-31T23:00:00-01:00", None),
             ("1000-01-01T00:00:00+00:30", None),
             ("1000-01-01T00:00:00-24:00", Some("1000-01-02")),
             ("0999-12-31T24:00:00Z", None),
@@ -762,8 +765,7 @@ mod tests {
             ("2024-13-01", None),
             ("2024-03", None),
             ("nope", None),
-            // validDate answers null here; the pick reads validDateSql, which the store mirrors.
-            ("9999-12-31T72:00:00Z", Some("10000-01-03")),
+            ("9999-12-31T72:00:00Z", None),
         ];
         for (input, want) in cases {
             assert_eq!(
