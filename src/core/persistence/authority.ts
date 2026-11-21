@@ -294,7 +294,7 @@ async function authorizeStoredTakeHolders(engine: AuthorityEngine, row: WriteReq
  * identical call once, like the statement text it replaced.
  */
 const ONCE_TYPED_READS: ReadonlySet<PropertyKey> = new Set<keyof BrainEngine>([
-  'readLinkedMember', 'readFolderAccess', 'readLiveMember', 'hasLabelledOnlyMember', 'readWriteVisibilityProbe',
+  'readLinkedMember', 'readFolderAccess', 'readLiveMember', 'hasLabelledOnlyMember', 'readWriteVisibilityProbe', 'getConfig',
 ]);
 function onceReads(engine: BrainEngine): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();

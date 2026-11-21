@@ -368,8 +368,8 @@ replaceDerivedAliases	sync_aliases	yes	13	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	23	no	yes	yes	serves
-setConfig	config	yes	29	no	yes	yes	serves
+getConfig	config	yes	25	no	yes	yes	serves
+setConfig	config	yes	31	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -392,7 +392,7 @@ readOAuthClientMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readAccessTokenMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readLocalWriterMemberGrant	access_grants	yes	4	no	yes	yes	serves
 readSharedSkillServingEpoch	access_grants	yes	2	no	yes	yes	serves
-insertAccessMember	access_members	yes	17	no	yes	yes	serves
+insertAccessMember	access_members	yes	19	no	yes	yes	serves
 setAccessMemberDisabled	access_members	yes	10	no	yes	yes	serves
 setAccessMemberEmail	access_members	yes	2	no	yes	yes	serves
 setAccessMemberKind	access_members	yes	2	no	yes	yes	serves
@@ -780,7 +780,7 @@ readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
 pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	4	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -872,7 +872,7 @@ listMemoryProposalRows	write_misc	yes	1	no	yes	yes	serves
 listOwnerProposalRows	write_misc	yes	1	no	yes	yes	serves
 attachSourcePath	write_misc	yes	1	no	yes	yes	serves
 listAppliedPolicyRevisions	write_misc	yes	2	no	yes	yes	serves
-readLiveMember	write_misc	yes	9	no	yes	yes	serves
+readLiveMember	write_misc	yes	11	no	yes	yes	serves
 readFolderAccess	write_misc	yes	4	no	yes	yes	serves
 readMayActFor	write_misc	yes	3	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	3	no	yes	yes	serves
