@@ -244,10 +244,31 @@ function matchBrace(t: string, open: number): number {
 
 interface RustFn { name: string; file: string; line: number; body: string; bodyAt: number; text: string; napi: boolean }
 
+/**
+ * The files of the modules a `#[cfg(test)] mod name;` line declares (`dir/name.rs` and everything under `dir/name/`,
+ * where `dir` is the declaring file's module directory): test-only code, skipped like an inline `#[cfg(test)] mod`.
+ */
+function testModuleFiles(files: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8');
+    const base = file.replace(/\.rs$/, '');
+    const dir = /\/(?:lib|main|mod)\.rs$/.test(file) ? file.replace(/\/[^/]+$/, '') : base;
+    for (const m of text.matchAll(/#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;/g)) {
+      const mod = join(dir, m[1]!);
+      for (const candidate of files) if (candidate === `${mod}.rs` || candidate === join(mod, 'mod.rs') || candidate.startsWith(`${mod}/`)) out.add(candidate);
+    }
+  }
+  return out;
+}
+
 function buildRustIndex(): Map<string, RustFn[]> {
   const fns = new Map<string, RustFn[]>();
   for (const crate of ['gbrain-store', 'gbrain-napi']) {
-    for (const file of listFiles(join(ROOT, 'rust/crates', crate, 'src'), '.rs')) {
+    const files = listFiles(join(ROOT, 'rust/crates', crate, 'src'), '.rs');
+    const testOnly = testModuleFiles(files);
+    for (const file of files) {
+      if (testOnly.has(file)) continue;
       let t = stripRust(readFileSync(file, 'utf8'));
       const test = /#\[cfg\(test\)\]\s*mod\s+\w+\s*\{/g;
       for (let m = test.exec(t); m; m = test.exec(t)) {
