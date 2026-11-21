@@ -12,7 +12,8 @@
  *  - Seam: the fake postgres.js driver (test/helpers/fake-postgres-sql.ts) records the text; no database runs.
  */
 import { describe, expect, test } from 'bun:test';
-import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
+import { makeEngineWithFake, runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
+import { withRequestSignal } from '../src/core/request-signal.ts';
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
 import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
@@ -1741,7 +1742,76 @@ const PINS: Pin[] = [
     case: { method: 'readLongPageSizes', variant: 'low', run: e => e.readLongPageSizes([3], { sourceIds: ['default', 'wiki'], excludePrivate: true, minTrust: 'operator_curated' }, { includeTimeline: false }) },
     texts: () => [pinnedLongPageSizes({ sourceIds: ['default', 'wiki'], excludePrivate: true, minTrust: 'operator_curated' }, false)],
   },
+  ...reflexPins(),
 ];
+
+type PinPrivacy = 'none' | 'caller' | 'floor';
+
+/** context/retrieval-reflex.ts's `privacySql` at efeb078093 (`excludePrivate === false` is 'none'). */
+function pinnedReflexPrivacy(privacy: PinPrivacy): string {
+  return privacy === 'none' ? '' : `AND ${privacy === 'caller' ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}`;
+}
+
+/** Each retrieval-reflex statement and the brief's entity-page statement at efeb078093, verbatim, for every privacy mode. */
+function reflexPins(): Pin[] {
+  const PREFIX_SQL = boundedBodyPrefixSql('p');
+  const at = (line: string) => `src/core/context/retrieval-reflex.ts:${line} at efeb078093`;
+  const scope = (privacy: PinPrivacy) => ({ sourceIds: ['default', 'wiki'], privacy });
+  const names = { kind: 'names' as const, titlesLc: ['alice example'], exactSlugs: ['alice-example'], slugSuffixes: ['%/alice-example'] };
+  return (['none', 'caller', 'floor'] as const).flatMap((privacy): Pin[] => {
+    const privacySql = pinnedReflexPrivacy(privacy);
+    return [
+      { from: `${at('79')} weakTitleHits (${privacy})`,
+        case: { method: 'readReflexPages', variant: `titles-${privacy}`, run: e => e.readReflexPages(scope(privacy), { kind: 'titles', titlesLc: ['acme example'] }) },
+        texts: () => [`SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+         FROM pages p
+        WHERE p.deleted_at IS NULL ${privacySql}
+          AND p.source_id = ANY($1::text[])
+          AND lower(p.title) = ANY($2::text[])`] },
+      { from: `${at('357')} the alias live check (${privacy})`,
+        case: { method: 'readReflexLiveKeys', variant: privacy, run: e => e.readReflexLiveKeys(scope(privacy), ['people/alice-example']) },
+        texts: () => [`SELECT p.slug, p.source_id FROM pages p
+            WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[]) ${privacySql}`] },
+      { from: `${at('417')} the title, slug and surname arm (${privacy})`,
+        case: { method: 'readReflexPages', variant: `surname-${privacy}`, run: e => e.readReflexPages(scope(privacy), { ...names, surnamePatterns: ['% example'] }) },
+        texts: () => [`SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[])
+                 OR p.slug = ANY($3::text[])
+                 OR p.slug LIKE ANY($4::text[])
+                 OR (lower(p.title) LIKE ANY($5::text[]) AND p.type = 'person') ) ORDER BY p.id`] },
+      { from: `${at('428')} the title and slug arm (${privacy})`,
+        case: { method: 'readReflexPages', variant: `names-${privacy}`, run: e => e.readReflexPages(scope(privacy), names) },
+        texts: () => [`SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[])
+             OR p.slug = ANY($3::text[])
+             OR p.slug LIKE ANY($4::text[]) ) ORDER BY p.id`] },
+      { from: `${at('447')} the alias-only hydration (${privacy})`,
+        case: { method: 'readReflexPages', variant: `slugs-${privacy}`, run: e => e.readReflexPages(scope(privacy), { kind: 'slugs', slugs: ['people/alice-example'] }) },
+        texts: () => [`SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+           FROM pages p
+          WHERE p.deleted_at IS NULL ${privacySql} AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[])`] },
+      { from: `${at('531')} the CJK exact arm (${privacy})`,
+        case: { method: 'readReflexPages', variant: `cjk-${privacy}`, run: e => e.readReflexPages(scope(privacy), { kind: 'cjkExact', norms: ['爱丽丝'] }) },
+        texts: () => [`SELECT p.slug, p.source_id, p.title, p.type, p.frontmatter, ${PREFIX_SQL} AS compiled_truth
+             FROM pages p
+            WHERE p.deleted_at IS NULL ${privacySql}
+              AND p.source_id = ANY($1::text[])
+              AND ( lower(p.title) = ANY($2::text[]) OR p.slug = ANY($3::text[]) )`] },
+      { from: `src/core/context/proactive-brief.ts:203 entityPages at efeb078093 (${privacy}, a trust floor)`,
+        case: { method: 'readBriefEntityPages', variant: privacy, run: e => e.readBriefEntityPages('default', ['people/alice-example'], { privacy, eligibility: { floor: 'operator_curated', suppressFlagged: true } }) },
+        texts: () => [`SELECT p.slug, p.title, p.type FROM pages p
+      WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL
+        ${privacy !== 'none' ? `AND ${privacy === 'caller' ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : ''}
+        AND ${pageEligibleSql('p', { floor: 'operator_curated', suppressFlagged: true })}`] },
+    ];
+  });
+}
 
 /** search/entity-facts.ts newestFacts's statement at efeb078093, verbatim (`worldOnly` stands for `worldOnlyFacts(opts.remote)`). */
 function pinnedNewestFacts(remote: boolean, worldOnly: boolean, minTrust?: TrustTier): string {
@@ -1821,6 +1891,27 @@ describe('caller raw SQL moved into typed members keeps its Postgres text byte f
       expect(capture.error).toBeUndefined();
       const sent = capture.trace.filter(s => s.kind === 'query').map(s => s.text);
       expect(sent).toEqual(expected);
+    });
+  }
+});
+
+describe('the reflex members keep the request-abort check of executeRaw', () => {
+  // The warm CLI socket and the Rust owner IPC server abort a request whose client left; the Postgres engine then
+  // refuses every later statement of it. The reflex members delegate through executeRaw so that check stays.
+  const scope = { sourceIds: ['default'], privacy: 'floor' as const };
+  const calls: Array<[string, (e: any) => Promise<unknown>]> = [
+    ['readReflexPages', e => e.readReflexPages(scope, { kind: 'slugs', slugs: ['people/alice-example'] })],
+    ['readReflexLiveKeys', e => e.readReflexLiveKeys(scope, ['people/alice-example'])],
+    ['readBriefEntityPages', e => e.readBriefEntityPages('default', ['people/alice-example'], { privacy: 'floor' })],
+  ];
+  for (const [method, call] of calls) {
+    test(`${method} throws AbortError and sends no statement on an aborted request`, async () => {
+      const { engine, fake } = makeEngineWithFake();
+      const controller = new AbortController();
+      controller.abort(new Error('client left'));
+      const error = await withRequestSignal(controller.signal, () => call(engine)).then(() => undefined, (e: unknown) => e);
+      expect((error as DOMException | undefined)?.name).toBe('AbortError');
+      expect(fake.trace.filter(s => s.kind === 'query')).toEqual([]);
     });
   }
 });

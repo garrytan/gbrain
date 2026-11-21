@@ -200,13 +200,10 @@ async function entityPages(
   opts: { excludePrivate: boolean; forCaller?: boolean; eligibility?: ReadEligibility },
 ): Promise<Map<string, string>> {
   if (!slugs.length) return new Map();
-  const rows = await engine.executeRaw<{ slug: string; title: string | null; type: string | null }>(
-    `SELECT p.slug, p.title, p.type FROM pages p
-      WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL
-        ${opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : ''}
-        AND ${pageEligibleSql('p', opts.eligibility)}`,
-    [sourceId, slugs],
-  );
+  const rows = await engine.readBriefEntityPages(sourceId, slugs, {
+    privacy: opts.excludePrivate ? (opts.forCaller ? 'caller' : 'floor') : 'none',
+    eligibility: opts.eligibility,
+  });
   return new Map(rows
     .filter((r) => ENTITY_TYPES.has(r.type ?? '') || ENTITY_PREFIXES.some((x) => r.slug.startsWith(x)))
     .map((r) => [r.slug, r.title || r.slug]));

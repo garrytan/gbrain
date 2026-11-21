@@ -48,6 +48,7 @@ import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as persistence from './persistence.ts';
 import * as cliEntities from './cli-entities.ts';
+import * as reflexReads from './reflex-reads.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
 import * as fenceHolds from './fence-holds.ts';
@@ -110,7 +111,7 @@ export const STORE_MEMBERS = {
   ...cliSources,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
-  ...cliEntities,
+  ...cliEntities, ...reflexReads,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
   ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...factsTrust, ...factsTrustReads, ...factsProvenance, ...factsQuoted, ...factRelinkAttempts,
   ...factRelinkWrites,

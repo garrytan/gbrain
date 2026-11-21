@@ -117,6 +117,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listUnattributedFacts', 'listWantedPages', 'readRankCoverage', 'readExactSnippetChunks', 'listExactRescanChunks', 'listHeldFenceCells', 'readFenceOverlayRows',
   'probePageTypes',
   'readLongPageSizes',
+  // Retrieval reflex and brief reads (engine-sql/reflex-reads.ts; covered by test/engine-parity/retrieval-reflex.test.ts)
+  'readReflexLiveKeys', 'readReflexPages', 'readBriefEntityPages',
   // CLI import and extract reads (engine-sql/cli-reads-import.ts; covered by test/engine-parity/cli-reads-import.test.ts)
   'listSourceRecords', 'readSourceIncarnation', 'readSyncDispatchRow', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
   'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows',

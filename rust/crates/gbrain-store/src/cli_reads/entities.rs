@@ -138,6 +138,23 @@ pub struct EntityCardRow {
 /// `left(coalesce(compiled_truth, truth_lead), BOUNDED_PREFIX_BYTES)`; `left()` counts code points.
 const CARD_PREFIX_CHARS: usize = 64 * 1024;
 
+/// `boundedBodyPrefixSql`: `left(coalesce(compiled_truth, truth_lead), 65536)`, the first 64K
+/// characters of the page body (the stored body, else its truth lead).
+pub(crate) fn bounded_body_prefix(
+    read: &dyn crate::kv::KvRead,
+    p: &PageRecord,
+) -> Result<Option<String>> {
+    let body = match p.compiled_truth.as_deref() {
+        Some(text) => Some(text.to_string()),
+        None => crate::page_body::truth_lead(read, p.id)?,
+    };
+    Ok(body.map(|b| {
+        b.char_indices()
+            .nth(CARD_PREFIX_CHARS)
+            .map_or(b.clone(), |(at, _)| b[..at].to_string())
+    }))
+}
+
 /// `readIgnoredPrivacyLabelPages` scope: the run's own slugs, or pages updated since an ISO time.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -387,16 +404,8 @@ impl Store {
             {
                 continue;
             }
-            let body = match p.compiled_truth.as_deref() {
-                Some(text) => Some(text.to_string()),
-                None => crate::page_body::truth_lead(&*read, p.id)?,
-            };
             out.push(EntityCardRow {
-                compiled_truth: body.map(|b| {
-                    b.char_indices()
-                        .nth(CARD_PREFIX_CHARS)
-                        .map_or(b.clone(), |(at, _)| b[..at].to_string())
-                }),
+                compiled_truth: bounded_body_prefix(&*read, &p)?,
                 updated_at: iso(p.updated_at_us),
                 last_retrieved_at: crate::page_ops::last_retrieved_us(&*read, p.id)?.map(iso),
                 frontmatter: Value::Object(p.frontmatter.clone()),

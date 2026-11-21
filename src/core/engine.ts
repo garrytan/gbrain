@@ -75,6 +75,7 @@ import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, LivePageTypeRow, ResolverPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
+import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from './engine-sql/reflex-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
@@ -4182,6 +4183,12 @@ export interface BrainEngine {
   readPageTitlesById(ids: readonly number[]): Promise<Array<{ id: number; title: string }>>;
   /** The live pages at `slugs` in `sourceIds` with title, type, frontmatter and `COALESCE(effective_date, updated_at)` as `date` (the entity card's text mentions). */
   readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]): Promise<TextMentionPageRow[]>;
+  /** The retrieval reflex's alias live recheck: the live pages in the scope at `slugs`, as (slug, source_id), in no set order. */
+  readReflexLiveKeys(scope: ReflexScope, slugs: readonly string[]): Promise<Array<{ slug: string; source_id: string }>>;
+  /** The retrieval reflex's candidate pages in the scope that `match` names, with the bounded body prefix (engine-sql/reflex-reads.ts). */
+  readReflexPages(scope: ReflexScope, match: ReflexPageMatch): Promise<ReflexPageRow[]>;
+  /** The proactive brief's live pages of the source at `slugs` that the privacy and the eligibility admit, in no set order. */
+  readBriefEntityPages(sourceId: string, slugs: readonly string[], opts: BriefEntityPageOpts): Promise<BriefEntityPageRow[]>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;
