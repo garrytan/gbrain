@@ -2,11 +2,12 @@
  * BrainEngine parity — the reads of `get_write_attribution` and attributed `get_versions` (engine-sql/write-attribution.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: readWriteAttributionNames names the asked requests and local writers (a revoked writer included) and
- *    no other row; readPageRevisionAttribution, readVersionAttributions and readOldestVersionAttribution read the
- *    receipts the attribution triggers stamp on a page and its versions; readRowAttribution reads one fact, take or
- *    timeline entry, inside its page, source, slug, visibility, privacy and holder filters, or null; under excludePrivate a
- *    caller who is not the owner gets no take or timeline entry while a source is owner-only (closed form). On every engine arm
+ *  - Contract: readWriteAttributionNames names the asked requests, local writers, OAuth clients and legacy tokens (a
+ *    revoked writer or token included) and no other row; readPageRevisionAttribution, readVersionAttributions and
+ *    readOldestVersionAttribution read the receipts the attribution triggers stamp on a page and its versions;
+ *    readRowAttribution reads one fact, take or timeline entry, inside its page, source, slug, visibility, privacy and
+ *    holder filters, or null; under excludePrivate a caller who is not the owner gets no take or timeline entry while a
+ *    source is owner-only (closed form). On every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1). The get_write_attribution
  *    handler gives the same answer end to end.
  *  - Regression: an engine that names a request it was not asked for, drops a revoked writer's name, or serves a row
@@ -15,8 +16,8 @@
  *    engine refuses, and test/write-attribution-read.test.ts runs on PGLite and Postgres only.
  *  - Seam: rows are written through typed members inside transactions whose write settings name the request and
  *    principal, as the persistence scope sets them. Ids and times differ between arms, so rows are compared by label
- *    and times by presence. The Rust store keeps OAuth clients and access tokens but does not read their names yet:
- *    a name read for an OAuth client or legacy token stops there on the typed refusal (rust/docs/store/write_attribution.md).
+ *    and times by presence. OAuth clients and legacy tokens are written through insertOauthClient and
+ *    insertAccessToken, and token ids are compared by label.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -166,13 +167,32 @@ describe('engine parity: write attribution', () => {
     return { empty, own, other, writers };
   });
 
-  parityTest('readWriteAttributionNames for an OAuth client: no name on SQL engines; the Rust store has no client table', {
-    methods: ['readWriteAttributionNames'],
-  }, async (engine) => engine.readWriteAttributionNames({ requestIds: [], oauthClientIds: ['client-example'], legacyTokenIds: [], localWriterIds: [] }));
-
-  parityTest('readWriteAttributionNames for a legacy token: no name on SQL engines; the Rust store has no token table', {
-    methods: ['readWriteAttributionNames'],
-  }, async (engine) => engine.readWriteAttributionNames({ requestIds: [], oauthClientIds: [], legacyTokenIds: [REQ_UNKNOWN], localWriterIds: [] }));
+  parityTest('readWriteAttributionNames names the asked OAuth clients and legacy tokens, a revoked token too, and nothing else', {
+    methods: ['readWriteAttributionNames', 'insertOauthClient', 'insertAccessToken', 'revokeAccessToken'],
+  }, async (engine) => {
+    const grant = { scopes: ['read'], permissions: {}, source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
+    await engine.insertOauthClient({ client_id: 'client-example', client_name: 'Client Example', grant_types: ['authorization_code'], scope: 'read' });
+    await engine.insertOauthClient({ client_id: 'client-other', client_name: 'Other Client', grant_types: ['authorization_code'], scope: 'read' });
+    const { id: live } = await engine.insertAccessToken({ name: 'token-live', token_hash: 'hash-live', ...grant });
+    const { id: revoked } = await engine.insertAccessToken({ name: 'token-revoked', token_hash: 'hash-revoked', ...grant });
+    await engine.insertAccessToken({ name: 'token-other', token_hash: 'hash-other', ...grant });
+    await engine.revokeAccessToken(revoked);
+    const names = await engine.readWriteAttributionNames({
+      requestIds: [], localWriterIds: [], oauthClientIds: ['client-example', 'client-missing'], legacyTokenIds: [live, revoked, REQ_UNKNOWN],
+    });
+    const label = (id: string) => (id === live ? 'live' : id === revoked ? 'revoked' : id);
+    const out = {
+      clients: [...names.clients].sort((a, b) => a.id.localeCompare(b.id)),
+      tokens: names.tokens.map(t => ({ id: label(t.id), name: t.name })).sort((a, b) => a.id.localeCompare(b.id)),
+      requests: names.requests, writers: names.writers,
+    };
+    expect(out).toEqual({
+      clients: [{ id: 'client-example', name: 'Client Example' }],
+      tokens: [{ id: 'live', name: 'token-live' }, { id: 'revoked', name: 'token-revoked' }],
+      requests: [], writers: [],
+    });
+    return out;
+  });
 
   parityTest('readPageRevisionAttribution, readVersionAttributions and readOldestVersionAttribution read the stamped page and version receipts', {
     methods: ['readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'createVersion', 'applyTransactionSettings'],

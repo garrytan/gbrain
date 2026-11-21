@@ -209,7 +209,7 @@ test/engine-parity/tie-break-stale-orphan-edge-downgrade.test.ts	0	4
 test/engine-parity/tie-purge-files-links-facts.test.ts	0	5
 test/engine-parity/timeline-held-rows.test.ts	2	0
 test/engine-parity/timeline-reads.test.ts	4	0
-test/engine-parity/timeline.test.ts	34	0
+test/engine-parity/timeline.test.ts	35	0
 test/engine-parity/title-fuzzy-like-bound.test.ts	1	0
 test/engine-parity/title-fuzzy-unicode.test.ts	1	0
 test/engine-parity/transaction-settings.test.ts	10	1
@@ -233,7 +233,7 @@ test/engine-parity/whoami-embedding-fix.test.ts	1	0
 test/engine-parity/withdrawal-discovery-reads.test.ts	5	0
 test/engine-parity/withdrawal-fence.test.ts	2	0
 test/engine-parity/withdrawal-forget.test.ts	2	0
-test/engine-parity/write-attribution.test.ts	5	2
+test/engine-parity/write-attribution.test.ts	6	0
 test/engine-parity/write-guards.test.ts	10	0
 test/engine-parity/write-misc.test.ts	66	3
 test/engine-parity/write-outcome-order.test.ts	1	0

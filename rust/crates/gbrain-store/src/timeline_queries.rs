@@ -259,7 +259,7 @@ impl Joined {
             "summary": self.entry.summary,
             "detail": self.entry.detail,
             "source": self.entry.source,
-            "trust_tier": "unknown",
+            "trust_tier": self.entry.trust.tier().as_str(),
             "page_id": self.entry.page_id,
             "page_slug": self.page_slug,
             "event_page_id": self.entry.event_page_id,
