@@ -34,6 +34,10 @@ export const PURGE_OWNERS = {
   receipts: 'lane 13 step 3',
   /** The generation-ledger scrub (generations/ledger-scrub.ts): typed members, rust-engine commit 61b18fbbc. */
   ledgerScrub: 'lane 4 (61b18fbbc)',
+  /** The recorded-value probe of the receipt's ledger report: rust-engine/rust-belief-purge e211982aba serves it (not merged here). */
+  beliefProbe: 'lane 3 (rust-belief-purge e211982aba)',
+  /** The fact-context probe of the receipt's ledger report. */
+  factContextProbe: 'lane 4',
   /** The origin-twin read: rust-engine/repair-rust b5945d814f (origin-twins.ts calls the readPageDatabaseOnlyReason member). */
   repairOriginTwin: 'lane 10 (repair-rust b5945d814f)',
   /** The online-built request index read: rust-engine/repair-rust aa2f70ffe8 (a Rust brain reads every index as valid). */
@@ -49,7 +53,7 @@ export interface PurgePathMember extends Base { member: keyof BrainEngine & stri
 export interface PurgePathSite extends Base { site: string; guarded?: string; stop?: string }
 export type PurgePathEntry = PurgePathMember | PurgePathSite;
 
-const { ours, receipts, ledgerScrub, repairOriginTwin, repairRequestIndexes } = PURGE_OWNERS;
+const { ours, receipts, ledgerScrub, beliefProbe, factContextProbe, repairOriginTwin, repairRequestIndexes } = PURGE_OWNERS;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
 /** Retention-only raw sites: the carry's parks and the candidate selection of purgeDeletedPagesCoordinated. */
@@ -100,6 +104,8 @@ const GUARDED_SITES: PurgePathSite[] = [
   ['pageLifetimesOf (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
   ['pagePurgeClaims (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
   ['redactPurgedKeys (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
+  ['redactCarryingFields (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
+  ['quotingSlugs (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
 ].map(([site, guarded]) => ({ site: site!, owner: ours, guarded: guarded! }));
 
 /**
@@ -119,6 +125,9 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   // verifyPagePurge: the receipt.
   { site: 'relationExists (persistence/rebuildable-cache.ts)', owner: receipts, stop: 'the receipt probes whether a rebuildable cache relation exists through raw SQL' },
   { member: 'countPurgeProbe', owner: receipts, refuses: 'the store refuses the receipt probes it does not serve (slug_key, page_rows, fact_refs, trust_proposals, page_requests)' },
+  // ledgerReports: runs for every purge whose page has fact claims, belief ledger or not.
+  { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
+  { member: 'listFactContextsForPurgeProbe', owner: factContextProbe, stop: 'the receipt pages the live fact contexts that quote the purged claims; not served' },
   { member: 'listPageProseHits', owner: receipts, stop: 'the source-prose scan of the receipt is not served' },
   { member: 'readPurgeReceiptSourcePath', owner: receipts, stop: 'the receipt source path read is not served' },
   { member: 'readDeletePageRequest', owner: receipts, stop: 'the purge request read of the receipt is not served' },

@@ -19,6 +19,8 @@
  *      the exclusive source lock in the publication  lane 13 (this port, not yet served)
  *      scrubGenerationLedger                         lane 4, 61b18fbbc (scrubGenerationPageRows, scrubGenerationTextRows)
  *      the receipt reads, probes and sweep state     lane 13 step 3 (its commit lifts them)
+ *      the receipt's recorded-value probe            lane 3, rust-engine/rust-belief-purge e211982aba (once merged)
+ *      the receipt's fact-context probe              lane 4
  *  - Why existing coverage misses it: delete-page.test.ts pins only the refusal on Rust; the page purge suites
  *    (test/page-purge*.test.ts) run on PGLite and Postgres only.
  *  - Seam: the delete_page and put_page operation handlers, whole, with a local (trusted) caller and the arm's own
@@ -53,6 +55,8 @@ const RUST_KNOWN_STOP = [
   { name: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: 'lane 4 (61b18fbbc)' },
   { name: 'relationExists (persistence/rebuildable-cache.ts)', owner: 'lane 13 step 3' },
   { name: 'countPurgeProbe', owner: 'lane 13 step 3' },
+  { name: 'listBeliefEventsForPurgeProbe', owner: 'lane 3 (rust-belief-purge e211982aba)' },
+  { name: 'listFactContextsForPurgeProbe', owner: 'lane 4' },
   { name: 'listPageProseHits', owner: 'lane 13 step 3' },
   { name: 'readPurgeReceiptSourcePath', owner: 'lane 13 step 3' },
   { name: 'readDeletePageRequest', owner: 'lane 13 step 3' },
