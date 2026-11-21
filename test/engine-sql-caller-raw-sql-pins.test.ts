@@ -646,6 +646,121 @@ const PINS: Pin[] = [
       AND ${privateSnapshotFilterFragment('t')} AND (${[[[], []], [['member:bob-example'], ['default:team']]].map(([identity, satisfied]) => `(${readersAllowedSql('t', identity)} AND ${folderRulesAllowedSql('t', satisfied)})`).join(' OR ')})
     GROUP BY t.source_id, t.slug ORDER BY t.source_id, t.slug LIMIT 50`],
   },
+  // Row 32d-1: the bearer checks' token reads and last-use stamp.
+  {
+    from: "src/core/oauth-provider.ts:697 verifyAccessToken at 8d2e667543 (the OAuth token read, rung 0)",
+    case: { method: 'readOauthAccessTokenRows', variant: 'rung0', run: e => e.readOauthAccessTokenRows('hash', 0) },
+    texts: [`
+        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes, to_jsonb(t)->>'grant_type' AS token_grant,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
+               c.source_id, c.federated_read, c.bound_slug_prefixes,
+               c.surface, c.surface_set_by
+        FROM oauth_tokens t
+        LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+        WHERE t.token_hash = $1 AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
+      `],
+  },
+  {
+    from: "src/core/oauth-provider.ts:743 verifyAccessToken at 8d2e667543 (the OAuth token read, rung 1)",
+    case: { method: 'readOauthAccessTokenRows', variant: 'rung1', run: e => e.readOauthAccessTokenRows('hash', 1) },
+    texts: [`
+          SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
+                 c.source_id, c.federated_read, c.bound_slug_prefixes
+          FROM oauth_tokens t
+          LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+          WHERE t.token_hash = $1 AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
+        `],
+  },
+  {
+    from: "src/core/oauth-provider.ts:760 verifyAccessToken at 8d2e667543 (the OAuth token read, rung 2)",
+    case: { method: 'readOauthAccessTokenRows', variant: 'rung2', run: e => e.readOauthAccessTokenRows('hash', 2) },
+    texts: [`
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
+                   c.source_id, c.federated_read
+            FROM oauth_tokens t
+            LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+            WHERE t.token_hash = $1 AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
+          `],
+  },
+  {
+    from: "src/core/oauth-provider.ts:777 verifyAccessToken at 8d2e667543 (the OAuth token read, rung 3)",
+    case: { method: 'readOauthAccessTokenRows', variant: 'rung3', run: e => e.readOauthAccessTokenRows('hash', 3) },
+    texts: [`
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources, c.source_id
+              FROM oauth_tokens t
+              LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+              WHERE t.token_hash = $1 AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
+            `],
+  },
+  {
+    from: "src/core/oauth-provider.ts:792 verifyAccessToken at 8d2e667543 (the OAuth token read, rung 4)",
+    case: { method: 'readOauthAccessTokenRows', variant: 'rung4', run: e => e.readOauthAccessTokenRows('hash', 4) },
+    texts: [`
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources
+              FROM oauth_tokens t
+              LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+              WHERE t.token_hash = $1 AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
+            `],
+  },
+  {
+    from: "src/core/oauth-provider.ts:941 verifyAccessToken at 8d2e667543 (the legacy token read)",
+    case: { method: 'readActiveAccessTokenByHash', variant: 'provider', run: e => e.readActiveAccessTokenByHash('hash', 'provider') },
+    texts: [`
+      SELECT * FROM access_tokens
+      WHERE token_hash = $1 AND revoked_at IS NULL
+    `],
+  },
+  {
+    from: "src/mcp/http-transport.ts:299 validateToken at 8d2e667543",
+    case: { method: 'readActiveAccessTokenByHash', variant: 'transport', run: e => e.readActiveAccessTokenByHash('hash', 'transport') },
+    texts: [`
+        SELECT * FROM access_tokens
+        WHERE token_hash = $1 AND revoked_at IS NULL
+      `],
+  },
+  {
+    from: "src/core/grants/legacy-token.ts:454-456 touchTokenLastUsed at 8d2e667543 (a row with source_grant)",
+    case: { method: 'touchAccessTokenLastUsed', variant: 'unified', run: e => e.touchAccessTokenLastUsed('00000000-0000-0000-0000-000000000000', true) },
+    texts: [`UPDATE access_tokens SET last_used_at = now()
+        WHERE id IN (SELECT id FROM access_tokens WHERE id = $1::uuid AND source_grant IS NOT NULL
+          AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`],
+  },
+  {
+    from: "src/core/grants/legacy-token.ts:457-459 touchTokenLastUsed at 8d2e667543 (a legacy-shape row)",
+    case: { method: 'touchAccessTokenLastUsed', variant: 'legacy', run: e => e.touchAccessTokenLastUsed('00000000-0000-0000-0000-000000000000', false) },
+    texts: [`UPDATE access_tokens SET last_used_at = now()
+        WHERE id IN (SELECT id FROM access_tokens WHERE id = $1::uuid
+          AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`],
+  },
   // Equivalent, not verbatim (the next four): the old-line statements add COLLATE "C" to every ORDER BY, so groups,
   // group members and pages come in byte order on every engine whatever the database collation.
   {

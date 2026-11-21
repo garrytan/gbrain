@@ -465,11 +465,13 @@ export class MemberBindingRefused extends Error {
  * with its groups. Null for an unbound credential (no member_id, or a schema
  * that predates the column). A binding to a disabled, removed or missing
  * member throws MemberBindingRefused, and so does an unreadable member table.
+ * With an engine the member is its readAccessMembers({ id }) row (any status,
+ * with its groups), so a store with no raw SQL (the Rust engine) verifies too.
  */
-export async function verifiedMember(sql: SqlQuery, memberId: unknown): Promise<{ id: string; groups: string[] } | null> {
+export async function verifiedMember(sql: SqlQuery, memberId: unknown, engine?: Pick<BrainEngine, 'readAccessMembers'>): Promise<{ id: string; groups: string[] } | null> {
   if (memberId == null) return null;
   if (typeof memberId !== 'string' || !ACCESS_ID_RE.test(memberId)) throw new MemberBindingRefused(String(memberId), 'malformed');
-  const [row] = await sql`SELECT m.id, m.disabled_at, m.tombstoned_at,
+  const [row] = engine ? await engine.readAccessMembers({ id: memberId }) : await sql`SELECT m.id, m.disabled_at, m.tombstoned_at,
     COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
     FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
     WHERE m.id = ${memberId} GROUP BY m.id`;

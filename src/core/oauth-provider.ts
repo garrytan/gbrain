@@ -58,6 +58,8 @@ import type { SqlQuery, SqlValue } from './sql-query.ts';
 import { storedMinTrust } from './trust/tier.ts';
 import { tokenMemberBinding } from './access/token-binding.ts';
 import { withAttestRight } from './access/actor-model.ts';
+import type { BrainEngine } from './engine.ts';
+import type { OauthTokenRung } from './engine-sql/access-credentials.ts';
 export type { SqlQuery, SqlValue };
 
 export interface AgentClientBindings {
@@ -230,6 +232,8 @@ interface GBrainOAuthProviderOptions {
   sql: SqlQuery;
   /** Required for grant issuance/rotation/revocation; registration and verification need only sql. */
   transaction?: OAuthTransaction;
+  /** The engine the bearer check reads tokens and members through (its typed members run on every engine, Rust included). */
+  engine?: BrainEngine;
   /** Default token TTL in seconds (default: 3600 = 1 hour) */
   tokenTtl?: number;
   /** Default refresh token TTL in seconds (default: 30 days) */
@@ -576,6 +580,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   readonly skipLocalPkceValidation = true;
   private sql: SqlQuery;
   private transaction?: OAuthTransaction;
+  private engine?: BrainEngine;
   private _clientsStore: GBrainClientsStore;
   private readonly dcrDisabled: boolean;
   private tokenTtl: number;
@@ -585,6 +590,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
     this.transaction = options.transaction;
+    this.engine = options.engine;
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
@@ -677,6 +683,26 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   // Token Verification
   // -------------------------------------------------------------------------
 
+  /**
+   * One rung of the bearer check's OAuth token read: through the engine member when the provider has an engine (a store
+   * that keeps no OAuth tokens finds none), else the statement `viaSql` sends (BEARER_SQL.oauth_rungs keeps both equal).
+   */
+  private oauthTokenRows(rung: OauthTokenRung, tokenHash: string, viaSql: () => Promise<Record<string, unknown>[]>): Promise<Record<string, unknown>[]> {
+    return this.engine ? this.engine.readOauthAccessTokenRows(tokenHash, rung) : viaSql();
+  }
+
+  /** The bearer check's legacy access_tokens read: the engine member when set, else the same statement (BEARER_SQL). */
+  private async legacyTokenRows(tokenHash: string): Promise<Record<string, unknown>[]> {
+    if (this.engine) {
+      const row = await this.engine.readActiveAccessTokenByHash(tokenHash, 'provider');
+      return row ? [row] : [];
+    }
+    return this.sql`
+      SELECT * FROM access_tokens
+      WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+    `;
+  }
+
   async verifyAccessToken(token: string): Promise<SdkAuthInfo> {
     const tokenHash = hashToken(token);
     const now = Math.floor(Date.now() / 1000);
@@ -694,7 +720,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // every token verification.
     let oauthRows: Record<string, unknown>[];
     try {
-      oauthRows = await this.sql`
+      oauthRows = await this.oauthTokenRows(0, tokenHash, () => this.sql`
         SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes, to_jsonb(t)->>'grant_type' AS token_grant,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
@@ -707,7 +733,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         LEFT JOIN oauth_clients c ON c.client_id = t.client_id
         WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
-      `;
+      `);
     } catch (err) {
       // Degrade ladder for brains that haven't run apply-migrations yet:
       // surface/surface_set_by (v127) → bound_slug_prefixes (v85) →
@@ -740,7 +766,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // fail-OPEN by design: the serve-http ceiling still bounds every
         // request, so a missing per-client surface only means "server
         // surface applies", never a widened catalog.
-        oauthRows = await this.sql`
+        oauthRows = await this.oauthTokenRows(1, tokenHash, () => this.sql`
           SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
@@ -752,12 +778,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
           LEFT JOIN oauth_clients c ON c.client_id = t.client_id
           WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
-        `;
+        `);
       } catch (errS) {
         if (!missingOAuthColumn(errS)) throw errS;
         try {
           // v85 missing: keep source_id + federated_read, drop the fence column.
-          oauthRows = await this.sql`
+          oauthRows = await this.oauthTokenRows(2, tokenHash, () => this.sql`
             SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
@@ -769,12 +795,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
             LEFT JOIN oauth_clients c ON c.client_id = t.client_id
             WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
-          `;
+          `);
         } catch (err2) {
           if (!missingOAuthColumn(err2)) throw err2;
           try {
             // v61 missing: source_id only.
-            oauthRows = await this.sql`
+            oauthRows = await this.oauthTokenRows(3, tokenHash, () => this.sql`
               SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
@@ -785,11 +811,11 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
               LEFT JOIN oauth_clients c ON c.client_id = t.client_id
               WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
-            `;
+            `);
           } catch (err3) {
             if (!missingOAuthColumn(err3)) throw err3;
             // Truly pre-v60: pre-v0.34 projection.
-            oauthRows = await this.sql`
+            oauthRows = await this.oauthTokenRows(4, tokenHash, () => this.sql`
               SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
@@ -800,7 +826,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
               LEFT JOIN oauth_clients c ON c.client_id = t.client_id
               WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
-            `;
+            `);
           }
         }
       }
@@ -854,7 +880,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         allowedSources = allowedSources.filter(id => (row.active_read_sources as string[]).includes(id));
         if (allowedSources.length === 0) effectiveScopes.length = 0;
       }
-      const shared = await clientReadShared(this.sql, currentGrant, allowedSources ?? [rowSourceId ?? 'default'], effectiveScopes.length > 0, async () => (await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at)).member?.id ?? null);
+      const shared = await clientReadShared(this.sql, currentGrant, allowedSources ?? [rowSourceId ?? 'default'], effectiveScopes.length > 0, async () => (await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at, this.engine)).member?.id ?? null);
       // v0.42.72.0: slug-prefix write binding. Array (even empty — the
       // fence treats [] as deny-all, matching submit_agent's fail-closed
       // posture) when the client carries a binding; undefined when the
@@ -889,7 +915,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: row.client_id as string,
         principal: { kind: 'oauth_client', id: row.client_id as string },
-        ...withAttestRight(await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at), currentGrant, row.token_grant), ...shared?.flags,
+        ...withAttestRight(await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at, this.engine), currentGrant, row.token_grant), ...shared?.flags,
         clientName: (row.client_name as string | null) ?? undefined,
         scopes: effectiveScopes,
         issuedScopes,
@@ -938,16 +964,13 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // pre-F3 rows no grant columns, and `scopes` (original schema) must never
     // drop out of the projection, or normalizeTokenScopes(undefined) would
     // grandfather a scoped token to full admin (ship-review P1).
-    const legacyRows: Record<string, unknown>[] = await this.sql`
-      SELECT * FROM access_tokens
-      WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
-    `;
+    const legacyRows = await this.legacyTokenRows(tokenHash);
 
     if (legacyRows.length > 0) {
       // For legacy tokens, name = clientId = clientName (single identifier).
       // #2833: debounced fire-and-forget last_used_at update that never blocks
       // or fails verification; shared with src/mcp/http-transport.ts.
-      void touchTokenLastUsed(this.sql, legacyRows[0]);
+      void touchTokenLastUsed(this.engine ?? this.sql, legacyRows[0]);
       const name = legacyRows[0].name as string;
       // One grant shape (grants/model.ts), shared with the legacy HTTP
       // transport so the two cannot drift. Unified rows read the columns,
@@ -961,14 +984,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: name,
         principal: { kind: 'legacy_token', id: String(legacyRows[0].id) },
-        ...withAttestRight(await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at), legacyRows[0], 'legacy'),
+        ...withAttestRight(await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at, this.engine), legacyRows[0], 'legacy'),
         clientName: name,
         scopes: grant.scopes,
         ...(grant.allowedOperations === null ? {} : { allowedOperations: grant.allowedOperations }),
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
         // #3242 parity: hasSourceGrant=false only on the historical no-grant
         // floor, the one case that may widen unqualified reads.
-        ...await tokenReadSources(this.sql, grant, async () => (await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at)).member?.id ?? null),
+        ...await tokenReadSources(this.sql, grant, async () => (await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at, this.engine)).member?.id ?? null, this.engine),
         takesHoldersAllowList: grant.takesHolders ?? undefined,
         ...(storedMinTrust(legacyRows[0].min_trust) ? { minTrust: storedMinTrust(legacyRows[0].min_trust) } : {}),
         ...privatePagesAuth(grant),

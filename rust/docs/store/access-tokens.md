@@ -4,8 +4,8 @@ Part of the Minion jobs family ([jobs.md](jobs.md), next to [oauth-clients.md](o
 [rust/README.md](../../README.md) ("The brain store") apply.
 
 The store keeps every `access_tokens` column, so `listAccessTokens` (`gbrain auth list`, and the member keys of the
-open-page count) returns each row as `SELECT *` does. `last_used_at` stays NULL (no store member stamps a token's use
-yet), and `private_pages` and `private_facts` stay `'none'` (no store member changes them yet). The SQL for the PGLite
+open-page count) returns each row as `SELECT *` does. The bearer check stamps `last_used_at`
+(`touchAccessTokenLastUsed`), and `private_pages` and `private_facts` stay `'none'` (no store member changes them yet). The SQL for the PGLite
 and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts`, `write-misc.ts` (the list) and `access-setup.ts`
 (the member-key setup of `gbrain access serves several`); the store serves the same members. The other readers and
 writers of the table (verify, revoke by name, rescope, rotate, the grant reads) are still raw SQL and stop on a Rust
@@ -21,6 +21,8 @@ brain.
 | `brain.readLiveAccessToken(name)` | `{ member_id, token_hash, source_grant, source_id, federated_read, permissions }` of the live token with this name (the oldest when several), or null; the setup compares the key file's hash to it |
 | `brain.recordTokenSetupReads(name, reads)` | null. Sets `setup_reads` in the `permissions` object of each live token with this name; a token whose `permissions` is not an object is left alone |
 | `brain.listKeysReadingSource(sourceId)` | `[{ name, member_id, federated_read }]` of the live member-bound `federated` keys whose write source is another source and whose read list holds `sourceId`, by name in byte order |
+| `brain.readActiveAccessTokenByHash(hash)` | the whole row of the live token with this hash, or null: the bearer checks' read (`readActiveAccessTokenByHash`; `gbrain serve --http` sign-in) |
+| `brain.touchAccessTokenLastUsed(id, unified)` | null. Stamps `last_used_at` with the store clock once per token per 60 seconds; with `unified`, only a row whose `source_grant` is set |
 | `brain.revokeAccessToken(id)` | the name of the live token with this id it revoked, or null (`revokeAccessTokenById`) |
 
 ## Callers
@@ -54,8 +56,9 @@ the table.
 
 Differences from PGLite and PostgreSQL:
 
-- `last_used_at` is kept but never stamped: a token's use is not recorded on this engine yet, so `gbrain auth list`
-  shows no last use. `private_pages` and `private_facts` are kept at `'none'`, which no store member changes yet.
+- `private_pages` and `private_facts` are kept at `'none'`, which no store member changes yet.
+- The store keeps no OAuth tokens (row 32d-2), so the bearer check's OAuth read (`readOauthAccessTokenRows`) finds none
+  here and the check reads the legacy token.
 - Not kept: the `trust_generation_update` trigger and the secondary indexes.
 - `setAccessTokenMinTrust` with an id that is not a UUID changes nothing here; Postgres refuses it (22P02). The callers
   pass the id `findActiveAccessTokens` returned.

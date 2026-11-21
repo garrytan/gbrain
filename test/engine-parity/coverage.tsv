@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1224/1228
+# covered: 1224/1231
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -67,7 +67,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 79/83
+# write_misc: 79/86
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -1128,7 +1128,7 @@ getWorktreeBinding	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	4	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	2	no	yes	yes	serves
-listAccessTokens	write_misc	yes	8	no	yes	yes	serves
+listAccessTokens	write_misc	yes	10	no	yes	yes	serves
 notifierCoverageRecorded	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
 writeOpCheckpointKeys	write_misc	yes	2	no	yes	yes	serves
@@ -1199,8 +1199,11 @@ readLiveAccessToken	write_misc	yes	1	no	yes	yes	serves
 recordTokenSetupReads	write_misc	yes	1	no	yes	yes	serves
 listKeysReadingSource	write_misc	yes	1	no	yes	yes	serves
 countCompanyPages	write_misc	yes	1	no	yes	yes	serves
-revokeAccessTokenById	write_misc	yes	1	no	yes	yes	serves
+revokeAccessTokenById	write_misc	yes	2	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
+readOauthAccessTokenRows	write_misc	no	0	no	-	-	-
+readActiveAccessTokenByHash	write_misc	no	0	no	-	-	-
+touchAccessTokenLastUsed	write_misc	no	0	no	-	-	-
 readFolderAccess	write_misc	yes	5	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves

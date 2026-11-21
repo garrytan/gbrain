@@ -448,8 +448,9 @@ export async function resolveTokenGrant(sql: SqlQuery, row: Record<string, unkno
  * a touch holding that row's lock made every concurrent conversion skip it
  * (SKIP LOCKED), so a burst of first reads could leave it unconverted (#6230).
  */
-export function touchTokenLastUsed(sql: SqlQuery, row: Record<string, unknown>): Promise<unknown> {
+export function touchTokenLastUsed(sql: SqlQuery | BrainEngine, row: Record<string, unknown>): Promise<unknown> {
   const id = String(row.id);
+  if (typeof sql !== 'function') return sql.touchAccessTokenLastUsed(id, 'source_grant' in row).catch(() => { /* fire-and-forget */ });
   const touch = 'source_grant' in row
     ? sql`UPDATE access_tokens SET last_used_at = now()
         WHERE id IN (SELECT id FROM access_tokens WHERE id = ${id}::uuid AND source_grant IS NOT NULL

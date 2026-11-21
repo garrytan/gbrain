@@ -14,7 +14,7 @@
 //! reads_unscoped; a record written before the binding columns were kept reads them as NULL) and the table's constraints on them: the unique
 //! `token_hash` (`access_tokens_token_hash_key`, found by scanning the table, as the secondary indexes are not kept), the
 //! `source_grant` list and the `min_trust` list. A refusal is `constraint_violation` with the Postgres message.
-//! Kept too, for `listAccessTokens`: `last_used_at` (NULL: no store member stamps a token's use yet) and the two private
+//! Kept too, for `listAccessTokens`: `last_used_at` (stamped by the bearer check, `touchAccessTokenLastUsed`) and the two private
 //! grants `private_pages` and `private_facts` (`'none'` at insert, with their CHECK list; no store member changes them
 //! yet). Not kept: the `trust_generation_update` trigger. Setting
 //! the floor of an id no token has changes nothing (Postgres also refuses an id that is not a UUID with 22P02; the
@@ -293,6 +293,39 @@ impl Store {
         Ok(Value::Array(
             rows.iter().map(TokenRecord::whole_row).collect(),
         ))
+    }
+
+    /// `readActiveAccessTokenByHash(hash, caller)`: the whole row (`SELECT *`) of the token not revoked with this hash,
+    /// for the bearer checks (row 32d-1); the hash in it is the one the caller passed.
+    pub fn read_active_access_token_by_hash(&self, hash: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(all_tokens(&*read)?
+            .into_iter()
+            .find(|t| t.revoked_at.is_none() && t.token_hash == hash)
+            .map(|t| t.whole_row()))
+    }
+
+    /// `touchAccessTokenLastUsed(id, unified)`: stamps the token's `last_used_at` with the store clock, once per token per
+    /// 60 seconds (`last_used_at IS NULL OR last_used_at < now() - interval '60 seconds'`), in one write. `unified` is
+    /// the statement that only touches a row whose `source_grant` is not NULL: a row still on the legacy shape is left
+    /// to its first-read conversion. A revoked token is stamped the same as the statement does (it has no revoked
+    /// filter); nothing changes for an id no token has.
+    pub fn touch_access_token_last_used(&self, id: &str, unified: bool) -> Result<()> {
+        let id = id.to_ascii_lowercase();
+        self.write(|tx| {
+            let Some(mut t) = get_json::<TokenRecord>(&*tx, &token_key(&id))? else {
+                return Ok(());
+            };
+            if unified && t.source_grant.is_none() {
+                return Ok(());
+            }
+            let now = self.env.now_micros();
+            if t.last_used_at.is_some_and(|last| last >= now - 60_000_000) {
+                return Ok(());
+            }
+            t.last_used_at = Some(now);
+            put_json(tx, &token_key(&id), &t)
+        })
     }
 
     /// `revokeAccessTokenById(id)`: stamps `revoked_at` on the token not revoked with this id (a UUID, so any case),

@@ -104,4 +104,25 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_keys_reading_source(&source_id))
     }
+
+    /// `readActiveAccessTokenByHash(hash)`: the whole row of the live token with this hash, or null.
+    #[napi]
+    pub fn read_active_access_token_by_hash<'env>(
+        &self,
+        env: &'env Env,
+        hash: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_active_access_token_by_hash(&hash))
+    }
+
+    /// `touchAccessTokenLastUsed(id, unified)`: null; the debounced last-use stamp.
+    #[napi]
+    pub fn touch_access_token_last_used<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        unified: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.touch_access_token_last_used(&id, unified))
+    }
 }

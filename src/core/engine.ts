@@ -16,6 +16,7 @@ import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRo
 import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia, FolderAccessRows, PageNamingReaderRow } from './engine-sql/access-control.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as AccessPolicySql from './engine-sql/access-policy.ts';
+import type * as AccessCredentialsSql from './engine-sql/access-credentials.ts';
 import type { LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount, WhoCanReadPageRow } from './engine-sql/access-setup.ts';
 import type { OwnerOnlyForm } from './access/owner-only.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
@@ -4572,6 +4573,12 @@ export interface BrainEngine {
   revokeAccessTokenById(id: string): Promise<void>;
   /** The live pages under each top-level people/<folder>/ folder, by source then folder. */
   countPeopleFolderPages(): Promise<PeopleFolderCount[]>;
+  /** The bearer check's OAuth access token read at one rung of its degrade ladder (engine-sql/access-credentials.ts). */
+  readOauthAccessTokenRows(hash: string, rung: AccessCredentialsSql.OauthTokenRung): Promise<Record<string, unknown>[]>;
+  /** The whole row of the legacy token not revoked with this hash, or null (the bearer checks' read). */
+  readActiveAccessTokenByHash(hash: string, caller: AccessCredentialsSql.TokenByHashCaller): Promise<Record<string, unknown> | null>;
+  /** The debounced last-use stamp of a token the bearer check just read (once per token per 60 s). */
+  touchAccessTokenLastUsed(id: string, unified: boolean): Promise<void>;
 
   /**
    * The applied folder rules any of `readers` meets (none read when `readers` is empty) and every folder prefix that

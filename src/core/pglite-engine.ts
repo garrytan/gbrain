@@ -223,6 +223,7 @@ import * as beliefImpl from './engine-sql/belief.ts';
 import * as configImpl from './engine-sql/config.ts';
 import * as accessControlImpl from './engine-sql/access-control.ts';
 import * as accessSetupImpl from './engine-sql/access-setup.ts';
+import * as accessCredentialsImpl from './engine-sql/access-credentials.ts';
 import * as accessPolicyImpl from './engine-sql/access-policy.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AudiencePrincipalRows, MayActForVia, FolderAccessRows, PageNamingReaderRow } from './engine-sql/access-control.ts';
 import * as accessMembersImpl from './engine-sql/access-members.ts';
@@ -2046,6 +2047,9 @@ export class PGLiteEngine implements BrainEngine {
   countCompanyPages(sourceId: string) { return accessSetupImpl.countCompanyPages(this, sourceId); }
   revokeAccessTokenById(id: string) { return accessSetupImpl.revokeAccessTokenById(this, id); }
   countPeopleFolderPages() { return accessSetupImpl.countPeopleFolderPages(this); }
+  readOauthAccessTokenRows(hash: string, rung: accessCredentialsImpl.OauthTokenRung) { return accessCredentialsImpl.readOauthAccessTokenRows(this, hash, rung); }
+  readActiveAccessTokenByHash(hash: string, caller: accessCredentialsImpl.TokenByHashCaller) { return accessCredentialsImpl.readActiveAccessTokenByHash(this, hash, caller); }
+  touchAccessTokenLastUsed(id: string, unified: boolean) { return accessCredentialsImpl.touchAccessTokenLastUsed(this, id, unified); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return entityReadsImpl.readMentionLastPass(unscopedExecutor(this.engineSql, 'entities: mention pass time ran unscoped through executeRaw'), sourceId); }
   countPagesDueForMentions(q: entityReadsImpl.MentionDueQuery) { return entityReadsImpl.countPagesDueForMentions(unscopedExecutor(this.engineSql, 'entities: mention-due count ran unscoped through executeRaw'), q); }

@@ -2,7 +2,8 @@
  * The member-key and owner setup of `gbrain access serves several` (commands/access-serves.ts) and the people folders
  * of access/serves.ts, over the store's tokens, OAuth clients, sources and live page slugs (SQL in
  * engine-sql/access-setup.ts; rust/docs/store/access-tokens.md). Also the token list `gbrain auth list` reads, with
- * every column `SELECT *` returns, and the unarchived source ids the member keys' read list starts from.
+ * every column `SELECT *` returns, the unarchived source ids the member keys' read list starts from, and the bearer
+ * check's token reads and last-use stamp (row 32d-1).
  */
 import type { LiveAccessTokenRow, MemberKeyReadingRow, PeopleFolderCount } from '../../engine-sql/access-setup.ts';
 import type { AccessTokenRow } from '../../engine-sql/write-misc.ts';
@@ -76,4 +77,21 @@ const TOKEN_DATES = ['created_at', 'last_used_at', 'revoked_at', 'reads_unscoped
 export const listAccessTokens: StoreMember<[], AccessTokenRow[]> = async (brain) => {
   const rows = await storeCall({ member: 'listAccessTokens' }, () => brain.listAccessTokens()) as AccessTokenRow[];
   return rows.map(r => withDates(r, TOKEN_DATES));
+};
+
+/**
+ * The bearer check's OAuth access token read (engine-sql/access-credentials.ts): none. The store keeps no OAuth tokens
+ * yet, and on this engine their issue runs raw SQL and refuses before any write (docs/designs/RUST_ENGINE.md row 32d-2),
+ * so no OAuth token can exist to find; the bearer check then reads the legacy token.
+ */
+export const readOauthAccessTokenRows: StoreMember<[hash: string, rung: number], Record<string, unknown>[]> = async () => [];
+
+/** The whole row of the live legacy token with this hash, or null (the bearer checks' read). */
+export const readActiveAccessTokenByHash: StoreMember<[hash: string, caller: string], Record<string, unknown> | null> = async (brain, hash) => {
+  const row = await storeCall({ member: 'readActiveAccessTokenByHash' }, () => brain.readActiveAccessTokenByHash(hash)) as Record<string, unknown> | null;
+  return row ? withDates(row, TOKEN_DATES) : null;
+};
+
+export const touchAccessTokenLastUsed: StoreMember<[id: string, unified: boolean], void> = async (brain, id, unified) => {
+  await storeCall({ member: 'touchAccessTokenLastUsed' }, () => brain.touchAccessTokenLastUsed(id, unified));
 };

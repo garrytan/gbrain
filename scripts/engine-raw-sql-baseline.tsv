@@ -1008,5 +1008,5 @@ src/eval/brainbench/trust-suites.ts	execute_raw	1
 src/eval/longmemeval/harness.ts	execute_raw	2
 src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4
-src/mcp/http-transport.ts	sql_template	2
+src/mcp/http-transport.ts	sql_template	1
 src/mcp/source-preflight.ts	execute_raw	1

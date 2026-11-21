@@ -121,3 +121,61 @@ fn a_floor_is_set_cleared_and_refused_without_touching_the_row() {
             .unwrap()
     );
 }
+
+#[test]
+fn the_bearer_read_finds_the_live_token_by_hash_and_the_touch_stamps_it_once_a_minute() {
+    let b = brain("tokens-bearer");
+    let id = insert(&b, token("laptop", "hash-laptop", json!({}))).unwrap();
+    let row = b
+        .read_active_access_token_by_hash("hash-laptop")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["id"], json!(id));
+    assert_eq!(row["name"], json!("laptop"));
+    assert_eq!(row["last_used_at"], Value::Null);
+    assert_eq!(
+        b.read_active_access_token_by_hash("no-such-hash").unwrap(),
+        None
+    );
+    b.touch_access_token_last_used(&id, true).unwrap();
+    let first = b
+        .read_active_access_token_by_hash("hash-laptop")
+        .unwrap()
+        .unwrap()["last_used_at"]
+        .clone();
+    assert!(first.is_string());
+    // Within a minute a second touch changes nothing.
+    b.touch_access_token_last_used(&id, true).unwrap();
+    assert_eq!(
+        b.read_active_access_token_by_hash("hash-laptop")
+            .unwrap()
+            .unwrap()["last_used_at"],
+        first
+    );
+    // A token with no source_grant is left to its first-read conversion by the unified touch.
+    let legacy = insert(
+        &b,
+        token("old", "hash-old", json!({ "source_grant": null })),
+    )
+    .unwrap();
+    b.touch_access_token_last_used(&legacy, true).unwrap();
+    assert_eq!(
+        b.read_active_access_token_by_hash("hash-old")
+            .unwrap()
+            .unwrap()["last_used_at"],
+        Value::Null
+    );
+    b.touch_access_token_last_used(&legacy, false).unwrap();
+    assert!(
+        b.read_active_access_token_by_hash("hash-old")
+            .unwrap()
+            .unwrap()["last_used_at"]
+            .is_string()
+    );
+    // A revoked token is not found by hash.
+    b.revoke_access_token(&id).unwrap();
+    assert_eq!(
+        b.read_active_access_token_by_hash("hash-laptop").unwrap(),
+        None
+    );
+}

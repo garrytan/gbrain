@@ -14,6 +14,7 @@
  * repository gets the switch unchanged.
  */
 import { isSourceFederated, parseSourceConfig } from '../sources-load.ts';
+import type { BrainEngine } from '../engine.ts';
 import type { SqlQuery } from '../sql-query.ts';
 import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
 import { NO_SOURCES } from '../source-id.ts';
@@ -70,6 +71,12 @@ export async function expandReadShared(sql: SqlQuery, stored: readonly string[],
   }
 }
 
+/** The archived source ids through typed reads: every source id less the unarchived ones (the engine the bearer check serves). */
+async function archivedSourceIds(engine: Pick<BrainEngine, 'listSourceIds' | 'listUnarchivedSourceIds'>): Promise<Set<string>> {
+  const live = new Set((await engine.listUnarchivedSourceIds()).map(r => r.id));
+  return new Set((await engine.listSourceIds()).filter(id => !live.has(id)));
+}
+
 /**
  * The AuthInfo source fields of a token: authSourcesFromGrant with every archived source dropped from the sources it
  * names, then widened by the shared set when the switch applies. Membership is live, as for OAuth clients: an archived
@@ -81,11 +88,11 @@ export async function expandReadShared(sql: SqlQuery, stored: readonly string[],
  * list, which already reads the floor. The write source never changes; `member` is read only for a switched key.
  * Throws when the archived sources cannot be read, so the token fails closed.
  */
-export async function tokenReadSources(sql: SqlQuery, grant: PrincipalGrant, member: () => Promise<string | null>):
+export async function tokenReadSources(sql: SqlQuery, grant: PrincipalGrant, member: () => Promise<string | null>, engine?: Pick<BrainEngine, 'listSourceIds' | 'listUnarchivedSourceIds'>):
   Promise<{ sourceId: string; allowedSources?: string[]; hasSourceGrant: boolean; readShared?: true; readSharedUnresolved?: true; archivedSources?: string[] }> {
   const base = authSourcesFromGrant(grant);
   if (grant.sources.kind === 'none' || grant.sources.kind === 'default') return base;
-  const archivedIds = new Set((await sql`SELECT id FROM sources WHERE archived IS TRUE`).map(r => String(r.id)));
+  const archivedIds = engine ? await archivedSourceIds(engine) : new Set((await sql`SELECT id FROM sources WHERE archived IS TRUE`).map(r => String(r.id)));
   const named = base.allowedSources ?? [base.sourceId];
   const stored = named.filter(id => !archivedIds.has(id));
   const archived = named.filter(id => archivedIds.has(id));

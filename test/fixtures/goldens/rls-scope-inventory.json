@@ -4037,6 +4037,28 @@
         ],
         "flagOnScopes": []
       },
+      "readActiveAccessTokenByHash#provider": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readActiveAccessTokenByHash#transport": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readAudiencePrincipals#members-and-groups": {
         "flagOffLanes": [
           "pool"
@@ -4560,6 +4582,28 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readOauthAccessTokenRows#rung0": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readOauthAccessTokenRows#rung4": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
         ],
         "flagOnScopes": []
       },
@@ -6935,6 +6979,7 @@
         "readAccessStateUnreadable": "none",
         "readAccessStoreConfig": "none",
         "readAccessTokenWriteGrant": "none",
+        "readActiveAccessTokenByHash": "none",
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
         "readAgentClientSpend": "none",
@@ -7060,6 +7105,7 @@
         "readNewestConversationFactId": "none",
         "readNoopEmbeddingCandidates": "none",
         "readOAuthClientWriteGrant": "none",
+        "readOauthAccessTokenRows": "none",
         "readOauthClient": "none",
         "readOldestVersionAttribution": "none",
         "readOldestWaitingAge": "none",
@@ -7327,6 +7373,7 @@
         "telemetryRead": "none",
         "timelineRead": "none",
         "tombstoneAccessMember": "none",
+        "touchAccessTokenLastUsed": "none",
         "transaction": "none",
         "transactionDirect": "none",
         "transactionOn": "none",

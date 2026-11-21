@@ -930,6 +930,9 @@ export const DOMAIN_OF: Record<string, string> = {
   'countCompanyPages': OOS.callerRawSql,
   'revokeAccessTokenById': OOS.callerRawSql,
   'countPeopleFolderPages': OOS.callerRawSql,
+  'readOauthAccessTokenRows': OOS.callerRawSql,
+  'readActiveAccessTokenByHash': OOS.callerRawSql,
+  'touchAccessTokenLastUsed': OOS.callerRawSql,
   'listOpenTwinRows': OOS.callerRawSql,
   'readCredentialBindingForUpdate': OOS.callerRawSql,
   'writeCredentialBinding': OOS.callerRawSql,
@@ -1852,6 +1855,8 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('countCompanyPages', [['default', (e) => e.countCompanyPages('company')]]),
   ...variants('countPeopleFolderPages', [['default', (e) => e.countPeopleFolderPages()]]),
   ...variants('listOpenTwinRows', [['default', (e) => e.listOpenTwinRows([{ source_id: 'default', slug: 'notes/a' }], [{ identity: [], satisfied: [] }], 50)]]),
+  ...variants('readOauthAccessTokenRows', [['rung0', (e) => e.readOauthAccessTokenRows('hash', 0)], ['rung4', (e) => e.readOauthAccessTokenRows('hash', 4)]]),
+  ...variants('readActiveAccessTokenByHash', [['provider', (e) => e.readActiveAccessTokenByHash('hash', 'provider')], ['transport', (e) => e.readActiveAccessTokenByHash('hash', 'transport')]]),
   ...variants('readCredentialBindingForUpdate', [
     ['token', (e) => e.readCredentialBindingForUpdate({ kind: 'token', id: 'tok-1' }, { readsUnscoped: false })],
     ['client-unscoped', (e) => e.readCredentialBindingForUpdate({ kind: 'client', id: 'client-1' }, { readsUnscoped: true })],
