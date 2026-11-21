@@ -9,11 +9,12 @@ function ctxFor(err: Error) {
   return { engine, orphanRatioSourceId: undefined, progress: { heartbeat() {} } } as any;
 }
 
-async function run(err: Error) {
+async function run(err: Error): Promise<any[]> {
   try {
-    return await quarantineEntry.run(ctxFor(err));
+    const out = await quarantineEntry.run(ctxFor(err));
+    return Array.isArray(out) ? out : [];
   } catch (e) {
-    return [] as any[];
+    return [];
   }
 }
 
