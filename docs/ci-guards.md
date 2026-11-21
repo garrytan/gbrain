@@ -187,8 +187,9 @@ A third metric, `capability_refusal_swallowed` (rule in
 `scripts/capability-refusal-rule.ts`), counts a catch around a raw-SQL engine
 call (`executeRaw`, `executeRawDirect`, `executeRawJsonb`, including the bare
 `executeRawJsonb(engine, ...)` helper and a call inside a callback the try
-awaits) whose handler can fall back before it lets a capability refusal
-through. A Rust brain refuses untyped SQL by name
+awaits or whose returned promise an awaited call hands back) whose handler can
+fall back before it lets a capability refusal through, including a fallback
+returned from a loop, `switch` or block ahead of the check. A Rust brain refuses untyped SQL by name
 (`engine_capability_missing`); such a catch turns that refusal into a quiet
 default. Fix: make `rethrowCapabilityRefusal(err)` the handler's first
 statement, or `if (isEngineCapabilityRefusal(err)) throw err`; where the
