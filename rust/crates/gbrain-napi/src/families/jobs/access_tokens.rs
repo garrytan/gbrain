@@ -1,4 +1,4 @@
-//! Jobs: `access_tokens` (the mint insert, the active-token find, the read floor) (rust/docs/store/access-tokens.md).
+//! Jobs: `access_tokens` (the mint insert, the active-token find, the write grant read, the read floor) (rust/docs/store/access-tokens.md).
 
 use gbrain_store::jobs::TokenInsert;
 use napi::Env;
@@ -41,6 +41,16 @@ impl Brain {
         ids: Vec<String>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_access_token_names(&ids))
+    }
+
+    /// `readAccessTokenWriteGrant(id)`: the token's write grant columns, or null for an id no token has.
+    #[napi]
+    pub fn read_access_token_write_grant<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_access_token_write_grant(&id))
     }
 
     /// `setAccessTokenMinTrust(id, tier)`: whether a token had the id.

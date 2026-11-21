@@ -16,7 +16,7 @@
 //! caller here always passes the id `findActiveAccessTokens` returned).
 
 use super::*;
-use crate::env::parse_iso;
+use crate::env::{iso, parse_iso};
 
 const TOKEN: u8 = 0x2B;
 const TABLE: &str = "access_tokens";
@@ -210,6 +210,30 @@ impl Store {
             }
         }
         Ok(Value::Array(rows))
+    }
+
+    /// `readAccessTokenWriteGrant(id)`: the grant columns of the token `authorizeWrite` re-checks (`id`, `scopes`,
+    /// `permissions`, the five grant columns, `grant_revision`, `read_shared_revision`, `revoked_at` as ISO text or
+    /// null), revoked ones included; null for an id no token has. `private_pages` and `private_facts` are not kept, so they
+    /// are left out, as on a brain whose table lacks them.
+    pub fn read_access_token_write_grant(&self, id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let Some(t) = get_json::<TokenRecord>(&*read, &token_key(id))? else {
+            return Ok(Value::Null);
+        };
+        Ok(json!({
+            "id": t.id,
+            "scopes": t.scopes,
+            "permissions": t.permissions,
+            "source_grant": t.source_grant,
+            "source_id": t.source_id,
+            "federated_read": t.federated_read,
+            "allowed_operations": t.allowed_operations,
+            "takes_holders": t.takes_holders,
+            "grant_revision": t.grant_revision,
+            "read_shared_revision": t.read_shared_revision,
+            "revoked_at": t.revoked_at.map(iso),
+        }))
     }
 
     /// `setAccessTokenMinTrust(id, tier)`: sets (or clears, with None) one token's floor; whether a token had the id.

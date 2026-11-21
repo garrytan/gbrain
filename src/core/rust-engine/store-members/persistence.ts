@@ -25,7 +25,7 @@ import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } fro
 import type { SourceDetailRow } from '../../engine.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
-import { requestRow, topologyRow } from '../store-codec.ts';
+import { requestRow, topologyRow, withDates } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
 import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
@@ -145,9 +145,15 @@ export const readOAuthClientWriteGrant: StoreMember<[clientId: string, opts?: { 
     allowed_operations: row.allowed_operations ?? null, bound_slug_prefixes: row.bound_slug_prefixes ?? null, bound_tools: row.bound_tools ?? null,
     delegated_namespace: row.delegated_namespace ?? null, delegated_slug_prefixes: row.delegated_slug_prefixes ?? null };
 };
-/** The store keeps no legacy access tokens, so a write owned by one finds no live grant row. */
-export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async () => null;
-/** No credential row exists to hold, so the lock holds nothing (a missing row locks nothing on Postgres either). */
+/**
+ * The grant columns of the legacy token that owns a write (rust/docs/store/access-tokens.md), revoked ones included, or
+ * null for a token the store does not have. `lock` holds nothing, as readOAuthClientWriteGrant above.
+ */
+export const readAccessTokenWriteGrant: StoreMember<[tokenId: string, opts?: { lock?: boolean }], AccessTokenWriteGrant | null> = async (brain, tokenId) => {
+  const row = await storeCall({ member: 'readAccessTokenWriteGrant' }, () => brain.readAccessTokenWriteGrant(tokenId)) as AccessTokenWriteGrant | null;
+  return row ? withDates(row, ['revoked_at']) : null;
+};
+/** One process owns the store, so the lock holds nothing (a missing row locks nothing on Postgres either). */
 export const shareLockWriteCredential: StoreMember<[kind: 'oauth_client' | 'legacy_token', id: string], void> = async () => {};
 
 /** The existing counter rows of `keys` in key byte order (`COLLATE "C"`), unlocked; a missing key has no row. */

@@ -496,7 +496,7 @@ readRefreshTiming	persistence_journal	yes	1	no	yes	yes	serves
 countHeldBehindImport	persistence_journal	yes	1	no	yes	yes	serves
 ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readOAuthClientWriteGrant	persistence_journal	yes	3	no	yes	yes	serves
-readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
+readAccessTokenWriteGrant	persistence_journal	yes	2	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	5	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
@@ -686,7 +686,7 @@ readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	9	no	yes	yes	serves
 listOauthClients	minion_queue	yes	1	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
-insertAccessToken	minion_queue	yes	4	no	yes	yes	serves
+insertAccessToken	minion_queue	yes	5	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	2	no	yes	yes	serves
 setAccessTokenMinTrust	minion_queue	yes	2	no	yes	yes	serves
 insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves

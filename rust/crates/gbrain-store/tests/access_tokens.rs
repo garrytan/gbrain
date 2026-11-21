@@ -1,4 +1,4 @@
-//! The `access_tokens` members (`insertAccessToken`, `findActiveAccessTokens`, `setAccessTokenMinTrust`). What the parity
+//! The `access_tokens` members (`insertAccessToken`, `findActiveAccessTokens`, `readAccessTokenWriteGrant`, `setAccessTokenMinTrust`). What the parity
 //! file cannot see lives here: the stored message of each refusal (the TypeScript member turns it into SQLSTATE 23514 /
 //! 23505 and the constraint name), that a refused write leaves the table as it was, and the generated ids.
 
@@ -144,4 +144,44 @@ fn the_name_read_answers_each_asked_token_once_by_id_a_revoked_one_included() {
     want.sort_by(|a, c| a["id"].as_str().cmp(&c["id"].as_str()));
     assert_eq!(b.read_access_token_names(&ids).unwrap(), Value::Array(want));
     assert_eq!(b.read_access_token_names(&[]).unwrap(), json!([]));
+}
+
+#[test]
+fn the_write_grant_read_answers_the_grant_columns_a_revoked_token_included_and_null_for_no_token() {
+    let b = brain("tokens-write-grant");
+    let live = insert(
+        &b,
+        token(
+            "live",
+            "h1",
+            json!({ "scopes": ["read", "write"], "source_grant": "scalar", "source_id": "notes", "takes_holders": ["world"], "read_shared": true }),
+        ),
+    )
+    .unwrap();
+    let gone = insert(
+        &b,
+        token(
+            "gone",
+            "h2",
+            json!({ "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        b.read_access_token_write_grant(&live).unwrap(),
+        json!({
+            "id": live, "scopes": ["read", "write"], "permissions": { "source_id": "wiki" }, "source_grant": "scalar",
+            "source_id": "notes", "federated_read": null, "allowed_operations": null, "takes_holders": ["world"],
+            "grant_revision": 1, "read_shared_revision": 1, "revoked_at": null,
+        })
+    );
+    assert_eq!(
+        b.read_access_token_write_grant(&gone).unwrap()["revoked_at"],
+        json!("2026-01-02T03:04:05.000000Z")
+    );
+    assert_eq!(
+        b.read_access_token_write_grant("00000000-0000-4000-8000-000000000000")
+            .unwrap(),
+        Value::Null
+    );
 }

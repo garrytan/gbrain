@@ -6,12 +6,14 @@
  *  - Contract: an MCP put_page over http owned by a live OAuth client commits (on Rust it stops on raw_sql at admission
  *    until the mention-links worker is typed); a deleted client's write refuses permission_denied. A legacy token
  *    minted with a grant to a named source is inserted and reads that source's page over http; a grant that names a
- *    marked scope source (`config.qm_scope`) refuses invalid_grant and inserts no token. An OAuth
+ *    marked scope source (`config.qm_scope`) refuses invalid_grant and inserts no token. A legacy token's write grant
+ *    reads its live scopes and grant axes, and a revoked token reads revoked. An OAuth
  *    client's slug fence reads its stored bound prefixes, null for a client that is gone.
  *  - Regression: on the Rust engine readOAuthClientWriteGrant answered null for every client, so a live client's write
  *    refused "The owning OAuth client is revoked"; assertScopeSourceGrant read the sources through raw SQL
  *    (`... FOR SHARE`), so a source-granted mint refused raw_sql. readWriterSlugFence refused every OAuth client on Rust,
- *    so the links effect of an http write never settled.
+ *    so the links effect of an http write never settled. readAccessTokenWriteGrant answered null for every token on Rust,
+ *    so a live legacy token's write refused "The owning token is revoked".
  *  - Why existing coverage misses it: persistence-declaration.test.ts pins only a client and token with no live grant
  *    row; access-tokens.test.ts mints only default-grant tokens. Over MCP a refusal comes back inside the tool result,
  *    so the remote cases go through dispatchToolCall.
@@ -23,6 +25,9 @@ import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
+import { grantFromTokenRow } from '../../src/core/grants/model.ts';
+import { normalizeTokenScopes } from '../../src/core/legacy-token-scope.ts';
+import type { AccessTokenWriteGrant } from '../../src/core/engine-sql/persistence-journal.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -93,6 +98,22 @@ describe('credential grant reads of a remote write', () => {
     const read = await http(engine, 'get_page', { slug: SLUG }, auth);
     return { read: { ok: read.ok, title: (read.body as Record<string, unknown> | undefined)?.title ?? null },
       live: (await engine.findActiveAccessTokens('source-granted')).length };
+  });
+
+  parityTest('a legacy token write grant reads the live grant, and a revoked token reads revoked', { methods: ['readAccessTokenWriteGrant', 'insertAccessToken'] }, async (engine, backend) => {
+    await createSource(engine, backend, SOURCE);
+    const live = await mintLegacyToken(engine, { name: 'token-writer', scopes: ['read', 'write'], sourceGrant: [SOURCE], takesHolders: ['world'] });
+    const revoked = await engine.insertAccessToken({ name: 'token-revoked', token_hash: 'hash-revoked', scopes: ['read', 'write'], permissions: {},
+      source_grant: 'scalar', source_id: SOURCE, federated_read: null, allowed_operations: null, takes_holders: ['world'], revoked_at: new Date('2026-01-01T00:00:00Z') });
+    // What authorizeWrite reads from the row (persistence/authority.ts): the revocation, the scopes and the grant axes.
+    const grant = (row: AccessTokenWriteGrant | null) => {
+      if (!row) return null;
+      const g = grantFromTokenRow(row);
+      return { revoked: row.revoked_at != null, scopes: normalizeTokenScopes(row.scopes) ?? null, operations: g.allowedOperations ?? null,
+        sources: g.sources, malformed: g.permissionsMalformed, revision: Number(row.grant_revision ?? 0) };
+    };
+    return { live: grant(await engine.readAccessTokenWriteGrant(live.id)), locked: grant(await engine.readAccessTokenWriteGrant(live.id, { lock: true })),
+      revoked: grant(await engine.readAccessTokenWriteGrant(revoked.id)), missing: await engine.readAccessTokenWriteGrant('00000000-0000-4000-8000-000000000000') };
   });
 
   parityTest('a token grant that names a marked scope source refuses invalid_grant and inserts no token', { methods: ['lockRegisteredSourceIds', 'getSource'] }, async (engine, backend) => {
