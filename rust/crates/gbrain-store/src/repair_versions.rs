@@ -188,7 +188,7 @@ impl Store {
                 })
             })
             .collect();
-        out.sort_by(|a, b| b.id.cmp(&a.id));
+        out.sort_by_key(|r| std::cmp::Reverse(r.id));
         out.truncate(limit);
         Ok(out)
     }
@@ -260,7 +260,7 @@ impl Store {
                 found.push((v.id, row));
             }
         }
-        found.sort_by(|a, b| b.0.cmp(&a.0));
+        found.sort_by_key(|f| std::cmp::Reverse(f.0));
         found.truncate(limit);
         Ok(found.into_iter().map(|(_, row)| row).collect())
     }
