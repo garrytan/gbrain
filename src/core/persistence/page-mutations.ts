@@ -526,7 +526,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     async () => !source.local_path && sourceId === 'default' ? ctx.engine.getConfig('sync.repo_path') : null,
   ]) as [Awaited<ReturnType<typeof submissionAuthority>>, unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, Awaited<ReturnType<typeof getWorktreeBinding>>, string | null, string | null];
   // A put by a page's exact decomposed spelling is refused, never written to a composed twin (legacy-slug-put.ts).
-  if (snapshot === null && input.operation === 'put_page' && input.managedFileImport !== true) await refuseLegacySpelling(ctx, sourceId, p.slug, slug);
+  if (input.operation === 'put_page' && input.managedFileImport !== true) await refuseLegacySpelling(ctx, sourceId, p.slug, slug);
   if (typeof intent.content === 'string' && (typeof p.expected_revision !== 'string' || p.expected_revision === snapshot?.revision)) {
     await assertTimelineNotOmitted(ctx.engine, { intent, remote: ctx.remote !== false, writer: typeof p.expected_revision === 'string' ? 'editing' : 'preserving',
       slug, sourceId, content: intent.content, prior: snapshot });

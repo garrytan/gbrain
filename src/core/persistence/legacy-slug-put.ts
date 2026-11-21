@@ -11,11 +11,11 @@ import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { normalizeSlug, withStoredSlug } from '../utils.ts';
 
-/** The refusal for a put by the decomposed spelling `stored` of a page whose composed slug is `slug`. */
+/** The refusal for a put by the decomposed (or capitalised) spelling `stored` of a page whose composed slug is `slug`. */
 export function legacySpellingRefusal(stored: string, slug: string, sourceId: string) {
   const read = { argv: ['gbrain', 'get', '--source', sourceId, '--', stored], mcp: { tool: 'get_page', arguments: { slug: stored, source_id: sourceId } } };
   return opError('invalid_params',
-    `Page ${stored} is stored under an older decomposed Unicode spelling of its name, so a put by that spelling is refused and nothing was changed. `
+    `Page ${stored} is stored under an older ${stored === stored.normalize('NFC') ? 'capitalised' : 'decomposed Unicode'} spelling of its name, so a put by that spelling is refused and nothing was changed. `
       + `A fix that moves the page to the composed spelling ${slug} is coming; until then the page cannot be replaced by put.`,
     'Read the page with get_page by either spelling; it keeps its content, tags and timeline. Do not write it under the composed spelling, which would create a second page.', {
       detail: 'legacy_slug_spelling',
@@ -28,12 +28,15 @@ export function legacySpellingRefusal(stored: string, slug: string, sourceId: st
 /** Operations that change a page that already exists: they address the exact stored row, whatever its spelling (storedWriteSlug). */
 export const EXISTING_PAGE_OPERATIONS: readonly string[] = ['delete_page', 'add_tag', 'remove_tag', 'add_timeline_entry', 'edit_page', 'append_page'];
 
-/** Refuse a put whose exact lowercased spelling names a stored page in `sourceId` that is not the composed `slug`. */
+/**
+ * Refuse a put whose exact bytes, or their lowercase, name a stored page in `sourceId` that is not the composed `slug`: whether
+ * or not a page already holds `slug` (a composed twin), the put would write that page, or a second one beside it.
+ */
 export async function refuseLegacySpelling(ctx: OperationContext, sourceId: string, rawSlug: unknown, slug: string): Promise<void> {
   if (typeof rawSlug !== 'string') return;
-  const stored = rawSlug.toLowerCase();
-  if (stored === slug) return;
-  if (await ctx.engine.readPageSnapshot(stored, { sourceId, includeDeleted: true })) throw legacySpellingRefusal(stored, slug, sourceId);
+  for (const stored of new Set([rawSlug, rawSlug.toLowerCase()])) {
+    if (stored !== slug && await ctx.engine.readPageSnapshot(stored, { sourceId, includeDeleted: true })) throw legacySpellingRefusal(stored, slug, sourceId);
+  }
 }
 
 /**
@@ -61,7 +64,7 @@ export async function storedWriteSlug(engine: BrainEngine, sourceId: string, raw
   return null;
 }
 
-/** Runs the preparation or publication of `row` so that a write on an existing page's stored spelling keeps that spelling (storedWriteSlug), whichever process picks the request up. */
+/** Runs the preparation or publication of `row` so that a write on an existing page's stored spelling keeps that spelling (storedWriteSlug; a remember is admitted on the stored key of the entity page it resolved), whichever process picks the request up. */
 export function inStoredSlugScope<T>(row: { operation: string; slug: string }, run: () => T): T {
-  return EXISTING_PAGE_OPERATIONS.includes(row.operation) && row.slug !== normalizeSlug(row.slug) ? withStoredSlug(row.slug, run) : run();
+  return (EXISTING_PAGE_OPERATIONS.includes(row.operation) || row.operation === 'remember') && row.slug !== normalizeSlug(row.slug) ? withStoredSlug(row.slug, run) : run();
 }
