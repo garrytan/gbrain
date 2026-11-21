@@ -878,3 +878,36 @@ fn identity_downgrade_checkpoints_are_gap_rows_inside_a_not_copied_table() {
         .collect();
     assert_eq!(with_gap_rows, ["op_checkpoints"]);
 }
+
+/// The columns a copied row may hold that the store cannot keep yet: counted as gaps, never
+/// dropped quietly. Edit the pin only together with rust/docs/store/seed.md.
+#[test]
+fn the_gap_columns_are_pinned_and_belong_to_copied_relations() {
+    let pinned: Vec<_> = super::GAP_COLUMNS
+        .iter()
+        .map(|g| (g.table, g.column, g.gap))
+        .collect();
+    assert_eq!(
+        pinned,
+        [
+            (
+                "page_versions",
+                "frontmatter_raw",
+                "page_versions.frontmatter_raw"
+            ),
+            ("pages", "frontmatter_raw", "pages.frontmatter_raw"),
+        ]
+    );
+    let plan = super::plan();
+    for g in super::GAP_COLUMNS {
+        let rel = plan.relations.iter().find(|r| r.relation == g.table);
+        assert!(rel.is_some(), "{} is a copied relation", g.table);
+        let spec = super::relation_spec(g.table).unwrap();
+        assert!(
+            !spec.columns.iter().any(|(c, _)| *c == g.column),
+            "{}.{} is not a column the relation keeps",
+            g.table,
+            g.column
+        );
+    }
+}

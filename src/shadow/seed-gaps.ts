@@ -4,7 +4,8 @@
  * other primary table"). The Rust store's `seedPlan()` names the copied relations, the carried
  * tables and the not-copied list; anything else in the primary's catalog is a gap. A not-copied
  * table can still hold rows that are brain state (`gap_rows`): those rows are counted as a gap
- * of their own. A swap to the seeded store is refused while any gap count is above zero.
+ * of their own, and so can a column of a copied relation the store cannot keep yet (`gap_columns`,
+ * counted only when the primary has the column). A swap to the seeded store is refused while any gap count is above zero.
  *
  * The count runs inside the seed's read-only snapshot through `query`, so it sees exactly the
  * rows the copy saw.
@@ -58,6 +59,19 @@ export async function countSeedGaps(plan: SeedPlan, query: SeedQuery): Promise<R
       [n.gap_rows.equals],
     );
     counts[n.gap_rows.gap] = Number(row?.n ?? 0);
+  }
+  for (const g of plan.gap_columns) {
+    if (!present.has(g.table)) continue;
+    const [col] = await query(
+      `SELECT 1 AS present FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`,
+      [g.table, g.column],
+    );
+    if (!col) continue;
+    const [row] = await query(
+      `SELECT count(*)::bigint::text AS n FROM ${quoted(g.table)} WHERE ${quoted(g.column)} IS NOT NULL`,
+    );
+    counts[g.gap] = Number(row?.n ?? 0);
   }
   return Object.fromEntries(Object.entries(counts).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }

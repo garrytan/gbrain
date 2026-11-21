@@ -71,7 +71,33 @@ pub struct SeedPlan {
     /// `(table, relation)`: a table whose rows ride in the rows of `relation`.
     pub carried: Vec<(&'static str, &'static str)>,
     pub not_copied: &'static [NotCopied],
+    /// Columns of copied relations that the store cannot keep yet: a row with a non-null value
+    /// there is counted as the gap `gap`, so a swap is refused while one exists.
+    pub gap_columns: &'static [GapColumn],
 }
+
+/// A column of a copied relation whose non-null values the store does not keep yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct GapColumn {
+    pub table: &'static str,
+    pub column: &'static str,
+    pub gap: &'static str,
+}
+
+/// The columns the store does not keep yet. The raw frontmatter text comes with the frontmatter
+/// format work; until the page family stores it, a page or version that has it is a gap.
+pub const GAP_COLUMNS: &[GapColumn] = &[
+    GapColumn {
+        table: "page_versions",
+        column: "frontmatter_raw",
+        gap: "page_versions.frontmatter_raw",
+    },
+    GapColumn {
+        table: "pages",
+        column: "frontmatter_raw",
+        gap: "pages.frontmatter_raw",
+    },
+];
 
 /// Tables read as columns of a relation's rows.
 const CARRIED: &[(&str, &str)] = &[("page_projection_jobs", "pages")];
@@ -87,6 +113,7 @@ pub fn plan() -> SeedPlan {
             .collect(),
         carried: CARRIED.to_vec(),
         not_copied: NOT_COPIED,
+        gap_columns: GAP_COLUMNS,
     }
 }
 

@@ -63,6 +63,14 @@ export interface SeedPlan {
   /** `[table, relation]`: a table whose rows ride in the rows of `relation`. */
   carried: [string, string][];
   not_copied: SeedNotCopied[];
+  /** Columns of copied relations the store cannot keep yet: a non-null value is the gap `gap`. */
+  gap_columns: SeedGapColumn[];
+}
+
+export interface SeedGapColumn {
+  table: string;
+  column: string;
+  gap: string;
 }
 
 /** What one `importRelation` batch did. `losses` counts values the store could not keep, by kind. */

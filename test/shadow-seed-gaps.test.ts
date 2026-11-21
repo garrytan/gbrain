@@ -7,6 +7,8 @@
  * gap `sync_identity_downgrades`; a checkpoint of any other op must not.
  * Regression it catches: the count ignoring `gap_rows`, which lets a swap drop pending rename
  * repairs silently, or counting a covered table as a gap.
+ * A column of a copied relation that the store cannot keep yet (`gap_columns`) counts the rows
+ * that hold a value, and is skipped when the primary has no such column.
  * Not covered elsewhere: the Rust test pins the plan's `op_checkpoints` split; this file checks
  * the count that reads the primary.
  */
@@ -49,6 +51,7 @@ async function planLeaving(left: string): Promise<SeedPlan> {
     relations: tables.filter(t => t !== left && t !== 'op_checkpoints').map(relation => ({ relation, key: ['id'] })),
     carried: [],
     not_copied: [OP_CHECKPOINTS],
+    gap_columns: [],
   };
 }
 
@@ -77,7 +80,24 @@ describe('countSeedGaps', () => {
     await checkpoint(IDENTITY_DOWNGRADE_OP, '41');
     const tables = await primaryTables(query);
     expect(tables).toContain('op_checkpoints');
-    const plan: SeedPlan = { relations: tables.map(relation => ({ relation, key: ['id'] })), carried: [], not_copied: [] };
+    const plan: SeedPlan = { relations: tables.map(relation => ({ relation, key: ['id'] })), carried: [], not_copied: [], gap_columns: [] };
     expect(await countSeedGaps(plan, query)).toEqual({});
+  });
+
+  test('a gap column counts the rows that hold a value; a column the primary lacks is skipped', async () => {
+    await engine.putPage('notes/kept', { type: 'note', title: 'Kept', compiled_truth: 'body' });
+    await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'body' });
+    await engine.executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = 'notes/gone'`);
+    const tables = await primaryTables(query);
+    const plan: SeedPlan = {
+      relations: tables.map(relation => ({ relation, key: ['id'] })),
+      carried: [],
+      not_copied: [],
+      gap_columns: [
+        { table: 'pages', column: 'deleted_at', gap: 'pages.deleted_at' },
+        { table: 'pages', column: 'no_such_column', gap: 'pages.no_such_column' },
+      ],
+    };
+    expect(await countSeedGaps(plan, query)).toEqual({ 'pages.deleted_at': 1 });
   });
 });
