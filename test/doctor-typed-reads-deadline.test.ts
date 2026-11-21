@@ -28,7 +28,7 @@ const LOCK_MS = 2_000;
 
 interface Case { member: string; table: string; call: (engine: BrainEngine) => Promise<unknown> }
 
-/** The decide members a doctor check calls, each with the table whose lock blocks its statement. */
+/** The members a doctor check calls, each with the table whose lock blocks its statement. */
 const CASES: Case[] = [
   { member: 'readDecideState', table: 'decide_state', call: (e) => e.readDecideState('doctor_deadline_probe') },
   { member: 'decideSlotUsage', table: 'decision_receipts', call: (e) => e.decideSlotUsage(24) },
@@ -37,11 +37,21 @@ const CASES: Case[] = [
   { member: 'listDecideMixedModelDecisions', table: 'decision_receipts', call: (e) => e.listDecideMixedModelDecisions(24) },
   { member: 'listDecideReceiptStats', table: 'decision_receipts', call: (e) => e.listDecideReceiptStats({ sinceHours: 24 }) },
   { member: 'listDecideCalibrations', table: 'decide_calibrations', call: (e) => e.listDecideCalibrations({ includeRetired: true }) },
+  // N3: the queue-health reads (engine-sql/jobs-health.ts) and the belief-coverage source read (engine-sql/belief.ts).
+  { member: 'readQueueHealthSignals', table: 'minion_jobs', call: (e) => e.readQueueHealthSignals({ waitingThreshold: 1, oldWaitingHours: 1, windowHours: 24, stalledAfterHours: 1 }) },
+  { member: 'listWaitingByQueue', table: 'minion_jobs', call: (e) => e.listWaitingByQueue() },
+  { member: 'readQueueDivergence', table: 'minion_jobs', call: (e) => e.readQueueDivergence({ windowHours: 24, ttlReasonPrefix: 'ttl:' }) },
+  { member: 'listQueueWedgeCounts', table: 'minion_jobs', call: (e) => e.listQueueWedgeCounts() },
+  { member: 'listPrivateQueueHealth', table: 'minion_jobs', call: (e) => e.listPrivateQueueHealth() },
+  { member: 'readWedgeSignals', table: 'minion_jobs', call: (e) => e.readWedgeSignals('default', ['sync']) },
+  { member: 'readOldestWaitingAge', table: 'minion_jobs', call: (e) => e.readOldestWaitingAge('default') },
+  { member: 'listStuckActiveJobsByName', table: 'minion_jobs', call: (e) => e.listStuckActiveJobsByName() },
+  { member: 'listCoveredSources', table: 'belief_events', call: (e) => e.listCoveredSources('doctor_deadline_probe') },
 ];
 
-test('the bounded typed reads are exactly the decide members a doctor check reaches', () => {
+test('the bounded typed reads are exactly the members a doctor check reaches', () => {
   expect([...BOUNDED_TYPED_READS].filter((name) => CASES.some((c) => c.member === name)).sort()).toEqual(CASES.map((c) => c.member).sort());
-  // The set lists the decide members only: the trunk adds its journal reads next to these (src/core/statement-deadline.ts).
+  // The set lists the members a doctor check reaches and no other: the trunk adds its journal reads next to these (src/core/statement-deadline.ts).
   expect([...BOUNDED_TYPED_READS].filter((name) => !CASES.some((c) => c.member === name))).toEqual([]);
   for (const { member } of CASES) expect(typeof (PostgresEngine.prototype as unknown as Record<string, unknown>)[member], member).toBe('function');
 });

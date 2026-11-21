@@ -13,6 +13,15 @@
 export const OWNER_IPC_LOCAL_ONLY_READS: ReadonlySet<string> = new Set([
   'readStoredBodyBytes', 'readPageBodySizes', 'readFieldUsageSamples', 'listFiles', 'getCodeTraversalCache',
   'listSegmentedPages', 'hasWithdrawnFenceClaim',
+  // N3: the alias, export, body-manifest, trust-tier, withdrawal-discovery, belief-coverage, search-vector and queue-health reads:
+  // SELECTs only. They stay closed to remote callers, as the decide reads below do.
+  'readEntityAliasRows', 'readPageAliasRows', 'readPageTitle', 'resolveCaseSensitiveAliases',
+  'listAccessPolicySourceIds', 'listExportPageKeys', 'listExportWithdrawals', 'listForcedCutSeqs', 'normalizeFenceLines',
+  'readBodyManifestMeta', 'readBodyManifestOutline', 'readBodyManifestRows', 'readExportPageRows', 'readExportWithdrawalLedgerBytes',
+  'readSegmentedPageHead', 'readSegmentedVersionBodyBytes', 'listPageTypesByIds', 'listVersionReasonWriters', 'listVersionTrustTiers',
+  'readWithdrawalDiscovery', 'listCoveredSources', 'countSearchVectorRows',
+  'readQueueHealthSignals', 'listPrivateQueueHealth', 'listQueueWedgeCounts', 'listStuckActiveJobsByName', 'listWaitingByQueue',
+  'readOldestWaitingAge', 'readQueueDivergence', 'readWedgeSignals',
   // The decide store: SELECTs only (getDecideProposal and getDecideReviewProposal may lock the row, released when
   // the call ends).
   'readDecideState', 'dailyDecideSpend', 'listDecideSpendBySlot', 'listDecideReceiptStats', 'decideSlotUsage',
