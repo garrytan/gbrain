@@ -206,6 +206,7 @@ describe('no PGLite or Postgres path raises engine_capability_missing', () => {
     walk(root);
     expect(callers.sort()).toEqual(['core/persistence/skill-activation.ts', 'core/shared-skills/publication.ts', 'core/sql-engine-kind.ts']);
     // Each shared-skill call sits behind isRustBrain, so a PGLite or Postgres brain never reaches it.
+    // test-reads-source-ok[structural]: the guard proves where the only raiser is called from, which no runtime probe can show.
     const read = (rel: string) => readFileSync(join(root, rel), 'utf8');
     const publication = read('core/shared-skills/publication.ts');
     expect(publication.match(/\bcapabilityMissing\s*\(/g)).toHaveLength(1);
