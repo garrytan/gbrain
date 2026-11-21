@@ -10,6 +10,39 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.757.0] - 2026-11-21
+
+**gbrain installs and connects to Hermes without changing Hermes's security settings: `gbrain setup hermes` now registers the MCP server through Hermes's own `hermes mcp add`, and the install docs add a release-binary route Hermes's command scanner allows.**
+
+<!-- behavior-change: setup_hermes_registers_mcp_gst2714 -->
+
+### Fixed
+- `gbrain setup hermes` registers gbrain's MCP server itself, through `hermes mcp add` (Hermes validates the entry, connects to it and writes its own `config.yaml`), then checks it with `hermes mcp test gbrain`. It used to print a step to follow by hand, and agents inside Hermes tried to edit `config.yaml` directly, which Hermes refuses ("Agent cannot modify security-sensitive configuration"). Setup finds `hermes` on PATH or where Hermes's installer puts it, leaves an `mcp_servers.gbrain` entry it did not write alone, keeps its marked hook block through Hermes's rewrite of `config.yaml`, and prints the one command to run when no `hermes` command is found. A rerun updates gbrain's own entry and keeps its member binding and connect timeout, but leaves an entry carrying other settings or environment variables alone (no stored value goes on a command line). If an update fails, setup puts the previous entry back and exits 1. `--remove` runs `hermes mcp remove gbrain`; `--instructions-only` still leaves MCP alone.
+
+### Changed
+- `INSTALL_FOR_AGENTS.md` adds a release-binary install route (`#release-binary`) for harnesses whose command scanner refuses the Bun installer or `bun install -g`, such as Hermes in single-query mode: download the stable `gbrain-linux-x64` (or `gbrain-darwin-arm64`) release file to `~/.local/bin/gbrain`, then `~/.local/bin/gbrain init --pglite --no-embedding` and `~/.local/bin/gbrain setup hermes`. Every command in it passes Hermes v2026.9.24's command checks with Tirith 0.4.2 and 0.5.0, online or offline.
+- The README has a Hermes section with that route, and `docs/mcp/HERMES.md` and the "If you are Hermes" step lead with `gbrain setup hermes`, keeping the `hermes mcp add` command as the by-hand fallback.
+
+**A self-registered connector such as claude.ai gets the wider access the owner gives it with `gbrain auth rescope` the next time it connects.**
+
+### Fixed
+- A browser connector that registered itself asking only for `read` stayed read-only after the owner widened it with `gbrain auth rescope --client <id> --scopes read,write`: it asks for `read` again every time it connects, and the owner's approval granted only what it asked for. Now the owner's approval of a self-registered connector grants its whole current scope, shown on the approval page, whenever the request names any scope it holds. The scope the owner set stays the ceiling, a connector asking for more gets no more, and a request naming nothing it holds still gets nothing. Tokens already issued and their refreshes keep the scope approved for them, and narrowing a connector still takes effect at once on its existing tokens. Clients the operator registered are unchanged. Reported and first fixed by Devin McNulty (overtonxyz/gbrain#2770).
+
+<!-- behavior-change: dcr_connector_takes_widened_grant_gst3334 -->
+
+**A misspelled `readable_by` frontmatter key now refuses the write instead of opening the page to every member.**
+
+<!-- behavior-change: readers_key_misspelled_refused -->
+
+### Fixed
+- A page whose frontmatter names its readers with `Readable_By`, `readable-by`, `READABLE_BY`, `readable by` or `readableBy` used to save without complaint and then be readable by every member, because page access reads only the exact `readable_by` key. `put_page`, `edit_page` and `capture` now refuse it with `readers_noncanonical` and store nothing; `ingest_capture`, `brainstorm --save` and `sources reconcile` refuse it the same way. Git sync and `gbrain import` hold such a file with the same code, the rest of the source still syncs, and an existing page keeps its last imported version. A page that also carries the exact `readable_by` key is refused too.
+- Write the key as `readable_by` (lowercase, with an underscore) on its own frontmatter line, then save, sync or import again. Pages already stored with a misspelled key are not rewritten.
+
+**The Rust engine's design docs under `rust/docs/` are now left out of /ship's code review, the same as `docs/`; nothing changes for users.**
+
+### Changed
+- `.gstack/ship-policy.json` now lists `rust/docs/**` next to `docs/**` in `review_exclude_paths`, so a large Rust change stays under the review pass's 2,000,000-byte limit. Rust code, tests and config are still reviewed in full, and the documentation audit and the privacy and secret-scan checks still read those docs.
+
 ## [0.60.756.0] - 2026-11-21
 
 **Purging deleted pages with an age that is not a number, negative or infinite is now refused on every engine, so a bad age can no longer permanently erase every deleted page.**
