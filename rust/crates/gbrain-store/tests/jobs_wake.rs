@@ -8,6 +8,9 @@ use gbrain_store::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT};
 use gbrain_store::jobs::{
     CronRunInput, EndSpec, ForgetClaimSpec, ForgetSettle, WatchFilter, WatchInsert, WatchSettle,
 };
+use gbrain_store::keys;
+use gbrain_store::kv::Kv;
+use gbrain_store::persistence::{ClaimStamp, WriteCompletion, WriteRequestInsert};
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::{OpenOptions, Store};
 use serde_json::{Value, json};
@@ -40,10 +43,12 @@ impl Env for Clock {
     }
 }
 
-/// A store on a clock the test moves.
+/// A store on a clock the test moves, and the key-value file under it (to write a record the
+/// store's members cannot).
 struct Brain {
     store: Store,
     clock: Arc<Clock>,
+    kv: Arc<RedbKv>,
     dir: PathBuf,
 }
 
@@ -80,7 +85,12 @@ fn brain(name: &str) -> Brain {
     });
     let kv = Arc::new(RedbKv::open_path(&dir.join("records.redb")).unwrap());
     let store = Store::open_kv(kv.clone(), clock.clone(), OpenOptions::default()).unwrap();
-    Brain { store, clock, dir }
+    Brain {
+        store,
+        clock,
+        kv,
+        dir,
+    }
 }
 
 fn user(n: u32) -> String {
@@ -435,6 +445,74 @@ fn a_cron_run_is_kept_seven_days_for_the_doctor_and_thirty_for_the_list() {
     let due = b.list_due_wake_watches(None).unwrap();
     assert_eq!(ids(&due), vec![cron_watch]);
     assert_eq!(due[0]["run_status"], "ok");
+}
+
+/// Writes `recovery` into the request's stored record, as the TypeScript journal does for a write
+/// that still has recovery work.
+fn set_recovery(b: &Brain, id: &str, recovery: Value) {
+    let key = keys::request(id);
+    let mut tx = b.kv.begin_write().unwrap();
+    let mut record: Value = serde_json::from_slice(&tx.get(&key).unwrap().unwrap()).unwrap();
+    record["recovery"] = recovery;
+    tx.put(&key, &serde_json::to_vec(&record).unwrap()).unwrap();
+    tx.commit().unwrap();
+}
+
+fn committed_request(b: &Brain) -> String {
+    let keys_ = vec!["principal:local_cli:w".to_string(), "brain".to_string()];
+    let incarnation = b.read_source_membership("default").unwrap().unwrap()["incarnation"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    b.lock_persistence_counters(&keys_).unwrap();
+    let insert: WriteRequestInsert = serde_json::from_value(json!({
+        "principalKind": "local_cli", "principalId": "w", "requestId": "b0000000-0000-4000-8000-0000000000b1",
+        "operation": "put_page", "sourceId": "default", "sourceIncarnation": incarnation, "pageId": null,
+        "slug": "notes/a", "worktreeId": null, "topologyGeneration": null, "digest": "d", "intent": {},
+        "authority": {}, "intentBytes": 10, "terminalReservation": 4096, "targetKind": "page",
+        "protocolVersion": 1, "admitterVersion": "v", "admitterHostId": null, "counterKeys": keys_,
+        "clientRequestId": null, "state": "queued", "deferredRefreshId": null,
+    }))
+    .unwrap();
+    let id = b.insert_write_request(&insert).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let stamp = ClaimStamp {
+        id: id.clone(),
+        token: "c0000000-0000-4000-8000-0000000000c1".into(),
+        lease_ms: 60_000.0,
+        phase_json: None,
+    };
+    b.stamp_write_claim(&stamp).unwrap().unwrap();
+    let done: WriteCompletion = serde_json::from_value(json!({
+        "id": id, "state": "committed", "outcome": {}, "errorCode": null, "errorMessage": null,
+        "consumerVersion": "v", "consumerHostId": null, "errorDetail": null, "resultBytes": 0,
+        "counterKeys": keys_, "intentBytes": 10, "retainedBytes": 100, "terminalReservation": 4096,
+        "probePurges": false,
+    }))
+    .unwrap();
+    b.complete_write_row(&done).unwrap().unwrap();
+    id
+}
+
+#[test]
+fn a_write_committed_with_a_recovery_record_is_not_settled_until_the_recovery_is_gone() {
+    let b = brain("recovery");
+    let request = committed_request(&b);
+    let w = open(
+        &b,
+        1,
+        json!({ "event": "gbrain.write.settled", "target": request, "targetRef": request }),
+    );
+    let due = b.list_due_wake_watches(None).unwrap();
+    assert_eq!(ids(&due), vec![w]);
+    assert_eq!(due[0]["req_state"], "committed");
+    assert_eq!(due[0]["req_id"], request);
+    set_recovery(&b, &request, json!({ "step": 1 }));
+    assert!(b.list_due_wake_watches(None).unwrap().is_empty());
+    set_recovery(&b, &request, Value::Null);
+    assert_eq!(ids(&b.list_due_wake_watches(None).unwrap()), vec![w]);
 }
 
 #[test]

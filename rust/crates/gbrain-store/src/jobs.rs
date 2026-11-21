@@ -39,7 +39,8 @@
 //!   reservation_uuid` indexes it by job, `0x22 expires_at reservation_uuid` by expiry (pending only).
 //!   `0x24 id -> record` is one lease-pressure row (sequence `lease_pressure`), `0x25 bounced_at id` its time
 //!   order and `0x26 job id` its job. The layout is in `spend.rs`; `0x27` indexes the open holds by owner, and
-//!   `0x28`/`0x29` (the spend ledger, `spend_log.rs`) and `0x2A` (the client caps, `oauth_clients.rs`) follow.
+//!   `0x28`/`0x29` (the spend ledger, `spend_log.rs`), `0x2A` (the whole client row, `oauth_clients.rs`) and `0x2B` (the
+//!   token row, `access_tokens.rs`) follow.
 //! - `m 0x18..=0x1C`: the subagent messages, tool rows and their three indexes (see `subagent.rs`).
 //!
 //! Integers are big-endian; a signed one has its sign bit flipped so byte order is numeric order.
@@ -61,6 +62,7 @@
 //! owner. A job's attachments, subagent messages and subagent tool rows go with it
 //! (`ON DELETE CASCADE`).
 
+mod access_tokens;
 mod attachments;
 mod checks;
 mod health;
@@ -78,6 +80,7 @@ mod sweeps;
 mod synthesis_completions;
 mod wake;
 
+pub use access_tokens::TokenInsert;
 pub use attachments::AttachmentInput;
 pub use checks::{
     BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,
@@ -86,7 +89,7 @@ pub use health::{DivergenceSpec, HealthSpec};
 pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
-pub use oauth_clients::ClientInsert;
+pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
@@ -100,7 +103,7 @@ pub use wake::{
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
-use crate::jsonb::ordered as jsonb;
+use crate::jsonb::ordered;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::timeline_queries::jsonb_field_text;
@@ -239,6 +242,9 @@ fn owned_key(owner: i64, id: i64) -> Vec<u8> {
     k
 }
 
+/// The id prefix of every page embedding lease (page-embedding-lease.ts `PAGE_EMBEDDING_LEASE_PREFIX`).
+const PAGE_EMBEDDING_LEASE_PREFIX: &str = "embed-page:";
+
 fn lock_key(id: &str) -> Vec<u8> {
     let mut k = prefix(LOCK);
     k.extend_from_slice(id.as_bytes());
@@ -266,8 +272,10 @@ pub struct JobRecord {
     pub queue: String,
     pub status: String,
     pub priority: i32,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub submission_authority: Option<Value>,
     pub claim_generation: i64,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub data: Value,
     pub max_attempts: i32,
     pub attempts_made: i32,
@@ -285,9 +293,12 @@ pub struct JobRecord {
     pub tokens_input: i32,
     pub tokens_output: i32,
     pub tokens_cache_read: i32,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub result: Option<Value>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub progress: Option<Value>,
     pub error_text: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub stacktrace: Option<Value>,
     pub depth: i32,
     pub max_children: Option<i32>,
@@ -304,11 +315,13 @@ pub struct JobRecord {
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
     pub updated_at: i64,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub quiet_hours: Option<Value>,
     pub stagger_key: Option<String>,
     pub budget_remaining_cents: Option<i32>,
     pub budget_owner_job_id: Option<i64>,
     pub budget_root_owner_id: Option<i64>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub spend_authorization: Option<Value>,
     pub spend_claim_token: Option<i64>,
 }
@@ -319,7 +332,7 @@ impl JobRecord {
     /// `jsonb` key order.
     pub fn to_json(&self) -> Value {
         let t = |v: Option<i64>| v.map(iso);
-        let j = |v: &Option<Value>| v.as_ref().map(jsonb);
+        let j = |v: &Option<Value>| v.as_ref().map(ordered);
         // `real` prints its shortest float4 form; read back as a double that is the same text.
         let jitter: f64 = format!("{}", self.backoff_jitter).parse().unwrap_or(0.0);
         let mut m = Map::new();
@@ -333,7 +346,7 @@ impl JobRecord {
         put("priority", json!(self.priority));
         put("submission_authority", json!(j(&self.submission_authority)));
         put("claim_generation", json!(self.claim_generation));
-        put("data", jsonb(&self.data));
+        put("data", ordered(&self.data));
         put("max_attempts", json!(self.max_attempts));
         put("attempts_made", json!(self.attempts_made));
         put("attempts_started", json!(self.attempts_started));
@@ -426,6 +439,7 @@ struct InboxRecord {
     id: i64,
     job_id: i64,
     sender: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     payload: Value,
     sent_at: i64,
     read_at: Option<i64>,
@@ -592,6 +606,25 @@ pub struct LockAcquire {
     pub acquisition_token: String,
     pub ttl_minutes: f64,
     pub steal_grace_seconds: f64,
+}
+
+/// `takePageEmbeddingLease` opts (page-embedding-lease.ts).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageLeaseTake {
+    pub holder_pid: i64,
+    pub holder_host: String,
+    pub acquisition_token: String,
+    pub ttl_minutes: f64,
+}
+
+/// `renewPageEmbeddingLease` and `releasePageEmbeddingLease` opts: the lease fences on its token alone.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageLeaseHolder {
+    pub acquisition_token: String,
+    #[serde(default)]
+    pub ttl_minutes: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1475,6 +1508,82 @@ impl Store {
         })
     }
 
+    /// `takePageEmbeddingLease`: writes the lease when no row stands or the row expired (no
+    /// steal grace, unlike `acquireCycleLock`); false while an unexpired row stands.
+    pub fn take_page_embedding_lease(&self, lease_id: &str, opts: &PageLeaseTake) -> Result<bool> {
+        uuid_arg("takePageEmbeddingLease", &opts.acquisition_token)?;
+        self.write(|tx| {
+            let now = self.env.now_micros();
+            let key = lock_key(lease_id);
+            if let Some(held) = get_json::<LockRecord>(tx, &key)?
+                && held.ttl_expires_at >= now
+            {
+                return Ok(false);
+            }
+            let record = LockRecord {
+                holder_pid: opts.holder_pid,
+                holder_host: Some(opts.holder_host.clone()),
+                acquired_at: now,
+                ttl_expires_at: now + minutes_us(opts.ttl_minutes),
+                last_refreshed_at: Some(now),
+                acquisition_token: opts.acquisition_token.to_lowercase(),
+            };
+            put_json(tx, &key, &record)?;
+            Ok(true)
+        })
+    }
+
+    /// `renewPageEmbeddingLease`: pushes the expiry out when the row still carries the token.
+    pub fn renew_page_embedding_lease(
+        &self,
+        lease_id: &str,
+        opts: &PageLeaseHolder,
+    ) -> Result<bool> {
+        uuid_arg("renewPageEmbeddingLease", &opts.acquisition_token)?;
+        let ttl = opts.ttl_minutes.ok_or_else(|| {
+            StoreError::invalid("renewPageEmbeddingLease: ttlMinutes is required")
+        })?;
+        self.write(|tx| {
+            let now = self.env.now_micros();
+            let key = lock_key(lease_id);
+            let Some(mut held) = get_json::<LockRecord>(tx, &key)?
+                .filter(|l| l.acquisition_token == opts.acquisition_token.to_lowercase())
+            else {
+                return Ok(false);
+            };
+            held.ttl_expires_at = now + minutes_us(ttl);
+            held.last_refreshed_at = Some(now);
+            put_json(tx, &key, &held)?;
+            Ok(true)
+        })
+    }
+
+    /// `releasePageEmbeddingLease`: deletes this holder's row and every expired `embed-page:` row.
+    pub fn release_page_embedding_lease(
+        &self,
+        lease_id: &str,
+        opts: &PageLeaseHolder,
+    ) -> Result<()> {
+        uuid_arg("releasePageEmbeddingLease", &opts.acquisition_token)?;
+        self.write(|tx| {
+            let now = self.env.now_micros();
+            let token = opts.acquisition_token.to_lowercase();
+            let mut doomed = Vec::new();
+            for (id, lock) in all_locks(tx)? {
+                let own = id == lease_id && lock.acquisition_token == token;
+                let expired =
+                    id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX) && lock.ttl_expires_at < now;
+                if own || expired {
+                    doomed.push(lock_key(&id));
+                }
+            }
+            for key in doomed {
+                tx.delete(&key)?;
+            }
+            Ok(())
+        })
+    }
+
     /// `readCycleLocks`: rows with `db_now`, the store clock the ages compare against. `stale`
     /// and `all` come oldest acquire first.
     pub fn read_cycle_locks(&self, filter: &LockFilter) -> Result<Vec<Value>> {
@@ -1601,7 +1710,7 @@ fn legacy_spend_record(row: &JobRecord, spend: &LegacySpend, now: i64) -> Value 
     let at = iso(millis);
     // `YYYY-MM-DDTHH24:MI:SS.MSZ`: millisecond precision.
     let at = format!("{}Z", &at[..23]);
-    jsonb(&json!({
+    ordered(&json!({
         "version": 1,
         "kind": "legacy_default",
         "group_id": spend.group_id,

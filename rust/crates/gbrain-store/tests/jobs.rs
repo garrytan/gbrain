@@ -130,6 +130,14 @@ fn many_workers_with_jobs_arriving_claim_and_complete_each_job_once() {
             assert_eq!(row["claim_generation"], 1);
             assert_eq!(row["attempts_started"], 1);
         }
+        if let Some(stats) = b.occ_stats() {
+            eprintln!(
+                "{workers} workers: {} commits, {} conflicts, hot keys {:?}",
+                stats.commits,
+                stats.conflicts,
+                stats.hot_keys.iter().take(3).collect::<Vec<_>>()
+            );
+        }
     }
 }
 

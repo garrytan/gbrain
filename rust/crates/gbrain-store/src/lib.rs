@@ -65,6 +65,7 @@ pub mod ontology;
 pub mod page_body;
 pub mod page_embedding_budget;
 pub mod page_ops;
+pub mod page_visibility;
 pub mod persistence;
 pub mod raw_files;
 pub mod relations;
