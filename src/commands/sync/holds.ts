@@ -22,6 +22,7 @@ import { importSizeLimit, contentRefusalFromReceipt, isContentRefusal, type Cont
 import { slugConflictHoldMessage, type ImportResult } from '../../core/import-file.ts';
 import { classifyImportHold, parseMarkdown } from '../../core/markdown.ts';
 import { noncanonicalPrivateHold } from '../../core/persistence/visibility-request.ts';
+import { noncanonicalReadersHold } from '../../core/persistence/readers-request.ts';
 import { readSourceFileSync } from '../../core/minions/source-filesystem.ts';
 import { maintenanceBeliefTransaction } from '../../core/belief/writers.ts';
 import type { SyncRename } from '../../core/persistence/sync-discovery.ts';
@@ -171,7 +172,7 @@ export function screenLegacyFile(filePath: string, relPath: string, activePack?:
   if (hasMalformedPathSegment(relPath) || isCodeFilePath(relPath)) return { refusal: null, upstreamVersion: read.upstreamVersion };
   const parsed = parseMarkdown(read.content, relPath, { validate: true, ...(activePack ? { activePack } : {}) });
   const refusal = classifyImportHold(parsed, { expectedSlug: slugifyPath(relPath) || null, slugConflictMessage: (_found, expected) => slugConflictHoldMessage(relPath, expected) })
-    ?? noncanonicalPrivateHold(read.content, parsed.frontmatter);
+    ?? noncanonicalPrivateHold(read.content, parsed.frontmatter) ?? noncanonicalReadersHold(read.content, parsed.frontmatter);
   return { refusal, upstreamVersion: read.upstreamVersion };
 }
 

@@ -456,6 +456,7 @@ async function streamLocalPage(connect: () => Promise<BrainEngine>, path: string
   assertPageRevision(await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true }), engineMutationPrecondition(parseMutationPrecondition(params)));
   const result = await importStreamedMarkdownFile(engine, resolve(path), relativePath, { sourceId, inferFrontmatter: false, content }, stat, policy);
   if (result.status === 'skipped' && result.error) {
+    if (result.refusal?.code === 'readers_noncanonical') throw (await import('../../core/persistence/readers-request.ts')).readersNoncanonicalRefusal({ slug, source_id: sourceId }, []);
     if (result.refusal?.code === 'visibility_noncanonical') throw (await import('../../core/persistence/visibility-request.ts')).privateRequestRefusal({ slug, source_id: sourceId }, undefined);
     throw opError(result.refusal?.code === 'invalid_frontmatter' ? 'invalid_frontmatter' : 'invalid_params', result.error,
       `${path} was not written as ${slug}: fix what the message names (or split the file into smaller pages) and run the command again.`);

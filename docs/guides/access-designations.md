@@ -41,6 +41,8 @@ Five kinds of caller read a brain:
 | fact `visibility: private` | reads | reads | hidden | hidden | hidden |
 | page or fact in an owner-only source (`imessage`, `owner_only: true`), or derived from one | reads | reads | hidden | hidden | hidden, under every relaxation |
 
+The key must be written exactly `readable_by` (lowercase, with an underscore). A page that spells it another way (`Readable_By`, `readable-by`, `readableBy`) would be read as having no restriction, so `put_page`, `edit_page` and `capture` refuse it with [`readers_noncanonical`](write-refusals.md#readers_noncanonical), and sync and import hold the file.
+
 "Hidden" means the same `not_found` a missing page gets, on every read path (get_page, search, query, recall, lists,
 links, timelines, versions). Designations govern readers, not processing: restricted pages are embedded
 with the brain's configured embedding provider like any other page. See
