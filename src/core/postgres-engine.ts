@@ -4827,6 +4827,7 @@ export class PostgresEngine implements BrainEngine {
   async insertAccessToken(row: accessTokens.AccessTokenInsert) { return accessTokens.insertAccessToken(this, row); }
   async findActiveAccessTokens(target: string) { return accessTokens.findActiveAccessTokens(this, target); }
   async setAccessTokenMinTrust(id: string, tier: string | null) { return accessTokens.setAccessTokenMinTrust(this, id, tier); }
+  async readLiveAccessTokenScope(id: string) { return accessTokens.readLiveAccessTokenScope(this, id); }
   async insertLeasePressure(row: jobsSpend.LeasePressureInsert) { return jobsSpend.insertLeasePressure(this, row); }
   async countLeasePressure(filter?: jobsSpend.LeasePressureFilter) { return jobsSpend.countLeasePressure(this, filter); }
   async listRecentLeasePressure(windowMs: number, limit: number) { return jobsSpend.listRecentLeasePressure(this, windowMs, limit); }

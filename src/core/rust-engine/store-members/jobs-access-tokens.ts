@@ -6,7 +6,7 @@
  * engine-sql/access-credentials.ts, and so are the bearer check reads and the OAuth token insert (the store keeps the table:
  * rust/docs/store/oauth-tokens.md); no store call returns a token hash.
  */
-import type { AccessTokenInsert, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
+import type { AccessTokenInsert, AccessTokenScopeRow, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
 import { normalizeOauthClientRow, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';
 import { normalizeAccessTokenListRow, type AccessTokenGrantWrite, type AccessTokenListRow, type AccessTokenPrivateAxis, type ActiveTokenGrantField, type LegacyTokenGrantColumns, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller, type ActiveTokenTarget, normalizeOauthCodeRow, type OauthCodeInsert, type OauthCodeRow, normalizeOauthTokenRow, type OauthTokenRow } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -158,4 +158,14 @@ export const writeAccessTokenPrivateGrant: StoreMember<[id: string, axis: Access
 export const lockLegacyAccessTokens: StoreMember<[], Record<string, unknown>[]> = async (brain) => {
   const rows = await storeCall({ member: 'lockLegacyAccessTokens' }, () => brain.lockLegacyAccessTokens()) as Record<string, unknown>[];
   return rows.map(row => withDates(row, ['created_at', 'last_used_at', 'revoked_at', 'reads_unscoped']));
+};
+
+/**
+ * A live token's requester-scope fields. The store keeps no `reads_unscoped` column and mints no token that opts out, so
+ * it answers null there (read as not opted out); `created_at` crosses as ISO text and is returned as a Date, as the SQL
+ * engines return it.
+ */
+export const readLiveAccessTokenScope: StoreMember<[id: string], AccessTokenScopeRow | null> = async (brain, id) => {
+  const row = await storeCall({ member: 'readLiveAccessTokenScope' }, () => brain.readLiveAccessTokenScope(id)) as AccessTokenScopeRow | null;
+  return row ? withDates(row, ['created_at']) : null;
 };

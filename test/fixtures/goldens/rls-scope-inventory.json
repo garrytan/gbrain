@@ -9050,6 +9050,7 @@
         "readLinkedMember": "none",
         "readLiveAccessToken": "none",
         "readLiveAccessTokenRows": "none",
+        "readLiveAccessTokenScope": "none",
         "readLiveConsumerSummary": "none",
         "readLiveFactEntityPage": "none",
         "readLiveGenerationId": "none",

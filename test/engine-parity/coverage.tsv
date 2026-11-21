@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1656/1662
+# covered: 1657/1663
 # lifecycle: 9/9
 # pages: 65/65
 # search: 7/7
@@ -39,7 +39,7 @@
 # entity_reads: 24/24
 # cycle_locks: 10/10
 # minion_jobs: 10/10
-# minion_queue: 134/134
+# minion_queue: 135/135
 # minion_status: 12/12
 # minion_subagent: 17/17
 # cli_reads_ops: 12/12
@@ -945,9 +945,10 @@ readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	26	no	yes	yes	serves
 listOauthClients	minion_queue	yes	4	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
-insertAccessToken	minion_queue	yes	35	no	yes	yes	serves
+insertAccessToken	minion_queue	yes	36	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
 setAccessTokenMinTrust	minion_queue	yes	2	no	yes	yes	serves
+readLiveAccessTokenScope	minion_queue	yes	1	no	yes	yes	serves
 insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
 countLeasePressure	minion_queue	yes	2	no	yes	yes	serves
 listRecentLeasePressure	minion_queue	yes	2	no	yes	yes	serves

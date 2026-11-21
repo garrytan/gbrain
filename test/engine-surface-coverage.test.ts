@@ -87,7 +87,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // oauth_clients rows (engine-sql/oauth-clients.ts)
   'readOauthClient', 'listOauthClients', 'patchOauthClient',
   // access_tokens rows (engine-sql/access-tokens.ts)
-  'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust',
+  'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust', 'readLiveAccessTokenScope',
   // group B (subagent transcript and tool ledger)
   'listSubagentMessages', 'countSubagentMessages', 'insertSubagentMessage', 'listSubagentToolExecutions', 'hasSubagentToolExecution', 'listSubagentWriteOutcomes', 'listSubagentOneshotLedger', 'summarizeSubagentToolExecutions', 'listSubagentPutPageSlugs', 'listSubagentPutPageWrites', 'listSubagentRetainedPutPages', 'listSubagentStagedPages', 'listSubagentTimelineAppendCalls', 'recordSubagentToolExecutions', 'startSubagentToolExecution', 'completeSubagentToolExecution', 'failSubagentToolExecution',
   // group D (takes, salience and code-edge reads)

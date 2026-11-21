@@ -142,7 +142,7 @@ import type {
   SettleLogOutcome, SpendLogInsert,
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
-import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
+import type { AccessTokenInsert, AccessTokenScopeRow, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
 import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakeTrustRef, AbandonedTakeRow, HolderResolvedTakeRow, PageTierRef, TakesLeavingFence } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
@@ -5544,6 +5544,8 @@ export interface BrainEngine {
   findActiveAccessTokens(target: string): Promise<ActiveAccessTokenRow[]>;
   /** Set or clear one token's read floor by row id. A tier outside the six is a constraint error (23514). */
   setAccessTokenMinTrust(id: string, tier: string | null): Promise<void>;
+  /** A live token's `reads_unscoped` and `created_at` (access/requester-scope.ts `credentialScopeFor`), or null when revoked or absent. */
+  readLiveAccessTokenScope(id: string): Promise<AccessTokenScopeRow | null>;
   /** One rate-lease bounce appended to the lease-pressure log. */
   insertLeasePressure(row: LeasePressureInsert): Promise<void>;
   /** How many lease bounces match every given field (window in ms, job id, lease key). */

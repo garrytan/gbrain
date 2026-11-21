@@ -990,6 +990,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'insertAccessToken': OOS.minionJobs,
   'findActiveAccessTokens': OOS.minionJobs,
   'setAccessTokenMinTrust': OOS.minionJobs,
+  'readLiveAccessTokenScope': OOS.minionJobs,
   // group B (subagent transcript and tool ledger)
   'listSubagentMessages': OOS.minionJobs,
   'countSubagentMessages': OOS.minionJobs,

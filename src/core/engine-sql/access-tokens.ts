@@ -1,7 +1,8 @@
 /**
  * The `access_tokens` columns the legacy-token mint and the read-floor command touch, as typed members
  * (rust/docs/store/access-tokens.md): insert one token row, find the active tokens a target names, set one token's
- * `min_trust`. SQL once for both engines, so a store that is not SQL serves the same members.
+ * `min_trust`, and read whether a live token reads unscoped and when it was created (access/requester-scope.ts
+ * `credentialScopeFor`). SQL once for both engines, so a store that is not SQL serves the same members.
  *
  * Not here: the list, the revokes and the bearer reads (engine-sql/access-credentials.ts), the member binding writes
  * (engine-sql/access-members.ts); the grant rewrites (grants/legacy-token.ts) stay raw SQL.
@@ -94,6 +95,19 @@ export async function findActiveAccessTokens(tx: Raw, target: string): Promise<A
     `SELECT id::text AS id, name, min_trust FROM access_tokens
       WHERE revoked_at IS NULL AND (id::text = $1 OR name = $1)
       ORDER BY id::text`, [target]);
+}
+
+/** A live token's requester-scope fields: its `--reads-unscoped` opt-out and its creation time. */
+export interface AccessTokenScopeRow {
+  reads_unscoped: unknown;
+  created_at: unknown;
+}
+
+/** `reads_unscoped` and `created_at` of the token `id` names when it is not revoked, or null. */
+export async function readLiveAccessTokenScope(tx: Raw, id: string): Promise<AccessTokenScopeRow | null> {
+  const [row] = await tx.executeRaw<AccessTokenScopeRow>(
+    'SELECT reads_unscoped, created_at FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL', [id]);
+  return row ?? null;
 }
 
 /** Set (or clear, with null) one token's read floor by row id. A tier outside the six is 23514 (`access_tokens_min_trust_check`). */

@@ -243,7 +243,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'insertLeasePressure', 'countLeasePressure', 'listRecentLeasePressure', 'reserveClientSpend', 'reserveGroupSpend',
     'readGroupSpendTotals', 'settleSpendWithLog', 'insertSpendLog', 'sumClientSpendSince', 'readClientBudgetUsd',
     'insertOauthClient', 'updateOauthClientBudget', 'readAgentClientSpend', 'readOauthClient', 'listOauthClients',
-    'patchOauthClient', 'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust', 'listAccessTokens',
+    'patchOauthClient', 'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust', 'readLiveAccessTokenScope', 'listAccessTokens',
     'readActiveAccessTokenGrant', 'accessTokenLive', 'oauthClientLive', 'readOauthClientColumns',
     'setOauthClientTokenTtl', 'insertOauthClientGrant', 'readTokenLifetimeClampedClients', 'readScopeSourceConfigs',
     'readOauthAccessTokenRows', 'lockActiveAccessTokens', 'writeAccessTokenGrant', 'writeAccessTokenPrivateGrant',
