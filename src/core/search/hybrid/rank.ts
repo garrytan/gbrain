@@ -331,6 +331,10 @@ export async function rerankAndPin(
   // read-only view of `deduped` with the same reads. The reranker's input is unchanged.
   const identityPending = readIdentityLookups(req, exactLookupOpts);
   const gatePending = prepareRerankGate(req, { deduped, rerankerOpts, egressDenied, lookups: identityPending, multimodal });
+  // Both promises are awaited only after the reranker call. A capability refusal that lands while it runs would
+  // otherwise be an unhandled rejection (the process exits); the no-op catches keep it for the awaits below.
+  identityPending.catch(() => undefined);
+  gatePending.catch(() => undefined);
   const reranked = rerankerOpts.enabled && !egressDenied
     ? await applyReranker(query, deduped, {
         ...(rerankerOpts as any),

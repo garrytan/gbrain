@@ -19,13 +19,17 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { applyCliOpNotices, captureRetrievalNotices } from '../../src/cli/op-notices.ts';
+import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { basisEmbedding } from '../../src/eval/deterministic-embed.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { operationsByName } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { hybridSearch, _resetSupersedeProbeForTests } from '../../src/core/search/hybrid.ts';
 import { structuralExactLookup } from '../../src/core/search/exact-lookup.ts';
 
+const DIM = 1536;
 const statementTimeout = () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
 
 describe('supersession check currency (PGLite)', () => {
@@ -240,6 +244,48 @@ describe('supersession check currency (PGLite)', () => {
       const err = refusal();
       engine.supersedingPageSlugs = async () => { throw err; };
       await expect(structuralExactLookup(engine, 'notes/pricing-v1', { sourceId: 'default' })).rejects.toBe(err);
+    });
+
+    // The identity reads start before the reranker call and are awaited after it. A refusal that lands while the
+    // reranker is still working has no awaiting handler yet; it must reach the caller at the later await, not exit the process.
+    test('a refused capability that lands while the reranker is in flight reaches the caller and is never an unhandled rejection', async () => {
+      // The reranker runs only on the vector path, so the two pages carry fixture embeddings.
+      configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: DIM, env: {} });
+      for (const [slug, title, text, dim] of [['notes/pricing-v1', 'Pricing v1', 'The tapirword fee is 10.', 12], ['notes/pricing-v2', 'Pricing v2', 'The tapirword fee is 20 now.', 13]] as const) {
+        await engine.deletePage(slug);
+        await engine.putPage(slug, { type: 'note', title, compiled_truth: text });
+        await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth' as const, embedding: basisEmbedding(dim, DIM), token_count: 8 }]);
+      }
+      await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
+      const err = refusal();
+      let calls = 0;
+      engine.supersedingPageSlugs = async (ids: number[], policy?: Record<string, unknown>) => {
+        if (++calls > 1) throw err;
+        return realSupersedingPageSlugs.call(engine, ids, policy as never);
+      };
+      let reranks = 0;
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        await expect(hybridSearch(engine, 'notes/pricing-v1', {
+          limit: 5, useCache: false, queryEmbedFn: () => basisEmbedding(12, DIM),
+          reranker: {
+            enabled: true, topNIn: 30, topNOut: null,
+            rerankerFn: async (input: { documents: unknown[] }) => {
+              reranks++;
+              await new Promise(resolve => setTimeout(resolve, 100));
+              return input.documents.map((_, index) => ({ index, relevanceScore: 1 }));
+            },
+          },
+        })).rejects.toBe(err);
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+        resetGateway();
+      }
+      expect(reranks).toBe(1); // the refusal landed while the reranker was working
+      expect(unhandled).toEqual([]);
     });
 
     test('the supersession read gets the page-read policy only, never the tier\'s own filters (a store that refuses unknown options must not refuse a healthy read)', async () => {

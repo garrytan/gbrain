@@ -9,9 +9,9 @@
  *     leaked across the source boundary (within-source contract, matches
  *     relational-recall)
  *   - edge-existence gate: on a brain with zero `supersedes` edges the
- *     downrank query never runs; one probe per engine per TTL (memoized —
- *     second call issues zero queries); a fresh edge inside the TTL window
- *     is skipped until the probe refreshes (accepted ranking-hint delay)
+ *     downrank query never runs; a "none" answer is never memoized, so an
+ *     edge written after it is seen by the very next search; only a "some"
+ *     answer is memoized (one probe per engine per TTL, second call issues zero queries)
  *   - probe fail-open: a probe error never kills the stage
  */
 
