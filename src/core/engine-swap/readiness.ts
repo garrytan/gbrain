@@ -275,6 +275,8 @@ function eligibility(r: Reader): Eligibility {
   if (hosts === undefined || hosts === null || unknown === undefined) {
     return { state: 'missing', detail: 'no durable writer observations for the last 7 days', reason: 'writer_coverage_unknown' };
   }
+  // Exactly one observed writer host: zero (or a non-count) is no writer evidence, never "one host".
+  if (!Number.isInteger(hosts) || hosts < 1) return { state: 'missing', detail: `no writer host observed in the last 7 days (${hosts})`, reason: 'writer_coverage_unknown' };
   if (hosts > 1) return { state: 'fail', detail: `${hosts} writer hosts in the last 7 days`, reason: 'multiple_writer_hosts' };
   if (unknown > 0) return { state: 'fail', detail: `${unknown} write path(s) with no observation`, reason: 'writer_coverage_unknown' };
   if (team === undefined || preview === undefined) return { state: 'missing', detail: `no evidence: ${[team === undefined ? 'eligibility.team_brain' : '', preview === undefined ? 'eligibility.preview_target' : ''].filter(Boolean).join(', ')}` };

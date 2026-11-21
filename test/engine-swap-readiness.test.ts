@@ -169,6 +169,16 @@ describe('swap readiness', () => {
     expect(v.reason as string | null).toBe(reason);
   });
 
+  test.each([
+    ['zero observed writer hosts', (d: ShadowStatus) => { d.eligibility!.writer_hosts_7d = 0; }],
+    ['a fractional host count', (d: ShadowStatus) => { d.eligibility!.writer_hosts_7d = 0.5; }],
+  ] as Array<[string, (d: ShadowStatus) => void]>)('%s is no writer evidence: NOT READY, writer_coverage_unknown', (_name, patch) => {
+    const v = evaluateReadiness(edit(patch), NOW);
+    expect(v.verdict).toBe('NOT READY');
+    expect(v.reason as string | null).toBe('writer_coverage_unknown');
+    expect(row(v, 11).state).not.toBe('pass');
+  });
+
   test('a topology reason outranks every other failure', () => {
     const v = evaluateReadiness(edit(d => { d.eligibility!.writer_hosts_7d = 3; d.fingerprints!.probe!.state = 'fail'; d.follower!.lag_ms = 50; }), NOW);
     expect(v.reason).toBe('multiple_writer_hosts');
