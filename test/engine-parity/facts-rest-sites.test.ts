@@ -29,7 +29,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { derivedRowsFrom, hideDerivedRows, recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
 import { ensureFactsFtsIndex } from '../../src/core/facts/fts-index.ts';
 import { getFtsLanguage } from '../../src/core/fts-language.ts';
-import { basisEmbedding, createSource, archiveSource, parityArms } from './harness.ts';
+import { basisEmbedding, createSource, archiveSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
@@ -79,6 +79,21 @@ async function factState(engine: BrainEngine, slug: string, name: (id: number | 
 }
 
 const scope = (extra: Record<string, unknown> = {}) => ({ sourceId: SRC, worldOnly: false, excludePrivate: false, ...extra }) as never;
+
+/**
+ * On the Rust arm, runs a case that must stop on its member's typed refusal and pins the refusal's exact words, so a
+ * refusal of another input, or a member that starts serving the input, fails the case. Other arms run it as written.
+ */
+async function rustStopsWith<T>(backend: ParityBackend, stop: string, run: () => Promise<T>): Promise<T> {
+  if (backend !== 'rust') return run();
+  try {
+    await run();
+  } catch (error) {
+    expect(error instanceof Error ? error.message : String(error)).toContain(`does not support ${stop} yet`);
+    throw error;
+  }
+  throw new Error(`[rust] expected the typed refusal of ${stop}, but the case ran`);
+}
 
 describe('engine parity: facts write-path and recall statements that left executeRaw', () => {
   parityTest('readPendingWriteReceipt finds no receipt for a request nothing queued', { methods: ['readPendingWriteReceipt'] }, async (engine) => {
@@ -505,7 +520,7 @@ describe('engine parity: facts write-path and recall statements that left execut
   // its typed refusal. Any other error fails the case.
   parityTest('readReplacementTarget refuses an id that is not a whole number', {
     methods: ['readReplacementTarget'],
-  }, async (engine) => {
+  }, (engine, backend) => rustStopsWith(backend, 'readReplacementTarget (an id that is not a whole number)', async () => {
     try {
       await engine.readReplacementTarget({ targetId: 1.5, sourceId: SRC, ownPage: null });
     } catch (error) {
@@ -514,7 +529,7 @@ describe('engine parity: facts write-path and recall statements that left execut
       throw error;
     }
     throw new Error('readReplacementTarget read a fractional id');
-  });
+  }));
 
   parityTest('readMemberPageWithdrawal finds the withdrawal a save onto a member page meets: its own subject first, another subject only for a row the member reads', {
     methods: ['readMemberPageWithdrawal', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'putPage'],
@@ -661,18 +676,18 @@ describe('engine parity: facts write-path and recall statements that left execut
 
   parityTest('expireSupersededFact takes an until that is not an ISO instant only where Postgres reads it', {
     methods: ['expireSupersededFact', 'readPairFactRow', 'insertFact'],
-  }, async (engine) => {
+  }, (engine, backend) => rustStopsWith(backend, 'expireSupersededFact (an until that is not an ISO instant)', async () => {
     const { oldId, newId } = await supersedePair(engine);
     const expired = await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: '2026-03-01 00:00:00+00' });
     const row = await engine.readPairFactRow(oldId);
     const out = { expired, valid_until: iso(row!.valid_until) };
     expect(out).toEqual({ expired: 1, valid_until: '2026-03-01T00:00:00.000Z' });
     return out;
-  });
+  }));
 
   parityTest('restoreSupersededFact takes an expiredAt that is not an ISO instant only where Postgres reads it', {
     methods: ['expireSupersededFact', 'restoreSupersededFact', 'readPairFactRow', 'insertFact'],
-  }, async (engine) => {
+  }, (engine, backend) => rustStopsWith(backend, 'restoreSupersededFact (an expiredAt that is not an ISO instant)', async () => {
     const { oldId, newId } = await supersedePair(engine);
     expect(await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: null })).toBe(1);
     const restored = await engine.restoreSupersededFact({
@@ -682,7 +697,7 @@ describe('engine parity: facts write-path and recall statements that left execut
     const out = { restored, expired_at: iso(row!.expired_at), superseded_by: row!.superseded_by };
     expect(out).toEqual({ restored: 1, expired_at: '2026-04-01T00:00:00.000Z', superseded_by: null });
     return out;
-  });
+  }));
 
   parityTest('readFactForForget, expireFactSuperseded and expireFactAtDate read and end an active fact for a forget, and only an active one', {
     methods: ['readFactForForget', 'expireFactSuperseded', 'expireFactAtDate', 'insertFact', 'insertFacts', 'listFactsByEntity'],
