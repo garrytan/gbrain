@@ -4,7 +4,7 @@
 //!
 //! Members: readReasonPurgeTombstones, writeReasonPurgeTombstones.
 //!
-//! Keys (tag `y`, `keys::REASON_TOMBSTONE`): `y source \0 commit \0 path`, value `{}`. The key is
+//! Keys (tag `1`, `keys::REASON_TOMBSTONE`): `1 source \0 commit \0 path`, value `{}`. The key is
 //! the table's primary key, so a pair is stored once. A source delete removes the source's pairs
 //! (`ON DELETE CASCADE` of `sources.id`, `cascade::remove_source_rows`).
 
