@@ -7,6 +7,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { countIndexDuePages, countMentionDuePages, type MentionPassResult } from './pass.ts';
 import { linkableTypesFor, loadSourcePack, readMentionPolicy } from './policy.ts';
+import { sortSourcesById } from '../source-rows.ts';
 
 export interface MentionPreview {
   due: number;
@@ -26,7 +27,7 @@ export async function previewMentionPass(engine: BrainEngine, sourceId?: string)
     readMentionPolicy(engine).then(async policy => {
       let due = 0;
       if (policy.enabled) {
-        const sources = sourceId ? [sourceId] : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(r => r.id);
+        const sources = sourceId ? [sourceId] : sortSourcesById(await engine.listAllSources({ includeArchived: true })).map(r => r.id);
         for (const id of sources) due += await countIndexDuePages(engine, id, linkableTypesFor(await loadSourcePack(engine, id), policy));
       }
       return { policy, due };

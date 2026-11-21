@@ -12,10 +12,7 @@ import type { Check } from '../../doctor.ts';
 export async function factsRedactionMarkerCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   const name = 'facts_redaction_marker';
   try {
-    const [row] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM facts f
-      WHERE f.expired_at IS NULL AND f.superseded_by IS NULL AND f.fact LIKE '%[redacted%'
-        AND f.source_id IN (SELECT id FROM sources WHERE archived IS NOT TRUE AND ($1::text[] IS NULL OR id=ANY($1::text[])))`, [sourceIds ?? null]);
-    const affected = Number(row?.n ?? 0);
+    const affected = await engine.countRedactedFacts(sourceIds);
     const details = { affected, repair: 'redacted-facts', docs: 'docs/guides/repair.md#redacted-facts' };
     if (!affected) return { name, status: 'ok', details, message: 'No active fact holds a redaction marker.' };
     return { name, status: 'warn', details,

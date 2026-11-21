@@ -22,11 +22,12 @@ import { RELEASABLE_HELD_REASONS, type HeldReason } from '../../../core/generati
 import { generationsPreviewArgv } from '../../../core/generations/repair.ts';
 import { listOrphanCandidates, listPendingMembers } from '../../../core/generations/managed.ts';
 import { fenceHoldEntries } from '../../../core/generations/fence.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 const DOCS = 'docs/guides/repair.md#generations';
 
 async function activeSources(engine: BrainEngine, sourceIds?: string[]): Promise<string[]> {
-  return sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+  return sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
 }
 
 export async function generationRetirementsCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {

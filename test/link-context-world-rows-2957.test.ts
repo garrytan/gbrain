@@ -72,8 +72,8 @@ const CH_FOUNDER = 'people/chainfounder-example';
 const CHAIN_PRIV = 'kitestalechaincanary';
 const CHAIN_Q = 'Who founded the companies that Chainanchor Example invested in?';
 const CHAIN_HOPS = [{ link_type: 'invested_in', toward: 'object' }];
-const LINK_MATCH_SQL = 'AS u(i, fs, fslug, ts, tslug, lt, ctx)';
-const ORIGIN_BODY_SQL = 'SELECT id, source_id, slug, compiled_truth, timeline FROM pages';
+const LINK_MATCH_READ = 'readLinkContextMatches';
+const ORIGIN_BODY_READ = 'readLinkContextOriginPages';
 
 for (const kind of testBackends()) {
   describe('GST-2957 stored link context and the core block for world-only callers (' + kind + ')', () => {
@@ -234,13 +234,20 @@ for (const kind of testBackends()) {
     }, 120_000);
 
     test('origin bodies are read once for at most LINK_CONTEXT_PAGE_BOUND pages; owner and local reads run no extra query and return contexts as stored', async () => {
-      const sql: string[] = [];
+      const calls: string[] = [];
       const executeRaw = engine.executeRaw;
-      engine.executeRaw = function (this: BrainEngine, q: string, p?: unknown[]) { sql.push(q); return executeRaw.call(this, q, p as never); } as typeof engine.executeRaw;
+      const readMatches = engine.readLinkContextMatches;
+      const readOrigins = engine.readLinkContextOriginPages;
+      engine.readLinkContextMatches = function (this: BrainEngine, ...a: Parameters<BrainEngine['readLinkContextMatches']>) {
+        calls.push(LINK_MATCH_READ); return readMatches.apply(this, a);
+      } as typeof engine.readLinkContextMatches;
+      engine.readLinkContextOriginPages = function (this: BrainEngine, ...a: Parameters<BrainEngine['readLinkContextOriginPages']>) {
+        calls.push(ORIGIN_BODY_READ); return readOrigins.apply(this, a);
+      } as typeof engine.readLinkContextOriginPages;
       const read = async (who: string, slug: string) => {
-        sql.length = 0;
+        calls.length = 0;
         const rows = JSON.parse(await call(who, 'get_backlinks', { slug })) as Array<{ from_slug: string; context: string }>;
-        return { rows, match: sql.filter(q => q.includes(LINK_MATCH_SQL)).length, bodies: sql.filter(q => q.includes(ORIGIN_BODY_SQL)).length };
+        return { rows, match: calls.filter(q => q === LINK_MATCH_READ).length, bodies: calls.filter(q => q === ORIGIN_BODY_READ).length };
       };
       try {
         const stored = await executeRaw.call(engine,
@@ -262,15 +269,16 @@ for (const kind of testBackends()) {
         }
         for (const [op, params] of [['traverse_graph', { slug: CH_ANCHOR, hops: CHAIN_HOPS }], ['search', { query: CHAIN_Q }]] as const) {
           for (const who of ['owner', 'local', 'bob', 'unbound']) {
-            sql.length = 0;
+            calls.length = 0;
             await call(who, op, params);
             const world = who === 'bob' || who === 'unbound';
-            expect({ who, op, match: sql.filter(q => q.includes(LINK_MATCH_SQL)).length, bodies: sql.filter(q => q.includes(ORIGIN_BODY_SQL)).length })
+            expect({ who, op, match: calls.filter(q => q === LINK_MATCH_READ).length, bodies: calls.filter(q => q === ORIGIN_BODY_READ).length })
               .toEqual({ who, op, match: world ? 1 : 0, bodies: world ? 1 : 0 });
           }
         }
       } finally {
-        engine.executeRaw = executeRaw;
+        engine.readLinkContextMatches = readMatches;
+        engine.readLinkContextOriginPages = readOrigins;
       }
     }, 300_000);
   });

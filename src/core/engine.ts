@@ -3117,13 +3117,6 @@ export interface BrainEngine {
   /** unlinked_facts: the `facts` and `fact_relink_attempts` table names the brain has (null for one it lacks). */
   readFactTableCatalog(): Promise<{ facts: string | null; attempts: string | null } | null>;
 
-  // and PGLite read their catalog; the Rust engine reads its per-vector records (an empty store has no column yet).
-  /** A `content_chunks` vector column: whether it exists and its width (null when the type is not a vector type). */
-  /** The stored embedding identity (model and width of `content_chunks.embedding`); null when the brain has no vector column. Postgres and PGLite throw when the width is unknown. */
-  /** The tables that carry an `embedding` vector column, in PRIMARY_EMBEDDING_TABLES order. */
-  /** Whether any row of `store` holds a vector. */
-  /** Per source with chunks, the chunk count and how many hold a vector in a fixed column (`embedding_image`, `embedding_multimodal`), in source id order. */
-
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
   getSourceStrictness(sourceId: string): Promise<boolean>;
 
