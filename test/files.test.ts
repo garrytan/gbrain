@@ -218,10 +218,10 @@ describe('collectFiles (production import)', () => {
         mime_type: null, size_bytes: null, content_hash: 'h2',
         created_at: '2026-04-27' },
     ];
-    // file_list now routes through the connected OperationContext engine
-    // (sqlQueryForEngine) instead of the module-global db connection; pin the
-    // same BigInt invariant against the new seam.
-    const fakeEngine: any = { executeRaw: async () => fakeRows };
+    // file_list routes through the connected OperationContext engine's typed
+    // member (engine-sql/files-ops.ts) instead of the module-global db
+    // connection; pin the same BigInt invariant against that seam.
+    const fakeEngine: any = { listReadableFileRows: async () => fakeRows };
 
     const op = operationsByName['file_list'];
     const ctx: any = { engine: fakeEngine, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true };

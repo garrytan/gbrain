@@ -110,41 +110,6 @@
           }
         ]
       },
-      "expireFactUntil": {
-        "dayText": [
-          {
-            "lane": "pool",
-            "params": [
-              "string",
-              "number"
-            ],
-            "sql": "UPDATE facts SET valid_until = COALESCE($1::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))), expired_at = now() WHERE id = $2 AND expired_at IS NULL",
-            "textSha256": "c4c37fb295661da774b5251f81be0163d6b956a99eeb1aed0b8063178db2e123"
-          }
-        ],
-        "ownEnd": [
-          {
-            "lane": "pool",
-            "params": [
-              "null",
-              "number"
-            ],
-            "sql": "UPDATE facts SET valid_until = COALESCE($1::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))), expired_at = now() WHERE id = $2 AND expired_at IS NULL",
-            "textSha256": "c4c37fb295661da774b5251f81be0163d6b956a99eeb1aed0b8063178db2e123"
-          }
-        ],
-        "until": [
-          {
-            "lane": "pool",
-            "params": [
-              "Date",
-              "number"
-            ],
-            "sql": "UPDATE facts SET valid_until = COALESCE($1::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))), expired_at = now() WHERE id = $2 AND expired_at IS NULL",
-            "textSha256": "c4c37fb295661da774b5251f81be0163d6b956a99eeb1aed0b8063178db2e123"
-          }
-        ]
-      },
       "findCandidateDuplicates": {
         "default": [
           {

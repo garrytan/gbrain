@@ -58,7 +58,7 @@ import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const SLUG = 'people/alice-example';
-const noOccupiedRows = { executeRaw: async () => [], listHeldFenceFactRows: async () => [] } as unknown as BrainEngine;
+const noOccupiedRows = { executeRaw: async () => [], listFenceRowClaims: async () => [], listHeldFenceFactRows: async () => [] } as unknown as BrainEngine;
 
 function legacyRow(overrides: Partial<UnfencedFactRow> = {}): UnfencedFactRow {
   return { id: '41', source_id: 'default', entity_slug: SLUG, fact: 'Alice example moved to Lisbon', kind: 'fact', visibility: 'private',

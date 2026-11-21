@@ -666,6 +666,23 @@
             "<anonymous>"
           ],
           "method": "get",
+          "path": "/admin/api/access/handover/:id"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/access/handover"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
           "path": "/admin/api/memory-proposals"
         },
         {
@@ -1454,6 +1471,23 @@
           ],
           "method": "post",
           "path": "/admin/api/access/attest"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/access/handover/:id"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/access/handover"
         },
         {
           "handlers": [

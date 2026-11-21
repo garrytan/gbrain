@@ -74,7 +74,7 @@ describe.skipIf(!BIN)('gbrain-skill-resolver in a real OpenClaw gateway', () => 
 
   test('setup installs the plugin for real and OpenClaw loads it with before_prompt_build', async () => {
     const r = await oc.gbrain(['setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main', '--gbrain-bin', oc.gbrainBin, '--json']);
-    expect({ code: r.code, stderr: r.code === 0 ? '' : r.stderr.slice(-3000) }).toEqual({ code: 0, stderr: '' });
+    expect({ code: r.code, stderr: r.code === 0 ? '' : r.stderr.slice(-3000), stdout: r.code === 0 ? '' : r.stdout.slice(-3000) }).toEqual({ code: 0, stderr: '', stdout: '' });
     const resolver = JSON.parse(r.stdout).skill_resolver;
     expect(resolver.error).toBeUndefined();
     expect(resolver.steps.map((s: { step: string }) => s.step)).toEqual(['catalog', 'library', 'state', 'plugin', 'install', 'verify', 'self-test']);

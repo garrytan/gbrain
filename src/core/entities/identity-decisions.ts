@@ -20,7 +20,6 @@
  * dedupe_decision_store_mismatch instead of writing a decision only the database would hold.
  */
 import { createHash } from 'node:crypto';
-import { pageBodyBytes } from '../page-body/page-shape.ts';
 import { isOwnerOnlySourceConfig } from '../access/owner-only.ts';
 import { withEngineScope } from '../engine-scope.ts';
 import { DEFAULT_SOURCE_ID } from '../sync-failure-ledger.ts';
@@ -43,7 +42,7 @@ export const IDENTITY_DIR = '.gbrain/identity';
 const DECISION_ID = /^[0-9a-f]{16}$/;
 
 /** A decision before it is stored: who, what and when, without where it lives. */
-export type DecisionInput = Pick<IdentityDecision, 'verdict' | 'members' | 'group_id' | 'entity_id' | 'canonical' | 'decided_by'>;
+export type DecisionInput = Pick<IdentityDecision, 'verdict' | 'members' | 'group_id' | 'entity_id' | 'canonical' | 'decided_by'> & { evidence?: string[] | null };
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 export const memberKey = (m: IdentityMemberRef) => `${m.source_id}\t${m.slug}`;
@@ -65,6 +64,7 @@ export function serializeDecision(d: DecisionInput & { decided_at: string }): st
   if (d.group_id) fm.group_id = d.group_id;
   if (d.entity_id) fm.entity_id = d.entity_id;
   if (d.canonical) fm.canonical = { source_id: d.canonical.source_id, slug: d.canonical.slug };
+  if (d.verdict === 'different' && d.evidence?.length) fm.evidence = [...d.evidence].sort();
   fm.decided_by = d.decided_by;
   fm.decided_at = d.decided_at;
   return `---\n${dump(fm, { lineWidth: -1, noRefs: true })}---\n`;
@@ -91,10 +91,12 @@ export function parseDecisionFile(text: string, id: string): (DecisionInput & { 
   const canonical = isRef(f.canonical) && members.some(x => memberKey(x) === memberKey(f.canonical as IdentityMemberRef)) ? f.canonical as IdentityMemberRef : null;
   const decidedAt = typeof f.decided_at === 'string' ? Date.parse(f.decided_at) : 0;
   if (Number.isNaN(decidedAt)) return null;
+  const evidence = Array.isArray(f.evidence) ? f.evidence.filter((e): e is string => typeof e === 'string' && /^[0-9a-f]{32}$/.test(e)).sort() : [];
   return {
     verdict: verdict as IdentityVerdict, members, group_id: typeof f.group_id === 'string' ? f.group_id : null,
     entity_id: verdict === 'same' ? entityId : null, canonical: verdict === 'same' ? canonical : null,
     decided_by: typeof f.decided_by === 'string' ? f.decided_by : 'unknown', decided_at: new Date(decidedAt).toISOString(),
+    evidence: verdict === 'different' && evidence.length ? evidence : null,
   };
 }
 
@@ -153,14 +155,14 @@ export async function projectIdentityDecisions(engine: BrainEngine, home: Identi
 
 const PROJECTION_ATTEMPTS = 5;
 
-export interface IdentityProjectionPlan { home: IdentityHome; upsert: IdentityDecision[]; remove: string[]; invalid: string[]; pending: number; revision: string }
+export interface IdentityProjectionPlan { home: IdentityHome; upsert: Array<Omit<IdentityDecision, 'evidence'> & { evidence?: string[] | null }>; remove: string[]; invalid: string[]; pending: number; revision: string }
 
 /** What a projection of the files committed at `rev` would write, read against the current rows. Writes nothing. */
 export async function planIdentityProjection(engine: BrainEngine, home: IdentityHome, rev = 'HEAD'): Promise<IdentityProjectionPlan> {
   const { decisions, pending, revision } = await engine.listIdentityDecisions();
   const mine = new Map(decisions.filter(d => d.origin === 'git' && d.home_source_id === home.sourceId).map(d => [d.decision_id, d]));
   const files = await committedDecisionFiles(home.root, rev);
-  const upsert: IdentityDecision[] = [];
+  const upsert: IdentityProjectionPlan['upsert'] = [];
   const invalid: string[] = [];
   for (const f of files) {
     if (mine.get(f.id)?.git_blob === f.blob) continue;
@@ -314,6 +316,7 @@ export interface ReconcileResult { store: 'git' | 'database'; written: number; g
  * projection gives the row the file's verdict, and git_kept names the decisions whose row disagreed.
  */
 export async function reconcileDecisions(engine: BrainEngine): Promise<ReconcileResult> {
+  await fillDecisionEvidence(engine);
   const read = await engine.listIdentityDecisions();
   const home = await identityHome(engine);
   if (!home) {
@@ -342,8 +345,12 @@ async function databaseOnly(engine: BrainEngine, home: IdentityHome, decisions: 
   return { dbOnly: rows.filter((_, i) => blocked[i] === null), committed };
 }
 
-/** Sync's hook: re-project the home source's decisions after it syncs, and retry pending members after any sync. Never throws. */
-export async function syncIdentityDecisions(engine: BrainEngine, sourceId: string, log?: (line: string) => void): Promise<void> {
+/**
+ * Sync's hook: re-project the home source's decisions after it syncs, retry pending members after any sync, fill the
+ * fingerprints of "different" decisions recorded before they were kept, then run the company sweep from the pages the
+ * sync changed. Never throws.
+ */
+export async function syncIdentityDecisions(engine: BrainEngine, sourceId: string, log?: (line: string) => void, changedSlugs?: readonly string[] | 'all'): Promise<void> {
   try {
     const home = await identityHome(engine);
     if (home && home.sourceId === sourceId) {
@@ -352,9 +359,35 @@ export async function syncIdentityDecisions(engine: BrainEngine, sourceId: strin
     } else if ((await engine.listIdentityDecisions()).pending.length) {
       await engine.applyIdentityDecisions({});
     }
+    await fillDecisionEvidence(engine);
   } catch (e) {
     log?.(`[dedupe] duplicate decisions were not reconciled after this sync: ${e instanceof Error ? e.message : String(e)} (gbrain dedupe reconcile retries)`);
   }
+  if (!changedSlugs?.length) return;
+  try {
+    const { autoLinkCompanies } = await import('./company-auto-link.ts');
+    const r = await autoLinkCompanies(engine, { ...(changedSlugs === 'all' ? {} : { near: changedSlugs.map(slug => ({ source_id: sourceId, slug })) }), log });
+    if (r.linked || r.unlinked) log?.(`[dedupe] linked ${r.linked} and unlinked ${r.unlinked} company group(s) that share an id`);
+  } catch (e) {
+    log?.(`[dedupe] companies that share an id were not linked after this sync: ${e instanceof Error ? e.message : String(e)} (gbrain dedupe reconcile retries)`);
+  }
+}
+
+/**
+ * Fills the fingerprints of "different" decisions that have none (recorded before they were kept) from their current
+ * pages, in the database only: the decision file is not rewritten. Returns how many decisions were filled.
+ */
+export async function fillDecisionEvidence(engine: BrainEngine): Promise<number> {
+  const read = await engine.listIdentityDecisions();
+  const bare = read.decisions.filter(d => d.verdict === 'different' && !d.evidence?.length);
+  if (!bare.length) return 0;
+  const { entityPagesOf } = await import('./duplicates.ts');
+  const pages = await entityPagesOf(engine, bare.flatMap(d => d.members));
+  const upsert = bare.map(d => ({ ...d, evidence: d.members.map(m => pages.get(`${m.source_id}\t${m.slug}`)?.fingerprint).filter((f): f is string => !!f) }))
+    .filter(d => d.evidence.length > 1);
+  if (!upsert.length) return 0;
+  const r = await engine.applyIdentityDecisions({ upsert, expectRevision: read.revision });
+  return r.stale ? 0 : upsert.length;
 }
 
 export interface IdentityDrift {
@@ -398,24 +431,28 @@ export async function identityDrift(engine: BrainEngine, read?: IdentityDecision
   };
 }
 
-/** The canonical member: the page in the brain's home source when one is, else the page with the most text, else the first. */
+/**
+ * The canonical member: the page in the brain's home source when one is, else the oldest page, else the first. Body
+ * length never decides, so a longer imported copy never takes over the page the owner keeps.
+ */
 export async function canonicalOf(engine: BrainEngine, members: IdentityMemberRef[], homeSource: string | null): Promise<IdentityMemberRef> {
   const home = members.find(m => m.source_id === homeSource);
   if (home) return home;
   let best = members[0]!;
-  let size = -1;
+  let oldest = Infinity;
   for (const m of members) {
     const p = await engine.getPage(m.slug, { sourceId: m.source_id });
-    const n = p ? pageBodyBytes(p) : 0;
-    if (n > size) { best = m; size = n; }
+    const at = p?.created_at ? new Date(p.created_at).getTime() : Infinity;
+    if (at < oldest) { best = m; oldest = at; }
   }
   return best;
 }
 
 /** The finder's view of the decisions: pairs kept apart, and member sets already decided as one. */
-export function decidedSets(read: IdentityDecisionsRead): { apart: IdentityMemberRef[][]; confirmed: IdentityMemberRef[][] } {
+export function decidedSets(read: IdentityDecisionsRead): { apart: IdentityMemberRef[][]; confirmed: IdentityMemberRef[][]; apartEvidence: string[][] } {
   return {
     apart: read.decisions.filter(d => d.verdict === 'different').map(d => d.members),
+    apartEvidence: read.decisions.filter(d => d.verdict === 'different' && d.evidence?.length).map(d => d.evidence!),
     confirmed: [...read.decisions.filter(d => d.verdict === 'same').reduce((byEntity, d) => {
       const key = d.entity_id ?? d.decision_id;
       return byEntity.set(key, [...(byEntity.get(key) ?? []), ...d.members]);

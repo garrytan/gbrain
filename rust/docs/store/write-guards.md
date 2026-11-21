@@ -22,7 +22,7 @@ keys.
 | `brain.readPageIndexingState(pageId)` | `{ chunker_version, corpus_generation, page_kind }` of the page, live or a tombstone, or `null` when no page has the id. `corpus_generation` is the page's contextual-retrieval generation, `null` when it has none | `readPageIndexingState` |
 | `brain.readInlinePageRegions(pageId)` | `{ compiled_truth, timeline }` of the page with id `pageId`, live or a tombstone, or `null` when no page has the id. A column the page does not store inline reads `null` | `readInlinePageRegions` |
 | `brain.readStoredPageTier(sourceId, slug)` | the page's stored `trust_tier` as text, live or a tombstone, or `null` when the source has no such page. A record that stores no tier reads `unknown`, the column default | `readStoredPageTier` |
-| `brain.readLivePageBody(slug, sourceId)` (as `readStoredPageBody`) | `{ compiled_truth, timeline }` of the live page, or `null`. The TypeScript member takes no row lock: the store runs one write transaction at a time | `readStoredPageBody` |
+| `brain.readLivePageBody(slug, sourceId)` (as `readLiveStoredBody`) | `{ compiled_truth, timeline }` of the live page, or `null`. The TypeScript member takes no row lock: the store runs one write transaction at a time | `readLiveStoredBody` |
 | `brain.hasSegmentStorage()` | `true` when any segment text or body staging record exists | `hasSegmentStorage` |
 
 ## Differences from PGLite
@@ -37,12 +37,13 @@ keys.
   keeps no such field, so there is nothing to clear.
 - **Times.** The store keeps microseconds. The TypeScript member sends `ingestedAt` as a millisecond ISO time,
   as PGLite's `timestamptz` parameter receives a `Date`, and returns `deleted_at` as a `Date`.
-- **A day text has no session zone.** Forget's file-mirror stamp calls `expireFactUntil(id, 'YYYY-MM-DD')`
-  (`src/core/facts/forget.ts`), as master bound that text. PGLite casts it with `::timestamptz` to midnight in the session TimeZone.
+- **A day text has no session zone.** Forget's file-mirror stamp calls `expireFactAtDate(id, 'YYYY-MM-DD')`
+  (`src/core/facts/forget.ts`), which binds that text as master did. PGLite casts it with `::timestamptz` to midnight in the session TimeZone.
   Postgres stores UTC midnight: postgres.js turns the text into a `Date` (`new Date(text)`) before it binds the
-  `timestamptz` parameter. The store has no session zone: `brain.expireFactUntil({ id, until })` reads
-  a day text as midnight UTC (`day_or_time` in `crates/gbrain-store/src/facts.rs`), PGLite's default zone. An ISO
-  time, as the supersession passes, is the same instant on every engine.
+  `timestamptz` parameter. The store has no session zone: `expireFactAtDate` and `expireFactSuperseded` both call
+  `brain.expireFactUntil({ id, until })`, which reads a day text as midnight UTC (`day_or_time` in
+  `crates/gbrain-store/src/facts.rs`), PGLite's default zone. An ISO time, as the supersession passes, is the same
+  instant on every engine.
 
 ## TypeScript members
 

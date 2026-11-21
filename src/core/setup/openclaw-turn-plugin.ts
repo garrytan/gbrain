@@ -66,9 +66,12 @@ export function openclawTurnPluginFiles(access: BrainFirstAccess): Record<string
 
 type Run = (argv: string[]) => { ok: boolean; output: string };
 
-function defaultRun(argv: string[]): { ok: boolean; output: string } {
-  const r = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout: 120_000 });
-  return { ok: r.exitCode === 0, output: `${r.stdout.toString()}${r.stderr.toString()}`.trim() };
+/** One openclaw CLI call; a call killed at its timeout ends its output with "timed out after N s", so the failure line names the stall instead of the last thing it printed. */
+export function runOpenclawCli(argv: string[], timeout = 120_000): { ok: boolean; output: string; stdout: string } {
+  const r = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout });
+  const output = `${r.stdout.toString()}${r.stderr.toString()}`.trim();
+  return { ok: r.exitCode === 0, output: r.exitedDueToTimeout ? `${output}
+timed out after ${timeout / 1000} s`.trim() : output, stdout: r.stdout.toString() };
 }
 
 function findOpenclaw(): string | null {
@@ -133,7 +136,7 @@ export function syncOpenclawTurnPlugin(opts: { access: BrainFirstAccess; dryRun:
   }
   if (!changed && openclawPluginRegistered(OPENCLAW_TURN_PLUGIN_ID, dir)) return { action: 'keep', path: dir, detail: `per-turn rule plugin ${OPENCLAW_TURN_PLUGIN_ID} (before_prompt_build) at ${dir}, already installed, enabled and allowed in OpenClaw, so no openclaw command ran`, unchanged: true };
   if (!bin) return { action: 'print', path: dir, detail: `plugin written to ${dir}; no openclaw on PATH, so run these on the OpenClaw host, then restart the gateway`, commands: commands.map(shown) };
-  const run = opts.run ?? defaultRun;
+  const run = opts.run ?? runOpenclawCli;
   for (const [i, argv] of commands.entries()) {
     const r = run(argv);
     if (!r.ok) return { action: 'print', path: dir, detail: `\`${shown(argv)}\` failed (${r.output.split('\n').at(-1) ?? 'no output'}); run the rest yourself`, commands: commands.slice(i).map(shown) };
@@ -153,7 +156,7 @@ export function removeOpenclawTurnPlugin(opts: { dryRun: boolean; workspace?: st
   if (opts.dryRun) return { action: 'remove', path: dir, detail: `per-turn rule plugin ${OPENCLAW_TURN_PLUGIN_ID} at ${dir}` };
   const bin = opts.openclawBin !== undefined ? opts.openclawBin : findOpenclaw();
   const uninstall = [bin ?? 'openclaw', 'plugins', 'uninstall', OPENCLAW_TURN_PLUGIN_ID, '--force'];
-  const r = bin ? (opts.run ?? defaultRun)(uninstall) : { ok: false, output: 'no openclaw on PATH' };
+  const r = bin ? (opts.run ?? runOpenclawCli)(uninstall) : { ok: false, output: 'no openclaw on PATH' };
   if (!r.ok) return { action: 'print', path: dir, detail: `${dir} left in place (OpenClaw still loads it); ${r.output.split('\n').at(-1)}, so run this on the OpenClaw host, then delete ${dir}`, commands: [shown(uninstall)] };
   try {
     rmSync(dir, { recursive: true, force: true });

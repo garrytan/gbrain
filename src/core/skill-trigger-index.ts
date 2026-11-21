@@ -26,7 +26,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from 'fs';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { parseResolverEntries, type ResolverEntry } from './check-resolvable.ts';
 import { findAllResolverFiles } from './resolver-filenames.ts';
 import { parseSkillFrontmatter } from './skill-frontmatter.ts';
@@ -154,6 +154,11 @@ function loadFrontmatterEntries(skillsDir: string): SkillTriggerEntry[] {
  * Walk every RESOLVER.md / AGENTS.md across `skillsDir` AND its parent
  * directory (the OpenClaw workspace-root layout from v0.31.7). For each
  * file: parse via `parseResolverEntries` and stamp `source: 'resolver_md'`.
+ *
+ * An AGENTS.md is the agent's general instructions, so a compact list row
+ * there (`- **word**: text`) is a resolver row only when `skills/<word>/SKILL.md`
+ * exists; otherwise it is a prose bullet (GST-3155). RESOLVER.md is a
+ * resolver file, so its list rows always count.
  */
 function loadResolverMdEntries(skillsDir: string): SkillTriggerEntry[] {
   const paths = [
@@ -168,7 +173,10 @@ function loadResolverMdEntries(skillsDir: string): SkillTriggerEntry[] {
     } catch {
       continue;
     }
+    const instructionsFile = basename(p) === 'AGENTS.md';
     for (const e of parseResolverEntries(content)) {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- skillsDir is the caller-resolved local skills/ dir and the row name is kebab-lowercase by the parser's regex; existence probe only
+      if (instructionsFile && e.listRow && !existsSync(join(skillsDir, e.skillPath.replace(/^skills\//, '')))) continue;
       out.push({ ...e, source: 'resolver_md' });
     }
   }

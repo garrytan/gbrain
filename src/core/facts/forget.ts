@@ -151,10 +151,13 @@ export async function forgetFactInFence(
   // Trust-boundary scope check BEFORE any state inspection: a row outside the
   // caller's source (or private, for remote callers) is reported as not_found,
   // never distinguished from a missing id.
-  const outOfScope = row !== null && (
+  if (!row) {
+    return { ok: false, path: 'not_found', reason };
+  }
+  const outOfScope =
     (opts.sourceId !== undefined && row.source_id !== opts.sourceId) ||
-    (opts.worldOnly === true && row.visibility !== 'world'));
-  if (row === null || outOfScope) {
+    (opts.worldOnly === true && row.visibility !== 'world');
+  if (outOfScope) {
     return { ok: false, path: 'not_found', reason };
   }
 
@@ -165,7 +168,7 @@ export async function forgetFactInFence(
   // withdrawn claim. Intent commits independently of filesystem availability.
   // A supersession or a retirement only expires the row; a supersession with a date ends it there (supersede-interval.ts).
   if (supersession || opts.retired !== undefined) {
-    await maintenanceTransaction(engine, tx => tx.expireFactUntil(factId, supersession?.validUntil ?? null));
+    await maintenanceTransaction(engine, tx => tx.expireFactSuperseded(factId, supersession?.validUntil?.toISOString() ?? null));
   } else {
     // W1 #6783 §5.1: the withdrawal's ledger publication is marked committed once its transaction commits.
     const publicationId = randomUUID();
@@ -241,7 +244,7 @@ export async function forgetFactInFence(
 
   if (!canFence) return legacyExpire();
   // Look up source.local_path first: a source without a checkout expires in the database whatever its mirror mode.
-  const localPath = (await engine.readSourceRow(row.source_id))?.local_path ?? null;
+  const localPath = await engine.readSourceLocalPath(row.source_id);
   if (!localPath) return legacyExpire();
   if (await isWriteThroughDisabled(engine) || await readOnlyCheckout(engine, row.source_id)) return legacyExpire();
 
@@ -323,7 +326,7 @@ export async function forgetFactInFence(
       // This keeps DB query patterns (active facts WHERE expired_at IS NULL)
       // accurate the moment the forget commits, without waiting for the
       // next extract_facts cycle phase to reconcile.
-      await maintenanceTransaction(engine, tx => tx.expireFactUntil(factId, today));
+      await maintenanceTransaction(engine, tx => tx.expireFactAtDate(factId, today));
 
       // #4696: mirror the rewritten file into the DB body, or the reconcile
       // (which reads pages.compiled_truth) resurrects the claim before the

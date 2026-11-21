@@ -79,3 +79,18 @@ two engines share that code instead of copying it:
   each page in the scope through the timeline family, one prefix scan per page. This is fine at
   the parity sizes; a brain with many thousand pages will want a per-page count record.
 
+
+## Page visibility and version history reads (`src/core/engine-sql/admin-reads.ts`)
+
+Two members for statements `src/core/ops/admin.ts` ran as raw SQL: `listVisiblePageSlugs` (the slugs `visibleMostConnected`
+may show, under the read or access policy and an optional source scope) and `readPagesForVersionHistory` (the page rows
+by id that `get_versions` resolves). Neither is served on Rust today: each is absent from `store-members/*`, so it refuses with
+`engine_capability_missing` naming the member (the capability in `members.ts` is `pages`). The caller sees the refusal;
+no member changes behaviour. What the store would need to serve them:
+
+| Members | Reads | The store would need |
+| --- | --- | --- |
+| `listVisiblePageSlugs` | the slugs of live pages the caller's policy admits, within the sources given | the page scan with the caller's page policy (read or access form) applied per page |
+| `readPagesForVersionHistory` | `id`, `slug`, `source_id` and `frontmatter` for each page id; the statement does not filter soft-deleted pages | the page record by id |
+
+The policy text is Postgres text only; the store reads the typed arguments, never the statement.

@@ -19,7 +19,7 @@
  *  - Known gap: on Rust the withdrawn row's stored context differs (test/rust-expected-divergence/forget.tsv). The row
  *    fails the run once Rust matches, so the flip cannot be missed.
  */
-import { afterAll, afterEach, describe } from 'bun:test';
+import { afterAll, afterEach, describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parseFactsFence } from '../../src/core/facts-fence.ts';
 import { forgetFactInFence } from '../../src/core/facts/forget.ts';
@@ -92,7 +92,7 @@ describe('a whole forget', () => {
     });
 
   parityTest('forgetFactInFence supersedes to a given end and retires on a source without a checkout',
-    { methods: ['readFactForForget', 'expireFactUntil', 'listFactsForPage', 'getPage'], timeout: 180_000 },
+    { methods: ['readFactForForget', 'expireFactSuperseded', 'listFactsForPage', 'getPage'], timeout: 180_000 },
     async (engine) => {
       const ids = await seed(engine, CLAIMS);
       const id = (claim: string) => ids.get(claim)!;
@@ -112,17 +112,20 @@ describe('a whole forget', () => {
       return { superseded, retired, again, missing, elsewhere, supersededEnd, target, unknown, ...await pageState(engine) };
     });
 
-  // forget.ts's file-mirror stamp binds today's 'YYYY-MM-DD' text, as master did; the server casts it (UTC on every
-  // arm here: PGLite's default zone, the test database's zone and the Rust store's). An ISO time is kept as given.
-  parityTest('expireFactUntil takes a day text as that midnight and an ISO time as that instant',
-    { methods: ['expireFactUntil', 'listFactsForPage'], timeout: 180_000 },
+  // forget.ts's file-mirror stamp (expireFactAtDate) binds today's 'YYYY-MM-DD' text, as master did; the server casts it
+  // (UTC on every arm here: PGLite's default zone, the test database's zone and the Rust store's). A supersession's
+  // end (expireFactSuperseded) is an ISO time, kept as given; an already-expired row is left as it was.
+  parityTest('expireFactAtDate takes a day text as that midnight and expireFactSuperseded an ISO time as that instant',
+    { methods: ['expireFactAtDate', 'expireFactSuperseded', 'listFactsForPage'], timeout: 180_000 },
     async (engine) => {
       const ids = await seed(engine, CLAIMS.slice(0, 3));
-      const day = await engine.expireFactUntil(ids.get(CLAIMS[0])!, '2026-06-01');
-      const instant = await engine.expireFactUntil(ids.get(CLAIMS[1])!, '2026-03-04T05:06:07.000Z');
-      const again = await engine.expireFactUntil(ids.get(CLAIMS[0])!, '2026-07-01');
+      await engine.expireFactAtDate(ids.get(CLAIMS[0])!, '2026-06-01');
+      await engine.expireFactSuperseded(ids.get(CLAIMS[1])!, '2026-03-04T05:06:07.000Z');
+      await engine.expireFactAtDate(ids.get(CLAIMS[0])!, '2026-07-01');
+      await engine.expireFactSuperseded(ids.get(CLAIMS[1])!, null);
       const ends = (await engine.listFactsForPage(SRC, SLUG)).map(f => ({ fact: f.fact, end: iso(f.valid_until ?? null), expired: f.expired_at !== null }))
         .filter(f => f.fact !== CLAIMS[2]);
-      return { day, instant, again, ends };
+      expect(ends.map(e => e.end)).toEqual(['2026-06-01T00:00:00.000Z', '2026-03-04T05:06:07.000Z']);
+      return { ends };
     });
 });

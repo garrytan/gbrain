@@ -1,7 +1,7 @@
 /**
  * Forget's database expiry keeps master's time-zone semantics.
  *
- * 1. Protects: in a session whose TimeZone is not UTC, `expireFactUntil` with a `'YYYY-MM-DD'` text ends the row at
+ * 1. Protects: in a session whose TimeZone is not UTC, `expireFactAtDate` with a `'YYYY-MM-DD'` text ends the row at
  *    the value master's file-mirror stamp (`UPDATE facts SET valid_until = $1` with today's text) stores: midnight in
  *    that zone on PGLite, UTC midnight on Postgres (postgres.js turns the text into a Date for the timestamptz
  *    parameter); and forget on a source with a checkout stores master's valid_until on every path: a supersession ends the
@@ -108,7 +108,7 @@ describe('forget expiry in a non-UTC session zone', () => {
       // verbatim on a twin row): PGLite casts it to midnight in the session zone; postgres.js serializes a text bound
       // to a timestamptz parameter through \`new Date(text)\`, so Postgres stores UTC midnight, on master and here.
       const [stamped, twin] = await seed(engine, root, 'notes/zone-stamp', ['Takes the early train', 'Takes the late train'], 2);
-      expect(await engine.expireFactUntil(stamped!, today)).toBe(true);
+      await engine.expireFactAtDate(stamped!, today);
       await engine.executeRaw(`UPDATE facts SET valid_until = $1, expired_at = now()
          WHERE id = $2 AND expired_at IS NULL`, [today, twin]);
       const ends = await engine.executeRaw<{ id: number; at_zone_midnight: boolean; at_utc_midnight: boolean }>(

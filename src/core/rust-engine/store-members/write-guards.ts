@@ -1,13 +1,14 @@
 /**
  * The page write guards (BrainEngine readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest,
- * sealImportedPage, readLivePageBody, readStoredPageBody, readPageIndexingState, readInlinePageRegions, readStoredPageTier, hasSegmentStorage): the reads and
+ * sealImportedPage, readLivePageBody, readLiveStoredBody, readPageIndexingState, readInlinePageRegions, readStoredPageTier, hasSegmentStorage): the reads and
  * writes a page write runs around the page row (engine-sql/write-guards.ts on the SQL engines). The store runs one
  * write transaction at a time, so the advisory locks PGLite takes before it lists origin claims are already held,
  * and `listOriginClaims` takes none.
  *
  * What each member answers and why: rust/docs/store/write-guards.md.
  */
-import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget, StoredPageBodyRow } from '../../engine-sql/write-guards.ts';
+import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget } from '../../engine-sql/write-guards.ts';
+import type { StoredBodyRow } from '../../engine-sql/facts-cycle.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 /** The page a target names, live or a tombstone. `deleted_at` comes back as a Date, as PGLite returns a timestamptz. */
@@ -50,11 +51,11 @@ export const readLivePageBody: StoreMember<[slug: string, opts: { sourceId: stri
   storeCall({ member: 'readLivePageBody', slug, sourceId: opts.sourceId }, () => brain.readLivePageBody(slug, opts.sourceId));
 
 /**
- * `readStoredPageBody`: the body columns of `readLivePageBody`. `lock` takes nothing: the store runs one write
- * transaction at a time, so no other writer changes the row under the caller's transaction.
+ * `readLiveStoredBody` (engine-sql/facts-cycle.ts): the body columns of `readLivePageBody`. `lock` takes nothing: the
+ * store runs one write transaction at a time, so no other writer changes the row under the caller's transaction.
  */
-export const readStoredPageBody: StoreMember<[sourceId: string, slug: string, lock?: boolean], StoredPageBodyRow | null> = async (brain, sourceId, slug) => {
-  const row = await storeCall({ member: 'readStoredPageBody', slug, sourceId }, () => brain.readLivePageBody(slug, sourceId)) as LivePageBodyRow | null;
+export const readLiveStoredBody: StoreMember<[sourceId: string, slug: string, lock?: boolean], StoredBodyRow | null> = async (brain, sourceId, slug) => {
+  const row = await storeCall({ member: 'readLiveStoredBody', slug, sourceId }, () => brain.readLivePageBody(slug, sourceId)) as LivePageBodyRow | null;
   return row && { compiled_truth: row.compiled_truth, timeline: row.timeline };
 };
 

@@ -93,7 +93,7 @@ export const ROLLBACK_CASES: RollbackCase[] = [
   (() => {
     let id = 0;
     return {
-      domain: 'facts (expireFactUntil)',
+      domain: 'facts (expireFactSuperseded)',
       async seed(engine: BrainEngine) {
         id = (await engine.insertFact(
           { fact: 'seeded expiry fact', source: 'test:rollback', entity_slug: 'people/alice-example' },
@@ -101,7 +101,7 @@ export const ROLLBACK_CASES: RollbackCase[] = [
         )).id;
       },
       async write(tx: BrainEngine) {
-        expect(await tx.expireFactUntil(id, new Date(Date.UTC(2026, 5, 1)))).toBe(true);
+        await tx.expireFactSuperseded(id, new Date(Date.UTC(2026, 5, 1)).toISOString());
       },
       async observe(engine: BrainEngine) {
         const rows = await engine.executeRaw<{ expired: boolean }>(

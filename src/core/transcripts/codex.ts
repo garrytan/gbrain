@@ -105,7 +105,7 @@ export function isRepeatedCodexUserTurn(previous: { role: string; text: string }
  * result rather than with an inferred one.
  */
 export type CodexLineResult =
-  | { kind: 'session'; sessionId?: string; cwd?: string; startedAt?: string; cliVersion?: string; modelProvider?: string; subagent?: true }
+  | { kind: 'session'; sessionId?: string; cwd?: string; startedAt?: string; cliVersion?: string; modelProvider?: string; subagent?: true; source?: string }
   | { kind: 'user'; message: TranscriptMessage }
   | { kind: 'assistant'; message: TranscriptMessage }
   | { kind: 'tool_call'; name: string; input: unknown }
@@ -122,6 +122,12 @@ function tolerantJson(v: unknown): unknown {
 }
 
 /** Map one ALREADY-JSON-PARSED codex rollout line. */
+/**
+ * GST-3216: `session_meta` sources a person types into (the CLI and the IDE extension). `exec` is headless (a script or
+ * another agent drives it) and a sub-agent rollout is another agent's, so their user turns stay speaker-unknown.
+ */
+const CODEX_INTERACTIVE_SOURCES: readonly string[] = ['cli', 'vscode'];
+
 export function mapCodexLine(entry: unknown): CodexLineResult {
   if (typeof entry !== 'object' || entry === null) return { kind: 'skip' };
   const e = entry as Record<string, unknown>;
@@ -143,6 +149,7 @@ export function mapCodexLine(entry: unknown): CodexLineResult {
       cliVersion: typeof payload.cli_version === 'string' ? payload.cli_version : undefined,
       modelProvider: typeof payload.model_provider === 'string' ? payload.model_provider : undefined,
       ...(typeof payload.source === 'object' && payload.source !== null && 'subagent' in payload.source ? { subagent: true as const } : {}),
+      ...(typeof payload.source === 'string' ? { source: payload.source } : {}),
     };
   }
   if (e.type === 'compacted') return { kind: 'boundary' };
@@ -240,6 +247,7 @@ export const codexAdapter: TranscriptAdapter = {
     let cwd: string | undefined;
     let startedAt = '';
     let subagent = false;
+    let interactive = false;
     const messages: TranscriptMessage[] = [];
     let rawMeta: Record<string, unknown> | undefined;
 
@@ -262,6 +270,7 @@ export const codexAdapter: TranscriptAdapter = {
         if (mapped.cwd) cwd = mapped.cwd;
         if (mapped.startedAt) startedAt = mapped.startedAt;
         subagent = mapped.subagent === true;
+        interactive = !subagent && CODEX_INTERACTIVE_SOURCES.includes(mapped.source ?? '');
         rawMeta = {
           session_id: sessionId,
           cwd: cwd ?? null,
@@ -293,6 +302,7 @@ export const codexAdapter: TranscriptAdapter = {
           cwd,
           startedAt: startedAt || messages[0].timestamp || undefined,
           raw: rawMeta ?? { session_id: sid, source_path: path },
+          ...(interactive ? { ownerBasis: 'session_user' as const } : {}),
         },
         messages,
       };

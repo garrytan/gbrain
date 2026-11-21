@@ -1,20 +1,20 @@
 /**
  * BrainEngine parity — the page write guards (engine-sql/write-guards.ts): the origin read, the origin claim read,
  * the origin bind, the ingest stamp, the import seal, the valid-time body read, the append path's tail-digest body
- * read, the page write gate's stored tier read, the fence guard's stored body read and the segment storage probe.
+ * read, the page write gate's stored tier read and the segment storage probe.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage, readLivePageBody,
- *    readPageIndexingState, readInlinePageRegions, readStoredPageTier, readStoredPageBody and hasSegmentStorage return
- *    the same observable result, and leave the same page columns, on every engine arm (PGLite always; Postgres with
- *    DATABASE_URL; the Rust arm through test/engine-parity/harness.ts).
+ *    readPageIndexingState, readInlinePageRegions, readStoredPageTier and hasSegmentStorage return the same observable result, and leave the
+ *    same page columns, on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through
+ *    test/engine-parity/harness.ts).
  *  - Regression: an engine that answers one of these differently (a tombstone read as absent, a claim from a deleted
  *    page or from the page being written, a bind that overwrites an origin it was told to keep, a seal that moves the
  *    text projection of a stale revision) lets two pages claim one file or loses a page's provenance; the Rust engine
  *    has no SQL, so each statement has to exist as a typed member.
  *  - Why existing coverage misses it: these statements ran through `executeRaw` inside origin-guard.ts,
- *    page-prepare.ts, projections.ts, valid-time-advisory.ts, journal.ts, tail-digest.ts, trust/page-write.ts and
- *    facts/file-body-guard.ts, which the parity cases cannot call (D18).
+ *    page-prepare.ts, projections.ts, valid-time-advisory.ts, journal.ts, tail-digest.ts and trust/page-write.ts, which
+ *    the parity cases cannot call (D18).
  *  - Seam: none in the cases. Typed members only (no executeRaw: D18). Page ids are compared as "the page putPage
  *    wrote", time stamps as presence.
  */
@@ -235,24 +235,6 @@ describe('engine parity: page write guards', () => {
       otherSource: await engine.readStoredPageTier('parity-missing', 'notes/tier'),
     };
     expect(answers).toEqual({ curated: 'operator_curated', plain: 'unknown', tombstone: 'unknown', missing: null, otherSource: null });
-    return answers;
-  });
-
-  parityTest('readStoredPageBody reads a live page body by source and slug, under a row lock too, and null for a tombstone or another source', {
-    methods: ['transaction', 'putPage', 'softDeletePage', 'readStoredPageBody'],
-  }, async (engine) => {
-    await engine.putPage('notes/body', { ...NOTE, compiled_truth: 'Stored body.', timeline: '- 2026-01-02: seen' });
-    await engine.putPage('notes/body-gone', NOTE);
-    await engine.softDeletePage('notes/body-gone');
-    const answers = {
-      live: await engine.readStoredPageBody('default', 'notes/body'),
-      locked: await engine.transaction(tx => tx.readStoredPageBody('default', 'notes/body', true)),
-      tombstone: await engine.readStoredPageBody('default', 'notes/body-gone'),
-      missing: await engine.readStoredPageBody('default', 'notes/body-missing'),
-      otherSource: await engine.readStoredPageBody('parity-missing', 'notes/body'),
-    };
-    const body = { compiled_truth: 'Stored body.', timeline: '- 2026-01-02: seen' };
-    expect(answers).toEqual({ live: body, locked: body, tombstone: null, missing: null, otherSource: null });
     return answers;
   });
 
