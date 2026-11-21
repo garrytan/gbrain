@@ -10,6 +10,7 @@ test/engine-parity/belief-ledger.test.ts	11	0
 test/engine-parity/belief-purge-probes.test.ts	6	0
 test/engine-parity/calibration-profiles.test.ts	5	0
 test/engine-parity/caller-typed-reads.test.ts	8	0
+test/engine-parity/checkpoint-validation.test.ts	0	4
 test/engine-parity/chunk-page-segmented.test.ts	7	0
 test/engine-parity/chunk-reads.test.ts	12	0
 test/engine-parity/chunk-safe-fence.test.ts	3	0
