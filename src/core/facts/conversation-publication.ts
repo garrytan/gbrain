@@ -128,8 +128,9 @@ const OUTCOME_SOURCES = new Set([TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SO
 
 export type ConversationFactRow = NewFact & { row_num: number; source_markdown_slug: string };
 /**
- * What a run saw of a page (#7013): every segment in scope (`full`), only the segments after `--since` (`window`),
- * or fewer segments than in scope (`partial`: a `--segment-limit` cut, a page that changed during the run).
+ * What a run saw of a page (#7013): every segment in scope (`full`), only the segments after `--since` (`window`, also
+ * when a `--segment-limit` cut it short), or fewer segments than in scope (`partial`: a `--segment-limit` cut with no
+ * `--since` start, a page that changed during the run).
  */
 export type ConversationScope = 'full' | 'window' | 'partial';
 const SCOPES: ReadonlySet<string> = new Set<ConversationScope>(['full', 'window', 'partial']);
@@ -504,8 +505,10 @@ async function stampSourceWindows(tx: BrainEngine, ids: readonly number[], windo
  * rejected by the gate) retires the prior batch (`replaceConversationFacts`),
  * or any replacement of a page with no active extractor facts. Otherwise the
  * prior facts stay: the outcome replaces the page's prior outcome rows, so
- * the page is not paid for again, a `window` run's facts are added beside
- * the prior ones, and a partial run's facts are not published over them.
+ * the page is not paid for again, a `window` run's facts (a `--since` start,
+ * cut short by `--segment-limit` or not) are added beside the prior ones, and
+ * a partial run's facts (cut short from the page's first segment) are not
+ * published over them.
  * #7043: a fact an active row of the source already states is not stored
  * again (the capture lane's fingerprint, entity and visibility rule with no
  * time bound); the page's own rows a replacement clears do not count. A slot
