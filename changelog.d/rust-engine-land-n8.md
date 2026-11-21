@@ -1,0 +1,8 @@
+**The OAuth client, chunk, chat-usage, effect-worker and write-gate statements now have typed engine members, and a few callers use them.**
+
+### Changed
+- `BrainEngine` gains 59 typed members for statements callers ran as raw SQL: the OAuth client row (`readOauthClient`, `listOauthClients`, `patchOauthClient`), the chunk reads of code-def, code-refs, doctor and withdrawal, the chat usage ledger (`logChatUsage`, `readChatUsage`), the effect worker and effect scans, the owner recovery scans, the connect gate, the write gate holds and receipts, the canonical timeline insert, the segmented embed page and the version change reason.
+- Eleven callers use them now: the access check, credential scope, client inspection, `agent register --reissue`, the oversized-embed doctor count, the recursive code walk, `get_usage`, the segmented embed read, the managed-root reads of the filesystem guard, the page append size read and the worktree refresh resume. The other callers keep their statements for now.
+- `agent register --reissue` rotates the secret in one compare-and-set on the hash it read. Two reissues that read the same secret no longer both succeed: one wins and the other fails with `reissue_conflict` and changes nothing. The name-scoped advisory lock and the transaction around the update are gone.
+- The recursive code walk's qualified-name lists are in byte order before the limit; they were in plan order.
+- On the Rust engine these members are reported as `raw_sql` (or `persistence_journal` for the effect and connect-gate members) and refuse as before; no Rust-served table changes. No schema, privacy or visibility filter moved.
