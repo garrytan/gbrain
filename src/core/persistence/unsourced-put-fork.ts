@@ -1,8 +1,8 @@
 /**
  * pages-02: an unsourced local put must not fork a page that lives in another source.
  *
- * A put with no source named (the CLI resolved the source from a non-explicit
- * tier: local_path, sole_non_default, brain_default or seed_default) goes to
+ * A put where nothing named or implied a source (the CLI resolved the source
+ * from the sole_non_default, brain_default or seed_default tier) goes to
  * whatever source that tier picks today. Tier sole_non_default stops picking
  * the only git source as soon as 'default' holds one page, so a later
  * `gbrain put people/erin-example --force` wrote a second copy into 'default'
@@ -11,12 +11,14 @@
  * slug is live in exactly one other source and has no row in the target, and
  * names the source and the retry with --source-id. A put that names its source
  * (--source-id, --source, GBRAIN_SOURCE or a .gbrain-source pin) is never
- * refused here, and remote callers never reach it (it would be a cross-source
+ * refused here, nor is one run from inside a source's checkout (the local_path
+ * tier counts as naming that source), and remote callers never reach it (it would be a cross-source
  * existence oracle outside their grant). A local writer registered for fewer
  * sources only hears about holders in sources its grant covers, and a real put
  * is checked after the write authority and after a stored request_id replay, so
  * a refused or replayed request keeps the answer it had. Reads go through typed
- * engine members only (listAllSources, readPageSnapshot, the local writer row).
+ * engine members only (listAllSources, readPageSnapshot, the local writer row). A batch put (put_pages)
+ * and an upload that begins a new page (begin_page_upload) are checked per page the same way.
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
@@ -24,13 +26,25 @@ import type { LocalGrant } from '../engine-sql/persistence-state.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { validateSlug } from '../utils.ts';
 import { parseSourceConfig } from '../sources-load.ts';
-import { formatSoleNonDefaultFlip } from '../source-resolver.ts';
+import { formatSoleNonDefaultFlip, resolveRegisteredLocalPathSource } from '../source-resolver.ts';
 import { hasCapability } from '../engine-capabilities.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter } from './identity.ts';
 
-/** True when `p` is a put from the trusted local CLI whose source was not named by the caller. */
-export function isUnsourcedLocalPut(ctx: Pick<OperationContext, 'remote' | 'localSourceImplicit'>, p: Record<string, unknown>): boolean {
-  return ctx.remote === false && ctx.localSourceImplicit === true && p.source_id === undefined;
+/** True when `p` is a put from the trusted local CLI where nothing named or implied a source (no flag, env, dotfile or cwd checkout). */
+export function isUnsourcedLocalPut(ctx: Pick<OperationContext, 'remote' | 'localSourceImplicit' | 'localSourceFromCheckout'>, p: Record<string, unknown>): boolean {
+  // A put run from inside a source's checkout (the local_path tier) names that source, as a flag, env or dotfile does.
+  return ctx.remote === false && ctx.localSourceImplicit === true && ctx.localSourceFromCheckout !== true && p.source_id === undefined;
+}
+
+/** Operations whose unsourced put the fork check covers. */
+const FORK_CHECKED_OPERATIONS = new Set(['put_page', 'put_pages', 'begin_page_upload', 'commit_page_upload']);
+
+/**
+ * The live owner resolves the cwd tier for a CLI caller; true when `sourceId` is the source whose checkout contains
+ * `cwd`. Read only for the operations the fork check covers.
+ */
+export async function sourceNamedByCheckout(engine: BrainEngine, operation: string, cwd: string, sourceId: string): Promise<boolean> {
+  return FORK_CHECKED_OPERATIONS.has(operation) && await resolveRegisteredLocalPathSource(engine, cwd) === sourceId;
 }
 
 /** The one other source in `readable` holding a live page at `slug` while `target` holds no row for it; null otherwise. */
@@ -110,7 +124,7 @@ export async function guardUnsourcedPutEarly(ctx: OperationContext, target: stri
  * a write still lands in 'default', not in the source.
  */
 export async function noteSuppressedSourceFlip(ctx: OperationContext, target: string, p: Record<string, unknown>): Promise<void> {
-  if (!isUnsourcedLocalPut(ctx, p) || target !== 'default') return;
+  if (!isUnsourcedLocalPut(ctx, p) || target !== 'default' || ctx.cliOpts?.quiet === true) return; // --quiet silences the notice
   try {
     if (await ctx.engine.getConfig('sources.default')) return; // config picked 'default', not the #3070 flip
     const others = (await ctx.engine.listAllSources({ localPathOnly: true }))
