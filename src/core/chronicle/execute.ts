@@ -44,7 +44,7 @@ import { CAMPAIGN_PRICING_POLICY, rowMaxAttempts } from './campaign.ts';
 import { CHRONICLE_RETIRED_BY, pinDepth, publishChronicleGeneration, type ChronicleDepthPin } from './publish.ts';
 import { describeMalformedProposals, diagnoseMalformedProposals, type MalformedProposalDiagnostics } from './proposal-diagnostics.ts';
 import { sha256 } from '../persistence/digest.ts';
-import { awaitsCarriedRowSql, followChronicleCarry } from './carry.ts';
+import { awaitsCarriedRowSql, carriedRowHash, followChronicleCarry, settleCarryInto } from './carry.ts';
 
 export interface ChronicleExecContext {
   engine: BrainEngine;
@@ -83,9 +83,19 @@ function key(row: ChronicleLedgerRow) {
  * `--max-usd` campaign row (#6199) consumes its attempt here, atomically with the lease, and is
  * not claimable once its stamped attempts are used, so a crash between claim and outcome never
  * yields an extra paid attempt. A row whose page's earlier hash is still held by a judge across the upgrade re-read
- * (carry.ts) is not claimable until that row follows or its wait ends, so the same meaning is never judged twice.
+ * (carry.ts) is not claimable until that row moves to it, so the same meaning is never judged twice; when the held
+ * row's lease or retry delay has ended, the claim moves it here and claims it, with its state, campaign stamp and
+ * attempts.
  */
 export async function claimChronicleRow(engine: BrainEngine, row: ChronicleLedgerRow): Promise<ChronicleLedgerRow | null> {
+  const claimed = await claimOnce(engine, row);
+  if (claimed || !await settleCarryInto(engine, row)) return claimed;
+  const [moved] = await engine.executeRaw<ChronicleLedgerRow>(
+    `SELECT * FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4`, [...key(row)]);
+  return moved ? claimOnce(engine, moved) : null;
+}
+
+async function claimOnce(engine: BrainEngine, row: ChronicleLedgerRow): Promise<ChronicleLedgerRow | null> {
   const [claimed] = await engine.executeRaw<ChronicleLedgerRow>(
     `UPDATE chronicle_page_state c SET next_attempt_at = now() + ($5::int * interval '1 millisecond'),
        attempts = c.attempts + CASE WHEN c.campaign_id IS NOT NULL AND c.state IN ('pending','failed') THEN 1 ELSE 0 END
@@ -113,7 +123,8 @@ async function setNextAttempt(engine: BrainEngine, row: ChronicleLedgerRow, at: 
  * Record an attempt's outcome. Spend accumulates per attempt (#6199): keyed to `attempt`, so a
  * replayed completion adds nothing, and recorded even from a stale executor because the money was
  * spent. The outcome itself applies only while `attempt` is still the row's latest attempt, so a
- * completion arriving after its lease expired and another executor claimed the row is fenced.
+ * completion arriving after its lease expired and another executor claimed the row is fenced. A row the upgrade re-read
+ * carried to its page's new hash while this attempt ran is found there (carry.ts), under the same rules.
  */
 async function finish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: number, patch: {
   state: ChronicleLedgerRow['state']; reason: string | null; nextAttemptAt: Date | null;
@@ -124,6 +135,7 @@ async function finish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: num
   /** This attempt was a paid judge call that ended in a SAME_INPUT_FAILURES outcome. */
   countFailure?: boolean;
 }): Promise<void> {
+  row = { ...row, content_hash: await carriedRowHash(engine, row) };
   if (patch.costUsd != null) {
     await engine.executeRaw(
       `UPDATE chronicle_page_state SET cost_usd=COALESCE(cost_usd, 0) + $5::numeric, cost_attempts=array_append(cost_attempts, $6::int)
