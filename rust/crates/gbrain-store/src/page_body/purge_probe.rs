@@ -8,21 +8,36 @@
 //! named or not as asked.
 
 use super::purge_sweep::{named_texts, recorded_by_live};
-use super::{TEXT, TextRecord, collect, from_hex, kind_key, to_hex};
+use super::{TEXT, TextRecord, from_hex, kind_key, to_hex};
 use crate::cli_reads::pg_text::pg_lower;
-use crate::kv::KvRead;
+use crate::kv::{KvRead, scan_prefix};
 use crate::{Result, StoreError};
 use std::collections::HashSet;
 
-/// The source's texts with their sha as hex, in sha order.
-fn source_texts(read: &dyn KvRead, source_id: &str) -> Result<Vec<(String, TextRecord)>> {
+/// Calls `f` with each text of the source (its sha as hex and its record), in sha order, until it returns false or fails. A
+/// record is read when the scan reaches it, so a stop leaves the later texts, bodies included, unread.
+fn for_each_source_text(
+    read: &dyn KvRead,
+    source_id: &str,
+    f: &mut dyn FnMut(String, TextRecord) -> Result<bool>,
+) -> Result<()> {
     let mut prefix = kind_key(TEXT);
     prefix.extend_from_slice(source_id.as_bytes());
     prefix.push(0);
-    Ok(collect::<TextRecord>(read, &prefix)?
-        .into_iter()
-        .map(|(key, text)| (to_hex(&key[prefix.len()..]), text))
-        .collect())
+    let mut failure = None;
+    scan_prefix(read, &prefix, false, &mut |key, value| {
+        let step = serde_json::from_slice::<TextRecord>(value)
+            .map_err(StoreError::from)
+            .and_then(|text| f(to_hex(&key[prefix.len()..]), text));
+        match step {
+            Ok(more) => more,
+            Err(e) => {
+                failure = Some(e);
+                false
+            }
+        }
+    })?;
+    failure.map_or(Ok(()), Err)
 }
 
 fn body(text: &TextRecord) -> Result<Vec<u8>> {
@@ -51,32 +66,25 @@ pub(crate) fn count_page_texts(
     let named = named_texts(read)?;
     let recorded = recorded_by_live(read)?;
     let mut count = 0;
-    for (hex, text) in source_texts(read, source_id)? {
+    for_each_source_text(read, source_id, &mut |hex, text| {
         let key = (source_id.to_string(), hex);
         if named.contains(&key) || recorded.contains(&key) {
-            continue;
+            return Ok(true);
         }
-        if wanted.contains(&key.1) {
-            count += 1;
-            if count >= cap {
-                break;
-            }
-            continue;
-        }
-        if forms.is_empty() {
-            continue;
-        }
-        let decoded = String::from_utf8(body(&text)?).map_err(|_| {
-            StoreError::invalid("invalid byte sequence for encoding \"UTF8\"".to_string())
-        })?;
-        let lowered = pg_lower(&decoded);
-        if forms.iter().any(|f| lowered.contains(f.as_str())) {
-            count += 1;
-            if count >= cap {
-                break;
-            }
-        }
-    }
+        let hit = if wanted.contains(&key.1) {
+            true
+        } else if forms.is_empty() {
+            false
+        } else {
+            let decoded = String::from_utf8(body(&text)?).map_err(|_| {
+                StoreError::invalid("invalid byte sequence for encoding \"UTF8\"".to_string())
+            })?;
+            let lowered = pg_lower(&decoded);
+            forms.iter().any(|f| lowered.contains(f.as_str()))
+        };
+        count += usize::from(hit);
+        Ok(count < cap)
+    })?;
     Ok(count)
 }
 
@@ -91,17 +99,76 @@ pub(crate) fn count_texts_holding(
 ) -> Result<usize> {
     let named = named_texts(read)?;
     let mut count = 0;
-    for (hex, text) in source_texts(read, source_id)? {
+    for_each_source_text(read, source_id, &mut |hex, text| {
         if named.contains(&(source_id.to_string(), hex)) != referenced {
-            continue;
+            return Ok(true);
         }
         let bytes = body(&text)?;
         if needles.iter().any(|n| has_bytes(&bytes, n)) {
             count += 1;
-            if count >= cap {
-                break;
-            }
         }
-    }
+        Ok(count < cap)
+    })?;
     Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kv::counting::Counting;
+
+    fn text(source: &str, n: usize, body: &str) -> (Vec<u8>, Vec<u8>) {
+        let mut key = kind_key(TEXT);
+        key.extend_from_slice(source.as_bytes());
+        key.push(0);
+        key.extend_from_slice(&[0, 0, 0, n as u8]);
+        let record = TextRecord {
+            byte_len: body.len() as i64,
+            line_count: 1,
+            body: to_hex(body.as_bytes()),
+            created_at_us: 0,
+        };
+        (key, serde_json::to_vec(&record).unwrap())
+    }
+
+    #[test]
+    fn the_text_scans_stop_at_the_cap_and_read_no_later_text() {
+        let mut store = Counting::default();
+        store
+            .entries
+            .extend((1..=30).map(|n| text("default", n, "holds notes/doomed here")));
+        store
+            .entries
+            .extend([text("other", 1, "holds notes/doomed here")]);
+        let forms = vec!["notes/doomed".to_string()];
+        let page = |cap| {
+            store.delivered.set(0);
+            let found = count_page_texts(&store, "default", &[], &forms, cap).unwrap();
+            (found, store.delivered.get())
+        };
+        let holding = |cap| {
+            store.delivered.set(0);
+            let found = count_texts_holding(&store, "default", &forms, false, cap).unwrap();
+            (found, store.delivered.get())
+        };
+        // (matches, text records handed out): the scan ends at the cap'th match, and another source's text is never reached.
+        assert_eq!(page(1), (1, 1));
+        assert_eq!(page(5), (5, 5));
+        assert_eq!(holding(1), (1, 1));
+        assert_eq!(holding(7), (7, 7));
+        assert_eq!(page(500).0, 30);
+        assert_eq!(holding(500).0, 30);
+    }
+
+    #[test]
+    fn a_text_that_is_not_utf8_still_refuses_the_page_form_scan() {
+        let mut store = Counting::default();
+        let (key, mut value) = text("default", 1, "x");
+        let mut record: TextRecord = serde_json::from_slice(&value).unwrap();
+        record.body = to_hex(&[0xFF, 0xFE]);
+        value = serde_json::to_vec(&record).unwrap();
+        store.entries.insert(key, value);
+        let forms = vec!["x".to_string()];
+        assert!(count_page_texts(&store, "default", &[], &forms, 3).is_err());
+    }
 }
