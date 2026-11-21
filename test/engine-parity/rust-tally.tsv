@@ -164,6 +164,7 @@ test/engine-parity/person-duplicates.test.ts	5	0
 test/engine-parity/private-page-reads.test.ts	25	0
 test/engine-parity/put-source-fork.test.ts	1	2
 test/engine-parity/raw-sql.test.ts	0	4
+test/engine-parity/read-shared-revision.test.ts	3	0
 test/engine-parity/reads-privacy.test.ts	51	1
 test/engine-parity/reason-tombstones.test.ts	3	0
 test/engine-parity/referrer-reads.test.ts	5	0
