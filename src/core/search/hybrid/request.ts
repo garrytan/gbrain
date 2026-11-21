@@ -317,6 +317,8 @@ export async function resolveHybridRequest(
   };
   const aliasHopOpts = {
     ...identityTierOpts,
+    type: opts?.type,
+    types: opts?.types,
     tokenHop: opts?.aliasTokenHop ?? modeInput.aliasTokenHop === 'true',
     qualified: resolvedMode.qualified_aliases,
   };
