@@ -1187,6 +1187,10 @@
       },
       {
         "category": "brain",
+        "name": "legacy_slug_spellings"
+      },
+      {
+        "category": "brain",
         "name": "purge_parked_pages"
       },
       {

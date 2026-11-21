@@ -170,6 +170,7 @@ test/engine-parity/put-source-fork.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
 test/engine-parity/repair-frontmatter-holds.test.ts
+test/engine-parity/repair-slug-spelling.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts

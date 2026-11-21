@@ -127,8 +127,9 @@ describe('preview', () => {
     const bySlug = Object.fromEntries(details.items.map(item => [item.slug, item]));
     expect(bySlug['Notes/Collide']).toMatchObject({ code: 'slug_spelling_collision' });
     expect(bySlug['Docs/Filed']).toMatchObject({ code: 'rename_file_first' });
+    for (const slug of ['Notes/Collide', 'Notes/Twins']) expect(bySlug[slug]!.fix?.argv?.join(' ')).toContain(`--source ${s.id}`);
+    expect(bySlug['Docs/Filed']!.fix?.argv).toEqual(['git', '-C', s.root!, 'mv', 'Docs/Filed.md', 'docs/filed.md']);
     for (const slug of ['Notes/Collide', 'Notes/Twins', 'Docs/Filed']) {
-      expect(bySlug[slug]!.fix?.argv?.join(' ')).toContain(`--source ${s.id}`);
       expect(bySlug[slug]!.fix?.verify?.argv?.join(' ')).toContain(`gbrain repair slug-spelling --source ${s.id}`);
     }
     expect(JSON.stringify(bySlug['Docs/Filed'])).toContain('git mv');
@@ -248,7 +249,7 @@ describe('apply', () => {
     const changes: Array<[string, (s: { id: string; root: string | null }, pageId: number) => Promise<void>]> = [
       ['revision', async (s, id) => { await engine.executeRaw("UPDATE pages SET compiled_truth='edited after the preview' WHERE id=$1", [id]); expect(await row(s.id, 'Notes/Moved')).toBeDefined(); }],
       ['recorded origin', async (_s, id) => { await engine.executeRaw("UPDATE pages SET source_path='notes/other-origin.md' WHERE id=$1", [id]); }],
-      ['source incarnation', async s => { await engine.executeRaw('UPDATE sources SET incarnation = gen_random_uuid() WHERE id=$1', [s.id]); }],
+      ['source incarnation', async s => { await engine.executeRaw('DELETE FROM page_write_guards WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1)', [s.id]); await engine.executeRaw('UPDATE sources SET incarnation = gen_random_uuid() WHERE id=$1', [s.id]); }],
       ['a new old-spelling file', async s => { mkdirSync(join(s.root!, 'Notes'), { recursive: true }); writeFileSync(join(s.root!, 'Notes/Moved.md'), page('Moved', 'a file under the old spelling')); }],
       ['the normal slug taken', async s => { await engine.putPage('notes/moved', { type: 'note', title: 'Took it', compiled_truth: 'x', timeline: '' }, { sourceId: s.id }); }],
     ];
@@ -326,7 +327,8 @@ describe('after the move', () => {
     expect(held.status).toBe('error');
     const preview = await repairJson(previewArgs(s.id));
     await repairJson(applyArgs(s.id, preview.preview_hash));
-    const put = await call<{ slug: string }>('put_page', { slug: 'notes/put-after', content, source_id: s.id, request_id: randomUUID() }, s.id);
+    const revision = (await engine.readPageSnapshot('notes/put-after', { sourceId: s.id }))!.revision;
+    const put = await call<{ slug: string }>('put_page', { slug: 'notes/put-after', content, source_id: s.id, expected_revision: revision, request_id: randomUUID() }, s.id);
     expect(put.slug).toBe('notes/put-after');
     const imported = await importFromContent(engine, 'Notes/Import-After', content, { noEmbed: true, sourceId: s.id });
     expect(imported.status).toBe('imported');
@@ -364,6 +366,8 @@ describe('doctor check legacy_slug_spellings', () => {
   };
 
   test('warns with the count per source and the preview command, and is ok when nothing is left', () => withEnv(env, async () => {
+    // Earlier cases left pages under older spellings; this case counts only its own.
+    await engine.executeRaw("DELETE FROM pages WHERE slug <> lower(slug) OR slug ~ '[^ -~]'");
     const s = await newSource();
     await storeAs(s.id, 'Notes/Doctor-One');
     await storeAs(s.id, 'notes/doctor-cafe\u0301');
