@@ -373,14 +373,15 @@ export function labelEditFit(slug: string, before: Buffer | FileBytes, content: 
 export async function protectedLocalEdit(engine: BrainEngine, slug: string, fileText: string, snapshot: PageSnapshot, activePack?: ParseOpts['activePack']): Promise<boolean> {
   snapshot = (await materializedSnapshot(engine, snapshot))!;
   const file = parseMarkdown(fileText, slug, { activePack });
-  if (file.title !== snapshot.page.title || importedFileType(file, snapshot.page, false) !== snapshot.page.type) return true;
+  const type = importedFileType(file, snapshot.page, false); // aligns the title too (pages-03)
+  if (file.title !== snapshot.page.title || type !== snapshot.page.type) return true;
   const fileFrontmatter = comparableFrontmatter(withoutSafetyAssessments(file.frontmatter));
   const stored = comparableFrontmatter(withoutSafetyAssessments(snapshot.page.frontmatter ?? {}));
   return [...new Set([...Object.keys(fileFrontmatter), ...Object.keys(stored)])].some(key => digest(fileFrontmatter[key] ?? null) !== digest(stored[key] ?? null)
     && (POLICY_KEYS.has(key) || protectedReconcileKey(key) || SPLICE_REFUSED_KEYS.has(key) || key === 'slug'));
 }
 /** The type a file's parse compares with (`fileMatchesSnapshot`), after aligning the parse with what its import over `page` stores. */
-function importedFileType(parsed: ParsedMarkdown, page: Pick<Page, 'type' | 'frontmatter'>, inferred: boolean): Page['type'] {
+function importedFileType(parsed: ParsedMarkdown, page: Pick<Page, 'type' | 'frontmatter' | 'title'>, inferred: boolean): Page['type'] {
   // #5521 parity for subtype (#5928): a pack rule is not part of the file's bytes, so a file
   // without an explicit `subtype:` keeps the stored subtype (or none); the import still stamps it.
   delete parsed.inferredSubtype;

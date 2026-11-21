@@ -12,7 +12,7 @@
  * written for every page whose file is unchanged.
  */
 import { dataFrontmatter, LEGACY_TYPED_SCHEMA } from './data-frontmatter.ts';
-import { comparableFrontmatter, parseMarkdownHead } from './markdown.ts';
+import { coerceFrontmatterString, comparableFrontmatter, parseMarkdownHead } from './markdown.ts';
 import type { BrainEngine } from './engine.ts';
 
 /** parseMarkdown keeps the text it read here, so alignWithStored can read the same file the old way. */
@@ -63,11 +63,25 @@ export function legacyWrittenValues(current: Record<string, unknown>, fileText: 
   return out;
 }
 
-/** A file parse aligned with a page stored under the old typing: each value that differs only by that typing reads as stored. */
-export function alignLegacyTyped(parsed: { frontmatter: Record<string, unknown> }, stored: Record<string, unknown> | null | undefined): void {
+/**
+ * A file parse aligned with a page stored under the old typing: each value that differs only by that typing reads as
+ * stored, and so does a frontmatter title the old typing read as the stored title (`title: 1.10` stored as `1.1`).
+ */
+export function alignLegacyTyped(parsed: { frontmatter: Record<string, unknown>; title?: string }, stored: Record<string, unknown> | null | undefined, storedTitle?: string | null): void {
   const text = (parsed as { [PARSED_FILE_TEXT]?: string })[PARSED_FILE_TEXT];
-  if (typeof text !== 'string' || !stored) return;
-  for (const key of legacyWrittenValues(parsed.frontmatter, text, stored).keys()) parsed.frontmatter[key] = stored[key];
+  if (typeof text !== 'string') return;
+  if (stored) for (const key of legacyWrittenValues(parsed.frontmatter, text, stored).keys()) parsed.frontmatter[key] = stored[key];
+  if (typeof storedTitle === 'string' && typeof parsed.title === 'string' && parsed.title !== storedTitle && legacyTypedTitle(text) === storedTitle) parsed.title = storedTitle;
+}
+
+/** The title the old typing gave a typed frontmatter `title:` (a number, a date's UTC day); null for a text title or none. */
+function legacyTypedTitle(content: string): string | null {
+  try {
+    const title = (dataFrontmatter(parseMarkdownHead(content).safeContent, LEGACY_TYPED_SCHEMA).data as Record<string, unknown>).title;
+    return title == null || typeof title === 'string' ? null : coerceFrontmatterString(title).trim();
+  } catch {
+    return null;
+  }
 }
 
 /**

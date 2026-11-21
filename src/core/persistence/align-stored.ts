@@ -10,12 +10,12 @@ import { alignLegacyTyped } from '../frontmatter-legacy.ts';
  * content a caller writes with no file behind it (import-file.ts without `sourcePath`: `put_page`) passes `retypeStamp` false and is
  * read as written, so an explicit type there still wins.
  */
-export function alignWithStored(parsed: ParsedMarkdown, stored: { type: string; frontmatter?: Record<string, unknown> | null }, inferred: boolean, retypeStamp = true, write = false): void {
+export function alignWithStored(parsed: ParsedMarkdown, stored: { type: string; frontmatter?: Record<string, unknown> | null; title?: string | null }, inferred: boolean, retypeStamp = true, write = false): void {
   if (!(retypeStamp && (keepRetypeStamp(parsed, stored) || keepPackRenamedType(parsed, stored, write))) && (inferred || !parsed.typeExplicit)) parsed.type = stored.type as ParsedMarkdown['type'];
   resolveParsedSubtype(parsed, stored);
   keepStoredOnlyStamps(parsed, stored, retypeStamp);
   // pages-03: a comparison reads a value the old parser typed as stored; an import (write) stores the file's text.
-  if (!write) alignLegacyTyped(parsed, stored.frontmatter);
+  if (!write) alignLegacyTyped(parsed, stored.frontmatter, stored.title);
 }
 
 /** Sync's reading of a file over the stored page (sync-prepare.ts): the retype stamp, the subtype and the database-only stamps kept as `alignWithStored` keeps them; an explicit file type is otherwise read as written. */

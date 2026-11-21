@@ -263,6 +263,14 @@ describe('pages-03: frontmatter values as written', () => {
     expect(file.split('\n')).toContain("limit: '.inf'");
   }, { setup: noteSetup('---\ntitle: Limits\ntype: note\nlimit: .inf\n---\n# Limits\n\nBody text.\n') }), 120_000);
 
+  test('an older page whose title the old typing read as a number (1.10 stored as 1.1) takes a body edit (no source_changed)', () => managedBrain(async ({ engine, ctx, root }) => {
+    expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
+    await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw("UPDATE pages SET title='1.1', frontmatter = frontmatter || '{\"title\":1.1}'::jsonb WHERE slug='notes/p'"));
+    await editBody(engine, ctx);
+    const file = readFileSync(join(root, 'notes/p.md'), 'utf8');
+    expect(file).toContain('Body words.');
+  }, { setup: noteSetup('---\ntitle: 1.10\ntype: note\n---\n# P\n\nBody text.\n') }), 120_000);
+
   const ITEM = '---\ntitle: Item\ntype: note\nid: 007\n---\n# Item\n\nBody text.\n';
   test('the rename identity reader reads an id as the page stores it (id: 007 is "007")', () => {
     expect(frontmatterIdentity(ITEM).id).toBe('007');
