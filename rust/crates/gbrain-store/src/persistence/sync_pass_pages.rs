@@ -51,6 +51,9 @@ pub enum SyncImportPageWindow {
     After { after: i64, limit: u64 },
 }
 
+/// JavaScript's `Number.MAX_SAFE_INTEGER`, the largest page size the SQL builder accepts.
+const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
 /// jsonb `=`: object keys in any order, numbers by value.
 fn jsonb_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
@@ -164,6 +167,15 @@ pub(crate) fn read_sync_import_page_rows_in(
     q: &SyncImportPageQuery,
     window: &SyncImportPageWindow,
 ) -> Result<Value> {
+    // SQL's syncImportPagesSql refuses a page size that is not a positive safe integer; a size napi could not read as
+    // a u64 (negative, fractional) never gets here.
+    if let SyncImportPageWindow::After { limit, .. } = window
+        && (*limit == 0 || *limit > MAX_SAFE_INTEGER)
+    {
+        return Err(StoreError::invalid(format!(
+            "readSyncImportPageRows: limit must be a positive integer, got {limit}"
+        )));
+    }
     let ids: Option<HashSet<i64>> = match window {
         SyncImportPageWindow::Ids { ids } => Some(
             ids.iter()
@@ -297,7 +309,7 @@ impl Store {
 mod tests {
     use super::*;
     use crate::env::iso;
-    use crate::pages::{PageInput, PutPageOptions, read_page};
+    use crate::pages::{PageInput, PutPageOptions, read_page, write_page};
     use crate::test_support::store;
     use crate::{keys, put_json};
 
@@ -410,6 +422,161 @@ mod tests {
         assert_eq!(rows(&store, &q)[0]["sync_deleted"], json!(true));
         receipt(true);
         assert_eq!(rows(&store, &q)[0]["sync_deleted"], json!(false));
+    }
+
+    #[test]
+    fn a_keyset_page_size_of_zero_or_past_the_safe_integer_range_is_refused() {
+        let store = store();
+        put(&store, "notes/a");
+        let q = query(json!({}));
+        for limit in [0, MAX_SAFE_INTEGER + 1] {
+            let window = SyncImportPageWindow::After { after: 0, limit };
+            assert!(
+                store.read_sync_import_page_rows(&q, &window).is_err(),
+                "limit {limit}"
+            );
+        }
+        let window = SyncImportPageWindow::After {
+            after: 0,
+            limit: MAX_SAFE_INTEGER,
+        };
+        assert_eq!(rows_of(&store, &q, &window).len(), 1);
+    }
+
+    fn rows_of(
+        store: &Store,
+        q: &SyncImportPageQuery,
+        window: &SyncImportPageWindow,
+    ) -> Vec<Value> {
+        store
+            .read_sync_import_page_rows(q, window)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn derived_current_is_true_only_when_every_projection_term_is_current() {
+        let store = store();
+        let q = query(json!({}));
+        // An all-current page: markdown, chunker version 4, inline body, the projection sealed at its revision and a
+        // contextual retrieval mode stamped.
+        let current = |slug: &str| {
+            put(&store, slug);
+            store.set_chunker_version(slug, "4", None).unwrap();
+            store
+                .update_page_contextual_retrieval_state(slug, "default", "none", None)
+                .unwrap();
+            store
+                .write(|tx| {
+                    let mut p = read_page(&*tx, "default", slug)?.unwrap();
+                    p.text_projection_revision = Some(p.knowledge_revision.clone());
+                    write_page(tx, &p)
+                })
+                .unwrap();
+            page(&store, slug)
+        };
+        let derived = |slug: &str| {
+            rows(&store, &q)
+                .into_iter()
+                .find(|r| r["slug"] == json!(slug))
+                .unwrap()["derived_current"]
+                .clone()
+        };
+        current("notes/all");
+        assert_eq!(derived("notes/all"), json!(true));
+        // Each term alone turns it false (or NULL for an unknown chunker version).
+        current("notes/kind");
+        store
+            .write(|tx| {
+                let mut p = read_page(&*tx, "default", "notes/kind")?.unwrap();
+                p.page_kind = "code".into();
+                write_page(tx, &p)
+            })
+            .unwrap();
+        assert_eq!(derived("notes/kind"), json!(false));
+        current("notes/chunker");
+        store
+            .set_chunker_version("notes/chunker", "3", None)
+            .unwrap();
+        assert_eq!(derived("notes/chunker"), json!(false));
+        current("notes/null-chunker");
+        store
+            .write(|tx| {
+                let mut p = read_page(&*tx, "default", "notes/null-chunker")?.unwrap();
+                p.chunker_version = None;
+                write_page(tx, &p)
+            })
+            .unwrap();
+        assert_eq!(derived("notes/null-chunker"), Value::Null);
+        let seg = current("notes/segmented");
+        store
+            .write(|tx| {
+                put_json(
+                    tx,
+                    &crate::page_body::body_key(seg.id),
+                    &json!({ "body_storage": "segmented", "body_generation": 1 }),
+                )
+            })
+            .unwrap();
+        assert_eq!(derived("notes/segmented"), json!(false));
+        current("notes/unsealed");
+        store
+            .write(|tx| {
+                let mut p = read_page(&*tx, "default", "notes/unsealed")?.unwrap();
+                p.text_projection_revision = None;
+                write_page(tx, &p)
+            })
+            .unwrap();
+        assert_eq!(derived("notes/unsealed"), json!(false));
+        put(&store, "notes/no-mode");
+        store
+            .set_chunker_version("notes/no-mode", "4", None)
+            .unwrap();
+        store
+            .write(|tx| {
+                let mut p = read_page(&*tx, "default", "notes/no-mode")?.unwrap();
+                p.text_projection_revision = Some(p.knowledge_revision.clone());
+                write_page(tx, &p)
+            })
+            .unwrap();
+        assert_eq!(derived("notes/no-mode"), json!(false));
+    }
+
+    #[test]
+    fn an_older_uncommitted_or_other_kind_receipt_does_not_prove_a_sync_deletion() {
+        let store = store();
+        put(&store, "notes/gone");
+        store.soft_delete_page("notes/gone", None).unwrap();
+        let gone = page(&store, "notes/gone");
+        let deleted_at = gone.deleted_at_us.unwrap();
+        let q = query(json!({}));
+        let receipt = |completed: i64, state: &str, kind: &str| {
+            let record = json!({ "id": "r1", "principal_kind": "local", "principal_id": "cli", "request_id": "r1",
+                "operation": "sync", "source_id": "default", "source_incarnation": "inc-1", "page_id": gone.id,
+                "slug": "notes/gone", "digest": "d", "intent": { "kind": kind }, "authority": {},
+                "sequence": 1, "state": state, "created_at_us": completed, "updated_at_us": completed,
+                "completed_at_us": completed, "compacted": false });
+            store
+                .write(|tx| put_json(tx, &keys::request("r1"), &record))
+                .unwrap();
+            rows(&store, &q)[0]["sync_deleted"].clone()
+        };
+        assert_eq!(
+            receipt(deleted_at - 1, "committed", "managed_sync_delete"),
+            json!(false)
+        );
+        assert_eq!(
+            receipt(deleted_at, "failed", "managed_sync_delete"),
+            json!(false)
+        );
+        assert_eq!(receipt(deleted_at, "committed", "put_page"), json!(false));
+        // Control: the qualifying receipt proves it.
+        assert_eq!(
+            receipt(deleted_at, "committed", "managed_sync_delete"),
+            json!(true)
+        );
     }
 
     #[test]

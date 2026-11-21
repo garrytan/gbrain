@@ -183,3 +183,19 @@ parityTest('readSyncAdmissionEffects: a stamp written later in the transaction t
   expect(out).toEqual({ destructive: true });
   return out;
 });
+
+parityTest('readSyncAdmissionEffects refuses a malformed incarnation or set_at, and a malformed stamp value writes nothing', {
+  methods: ['readSyncAdmissionEffects', 'writeSyncAdmissionStamp', 'readOpCheckpointRecords', 'readSourceMembership'],
+}, async (engine) => {
+  const incarnation = await incarnationOf(engine);
+  const refuses = (p: Promise<unknown>) => p.then(() => false, () => true);
+  const badIncarnation = await refuses(effects(engine, 'not-a-uuid', null));
+  const badSetAt = await refuses(effects(engine, incarnation, 'not-a-time'));
+  // Control: the same probe with valid inputs answers.
+  const valid = await effects(engine, incarnation, null);
+  // A stamp value holding NUL is refused, and the stamp written before it stays.
+  await stamp(engine, 'imports_only');
+  const nulStamp = await refuses(stamp(engine, 'bad\u0000value'));
+  const [kept] = await engine.readOpCheckpointRecords(SYNC_ADMISSION_SET_OP, ['brain']) as Array<{ value: string }>;
+  return { badIncarnation, badSetAt, valid, nulStamp, kept: kept?.value };
+});

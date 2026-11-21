@@ -131,3 +131,17 @@ parityTest('the whole-source sync pass cursor answers the keyset\'s rows on SQL 
   expect(rows).toEqual(view(keyset, seeded).sort((a, b) => String(a.id).localeCompare(String(b.id))));
   return { sizes: pages.map(p => p.length), rows };
 });
+
+parityTest('readSyncImportPageRows refuses a keyset page size that is not a positive safe integer, as SQL does', {
+  methods: ['putPage', 'readSyncImportPageRows'],
+}, async (engine) => {
+  await engine.putPage('notes/limit', { ...NOTE, source_path: 'notes/limit.md' });
+  const sizes = [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 2];
+  const refused: Record<string, boolean> = {};
+  for (const limit of sizes) {
+    refused[String(limit)] = await engine.readSyncImportPageRows(Q, { after: 0, limit }).then(() => false, () => true);
+  }
+  // Control: the smallest valid size still answers the page.
+  const one = (await engine.readSyncImportPageRows(Q, { after: 0, limit: 1 })).map(row => row.slug);
+  return { refused, one };
+});

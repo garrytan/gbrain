@@ -141,3 +141,16 @@ parityTest('readPageRevisionWriter and readRevisionWriterRequest name a page\'s 
     .toEqual(['writer', null, 'committed', 'page', null, null, null, null, null]);
   return out;
 });
+
+parityTest('the sync run reads refuse a malformed request id instead of answering nothing', {
+  methods: ['readAdmittedWriteRequests', 'readRevisionWriterRequest'],
+}, async (engine) => {
+  const refuses = (p: Promise<unknown>) => p.then(() => false, () => true);
+  return {
+    admitted: await refuses(engine.readAdmittedWriteRequests('local_cli', 'writer-a', ['not-a-uuid'], false)),
+    writerRequest: await refuses(engine.readRevisionWriterRequest('not-a-uuid')),
+    // Control: a well-formed id that names no request answers nothing.
+    admittedUnknown: await engine.readAdmittedWriteRequests('local_cli', 'writer-a', [UNKNOWN], false),
+    writerUnknown: await engine.readRevisionWriterRequest(UNKNOWN),
+  };
+});
