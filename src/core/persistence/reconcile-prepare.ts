@@ -9,6 +9,7 @@ import { alignWithStored } from './align-stored.ts';
 import { parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, restoreHiddenFactRows, type ParsedFact } from '../facts-fence.ts';
 import { opError } from '../ops/contract.ts';
 import { privateRequestRefusal } from './visibility-request.ts';
+import { misspelledReaderKeys, readersNoncanonicalRefusal } from './readers-request.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
@@ -114,6 +115,7 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
     prepare: async prepared => { ready = prepared; return prepared.result; }, holdNoncanonicalPrivate: true,
   });
   if (imported.refusal?.code === 'visibility_noncanonical') throw privateRequestRefusal(state.pins, result.frontmatter);
+  if (imported.refusal?.code === 'readers_noncanonical') throw readersNoncanonicalRefusal(state.pins, misspelledReaderKeys(content, result.frontmatter));
   if (!ready || ready.slug !== state.pins.slug) throw opError('invalid_params', imported.error ?? 'Reconciliation cannot change page identity or deduplicate to another page.',
     `The reconciled content of ${state.pins.slug} in source ${state.pins.source_id} does not import as that same page (a changed frontmatter slug or a match to another page), and reconcile never changes page identity. Keep its slug as ${state.pins.slug} in the file. ${freshPreview(state.pins.source_id, state.pins.slug)}`,
     { fix: pageFix(state.pins.source_id, state.pins.slug) });
