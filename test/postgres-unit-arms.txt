@@ -787,6 +787,7 @@ test/sync-drain-effect-recovery-blocked.test.ts
 test/sync-drain-head-blocked-6543.test.ts
 test/sync-drain-inpass-stall.test.ts
 test/sync-drain-write-capacity.test.ts
+test/sync-drift-history-gst3328.test.ts
 test/sync-drift-rescreen-progress-gst2515.test.ts
 test/sync-dry-run-drain-7167.test.ts
 test/sync-exits-l4-6712.test.ts
