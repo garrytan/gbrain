@@ -100,10 +100,17 @@ describe('engine parity: purge receipt reads', () => {
   });
 
   parityTest('verifyPagePurge builds the same receipt; the Rust arm refuses naming the source-prose scan', {
-    methods: ['countPurgeProbe', 'listPurgeProbeItems', 'listPageProseHits', 'countPagePurgeTombstones'] }, async (engine) => {
+    methods: ['countPurgeProbe', 'listPurgeProbeItems', 'listPageProseHits', 'countPagePurgeTombstones'] }, async (engine, backend) => {
     const { pageId, factId } = await seed(engine);
     const receipt = await verifyPagePurge(engine, { sourceId: SRC, slug: 'notes/gone', requestId: randomUUID(), removed: {}, blobsRemaining: [],
-      context: { needles: ['Secret Plan'], reasons: ['tidy'], factIds: [factId], pageId, paths: [], segmentShas: [] } });
+      context: { needles: ['Secret Plan'], reasons: ['tidy'], factIds: [factId], pageId, paths: [], segmentShas: [] } }).catch((error: unknown) => {
+      // The refusal is rethrown (the Rust arm counts the case as stopped); it names its lane and when the lane owes the read.
+      if (backend === 'rust') {
+        expect((error as Error).message).toContain('listPageProseHits (owner lane 4 (rust-5a 90e7bea933), due 5 PM PST Nov 25)');
+        expect((error as { detail?: unknown }).detail).toBe('member=listPageProseHits capability=facts outcome=none written=nothing owner="lane 4 (rust-5a 90e7bea933)" due="5 PM PST Nov 25"');
+      }
+      throw error;
+    });
     const blind = await verifyPagePurge(engine, { sourceId: SRC, slug: 'notes/missing', requestId: randomUUID(), removed: {}, blobsRemaining: [], context: null });
     type Report = { store: string; status: string; remaining?: number; reason?: string; items?: unknown[] };
     const shape = (r: Record<string, unknown>) => ({

@@ -251,9 +251,12 @@ describe('engine parity: the store probes of a fact purge receipt', () => {
     const plan = await planFactPurge(engine, target, false);
     expect(reasonNeedle(CLAIM).length).toBeGreaterThan(0);
     // A typed refusal is rethrown, not swallowed: the case stops on it, and the Rust arm counts it as stopped. The refusal names its
-    // owner: lane 3 for the ledger's recorded values (lane 4's fact contexts are read right after them).
+    // owner and due date: lane 3 for the ledger's recorded values, due 5 PM PST Nov 24 (lane 4's fact contexts, due the same time, are read right after them).
     const { tell_user_to_run: _engineAdvice, ...receipt } = await verifyFactPurge(engine, { target, plan, dryRun: false }).catch((error: unknown) => {
-      if (backend === 'rust') expect((error as Error).message).toContain('listBeliefEventsForPurgeProbe (owner lane 3 (rust-belief-purge e211982aba))');
+      if (backend === 'rust') {
+        expect((error as Error).message).toContain('listBeliefEventsForPurgeProbe (owner lane 3 (rust-belief-purge e211982aba), due 5 PM PST Nov 24)');
+        expect((error as { detail?: unknown }).detail).toBe('member=listBeliefEventsForPurgeProbe capability=facts outcome=none written=nothing owner="lane 3 (rust-belief-purge e211982aba)" due="5 PM PST Nov 24"');
+      }
       throw error;
     }) as Awaited<ReturnType<typeof verifyFactPurge>> & { tell_user_to_run?: unknown };
     // The physical-copy residual and the operator's VACUUM advice name the engine's own storage; every other line is engine-independent.

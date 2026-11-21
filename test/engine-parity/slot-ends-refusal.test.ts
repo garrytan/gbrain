@@ -101,8 +101,8 @@ describe('engine parity: read-time slot ends on a failed slot read', () => {
       // Rust known stop (lane 4, listSlotRows): the case fails as soon as Rust answers instead of refusing.
       const stop = await answer().then(() => null, (e: unknown) => e);
       expect({ message: (stop as Error | null)?.message ?? null, detail: (stop as { detail?: unknown } | null)?.detail ?? null }).toEqual({
-        message: "This brain's engine does not support listSlotRows yet (it needs the facts capability), so nothing ran.",
-        detail: 'member=listSlotRows capability=facts outcome=none written=nothing' });
+        message: "This brain's engine does not support listSlotRows (owner lane 4 (listSlotRows), due 5 PM PST Nov 25) yet (it needs the facts capability), so nothing ran.",
+        detail: 'member=listSlotRows capability=facts outcome=none written=nothing owner="lane 4 (listSlotRows)" due="5 PM PST Nov 25"' });
       throw stop;
     }
     const got = await answer();

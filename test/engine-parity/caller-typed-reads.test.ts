@@ -142,8 +142,8 @@ async function recall(engine: BrainEngine, args: string[]) {
  */
 const RUST_KNOWN_STOP = {
   owner: 'lane 4 (listSlotRows, due 5 PM PST Nov 25)',
-  message: "This brain's engine does not support listSlotRows yet (it needs the facts capability), so nothing ran.",
-  detail: 'member=listSlotRows capability=facts outcome=none written=nothing',
+  message: "This brain's engine does not support listSlotRows (owner lane 4 (listSlotRows), due 5 PM PST Nov 25) yet (it needs the facts capability), so nothing ran.",
+  detail: 'member=listSlotRows capability=facts outcome=none written=nothing owner="lane 4 (listSlotRows)" due="5 PM PST Nov 25"',
 } as const;
 
 describe('engine parity: the name-and-topic split of gbrain recall', () => {
