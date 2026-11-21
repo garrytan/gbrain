@@ -8,7 +8,7 @@
  * Spawns the real CLI against a temp GBRAIN_HOME with a keyless PGLite brain.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -240,4 +240,129 @@ describe('doctor also refuses a mounted brain whose folder is missing, and an em
       renameSync(`${edgeStore}.moved`, edgeStore);
     }
   }, 180_000);
+});
+
+describe('the guard follows what the connector really opens', () => {
+  let h: string;
+  let store: string;
+  const mountsFile = () => join(h, '.gbrain', 'mounts.json');
+  const cfgFile = () => join(h, '.gbrain', 'config.json');
+  const mountEntry = (id: string, databasePath: string, extra: Record<string, unknown> = {}) => {
+    const clone = join(h, `clone-${id}`);
+    mkdirSync(clone, { recursive: true });
+    return { id, path: clone, engine: 'pglite', database_path: databasePath, ...extra };
+  };
+  const writeMounts = (...mounts: Array<Record<string, unknown>>) => writeFileSync(mountsFile(), JSON.stringify({ version: 1, mounts }));
+  const tree = () => {
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        out.push(p);
+        if (e.isDirectory() && !p.endsWith('.moved') && !p.endsWith('.healthy')) walk(p);
+      }
+    };
+    walk(join(h, '.gbrain'));
+    return out.sort();
+  };
+  const doctorJson = async (...extra: string[]) => {
+    const r = await runCli(['doctor', ...extra, '--only', 'connection', '--json'], { home: h, timeoutMs: 120_000 });
+    return { r, out: JSON.parse(r.stdout) as Record<string, any> };
+  };
+
+  beforeAll(async () => {
+    h = mkdtempSync(join(tmpdir(), 'gbrain-doctor-missing-follow-'));
+    expect((await runCli(['init', '--pglite', '--no-embedding'], { home: h, timeoutMs: 120_000 })).exitCode).toBe(0);
+    store = join(h, '.gbrain', 'brain.pglite');
+    cpSync(store, `${store}.healthy`, { recursive: true }); // an initialized datastore to point a healthy mount at
+  }, 180_000);
+
+  afterAll(() => {
+    try { rmSync(h, { recursive: true, force: true }); } catch { /* best effort */ }
+  });
+
+  test('a folder holding only stray files (no PG_VERSION) is not a brain: refused and left as it was, host and mount', async () => {
+    const stray = join(h, 'stray-mount');
+    mkdirSync(stray);
+    writeFileSync(join(stray, '.DS_Store'), 'x');
+    writeMounts(mountEntry('team', stray));
+    renameSync(store, `${store}.moved`);
+    mkdirSync(store);
+    writeFileSync(join(store, '.DS_Store'), 'x');
+    try {
+      const before = tree();
+      for (const extra of [[], ['--brain', 'team']]) {
+        const { r, out } = await doctorJson(...extra);
+        expect(r.exitCode).toBe(1);
+        expect(out.reason).toBe('missing_brain');
+        expect(existsSync(join(store, 'PG_VERSION'))).toBe(false);
+        expect(existsSync(join(stray, 'PG_VERSION'))).toBe(false);
+        expect(tree()).toEqual(before);
+      }
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+      renameSync(`${store}.moved`, store);
+    }
+  }, 240_000);
+
+  test('a mount alias equal to another mount id never stands in for it: the selected id is the one checked', async () => {
+    const missing = join(h, 'alias-missing.pglite');
+    const healthy = join(h, 'alias-healthy.pglite');
+    cpSync(`${store}.healthy`, healthy, { recursive: true });
+    // `alpha` carries the alias `team`; the registry opens the mount whose id is exactly `team`.
+    writeMounts(mountEntry('alpha', healthy, { alias: 'team' }), mountEntry('team', missing));
+    const refused = await doctorJson('--brain', 'team');
+    expect(refused.r.exitCode).toBe(1);
+    expect(refused.out.reason).toBe('missing_brain');
+    expect(JSON.stringify(refused.out)).toContain(missing);
+    expect(existsSync(missing)).toBe(false);
+    // The other way round: the aliased mount is missing, the exact-id mount is healthy, so doctor must run on it.
+    const healthyTeam = join(h, 'alias-healthy-team.pglite');
+    cpSync(`${store}.healthy`, healthyTeam, { recursive: true });
+    writeMounts(mountEntry('alpha', missing, { alias: 'team' }), mountEntry('team', healthyTeam));
+    const ran = await doctorJson('--brain', 'team');
+    expect(ran.out.reason).toBeUndefined();
+    expect(ran.out.code).not.toBe('brain_missing');
+    expect(existsSync(missing)).toBe(false);
+  }, 240_000);
+
+  test('an engine pglite config that also carries a database_url still opens its folder, so a missing folder is refused (host and mount)', async () => {
+    const mountStore = join(h, 'url-mount.pglite');
+    writeMounts(mountEntry('team', mountStore, { database_url: 'postgresql://127.0.0.1:1/none' }));
+    const cfg = JSON.parse(readFileSync(cfgFile(), 'utf-8')) as Record<string, unknown>;
+    const original = JSON.stringify(cfg);
+    writeFileSync(cfgFile(), JSON.stringify({ ...cfg, database_url: 'postgresql://127.0.0.1:1/none' }));
+    renameSync(store, `${store}.moved`);
+    try {
+      const before = tree();
+      for (const extra of [[], ['--brain', 'team']]) {
+        const { r, out } = await doctorJson(...extra);
+        expect(r.exitCode).toBe(1);
+        expect(out.reason).toBe('missing_brain');
+        expect(existsSync(store)).toBe(false);
+        expect(existsSync(mountStore)).toBe(false);
+        expect(tree()).toEqual(before);
+      }
+    } finally {
+      writeFileSync(cfgFile(), original);
+      renameSync(`${store}.moved`, store);
+    }
+  }, 240_000);
+
+  test('the refusal for a mount never offers `gbrain init --pglite` (it rewrites the host config); the host one still does', async () => {
+    const mountStore = join(h, 'advice-mount.pglite');
+    writeMounts(mountEntry('team', mountStore));
+    const mount = await doctorJson('--brain', 'team');
+    expect(mount.out.code).toBe('brain_missing');
+    expect(JSON.stringify(mount.out)).not.toContain('gbrain init --pglite');
+    expect(JSON.stringify(mount.out)).toContain('mount `team`');
+    renameSync(store, `${store}.moved`);
+    try {
+      const host = await doctorJson();
+      expect(host.out.code).toBe('brain_missing');
+      expect(JSON.stringify(host.out)).toContain('gbrain init --pglite --no-embedding --path');
+    } finally {
+      renameSync(`${store}.moved`, store);
+    }
+  }, 240_000);
 });
