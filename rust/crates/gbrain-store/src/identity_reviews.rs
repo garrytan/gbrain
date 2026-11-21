@@ -337,7 +337,7 @@ impl Store {
                     "decision_id": id, "verdict": r.verdict, "members": r.members, "group_id": r.group_id,
                     "entity_id": r.entity_id, "canonical": canonical, "decided_by": r.decided_by,
                     "decided_at": timestamptz_text(r.decided_at_us), "origin": r.origin,
-                    "home_source_id": r.home_source_id, "git_blob": r.git_blob,
+                    "home_source_id": r.home_source_id, "git_blob": r.git_blob, "evidence": r.evidence,
                 })
             })
             .collect();
@@ -589,12 +589,24 @@ mod tests {
             origin: "database".into(),
             home_source_id: None,
             git_blob: None,
+            evidence: None,
         };
         let rows = vec![
             ("a".to_string(), rec("same", Some("e"))),
             ("b".to_string(), rec("different", None)),
         ];
         assert_eq!(revision(&rows), "a:same:e:database:,b:different::database:");
+    }
+
+    #[test]
+    fn a_record_written_before_evidence_reads_none() {
+        let old = json!({
+            "verdict": "same", "members": [], "group_id": null, "entity_id": "e",
+            "canonical_source_id": null, "canonical_slug": null, "decided_by": "owner",
+            "decided_at_us": 0, "origin": "database", "home_source_id": null, "git_blob": null,
+        });
+        let rec: ReviewRecord = serde_json::from_value(old).unwrap();
+        assert_eq!(rec.evidence, None);
     }
 
     #[test]
