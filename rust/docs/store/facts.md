@@ -994,8 +994,8 @@ The statements `facts/gone-page-facts.ts`, `facts/purge-reasons.ts`, `facts/held
 with the typed `raw_sql` refusal until the store holds what it reads. The ten held-move members are served by
 `facts/held_moves.rs` (see "Held moves" below), `expireFactsOfGonePages` by `facts/rest_sites.rs`, and ten
 purge receipt reads by `facts/purge_receipt.rs` (see "Purge receipt reads" below), and nine journal and
-change-reason statements by `facts/purge_journal.rs` (see "Purge journal statements" below). The other 4 have no Rust
-implementation yet, and `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for their cases. The Postgres text of each
+change-reason statements by `facts/purge_journal.rs` (see "Purge journal statements" below), and the derivation
+probe by `facts/purge_probe.rs` (see "Derivation probe" below). The other 2 have no Rust implementation yet, and `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for their cases. The Postgres text of each
 statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
 
 | Member | What it does |
@@ -1119,8 +1119,26 @@ Served on Rust: `insertReasonPurgeTombstones`, `listGitEffectsCarryingReason`, `
 - The parity case for `countPagePurgeTombstones` and `readDeletePageRequest` still stops: its seed writes
   `page_purges` through `executeRaw`, which the Rust arm refuses.
 
-Not served yet: `setPurgeProbeTimeout`, `probePurgeDerivations`, `listBeliefEventsForPurgeProbe` (the store keeps no
-`belief_events`) and `listNearestFactsForPurge` (a vector read).
+### Derivation probe (`facts/purge_probe.rs`, family `facts_purge_probe`)
+
+`probePurgeDerivations` walks one batch of the source's stored derivation results (live and soft-deleted pages, as
+the SQL joins pages without a `deleted_at` test) after the cursor, in (page, pipeline, occurrence) order, and counts
+the claim candidates and the rows that hold a claim inside and outside the sweep scope.
+
+- The sweep scope is the SQL's: a page in `pageIds`, a soft-deleted page, or no live published manifest row
+  (`gen_to` and `staging_id` both unset) with the row's occurrence and segment hash.
+- The prefilter and the claim test use `lower()`, the fold (`ς` to `σ`, `i̇` to `i`), `LIKE` with `\` as the escape
+  and `gbrain_fact_normalize`, over the row's jsonb text and over each string value and object key at any depth.
+- The cursor compares as a SQL row comparison: a cursor with a page but no pipeline admits only later pages. A
+  cursor occurrence that is not a bigint, and a negative batch size, refuse with `invalid_argument`.
+- Pipelines are lower-case ASCII, so byte order is the collation order.
+- `setPurgeProbeTimeout` sets nothing: a store read has no statement timer. It refuses a negative or non-finite value,
+  which `statement_timeout` refuses too.
+- Two parity cases match PGLite: empty batches, and kept, swept, object-key, receipt and near-miss rows walked
+  whole and in batches of two through the cursor.
+
+Not served yet: `listBeliefEventsForPurgeProbe` (the store keeps no `belief_events`) and `listNearestFactsForPurge`
+(a vector read).
 
 ### Claim conflicts, contested proposals, live entity page and gone-page expiry (`facts/rest_sites.rs`, family `facts_rest`)
 

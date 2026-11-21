@@ -2147,6 +2147,56 @@ fn prepare_manifest_row(row: &ManifestRow) -> Result<(ManifestRow, [u8; 16])> {
     Ok((out, staging))
 }
 
+/// One stored derivation row as the fact purge's derivation probe reads it
+/// (`page_segment_derivations`): its pipeline, occurrence, segment hash (hex) and JSON columns
+/// (`Value::Null` for SQL NULL).
+pub(crate) struct ProbeDerivation {
+    pub kind: String,
+    pub occurrence_id: i64,
+    pub segment_sha256: String,
+    pub output: Value,
+    pub receipt: Value,
+}
+
+/// The derivation rows of page `page_id`, in (pipeline, occurrence) order.
+pub(crate) fn probe_derivations(read: &dyn KvRead, page_id: u64) -> Result<Vec<ProbeDerivation>> {
+    let prefix = derivation_prefix(page_id);
+    let mut out = Vec::new();
+    for (key, record) in collect::<DerivationRecord>(read, &prefix)? {
+        let rest = &key[prefix.len()..];
+        let Some(split) = rest.iter().position(|b| *b == 0) else {
+            continue;
+        };
+        let Some(occurrence) = keys::be8(&rest[split + 1..]).map(|v| (v ^ (1u64 << 63)) as i64)
+        else {
+            continue;
+        };
+        out.push(ProbeDerivation {
+            kind: String::from_utf8_lossy(&rest[..split]).into_owned(),
+            occurrence_id: occurrence,
+            segment_sha256: record.segment_sha256,
+            output: record.output,
+            receipt: record.receipt,
+        });
+    }
+    Ok(out)
+}
+
+/// Whether a live published manifest row of the page (`gen_to IS NULL AND staging_id IS NULL`)
+/// backs occurrence `occurrence_id` with segment hash `sha256` (hex, compared without case).
+pub(crate) fn live_segment_backs(
+    read: &dyn KvRead,
+    page_id: u64,
+    occurrence_id: i64,
+    sha256: &str,
+) -> Result<bool> {
+    Ok(manifest_rows(read, page_id)?.iter().any(|(_, row)| {
+        live_published(row)
+            && row.occurrence_id == occurrence_id
+            && row.sha256.eq_ignore_ascii_case(sha256)
+    }))
+}
+
 /// The page's published manifest rows a later generation closed (`gen_to IS NOT NULL AND
 /// staging_id IS NULL`): the rows only a version snapshot can keep, which segmented retention
 /// counts as pinned bytes.

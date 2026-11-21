@@ -865,8 +865,8 @@ readHeldPageLocation	facts_purge	yes	1	no	yes	yes	serves
 readHeldVersionsEdited	facts_purge	yes	1	no	yes	yes	serves
 listSegmentedPageBodies	facts_purge	yes	1	no	yes	yes	serves
 listSegmentedVersionBodies	facts_purge	yes	1	no	yes	yes	serves
-setPurgeProbeTimeout	facts_purge	yes	2	no	yes	yes	refuses:facts
-probePurgeDerivations	facts_purge	yes	2	no	yes	yes	refuses:facts
+setPurgeProbeTimeout	facts_purge	yes	2	no	yes	yes	serves
+probePurgeDerivations	facts_purge	yes	2	no	yes	yes	serves
 listBeliefEventsForPurgeProbe	facts_purge	yes	2	no	yes	yes	refuses:facts
 listFactContextsForPurgeProbe	facts_purge	yes	1	no	yes	yes	serves
 listPageSourcePathsForPurge	facts_purge	yes	1	no	yes	yes	serves

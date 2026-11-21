@@ -65,6 +65,7 @@ mod privacy;
 pub mod purge;
 pub mod purge_journal;
 pub mod purge_ledger;
+pub mod purge_probe;
 pub mod purge_receipt;
 pub mod quoted;
 pub mod recall;
