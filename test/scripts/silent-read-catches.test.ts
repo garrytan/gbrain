@@ -98,6 +98,14 @@ describe('what counts', () => {
     expect(scan("export async function f(engine: any) { const d = ['x']; try { return await engine.listPages(); } catch { return d; } }")).toEqual([]);
   });
 
+  test('a returned local is the binding visible at the return: an empty outer fallback still counts past a same-named sibling block', () => {
+    expect(scan("export async function f(engine: any) { const rows: string[] = []; { const rows = ['cached']; } try { return await engine.listPages(); } catch { return rows; } }")).toEqual(['src/x.ts#f catch_empty 1']);
+  });
+
+  test('a returned local is the binding visible at the return: a non-empty outer value is not made empty by a same-named sibling block', () => {
+    expect(scan("export async function f(engine: any) { const rows = ['x']; { const rows: string[] = []; } try { return await engine.listPages(); } catch { return rows; } }")).toEqual([]);
+  });
+
   test('promise handlers count: arrow and function forms, with a local receiver judged by its initializer', () => {
     expect(scan('export function f(engine: any) { return engine.getLinks("a").catch(() => []); }')).toEqual(['src/x.ts#f promise_catch_empty 1']);
     expect(scan('export function f(engine: any) { return engine.getLinks("a").catch(() => {}); }')).toEqual(['src/x.ts#f promise_catch_empty 1']);
