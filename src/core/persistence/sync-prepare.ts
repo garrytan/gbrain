@@ -1001,12 +1001,13 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
       let applied = ready;
       if (renamed) {
         // The page moves first, keeping its id, inbound links and history and leaving
-        // `old -> new` in slug_aliases; the file content is then prepared against it.
+        // `old -> new` in slug_aliases; the file content is then prepared against it, knowing the revision it moved from.
+        const renamedFrom = (await tx.readPageSnapshot(renamed.slug, { ...source, includeDeleted: true }))?.revision;
         if (await tx.updateSlug(renamed.slug, row.slug, source) !== 1) throw syncPublicationRefusal('page_identity_changed', 'The renamed page could not move to its new slug.', row, p,
           `Page ${renamed.slug} could not move to ${row.slug}.`);
         if (renamedType) await tx.executeRaw('UPDATE pages SET type=$3 WHERE source_id=$1 AND slug=$2', [row.source_id, row.slug, renamedType]);
         let movedImport: PreparedContentImport | undefined;
-        await importFromContent(tx, row.slug, importContent, { ...importOptions, reuseSegments: ready.segmented,
+        await importFromContent(tx, row.slug, importContent, { ...importOptions, reuseSegments: ready.segmented, ...(renamedFrom ? { renamedFrom } : {}),
           prepare: async value => { movedImport = value; return value.result; } });
         if (!movedImport || movedImport.slug !== row.slug) throw syncPublicationRefusal('page_identity_changed', 'The renamed page could not be prepared at its new slug.', row, p,
           `Page ${renamed.slug} could not be prepared at ${row.slug}.`);

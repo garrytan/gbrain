@@ -138,36 +138,31 @@ export function legacyStoredFrontmatter(current: Record<string, unknown>, fileTe
 
 /**
  * pages-03: SQL true when page row `page` was stored by the importer before pages-03: its import record, at the page's
- * current revision (or, with `renamed`, at a revision the page was renamed from with the same frontmatter, title and type), names an
- * importer before import=2 (or none, on records from before the parser stamp). A page with no such record, or one a
- * later edit moved past the recorded revision, is not proven old.
+ * current revision (or at `renamedFrom`, the SQL text of the revision this transaction just renamed the page from),
+ * names an importer before import=2 (or none, on records from before the parser stamp). A page with no such record, or
+ * one a later edit moved past the recorded revision, is not proven old.
  */
-export function importedByOldParserSql(page: string, renamed = false): string {
-  // A rename versions the page as it stood (updateSlug), so a version at the recorded revision holding the live
-  // frontmatter, title and type proves the stored typing is still that import's. The body is not compared: the carry
-  // also needs the stored content hash to equal the old reading of the file (legacyHashToCarry), which binds the body.
-  const revision = renamed
-    ? `(lp.completed_keys->0->>'revision'=${page}.knowledge_revision::text OR EXISTS (SELECT 1 FROM page_versions pv
-        WHERE pv.page_id=${page}.id AND pv.knowledge_revision::text=lp.completed_keys->0->>'revision'
-          AND pv.frontmatter=${page}.frontmatter AND pv.title IS NOT DISTINCT FROM ${page}.title AND pv.type IS NOT DISTINCT FROM ${page}.type
-          AND COALESCE(pv.content_hash, ${page}.content_hash)=${page}.content_hash AND pv.is_deleted IS NOT TRUE))`
-    : `lp.completed_keys->0->>'revision'=${page}.knowledge_revision::text`;
+export function importedByOldParserSql(page: string, renamedFrom?: string): string {
+  const revision = `lp.completed_keys->0->>'revision'`;
+  const atRevision = renamedFrom ? `(${revision}=${page}.knowledge_revision::text OR ${revision}=${renamedFrom})` : `${revision}=${page}.knowledge_revision::text`;
   return `EXISTS (SELECT 1 FROM op_checkpoints lp JOIN sources ls ON ls.id=${page}.source_id
     WHERE lp.op='${SYNC_IMPORT_PROVENANCE_OP}' AND lp.fingerprint=${page}.source_id||':'||ls.incarnation::text||':'||${page}.id::text
-      AND ${revision}
+      AND ${atRevision}
       AND COALESCE(lp.completed_keys->0->'parser'->>'parser_version','import=1;') LIKE 'import=1;%')`;
 }
 
 /**
  * pages-03: `legacyCarry` (legacyHashToCarry) when the live page `pageId` was stored by the importer before pages-03
- * (importedByOldParserSql), also when this sync renamed it first; else null. Only such a page's old hash can be the old
- * typing of the file it reads now: on a page today's importer stored, the same rebuilt hash is a real edit (`title: 1.1`
- * changed to `title: 1.10`), so the paid phases' records stay where they are. An engine without raw SQL carries nothing.
+ * (importedByOldParserSql), else null. `renamedFrom` is the revision the page had before this sync renamed it in the
+ * same transaction (nothing else wrote it in between), so a record at that revision still names the stored values'
+ * importer. Only such a page's old hash can be the old typing of the file it reads now: on a page today's importer
+ * stored, or one a later write changed, the same rebuilt hash is a real edit (`title: 1.1` changed to `title: 1.10`),
+ * so the paid phases' records stay where they are. An engine without raw SQL carries nothing.
  */
-export async function provenLegacyCarry(engine: BrainEngine, sourceId: string, pageId: unknown, legacyCarry: string | null): Promise<string | null> {
+export async function provenLegacyCarry(engine: BrainEngine, sourceId: string, pageId: unknown, legacyCarry: string | null, renamedFrom?: string | null): Promise<string | null> {
   if (!legacyCarry || pageId == null || !hasCapability(engine, 'raw_sql')) return null;
   const proven = await engine.executeRaw(`SELECT 1 FROM pages page WHERE page.source_id=$1 AND page.id=$2 AND page.deleted_at IS NULL
-    AND ${importedByOldParserSql('page', true)}`, [sourceId, Number(pageId)]);
+    AND ${importedByOldParserSql('page', renamedFrom ? '$3::text' : undefined)}`, renamedFrom ? [sourceId, Number(pageId), renamedFrom] : [sourceId, Number(pageId)]);
   return proven.length > 0 ? legacyCarry : null;
 }
 

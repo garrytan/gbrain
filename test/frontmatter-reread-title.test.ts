@@ -30,7 +30,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
-import { legacyTypedFrontmatter } from '../src/core/frontmatter-legacy.ts';
+import { legacyTypedFrontmatter, provenLegacyCarry } from '../src/core/frontmatter-legacy.ts';
 import { contentHash } from '../src/core/utils.ts';
 import { discoverExtractablePages } from '../src/core/cycle/extract-atoms.ts';
 import { PAGE_MAX_BYTES } from '../src/core/page-size-policy.ts';
@@ -158,6 +158,31 @@ describe('pages-03: the upgrade re-read of a page whose title the old typing cha
       expect(after.title).toBe('1.10');
       expect(await scanStateAt(engine, after.id, after.content_hash)).toEqual([{ n: 0 }]);
       expect((await discoverExtractablePages(engine, 'default', [PAGES.titleOnly])).map(page => page.slug)).toEqual([PAGES.titleOnly]);
+    });
+  }, { setup }), 240_000);
+
+  test('a page the older parser stored is no longer proven old once a later write changed it, though a version still holds its title', () => managedBrain(async ({ engine, root }) => {
+    await withStubEmbeddings(async () => {
+      writeFileSync(join(root, `${PAGES.titleOnly}.md`), file(PAGES.titleOnly, '1.1'));
+      commit(root, 'title 1.1');
+      expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
+      await drainEffects(engine);
+      const { id } = await pageRow(engine, PAGES.titleOnly);
+      // An older gbrain imported it: its import record names that parser at the page's revision.
+      await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,revision}',to_jsonb($2::text)) WHERE op=$1 AND fingerprint LIKE '%:' || $3`,
+        [SYNC_IMPORT_PROVENANCE_OP, await revisionOf(engine, PAGES.titleOnly), String(id)]);
+      await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"import=1;frontmatter=1;fence=1"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
+      expect(await provenLegacyCarry(engine, 'default', id, 'the-old-hash')).toBe('the-old-hash');
+      // A later write changed only the body: the page is versioned as it stood, at the recorded revision, with the same
+      // frontmatter, title and type (an inline version keeps no content hash), and the import record stays there.
+      await withManagedFixtureWrite(engine, ['default'], async tx => {
+        const row = await pageRow(tx, PAGES.titleOnly);
+        await tx.createVersion(PAGES.titleOnly, { sourceId: 'default' });
+        const body = 'The rewritten notes, about acme-example.';
+        await tx.executeRaw('UPDATE pages SET compiled_truth=$1, content_hash=$2 WHERE id=$3', [body, hashOf({ ...row, compiled_truth: body }, '1.1', row.frontmatter), id]);
+      });
+      // Its title 1.1 is no longer that import's: a file edit to title: 1.10 is a real edit, scanned again.
+      expect(await provenLegacyCarry(engine, 'default', id, 'the-old-hash')).toBeNull();
     });
   }, { setup }), 240_000);
 });
