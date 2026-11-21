@@ -71,12 +71,26 @@ export function ownerGone(member: string, ownerPid: number | null, sent: boolean
       why: 'This process reached the brain through the owner process. A call the owner may have run is never sent again, so a write is not applied twice; the next call runs the election again and takes over the brain.' });
 }
 
-/** The call's deadline passed before the owner answered; the owner cancelled it. */
-export function ownerCallTimeout(member: string, ms: number, queued: boolean): OperationError {
+/**
+ * The call's deadline passed before it finished. `stage` says how far it got: `queued` (it waited in the owner queue and
+ * never ran), `not_sent` (it never left this process) or `sent` (the owner may have started it). A call the owner
+ * already started is not interrupted: the store does not observe the abort, so a write can still commit after this
+ * error, and its outcome is unknown.
+ */
+export function ownerCallTimeout(member: string, ms: number, stage: 'queued' | 'not_sent' | 'sent'): OperationError {
+  const detail = `member=${member} via=owner_ipc deadline_ms=${ms} queued=${stage === 'queued'} sent=${stage !== 'not_sent'}`;
+  if (stage !== 'sent') {
+    return opError('timeout',
+      stage === 'queued'
+        ? `${member} did not start within ${ms} ms on the brain's owner: it waited in the owner queue and never ran.`
+        : `${member} reached its deadline before it was sent to the brain's owner, so it never ran.`,
+      'Retry the same call; it waits again within its own deadline. If it keeps timing out, the owner process is busy: check its log.',
+      { reason: stage === 'queued' ? 'not_started' : 'not_sent', retryable: true, detail });
+  }
   return opError('timeout',
-    `${member} did not finish within ${ms} ms on the brain's owner${queued ? ' (it waited in the owner queue)' : ''}; the owner cancelled it.`,
-    'Retry the same call; it waits again within its own deadline. If it keeps timing out, the owner process is busy: check its log.',
-    { retryable: true, detail: `member=${member} via=owner_ipc deadline_ms=${ms} queued=${queued}` });
+    `${member} did not finish within ${ms} ms on the brain's owner. A call the owner already started is not interrupted, so a write may or may not have committed.`,
+    'Read the page or run the read again before you retry a write. If calls keep timing out, the owner process is busy: check its log.',
+    { reason: 'outcome_unknown', retryable: true, detail });
 }
 
 /** The caller's AbortSignal fired; the owner was told to cancel the call. */

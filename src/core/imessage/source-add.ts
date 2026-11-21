@@ -1,4 +1,8 @@
-/** `sources add --kind imessage`: the registered config. Always database-recorded, so it takes no directory and no record mode. */
+/**
+ * `sources add --kind imessage`: the registered config. It takes no directory and no record mode: the source keeps
+ * local_path NULL, and each sync decides where the pages live (owned-folder/destination.ts: files under
+ * `.gbrain-owned/<id>/` in the default source's checkout on a personal brain, else the database only).
+ */
 import { SYNC_INTERVAL_MIN_FLOOR } from '../meetings/types.ts';
 
 export interface AddSourceIMessageOpts {

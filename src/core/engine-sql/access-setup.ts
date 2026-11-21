@@ -64,7 +64,7 @@ export async function readLiveAccessToken(exec: AccessSetupExec, name: string): 
 }
 
 /** The ids of `ids` that name a source that is not archived (in no set order). */
-export async function listUnarchivedSourceIds(exec: AccessSetupExec, ids: readonly string[]): Promise<string[]> {
+export async function filterUnarchivedSourceIds(exec: AccessSetupExec, ids: readonly string[]): Promise<string[]> {
   return (await exec.executeRaw<{ id: string }>(UNARCHIVED_SOURCE_IDS_SQL, [ids])).map(r => r.id);
 }
 

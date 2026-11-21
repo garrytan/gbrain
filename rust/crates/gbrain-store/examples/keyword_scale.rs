@@ -1337,7 +1337,8 @@ fn write_fixtures(store: &Store) -> Value {
 /// The privacy filter over the fixture: private pages outrank and outnumber the public ones, so a
 /// window of 20 (or 5) is saturated by hidden pages unless the filter runs before the window.
 fn private_saturation_cases() -> Vec<Case> {
-    let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage", "identity": []});
+    let policy =
+        json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn", "identity": []});
     let hide = json!({"excludePrivate": policy, "requireSafeChunks": false});
     let mut out = Vec::new();
     for text in ["zorblax", "zorblax saturation"] {

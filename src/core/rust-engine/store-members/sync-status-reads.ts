@@ -22,6 +22,7 @@ import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { CycleLockRow, SourceDetailRow, SourceRow } from '../../engine.ts';
 import { SYNC_ADMISSION_SETTING_PARAMS } from '../../persistence/sync-admission.ts';
 import { SYNC_DELETES_WITHHELD_OP } from '../../persistence/sync-pass-row.ts';
+import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../../apple-contacts/review-status.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../persistence/sync-status-sql.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
@@ -109,6 +110,8 @@ export const readSyncStatusSourceRow: StoreMember<[sourceId: string], SyncStatus
     pass_value: first(pass) as never, pass_updated_at: pass?.updated_at ?? null, pass_read_at: new Date().toISOString(), withheld: first(withheld) as never,
     admission_stored: stored, admission_row_value: rowValue, admission_set_at: text(dating?.set_at), admission_pinned: pinned, admission_destructive: destructive,
     writeback_failed: null, refresh: null,
+    identity_reviews: (await readRow(brain, member, APPLE_CONTACTS_REVIEW_OP, sourceId))?.completed_keys ?? null,
+    held_deletes: (await readRow(brain, member, APPLE_CONTACTS_PENDING_DELETES_OP, sourceId))?.completed_keys ?? null,
   };
 };
 

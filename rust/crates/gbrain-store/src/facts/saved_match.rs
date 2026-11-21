@@ -244,6 +244,7 @@ fn row_json(c: &Candidate, need: usize, pool_rank: usize) -> Value {
         "valid_from": timestamptz_text(row.valid_from_us),
         "source": row.source,
         "at": iso(row.valid_from_us),
+        "dimension": row.dimension,
         "source_id": row.source_id,
         "visibility": row.visibility,
         "created_at": iso(row.created_at_us),

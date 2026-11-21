@@ -154,7 +154,7 @@ export function encodeValue(value: unknown, opts: EncodeOptions = {}, path = 'va
     let tagged = false;
     for (const key of Object.keys(object)) {
       if (key === '$t') tagged = true;
-      out[key] = encodeValue((object as Record<string, unknown>)[key], opts, `${path}.${key}`, seen);
+      setOwn(out, key, encodeValue((object as Record<string, unknown>)[key], opts, `${path}.${key}`, seen));
     }
     return tagged ? { $t: 'obj', v: out } : out;
   } finally {
@@ -208,8 +208,16 @@ function decodeTagged(wire: { [key: string]: Wire }, opts: DecodeOptions): unkno
 
 function decodePlain(wire: { [key: string]: Wire }, opts: DecodeOptions): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const key of Object.keys(wire)) out[key] = decodeValue(wire[key], opts);
+  for (const key of Object.keys(wire)) setOwn(out, key, decodeValue(wire[key], opts));
   return out;
+}
+
+/**
+ * Sets `key` as an own data property, as JSON.parse does. A plain assignment of `__proto__` would call the inherited
+ * setter instead and drop the field, so data that names it would cross the socket changed.
+ */
+function setOwn(out: object, key: string, value: unknown): void {
+  Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true });
 }
 
 export function decodeValue(wire: Wire, opts: DecodeOptions = {}): unknown {

@@ -505,12 +505,7 @@ export async function writeFactsToFence(
       //    because file-only numbering is the duplicate-key class above.
       let dbMaxRowNum = 0;
       try {
-        const rows = await engine.executeRaw<{ max_row_num: number | null }>(
-          `SELECT MAX(row_num) AS max_row_num FROM facts
-            WHERE source_id = $1 AND source_markdown_slug = $2`,
-          [target.sourceId, target.slug],
-        );
-        dbMaxRowNum = Number(rows[0]?.max_row_num ?? 0);
+        dbMaxRowNum = await engine.readFenceRowNumHint(target.sourceId, target.slug);
       } catch (err) {
         console.warn(`[facts.fence] FACTS_ROW_NUM_HINT_UNAVAILABLE: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; numbering from the file alone`);
       }
@@ -681,10 +676,5 @@ export async function lookupSourceLocalPath(
   engine: BrainEngine,
   sourceId: string,
 ): Promise<string | null> {
-  const rows = await engine.executeRaw<{ local_path: string | null }>(
-    `SELECT local_path FROM sources WHERE id = $1 LIMIT 1`,
-    [sourceId],
-  );
-  if (rows.length === 0) return null;
-  return rows[0].local_path;
+  return engine.readSourceCheckoutPath(sourceId);
 }

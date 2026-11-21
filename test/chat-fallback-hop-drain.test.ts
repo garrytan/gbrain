@@ -26,7 +26,12 @@ const queueHop = () => queueFirstFallbackHop(() => chatFallbackHopNotice('claude
 let engine: PGLiteEngine;
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
 afterAll(async () => { await engine.disconnect(); });
-beforeEach(() => { __resetChatFallbackHopNoticeForTests(); __resetProcessNoticeLedgerForTests(); });
+// Another file in the same bun process can leave CLI op notices queued (markCliResult captures room notices);
+// drain them first so the exact-list assertion below sees only this file's notices.
+beforeEach(async () => {
+  await withEnv({ GBRAIN_HOME: mkdtempSync(join(tmpdir(), 'gbrain-hop-drain-')) }, async () => { applyCliOpNotices({}, true); });
+  __resetChatFallbackHopNoticeForTests(); __resetProcessNoticeLedgerForTests();
+});
 
 const cfg = { engine: 'pglite', database_path: join(tmpdir(), 'hop-drain-brain') } as GBrainConfig;
 
