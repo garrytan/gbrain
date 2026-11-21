@@ -488,7 +488,7 @@ function isSkippedTurnEntry(e: Record<string, unknown>): boolean {
 }
 
 /** Claude Code's lead-in on a message another Claude session sent (#9768): an agent wrote it, not the owner. */
-const RELAYED_SESSION_MESSAGE_RE = /^\s*Another Claude session sent a message(?: while you were working)?:/;
+const RELAYED_SESSION_MESSAGE_RE = /^\s*Another Claude session sent a message(?: while you were working)?:\s*<cross-session-message[\s>]/;
 
 function isRelayedSessionMessage(e: Record<string, unknown>): boolean {
   const content = typeof e.message === 'object' && e.message !== null ? (e.message as Record<string, unknown>).content : undefined;
@@ -499,10 +499,10 @@ function isRelayedSessionMessage(e: Record<string, unknown>): boolean {
 }
 
 function hasNonHumanOrigin(e: Record<string, unknown>): boolean {
+  const kind = typeof e.origin === 'object' && e.origin !== null ? (e.origin as Record<string, unknown>).kind : undefined;
+  if (kind === 'human') return false;
   if (isRelayedSessionMessage(e)) return true;
-  if (typeof e.origin !== 'object' || e.origin === null) return false;
-  const kind = (e.origin as Record<string, unknown>).kind;
-  return typeof kind === 'string' && kind.length > 0 && kind !== 'human';
+  return typeof kind === 'string' && kind.length > 0;
 }
 
 /** One transcript line → a turn plus its structural human-prompt origin. */

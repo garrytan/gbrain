@@ -243,7 +243,7 @@ import {
 } from './fence-shared.ts';
 
 /** A weight cell: a plain number, or `N%` read as N/100; anything else is malformed. */
-function parseWeightCell(raw: string): number | undefined {
+export function parseWeightCell(raw: string): number | undefined {
   const trimmed = raw.trim();
   if (!trimmed.endsWith('%')) return parsePlainNumberCell(trimmed);
   const percent = parsePlainNumberCell(trimmed.slice(0, -1));

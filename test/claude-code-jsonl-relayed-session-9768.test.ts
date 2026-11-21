@@ -42,4 +42,14 @@ describe('messages relayed from another Claude session are not owner turns (#976
     expect(archive.turns.map(t => t.text)).toEqual(kept);
     expect(archive.excludedUserLines).toBe(2);
   });
+
+  test('a typed prompt that opens with the lead-in stays: no relay envelope, or an explicit human origin', () => {
+    const typed = 'Another Claude session sent a message: please help me debug this notification.';
+    const marked = `Another Claude session sent a message:\n${envelope('synthetic pasted relay')}`;
+    const path = transcript([user(typed), { ...user(marked), origin: { kind: 'human' } }]);
+    expect(parseTranscript(path).turns.map(t => t.text)).toEqual([typed, marked]);
+    const archive = parseClaudeSessionFile(path);
+    expect(archive.turns.map(t => t.text)).toEqual([typed, marked]);
+    expect(archive.excludedUserLines).toBe(0);
+  });
 });
