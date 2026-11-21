@@ -11,17 +11,18 @@
  *  - Why existing coverage misses it: the doctor goldens run on PGLite and Postgres only, and they were regenerated
  *    with the check in them. The parity harness cannot hold the Rust doctor run, because each doctor check that reads
  *    raw SQL catches a typed refusal and reports the check as unknown.
- *  - Seam: none. Each engine is a real brain with a registered checkout; the doctor runs through `runDoctor`, the
+ *  - Seam: none. Each engine is a real brain with a registered and claimed checkout; the doctor runs through `runDoctor`, the
  *    function the CLI calls, with its stdout captured. On the Rust engine `writer status` stops on a typed refusal
  *    before it prints (persistence/effect-catchup.ts `readStalledCatchups`); that stop is asserted, not skipped.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runDoctor } from '../src/commands/doctor.ts';
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { writerAdminState } from '../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -34,65 +35,64 @@ import { withEnv } from './helpers/with-env.ts';
 
 const backends: ParityBackend[] = [...testBackends(), ...(rustArmRequested() ? ['rust' as const] : [])];
 
-async function openEngine(backend: ParityBackend): Promise<{ engine: BrainEngine; close: () => Promise<void> }> {
-  if (backend === 'rust') {
-    const brain = await openRustBrain();
-    const engine = brain.engine as unknown as BrainEngine;
-    return { engine, close: async () => { await engine.disconnect(); removeBrainDir(brain.dir); } };
-  }
-  if (backend === 'postgres') {
-    const { engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
-    return { engine, close };
-  }
-  const engine = new PGLiteEngine();
-  await engine.connect({ engine: 'pglite' } as never);
-  await engine.initSchema();
-  return { engine, close: () => engine.disconnect() };
-}
-
 /** Everything `run` printed to stdout. */
 async function stdoutOf(run: () => Promise<unknown>): Promise<string> {
   const lines: string[] = [];
   const log = console.log;
   const write = process.stdout.write.bind(process.stdout);
-  const exitCode = process.exitCode;
   console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
   process.stdout.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true; }) as typeof process.stdout.write;
   try { await run(); } finally {
     console.log = log;
     process.stdout.write = write;
-    process.exitCode = exitCode;
   }
   return lines.join('\n');
 }
 
-/** Runs `run` on a fresh brain of `backend` with a plain checkout registered and claimed as source `work`. */
-async function withClaimedCheckout<T>(backend: ParityBackend, run: (engine: BrainEngine) => Promise<T>): Promise<T> {
-  const { engine, close } = await openEngine(backend);
-  const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-topology-retired-')));
-  try {
-    return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
-      const root = join(home, 'checkout');
-      await Bun.write(join(root, 'example.md'), 'generic example');
-      await createSource(engine, backend, 'work', {}, root);
-      await runPersistenceAdministration(engine, 'writer_claim', {
-        source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) });
-      try { return await run(engine); } finally { await disposePersistenceConsumer(engine); }
+for (const backend of backends) {
+  describe(`[${backend}] the retired topology recovery stop has no doctor or writer status surface`, () => {
+    let engine: BrainEngine;
+    let close: () => Promise<void> = async () => undefined;
+    let home = '';
+    /** Runs `run` under this file's scratch GBRAIN_HOME, where source `work` is registered and claimed. */
+    const inHome = <T>(run: () => Promise<T>) => withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, run);
+
+    beforeAll(async () => {
+      if (backend === 'rust') {
+        const brain = await openRustBrain();
+        engine = brain.engine as unknown as BrainEngine;
+        close = async () => { await engine.disconnect(); removeBrainDir(brain.dir); };
+      } else if (backend === 'postgres') {
+        ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+      } else {
+        const pglite = new PGLiteEngine();
+        await pglite.connect({ engine: 'pglite' } as never);
+        await pglite.initSchema();
+        engine = pglite;
+      }
+      home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-topology-retired-')));
+      await inHome(async () => {
+        const root = join(home, 'checkout');
+        await Bun.write(join(root, 'example.md'), 'generic example');
+        await createSource(engine, backend, 'work', {}, root);
+        await runPersistenceAdministration(engine, 'writer_claim', {
+          source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) });
+      });
+    }, 120_000);
+    beforeEach(() => _resetCliExitVerdictForTests());
+    afterEach(async () => {
+      _resetCliExitVerdictForTests();
+      await disposePersistenceConsumer(engine);
     });
-  } finally {
-    await close();
-    rmSync(home, { recursive: true, force: true });
-  }
-}
+    afterAll(async () => {
+      // PGLite closes by disconnecting; the Postgres and Rust arms also drop their database or brain directory.
+      if (backend === 'pglite') await engine.disconnect();
+      else await close();
+      rmSync(home, { recursive: true, force: true });
+    });
 
-describe('the retired topology recovery stop has no doctor or writer status surface', () => {
-  let lastProcessExit: typeof process.exitCode;
-  afterEach(() => { process.exitCode = lastProcessExit; });
-
-  for (const backend of backends) {
-    test(`[${backend}] doctor --json and the human doctor output carry no topology_recovery_stopped check`, async () => {
-      lastProcessExit = process.exitCode;
-      const surface = await withClaimedCheckout(backend, async (engine) => {
+    test('doctor --json and the human doctor output carry no topology_recovery_stopped check', async () => {
+      const surface = await inHome(async () => {
         const json = await stdoutOf(() => runDoctor(engine, ['--json', '--scope=brain']));
         const human = await stdoutOf(() => runDoctor(engine, ['--scope=brain']));
         const report = JSON.parse(json.slice(json.indexOf('{'))) as { checks: { name: string }[] };
@@ -106,9 +106,8 @@ describe('the retired topology recovery stop has no doctor or writer status surf
       expect(surface).toEqual({ ran: true, json_check: false, json_text: false, human_row: false });
     }, 180_000);
 
-    test(`[${backend}] sources writer status --json has no topology_recoveries key`, async () => {
-      lastProcessExit = process.exitCode;
-      const outcome = await withClaimedCheckout(backend, async (engine) => {
+    test('sources writer status --json has no topology_recoveries key', async () => {
+      const outcome = await inHome(async () => {
         const status = await runPersistenceAdministration(engine, 'writer_status', {}).then(
           (value) => ({ value: value as Record<string, unknown> }), (error: unknown) => ({ error }));
         if ('error' in status) return { printed: false, typed_refusal: isCapabilityMissing(status.error), key: false };
@@ -119,5 +118,5 @@ describe('the retired topology recovery stop has no doctor or writer status surf
         ? { printed: false, typed_refusal: true, key: false }
         : { printed: true, typed_refusal: false, key: false });
     }, 60_000);
-  }
-});
+  });
+}
