@@ -439,8 +439,10 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   const { heldDeletions, levelReuse } = await readPassSwitches(engine, sourceId);
   // GST-2201: `sync_deleted_restore` marks the classifier that imports a file restored over its sync-made tombstone, so the first
   // pass after the upgrade reads the whole level once and brings back pages an older pass left deleted beside their file.
+  // LC-1: `restored_file_hold` does the same for the classifier that holds a restored file: a stamp from before it carries no
+  // `removal_pending`, so its idle check would never see a file restored after its delete settled.
   const selectionFp = digest({ ...selection, ...(metafilePages === 'off' ? {} : { metafile_pages: metafilePages }), ...(heldDeletions ? { apply_held_deletions: true } : {}), ...(strict ? { canonical: 'git' } : {}),
-    sync_deleted_restore: 1 }), parserFp = parserFingerprint();
+    sync_deleted_restore: 1, restored_file_hold: 1 }), parserFp = parserFingerprint();
   const obligations: ManagedSyncPassValue['obligations'] = prior ? structuredClone(prior.value.obligations)
     : { baseline_commit: context.source.last_commit, mismatch: {}, not_converged_streak: 0, faults: {} };
   obligations.mismatch ??= {}; obligations.faults ??= {}; obligations.not_converged_streak ??= 0;

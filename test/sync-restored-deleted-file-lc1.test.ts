@@ -158,6 +158,50 @@ for (const backend of testBackends()) describe(`[${backend}] LC-1: a file restor
     expect(await pageState(engine, slug)).toBe('deleted');
   }, { databaseUrl, setup }), 240_000);
 
+  test('a repeated delete (a no-op on a page already deleted) keeps the first delete\'s removal: the restore is still held', () => managedBrain(async ({ engine, ctx, root }) => {
+    const slug = 'notes/ivy-example';
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await remove(engine, ctx, slug, false);
+    await performManagedSync(engine, OPTS);
+    await remove(engine, ctx, slug, false);
+    git(root, 'checkout', '--', `${slug}.md`);
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual({ [`${slug}.md`]: ['file_drift', 'deleted', 'tombstone_edited', true] });
+    expect(await pageState(engine, slug)).toBe('deleted');
+  }, { databaseUrl, setup }), 240_000);
+
+  test('a staged removal undone only in the index is still seen: the idle check does not trust a staged path\'s disk stat', () => managedBrain(async ({ engine, ctx, root }) => {
+    const slug = 'notes/ivy-example';
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await remove(engine, ctx, slug, false);
+    // Stage the removal, then put the same bytes back on disk without touching the index.
+    git(root, 'rm', '-q', '--cached', '--ignore-unmatch', '--', `${slug}.md`);
+    writeFileSync(join(root, `${slug}.md`), execFileSync('git', ['-C', root, 'show', `HEAD:${slug}.md`]));
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual({});
+    git(root, 'restore', '--staged', '--', `${slug}.md`);
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual({ [`${slug}.md`]: ['file_drift', 'deleted', 'tombstone_edited', true] });
+    expect(await pageState(engine, slug)).toBe('deleted');
+  }, { databaseUrl, setup }), 240_000);
+
+  test('a stamp from before this fix (no removal_pending, an older selection fingerprint) re-reads the level, so a restore made after the upgrade is held', () => managedBrain(async ({ engine, ctx, root }) => {
+    const slug = 'notes/ivy-example';
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await remove(engine, ctx, slug, false);
+    await performManagedSync(engine, OPTS);
+    const converged = "completed_keys->0->'obligations'->'converged'";
+    const [stamp] = await engine.executeRaw<{ pending: unknown }>(`SELECT ${converged}->'removal_pending' AS pending FROM op_checkpoints WHERE op='managed-sync-pass'`);
+    expect(stamp!.pending).toEqual([expect.objectContaining({ path: `${slug}.md`, stat: 'absent' })]);
+    // The shape an older gbrain stamped: no removal_pending, and the selection fingerprint of a classifier without this hold.
+    await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys = jsonb_set(completed_keys #- '{0,obligations,converged,removal_pending}',
+      '{0,obligations,converged,selection_fp}', '"pre-lc1"'::jsonb) WHERE op='managed-sync-pass'`);
+    git(root, 'checkout', '--', `${slug}.md`);
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual({ [`${slug}.md`]: ['file_drift', 'deleted', 'tombstone_edited', true] });
+    expect(await pageState(engine, slug)).toBe('deleted');
+  }, { databaseUrl, setup }), 240_000);
+
   test('removal evidence is the page\'s own newest committed delete: other pages, other sources, uncommitted, undone, kept-file and owner-purge receipts are not', () => managedBrain(async ({ engine }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     const receipt = (slug: string, operation: string, o: { pageId?: number | null; state?: string; outcome?: unknown; intent?: unknown }) => engine.transaction(async tx => {
@@ -178,6 +222,7 @@ for (const backend of testBackends()) describe(`[${backend}] LC-1: a file restor
       ['a delete that did not commit', [['delete_page', { state: 'failed', outcome: removed }]], false],
       ['a delete a restore_page undid', [['delete_page', { outcome: removed }], ['restore_page', {}]], false],
       ['a delete a consented put_page undid', [['delete_page', { outcome: removed }], ['put_page', {}]], false],
+      ['a no-op repeat of the delete does not hide its removal', [['delete_page', { outcome: removed }], ['delete_page', { outcome: { ...kept, noop: true } }]], true],
       ['a put_page of another page does not undo it', [['delete_page', { outcome: removed }], ['put_page', { pageId: 8 }]], true],
       ['a later delete that kept the file', [['delete_page', { outcome: removed }], ['put_page', {}], ['delete_page', { outcome: kept }]], false],
       ['a retention purge after the removal', [['delete_page', { outcome: removed }], ['delete_page', { outcome: { status: 'purged', retention: true } }]], true],

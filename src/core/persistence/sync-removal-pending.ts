@@ -34,7 +34,9 @@ function removalPending(mode: 'committed' | 'working', entries: Iterable<Pending
   for (const entry of entries) {
     if (entry.result.cls !== 'deleted_same' || entry.state.removedFile !== true || CLEAN_DIRTINESS.has(entry.state.dirty)) continue;
     if (pending.length >= REMOVAL_PENDING_CAP) return null;
-    pending.push({ path: entry.path, stat: stat(entry.path) });
+    // A staged removal can be undone in the index alone (`git restore --staged`), which leaves the disk stat as it was: such a
+    // path records `staged`, which no stat matches, so the stamp is never idle until the pass reads the path again.
+    pending.push({ path: entry.path, stat: entry.state.dirty === 'staged' ? 'staged' : stat(entry.path) });
   }
   return pending.length ? pending : undefined;
 }

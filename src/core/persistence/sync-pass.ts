@@ -577,8 +577,8 @@ async function readRemovedFiles(exec: Exec, sourceId: string, input: { pages: Pa
 
 /**
  * LC-1 (decision E1): the paths whose deleted page (by slug and page id) a person's delete removed the file of. The
- * evidence is the newest committed `delete_page` of the page that is not a retention purge (`gbrain pages purge-deleted`,
- * the autopilot purge phase): it wrote the removal (`outcome.write_through.written`), it is not an owner purge, and no
+ * evidence is the newest committed `delete_page` of the page that is neither a retention purge (`gbrain pages purge-deleted`,
+ * the autopilot purge phase) nor a no-op repeat of a delete (`outcome.noop`, a page already deleted): it wrote the removal (`outcome.write_through.written`), it is not an owner purge, and no
  * committed `restore_page` or `put_page` (a consented `repair file-drift --prefer file` restores through `put_page`) brought
  * the page back after it. So a later delete that left the file (`sync.write_through=false`) is the evidence, not an older
  * removal a repair already undid. An owner purge tombstones the content source-wide, so its bytes can never be saved again
@@ -592,7 +592,7 @@ export async function readFileRemovingDeletes(exec: Exec, sourceId: string, asks
     const chunk = asks.slice(i, i + 5_000);
     const rows = await exec.executeRaw<{ path: string }>(`SELECT x.path FROM unnest($2::text[], $3::text[], $4::int[]) AS x(path, slug, page_id)
       CROSS JOIN LATERAL (SELECT r.sequence, r.outcome FROM persistence_requests r WHERE r.source_id=$1 AND r.slug=x.slug AND r.state='committed'
-          AND r.operation='delete_page' AND (r.page_id IS NULL OR r.page_id=x.page_id)
+          AND r.operation='delete_page' AND (r.page_id IS NULL OR r.page_id=x.page_id) AND r.outcome->>'noop' IS DISTINCT FROM 'true'
           AND r.outcome->>'retention' IS DISTINCT FROM 'true' AND (r.intent IS NULL OR r.intent->>'retention' IS DISTINCT FROM 'true')
         ORDER BY r.sequence DESC LIMIT 1) d
       WHERE d.outcome->'write_through'->>'written'='true' AND d.outcome->>'status' IS DISTINCT FROM 'purged'
