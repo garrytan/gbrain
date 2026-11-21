@@ -307,6 +307,7 @@ test/engine-parity/write-outcome-order.test.ts
 test/engine-parity/write-request-cancel.test.ts
 test/engine-parity/write-request-reads.test.ts
 test/engine-parity/writer-admin.test.ts
+test/engine-parity/writer-not-initialized.test.ts
 test/engine-parity/writer-registration.test.ts
 test/engine-parity/writer-release.test.ts
 test/engine-parity/writer-status.test.ts
