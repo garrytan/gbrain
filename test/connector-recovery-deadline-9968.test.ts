@@ -195,6 +195,66 @@ test('#9968: a --full sweep stopped at its deadline keeps unreached retries, its
   }
 }), 300_000);
 
+/** Fake GitHub that refuses a request made after the caller's signal aborted; with `stallListingMs` the open-PR listing, the last listing call, answers only after that delay, ignoring the signal. */
+function githubIssues(numbers: number[], updatedAt: string, stallListingMs = 0) {
+  const issue = (n: number) => ({ number: n, title: `Synthetic issue ${n}`, state: 'open', body: `Body ${n}.`, created_at: '2026-01-01T00:00:00Z',
+    updated_at: updatedAt, labels: [], assignees: [], user: { login: 'example-user' }, html_url: `https://github.com/acme-example/app/issues/${n}` });
+  return async (url: string, init?: RequestInit) => {
+    init?.signal?.throwIfAborted();
+    const path = new URL(url).pathname;
+    if (path.endsWith('/issues')) return json(numbers.map(issue));
+    if (path.endsWith('/pulls')) {
+      if (stallListingMs) await new Promise(resolve => setTimeout(resolve, stallListingMs));
+      return json([]);
+    }
+    if (path.endsWith('/comments')) return json([]);
+    const detail = path.match(/\/issues\/(\d+)$/);
+    if (detail) return json(issue(Number(detail[1])));
+    if (path === '/repos/acme-example/app') return json({ full_name: 'acme-example/app', private: true, default_branch: 'main' });
+    throw new Error('Unexpected external fixture route');
+  };
+}
+
+test('#9968: a GitHub sweep whose listing returns after the deadline imports nothing more and deletes nothing', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await boundSource(engine, githubConfig);
+    const cfg = parseGitHubSourceConfig(githubConfig, f.dir);
+    expect((await runGitHubSync(engine, f.id, cfg, options, githubIssues([1, 2, 3], '2026-01-02T00:00:00Z'))).status).not.toBe('partial');
+    await settleConnectorWrites(engine, f.id);
+    const imports = async () => (await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM persistence_requests
+      WHERE source_id=$1 AND intent->>'kind'='connector_v2_import'`, [f.id]))[0].n;
+    const before = await imports();
+    const pages = async () => (await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL
+      AND slug LIKE 'gh/acme-example/app/%' ORDER BY slug`, [f.id])).map(row => row.slug);
+    const kept = await pages();
+    expect(kept).toContain('gh/acme-example/app/1');
+    // A --full sweep lists everything again, but the listing answers only after the job's deadline has passed.
+    const listed = Array.from({ length: 30 }, (_, i) => i + 1);
+    const result = await runGitHubSync(engine, f.id, cfg, { ...options, full: true, deadlineAtMs: Date.now() + 1_500 },
+      githubIssues(listed, '2026-01-05T00:00:00Z', 3_000));
+    expect(result).toMatchObject({ status: 'partial', reason: 'timeout' });
+    await settleConnectorWrites(engine, f.id);
+    await disposePersistenceConsumer(engine);
+    expect(await imports()).toBe(before);
+    expect(await pages()).toEqual(kept);
+    expect((await connectorState(engine, f.id)).last_failure).toBeNull();
+  }
+}), 120_000);
+
+test('#9968: a first GitHub import whose listing returns after the deadline stops on time with no failed item', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await boundSource(engine, githubConfig);
+    const cfg = parseGitHubSourceConfig(githubConfig, f.dir);
+    const result = await runGitHubSync(engine, f.id, cfg, { ...options, deadlineAtMs: Date.now() + 1_500 },
+      githubIssues([1, 2, 3], '2026-01-02T00:00:00Z', 3_000));
+    expect(result).toMatchObject({ status: 'partial', reason: 'timeout' });
+    expect(result).not.toHaveProperty('failedFiles');
+    await settleConnectorWrites(engine, f.id);
+    await disposePersistenceConsumer(engine);
+    expect((await connectorState(engine, f.id)).last_failure).toBeNull();
+  }
+}), 120_000);
+
 test('#9968: a real retained publication keeps the stop, and the sync refuses within its deadline naming the receipt to read', async () => withEnv({ ...env, GBRAIN_WRITE_WAIT_MS: '30000' }, async () => {
   for (const engine of engines) {
     const f = await boundSource(engine, githubConfig);
@@ -220,7 +280,7 @@ test('#9968: a real retained publication keeps the stop, and the sync refuses wi
       expect(failure?.writeRequest?.request_id).toBe(retained.request_id);
       expect(failure?.fix?.argv).toEqual(['gbrain', 'write-request', '--', retained.request_id]);
       expect(failure?.suggestion).toContain(retained.request_id);
-      expect((await connectorState(engine, f.id)).last_failure?.code).toBe('recovery_required');
+      expect((await connectorState(engine, f.id)).last_failure).toMatchObject({ code: 'recovery_required', consecutive: 4, request_id: retained.request_id });
       const diagnostics = await readWriterDiagnostics(engine);
       expect(diagnostics.blockers.map(b => b.request_id)).toContain(retained.request_id);
     } finally {
