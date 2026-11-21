@@ -659,7 +659,7 @@ describe('engine parity: takes', () => {
         // A read that scans the take vectors and reads each take, with one take vector stored.
         const stored = await tx.hasStoredVectors('takes');
         // A nested transaction (a savepoint) writes another vector, searches it, then rolls back.
-        let seenInside: number | null | undefined = null;
+        let seenInside = null as number | null | undefined;
         try {
           await tx.transaction(async (sp) => {
             await embed(sp, 0);
