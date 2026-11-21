@@ -3,7 +3,7 @@
 Part of the Minion jobs family ([jobs.md](jobs.md), next to [oauth-clients.md](oauth-clients.md)); the rules in
 [rust/README.md](../../README.md) ("The brain store") apply.
 
-The store keeps only the `access_tokens` columns the legacy-token mint, the read-floor command, the write grant read and the write-attribution name read touch. The SQL for the
+The store keeps only the `access_tokens` columns the legacy-token mint, the read-floor command, the write grant read, the requester-scope read and the write-attribution name read touch. The SQL for the
 PGLite and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts`; the store serves the same members. Every other
 reader and writer of the table (verify, list, revoke, rescope, rotate, the read-side grant reads) is still raw SQL and stops on a Rust
 brain.
@@ -14,6 +14,7 @@ brain.
 | `brain.findActiveAccessTokens(target)` | `[{ id, name, min_trust }]`: the tokens with no `revoked_at` whose id (as text) or name is `target`, by id. Names are not unique, so there may be several |
 | `brain.readAccessTokenNames(ids)` | `[{ id, name }]` of the tokens with those ids, revoked ones included, by id; an unknown id is left out. The names `readWriteAttributionNames` shows ([write_attribution.md](write_attribution.md)) |
 | `brain.readAccessTokenWriteGrant(id)` | `{ id, scopes, permissions, source_grant, source_id, federated_read, allowed_operations, takes_holders, grant_revision, read_shared_revision, revoked_at }` of the token, revoked ones included (`revoked_at` as ISO text, or null), or null for an id no token has. The grant `authorizeWrite` re-checks for a write a legacy token owns ([journal.md](journal.md)) |
+| `brain.readLiveAccessTokenScope(id)` | `{ reads_unscoped, created_at }` of the token when it is not revoked (`created_at` as ISO text; `reads_unscoped` always null, as the column is not kept and no token the store mints opts out), or null for a revoked token or an id no token has |
 | `brain.setAccessTokenMinTrust(id, tier)` | null. Sets the token's read floor, or clears it with null. An id no token has changes nothing |
 
 ## Callers
@@ -26,7 +27,9 @@ brain.
 `findActiveAccessTokens` and `setAccessTokenMinTrust`; their `migrations_pending` answer for a brain without the
 `min_trust` column still comes from the undefined-column error the SQL engines raise.
 `authorizeWrite` (`src/core/persistence/authority.ts`) calls `readAccessTokenWriteGrant` through the journal member of
-the same name when it re-checks a write a legacy token owns.
+the same name when it re-checks a write a legacy token owns. `credentialScopeFor` (`src/core/access/requester-scope.ts`)
+calls `readLiveAccessTokenScope` for an agent job's legacy token, so the requester-scope gate compares its real creation
+time with the time the brain began to serve several people.
 
 ## Constraints
 

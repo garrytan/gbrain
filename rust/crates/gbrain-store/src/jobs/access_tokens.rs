@@ -1,13 +1,13 @@
 //! Jobs: the `access_tokens` table, the columns the legacy-token mint and the read-floor command touch, as the members
 //! of `src/core/engine-sql/access-tokens.ts` run them (rust/docs/store/access-tokens.md).
 //!
-//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust, and the name read of
-//! readWriteAttributionNames (`read_access_token_names`).
+//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust, readAccessTokenWriteGrant,
+//! readLiveAccessTokenScope, and the name read of readWriteAttributionNames (`read_access_token_names`).
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2B (this file only):
 //! - `m 0x2B id -> TokenRecord`: one token row, keyed by its generated UUID.
 //!
-//! Kept: the columns those three members read or write (id, name, token_hash, scopes, permissions, the five grant
+//! Kept: the columns those members read or write (id, name, token_hash, scopes, permissions, the five grant
 //! columns, grant_revision, min_trust, revoked_at, created_at) and the table's constraints on them: the unique
 //! `token_hash` (`access_tokens_token_hash_key`, found by scanning the table, as the secondary indexes are not kept), the
 //! `source_grant` list and the `min_trust` list. A refusal is `constraint_violation` with the Postgres message.
@@ -234,6 +234,19 @@ impl Store {
             "read_shared_revision": t.read_shared_revision,
             "revoked_at": t.revoked_at.map(iso),
         }))
+    }
+
+    /// `readLiveAccessTokenScope(id)`: `{ reads_unscoped, created_at }` of the token `id` names when it is not revoked,
+    /// or null. `reads_unscoped` is always null: the column is not kept, and no token this store mints opts out.
+    pub fn read_live_access_token_scope(&self, id: &str) -> Result<Value> {
+        let read = self.read()?;
+        match get_json::<TokenRecord>(&*read, &token_key(id))? {
+            Some(t) if t.revoked_at.is_none() => Ok(json!({
+                "reads_unscoped": Value::Null,
+                "created_at": iso(t.created_at),
+            })),
+            _ => Ok(Value::Null),
+        }
     }
 
     /// `setAccessTokenMinTrust(id, tier)`: sets (or clears, with None) one token's floor; whether a token had the id.

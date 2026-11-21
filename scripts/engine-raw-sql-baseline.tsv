@@ -229,7 +229,7 @@ src/core/access/members.ts	sql_template	1
 src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/open-twins.ts	execute_raw	1
 src/core/access/owner.ts	execute_raw	1
-src/core/access/requester-scope.ts	execute_raw	3
+src/core/access/requester-scope.ts	execute_raw	2
 src/core/access/room.ts	execute_raw	2
 src/core/access/token-member-status.ts	sql_template	1
 src/core/advisor/collect-chronicle.ts	execute_raw	1

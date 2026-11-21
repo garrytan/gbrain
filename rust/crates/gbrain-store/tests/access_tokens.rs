@@ -1,4 +1,5 @@
-//! The `access_tokens` members (`insertAccessToken`, `findActiveAccessTokens`, `readAccessTokenWriteGrant`, `setAccessTokenMinTrust`). What the parity
+//! The `access_tokens` members (`insertAccessToken`, `findActiveAccessTokens`, `readAccessTokenWriteGrant`, `readLiveAccessTokenScope`,
+//! `setAccessTokenMinTrust`). What the parity
 //! file cannot see lives here: the stored message of each refusal (the TypeScript member turns it into SQLSTATE 23514 /
 //! 23505 and the constraint name), that a refused write leaves the table as it was, and the generated ids.
 
@@ -181,6 +182,31 @@ fn the_write_grant_read_answers_the_grant_columns_a_revoked_token_included_and_n
     );
     assert_eq!(
         b.read_access_token_write_grant("00000000-0000-4000-8000-000000000000")
+            .unwrap(),
+        Value::Null
+    );
+}
+
+#[test]
+fn the_scope_read_answers_a_live_tokens_creation_time_and_null_for_a_revoked_or_missing_token() {
+    let b = brain("tokens-scope");
+    let live = insert(&b, token("live", "h1", json!({}))).unwrap();
+    let gone = insert(
+        &b,
+        token(
+            "gone",
+            "h2",
+            json!({ "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    let scope = b.read_live_access_token_scope(&live).unwrap();
+    assert_eq!(scope["reads_unscoped"], Value::Null);
+    let created = scope["created_at"].as_str().unwrap();
+    assert!(created.ends_with('Z') && created.len() == 27, "{created}");
+    assert_eq!(b.read_live_access_token_scope(&gone).unwrap(), Value::Null);
+    assert_eq!(
+        b.read_live_access_token_scope("00000000-0000-4000-8000-000000000000")
             .unwrap(),
         Value::Null
     );
