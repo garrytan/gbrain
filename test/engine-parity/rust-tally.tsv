@@ -89,7 +89,7 @@ test/engine-parity/memory-proposal-reads.test.ts	3	0
 test/engine-parity/oauth-clients.test.ts	6	0
 test/engine-parity/open-loops.test.ts	6	0
 test/engine-parity/owner-only-marks.test.ts	0	2
-test/engine-parity/owner-only-reads.test.ts	3	0
+test/engine-parity/owner-only-reads.test.ts	4	0
 test/engine-parity/owner-recovery-scans.test.ts	5	0
 test/engine-parity/page-embedding-budget.test.ts	4	0
 test/engine-parity/page-read-options.test.ts	3	0
@@ -151,7 +151,7 @@ test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/withdrawal-discovery-reads.test.ts	5	0
 test/engine-parity/withdrawal-fence.test.ts	2	0
 test/engine-parity/withdrawal-forget.test.ts	2	0
-test/engine-parity/write-attribution.test.ts	5	2
+test/engine-parity/write-attribution.test.ts	6	2
 test/engine-parity/write-guards.test.ts	10	0
 test/engine-parity/write-misc.test.ts	33	16
 test/engine-parity/write-outcome-order.test.ts	1	0
