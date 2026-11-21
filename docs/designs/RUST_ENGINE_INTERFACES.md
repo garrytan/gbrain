@@ -174,6 +174,7 @@ Reserved tags:
 | access_rules (folder rules, pending prefixes, policy state and revisions; the module owns the sub-tags) | `z` | `ACCESS_RULES` | no |
 | reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
 | embedding_holds, a page's `page_embedding_budget` state and reason | `2` | `EMBEDDING_HOLD` | yes (a hard page delete removes it) |
+| access_members | `x` | `ACCESS_MEMBERS` | no |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -196,6 +197,9 @@ in its module header:
 
 `eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
 change to this table and to `keys.rs`.
+
+`rust/crates/gbrain-store/tests/keys_registry.rs` fails when two constants of `keys.rs` take one tag byte (or one
+sub-tag of a family), and when these tag tables and `keys.rs` disagree.
 
 The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
 `0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), `R` for a
