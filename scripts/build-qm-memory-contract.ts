@@ -47,12 +47,13 @@ const V1_DEFERRED_OPS: readonly string[] = ['capture', 'extract_facts', 'list_wr
  * v5 leave them out and every later version lists them; an attested call is refused them either way.
  */
 const DEFERRED_AFTER_V5: ReadonlySet<string> = new Set(['promote_guest_note']);
-/** Tool text v3 to v5 published before it changed, frozen: GST-3256 added phone numbers to whois. */
-export const V5_TOOL_TEXT: Record<string, { description: string; params: Record<string, string> }> = {
+/** Tool text v3 to v5 published before it changed, frozen: GST-3256 added phone numbers to whois; GST-3338 said query's autocut is off by default. */
+export const V5_TOOL_TEXT: Record<string, { description?: string; params: Record<string, string> }> = {
   whois: {
     description: 'Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. Never fuzzy: empty matches means no exact match; ambiguous means several.',
     params: { query: "Email address or name, e.g. 'alice@acme-example.com'." },
   },
+  query: { params: { autocut: 'Default on (never empty); false: full top-K for breadth.' } },
 };
 /** Catalogue summaries v1 published before they changed, frozen. */
 const V1_SUMMARIES: Record<string, string> = {
