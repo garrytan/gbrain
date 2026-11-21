@@ -1090,8 +1090,8 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         // preview-only recovery banner; applying stays the user's decision.
         try {
           const { postUpgradeRecoveryBanner } = await import('./doctor/upgrade-banner.ts');
-          const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-          for (const line of await postUpgradeRecoveryBanner(engine, `host (${engine.kind}${brain ? `, id ${brain.brain_id}` : ''})`)) console.log(line);
+          const brainId = await engine.readPersistenceBrainId().catch(() => null);
+          for (const line of await postUpgradeRecoveryBanner(engine, `host (${engine.kind}${brainId !== null ? `, id ${brainId}` : ''})`)) console.log(line);
         } catch (be) {
           console.warn(`\nRecovery checks skipped: ${be instanceof Error ? be.message : String(be)}. Run \`gbrain doctor --remediation-plan\` to preview.`);
         }

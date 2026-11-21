@@ -152,6 +152,7 @@ test/engine-parity/alias-trust.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
 test/engine-parity/bench-save-repro.test.ts
 test/engine-parity/bound-write.test.ts
+test/engine-parity/brain-id-callers.test.ts
 test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/chronicle-decision.test.ts
 test/engine-parity/chunk-page-segmented.test.ts

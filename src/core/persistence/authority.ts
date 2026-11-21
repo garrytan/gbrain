@@ -306,7 +306,8 @@ function onceReads(engine: BrainEngine): BrainEngine {
       if (/\bFOR (?:SHARE|UPDATE)\b/i.test(sql)) return target.executeRaw(sql, params, opts);
       return memo(JSON.stringify([sql, params ?? null]), () => target.executeRaw(sql, params, opts));
     };
-    if (key === 'readPersistenceBrainId') return () => memo('typed:brain', () => target.readPersistenceBrainId());
+    if (key === 'readPersistenceBrainId') return (opts?: { lock?: boolean }) =>
+      opts?.lock ? target.readPersistenceBrainId(opts) : memo('typed:brain', () => target.readPersistenceBrainId());
     if (key === 'readLocalWriterRow') return (id: string, opts?: { lock?: boolean }) => opts?.lock ? target.readLocalWriterRow(id, opts)
       : memo(JSON.stringify(['typed:writer', id]), () => target.readLocalWriterRow(id));
     const value = Reflect.get(target, key, target);

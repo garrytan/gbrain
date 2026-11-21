@@ -17,7 +17,7 @@ import { wholeBodySnapshot } from './segmented-apply.ts';
 import { sharedOriginExit } from './sync-origin.ts';
 import { originTwinsPreviewArgv } from './origin-twins.ts';
 export { fileClaimCandidatesQuery } from './file-claims.ts';
-import { hostIdFor } from './identity.ts';
+import { hostIdFor, readBrainIdentity } from './identity.ts';
 import { isDatabaseOnlyPage, recordsNoFileOrigin, slugDerivedOrigin } from './unbound-pages.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -236,7 +236,7 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   if (!binding?.local_path || binding.owner_host_id !== hostIdFor(engine) || binding.state !== 'active') {
     throw new OperationError('owner_unavailable', 'Reconciliation requires the existing active owner on this host.', 'Run repair on the current owner; repair never claims or activates a source.');
   }
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  const brainId = await readBrainIdentity(engine);
   // Wave B: a page stored in segments is compared and merged as strings up to 24 MiB; a larger one refuses.
   const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true }), 'sources reconcile');
   if (!snapshot || snapshot.page.deleted_at) throw opError('page_not_found', 'Reconciliation requires an existing live page; use the separate restore workflow for deleted pages.',
@@ -274,7 +274,7 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
       recordedUri: recorded ? snapshot.page.source_uri ?? null : null, absent: true });
     return { binding, root, path, importPath: scannerSourcePath(root, path, mode), raw: Buffer.alloc(0), snapshot, storedPage,
       file: reconcileCanonical(snapshot.page, snapshot.tags), origin, originSourcePath: null,
-      pins: await reconcilePins(engine, { brain_id: brain.brain_id, sourceId, binding, snapshot, slug, assessmentAt, root, path, canonicalPath, rawFileHash: ABSENT_FILE_HASH }) };
+      pins: await reconcilePins(engine, { brain_id: brainId, sourceId, binding, snapshot, slug, assessmentAt, root, path, canonicalPath, rawFileHash: ABSENT_FILE_HASH }) };
   }
   const { readJournalLimits } = await import('./limits.ts');
   const limits = await readJournalLimits(engine);
@@ -310,7 +310,7 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
     throw opError('invalid_params', 'Canonical file metadata cannot be parsed losslessly; repair its syntax before previewing.',
       `Nothing changed. Fix the frontmatter of the canonical file of ${slug} in '${sourceId}' (close the --- block, keep its slug), then preview the page again.`);
   }
-  const pins = await reconcilePins(engine, { brain_id: brain.brain_id, sourceId, binding, snapshot, slug, assessmentAt, root, path, canonicalPath, rawFileHash: sha256(raw) });
+  const pins = await reconcilePins(engine, { brain_id: brainId, sourceId, binding, snapshot, slug, assessmentAt, root, path, canonicalPath, rawFileHash: sha256(raw) });
   return { binding, root, path, importPath, raw, snapshot, storedPage, file: reconcileCanonical(parsed, parsed.tags), pins, origin, originSourcePath: derived?.sourcePath ?? null };
 }
 async function reconcilePins(engine: BrainEngine, input: { brain_id: string; sourceId: string; binding: WorktreeBinding; snapshot: PageSnapshot; slug: string; assessmentAt: string;

@@ -12,7 +12,7 @@ import { parseSourceConfig } from '../sources-load.ts';
 import type { SourceLifecycleInput } from './source-lifecycle.ts';
 import type { TopologyCloneRecovery } from './topology-clone-model.ts';
 import { compactStoredManifest, getWorktreeBinding, humanManifestProgress, storedManifestScope, worktreeManifest } from './ownership.ts';
-import { hostIdFor } from './identity.ts';
+import { hostIdFor, readBrainIdentity } from './identity.ts';
 import { resolveCoordinationLock } from './coordination-lock.ts';
 import { acquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { canonicalFilesystemPath, recordManagedRoots } from './root-registry.ts';
@@ -144,8 +144,7 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
           await tx.executeRaw('INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO NOTHING',[worktreeId,hostIdFor(engine),target,coordination]);
           await tx.executeRaw('INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id) VALUES($1,$2::uuid,$3::uuid)',[input.sourceId,incarnation,worktreeId]);
         }else await tx.executeRaw("UPDATE persistence_worktrees SET state='recovering',manifest=$2::text::jsonb WHERE id=$1::uuid",[worktreeId,JSON.stringify(manifest)]);
-        const [brain]=await tx.executeRaw<{brain_id:string}>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-        recordManagedRoots(brain.brain_id,[{local_path:target,source_id:input.sourceId,source_incarnation:incarnation,worktree_id:worktreeId}]);
+        recordManagedRoots(await readBrainIdentity(tx),[{local_path:target,source_id:input.sourceId,source_incarnation:incarnation,worktree_id:worktreeId}]);
         return recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation,worktrees:[worktreeId]},
           {operation:input.operation,source_id:input.sourceId,source_incarnation:incarnation,invalidated_requests:invalidated},recovery as unknown as Record<string,unknown>,reserved);
       });

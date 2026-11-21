@@ -94,8 +94,8 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
     else held.reads.delete(key);
     return rows;
   };
-  const brainRead = async (): Promise<string | null> => {
-    if (caches.get(engine) !== held) return engine.readPersistenceBrainId();
+  const brainRead = async (opts?: { lock?: boolean }): Promise<string | null> => {
+    if (opts?.lock || caches.get(engine) !== held) return engine.readPersistenceBrainId(opts);
     if (held.brainId && now() - held.brainId.at < PREADMIT_TTL_MS) return held.brainId.id;
     const id = await engine.readPersistenceBrainId();
     if (typeof id === 'string' && caches.get(engine) === held) noteBrain(id);

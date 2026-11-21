@@ -40,9 +40,13 @@ export async function getSourceStrictness(exec: LegacyUnscopedRead, sourceId: st
   return row?.strict === true;
 }
 
-/** The persistence identity (`brain_id`), or null when the schema has no `persistence_brain` row. */
-export async function readPersistenceBrainId(exec: LegacyUnscopedRead): Promise<string | null> {
-  const [brain] = await exec.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+/**
+ * The persistence identity (`brain_id`), or null when the schema has no `persistence_brain` row; `lock` appends
+ * `FOR UPDATE`, so a caller in a transaction holds the singleton until it ends.
+ */
+export async function readPersistenceBrainId(exec: LegacyUnscopedRead, opts: { lock?: boolean } = {}): Promise<string | null> {
+  const { rows: [brain] } = await exec.run<{ brain_id: string }>(
+    sqlFragment`SELECT brain_id FROM persistence_brain WHERE singleton=1${opts.lock ? trustedSql(' FOR UPDATE') : sqlFragment``}`);
   return brain ? brain.brain_id : null;
 }
 

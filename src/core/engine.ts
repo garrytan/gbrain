@@ -3790,8 +3790,8 @@ export interface BrainEngine {
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
   getSourceStrictness(sourceId: string): Promise<boolean>;
 
-  /** The brain's persistence identity (`persistence_brain.brain_id`), or null when the schema holds no such row. */
-  readPersistenceBrainId(): Promise<string | null>;
+  /** The brain's `persistence_brain.brain_id`, or null with no row; `lock` reads it `FOR UPDATE` until the transaction ends. */
+  readPersistenceBrainId(opts?: { lock?: boolean }): Promise<string | null>;
 
   /**
    * Declares persistence protocol 2 for the current transaction (`gbrain.persistence_protocol`), with the durable-write

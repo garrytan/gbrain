@@ -23,11 +23,12 @@ export interface PhysicalRootFacts {
   worktree(id: string): Promise<{ owner_host_id: string | null; state: string } | null>;
   hostBinding(worktreeId: string, hostId: string): Promise<{ local_path: string; coordination_path: string } | null>;
 }
-function sqlPhysicalRootFacts(tx: SqlEngine): PhysicalRootFacts {
+/** The transaction engine a root claim reads through: its SQL reads and the brain identity member. */
+export type PhysicalRootEngine = SqlEngine & Pick<BrainEngine, 'readPersistenceBrainId'>;
+function sqlPhysicalRootFacts(tx: PhysicalRootEngine): PhysicalRootFacts {
   return {
     async brainId() {
-      const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-      return brain?.brain_id ?? null;
+      return tx.readPersistenceBrainId();
     },
     async worktree(id) {
       const [row] = await tx.executeRaw<{ owner_host_id: string | null; state: string }>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid', [id]);
@@ -50,7 +51,7 @@ async function brainIdentity(facts: Pick<PhysicalRootFacts, 'brainId'>): Promise
  * reservation is a veto, never database ownership authority. It is deliberately
  * retained after a transaction rollback or process death.
  */
-export async function reservePhysicalRoot(tx: SqlEngine, path: string, opts: PhysicalRootClaim,
+export async function reservePhysicalRoot(tx: PhysicalRootEngine, path: string, opts: PhysicalRootClaim,
   facts: PhysicalRootFacts = sqlPhysicalRootFacts(tx)): Promise<PhysicalRootReservation> {
   const root = canonicalFilesystemPath(path), brainId = await brainIdentity(facts);
   await repairWedgedReservation(facts, root, opts.hostId);
@@ -91,7 +92,7 @@ export async function movedPhysicalRootRefusal(tx: SqlEngine, root: string, exit
   return physicalRootMovedRefusal(moved, { ...exit, members: moved.members });
 }
 /** Existing bindings require their stamp; only a never-committed original claim may finish creating it. */
-export async function claimPhysicalRoot(tx: SqlEngine, path: string, opts: PhysicalRootClaim,
+export async function claimPhysicalRoot(tx: PhysicalRootEngine, path: string, opts: PhysicalRootClaim,
   facts: PhysicalRootFacts = sqlPhysicalRootFacts(tx)): Promise<PhysicalRootReservation> {
   const reservation = await reservePhysicalRoot(tx, path, opts, facts);
   const owner = await facts.worktree(reservation.worktreeId);
@@ -113,7 +114,7 @@ export async function claimPhysicalRoot(tx: SqlEngine, path: string, opts: Physi
  * has verified the canonical manifest and holds the stable outside-root lock.
  * Moving this stage to target preserves the stamp and immutable reservation.
  */
-export async function preparePhysicalRootReplacement(tx: SqlEngine, stage: string, target: string,
+export async function preparePhysicalRootReplacement(tx: PhysicalRootEngine, stage: string, target: string,
   opts: Required<PhysicalRootClaim>): Promise<void> {
   const reservation = await reservePhysicalRoot(tx, target, opts);
   const [owner] = await tx.executeRaw<{ owner_host_id: string; state: string }>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid', [opts.worktreeId]);
@@ -164,10 +165,10 @@ export async function restampPhysicalRoot(engine: BrainEngine, binding: { worktr
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
     const [owner] = await tx.executeRaw<{ owner_host_id: string | null; manifest: Record<string, any> | null }>(
       'SELECT owner_host_id,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
-    const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+    const brainId = await tx.readPersistenceBrainId();
     const [bound] = await tx.executeRaw<{ local_path: string; coordination_path: string }>(
       'SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid', [binding.worktree_id, hostId]);
-    if (!owner || owner.owner_host_id !== hostId || brain?.brain_id !== stamp.brainId
+    if (!owner || owner.owner_host_id !== hostId || brainId !== stamp.brainId
       || bound?.local_path !== root || bound.coordination_path !== binding.coordination_path) return false;
     const manifest = owner.manifest;
     if (manifest && restampRecovery(manifest.self_transfer, change)) {

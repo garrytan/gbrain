@@ -215,7 +215,6 @@ src/commands/sync/renames.ts	execute_raw	1
 src/commands/sync/run.ts	execute_raw	3
 src/commands/takes.ts	execute_raw	2
 src/commands/trust.ts	execute_raw	1
-src/commands/upgrade.ts	execute_raw	1
 src/core/access/actor.ts	execute_raw	7
 src/core/access/attest-sources.ts	sql_template	8
 src/core/access/federation-exposure.ts	execute_raw	1
@@ -694,7 +693,7 @@ src/core/persistence/page-upload.ts	execute_raw	16
 src/core/persistence/page-visibility.ts	execute_raw	10
 src/core/persistence/parked-groups.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
-src/core/persistence/physical-root.ts	execute_raw	13
+src/core/persistence/physical-root.ts	execute_raw	11
 src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
 src/core/persistence/prepared-maintenance.ts	execute_raw	13
@@ -709,9 +708,9 @@ src/core/persistence/purged-intent.ts	execute_raw	2
 src/core/persistence/put-page-screen.ts	execute_raw	1
 src/core/persistence/rebuildable-cache.ts	execute_raw	2
 src/core/persistence/reconcile-audit.ts	execute_raw	1
-src/core/persistence/reconcile-backup.ts	execute_raw	4
+src/core/persistence/reconcile-backup.ts	execute_raw	3
 src/core/persistence/reconcile-prepare.ts	execute_raw	1
-src/core/persistence/reconcile-state.ts	execute_raw	5
+src/core/persistence/reconcile-state.ts	execute_raw	4
 src/core/persistence/reconcile.ts	execute_raw	3
 src/core/persistence/recovery-resolve.ts	execute_raw	10
 src/core/persistence/refresh-barrier.ts	execute_raw	4
@@ -775,8 +774,8 @@ src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
 src/core/persistence/takes-prepare.ts	execute_raw	7
 src/core/persistence/terminal-failures.ts	execute_raw	4
-src/core/persistence/topology-clone.ts	execute_raw	19
-src/core/persistence/topology-locks.ts	execute_raw	19
+src/core/persistence/topology-clone.ts	execute_raw	18
+src/core/persistence/topology-locks.ts	execute_raw	18
 src/core/persistence/topology-receipts.ts	execute_raw	9
 src/core/persistence/topology-recovery.ts	execute_raw	17
 src/core/persistence/topology-transaction.ts	execute_raw	1
@@ -931,15 +930,15 @@ src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/content-freshness.ts	execute_raw	1
 src/core/shared-skills/knowledge-guard.ts	execute_raw	3
 src/core/shared-skills/membership-authority.ts	execute_raw	4
-src/core/shared-skills/membership.ts	execute_raw	17
-src/core/shared-skills/migration-export.ts	execute_raw	7
+src/core/shared-skills/membership.ts	execute_raw	16
+src/core/shared-skills/migration-export.ts	execute_raw	6
 src/core/shared-skills/migration-members.ts	execute_raw	1
 src/core/shared-skills/migration-projection.ts	execute_raw	2
 src/core/shared-skills/migration.ts	execute_raw	4
 src/core/shared-skills/optimizer.ts	execute_raw	1
 src/core/shared-skills/policy.ts	execute_raw	10
 src/core/shared-skills/publication.ts	execute_raw	14
-src/core/shared-skills/restore.ts	execute_raw	27
+src/core/shared-skills/restore.ts	execute_raw	26
 src/core/shared-skills/retention.ts	execute_raw	12
 src/core/shared-skills/setup.ts	execute_raw	6
 src/core/shared-skills/source-opt-out.ts	execute_raw	2
@@ -960,7 +959,7 @@ src/core/sync-anchor.ts	execute_raw	2
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-cost-gate.ts	execute_raw	1
 src/core/sync-git.ts	execute_raw	3
-src/core/sync-identity-downgrades.ts	execute_raw	7
+src/core/sync-identity-downgrades.ts	execute_raw	6
 src/core/sync-pending.ts	execute_raw	2
 src/core/sync-policy.ts	execute_raw	1
 src/core/sync-rename-identity.ts	execute_raw	1

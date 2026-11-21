@@ -18,7 +18,7 @@ import type { WorktreeOwnerRow } from '../engine-sql/publication-journal.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { acquireShared, deferToLease, exclusiveAcquired, foreignWaiterAhead, joinLease, noteWaiting, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
-import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
+import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot, type PhysicalRootEngine } from './physical-root.ts';
 import { assertPhysicalRootReservation, readPhysicalRootStamp, readWedgedPhysicalRootReservation, relocatedRootTransferFix } from './physical-root-record.ts';
 import { nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
@@ -137,7 +137,7 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
       id = overlap.worktree_id; root = overlap.local_path;
       assertPhysicalRoot(root, { worktreeId: id, coordinationPath: overlap.coordination_path });
     } else {
-      const physical = await claimPhysicalRoot(tx as unknown as SqlEngine, root, { hostId, worktreeId: candidateId, coordinationPath: lockPath }, store);
+      const physical = await claimPhysicalRoot(tx as unknown as PhysicalRootEngine, root, { hostId, worktreeId: candidateId, coordinationPath: lockPath }, store);
       id = physical.worktreeId;
       await store.insertWorktree({ id, ownerHostId: hostId, ownerEpoch: 1 });
       await store.insertHostBinding({ worktreeId: id, hostId, localPath: root, coordinationPath: physical.coordinationPath });

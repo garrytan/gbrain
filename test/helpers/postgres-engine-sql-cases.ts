@@ -1633,7 +1633,10 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readConfigTable', [['default', (e) => e.readConfigTable()]]),
   ...variants('readManagedModeRows', [['default', (e) => e.readManagedModeRows()]]),
   ...variants('getSourceStrictness', [['default', (e) => e.getSourceStrictness(SRC)]]),
-  ...variants('readPersistenceBrainId', [['default', (e) => e.readPersistenceBrainId()]]),
+  ...variants('readPersistenceBrainId', [
+    ['default', (e) => e.readPersistenceBrainId()],
+    ['lock', (e) => e.transaction((tx: any) => tx.readPersistenceBrainId({ lock: true }))],
+  ]),
   ...variants('readLocalWriterRow', [
     ['default', (e) => e.readLocalWriterRow('writer-1')],
     ['lock', (e) => e.transaction((tx: any) => tx.readLocalWriterRow('writer-1', { lock: true }))],

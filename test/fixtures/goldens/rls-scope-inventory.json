@@ -4932,6 +4932,17 @@
         ],
         "flagOnScopes": []
       },
+      "readPersistenceBrainId#lock": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "readPlainSyncSource#default": {
         "flagOffLanes": [
           "pool"

@@ -6,7 +6,7 @@ import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
-import { persistenceHome, currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, hostIdFor } from './identity.ts';
+import { persistenceHome, currentVerifiedLocalWriter, readBrainIdentity, readLocalWriter, verifyLocalWriter, hostIdFor } from './identity.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { containsPath, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { completeWrite, lockCounters } from './journal.ts';
@@ -42,7 +42,7 @@ export async function lockTopologyPrincipal(engine: BrainEngine, id: string): Pr
  */
 export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string,
   run: (bindings: TopologyBinding[]) => Promise<T>, additionalRoot?: string, waitMs=5000, opts: { relocation?: boolean } = {}): Promise<T> {
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  const brainId = await readBrainIdentity(engine);
   const handles: NativeLockHandle[] = [];
   const take = async (path: string) => {
     const handle = waitMs===0?await tryAcquireNativeLock(path):await acquireNativeLock(path, { timeoutMs: waitMs });
@@ -54,7 +54,7 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
   try {
     // Serializes discovery of new/unbound paths on this host. Worktree locks
     // remain the actual publication authority and never live in the checkout.
-    await take(join(persistenceHome(), 'locks', `topology-${brain.brain_id}.lock`));
+    await take(join(persistenceHome(), 'locks', `topology-${brainId}.lock`));
     const binding = await getWorktreeBinding(engine, sourceId);
     const bindings:TopologyBinding[] = binding ? [binding] : [];
     if (additionalRoot) {

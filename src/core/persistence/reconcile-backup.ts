@@ -17,6 +17,7 @@ import type { ReconcileArtifact } from './reconcile-state.ts';
 import { isTerminal, type Principal, type WriteAuthority, type WriteRequest } from './model.ts';
 import { PERSISTENCE_IPC_MAX_BYTES } from './ipc.ts';
 import { authorizeStoredRequest } from './authority.ts';
+import { readBrainIdentity } from './identity.ts';
 
 const backupPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.[a-f0-9]{64}\.json$/;
 const backupReference = (brain: string, principal: Principal, requestId: string) => `${requestId}.${digest({ brain, principal, requestId })}.json`;
@@ -115,7 +116,7 @@ export async function manageReconcileBackups(engine: BrainEngine, authority: Wri
   params: { action: 'list' | 'remove'; backup_reference?: string; after?: string; limit?: number }): Promise<Record<string, unknown>> {
   const directory = backupDirectory();
   const principal = authority.principal;
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  const brainId = await readBrainIdentity(engine);
   const limit = params.limit ?? 100;
   if (params.action === 'list') {
     const rows = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2
@@ -125,7 +126,7 @@ export async function manageReconcileBackups(engine: BrainEngine, authority: Wri
     const backups: Record<string, unknown>[] = [];
     for (const row of rows.slice(0, limit)) {
       await authorizeStoredRequest(engine, row);
-      const reference = backupReference(brain.brain_id, principal, row.request_id);
+      const reference = backupReference(brainId, principal, row.request_id);
       const path = join(directory, reference);
       if (!existsSync(path) && row.outcome?.backup_reference !== reference && row.intent?.backup_reference !== reference) continue;
       let bytes: number | null = null;
@@ -149,7 +150,7 @@ export async function manageReconcileBackups(engine: BrainEngine, authority: Wri
   if (!backupPattern.test(reference)) throw opError('invalid_params', 'An exact private backup reference is required.',
     `Pass the exact backup_reference that a --backups listing of ${slug} in ${authority.sourceId} returned.`);
   const requestId = reference.slice(0, 36);
-  if (reference !== backupReference(brain.brain_id, principal, requestId)) throw opError('permission_denied', 'The backup reference belongs to another caller or brain.',
+  if (reference !== backupReference(brainId, principal, requestId)) throw opError('permission_denied', 'The backup reference belongs to another caller or brain.',
     `Use a backup_reference from a --backups listing of ${slug} in ${authority.sourceId} made by this CLI registration on this brain; nothing was removed.`);
   await assertReconcileOutputPath(engine, authority.sourceId, directory);
   privateDirectory(directory);

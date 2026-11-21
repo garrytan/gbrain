@@ -43,8 +43,8 @@ export async function quarantineSharedSkillRestore(tx: BrainEngine, restoreId: s
     if (mode === 'recovery') throw new AgentInstallError('restore_recovery_unsupported', 'Identity recovery requires a compatible operational backup with shared-skill authority metadata. Validate and migrate older backups offline before creating a current operational backup.');
     return null;
   }
-  const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1 FOR UPDATE');
-  if (!brain) throw new AgentInstallError('invalid_backup', 'The archived shared brain has no persistence identity.');
+  const previousBrainId = await tx.readPersistenceBrainId({ lock: true });
+  if (previousBrainId === null) throw new AgentInstallError('invalid_backup', 'The archived shared brain has no persistence identity.');
   const [recovery] = await tx.executeRaw<{ pending: boolean }>(`SELECT
     EXISTS(SELECT 1 FROM persistence_requests WHERE recovery IS NOT NULL OR recovery_bytes<>0 OR state='recovering' OR publication_started AND state IN ('queued','running'))
     OR EXISTS(SELECT 1 FROM persistence_effects WHERE recovery IS NOT NULL OR recovery_bytes<>0)
@@ -52,7 +52,7 @@ export async function quarantineSharedSkillRestore(tx: BrainEngine, restoreId: s
     OR EXISTS(SELECT 1 FROM persistence_worktrees WHERE state='recovering') AS pending`);
   if (recovery.pending) throw new AgentInstallError('restore_recovery_required', 'This shared brain backup contains unresolved file recovery. Preserve the archive and source installation; reconcile recovery with the current canonical owner and create a new backup before restoring.');
 
-  const restored: SharedSkillRestore = { mode, previous_brain_id: brain.brain_id, brain_id: mode === 'recovery' ? brain.brain_id : randomUUID(),
+  const restored: SharedSkillRestore = { mode, previous_brain_id: previousBrainId, brain_id: mode === 'recovery' ? previousBrainId : randomUUID(),
     ...(mode === 'recovery' ? { recovery_attestation: { old_service_quiesced: true as const, compatible_backup_reviewed: true as const,
       authority_reviewed: true as const, external_enforcement: 'operator_required_unverified' as const } } : {}) };
   const policies = await tx.executeRaw('SELECT * FROM shared_skill_policies');
