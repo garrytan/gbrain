@@ -10,7 +10,7 @@
  *    and no active refresh. Unknown sources and worktrees read as null or empty.
  *  - Regression: the Rust engine had no topologyStore member, so every source lifecycle change refused at its first
  *    read as `member=executeRaw`.
- *  - Why existing coverage misses it: topology-named-stop.test.ts runs the clone to its first write and never reaches
+ *  - Why existing coverage misses it: topology-recovery.test.ts runs the clone to its first write and never reaches
  *    the reclone's canonical stamp or the additional-root reads.
  *    The lifecycle read (`lifecycleSource`, source-lifecycle.ts's first read of every lifecycle change) answers a
  *    registered source's id, incarnation, archived flag, local path, config, name and last commit, an archived source

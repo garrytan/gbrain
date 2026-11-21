@@ -1,7 +1,6 @@
 /** Trusted local administration, shared by direct CLI and its authenticated resident proxy. */
 import { isAbsolute, join } from 'node:path';
 import { claimedWorktreeRoot, inspectClaimedPhysicalRoot } from './topology-locks.ts';
-import { readTopologyRecoveryStops } from './topology-stop.ts';
 import { movedPhysicalRootRefusal } from './physical-root.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -343,8 +342,6 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       worktree_refreshes: await (await import('./worktree-refresh.ts')).activeWorktreeRefreshes(engine, params.source_id as string | undefined),
       // #8984: stopped remove/purge requests (retire admissions) and the ones a later lifecycle change superseded.
       topology_requests: topologyRequests,
-      // This host's recovering topology changes (topology-stop.ts); the owner converges each one on every engine.
-      topology_recoveries: await readTopologyRecoveryStops(engine, existingHostIdFor(engine)),
       // Q1: each canonical checkout on this host against its last fetched upstream: commits it holds that the upstream lacks, and its porcelain.
       checkouts: await writerStatusCheckouts(bindings as Array<{ source_id: string; local_path: string | null }>),
       // #6317 (B4): per managed source, whether sync data moves (shares the reader of sources status, doctor and writer movement).

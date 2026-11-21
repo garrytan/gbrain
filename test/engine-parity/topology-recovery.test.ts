@@ -2,25 +2,28 @@
  * BrainEngine parity: source topology changes on every engine. The owner's topology recovery (topology-recovery.ts
  * `recoverSourceTopologies`) and the managed clone (topology-clone.ts `runManagedSourceClone`, reached by
  * `sources add --url` and `sources reclone`) read, lock and write through the typed `topologyStore` member, so both
- * converge on every engine. (The file keeps its name from the retired named Rust stop.)
+ * converge on every engine, and no engine reports a topology recovery stop.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: the recovery scan reaches a recovering change under its topology locks on every engine, leaves a record
- *    it does not recognize as recorded, and the typed status read (`readTopologyRecoveryStops`) lists it with no stop.
- *    A managed clone commits on every engine: the checkout is at its target with no staging directory left, the source
- *    is registered and bound to the clone's worktree, no change is recovering, and the receipt says `cloned`. Before
- *    its first write every engine runs the same checks: a loopback remote refuses `internal_target` and a reclone of a
- *    source this host does not own refuses `owner_unavailable`, with no lock or directory taken. An interrupted clone
- *    and an interrupted reclone stay recovering, and the owner's next recovery pass rolls each back the same way on
- *    every engine: the add leaves nothing registered and no staging, the reclone keeps the committed checkout bound.
+ *  - Contract: the recovery scan reaches a recovering change under its topology locks on every engine and leaves a
+ *    record it does not recognize as recorded. A managed clone commits on every engine: the checkout is at its target
+ *    with no staging directory left, the source is registered and bound to the clone's worktree, no change is
+ *    recovering, and the receipt says `cloned`. Before its first write every engine runs the same checks: a loopback
+ *    remote refuses `internal_target` and a reclone of a source this host does not own refuses `owner_unavailable`,
+ *    with no lock or directory taken. An interrupted clone and an interrupted reclone stay recovering, and the owner's
+ *    next recovery pass rolls each back the same way on every engine: the add leaves nothing registered and no
+ *    staging, the reclone keeps the committed checkout bound. `sources writer status --json` carries no
+ *    `topology_recoveries` key (the Rust engine stops before it prints, on the typed `readStalledCatchups` refusal).
  *  - Regression: on the Rust engine the recovery scan refused by name (`member=source_topology_recovery`, capability
  *    raw_sql) whenever a change was recovering, so an interrupted clone or reclone never converged there; case 4
- *    failed on the Rust arm with that refusal before the stop was retired. Earlier, the scan reached topology-locks.ts
- *    `withTopologyLocks` and the clone its first raw read, each refusing as the generic `member=executeRaw`.
+ *    failed on the Rust arm with that refusal before the stop was retired. That stop added a writer status key that
+ *    master never had; case 5 failed on PGLite and Postgres while it existed. The doctor side is in
+ *    test/doctor-topology-stop-retired.test.ts, since a Rust doctor run catches typed refusals the harness rejects.
  *  - Why existing coverage misses it: owner-recovery-scans.test.ts runs the scan with no recovering change, and
  *    journal-typed-sites.test.ts lists a recovering change without running the scan.
  *  - Seam: cases 3 and 4 pass the `hooks.clone` seam (a local bare repository) instead of a network clone; case 4 also
- *    passes `hooks.boundary` to stop the run once the clone is prepared. Cases 1 and 2 use the real scan and lifecycle.
+ *    passes `hooks.boundary` to stop the run once the clone is prepared. The other cases use the real scan, lifecycle
+ *    and writer status.
  */
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,7 +44,6 @@ import { topologyPrincipal } from '../../src/core/persistence/topology-locks.ts'
 import { largeBareRepository } from '../helpers/large-worktree.ts';
 import { execFileSync } from 'node:child_process';
 import { recoverSourceTopologies } from '../../src/core/persistence/topology-recovery.ts';
-import { readTopologyRecoveryStops } from '../../src/core/persistence/topology-stop.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -52,7 +54,7 @@ const CLOSED_REMOTE = 'https://127.0.0.1:9/none.git';
 
 /** Runs `run` under a scratch GBRAIN_HOME with a plain checkout registered as source `work`. */
 async function withCheckout<T>(engine: BrainEngine, backend: ParityBackend, run: (home: string, root: string) => Promise<T>): Promise<T> {
-  const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-topology-stop-parity-')));
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-topology-parity-')));
   try {
     return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
       const root = join(home, 'checkout');
@@ -86,11 +88,10 @@ describe('engine parity: source topology changes on every engine', () => {
     const before = text(await engine.listTopologyRecoveries(host, null, 16));
     const recovered = await recoverSourceTopologies(engine, { hostId: host });
     const after = await engine.listTopologyRecoveries(host, null, 16);
-    const stops = await readTopologyRecoveryStops(engine, host);
-    const listed = stops.recovering.map(row => ({ source: row.source_id, operation: row.operation, stop: row.stop }));
-    expect({ recovered, unchanged: text(after) === before, listed, stop: stops.stop }).toEqual({
-      recovered: 0, unchanged: true, listed: [{ source: 'work', operation: 'writer_claim', stop: null }], stop: null });
-    return { recovered, recovering: after.map(row => ({ source: row.source_id, state: row.state })), listed };
+    const listed = after.map(row => ({ source: row.source_id, operation: row.operation, state: row.state }));
+    expect({ recovered, unchanged: text(after) === before, listed }).toEqual({
+      recovered: 0, unchanged: true, listed: [{ source: 'work', operation: 'writer_claim', state: 'recovering' }] });
+    return { recovered, listed };
   }));
 
   parityTest('a clone from an internal remote and a reclone off the owner refuse before any lock or directory on every engine, and register nothing', {
@@ -176,5 +177,15 @@ describe('engine parity: source topology changes on every engine', () => {
     expect(reclone).toMatchObject({ refusal: 'recovery_required', recovering: [{ operation: 'reclone', state: 'recovering' }], recovered: 1,
       after: { checkout: true, staging: [], registered: true, recovering: 0, bound: { local_path: true, state: 'active' } } });
     return { add, reclone };
+  }));
+
+  parityTest('writer status JSON has no topology_recoveries key on every engine', {
+    methods: ['readWriterStatusRows'],
+    timeout: 60_000,
+  }, async (engine, backend) => withCheckout(engine, backend, async (_home, root) => {
+    await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) });
+    const status = await runPersistenceAdministration(engine, 'writer_status', {}) as Record<string, unknown>;
+    expect('topology_recoveries' in status).toBe(false);
+    return { topology_recoveries: 'topology_recoveries' in status, topology_requests: 'topology_requests' in status };
   }));
 });

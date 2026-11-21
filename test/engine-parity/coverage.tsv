@@ -444,7 +444,7 @@ settleFreshnessMarker	persistence_journal	yes	2	no	yes	yes	serves
 listSourceWantedMarkers	persistence_journal	yes	1	no	yes	yes	serves
 readFirstDue	persistence_journal	yes	1	no	yes	yes	serves
 readWriterDiagnosticRows	persistence_journal	yes	3	no	yes	yes	serves
-readWriterStatusRows	persistence_journal	yes	2	no	yes	yes	serves
+readWriterStatusRows	persistence_journal	yes	3	no	yes	yes	serves
 listOnboardingSources	persistence_journal	yes	2	no	yes	yes	serves
 listBlockingEffectRows	persistence_journal	yes	2	no	yes	yes	serves
 listActiveWorktreeRefreshRows	persistence_journal	yes	2	no	yes	yes	serves
@@ -512,7 +512,7 @@ insertWithdrawalEffects	persistence_journal	yes	3	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
 readSourceMembership	persistence_journal	yes	53	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
-listTopologyRecoveries	persistence_journal	yes	6	no	yes	yes	serves
+listTopologyRecoveries	persistence_journal	yes	5	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	6	no	yes	yes	serves
 renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves

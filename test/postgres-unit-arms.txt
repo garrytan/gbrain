@@ -132,6 +132,7 @@ test/doctor-routing-skill-pack-source.test.ts
 test/doctor-session-lane-gbra133.test.ts
 test/doctor-strict-facts-outside-git.test.ts
 test/doctor-sync-freshness-skill-pack-6076.test.ts
+test/doctor-topology-stop-retired.test.ts
 test/edge-whitespace-twins.test.ts
 test/effect-commit-moved-head.test.ts
 test/embed-once-per-content-version.serial.test.ts
@@ -276,7 +277,7 @@ test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
-test/engine-parity/topology-named-stop.test.ts
+test/engine-parity/topology-recovery.test.ts
 test/engine-parity/topology-store.test.ts
 test/engine-parity/transaction-settings.test.ts
 test/engine-parity/traversal-cache.test.ts

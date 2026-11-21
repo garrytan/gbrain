@@ -645,20 +645,6 @@
         {
           "category": "ops",
           "details": {
-            "count": 0,
-            "docs": "docs/ENGINES.md#topology-recovery-on-the-rust-engine",
-            "more": false,
-            "recovering": [],
-            "stop": null
-          },
-          "elapsed_ms": "<volatile>",
-          "message": "No topology change is recovering on this host.",
-          "name": "topology_recovery_stopped",
-          "status": "ok"
-        },
-        {
-          "category": "ops",
-          "details": {
             "docs": "docs/guides/repair.md#receipt-compaction",
             "last_compaction": {
               "at": "<ts>",

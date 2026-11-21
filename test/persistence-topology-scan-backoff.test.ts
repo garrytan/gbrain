@@ -8,9 +8,9 @@
  *    refusal from a step the scan reaches (the Rust engine resuming a refresh another engine recorded) is reported once
  *    and parks the scan for TOPOLOGY_STOP_BACKOFF_MS: the next tick neither scans nor reports again, and it does not
  *    throw. Any other scan error is reported and the next tick scans again.
- *  - Regression: the scan refused on every scanning tick of a Rust owner, then stopped by name
- *    (`member=source_topology_recovery`) while a change was recovering; it now converges the change on every engine.
- *  - Why existing coverage misses it: the parity case (test/engine-parity/topology-named-stop.test.ts) runs the scan
+ *  - Regression: the scan refused on every scanning tick of a Rust owner while a change was recovering; it now
+ *    converges the change on every engine, and a refusal it still meets parks it instead of repeating every tick.
+ *  - Why existing coverage misses it: the parity case (test/engine-parity/topology-recovery.test.ts) runs the scan
  *    function itself; the consumer's tick wiring and its backoff are only reachable through the consumer.
  *  - Seam: a proxy over a real PGLite engine; the Rust shape drops raw_sql from its capability set, and `scanError`
  *    makes listTopologyRecoveries throw (the capability refusal is the real capabilityMissing error).

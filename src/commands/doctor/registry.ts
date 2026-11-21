@@ -186,7 +186,6 @@ import { commitNotifierEntry } from './checks/commit-notifier.ts';
 import { managedSyncConvergenceEntry } from './checks/managed-sync-convergence.ts';
 import { managedSyncBlockedEntry } from './checks/managed-sync-blocked.ts';
 import { syncAdmissionEntry } from './checks/sync-admission.ts';
-import { topologyRecoveryStoppedEntry } from './checks/topology-recovery-stopped.ts';
 import { atomHeldFailedEntry } from './checks/atom-holds.ts';
 import { extractionInputTruncatedEntry } from './checks/extraction-input.ts';
 import { derivationUnpricedModelEntry } from './checks/derivation-pricing.ts'; // PR 4 (Wave B incremental derivation, transcripts)
@@ -243,7 +242,6 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   managedSyncMovementEntry,
   managedSyncBlockedEntry,
   syncAdmissionEntry,
-  topologyRecoveryStoppedEntry,
   persistenceCompactionEntry,
   soakCountersEntry,
   serveBuildDriftEntry,

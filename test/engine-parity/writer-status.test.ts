@@ -35,7 +35,6 @@ import { listBlockingEffects } from '../../src/core/persistence/blocking-effects
 import { listWriterVersions } from '../../src/core/persistence/writer-versions.ts';
 import { activeWorktreeRefreshes } from '../../src/core/persistence/worktree-refresh.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { readTopologyRecoveryStops } from '../../src/core/persistence/topology-stop.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -92,7 +91,7 @@ async function withClaimedCheckout<T>(engine: BrainEngine, backend: ParityBacken
 describe('writer status', () => {
   parityTest('prints the same status on every engine from its typed reads', {
     methods: ['readWriterDiagnosticRows', 'readWriterStatusRows', 'listOnboardingSources', 'listBlockingEffectRows',
-      'listActiveWorktreeRefreshRows', 'readCycleLocks', 'listTopologyRecoveries'],
+      'listActiveWorktreeRefreshRows', 'readCycleLocks'],
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (home) => {
     const hostId = existingHostIdFor(engine);
     const { bindings, topology_requests } = await engine.readWriterStatusRows(hostId, null);
@@ -106,9 +105,7 @@ describe('writer status', () => {
       onboarding: await writerOnboardingPreflight(engine, undefined),
       shared_skills: await readSharedSkillsState(engine),
       worktree_refreshes: await activeWorktreeRefreshes(engine, undefined),
-      topology_requests,
-      topology_recoveries: await readTopologyRecoveryStops(engine, hostId) };
-    expect(status.topology_recoveries).toEqual({ recovering: [], more: false, stop: null });
+      topology_requests };
     expect(bindings.map(b => [b.source_id, b.local_path === null ? null : 'set', b.git_durability_state])).toEqual([['work', 'set', 'unknown']]);
     expect(adminLock.locked).toBe(true);
     const ids = status.onboarding.sources.map(s => s.source_id);

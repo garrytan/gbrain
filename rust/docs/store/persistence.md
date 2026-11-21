@@ -583,8 +583,8 @@ writer protocol registration exists here.
 Differences from a SQL brain: slugs and source ids sort in byte order; the store keeps no
 `database_only_reason` (always null); an audit page's frontmatter size is its compact JSON text
 (only the audit's 5 MB skip reads it). The engine reports `managed_persistence`, so an activated Rust
-brain is written through the journal; a topology change of a managed source still refuses `raw_sql`
-(`persistence/topology-locks.ts`).
+brain is written through the journal; a topology change of a managed source runs through the topology store
+(below).
 
 ## Publication journal
 
@@ -664,7 +664,8 @@ worktree refresh rows (`gbrain sources refresh` refuses before it writes one). `
 host binding first and keeps an existing one, as `ON CONFLICT DO NOTHING` does. `markTopologyChange` does nothing: no
 trigger guards this engine's source records. The receipts' counter changes go through `addPersistenceCounters`.
 A managed clone commits on this engine, and the owner's recovery finishes or rolls back an interrupted clone or
-reclone here too (docs/ENGINES.md, "Topology recovery on the Rust engine").
+reclone here too. A worktree refresh another engine recorded still refuses here (docs/designs/RUST_ENGINE.md, row
+L7-1).
 
 ## TypeScript members with no stored state
 

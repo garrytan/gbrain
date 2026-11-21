@@ -231,7 +231,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
   private draining: { since: number; settled: number; ran: number; noticedAt: number } | undefined;
   private settleCursor: NoopSettleCursor | undefined;
   private topologyWorker: Promise<unknown> | undefined;
-  /** Until when a named capability stop parks the topology scan (scanTopologies). */
+  /** Until when a capability refusal parks the topology scan (scanTopologies). */
   private topologyStoppedUntil = 0;
   private maintenanceWorker: Promise<unknown> | undefined;
   private nextMaintenance = 0;
