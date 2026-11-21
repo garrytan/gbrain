@@ -1886,15 +1886,27 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   It refuses while shadow mode is on. To seed again, `stop --delete` and seed into the new directory.
   Rust store layout: [rust/docs/store/seed.md](../rust/docs/store/seed.md).
 - **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
-  read back from the brain, in one read-only `REPEATABLE READ` transaction, and applied to the Rust store, so stored
-  ids and fact fingerprints stay identical. A rolled-back transaction changes nothing. A shed, a gap in the write
-  sequence, a failed read or a restarted child invalidates the follower's coverage watermark until a reconcile pass
-  restores it. Only the process that owns the Rust store applies writes; a second serving process cannot apply, and its
-  writes are caught by reconcile.
+  read back from the brain, in its own short read-only `REPEATABLE READ` transaction (on Postgres, a dedicated
+  one-connection pool, so the serving pool is never used), and applied to the Rust store, so stored ids and fact
+  fingerprints stay identical. A rolled-back transaction changes nothing. The coverage watermark says whether every
+  committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
+  the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
+  displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again
+  only when a full reconcile pass that started after the session start has proven the store. A relation marked dirty
+  is settled by a pass for that relation that started after the mark. Only the process that owns the Rust store
+  applies writes. A second process cannot apply: its child leaves a line in `follower-invalidations.jsonl` (at most
+  one per second while it sees writes) and the owner reads those lines before it advances the watermark, treating the
+  second after each line as unproven. A write by a second process is therefore unproven for a short moment before its
+  line lands, and a read-only command leaves no line.
 - **Reconcile.** `reconcile` compares every seeded relation with the Rust store in 500-row key intervals and replaces
-  any interval that differs, then checks allocators and the fingerprint probe. `reconcile` and `reconcile --full` both
-  run a full pass. It needs the Rust store to be free (stop the serving process first). A full pass also runs on its own
-  every 24 hours while the follower runs, and again when the watermark is invalid and the last pass is over an hour old.
+  any interval that differs, then checks allocators and the fingerprint probe. Each interval is its own short read of
+  the primary (with a pause between intervals) and nothing is held open while the pass talks to the Rust store, so a
+  pass is not one snapshot: each interval is protected by the generation taken just before its read. `reconcile` and
+  `reconcile --full` both run a full pass. It needs the Rust store to be free (stop the serving process first). A full
+  pass also runs on its own a minute after a serving process starts if the watermark is still invalid, every 24 hours
+  while the follower runs, and again when the watermark is invalid and the last pass is over an hour old. A pass that
+  displaced rows does not restore the watermark; the relation gets another pass and the full restore waits for the
+  next full pass.
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `stopped`, `invalid`, `behind`,
   `following`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
   value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,

@@ -573,6 +573,10 @@ The shadow is an eventual-state copy, not a commit-log replica. Three mechanisms
 
 - Reconcile cannot find Rust-side drift after import.
 - Write comparisons check typed read-backs, not the full mutation set.
+- A write by a second process on the same brain is covered by a one-second lease after the line it leaves, not by an exact record: there is a short window between its commit and that line.
+- A reconcile pass is not one snapshot. Each interval is read on its own and consistency across intervals rests on generations and on the store's tombstones and interval fences.
+- Rows the store displaced make the full restore wait for the next full pass, up to the hour-long retry.
+- The write map names what each member writes, including trigger and cleanup effects (owner marks, slug-keyed stores, the restriction flag); a member added later without an entry is reported as unmapped and invalidates the watermark.
 
 The shadow lives on one host, the **shadow host**: the machine that would own the brain after a swap. On Postgres brains with several hosts, the others keep writing to Postgres as today and reconcile picks their writes up.
 
