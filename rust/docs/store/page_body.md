@@ -254,8 +254,20 @@ repeated until one deletes nothing, and then the record is deleted (`readDerivat
 until `totalMs` has passed (`inlineMs` for the purge's own call) and always runs one. It returns `{ deleted, work }`: the rows the first
 walks deleted, and per page the rows of those walks that were in scope, passed the prefilter and were deleted.
 
+A page can enter a sweep's scope behind the walk without a derivation write: it is soft-deleted (`softDeletePage`, the hidden derived
+pages of a purge) or a live segment of it is retired (a body flip closing a published occurrence). The store notes it on every record of
+the page's source (`note_scope_entry`; the SQL engines' triggers write `page_segment_derivation_purge_pages`), and the end of a verify
+walk takes the notes: it reads the first batch of the noted pages' rows and, when that is not all of them or a row in it holds the claim,
+walks only those pages again (`recheck`) before it deletes the record. A record keeps at most 1000 notes; past that its walk goes back to
+the start of a full verify walk. A record has a source index (`b 0x0A <source> 0x00 <request id>`), so a walk reads its own source's
+records and no other's.
+
+The derivation keys are grouped by page, not by source, so a batch visits the physical keys in order and keeps those of the source's
+pages; it visits at most `max(8 × batchRows, 512)` keys. A batch the cap stopped before it had `batchRows` rows stores the physical
+cursor and the walk goes on (it is not the end of the walk), so a source with few rows beside sources with many costs several short
+batches where the SQL engines read one; the work of any one batch, and the time before the call looks at its deadline, are bounded.
+
 What differs from the SQL engines: the store has no statement budget, so no batch times out, none is halved, no row is deleted unread
 and no record stalls (`readDerivationPurgeState` never answers `stalled`, and `retry` has nothing to clear); it has one writer and no
-scope lock, so no record waits on `scope_lock_busy`, and the scope-entry trigger's page notes (`page_segment_derivation_purge_pages`)
-are never written, so no walk's end checks a noted page again. The test seams (`hooks`: after each batch, before an unread delete, and the
+scope lock, so no record waits on `scope_lock_busy`. The test seams (`hooks`: after each batch, before an unread delete, and the
 work counters) stay in the SQL engines. The store has no source delete, so the foreign key's cascade has nothing to remove.

@@ -1638,6 +1638,12 @@ impl Store {
                 {
                     page.deleted_at_us = Some(now);
                     tag_change(tx, &*self.env, &mut page)?;
+                    // The page enters a fact purge's derivation sweep's scope: the sweep checks it again before it ends.
+                    crate::page_body::derivation_sweep::note_scope_entry(
+                        tx,
+                        &page.source_id,
+                        page.id,
+                    )?;
                     hidden.get_or_insert(page.slug);
                 }
             }

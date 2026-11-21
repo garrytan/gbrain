@@ -63,6 +63,8 @@ const STAGING_CLIENT: u8 = 0x06;
 const STAGING_TEXT: u8 = 0x07;
 const STAGING_BY_PAGE: u8 = 0x08;
 const DERIVATION_PURGE: u8 = 0x09;
+/// `b 0x0A <source id> 0x00 <request id>`: the sweep records of a source, so a walk finds its own without reading every source's.
+const DERIVATION_PURGE_BY_SOURCE: u8 = 0x0A;
 
 /// The page id counter of `pages.rs` (its `NEXT_PAGE_ID`, private there): a shell takes its id
 /// from the same sequence `putPage` does.
@@ -1542,10 +1544,12 @@ impl Store {
             let staging_bytes = uuid_bytes(&staging);
             let mut live_seqs: HashSet<i64> = HashSet::new();
             let mut moved = Vec::new();
+            let mut closed_live = false;
             for (key, mut row) in rows {
                 if live_published(&row) && close.contains(&row.occurrence_id) {
                     row.gen_to = Some(input.new_generation);
                     put_json(tx, &key, &row)?;
+                    closed_live = true;
                 } else if row.staging_id.as_deref() == Some(staging.as_str()) {
                     moved.push((key, row));
                     continue;
@@ -1553,6 +1557,10 @@ impl Store {
                 if live_published(&row) {
                     live_seqs.insert(row.seq);
                 }
+            }
+            if closed_live {
+                // A live segment of the page is retired: rows its occurrence backed enter a fact purge's derivation sweep's scope.
+                derivation_sweep::note_scope_entry(tx, &page.source_id, page.id)?;
             }
             let retired = if retire_deferred || to_retire == 0 {
                 0

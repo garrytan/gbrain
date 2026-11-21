@@ -13,10 +13,10 @@
 //! The table probe streams the records as rows (`probe_records`).
 
 use super::purge_probe::{holds_claim, swept};
-use super::{DERIVATION_PURGE, DerivationRecord, kind_key, violation};
+use super::{DERIVATION_PURGE, DERIVATION_PURGE_BY_SOURCE, DerivationRecord, kind_key, violation};
 use crate::Store;
-use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json, json_rows};
-use crate::kv::KvRead;
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
+use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
@@ -43,6 +43,16 @@ pub(crate) struct SweepRecord {
     /// The rows the current walk has deleted.
     #[serde(default)]
     pub(super) found: i64,
+    /// Pages that entered the sweep's scope (soft-deleted, or a live segment retired) since the walk began, in the order they were
+    /// noted: the end of a walk checks them again (`derivation_sweep::note_scope_entry`; the SQL engines' `page_segment_derivation_purge_pages`).
+    #[serde(default)]
+    pub(super) noted: Vec<u64>,
+    /// More pages entered the scope than the record keeps: the end of the walk walks everything again instead of checking them.
+    #[serde(default)]
+    pub(super) noted_overflow: bool,
+    /// The noted pages a `recheck` walk is limited to, in page order.
+    #[serde(default)]
+    pub(super) recheck: Option<Vec<u64>>,
 }
 
 /// `recordDerivationPurgeRow`'s arguments: the purge request and what its sweep searches for.
@@ -61,6 +71,36 @@ pub struct DerivationPurgeRecordArgs {
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct DerivationPurgeStateArgs {
     pub request_id: String,
+}
+
+/// The index key of a record under its source (`DERIVATION_PURGE_BY_SOURCE`).
+pub(super) fn index_key(source_id: &str, request_id: &str) -> Vec<u8> {
+    let mut key = source_index_prefix(source_id);
+    key.extend_from_slice(request_id.as_bytes());
+    key
+}
+
+fn source_index_prefix(source_id: &str) -> Vec<u8> {
+    let mut key = kind_key(DERIVATION_PURGE_BY_SOURCE);
+    key.extend_from_slice(source_id.as_bytes());
+    key.push(0);
+    key
+}
+
+/// The sweep records of one source, read through the source's index: the records of other sources are not read.
+pub(super) fn records_of_source(read: &dyn KvRead, source_id: &str) -> Result<Vec<SweepRecord>> {
+    let mut requests: Vec<String> = Vec::new();
+    scan_prefix(read, &source_index_prefix(source_id), false, &mut |_, v| {
+        requests.push(String::from_utf8_lossy(v).into_owned());
+        true
+    })?;
+    let mut out = Vec::with_capacity(requests.len());
+    for request in requests {
+        if let Some(record) = get_json::<SweepRecord>(read, &record_key(&request))? {
+            out.push(record);
+        }
+    }
+    Ok(out)
 }
 
 pub(super) fn record_key(request_id: &str) -> Vec<u8> {
@@ -117,10 +157,7 @@ pub(super) fn sweep_drops(
     occurrence: i64,
 ) -> Result<bool> {
     // Read the records first: `swept` scans the manifest, and a write transaction takes one scan at a time.
-    for record in json_rows::<SweepRecord>(read, &kind_key(DERIVATION_PURGE))? {
-        if record.source_id != page.source_id {
-            continue;
-        }
+    for record in records_of_source(read, &page.source_id)? {
         let rewritten: HashSet<i64> = record.page_ids.iter().copied().collect();
         if holds_claim(row, &record.needles, &record.patterns)
             && swept(read, row, page, occurrence, &rewritten)?
@@ -212,8 +249,12 @@ impl Store {
                     phase: "sweep".to_string(),
                     cursor: None,
                     found: 0,
+                    noted: Vec::new(),
+                    noted_overflow: false,
+                    recheck: None,
                 },
-            )
+            )?;
+            tx.put(&index_key(&q.source_id, &request_id), request_id.as_bytes())
         })
     }
 
