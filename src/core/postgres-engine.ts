@@ -1431,11 +1431,11 @@ export class PostgresEngine implements BrainEngine {
   listPageProseHits(store: factsPurgeImpl.PageProseStore, sourceId: string, loweredNeedles: string[]) { return factsPurgeImpl.listPageProseHits(this.executeRaw.bind(this), store, sourceId, loweredNeedles); }
   readPurgeReceiptSourcePath(sourceId: string) { return factsPurgeImpl.readPurgeReceiptSourcePath(this.executeRaw.bind(this), sourceId); }
   countPagePurgeTombstones(sourceId: string, slug: string) { return factsPurgeImpl.countPagePurgeTombstones(this.executeRaw.bind(this), sourceId, slug); }
-  listPurgeClaimFacts(sourceId: string, slug: string) { return pagePurgeImpl.listPurgeClaimFacts(this, sourceId, slug); }
-  listPurgeClaimTakes(pageId: number) { return pagePurgeImpl.listPurgeClaimTakes(this, pageId); }
+  listPurgeClaimFacts(sourceId: string, slug: string) { return this.ownRawRead(exec => pagePurgeImpl.listPurgeClaimFacts(exec, sourceId, slug)); }
+  listPurgeClaimTakes(pageId: number) { return this.ownRawRead(exec => pagePurgeImpl.listPurgeClaimTakes(exec, pageId)); }
   listPurgeSegmentClaims(sourceId: string, slug: string, pageId: number) { return pagePurgeImpl.listPurgeSegmentClaims(this, sourceId, slug, pageId); }
-  listQueuedPagePurges(sourceId: string, afterSequence: string, limit: number) { return pagePurgeImpl.listQueuedPagePurges(this, sourceId, afterSequence, limit); }
-  listPageLinkStreams(sourceId: string, pageId: number) { return pagePurgeImpl.listPageLinkStreams(this, sourceId, pageId); }
+  listQueuedPagePurges(sourceId: string, afterSequence: string, limit: number) { return this.ownRawRead(exec => pagePurgeImpl.listQueuedPagePurges(exec, sourceId, afterSequence, limit)); }
+  listPageLinkStreams(sourceId: string, pageId: number) { return this.ownRawRead(exec => pagePurgeImpl.listPageLinkStreams(exec, sourceId, pageId)); }
   insertPageFactPurges(sourceId: string, slug: string, requestId: string, actor: string) { return pagePurgeImpl.insertPageFactPurges(this, sourceId, slug, requestId, actor); }
   listPageVersionBodiesForPurge(pageId: number) { return pagePurgeImpl.listPageVersionBodiesForPurge(this, pageId); }
   readPurgePageBody(pageId: number) { return pagePurgeImpl.readPurgePageBody(this, pageId); }
@@ -1443,7 +1443,7 @@ export class PostgresEngine implements BrainEngine {
   listPageMirrorTakeHashes(pageId: number) { return pagePurgeImpl.listPageMirrorTakeHashes(this, pageId); }
   countPageCascadeRows(pageId: number) { return pagePurgeImpl.countPageCascadeRows(this, pageId); }
   listPageVersionSourcePaths(pageId: number) { return pagePurgeImpl.listPageVersionSourcePaths(this, pageId); }
-  listPagePurgeTombstones(sourceId: string, limit: number) { return pagePurgeImpl.listPagePurgeTombstones(this, sourceId, limit); }
+  listPagePurgeTombstones(sourceId: string, limit: number) { return this.ownRawRead(exec => pagePurgeImpl.listPagePurgeTombstones(exec, sourceId, limit)); }
   listPagePurgeRows(sourceId: string | null, limit: number) { return pagePurgeImpl.listPagePurgeRows(this, sourceId, limit); }
   deletePagePurgeTombstones(sourceId: string, slug: string) { return pagePurgeImpl.deletePagePurgeTombstones(this, sourceId, slug); }
   deleteFactPurgesByRequests(sourceId: string, requestIds: readonly string[]) { return pagePurgeImpl.deleteFactPurgesByRequests(this, sourceId, requestIds); }
