@@ -13,7 +13,11 @@
  *    arm with GBRAIN_TEST_RUST_ARM=1. Where the arms differ is only what the Rust store has no equivalent of: a statement budget (a
  *    batch never times out, so no record stalls and none halves its batch), and a scope lock (no writer holds it, so no record waits
  *    on `scope_lock_busy`).
- *  - Regression: the sweep ran through raw SQL, so the Rust arm refused it and the record of a fact purge stayed `pending` for
+ *  - A page that enters the sweep's scope after the walk passed it (here: soft-deleted while the verify walk is past its row) is noted,
+ *    and the end of the walk checks the noted pages again before the record is deleted: the row it still holds the claim in goes, and the
+ *    record stays until that check passes.
+ *  - Regression: the Rust store deleted the record at the end of a verify walk without that check, leaving a claim-holding row of a page
+ *    deleted behind the walk and no write guard; before that, the sweep ran through raw SQL, so the Rust arm refused it and the record of a fact purge stayed `pending` for
  *    good, with the rows still holding the claim.
  *  - Why existing coverage misses it: the sweep's cases (test/helpers/derivation-purge-cases.ts) run on PGLite and Postgres only;
  *    the record parity cases (derivation-purge-record.test.ts) stop at recording it.
@@ -131,5 +135,38 @@ describe('engine parity: the derivation sweep of a fact purge', () => {
       a: (await engine.readSegmentDerivations(pa.pageId)).length, b: (await engine.readSegmentDerivations(pb.pageId)).length, c: (await engine.readSegmentDerivations(pc.pageId)).length };
     expect(end).toEqual({ states: [null, null, { state: 'pending', reason: null }], a: 0, b: 0, c: 1 });
     return { afterFirst, steps, end };
+  });
+
+  parityTest('a page soft-deleted behind the verify walk is checked again before the record is deleted: its claim-holding row goes first', {
+    methods: ['transaction', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration',
+      'setBodyStagingState', 'upsertSegmentDerivations', 'readSegmentDerivations', 'readDerivationPurgeState', 'recordDerivationPurgeRow', 'listDerivationClaimForms',
+      'softDeletePage'],
+    timeout: 120_000,
+  }, async (engine) => {
+    const a = [segmentText('# One\nfirst segment\n')];
+    const pa = await publishSegmentedPage(engine, 'notes/behind-a', a);
+    // A row its live segment backs on a page the purge did not rewrite: out of scope, so the walk keeps it while it holds the claim.
+    await engine.upsertSegmentDerivations([row(pa.pageId, 'links', pa.occurrences[0]!, a[0]!.sha256, { excerpt: 'Alice likes tea' })]);
+    await engine.transaction(tx => recordDerivationPurge(tx, REQ, SRC, [], [CLAIM]));
+    const steps: Array<{ call: number; deleted: number; state: unknown; rows: number }> = [];
+    __setDerivationSweepLimitsForTests({ batchRows: 1, totalMs: 0 });
+    try {
+      for (let call = 1; call <= 12; call++) {
+        // Calls 1 and 2 walk the first walk (the row, then the end); call 3 is the verify walk reading the row, which it keeps.
+        // The page is deleted after it, so the row enters the scope behind the walk, whose next batch finds the end.
+        if (call === 4) await engine.softDeletePage('notes/behind-a');
+        const deleted = await continueDerivationPurges(engine, SRC, { first: REQ });
+        const state = await derivationPurgeState(engine, REQ);
+        steps.push({ call, deleted, state, rows: (await engine.readSegmentDerivations(pa.pageId)).length });
+        if (state === null) break;
+      }
+    } finally {
+      __setDerivationSweepLimitsForTests(null);
+    }
+    // The record ends only after the noted page was checked again, and by then the row is gone.
+    expect(steps.at(-1)).toMatchObject({ state: null, rows: 0 });
+    expect(steps.reduce((n, step) => n + step.deleted, 0)).toBe(0);
+    expect(steps.slice(0, -1).every(step => (step.state as { state: string }).state === 'pending')).toBe(true);
+    return { steps };
   });
 });
