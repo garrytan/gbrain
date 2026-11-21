@@ -286,8 +286,7 @@ fn fact_slug_id(slug: &str) -> Option<u64> {
 /// candidate covers. Purged slugs leave the array; the rest keep their order. Returns the number
 /// of candidates updated. A candidate with no `source_ids` is never touched (as in PGLite, where
 /// `$1 = ANY('{}')` is false), even though its capture matched pages in every source.
-// page_ops (`deletePages`, `purgeDeletedPages`) is its caller; until that lands only tests call it.
-#[allow(dead_code)]
+// page_ops (`deletePages`, `purgeDeletedPages`) and `scrub_eval_candidate_slugs` call it.
 pub(crate) fn remove_retrieved_slugs(
     tx: &mut dyn KvWrite,
     source_id: &str,
@@ -341,6 +340,19 @@ pub(crate) fn remove_retrieved_slugs(
 }
 
 impl Store {
+    /// `scrubEvalCandidateSlugs(sourceId, slugs)`: strips the purged slugs from the `retrieved_slugs` of the candidates that
+    /// cover `source_id` (the `eval_candidates` statement of `deletePurgedFeedbackRows`), in the caller's transaction; how many
+    /// candidates it rewrote. A slug a page of another covered source still holds stays. No slugs, or a source no candidate
+    /// covers, rewrites none.
+    pub fn scrub_eval_candidate_slugs(&self, source_id: &str, slugs: &[String]) -> Result<u64> {
+        let op = "scrubEvalCandidateSlugs";
+        no_nul(op, &[("sourceId", source_id)])?;
+        for slug in slugs {
+            no_nul(op, &[("slugs", slug)])?;
+        }
+        self.write(|tx| remove_retrieved_slugs(tx, source_id, slugs))
+    }
+
     /// `logEvalCandidate(input)`: inserts one candidate and returns its id. `retrieved_slugs`
     /// keeps, in order, only the slugs a page of `source_ids` holds (any source when it names
     /// none). The `CHECK` and `NOT NULL` constraints of the table refuse with

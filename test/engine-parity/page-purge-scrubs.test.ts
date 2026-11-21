@@ -44,7 +44,7 @@ const candidate = (query: string, slugs: string[], sources: string[]): EvalCandi
 
 describe('engine parity: the stores a page purge scrubs by slug', () => {
   parityTest('scrubPurgedSlugs strips a purged slug from the candidates that cover its source, keeps a slug another covered source holds, and counts what it rewrote', {
-    methods: ['putPage', 'logEvalCandidate', 'listEvalCandidates', 'transaction', 'executeRaw'],
+    methods: ['putPage', 'logEvalCandidate', 'listEvalCandidates', 'transaction', 'deletePurgedFeedbackRows'],
   }, async (engine, backend) => {
     await createSource(engine, backend, OTHER);
     await engine.putPage(SLUG, note('Doomed', 'The harbor ledger starts here.'));
@@ -70,7 +70,7 @@ describe('engine parity: the stores a page purge scrubs by slug', () => {
   });
 
   parityTest('scrubPurgedNameStores answers its two counts, an empty object for no slugs, and zero for a source it does not know', {
-    methods: ['transaction', 'executeRaw'],
+    methods: ['transaction', 'deletePurgedNameStoreRows'],
   }, async (engine) => {
     const none = await engine.transaction(tx => scrubPurgedNameStores(tx, SRC, []));
     const removed = await engine.transaction(tx => scrubPurgedNameStores(tx, SRC, [SLUG, 'notes/other']));
@@ -80,12 +80,29 @@ describe('engine parity: the stores a page purge scrubs by slug', () => {
   });
 
   parityTest('clearRebuildableCache empties the query cache and answers how many rows it removed, never null on a brain that has the table', {
-    methods: ['transaction', 'executeRaw'],
+    methods: ['transaction', 'clearQueryCache'],
   }, async (engine) => {
     const cleared = await engine.transaction(tx => clearRebuildableCache(tx, 'query_cache'));
     const again = await engine.transaction(tx => clearRebuildableCache(tx, 'query_cache'));
     const refused = await engine.transaction(tx => clearRebuildableCache(tx, 'pages')).then(() => 'cleared', (error: Error) => error.message);
     expect(cleared).toBe(0);
     return { cleared, again, refused };
+  });
+
+  parityTest('the scrub members answer their counts directly: the five feedback stores, the two name stores and the query cache', {
+    methods: ['putPage', 'logEvalCandidate', 'listEvalCandidates', 'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'clearQueryCache'],
+  }, async (engine) => {
+    await engine.putPage('notes/keeper', note('Keeper', 'Keeper notes.'));
+    await engine.logEvalCandidate(candidate('keeps', ['notes/keeper', SLUG], [SRC]));
+    const empty = await engine.deletePurgedFeedbackRows(SRC, []);
+    const unknown = await engine.deletePurgedFeedbackRows('nobody', [SLUG]);
+    const stripped = await engine.deletePurgedFeedbackRows(SRC, [SLUG]);
+    const again = await engine.deletePurgedFeedbackRows(SRC, [SLUG]);
+    const names = await engine.deletePurgedNameStoreRows(SRC, [SLUG]);
+    const noNames = await engine.deletePurgedNameStoreRows(SRC, []);
+    const cache = await engine.clearQueryCache();
+    const slugs = (await engine.listEvalCandidates()).map(c => c.retrieved_slugs);
+    expect(Object.keys(stripped)).toEqual(['retrieval_event_pages', 'retrieval_event_links', 'retrieval_feedback', 'retrieval_weights', 'eval_candidates.retrieved_slugs']);
+    return { empty, unknown, stripped, again, names, noNames, cache, slugs };
   });
 });

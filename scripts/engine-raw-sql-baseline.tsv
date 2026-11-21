@@ -355,7 +355,7 @@ src/core/facts/held-fact-move.ts	execute_raw	1
 src/core/facts/purge-overlay.ts	execute_raw	1
 src/core/facts/purge.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
 src/core/facts/writeback-audience.ts	execute_raw	1	reads access_tokens.member_id and oauth_clients.member_id to count people, not credentials, for the brain audience (GST-3180); no typed engine method exists yet
-src/core/feedback/store.ts	execute_raw	19
+src/core/feedback/store.ts	execute_raw	18
 src/core/fence-repair/attempts.ts	execute_raw	3
 src/core/fence-repair/census-store.ts	execute_raw	9
 src/core/fence-repair/census.ts	execute_raw	6
@@ -632,7 +632,6 @@ src/core/persistence/preview-approval.ts	execute_raw	3
 src/core/persistence/protocol.ts	execute_raw	1
 src/core/persistence/publication-deadline.ts	execute_raw	1
 src/core/persistence/purge-deleted.ts	execute_raw	8	#9653: the automatic purge's read of concepts hidden by an input purge, beside the sync-tombstone hold it mirrors
-src/core/persistence/purge-name-stores.ts	execute_raw	1
 src/core/persistence/purge-parks.ts	execute_raw	6
 src/core/persistence/purged-intent.ts	execute_raw	2
 src/core/persistence/put-page-screen.ts	execute_raw	1

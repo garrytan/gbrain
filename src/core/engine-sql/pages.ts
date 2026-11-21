@@ -46,6 +46,7 @@ import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from '../persistence/purge-name-stores.ts';
 import { pageSecretOccurrences, scrubPurgedSlugHolds, scrubPurgedSlugStores } from '../persistence/purge-slug-stores.ts';
 import { slugStoreScrubber } from './purge-slug-stores.ts';
+import { purgeStoreScrubber } from './purge-stores.ts';
 import { expireFactsOfGonePages } from './facts-purge.ts';
 import { guestSourceExclusionSql } from '../guests/derived.ts';
 
@@ -237,8 +238,8 @@ export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { so
       `);
       const deleted = rows.map(r => r.slug);
       const gone = new Set(rows.map(r => Number(r.id)));
-      await scrubPurgedSlugs(tx, opts.sourceId, deleted);
-      await scrubPurgedNameStores(tx, opts.sourceId, deleted);
+      await scrubPurgedSlugs(purgeStoreScrubber(tx), opts.sourceId, deleted);
+      await scrubPurgedNameStores(purgeStoreScrubber(tx), opts.sourceId, deleted);
       await scrubPurgedSlugStores(slugStoreScrubber(tx), opts.sourceId, deleted, { secretOccurrences: secrets.filter(o => gone.has(Number(o.page_id))).map(o => o.id) });
       await scrubPurgedSlugHolds(slugStoreScrubber(tx), opts.sourceId, deleted.map(slug => ({ slug })));
       return deleted;
@@ -404,8 +405,8 @@ export async function purgeDeletedPages(
       for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], { slug: r.slug, deletedAt: r.deleted_at }]);
       for (const [sourceId, purged] of bySource) {
         const slugs = purged.map(p => p.slug);
-        await scrubPurgedSlugs(tx, sourceId, slugs);
-        await scrubPurgedNameStores(tx, sourceId, slugs);
+        await scrubPurgedSlugs(purgeStoreScrubber(tx), sourceId, slugs);
+        await scrubPurgedNameStores(purgeStoreScrubber(tx), sourceId, slugs);
         await scrubPurgedSlugStores(slugStoreScrubber(tx), sourceId, slugs, { secretOccurrences: goneSecrets });
         await scrubPurgedSlugHolds(slugStoreScrubber(tx), sourceId, purged);
       }

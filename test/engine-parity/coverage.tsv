@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1422/1429
+# covered: 1425/1432
 # lifecycle: 12/12
 # pages: 59/59
 # search: 7/7
@@ -34,7 +34,7 @@
 # import_guards: 13/13
 # persistence_journal: 139/139
 # label_door: 5/5
-# page_purge: 35/35
+# page_purge: 38/38
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -95,7 +95,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	168	no	yes	yes	serves
+transaction	lifecycle	yes	171	no	yes	yes	serves
 transactionDirect	lifecycle	yes	17	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -106,7 +106,7 @@ getPage	pages	yes	147	yes	yes	yes	serves
 readPageSnapshot	pages	yes	38	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	6	no	yes	yes	serves
-putPage	pages	yes	667	yes	yes	yes	serves
+putPage	pages	yes	669	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	27	yes	yes	yes	serves
@@ -728,6 +728,9 @@ lockWriteRequests	page_purge	yes	2	no	yes	yes	serves
 readEffectBytes	page_purge	yes	2	no	yes	yes	serves
 redactWriteRequestRow	page_purge	yes	2	no	yes	yes	serves
 releaseTerminalBytes	page_purge	yes	2	no	yes	yes	serves
+deletePurgedFeedbackRows	page_purge	yes	2	no	yes	yes	serves
+deletePurgedNameStoreRows	page_purge	yes	2	no	yes	yes	serves
+clearQueryCache	page_purge	yes	2	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	4	no	yes	yes	serves
@@ -1264,8 +1267,8 @@ getEdgesByChunk	code_edges	yes	2	no	yes	yes	serves
 getCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 putCodeTraversalCache	code_edges	yes	7	no	yes	yes	serves
 clearCodeTraversalCache	code_edges	yes	2	no	yes	yes	serves
-logEvalCandidate	eval_capture	yes	4	no	yes	yes	serves
-listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
+logEvalCandidate	eval_capture	yes	6	no	yes	yes	serves
+listEvalCandidates	eval_capture	yes	4	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves

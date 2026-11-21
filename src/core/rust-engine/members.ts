@@ -618,6 +618,10 @@ export const RUST_ENGINE_MEMBERS = {
   readEffectBytes: 'persistence_journal',
   redactWriteRequestRow: 'persistence_journal',
   releaseTerminalBytes: 'persistence_journal',
+  // The scrubs of a page purge's retrieval stores, name stores and query cache (engine-sql/purge-stores.ts).
+  deletePurgedFeedbackRows: 'eval_capture',
+  deletePurgedNameStoreRows: 'pages',
+  clearQueryCache: 'pages',
   readDeletePageRequest: 'facts',
   listPurgeEffects: 'facts',
   countPurgeFingerprintResidue: 'facts',

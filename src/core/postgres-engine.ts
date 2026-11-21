@@ -179,6 +179,7 @@ import * as labelDoorImpl from './engine-sql/label-door.ts';
 import * as pagePurgeImpl from './engine-sql/page-purge.ts';
 import * as pagePurgeSweepImpl from './engine-sql/page-purge-sweep.ts';
 import * as pagePurgeJournalImpl from './engine-sql/page-purge-journal.ts';
+import * as purgeStoresImpl from './engine-sql/purge-stores.ts';
 import * as headBlockerImpl from './engine-sql/head-blocker.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
@@ -1464,6 +1465,9 @@ export class PostgresEngine implements BrainEngine {
   readEffectBytes(requestId: string) { return pagePurgeJournalImpl.readEffectBytes(this, requestId); }
   redactWriteRequestRow(redaction: pagePurgeJournalImpl.RequestRedaction) { return pagePurgeJournalImpl.redactWriteRequestRow(this, redaction); }
   releaseTerminalBytes(key: string, bytes: number) { return pagePurgeJournalImpl.releaseTerminalBytes(this, key, bytes); }
+  deletePurgedFeedbackRows(sourceId: string, slugs: readonly string[]) { return purgeStoresImpl.deletePurgedFeedbackRows(this, sourceId, slugs); }
+  deletePurgedNameStoreRows(sourceId: string, slugs: readonly string[]) { return purgeStoresImpl.deletePurgedNameStoreRows(this, sourceId, slugs); }
+  clearQueryCache() { return purgeStoresImpl.clearQueryCache(this); }
   readDeletePageRequest(sourceId: string, requestId: string) { return factsPurgeImpl.readDeletePageRequest(this.executeRaw.bind(this), sourceId, requestId); }
   listPurgeEffects(requestId: string) { return factsPurgeImpl.listPurgeEffects(this.executeRaw.bind(this), requestId); }
   countPurgeFingerprintResidue(sourceId: string, factHash: string, subject: string) { return factsPurgeImpl.countPurgeFingerprintResidue(this.executeRaw.bind(this), sourceId, factHash, subject); }

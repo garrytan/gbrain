@@ -107,6 +107,7 @@ import type { CheckoutFileRow, OriginDependentRow, OriginRefInput, PageLabelRow,
 import type * as PagePurgeSql from './engine-sql/page-purge.ts';
 import type * as PagePurgeSweepSql from './engine-sql/page-purge-sweep.ts';
 import type * as PagePurgeJournalSql from './engine-sql/page-purge-journal.ts';
+import type * as PurgeStoresSql from './engine-sql/purge-stores.ts';
 import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from './engine-sql/head-blocker.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
@@ -4129,6 +4130,13 @@ export interface BrainEngine {
   redactWriteRequestRow(redaction: PagePurgeJournalSql.RequestRedaction): Promise<void>;
   /** Lowers a counter's terminal bytes by `bytes`, never below zero. Writes persistence_counters; run it in the purge transaction. */
   releaseTerminalBytes(key: string, bytes: number): Promise<void>;
+  // The scrubs of a page purge's retrieval stores, name stores and query cache (engine-sql/purge-stores.ts).
+  /** Deletes the retrieval rows (events, link events, ratings, weights) that name any of `slugs` in the source and strips them from the eval candidates that cover it; rows per store. Writes those stores; run it in the purge transaction. */
+  deletePurgedFeedbackRows(sourceId: string, slugs: readonly string[]): Promise<PurgeStoresSql.PurgedFeedbackRows>;
+  /** Deletes the volunteer log rows and gazetteer entries of `slugs` in the source; rows per store. Writes both; run it in the purge transaction. */
+  deletePurgedNameStoreRows(sourceId: string, slugs: readonly string[]): Promise<PurgeStoresSql.PurgedNameStoreRows>;
+  /** Empties the query cache; the rows removed, or null when the brain has no such table. Writes query_cache; run it in the purge transaction. */
+  clearQueryCache(): Promise<number | null>;
   /** The newest delete_page request of the source with this request id, null for none. Reads persistence_requests. */
   readDeletePageRequest(sourceId: string, requestId: string): Promise<FactsPurgeSql.DeletePageRequestRow | null>;
   /** The request's effects in kind order, each with whether any target is parked. Reads persistence_effects. */

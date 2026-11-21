@@ -305,29 +305,14 @@ export async function pruneRetrievalFeedback(engine: BrainEngine, retentionDays:
  * end of a `from|type|to` edge key) and the captured eval candidates whose results came from that source. Runs inside
  * the purge's transaction; returns rows touched per store, keyed as the purge receipt names them.
  */
-/** A captured slug is the purged page's unless another source the candidate covers still has a page by that name. */
-const purgedCandidateSlug = (slug: string) =>
-  `${slug} = ANY($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages po WHERE po.slug = ${slug} AND po.source_id = ANY(eval_candidates.source_ids) AND po.source_id <> $1)`;
-
 export async function scrubPurgedSlugs(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'deletePurgedFeedbackRows'>,
   sourceId: string,
   slugs: readonly string[],
 ): Promise<Record<string, number>> {
   if (!slugs.length) return {};
-  const edgeNames = (key: string) => `EXISTS (SELECT 1 FROM unnest($2::text[]) AS s(slug) WHERE starts_with(${key}, s.slug || '|') OR right(${key}, length(s.slug) + 1) = '|' || s.slug)`;
-  const count = async (sql: string) => (await engine.executeRaw(sql, [sourceId, [...slugs]])).length;
-  return {
-    retrieval_event_pages: await count('DELETE FROM retrieval_event_pages WHERE source_id = $1 AND slug = ANY($2::text[]) RETURNING 1'),
-    retrieval_event_links: await count(`DELETE FROM retrieval_event_links WHERE source_id = $1 AND (to_slug = ANY($2::text[]) OR ${edgeNames('edge_key')}) RETURNING 1`),
-    retrieval_feedback: await count(`DELETE FROM retrieval_feedback WHERE source_id = $1
-      AND ((element_kind = 'page' AND element_key = ANY($2::text[])) OR (element_kind = 'link' AND ${edgeNames('element_key')})) RETURNING 1`),
-    retrieval_weights: await count(`DELETE FROM retrieval_weights WHERE source_id = $1
-      AND ((element_kind = 'page' AND element_key = ANY($2::text[])) OR (element_kind = 'link' AND ${edgeNames('element_key')})) RETURNING 1`),
-    'eval_candidates.retrieved_slugs': await count(`UPDATE eval_candidates
-      SET retrieved_slugs = ARRAY(SELECT s FROM unnest(retrieved_slugs) WITH ORDINALITY AS u(s, n) WHERE NOT (${purgedCandidateSlug('u.s')}) ORDER BY n)
-      WHERE $1 = ANY(source_ids) AND EXISTS (SELECT 1 FROM unnest(retrieved_slugs) AS r(s) WHERE ${purgedCandidateSlug('r.s')}) RETURNING 1`),
-  };
+  // A captured slug is the purged page's unless another source the candidate covers still has a page by that name (engine-sql/purge-stores.ts).
+  return { ...await engine.deletePurgedFeedbackRows(sourceId, slugs) };
 }
 
 /**
