@@ -42,6 +42,8 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['readManifest', 'FROM page_body_manifest m', e => e.readManifest(1)],
   // Page preparation reads an OAuth client's member binding (persistence/page-visibility.ts defaultSourceMemberWriter).
   ['readOauthClient', 'FROM oauth_clients WHERE client_id', e => e.readOauthClient('a-client')],
+  // The segmented-storage writer gate a page or sync preparation reads through readPageBodyPolicy (page-body/limits.ts).
+  ['readSegmentedGateEvidence', 'FROM ingest_log l CROSS JOIN win', e => e.readSegmentedGateEvidence(7)],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];
