@@ -38,6 +38,11 @@ export function sealableImageSql(p: string): string {
     AND ${safeChunksFilter(p)} AND ${importerChunkSql(p)} IS TRUE)`;
 }
 
+/** The `text` class without the image branches: a page of a live source the resident drain rebuilds by itself. */
+export function textClassSql(p: string, s: string): string {
+  return `(NOT ${s}.archived AND (${p}.page_kind IS DISTINCT FROM 'image' OR ${p}.body_storage = 'segmented'))`;
+}
+
 /**
  * The class of a page's unsealed projection: `p` a live page, `s` its source
  * (internal aliases with every column).
