@@ -29,12 +29,11 @@
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import { AUDIT_ROW_SOURCES } from '../../../core/facts/audit-sources.ts';
-import { ENTITY_LINKABLE_SQL } from '../../../core/facts/attribution.ts';
 import type { Check } from '../../doctor.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import { doctorVerify } from '../check-fix.ts';
-import { conversationPaidSql, conversationTriedSql } from '../../../core/facts/conversation-memo.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 export const UNLINKED_NEW_SHARE_WARN = 0.25;
 export const UNLINKED_NEW_MIN_FACTS = 20;
@@ -42,7 +41,6 @@ export const UNLINKED_NEW_MIN_FACTS = 20;
 export const UNLINKED_WINDOW_PER_SOURCE = 100_000;
 /** Conversation pages one re-extraction fix names (`--slugs`). */
 export const CONVERSATION_FIX_SLUGS = 50;
-const DERIVED = `f.source LIKE 'cli:extract-conversation-facts%'`;
 /** The conversation share's fixes, in the order doctor offers them: free relink, then the paid fallback, then by hand. */
 const CONVERSATION_FIXES = ['relink', 'reextract', 'manual'] as const;
 type ConversationFix = typeof CONVERSATION_FIXES[number];
@@ -64,41 +62,16 @@ export interface UnlinkedFactsStats {
   relinked_7d: Record<string, number> | null;
 }
 
-const ACTIVE = `f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source <> ALL($2::text[]) AND ${ENTITY_LINKABLE_SQL}`;
-const ORIGIN = `CASE WHEN ${DERIVED} THEN 'conversation' WHEN f.source = 'mcp:put_page' THEN 'mcp:put_page'
-  WHEN f.source LIKE 'mcp:%' OR f.source LIKE 'sync:%' OR f.source LIKE 'hook:%' OR f.source IN ('file_upload', 'code_import') THEN 'extraction'
-  ELSE 'remember' END`;
-const INFERRED = `(f.context LIKE 'entity inferred from %' OR f.context LIKE '% — entity inferred from %')`;
-const INFERRED_TIER = `substring(f.context from 'entity inferred from ([a-z]+)')`;
-
 const n = (v: unknown) => Number(v ?? 0);
 
 /** Null when the brain has no facts table (nothing to report). */
 export async function unlinkedFactsStats(engine: BrainEngine, sourceIds?: readonly string[]): Promise<UnlinkedFactsStats | null> {
-  const [tables] = await engine.executeRaw<{ facts: string | null; attempts: string | null }>(
-    `SELECT to_regclass('facts')::text AS facts, to_regclass('fact_relink_attempts')::text AS attempts`);
+  const tables = await engine.readFactTableCatalog();
   if (!tables?.facts) return null;
   const hasAttempts = !!tables.attempts;
-  const ids = sourceIds?.length ? [...sourceIds] : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map((r) => r.id);
+  const ids = sourceIds?.length ? [...sourceIds] : sortSourcesById(await engine.listAllSources({ includeArchived: true })).map((r) => r.id);
   const audit = [...AUDIT_ROW_SOURCES];
-  const tried = hasAttempts ? conversationTriedSql : 'false';
-  const paid = hasAttempts ? conversationPaidSql : 'false';
-  const windowRows = await engine.executeRaw<{ source_id: string; origin: string; active: number; unlinked: number; fence_owned: number; conversation: number; conversation_tried: number; conversation_paid: number }>(
-    `SELECT s.id AS source_id, w.origin, COUNT(*)::int AS active, COUNT(*) FILTER (WHERE w.unlinked)::int AS unlinked,
-            COUNT(*) FILTER (WHERE w.unlinked AND w.fence_owned AND NOT w.derived)::int AS fence_owned,
-            COUNT(*) FILTER (WHERE w.unlinked AND w.derived)::int AS conversation,
-            COUNT(*) FILTER (WHERE w.unlinked AND w.derived AND w.tried)::int AS conversation_tried,
-            COUNT(*) FILTER (WHERE w.unlinked AND w.derived AND w.tried AND w.paid)::int AS conversation_paid
-       FROM unnest($1::text[]) AS s(id) CROSS JOIN LATERAL (
-         SELECT ${ORIGIN} AS origin, f.entity_slug IS NULL AS unlinked, ${DERIVED} AS derived,
-                CASE WHEN f.entity_slug IS NULL AND ${DERIVED} THEN ${tried} ELSE false END AS tried,
-                CASE WHEN f.entity_slug IS NULL AND ${DERIVED} THEN ${paid} ELSE false END AS paid,
-                (f.row_num IS NOT NULL OR f.source_markdown_slug IS NOT NULL) AS fence_owned
-           FROM facts f WHERE f.source_id = s.id AND ${ACTIVE}
-          ORDER BY f.created_at DESC LIMIT $3) w
-      GROUP BY s.id, w.origin`,
-    [ids, audit, UNLINKED_WINDOW_PER_SOURCE],
-  );
+  const windowRows = await engine.countUnlinkedFactsByOrigin({ sourceIds: ids, auditSources: audit, windowPerSource: UNLINKED_WINDOW_PER_SOURCE, hasAttempts });
   const perSource = new Map<string, number>();
   const byOrigin = new Map<string, number>();
   const derivedBySource = new Map<string, Record<ConversationFix, number>>();
@@ -109,43 +82,20 @@ export async function unlinkedFactsStats(engine: BrainEngine, sourceIds?: readon
       reextract: d.reextract + n(r.conversation_tried) - n(r.conversation_paid), manual: d.manual + n(r.conversation_paid) });
     if (n(r.unlinked) > 0) byOrigin.set(r.origin, (byOrigin.get(r.origin) ?? 0) + n(r.unlinked));
   }
-  const judged = hasAttempts
-    ? `EXISTS (SELECT 1 FROM fact_relink_attempts a WHERE a.source_id = f.source_id AND a.fact_id = f.id AND a.outcome = 'no_subject')`
-    : 'false';
-  const [recent] = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT COUNT(*)::int AS facts, COUNT(*) FILTER (WHERE f.entity_slug IS NULL)::int AS unlinked,
-            COUNT(*) FILTER (WHERE f.entity_slug IS NULL AND ${judged})::int AS no_subject,
-            COUNT(*) FILTER (WHERE f.entity_slug IS NULL AND ${tried})::int AS conversation_unresolved,
-            COUNT(*) FILTER (WHERE ${INFERRED} AND ${INFERRED_TIER} = 'page')::int AS inferred_page,
-            COUNT(*) FILTER (WHERE ${INFERRED} AND ${INFERRED_TIER} = 'mention')::int AS inferred_mention
-       FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.created_at >= now() - interval '7 days' AND ${ACTIVE}`,
-    [ids, audit],
-  );
+  const recent = await engine.countUnlinkedFactStats({ sourceIds: ids, auditSources: audit, hasAttempts });
   let noSubject: number | null = null;
   let relinked: Record<string, number> | null = null;
   if (hasAttempts) {
-    const rows = await engine.executeRaw<{ outcome: string; tier: string | null; n: number }>(
-      `SELECT outcome, tier, COUNT(*)::int AS n FROM fact_relink_attempts
-        WHERE source_id = ANY($1::text[])
-          AND (outcome = 'no_subject' OR (outcome = 'linked' AND attempted_at >= now() - interval '7 days'))
-        GROUP BY outcome, tier`,
-      [ids],
-    );
+    const rows = await engine.countFactRelinkOutcomes(ids);
     noSubject = rows.filter((r) => r.outcome === 'no_subject').reduce((sum, r) => sum + n(r.n), 0);
     relinked = {};
     for (const r of rows.filter((x) => x.outcome === 'linked')) relinked[r.tier ?? 'unknown'] = (relinked[r.tier ?? 'unknown'] ?? 0) + n(r.n);
   }
   const fixKind = CONVERSATION_FIXES.find(k => [...derivedBySource.values()].some(d => d[k] > 0)) ?? 'manual';
   const [derivedSource] = [...derivedBySource].filter(([, d]) => d[fixKind] > 0).sort((a, b) => b[1][fixKind] - a[1][fixKind] || a[0].localeCompare(b[0]));
-  const hitSql = { relink: `NOT ${tried}`, reextract: `${tried} AND NOT ${paid}`, manual: `${tried} AND ${paid}` }[fixKind];
   let conversation: UnlinkedFactsStats['conversation'] = null;
   if (derivedSource) {
-    const pages = await engine.executeRaw<{ slug: string }>(
-      `SELECT w.slug FROM (SELECT f.source_markdown_slug AS slug, f.entity_slug IS NULL AND ${DERIVED} AND ${hitSql} AS hit
-           FROM facts f WHERE f.source_id = $1 AND ${ACTIVE} ORDER BY f.created_at DESC LIMIT $3) w
-        WHERE w.hit AND w.slug IS NOT NULL GROUP BY w.slug ORDER BY COUNT(*) DESC, w.slug`,
-      [derivedSource[0], audit, UNLINKED_WINDOW_PER_SOURCE],
-    );
+    const pages = await engine.listUnlinkedConversationSlugs({ sourceId: derivedSource[0], auditSources: audit, windowPerSource: UNLINKED_WINDOW_PER_SOURCE, fix: fixKind, hasAttempts });
     conversation = { source_id: derivedSource[0], fix: fixKind, pages: pages.length, slugs: pages.slice(0, CONVERSATION_FIX_SLUGS).map(r => r.slug) };
   }
   return {

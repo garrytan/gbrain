@@ -9,6 +9,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { RecommendationContext } from '../brain-score-recommendations.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
+import { sortSourcesById } from '../source-rows.ts';
 
 // Re-export so consumers can `import { RecommendationContext } from '../remediation'`
 // — the canonical RecommendationContext type still lives in
@@ -25,7 +26,7 @@ export async function staleExtractionBlocked(engine: BrainEngine, sourceId?: str
   const { effectiveLinkExtractorWatermark } = await import('../link-extraction-watermark.ts');
   const watermark = await effectiveLinkExtractorWatermark(engine);
   const sourceIds = sourceId ? [sourceId]
-    : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id')).map(row => row.id);
+    : sortSourcesById(await engine.listAllSources()).map(row => row.id);
   for (const id of sourceIds) {
     if (await loadActivePackForLocalEngine(engine, { sourceId: id })) continue;
     if (!sourceId && !await engine.countStalePagesForExtraction({ sourceId: id, versionTs: watermark })) continue;
@@ -41,11 +42,9 @@ export async function staleExtractionBlocked(engine: BrainEngine, sourceId?: str
  */
 export async function firstSourceLocalPath(engine: BrainEngine): Promise<string | null> {
   try {
-    const rows = await engine.executeRaw<{ local_path: string }>(
-      `SELECT local_path FROM sources WHERE NOT archived AND local_path IS NOT NULL AND local_path <> ''
-        ORDER BY (id = 'default') DESC, id LIMIT 1`,
-    );
-    return rows[0]?.local_path ?? null;
+    // listAllSources is the non-archived sources, `default` first, then by id.
+    const owner = (await engine.listAllSources()).find(row => row.local_path !== null && row.local_path !== '');
+    return owner?.local_path ?? null;
   } catch {
     return null;
   }

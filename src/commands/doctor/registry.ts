@@ -206,6 +206,7 @@ import type { Check } from '../doctor.ts';
 import { infoCheck } from './check-fix.ts';
 import { withGitListingCache } from '../../core/git-visible-files.ts';
 import type { BrainEngine } from '../../core/engine.ts';
+import { readConfigValue } from '../../core/config-values.ts';
 import { applyLastKnown, lastKnownMode, queueRefresh, readLastKnown, unmeasuredCheck, writeLastKnown, type EntryOutcome, type LastKnownMode } from './last-known.ts';
 
 export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
@@ -604,10 +605,10 @@ async function readEntryBudget(ctx: DoctorContext): Promise<number> {
   const deadlineAt = Math.min(startedAt + SETUP_READ_MS, ctx.deadline?.deadlineAt ?? Infinity);
   try {
     const read = withStatementDeadline({ startedAt, deadlineAt, expired: false }, () =>
-      ctx.engine!.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [ENTRY_BUDGET_KEY]));
-    const rows = await raceBudget(read, deadlineAt - startedAt);
-    if (budgetExpired(rows)) { read.catch(() => undefined); return ENTRY_BUDGET_MS_DEFAULT; }
-    const n = rows[0] === undefined ? NaN : Number(rows[0].value);
+      readConfigValue(ctx.engine!, ENTRY_BUDGET_KEY));
+    const value = await raceBudget(read, deadlineAt - startedAt);
+    if (budgetExpired(value)) { read.catch(() => undefined); return ENTRY_BUDGET_MS_DEFAULT; }
+    const n = value === undefined ? NaN : Number(value);
     return Number.isSafeInteger(n) && n > 0 ? n : ENTRY_BUDGET_MS_DEFAULT;
   } catch {
     return ENTRY_BUDGET_MS_DEFAULT;

@@ -28,6 +28,7 @@ import { doctorVerify } from '../check-fix.ts';
 import { DUPLICATE_KINDS, findDuplicateGroups } from '../../../core/entities/duplicates.ts';
 import { decidedSets, identityDrift, type IdentityDrift } from '../../../core/entities/identity-decisions.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 import type { IdentityDecisionsRead, PendingIdentityMember } from '../../../core/engine-sql/identity-decisions.ts';
 
 export const NAME = 'person_title_duplicates';
@@ -47,7 +48,7 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
   try {
     const sources = ctx.orphanRatioSourceId
       ? [ctx.orphanRatioSourceId]
-      : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(r => r.id);
+      : sortSourcesById(await engine.listAllSources()).map(r => r.id);
     const pairs: TitleDuplicatePair[] = [];
     let scanned = 0;
     let capped = false;

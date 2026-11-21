@@ -15,6 +15,7 @@ import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { DOCTOR_PATH_LIMIT, PURGED_NOTE, scanUncommittedDeletions, type UncommittedDeletionScan } from '../../../core/uncommitted-deletions.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 const DOCS = 'docs/guides/repair.md#uncommitted-deletions';
 const SAMPLE_LIMIT = 5;
@@ -23,7 +24,7 @@ async function runUncommittedSyncDeletions(ctx: DoctorContext): Promise<Check[]>
   const checks: Check[] = [];
   try {
     const engine = connectedEngine(ctx);
-    const sourceIds = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sourceIds = sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const scans: UncommittedDeletionScan[] = [];
     let budget = DOCTOR_PATH_LIMIT;
     for (const sourceId of sourceIds) {

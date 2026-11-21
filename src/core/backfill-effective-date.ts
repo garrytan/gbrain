@@ -28,6 +28,7 @@
 import type { BrainEngine } from './engine.ts';
 import { computeEffectiveDate, fallbackCreatedAt } from './effective-date.ts';
 import type { EffectiveDateSource } from './types.ts';
+import { readConfigValue } from './config-values.ts';
 
 const BATCH_SIZE = 1000;
 const CHECKPOINT_KEY = 'backfill.effective_date.last_id';
@@ -109,12 +110,9 @@ export function parseFrontmatter(raw: unknown): Record<string, unknown> {
 async function getCheckpoint(engine: BrainEngine, fresh: boolean): Promise<number> {
   if (fresh) return 0;
   try {
-    const rows = await engine.executeRaw<{ value: string }>(
-      `SELECT value FROM config WHERE key = $1 LIMIT 1`,
-      [CHECKPOINT_KEY],
-    );
-    if (rows.length === 0) return 0;
-    const n = Number(rows[0].value);
+    const value = await readConfigValue(engine, CHECKPOINT_KEY);
+    if (value === undefined) return 0;
+    const n = Number(value);
     return Number.isFinite(n) && n >= 0 ? n : 0;
   } catch {
     return 0;
@@ -123,11 +121,7 @@ async function getCheckpoint(engine: BrainEngine, fresh: boolean): Promise<numbe
 
 async function setCheckpoint(engine: BrainEngine, lastId: number): Promise<void> {
   try {
-    await engine.executeRaw(
-      `INSERT INTO config (key, value) VALUES ($1, $2)
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-      [CHECKPOINT_KEY, String(lastId)],
-    );
+    await engine.setConfig(CHECKPOINT_KEY, String(lastId));
   } catch {
     // Best effort. Failure to checkpoint just means re-walk on next run;
     // doesn't corrupt state.
@@ -136,7 +130,7 @@ async function setCheckpoint(engine: BrainEngine, lastId: number): Promise<void>
 
 async function clearCheckpoint(engine: BrainEngine): Promise<void> {
   try {
-    await engine.executeRaw(`DELETE FROM config WHERE key = $1`, [CHECKPOINT_KEY]);
+    await engine.unsetConfig(CHECKPOINT_KEY);
   } catch {
     // Same — best effort.
   }

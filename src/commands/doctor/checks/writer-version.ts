@@ -13,8 +13,7 @@ const SAMPLE = 20;
  */
 export async function writerVersionCheck(engine: BrainEngine): Promise<Check> {
   try {
-    const [brain] = await engine.executeRaw<{ cutoff: unknown }>('SELECT writer_version_cutoff AS cutoff FROM persistence_brain WHERE singleton=1');
-    if (!brain?.cutoff) throw new Error('the writer-version migration cutoff is not recorded');
+    if (!await engine.readWriterVersionCutoff()) throw new Error('the writer-version migration cutoff is not recorded');
     const observed = await recentWriterVersions(engine, WINDOW_DAYS);
     const flagged = observed.filter(row => writerVersionBelowFloor(row.version));
     const hosts = flagged.slice(0, SAMPLE).map(row => ({ host_id: row.host_id, principal: row.principal, role: row.role,

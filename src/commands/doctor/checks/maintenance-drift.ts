@@ -8,6 +8,7 @@ import { isKeepDbSlug } from '../../../core/storage-config.ts';
 import { keepDbReceiptCost, readKeepDbPolicy } from '../../../core/repair/keep-db-policy.ts';
 import { isStatementTimeout } from '../../../core/persistence/bounded-reads.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 /** Newest request sequences scanned for drift conflicts (one range read of the unique sequence index). */
 const WINDOW = 20_000;
@@ -34,7 +35,7 @@ const OLDER_READ_MS = 3_000;
 export async function maintenanceWriteDriftCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   const docs = 'docs/guides/troubleshooting.md#maintenance-write-drift';
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const [bounds] = await engine.executeRaw<{ top: string | null }>('SELECT max(sequence)::text AS top FROM persistence_requests');
     const floor = String(Math.max(0, Number(bounds?.top ?? 0) - WINDOW));
     const skips = await readDriftSkips(engine);

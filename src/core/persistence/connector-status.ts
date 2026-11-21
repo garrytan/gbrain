@@ -10,13 +10,12 @@
  * `connector_held_items` stay connector-only.
  */
 import type { BrainEngine } from '../engine.ts';
-import { CONNECTOR_KINDS_SQL } from './connector-kinds.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { CONNECTOR_STOPPED_RUNS, readManagedConnectorState, type ConnectorPurgedItem, type ConnectorRunCounts, type ConnectorRunFailure, type UpgradeRecovery } from './connector-state.ts';
 import { classifySyncFault, type SyncFaultVerdict } from './sync-fault-class.ts';
 import { cliRenderContext, renderAction, type Action } from '../agent-output.ts';
-import { managedBrain, readAllSourceHolds } from '../connectors/item-holds-store.ts';
+import { connectorSourceRows, managedBrain, readAllSourceHolds } from '../connectors/item-holds-store.ts';
 import type { ItemHoldRecord } from '../connectors/item-holds.ts';
 import { fenceAutoRepairFor, gitHoldItem, readGitHoldCodeCounts, readGitHoldListing, readSyncConversions, readSyncHoldPolicy, type GitHoldItem, type SyncConversion } from './sync-holds.ts';
 import { holdLine } from '../../commands/sync-diagnostics.ts';
@@ -60,19 +59,16 @@ function connectorFailureFix(sourceId: string, failure: ConnectorRunFailure): Ac
 }
 
 /** #6831: the connector run failure recorded for a source (null for a non-connector source or a last run that finished). */
-export async function readConnectorLastError(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<ConnectorLastError | null> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>(
-    `SELECT incarnation::text FROM sources WHERE id=$1 AND NOT archived AND config->>'kind' IN (${CONNECTOR_KINDS_SQL})`, [sourceId]);
+export async function readConnectorLastError(engine: Pick<BrainEngine, 'executeRaw' | 'listSourceRecords' | 'readSourceIncarnation'>, sourceId: string): Promise<ConnectorLastError | null> {
+  const [source] = await connectorSourceRows(engine, [sourceId]);
   const failure = source ? (await readManagedConnectorState(engine, sourceId, source.incarnation)).last_failure : null;
   if (!failure) return null;
   return { ...failure, stopped: failure.consecutive >= CONNECTOR_STOPPED_RUNS, ...classifySyncFault({ code: failure.code, message: failure.message }),
     fix: connectorFailureFix(sourceId, failure) };
 }
 
-export async function readConnectorSourceStatuses(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds?: string[]): Promise<Map<string, ConnectorSourceStatus>> {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    `SELECT id,incarnation::text FROM sources WHERE NOT archived AND config->>'kind' IN (${CONNECTOR_KINDS_SQL}) AND ($1::text[] IS NULL OR id=ANY($1::text[]))`,
-    [sourceIds ?? null]);
+export async function readConnectorSourceStatuses(engine: Pick<BrainEngine, 'executeRaw' | 'listSourceRecords' | 'readSourceIncarnation'>, sourceIds?: string[]): Promise<Map<string, ConnectorSourceStatus>> {
+  const sources = await connectorSourceRows(engine, sourceIds);
   const statuses = new Map<string, ConnectorSourceStatus>();
   for (const source of sources) {
     const state = await readManagedConnectorState(engine, source.id, source.incarnation);
@@ -162,7 +158,7 @@ export interface GitHoldStatus {
 export const CONVERSION_STATUS_LIMIT = 5;
 
 /** Held files and recent conversions of each listed source that has any (sources with neither are absent). */
-export async function readGitHoldStatuses(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, sourceIds: string[]): Promise<Map<string, GitHoldStatus>> {
+export async function readGitHoldStatuses(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'listSourceRecords' | 'readSourceIncarnation'>, sourceIds: string[]): Promise<Map<string, GitHoldStatus>> {
   const out = new Map<string, GitHoldStatus>();
   if (!sourceIds.length) return out;
   const { cap } = await readSyncHoldPolicy(engine);

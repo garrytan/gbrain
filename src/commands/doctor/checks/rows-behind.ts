@@ -17,6 +17,7 @@ import { scanDeadline } from '../budget.ts';
 import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 import { connectedEngine, doctorSourceIds, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { ROWS_BEHIND_DOCS, scanRowsBehind, type RowsBehindScan } from '../../../core/persistence/rows-behind.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 const SAMPLES = 10;
 
@@ -31,7 +32,7 @@ async function runRowsBehind(ctx: DoctorContext): Promise<Check[]> {
   try {
     const engine = connectedEngine(ctx);
     const deadlineAt = scanDeadline(ctx, rowsBehindScanTimeoutMs());
-    const ids = doctorSourceIds(ctx) ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const ids = doctorSourceIds(ctx) ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const scans: RowsBehindScan[] = [];
     for (const id of ids) scans.push(await scanRowsBehind(engine, id, { deadlineAt, confirmUnproven: false }));
     const known = scans.filter(scan => scan.status === 'known');

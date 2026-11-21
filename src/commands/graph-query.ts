@@ -17,6 +17,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import type { GraphPath } from '../core/types.ts';
 import { TRAVERSE_PATH_ROW_CAP } from '../core/engine-constants.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult, ignoredRemoteParams } from '../core/mcp-client.ts';
 import { CHAIN_LINK_TYPES, resolveChainAnchors, runRelationalChain, validateChainHops, type ChainDiagnostics, type ChainEvidenceEdge } from '../core/search/relational-chain.ts';
@@ -129,36 +130,12 @@ async function countForeignEdges(
   // For 'out': from_page is root, count where from.source_id != to.source_id.
   // For 'in': to_page is root, count where to.source_id != from.source_id.
   // For 'both': either endpoint can be the root; union the two cases.
-  const sql = direction === 'in'
-    ? `SELECT COUNT(*)::text AS n
-         FROM links l
-         JOIN pages fp ON l.from_page_id = fp.id
-         JOIN pages tp ON l.to_page_id = tp.id
-        WHERE tp.slug = $1 AND tp.source_id = $2
-          AND fp.source_id IS NOT NULL
-          AND fp.source_id <> tp.source_id`
-    : direction === 'both'
-    ? `SELECT COUNT(*)::text AS n
-         FROM links l
-         JOIN pages fp ON l.from_page_id = fp.id
-         JOIN pages tp ON l.to_page_id = tp.id
-        WHERE ((fp.slug = $1 AND fp.source_id = $2) OR (tp.slug = $1 AND tp.source_id = $2))
-          AND fp.source_id IS NOT NULL
-          AND tp.source_id IS NOT NULL
-          AND fp.source_id <> tp.source_id`
-    : `SELECT COUNT(*)::text AS n
-         FROM links l
-         JOIN pages fp ON l.from_page_id = fp.id
-         JOIN pages tp ON l.to_page_id = tp.id
-        WHERE fp.slug = $1 AND fp.source_id = $2
-          AND tp.source_id IS NOT NULL
-          AND fp.source_id <> tp.source_id`;
   try {
-    const rows = await engine.executeRaw<{ n: string }>(sql, [rootSlug, sourceId]);
-    return Number(rows[0]?.n ?? 0);
-  } catch {
-    // Pre-v0.18 brains may not have source_id on pages. Fail-open: no
-    // foreign edges to report.
+    return await engine.countForeignEdges(rootSlug, sourceId, direction);
+  } catch (err) {
+    // A refused capability is never swallowed. Pre-v0.18 brains may not have
+    // source_id on pages. Fail-open: no foreign edges to report.
+    rethrowCapabilityRefusal(err);
     return 0;
   }
 }

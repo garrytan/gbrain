@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 /**
  * #6454: live pages whose stored frontmatter still carries one of the
@@ -13,7 +14,7 @@ import { agentFix, checkError } from '../check-fix.ts';
 export async function staleFrontmatterKeysCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   const docs = 'docs/guides/repair.md#frontmatter-keys';
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const counts = await engine.countStaleFrontmatterKeyPages({ sourceIds: sources });
     const count = counts.reduce((sum, row) => sum + row.n, 0);
     const details = { count, sources: counts, source_ids: counts.map(row => row.source_id), repair: 'frontmatter-keys', docs };

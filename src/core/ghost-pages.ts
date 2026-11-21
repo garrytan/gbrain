@@ -53,6 +53,7 @@ import { publishesDatabaseOnly } from './persistence/page-prepare.ts';
 import { liveFileDrift } from './persistence/drift-conflicts.ts';
 import { isReservedSkillBundlePath } from './skill-reserved-paths.ts';
 import { sharedPackMember } from './shared-skills/knowledge-guard.ts';
+import { sortSourcesById } from './source-rows.ts';
 
 export interface GhostPage { source_id: string; slug: string; path: string; revision: string; page_id: number }
 /** #7736: a live page whose recorded non-Markdown path names no file inside its source; never a ghost, never removed. */
@@ -280,7 +281,7 @@ export async function ghostPageNamed(engine: BrainEngine, sourceId: string, slug
 
 /** Every selected (default: every active) source's ghost count, bounded samples and coverage; the doctor and health reader. */
 export async function readGhostPages(engine: BrainEngine, opts: { sourceIds?: string[]; sampleLimit?: number }): Promise<GhostPagesSummary> {
-  const sourceIds = opts.sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+  const sourceIds = opts.sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
   const scans: GhostSourceScan[] = [];
   for (const sourceId of sourceIds) scans.push(await scanGhostSource(engine, sourceId));
   const unknown = scans.find(scan => scan.status === 'unknown');

@@ -10,13 +10,14 @@ import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
 import { findAtomFenceRows } from '../../../core/repair/atom-fence-rows.ts';
 import { PLAN_STATEMENT_MS } from '../../../core/repair/visibility.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 const DOCS = 'docs/guides/repair.md#atom-fence-rows';
 
 export async function atomFenceRowsCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   const name = 'atom_fence_rows';
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const bySource: Array<{ source_id: string; count: number }> = [];
     let originUnread = 0;
     for (const source of sources) {

@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { classifyAgentSessionFacts } from '../../../core/repair/agent-session-facts.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 
 /**
  * `agent_session_facts` (#8064): active capture-lane facts still attributed to
@@ -13,7 +14,7 @@ import { classifyAgentSessionFacts } from '../../../core/repair/agent-session-fa
 export async function agentSessionFactsCheck(engine: BrainEngine, sourceIds?: string[], opts: { corpusDir?: string | null } = {}): Promise<Check> {
   const name = 'agent_session_facts';
   try {
-    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const sources = sourceIds ?? sortSourcesById(await engine.listAllSources()).map(row => row.id);
     const { candidates, unclassifiable } = await classifyAgentSessionFacts(engine, sources, opts);
     const count = (klass: string) => candidates.filter(c => c.class === klass).length;
     const details = { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded'), unclassifiable,
