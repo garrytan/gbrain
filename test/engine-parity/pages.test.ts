@@ -306,6 +306,95 @@ describe('engine parity: pages', () => {
     };
   });
 
+  // #9823 post-land finding 1: on the Rust engine an age of NaN read as 0 hours and hard-deleted every tombstone, and the
+  // SQL engines clamped a negative age to 0 the same way. Every engine now refuses an age that is NaN, negative or not
+  // finite with the same typed error (PurgeAgeError, code invalid_argument), before it previews or deletes anything.
+  parityTest('purgeDeletedPages refuses an age that is NaN, negative or not finite, and deletes nothing', { methods: ['purgeDeletedPages', 'softDeletePage'] }, async (engine) => {
+    await seed(engine, [['notes/a', NOTE], ['notes/b', NOTE]]);
+    await engine.softDeletePage('notes/a');
+    await engine.softDeletePage('notes/b');
+    const refusals: Array<{ hours: string; dryRun: boolean; name: string; code: unknown }> = [];
+    for (const hours of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, -72, -0.5]) {
+      for (const dryRun of [false, true]) {
+        const error = await engine.purgeDeletedPages(hours, { dryRun }).then(() => null, (e: unknown) => e as Error & { code?: unknown });
+        expect(error).not.toBeNull();
+        refusals.push({ hours: String(hours), dryRun, name: error!.name, code: error!.code });
+      }
+    }
+    expect(refusals.every((r) => r.name === 'PurgeAgeError' && r.code === 'invalid_argument')).toBe(true);
+    const tombstones = await Promise.all(['notes/a', 'notes/b'].map(async (slug) => (await engine.getPage(slug, { includeDeleted: true }))?.slug ?? null));
+    expect(tombstones).toEqual(['notes/a', 'notes/b']);
+    return { refusals, tombstones };
+  });
+
+  // `purgeDeletedPages(0)` takes tombstones strictly older than the statement clock, and PGLite's clock can stamp the
+  // last soft delete with the same instant as the next statement. Waiting a few milliseconds moves the clock past it.
+  const tombstonesSettle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+  // The retirement holds (src/core/persistence/{atom,derived}-retirement-hold.ts). Neither arm can stand a tombstone days
+  // in the past here, so every stamped page is inside its window; the store unit tests in
+  // rust/crates/gbrain-store/src/page_ops.rs cover the windows closing and the atom "still restorable" rules.
+  parityTest(
+    'purgeDeletedPages keeps retired pages inside their hold windows',
+    { methods: ['purgeDeletedPages', 'softDeletePage', 'setConfig'] },
+    async (engine) => {
+      const atom: PageInput = {
+        type: 'atom' as PageInput['type'], title: 'An atom', compiled_truth: 'A claim.', timeline: '',
+        frontmatter: { retired_by: 'managed-reextract', source_slug: 'notes/origin', source_hash: 'pending:h1', retired_at: '2026-01-01' },
+      };
+      await seed(engine, [
+        ['notes/origin', NOTE],
+        ['atoms/held', atom],
+        ['notes/derived', { ...NOTE, frontmatter: { retired_by: 'extract-atoms' } }],
+        ['notes/chronicle', { ...NOTE, frontmatter: { retired_by: 'life-chronicle' } }],
+        ['notes/plain', NOTE],
+        ['notes/other', { ...NOTE, frontmatter: { retired_by: 'someone-else' } }],
+      ]);
+      for (const slug of ['atoms/held', 'notes/derived', 'notes/chronicle', 'notes/plain', 'notes/other']) await engine.softDeletePage(slug);
+      await tombstonesSettle();
+      const dryRuns: Record<string, string[]> = {};
+      for (const restoreDays of ['unset', '3', '365', 'abc', '2']) {
+        if (restoreDays !== 'unset') await engine.setConfig('generations.restore_days', restoreDays);
+        const dry = await engine.purgeDeletedPages(0, { dryRun: true });
+        expect(dry.count).toBe(dry.slugs.length);
+        dryRuns[restoreDays] = dry.slugs;
+      }
+      for (const slugs of Object.values(dryRuns)) expect(sorted(slugs)).toEqual(['notes/other', 'notes/plain']);
+      const real = await engine.purgeDeletedPages(0);
+      const purged = sorted(real.slugs);
+      expect(purged).toEqual(['notes/other', 'notes/plain']);
+      const kept: string[] = [];
+      for (const slug of ['atoms/held', 'notes/derived', 'notes/chronicle', 'notes/origin']) {
+        if (await engine.getPage(slug, { includeDeleted: true })) kept.push(slug);
+      }
+      expect(kept).toEqual(['atoms/held', 'notes/derived', 'notes/chronicle', 'notes/origin']);
+      const again = await engine.purgeDeletedPages(0, { dryRun: true });
+      return { dryRuns: Object.fromEntries(Object.entries(dryRuns).map(([k, v]) => [k, sorted(v)])), purged, count: real.count, kept, again: again.slugs };
+    },
+  );
+
+  parityTest('purgeDeletedPages skips excludeIds and treats an empty list as no filter', { methods: ['purgeDeletedPages', 'softDeletePage'] }, async (engine) => {
+    await seed(engine, [['notes/a', NOTE], ['notes/b', NOTE], ['notes/c', NOTE]]);
+    for (const slug of ['notes/a', 'notes/b', 'notes/c']) await engine.softDeletePage(slug);
+    await tombstonesSettle();
+    const idOf = async (slug: string) => (await engine.getPage(slug, { includeDeleted: true }))!.id;
+    const excludeIds = [await idOf('notes/b'), 987654321];
+    const dry = await engine.purgeDeletedPages(0, { dryRun: true, excludeIds });
+    const dryEmpty = await engine.purgeDeletedPages(0, { dryRun: true, excludeIds: [] });
+    const real = await engine.purgeDeletedPages(0, { excludeIds });
+    expect(sorted(real.slugs)).toEqual(['notes/a', 'notes/c']);
+    const rest = await engine.purgeDeletedPages(0, { excludeIds: [] });
+    expect(rest.slugs).toEqual(['notes/b']);
+    return {
+      dry: sorted(dry.slugs),
+      dryPages: sorted((dry.pages ?? []).map((p) => `${p.source_id}:${p.slug}:${p.deleted_at instanceof Date}`)),
+      dryEmpty: sorted(dryEmpty.slugs),
+      real: sorted(real.slugs),
+      realHasPages: 'pages' in real && real.pages !== undefined,
+      rest: rest.slugs,
+    };
+  });
+
   parityTest('resolveSlugsByPaths maps stored source paths to slugs', { methods: ['resolveSlugsByPaths'] }, async (engine) => {
     await seed(engine, [['notes/a', { ...NOTE, source_path: 'Notes/A File.md' }], ['notes/b', NOTE]]);
     const empty = await engine.resolveSlugsByPaths([], { sourceId: 'default' });

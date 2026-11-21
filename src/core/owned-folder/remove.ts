@@ -38,10 +38,15 @@ async function ownedRecord(engine: Exec, sourceId: string) {
  * Removes the source's folder (removeOwnedFolder), then runs `deleteRow`, both under the source's sync lock, so a
  * sync of an owned-folder source that is still reading Messages cannot commit day files after the folder and the row
  * are gone, even during a first import that has recorded nothing yet. A busy lock refuses with nothing removed. Any
- * other kind of source takes no lock.
+ * other kind of source takes no lock. An apple-contacts source first retires the rows it wrote on person pages, and a
+ * row it cannot retire throws with the row kept.
  */
 export async function removeOwnedFolderThen<T>(engine: BrainEngine, sourceId: string, opts: { keep?: boolean }, deleteRow: () => Promise<T>): Promise<T> {
-  const work = async () => { await removeOwnedFolder(engine, sourceId, opts); return deleteRow(); };
+  const work = async () => {
+    await (await import('../apple-contacts/person-facts.ts')).retirePersonFactsBeforeRemove(engine, sourceId);
+    await removeOwnedFolder(engine, sourceId, opts);
+    return deleteRow();
+  };
   if (!(await ownedSource(engine, sourceId))) return work();
   const { syncLockId, tryAcquireDbLock } = await import('../db-lock.ts');
   const lock = await tryAcquireDbLock(engine, syncLockId(sourceId));

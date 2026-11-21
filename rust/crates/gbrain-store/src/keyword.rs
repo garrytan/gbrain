@@ -50,6 +50,7 @@ mod trgm;
 mod tsearch;
 mod vector_cache;
 
+pub(crate) use filters::served;
 pub use filters::{AfterKey, DateBound, KeywordOptions};
 pub use titles::{TitleAttempt, TitleAttemptKind};
 pub(crate) use titles::{check_page_vector, check_sealed_page_vector};
@@ -66,8 +67,10 @@ pub(crate) fn check_chunk_vector(chunk: &crate::chunks::ChunkRecord) -> crate::e
 #[allow(unused_imports)]
 pub(crate) use tsearch::{
     TsQuery, TsVector, Weight, concat, fts_input, or_of_lexemes, phraseto_tsquery, plainto_tsquery,
-    setweight, to_tsvector, ts_matches, websearch_to_tsquery,
+    setweight, to_tsvector, ts_matches, websearch_to_tsquery, with_query_stack,
 };
+#[cfg(test)]
+pub(crate) use tsearch::{deep_spawns, reset_deep_spawns};
 
 #[allow(unused_imports)]
 pub(crate) use trgm::{

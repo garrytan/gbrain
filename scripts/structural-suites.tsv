@@ -296,6 +296,7 @@ test/pregate-allowlist-cache-keys.test.ts	(file-level)	6	readFileSync
 test/private-visibility.test.ts	shared private predicate lives once (#4352 remediation)	1	readFileSync
 test/purge-root-metafile-7613.test.ts	(file-level)	3	readFileSync
 test/q2-typing-package.test.ts	(file-level)	3	readFileSync
+test/readers-noncanonical.test.ts	the readers_noncanonical fix text says what the rename does and how to check it	4	readFileSync
 test/redos-hardening.test.ts	#1569 --no-schema-pack + heartbeat wiring (structural)	2	readFileSync,source-surface-helper
 test/redos-hardening.test.ts	megawave vm-watchdog removal (bootstrap-verify freeze)	5	readFileSync
 test/register-client-source-normalize.test.ts	register-client route wiring (structural)	1	readFileSync
@@ -383,6 +384,7 @@ test/scripts/require-executed-tests.test.ts	require-executed-tests	9	readFileSyn
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)	8	readFileSync
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync
+test/scripts/sql-move-check.test.ts	sql-move-check: the real engine-sql copies	3	readFileSync
 test/scripts/stable-daily.test.ts	stable-daily.yml	2	readFileSync
 test/scripts/stress-gate.test.ts	docs anchors	1	readFileSync
 test/scripts/stress-gate.test.ts	gate plan	8	readFileSync

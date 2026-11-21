@@ -23,6 +23,12 @@
     "addTimelineEntry#default": {},
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
+    "clearCodeTraversalCache#allSources": {
+      "raw": 1
+    },
+    "clearCodeTraversalCache#sourceId": {
+      "raw": 1
+    },
     "consolidateFact#default": {},
     "countChunklessPagesWithContent#default": {},
     "countChunklessPagesWithContent#sourceId": {},
@@ -127,6 +133,9 @@
     },
     "getChunksWithEmbeddings#default": {},
     "getChunksWithEmbeddings#sourceId+includeUnsealed": {},
+    "getCodeTraversalCache#default": {
+      "raw": 1
+    },
     "getContradictionCacheEntry#default": {},
     "getEdgesByChunk#default": {},
     "getEdgesByChunk#in+edgeType": {},
@@ -230,6 +239,8 @@
     "listFactsKeyset#strictTime": {},
     "listFactsSince#allFilters": {},
     "listFactsSince#default": {},
+    "listFiles#default": {},
+    "listFiles#page_slug": {},
     "listFilesForPage#default": {},
     "listLinkSources#default": {},
     "listLinkSources#sourceId": {},
@@ -292,6 +303,9 @@
     },
     "purgeDeletedPages#default": {},
     "purgeDeletedPages#dryRun": {},
+    "putCodeTraversalCache#default": {
+      "raw": 1
+    },
     "putContradictionCacheEntry#default": {},
     "putPage#blankBody": {
       "raw": 5,

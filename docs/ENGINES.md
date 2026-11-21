@@ -1698,12 +1698,17 @@ when the `rust` config value lands; no config value selects the Rust engine yet.
 addon, and refusing a missing or mismatched one, belong to the loader (below), not the shell.
 
 - **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
-  capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `config`, `sources`, `tags`, `schema`, `keyword_search`, `vector_search`, `embeddings`, `links`, `graph`,
-  `takes`, `salience`, `ingest_log`, `code_edges`, `contradictions`, `dream_verdicts`, `files`, `raw_data`, `facts`, `ontology` and `eval_capture`.
+  capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `schema`, `sources`, `config`, `page_versions`, `tags`, `embeddings`, `keyword_search`, `vector_search`,
+  `links`, `timeline`, `graph`, `facts`, `takes`, `files`, `code_edges`, `salience`, `raw_data`, `eval_capture`,
+  `ingest_log`, `dream_verdicts`, `contradictions` and `ontology`.
   Each member it does not serve refuses `engine_capability_missing` with the capability as `reason` (`raw_sql`,
   `pages`, `search`, ...), the member in `detail`, and `written=nothing`, before any work.
   `src/core/rust-engine/members.ts` maps every member to its capability; the type fails when a new `BrainEngine`
   member is not classified. What each capability still lacks is under "What a Rust brain serves now".
+- **One owner process per brain.** `connect()` takes the kernel lock `<database_path>.gbrain-owner.lock`; its
+  holder opens the store and serves it on `<database_path>/.gbrain-owner.sock` (`ownerRole` `'owner'`). Any other
+  process is a `'client'` that forwards each call; transactions refuse there. Limits and errors:
+  `docs/designs/RUST_ENGINE.md` ("Process model").
 - **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
   embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
   `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
@@ -1723,7 +1728,8 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
 ### What a Rust brain serves now
 
 `connect()` opens the brain directory through the addon's store (`rust/README.md`, "The brain store") and
-`disconnect()` closes it. A second engine on a directory that is open refuses `rust_store_locked`; a directory the
+`disconnect()` closes it. A second engine on an open directory becomes the owner's client; a second direct store
+open refuses `rust_store_locked`; a directory the
 store cannot read refuses `rust_store_unreadable` with its reason (`gbrain errors <code>`). A served member on an engine
 that is not connected refuses `engine_closed`. These members run on the store (`src/core/rust-engine/store-members/`):
 
@@ -1744,12 +1750,12 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   null, null and false: only the sync anchor and source admin SQL write those columns, and neither runs on a Rust brain.
 - Pages: `getPage`, `readPageSnapshot`, `putPage`, `deletePage`, `softDeletePage`, `restorePage`, `listPages`,
   `resolveSlugs`. A stale `expectedRevision` refuses with `PageRevisionConflictError`, as on PGLite.
-- Versions, chunks and timeline: `createVersion`, `getVersions`, `upsertChunks`, `sealChunks`, `getChunks`,
-  `getChunkPage`, `getChunkWindows`, `countChunklessPagesWithContent`, `listChunklessPagesWithContent`,
+- Versions, chunks and timeline: `createVersion`, `getVersions`, `revertToVersion`, `upsertChunks`, `sealChunks`,
+  `getChunks`, `getChunkPage`, `getChunkWindows`, `countChunklessPagesWithContent`, `listChunklessPagesWithContent`,
   `deleteChunks`, `addTimelineEntry`, `addTimelineEntriesBatch`, `getTimeline`, `getTimelineForDate`, `getSince`,
-  `getOnThisDay`, `getLastSeen`. These capabilities stay unreported, because other members of the same capability
-  (`revertToVersion`, `setChunkerVersion`, `upsertEventProjection`, ...) still refuse. Chunk reads are in
-  `rust/docs/store/chunk_queries.md`.
+  `getOnThisDay`, `getLastSeen` and `upsertEventProjection`. `page_versions` and `timeline` are reported. `chunks`
+  stays unreported, because `deleteChunksExcept`, `setChunkerVersion`, `writeTextProjectionSeal`, `moveChunkIndexes` and
+  `getChunkReuseRows` still refuse. Reads: `rust/docs/store/chunk_queries.md` and `timeline_queries.md`.
 - Links and graph: `addLink`, `addLinksBatch`, `removeLink`, `getLinks`, `getBacklinks`, `traverseGraph`,
   `traversePaths`, `traversePathsDetailed`, and the link reads in `rust/docs/store/link_queries.md` (`getBacklinkCounts`,
   `getAdjacencyBoosts`, `relationalFanout`, `findOrphanPages`, `supersedingPageSlugs`, `pagesLinkingTo`, ...). Every
@@ -1769,6 +1775,10 @@ that is not connected refuses `engine_closed`. These members run on the store (`
 - Takes, salience, stats and the ingest log, alias and slug members, and the extraction and page-listing reads:
   `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `takes`,
   `salience` and `ingest_log` capabilities are reported.
+- Facts and ontology claims, page operations, raw data and files, eval capture, dream verdicts, contradiction runs and
+  the code call graph: `rust/docs/store/facts.md`, `ontology.md`, `page_ops.md`, `raw_files.md`, `eval_capture.md`,
+  `dream.md`, `contradictions.md` and `code_edges.md`. The `facts`, `raw_data`, `files`, `eval_capture`,
+  `dream_verdicts`, `contradictions` and `code_edges` capabilities are reported; `pages` is not (`page_ops.md` says why).
 - Keyword and title search: `searchKeyword`, `searchKeywordChunks`, `countKeywordPages`, `searchKeywordPages`,
   `searchTitles` and `findByTitleFuzzy`. They rank with a port of PostgreSQL's `ts_rank`, `ts_rank_cd` and
   `websearch_to_tsquery` (english), so their answers match PGLite's (`rust/docs/store/keyword.md`). Every member of
@@ -1793,6 +1803,8 @@ way PGLite does, refuses `engine_capability_missing` and writes nothing. These a
   not have, so an empty answer would be wrong to give;
 - a `getChunks` or `getChunkPage` over more than one distinct `sourceIds` entry;
 - a vector search with `where`, a date bound, `minTrust` or `suppressFlagged` (`rust/docs/store/vectors.md`);
+- an input of a raw-data, page-operation, salience, facts, ontology, chronicle or code-edge read the store cannot
+  reproduce, including a privacy policy wider than the store's (each `rust/docs/store/*.md` page lists them);
 - a keyword or title search with a CJK query, a text search configuration other than `english`, a truthy
   `requireSafeChunks`, `minTrust` or `suppressFlagged`, a date bound that is not an ISO date, a malformed `where`, or a
   truthy `excludePrivate` on `searchKeywordChunks`, `countKeywordPages` or `searchKeywordPages` (`searchKeyword` and

@@ -36,6 +36,8 @@ const AUDITED: Record<string, Audit> = {
   'src/core/persistence/page-prepare.ts': { calls: { importFromContent: 1 }, disposition: 'held', why: 'put_page, edit_page and capture refuse visibility_not_applied first' },
   'src/core/persistence/sync-prepare.ts': { calls: { importFromContent: 2, screenImportContent: 2 }, disposition: 'held',
     why: 'screenSyncImport screens with the hold first; the two unflagged screens are code files, which carry no frontmatter' },
+  'src/core/rust-engine/owner-ipc/owner-ops.ts': { calls: { importFromContent: 1 }, disposition: 'held',
+    why: 'the owner runs the client\'s own whole import with the client\'s options unchanged, so the client\'s call site holds; test/rust-owner-ipc.test.ts "a whole import carries the client\'s holdNoncanonicalPrivate option to the owner\'s importFromContent unchanged"' },
   'src/core/transcripts/ingest.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 'render.ts writes fixed keys; other keys come from the stored page' },
   'src/core/transcripts/archive.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 'archive-day.ts writes fixed keys; readable_by is the owner (and a verified group) the archive resolves, never source text' },
   'src/core/trust/page-handlers.ts': { calls: { importFromContent: 1 }, disposition: 'derived', why: 'a stored version\'s markdown' },

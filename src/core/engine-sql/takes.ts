@@ -710,3 +710,24 @@ export async function addSynthesisEvidence(exec: SqlExecutor, rowsIn: SynthesisE
     `)).rows;
     return result.length;
   }
+
+
+/** A fence row's identity fields, as a page write compares them with the stored take at the same row number. */
+export interface TakeFenceRow { row_num: number; claim: string; kind: string; holder: string }
+
+/** The page's stored takes a fence's new rows (`$2`) would collide with: the same row number, another claim, kind or holder. */
+export const TAKE_COLLISIONS_SQL = `SELECT k.row_num FROM takes k
+    JOIN jsonb_to_recordset($2::text::jsonb) AS n(row_num integer,claim text,kind text,holder text) ON n.row_num=k.row_num
+    WHERE k.page_id=$1 AND (k.claim,k.kind,k.holder) IS DISTINCT FROM (n.claim,n.kind,n.holder) ORDER BY k.row_num LIMIT $3`;
+
+const DELETE_TAKE_ROWS_SQL = 'DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])';
+
+/** The row numbers of the page's stored takes that differ from the fence row of the same number, ascending, at most `limit` (`BrainEngine.matchTakeRows`). */
+export async function matchTakeRows(exec: LegacyUnscopedRead, pageId: number, rows: readonly TakeFenceRow[], limit: number): Promise<number[]> {
+  return (await exec.executeRaw<{ row_num: number }>(TAKE_COLLISIONS_SQL, [pageId, JSON.stringify(rows), limit])).map(r => Number(r.row_num));
+}
+
+/** Deletes the page's takes at the given row numbers (`BrainEngine.deleteTakeRows`); an empty list deletes nothing. */
+export async function deleteTakeRows(exec: SqlExecutor, pageId: number, rowNums: readonly number[]): Promise<void> {
+  await exec.executeRaw(DELETE_TAKE_ROWS_SQL, [pageId, [...rowNums]]);
+}

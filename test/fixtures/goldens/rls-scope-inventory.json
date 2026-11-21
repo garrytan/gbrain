@@ -133,6 +133,28 @@
         ],
         "flagOnScopes": []
       },
+      "clearCodeTraversalCache#allSources": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "clearCodeTraversalCache#sourceId": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "consolidateFact#default": {
         "flagOffLanes": [
           "pool"
@@ -1026,6 +1048,17 @@
         "flagOnScopes": []
       },
       "getChunksWithEmbeddings#sourceId+includeUnsealed": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "getCodeTraversalCache#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -2100,6 +2133,28 @@
         ],
         "flagOnScopes": []
       },
+      "listFiles#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listFiles#page_slug": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFilesForPage#default": {
         "flagOffLanes": [
           "pool"
@@ -2645,6 +2700,17 @@
         "flagOnScopes": []
       },
       "purgeDeletedPages#dryRun": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "putCodeTraversalCache#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3861,12 +3927,15 @@
         "addTimelineEntry": "none",
         "aliasCanonicalRefs": "none",
         "allocateBodyOccurrenceIds": "none",
+        "applyDecideReviewQueue": "none",
+        "applyDecideSweepDeferred": "none",
         "applyForwardReferenceBootstrap": "none",
         "applyIdentityDecisions": "none",
         "applyTransactionSettings": "none",
         "autocommitSql": "none",
         "batchLoadEmotionalInputs": "none",
         "batchRetry": "none",
+        "clearCodeTraversalCache": "none",
         "connRetry": "none",
         "connect": "none",
         "connectedDatabaseUrl": "none",
@@ -3883,21 +3952,28 @@
         "countUnconsolidatedFacts": "none",
         "createSegmentedPageShell": "none",
         "createVersion": "none",
+        "dailyDecideSpend": "none",
+        "decideConflictNoEntityCounts": "none",
+        "decideRead": "none",
+        "decideSlotUsage": "none",
         "deleteChunks": "none",
         "deleteChunksExcept": "none",
         "deleteCodeEdgesForChunks": "none",
         "deleteCycleLock": "none",
         "deleteCycleLockIfStale": "none",
+        "deleteDecideState": "none",
         "deleteEvalCandidatesBefore": "none",
         "deleteFactsForPage": "none",
         "deletePage": "none",
         "deletePages": "none",
+        "deleteTakeRows": "none",
         "directEngineSql": "none",
         "disconnect": "none",
         "disconnectInternal": "none",
         "discoverOntologyDimensions": "none",
         "engineSql": "none",
         "engineSqlOn": "none",
+        "ensureDecideState": "none",
         "executeRaw": "none",
         "executeRawDirect": "none",
         "expireFact": "none",
@@ -3927,10 +4003,14 @@
         "getChunkWindows": "direct",
         "getChunks": "direct",
         "getChunksWithEmbeddings": "none",
+        "getCodeTraversalCache": "none",
         "getConfig": "none",
         "getConfigValues": "none",
         "getContentFlagsByPageIds": "none",
         "getContradictionCacheEntry": "none",
+        "getDecideCalibration": "none",
+        "getDecideProposal": "none",
+        "getDecideReviewProposal": "none",
         "getDreamVerdict": "none",
         "getEdgesByChunk": "none",
         "getEffectiveDates": "none",
@@ -3962,13 +4042,20 @@
         "getUnverifiedExtractionPageIds": "none",
         "getVersions": "none",
         "hasSupersedeEdges": "none",
+        "hasWithdrawnFenceClaim": "none",
         "holdSchemaMigrationLock": "none",
         "initSchema": "none",
+        "insertDecideCalibration": "none",
+        "insertDecideProposal": "none",
+        "insertDecideReceipts": "none",
+        "insertDecideReviewProposal": "none",
+        "insertDecideSpend": "none",
         "insertFact": "none",
         "insertFacts": "none",
         "insertLocalWriterRow": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
+        "invalidateWithdrawnPages": "none",
         "isFolderRestricted": "none",
         "jitOffRead": "none",
         "keywordBoundedRead": "direct",
@@ -3979,6 +4066,19 @@
         "listChunklessPagesWithContent": "direct",
         "listConfigKeys": "none",
         "listCorpusSample": "direct",
+        "listDecideCalibrations": "none",
+        "listDecideMixedModelDecisions": "none",
+        "listDecideProposalIds": "none",
+        "listDecideProposals": "none",
+        "listDecideProposedPairs": "none",
+        "listDecideReceiptStats": "none",
+        "listDecideReplayReceipts": "none",
+        "listDecideResolvedModels": "none",
+        "listDecideReviewProposalIds": "none",
+        "listDecideReviewProposals": "none",
+        "listDecideSpendBySlot": "none",
+        "listDueDecideReviewQueue": "none",
+        "listDueDecideSweepDeferred": "none",
         "listEmbeddingStateRows": "direct",
         "listEnrichCandidates": "none",
         "listEntityKeyRows": "none",
@@ -3988,12 +4088,14 @@
         "listFactsBySession": "none",
         "listFactsKeyset": "none",
         "listFactsSince": "none",
+        "listFiles": "none",
         "listFilesForPage": "none",
         "listIdentityDecisions": "none",
         "listLinkSources": "direct",
         "listPages": "direct",
         "listPrefixSampledPages": "direct",
         "listRestrictedIdentityMembers": "none",
+        "listSegmentedPages": "none",
         "listSourceLocalPaths": "none",
         "listStaleChunks": "direct",
         "listStaleFrontmatterKeyPages": "direct",
@@ -4004,11 +4106,13 @@
         "livePageIdsAt": "none",
         "loadContradictionsTrend": "none",
         "lockPageKeys": "none",
+        "lockRegisteredSourceIds": "none",
         "logEvalCandidate": "none",
         "logEvalCaptureFailure": "none",
         "logIngest": "none",
         "markPagesAttendanceBlocked": "none",
         "markPagesExtractedBatch": "none",
+        "matchTakeRows": "none",
         "mergeOntologyFact": "none",
         "migrateFactsToCanonical": "none",
         "moveChunkIndexes": "none",
@@ -4018,23 +4122,30 @@
         "pageCollapseFacts": "none",
         "pagesLinkingTo": "none",
         "preparationRead": "none",
+        "pruneDecideReceipts": "none",
         "pruneFrontmatterTags": "none",
         "purgeDeletedPages": "none",
+        "putCodeTraversalCache": "none",
         "putContradictionCacheEntry": "none",
         "putDreamVerdict": "none",
         "putPage": "none",
         "putRawData": "none",
         "readCycleLocks": "none",
+        "readDecideState": "none",
         "readEmbeddingStateCounts": "direct",
+        "readFieldUsageSamples": "none",
         "readLedgerSource": "none",
         "readLocalWriterRow": "none",
         "readManagedModeRows": "none",
         "readManifest": "none",
+        "readPageBodySizes": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
         "readPersistenceBrainId": "none",
+        "readProposalReviewRates": "none",
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",
+        "readStoredBodyBytes": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",
         "reconnect": "none",
@@ -4048,9 +4159,11 @@
         "removeLink": "none",
         "removeLinksByPagesAndSource": "none",
         "removeTag": "none",
+        "removeTimelineRows": "none",
         "replaceDerivedAliases": "none",
         "replaceDerivedLinks": "none",
         "replaceDerivedLinksBatch": "none",
+        "replaceWantedLinkRows": "none",
         "resolveAliases": "none",
         "resolveFactsEmbeddingCast": "none",
         "resolveSlugWithAlias": "none",
@@ -4079,6 +4192,7 @@
         "setBodyStagingState": "none",
         "setChunkerVersion": "none",
         "setConfig": "none",
+        "setDecideCalibrationRetired": "none",
         "setEmotionalWeightBatch": "none",
         "setPageAliases": "none",
         "setPageEmbeddingSignature": "none",
@@ -4089,6 +4203,7 @@
         "stageManifestRows": "none",
         "stageSegmentChunks": "none",
         "stageSegmentTexts": "none",
+        "storeDecideQualification": "none",
         "stripStaleFrontmatterKeys": "none",
         "sumStaleChunkChars": "none",
         "supersedeTake": "none",
@@ -4099,6 +4214,8 @@
         "transaction": "none",
         "transactionDirect": "none",
         "transactionOn": "none",
+        "transitionDecideProposal": "none",
+        "transitionDecideReviewProposal": "none",
         "traverseGraph": "none",
         "traversePaths": "none",
         "traversePathsDetailed": "none",
@@ -4108,7 +4225,9 @@
         "updateSourceConfig": "none",
         "updateTake": "none",
         "updateTakeEmbeddings": "none",
+        "updateTimelineDetails": "none",
         "upsertChunks": "via:_upsertChunksOnce",
+        "upsertDecideState": "none",
         "upsertEventProjection": "none",
         "upsertFile": "none",
         "upsertSegmentDerivations": "none",

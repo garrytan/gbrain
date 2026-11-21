@@ -43,6 +43,11 @@ async function putEvent(engine: BrainEngine, slug: string, effective: string, ev
   }, opts);
 }
 
+/** The page's own timeline rows with their ids, event projections left out (the engine hands them out through getTimeline). */
+async function storedTimelineRows(engine: BrainEngine, slug: string) {
+  return (await engine.getTimeline(slug)).filter((e) => e.summary !== 'Event row').map((e) => ({ id: Number(e.id), date: (e.date as unknown) instanceof Date ? (e.date as unknown as Date).toISOString().slice(0, 10) : String(e.date), source: e.source, summary: e.summary, detail: e.detail }));
+}
+
 /** Depth pages + three events across three days; projections via upsertEventProjection. */
 async function seedChronicle(engine: BrainEngine) {
   await putPlain(engine, 'life/diary/2026-06-18');
@@ -127,6 +132,119 @@ describe('engine parity: timeline entries', () => {
       const alt = (await engine.getTimeline('batch/one', { sourceId: 'alt' })).map((e) => e.summary);
       const two = (await engine.getTimeline('batch/two')).map((e) => e.summary);
       return { first, replay, empty, one, alt, two };
+    },
+  );
+
+  parityTest(
+    'removeTimelineRows deletes only the rows that still match field for field, never an event projection or another page, and reports each deleted date',
+    { methods: ['removeTimelineRows', 'getTimeline', 'addTimelineEntry', 'upsertEventProjection', 'putPage', 'getPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/prune');
+      await putPlain(engine, 'people/prune-other');
+      await putEvent(engine, 'life/events/2026-07-01-001', '2026-07-01T09:00:00Z', { kind: 'meeting' });
+      const pageId = Number((await engine.getPage('people/prune'))!.id);
+      const otherId = Number((await engine.getPage('people/prune-other'))!.id);
+      await engine.addTimelineEntry('people/prune', { date: '2026-01-02', source: 'cal', summary: 'drop me', detail: 'd1' });
+      await engine.addTimelineEntry('people/prune', { date: '2026-02-03', source: 'cal', summary: 'edited since', detail: 'old text' });
+      await engine.addTimelineEntry('people/prune', { date: '2026-03-04', source: 'note', summary: 'dropped but not removed', detail: '' });
+      await engine.addTimelineEntry('people/prune', { date: '2026-04-05', source: 'note', summary: 'null source', detail: 'd4' });
+      await engine.addTimelineEntry('people/prune', { date: '2026-05-06', source: 'note', summary: 'keep me', detail: 'd5' });
+      await engine.addTimelineEntry('people/prune-other', { date: '2026-01-02', source: 'cal', summary: 'other page', detail: 'o1' });
+      await engine.upsertEventProjection({ depthSlug: 'people/prune', eventSlug: 'life/events/2026-07-01-001', date: '2026-07-01', summary: 'Event row', detail: 'e1' });
+      const stored = async (slug: string) => await storedTimelineRows(engine, slug);
+      const idOf = async (slug: string, summary: string) => (await stored(slug)).find((r) => r.summary === summary)!.id;
+      const event = (await engine.getTimeline('people/prune')).find((e) => e.summary === 'Event row')!;
+      const row = async (summary: string, over: Record<string, unknown> = {}) => {
+        const found = (await stored('people/prune')).find((r) => r.summary === summary)!;
+        return { id: found.id, date: found.date, source: found.source, summary: found.summary, detail: found.detail ?? '', removed: false, ...over };
+      };
+      const attempt = await engine.removeTimelineRows(pageId, [
+        await row('drop me', { removed: true }),
+        await row('edited since', { detail: 'older text', removed: true }),
+        await row('dropped but not removed'),
+        await row('null source', { source: null }),
+        { id: Number(event.id), date: '2026-07-01', source: event.source, summary: 'Event row', detail: 'e1', removed: true },
+        { id: await idOf('people/prune-other', 'other page'), date: '2026-01-02', source: 'cal', summary: 'other page', detail: 'o1', removed: true },
+        { id: 987654, date: '2026-01-02', source: 'cal', summary: 'never stored', detail: '', removed: true },
+      ] as never);
+      const left = async () => ({
+        rows: (await stored('people/prune')).map((r) => r.summary).sort(),
+        other: (await stored('people/prune-other')).map((r) => r.summary),
+        event: (await engine.getTimeline('people/prune')).filter((e) => e.summary === 'Event row').length,
+      });
+      const afterAttempt = await left();
+      const none = await engine.removeTimelineRows(pageId, []);
+      const wrongPage = await engine.removeTimelineRows(otherId, [await row('keep me', { removed: true })]);
+      // A removed row frees its dedup slot: the same entry can be added again.
+      const readded = await engine.addTimelineEntry('people/prune', { date: '2026-01-02', source: 'cal', summary: 'drop me', detail: 'd1' });
+      const duplicated = await engine.removeTimelineRows(pageId, [await row('keep me', { removed: true }), await row('keep me', { removed: true })]);
+      // DELETE ... RETURNING has no row order: compare the returned rows in a fixed order.
+      const answers = { attempt: [...attempt].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))), afterAttempt, none, wrongPage, readded, duplicated, final: await left() };
+      expect(attempt.map((r) => r.date).sort()).toEqual(['2026-01-02', '2026-03-04']);
+      expect(afterAttempt.event).toBe(1);
+      expect(duplicated).toHaveLength(1);
+      return answers;
+    },
+  );
+
+  parityTest(
+    'removeTimelineRows reads dates as dates and keeps the page order of the deleted rows',
+    { methods: ['removeTimelineRows', 'getTimeline', 'addTimelineEntry', 'putPage', 'getPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/prune-dates');
+      const pageId = Number((await engine.getPage('people/prune-dates'))!.id);
+      for (const [date, summary] of [['2026-09-03', 'c'], ['2026-09-01', 'a'], ['2026-09-02', 'b']]) {
+        await engine.addTimelineEntry('people/prune-dates', { date: date!, source: 's', summary: summary!, detail: summary! });
+      }
+      const rows = await storedTimelineRows(engine, 'people/prune-dates');
+      const byId = [...rows].sort((x, y) => x.id - y.id);
+      // The recordset gives the date as another spelling Postgres casts to the same day, and names the rows out of order.
+      const asks = [byId[2]!, byId[0]!, byId[1]!].map((r) => ({ id: r.id, date: r.date.replace(/-/g, '/'), source: r.source, summary: r.summary, detail: r.detail ?? '', removed: r.summary !== 'b' }));
+      const removed = await engine.removeTimelineRows(pageId, asks);
+      const left = (await storedTimelineRows(engine, 'people/prune-dates')).length;
+      expect(left).toBe(0);
+      return { removed: removed.map((r) => `${r.date}:${r.removed}`).sort(), left };
+    },
+  );
+
+  parityTest(
+    'updateTimelineDetails rewrites a detail only while the stored one is still the preimage, on the page own rows',
+    { methods: ['updateTimelineDetails', 'getTimeline', 'addTimelineEntry', 'upsertEventProjection', 'putPage', 'getPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/refresh');
+      await putPlain(engine, 'people/refresh-other');
+      await putEvent(engine, 'life/events/2026-07-02-001', '2026-07-02T09:00:00Z', { kind: 'meeting' });
+      const pageId = Number((await engine.getPage('people/refresh'))!.id);
+      for (const [summary, detail] of [['refresh me', 'before'], ['edited since', 'changed'], ['same text', 'same'], ['clear me', 'to clear'], ['first of two', 'twin']]) {
+        await engine.addTimelineEntry('people/refresh', { date: '2026-02-03', source: 'cal', summary: summary!, detail: detail! });
+      }
+      await engine.addTimelineEntry('people/refresh-other', { date: '2026-02-03', source: 'cal', summary: 'other page', detail: 'before' });
+      await engine.upsertEventProjection({ depthSlug: 'people/refresh', eventSlug: 'life/events/2026-07-02-001', date: '2026-07-02', summary: 'Event row', detail: 'before' });
+      const stored = async (slug: string) => storedTimelineRows(engine, slug);
+      const idOf = async (slug: string, summary: string) => (await stored(slug)).find((r) => r.summary === summary)!.id;
+      const event = (await engine.getTimeline('people/refresh')).find((e) => e.summary === 'Event row')!;
+      await engine.updateTimelineDetails(pageId, [
+        { id: await idOf('people/refresh', 'refresh me'), detail: 'before', next: 'after' },
+        { id: await idOf('people/refresh', 'edited since'), detail: 'earlier text', next: 'never written' },
+        { id: await idOf('people/refresh', 'same text'), detail: 'same', next: 'same' },
+        { id: await idOf('people/refresh', 'first of two'), detail: 'twin', next: 'first answer' },
+        { id: await idOf('people/refresh', 'first of two'), detail: 'twin', next: 'first answer' },
+        { id: await idOf('people/refresh-other', 'other page'), detail: 'before', next: 'moved' },
+        { id: Number(event.id), detail: 'before', next: 'moved' },
+        { id: 987654, detail: 'before', next: 'moved' },
+      ]);
+      await engine.updateTimelineDetails(pageId, []);
+      const details = async (slug: string) => (await stored(slug)).map((r) => `${r.summary}=${r.detail}`).sort();
+      const answers = {
+        own: await details('people/refresh'), other: await details('people/refresh-other'),
+        event: (await engine.getTimeline('people/refresh')).filter((e) => e.summary === 'Event row').map((e) => e.detail),
+      };
+      // A refresh that writes the same detail twice in one call, and the entry stays findable by date.
+      expect(answers.own).toContain('refresh me=after');
+      expect(answers.own).toContain('edited since=changed');
+      expect(answers.event).toEqual(['before']);
+      expect(answers.other).toEqual(['other page=before']);
+      return answers;
     },
   );
 });
@@ -318,6 +436,57 @@ describe('engine parity: ontology', () => {
       expect(defaultOnly.find((d) => d.dimension === 'role')?.entities).toBe(2);
       expect(missing).toEqual([]);
       return { all, defaultOnly, federated, missing };
+    },
+  );
+
+  parityTest(
+    'getOntology and findOntologyConflicts drop rows whose provenance or entity page excludePrivate hides',
+    { methods: ['putPage', 'mergeOntologyFact', 'getOntology', 'findOntologyConflicts'] },
+    async (engine) => {
+      const pages: Array<[string, string, Record<string, unknown>]> = [
+        ['notes/open', 'note', {}],
+        ['notes/private', 'note', { visibility: 'private' }],
+        ['notes/readers', 'note', { readable_by: ['alice-example'] }],
+        ['notes/alias', 'note', { confidentiality: ' Secret\t' }],
+        ['atoms/origin-private', 'atom', { visibility: 'world', source_slug: 'notes/private' }],
+        ['notes/lineage', 'note', { derived_from: 'notes/open.md' }],
+        ['people/hidden-entity', 'person', { visibility: 'private' }],
+      ];
+      for (const [slug, type, frontmatter] of pages) {
+        await engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `About ${slug}.`, timeline: '', frontmatter });
+      }
+      const merge = (entitySlug: string, dimension: string, value: string, source: string, validFrom: string) =>
+        engine.mergeOntologyFact({ entitySlug, dimension, value, source, validFrom, visibility: 'world' });
+      // The newest role is on a private page; the read under excludePrivate falls back to the older visible one.
+      await merge(SARAH, 'role', 'founder', 'notes/private', '2024-06-01');
+      await merge(SARAH, 'role', 'advisor', 'notes/open', '2024-01-01');
+      await merge(SARAH, 'employer', 'Acme', 'notes/readers', '2025-01-01');
+      await merge(SARAH, 'location', 'SF', 'notes/alias', '2025-01-01');
+      await merge(SARAH, 'expertise', 'fintech', 'atoms/origin-private', '2025-01-01');
+      await merge(SARAH, 'relation', 'friend', 'notes/open', '2025-01-01');
+      await merge('people/hidden-entity', 'role', 'cto', 'notes/open', '2025-01-01');
+      const bob = 'people/bob-jones';
+      await merge(bob, 'role', 'advisor', 'notes/open', '2026-05-01');
+      await merge(bob, 'role', 'founder', 'notes/private', '2026-01-01');
+      await merge(bob, 'employer', 'Acme', 'notes/open', '2026-05-01');
+      await merge(bob, 'employer', 'Widget', 'notes/readers', '2026-01-01');
+      await merge(bob, 'expertise', 'search', 'notes/open', '2026-05-01');
+      await merge(bob, 'expertise', 'ranking', 'atoms/origin-private', '2026-01-01');
+      await merge(bob, 'location', 'NYC', 'notes/open', '2026-05-01');
+      await merge(bob, 'location', 'LA', 'notes/alias', '2026-01-01');
+      await merge(bob, 'relation', 'peer', 'notes/open', '2026-05-01');
+      await merge(bob, 'relation', 'mentor', 'notes/lineage', '2026-01-01');
+      const all = values(await engine.getOntology(SARAH));
+      const kept = values(await engine.getOntology(SARAH, { excludePrivate: true }));
+      const hiddenEntity = values(await engine.getOntology('people/hidden-entity', { excludePrivate: true }));
+      const conflicts = conflictView(await engine.findOntologyConflicts());
+      const conflictsKept = conflictView(await engine.findOntologyConflicts({ excludePrivate: true }));
+      expect(all.map((r) => `${r.dimension}=${r.value}`)).toEqual(['employer=Acme', 'expertise=fintech', 'location=SF', 'relation=friend', 'role=founder']);
+      expect(kept.map((r) => `${r.dimension}=${r.value}`)).toEqual(['relation=friend', 'role=advisor']);
+      expect(hiddenEntity).toEqual([]);
+      expect(conflicts.map((c) => c.dimension)).toEqual(['employer', 'expertise', 'location', 'relation', 'role', 'role']);
+      expect(conflictsKept.map((c) => c.dimension)).toEqual(['relation']);
+      return { all, kept, hiddenEntity, conflicts, conflictsKept };
     },
   );
 });

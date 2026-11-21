@@ -34,7 +34,7 @@ const POLICY_ALIASES = { p: 'p', pf: 'pf', pt: 'pt', origin: 'origin' } as const
 const SOURCE_COLUMNS = { p: 'p.source_id', pf: 'pf.source_id', pt: 'pt.source_id', origin: 'origin.source_id' } as const;
 
 /** `pageReadFilter(alias, scope, params, live)` as a fragment: the source clause is bound, the rest is master's text. */
-function readFilter(alias: keyof typeof POLICY_ALIASES, scope: PageReadScope | undefined, live: boolean): SqlFragment {
+export function readFilter(alias: keyof typeof POLICY_ALIASES, scope: PageReadScope | undefined, live: boolean): SqlFragment {
   const rest = pageReadFilter(POLICY_ALIASES[alias], scope ? { ...scope, sourceId: undefined, sourceIds: undefined } : undefined, [], live);
   const column = trustedSql(SOURCE_COLUMNS[alias]);
   const source = scope?.sourceIds?.length
@@ -44,7 +44,8 @@ function readFilter(alias: keyof typeof POLICY_ALIASES, scope: PageReadScope | u
   return rest === 'TRUE' ? source : sqlFragment`${source} AND ${trustedSql(rest)}`;
 }
 
-async function rows<R>(exec: LegacyUnscopedRead, fragment: SqlFragment): Promise<R[]> {
+/** Render `fragment` and run it on the unscoped raw path. */
+export async function rows<R>(exec: LegacyUnscopedRead, fragment: SqlFragment): Promise<R[]> {
   const { text, params } = renderFragment(fragment);
   return exec.executeRaw<R>(text, params);
 }

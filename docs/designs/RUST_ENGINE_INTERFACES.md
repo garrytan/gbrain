@@ -381,7 +381,7 @@ family's records keyed by source, not by page; records under a page go through t
 
 ```rust
 // In facts.rs (full paths, so the file needs no import line):
-pub(crate) fn rename_slug_rows(tx: &mut dyn KvWrite, source_id: &str, old_slug: &str, new_slug: &str) -> Result<()>;
+pub(crate) fn move_slug_rows(tx: &mut dyn KvWrite, source_id: &str, old_slug: &str, new_slug: &str) -> Result<()>;
 ```
 
 Records keyed by a page's `(source, slug)` rather than its id do not follow a rename by themselves. PGLite's
@@ -712,7 +712,7 @@ example `families/timeline.rs` and `store-members/timeline.ts`) for the details.
 
 ### page_ops
 
-Batch page reads and writes the pages capability still refuses.
+Batch page reads and writes of the `pages` and `page_versions` capabilities (served; `pages` stays unreported while its other members refuse).
 
 - **Files:** `gbrain-store/src/page_ops.rs`, `gbrain-napi/src/families/page_ops.rs`, `store-members/page-ops.ts`.
 - **Tag:** `p` (`PAGE_OPS`). Cascade on page delete: no.
@@ -813,7 +813,7 @@ Facts and their supersession chains.
 - **Store and binding:** `insertFact` (`insert_fact`), `insertFacts` (`insert_facts`), `deleteFactsForPage` (`delete_facts_for_page`), `expireFact` (`expire_fact`), `listFactsByEntity` (`list_facts_by_entity`), `listFactsSince` (`list_facts_since`), `listFactsKeyset` (`list_facts_keyset`), `listFactsBySession` (`list_facts_by_session`), `listSupersessions` (`list_supersessions`), `countUnconsolidatedFacts` (`count_unconsolidated_facts`), `findCandidateDuplicates` (`find_candidate_duplicates`), `consolidateFact` (`consolidate_fact`), `findTrajectory` (`find_trajectory`), `getFactsHealth` (`get_facts_health`), `migrateFactsToCanonical` (`migrate_facts_to_canonical`).
 - **Postgres tables:** `facts` (also the rows ontology reads; `superseded_by` is SET NULL on delete).
 - **Keys:** `F 0x01 <fact id>` row; indexes under `F 0x02 <source> 0x00 <entity> 0x00 <valid_from us> <id>`, `F 0x03 <source> 0x00 <session> ...`, `F 0x04 <source> <created_at us> <id>` (keyset), `F 0x05 <source> 0x00 <source_markdown_slug> 0x00 <row_num>` (fence key, unique). `M next_fact_id`. Offer `pub(crate)` row reads and writes to the ontology family.
-- **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding needs core vectors (built); the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
+- **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding needs core vectors (built); the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: `cascade::rename_slug_rows` calls `facts::move_slug_rows` ("Rename slug rows").
 - **Estimate:** about 4 days.
 - **Notes:** `listFactsKeyset` cursors are microsecond ISO text; `grep` is ILIKE with wildcards treated literally. `migrateFactsToCanonical` rewrites `entity_slug`, `source_markdown_slug` and `row_num` only.
 - **Parity cases (22, in `facts.test.ts`, `sync-aliases.test.ts`):**

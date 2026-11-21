@@ -47,6 +47,7 @@
   "test/engine-parity/chunk-vector-overflow.test.ts": 7264,
   "test/engine-parity/page-vector-flip.test.ts": 7249,
   "test/engine-parity/page-vector-overflow.test.ts": 7373,
+  "test/engine-parity/private-page-reads.test.ts": 11000,
   "test/engine-parity/reads-privacy.test.ts": 62000,
   "test/engine-parity/search-deep-query.test.ts": 5462,
   "test/engine-parity/search-privacy-retention.test.ts": 7755,

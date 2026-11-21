@@ -4,10 +4,10 @@
  * shell does what the shared SQL does before its statement runs (window boundary, limit clamp, briefings rule, recency
  * map), so both engines rank the same pages.
  *
- * Read policy: source scope and `takesHoldersAllowList` are honoured. On getSalienceScores `excludePrivate` is served as
- * the page policy `pageReadFilter` adds (private-provenance.ts `storePagePolicy`, which refuses a caller whose policy is
- * wider than the store's); on getRecentSalience it refuses. On getSalienceScores a trust floor or flag suppression
- * refuses too, as its SQL reads them; getRecentSalience's SQL never reads them, so they change nothing there.
+ * Read policy: source scope and `takesHoldersAllowList` are honoured. `excludePrivate` is served as the page policy
+ * `pageReadFilter` adds (private-provenance.ts `storePagePolicy`, which refuses a caller whose policy is wider than the
+ * store's). On getSalienceScores a trust floor or flag suppression refuses, as its SQL reads them; getRecentSalience's
+ * SQL never reads them, so they change nothing there.
  * getSalienceScores also accepts the rest of hybrid search's post-fusion option bag (`HYBRID_BAG_KEYS`), which its SQL
  * never reads; refusing it would make the post-fusion stage skip the salience boost.
  */
@@ -62,8 +62,9 @@ type RecentRow = Omit<SalienceResult, 'updated_at'> & { updated_at: string };
 
 export const getRecentSalience: StoreMember<[opts: SalienceOpts], SalienceResult[]> = async (brain, opts) => {
   const o = takeOptions('getRecentSalience', opts,
-    ['sourceId', 'sourceIds', 'days', 'limit', 'slugPrefix', 'recency_bias', 'takesHoldersAllowList'],
+    ['sourceId', 'sourceIds', 'days', 'limit', 'slugPrefix', 'recency_bias', 'takesHoldersAllowList', 'excludePrivate'],
     ['minTrust', 'suppressFlagged', 'requireSafeChunks']);
+  const excludePrivate = storePagePolicy('getRecentSalience', o.excludePrivate);
   const days = Math.max(0, (o.days as number | undefined) ?? 14);
   const limit = clampSearchLimit(o.limit as number | undefined, 20, 100);
   const slugPrefix = o.slugPrefix as string | undefined;
@@ -80,6 +81,7 @@ export const getRecentSalience: StoreMember<[opts: SalienceOpts], SalienceResult
     recency: bias === 'on'
       ? recency(resolveRecencyDecayMap(), DEFAULT_FALLBACK, true)
       : recency({}, { halflifeDays: 1, coefficient: 1.0 }, false),
+    ...(excludePrivate ? { exclude_private: excludePrivate } : {}),
   }))) as RecentRow[];
   return rows.map((r) => ({ ...r, updated_at: new Date(r.updated_at) }));
 };

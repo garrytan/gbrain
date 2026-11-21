@@ -3,6 +3,7 @@
 # class: primitive | engine | canonical | pending:inventory (a derived or mixed writer each later GBRA-161 PR reviews onto the generation primitive).
 src/commands/sync/deletes.ts	1	canonical	sync deletes a page whose canonical file was removed
 src/core/company-brain/profile.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
+src/core/connectors/api-source.ts	1	canonical	connector delete applies an upstream deletion of a connected item (apple-contacts: soft delete, restorable)
 src/core/cycle/phantom-redirect.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
 src/core/engine-sql/pages.ts	5	engine	the shared soft-delete SQL both engines delegate to
 src/core/engine.ts	3	engine	BrainEngine interface declarations of softDeletePage/softDeletePages
@@ -24,6 +25,7 @@ src/core/pglite-engine.ts	4	engine	PGLite engine soft-delete methods
 src/core/postgres-engine.ts	4	engine	Postgres engine soft-delete methods
 src/core/repair/ghost-pages.ts	1	canonical	repair ghost-pages soft-deletes a live page whose canonical file is gone, after operator agreement
 src/core/repair/rename-identity.ts	2	canonical	repair rename-identity closes the old page of a rename pair, after operator agreement
+src/core/rust-engine/store-members/page-ops.ts	1	engine	the Rust engine's softDeletePages member forwards one batch soft delete to the store
 src/core/rust-engine/store-members/pages.ts	1	engine	the Rust engine's softDeletePage member forwards one soft delete to the store
 src/core/schema-pack/page-to-alias.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR
 src/core/schema-pack/page-to-link.ts	1	pending:inventory	derived or mixed writer not yet on the generation primitive; reviewed in a later GBRA-161 PR

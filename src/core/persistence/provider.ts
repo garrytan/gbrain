@@ -12,6 +12,7 @@ import { LOCAL_CLI_OWNER_OPERATIONS, PERSISTENCE_ROOM_MARKED_KEY, restoreRecover
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { runPersistenceAdministration } from './administration.ts';
 import { boundedWriteWaitMs } from './write-wait.ts';
+import { sourceNamedByCheckout } from './unsourced-put-fork.ts';
 export { residentPersistenceConfig } from './local-client.ts';
 import { startProjectionStatusCache } from '../page-state/projection-status.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
@@ -82,13 +83,15 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     }
     const localCliLocalOnly = !verified.remote && verified.principal.kind === 'local_cli' && LOCAL_CLI_LOCAL_ONLY_OPS.has(request.operation);
     const writeWaitMs = boundedWriteWaitMs(request.write_wait_ms);
+    const unsourcedLocal = request.routing.source === null && !verified.remote;
     const result = await dispatchToolCall(engine, request.operation, params, {
       // #6696 (A5): a verified local registration is the user's CLI or agent, as on the in-process entry points.
       admissionOrigin: 'interactive', pendingAsError: true,
       config, remote: verified.remote, transport: verified.remote || localSkillAdministration || localCliLocalOnly ? 'stdio' : undefined, sourceId, auth,
       ...(writeWaitMs !== undefined ? { writeWaitMs } : {}),
       ...(unrestricted ? {} : { localFederatedSourceIds: verified.grant.sourceIds }),
-      ...(request.routing.source === null && !verified.remote ? { localSourceImplicit: true } : {}),
+      ...(unsourcedLocal ? { localSourceImplicit: true } : {}),
+      ...(unsourcedLocal && await sourceNamedByCheckout(engine, request.operation, request.routing.cwd, sourceId) ? { localSourceFromCheckout: true } : {}),
     });
     const body = JSON.parse(result.content[0].text) as Record<string, unknown>;
     // GBRA-498: the trusted local CLI's --room is marked here, where the brain is; any other lane's answer goes back

@@ -241,6 +241,7 @@ or a physical projection that leaves attribution untouched):
 - `src/commands/sync/rename-collision.ts` (2): the legacy sync rename (`updateSlug`, and the tombstone re-key when the destination slug is a soft-deleted row, #5431) runs with its `source_path` repair in one `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
 - `src/core/calibration/undo-wave.ts` (1): the calibration wave undo of take resolutions runs in `maintenanceTransaction`.
 - `src/core/company-brain/profile.ts` (1): legacy sync soft deletes (`softDeleteSyncPages`) run in `maintenanceTransaction`, inside the company-brain source check when one is active.
+- `src/core/connectors/api-source.ts` (1): an unmanaged connector's soft delete of a page whose item was deleted upstream (Apple Contacts) runs in `maintenanceTransaction`; managed sources delete through `ManagedConnectorSync`.
 - `src/core/cycle/dream-provenance.ts` (1): the dream provenance frontmatter stamp runs per page in `maintenanceTransaction`, or `derivedMaintenanceTransaction` at the child's derived tier when the ref carries its taint (unmanaged brains only; managed synthesis publishes through maintenance requests).
 - `src/core/cycle/extract-facts.ts` (6): the unmanaged page reconcile and the expiry of fence facts whose page was soft-deleted run in `maintenanceTransaction`; managed brains publish `managed_maintenance_fence_facts` and `managed_maintenance_deleted_page_facts_expire` requests whose preparers write inside the coordinator publication. Both reconcile paths write at the page's tier and gate new rows.
 - `src/core/cycle/extract-takes.ts` (1): one projected-takes writer stamps each page's tier and runs the write gate: inside a receipted `managed_maintenance_takes_reextract` request per changed page on managed brains, one `maintenanceTransaction` per page tier for the unmanaged batch upsert.
@@ -286,6 +287,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/page-state/versions.ts` (3): `createVersion` itself, its segmented-page twin and the pruned-history marks (`successor_pruned`, `version_history_gap_at`); the caller's scope supplies the actor.
 - `src/core/persistence/canonical-projections.ts` (8): fence projection inside the request's publication.
 - `src/core/persistence/change-reason.ts` (1): stamps a page write's `reason` on the snapshot its publication archived, inside that request's publication apply.
+- `src/core/persistence/connector-fact-retirement.ts` (1): the `retire_connector_facts` preparer expires a connector's own facts rows inside the page's coordinated publication.
 - `src/core/persistence/connector-google-receipts.ts` (2): request preparer.
 - `src/core/persistence/connector-sync.ts` (2): connector publication inside `withCoordinatedWrite`.
 - `src/core/persistence/derived-facts.ts` (1): the gated conversation fact insert (`insertDerivedFacts`) on unmanaged brains, in `writeDerivedFacts`' `maintenanceTransaction` at the page's derived tier.

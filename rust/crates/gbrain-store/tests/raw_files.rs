@@ -196,6 +196,48 @@ fn raw_data_scopes_by_source_and_follows_soft_delete() {
 }
 
 #[test]
+fn raw_data_comes_in_sql_order_and_a_repeated_source_reads_once() {
+    let dir = TempDir::new("raw-order");
+    let store = open(&dir);
+    add_source(&store, "aaa");
+    add_source(&store, "other");
+    for (source, who) in [("default", "d"), ("other", "o"), ("aaa", "a")] {
+        put(&store, source, "notes/shared");
+        for feed in ["zfeed", "afeed"] {
+            store
+                .put_raw_data(
+                    "notes/shared",
+                    Some(feed),
+                    Some(&format!(r#"{{"who":"{who}-{feed}"}}"#)),
+                    Some(source),
+                )
+                .unwrap();
+        }
+    }
+    let who = |rows: Vec<Value>| -> Vec<String> {
+        rows.iter()
+            .map(|r| r["data"]["who"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    // Page source byte-wise, then raw-data source byte-wise; `default` is not put first.
+    let all = vec![
+        "a-afeed", "a-zfeed", "d-afeed", "d-zfeed", "o-afeed", "o-zfeed",
+    ];
+    assert_eq!(
+        who(store
+            .get_raw_data("notes/shared", None, &RawDataScope::default())
+            .unwrap()),
+        all
+    );
+    // The scope list is a set: order and repeats do not change the rows.
+    let listed = scope(json!({"sourceIds": ["other", "default", "other", "default"]}));
+    assert_eq!(
+        who(store.get_raw_data("notes/shared", None, &listed).unwrap()),
+        vec!["d-afeed", "d-zfeed", "o-afeed", "o-zfeed"]
+    );
+}
+
+#[test]
 fn raw_data_refusals_match_pglite() {
     let dir = TempDir::new("raw-refuse");
     let store = open(&dir);

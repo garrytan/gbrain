@@ -12,24 +12,27 @@ public struct RouterSettings {
     public let enabled: () -> Set<String>
     public let version: String
     public let send: SendService?
+    public let writer: ContactsWriter?
 
-    public init(listener: Listener, grants: [TokenGrant], sources: [SourceModule], enabled: Set<String>, version: String, send: SendService? = nil) {
-        self.init(listener: listener, liveGrants: { grants }, liveEnabled: { enabled }, sources: sources, version: version, send: send)
+    public init(listener: Listener, grants: [TokenGrant], sources: [SourceModule], enabled: Set<String>, version: String, send: SendService? = nil,
+                writer: ContactsWriter? = nil) {
+        self.init(listener: listener, liveGrants: { grants }, liveEnabled: { enabled }, sources: sources, version: version, send: send, writer: writer)
     }
 
     public init(listener: Listener, liveGrants: @escaping () -> [TokenGrant], sources: [SourceModule], enabled: Set<String>, version: String,
-                send: SendService? = nil) {
-        self.init(listener: listener, liveGrants: liveGrants, liveEnabled: { enabled }, sources: sources, version: version, send: send)
+                send: SendService? = nil, writer: ContactsWriter? = nil) {
+        self.init(listener: listener, liveGrants: liveGrants, liveEnabled: { enabled }, sources: sources, version: version, send: send, writer: writer)
     }
 
     public init(listener: Listener, liveGrants: @escaping () -> [TokenGrant], liveEnabled: @escaping () -> Set<String>, sources: [SourceModule],
-                version: String, send: SendService? = nil) {
+                version: String, send: SendService? = nil, writer: ContactsWriter? = nil) {
         self.listener = listener
         self.grants = liveGrants
         self.sources = sources
         self.enabled = liveEnabled
         self.version = version
         self.send = send
+        self.writer = writer
     }
 }
 
@@ -71,14 +74,15 @@ public final class Router {
     public func bodyLimit(path: String) -> Int? {
         switch path {
         case SendSignature.route: return 32 * 1024
-        case SendService.adminRoute, ContactsSource.adminRoute: return 8 * 1024
+        case SendService.adminRoute, ContactsSource.adminRoute, ContactsWriter.adminRoute: return 8 * 1024
+        case ContactsWriter.route: return ContactsWriter.bodyLimit
         default: return nil
         }
     }
 
     public func handle(_ request: HTTPRequest, peer: UInt32, port: UInt16, requestId: String) -> Routed {
         let source = settings.sources.first { $0.routes.contains(request.path) }
-        let posts = [SendSignature.route, SendService.adminRoute, ContactsSource.adminRoute]
+        let posts = [SendSignature.route, SendService.adminRoute, ContactsSource.adminRoute, ContactsWriter.route, ContactsWriter.adminRoute]
         let known = request.path == "/health" || request.path == "/v1/sources" || source != nil || posts.contains(request.path)
         let route = known ? request.path : "unknown"
         func fail(_ problem: Problem) -> Routed {
@@ -96,6 +100,11 @@ public final class Router {
                 guard request.method == "POST" else { return fail(.methodNotAllowed) }
                 return reply(send.handle(request, peer: peer))
             }
+            if request.path == ContactsWriter.route, let writer = settings.writer {
+                guard request.headers["origin"] == nil else { return fail(.forbiddenOrigin) }
+                guard request.method == "POST" else { return fail(.methodNotAllowed) }
+                return reply(writer.handle(request, grants: settings.grants()))
+            }
             guard let source, Self.tailnetReads.contains(request.path) else { return fail(.notFound) }
             guard request.headers["origin"] == nil else { return fail(.forbiddenOrigin) }
             guard request.method == "GET" else { return fail(.methodNotAllowed) }
@@ -109,6 +118,11 @@ public final class Router {
             guard let send = settings.send else { return fail(.notFound) }
             guard request.method == "POST" else { return fail(.methodNotAllowed) }
             return reply(send.admin(request))
+        }
+        if request.path == ContactsWriter.route || request.path == ContactsWriter.adminRoute {
+            guard let writer = settings.writer else { return fail(.notFound) }
+            guard request.method == "POST" else { return fail(.methodNotAllowed) }
+            return reply(request.path == ContactsWriter.route ? writer.handle(request, grants: settings.grants()) : writer.admin(request))
         }
         if request.path == ContactsSource.adminRoute {
             guard let contacts = settings.sources.lazy.compactMap({ $0 as? ContactsSource }).first else { return fail(.notFound) }

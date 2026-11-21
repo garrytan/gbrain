@@ -1,7 +1,7 @@
-//! Timeline reads by date (the Life Chronicle reads).
+//! Timeline reads by date (the Life Chronicle reads) and event projections.
 //!
-//! Store methods for getTimelineForDate, getSince, getOnThisDay and getLastSeen.
-//! upsertEventProjection has no method yet: it waits on the core timeline write helpers.
+//! Store methods for getTimelineForDate, getSince, getOnThisDay, getLastSeen and
+//! upsertEventProjection.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -68,6 +68,19 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.get_last_seen(&entity_slug, &arg(options, "getLastSeen options")?)
+        })
+    }
+
+    /// `upsertEventProjection({ depthSlug, eventSlug, date, summary, detail?, sourceId? })`:
+    /// `{ projected }`.
+    #[napi]
+    pub fn upsert_event_projection<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.upsert_event_projection(&arg(Some(input), "upsertEventProjection options")?)
         })
     }
 }

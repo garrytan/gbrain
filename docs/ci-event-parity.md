@@ -54,6 +54,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `osv-scanner.yml` | Pull requests scan only on a manifest change | Named exception | Weekly OSV schedule; `dependency-audit` on every PR |
 | `nightly-watch.yml` | `workflow_run` event guard | Not a test scope: it files issues from qualifying scheduled and push-to-master runs | — |
 | `fix-wave-gate.yml`, `fix-wave-closeout.yml` | Pull-request action and merge state | Not a test scope: merge-process automation | — |
+| `vorflux-notify.yml` | Comments, reviews, pushes, merge or close, and failed full runs on `rust-engine` pull requests from this repository | Not a test scope: notifies the Rust engine agent | — |
 | `harness-check.yml` | `pull_request` only; a missing `HARNESS_EVALS_READ_TOKEN` skips the job (succeeds with a notice); a fork head is refused | Named exception: advisory, non-required check ([below](#harness-check)) | None: pushes to master and schedules do not run it; the pin bump runs its steps by hand on master |
 | `full-ci.yml` | `full-ci` label, same-repository head; the label comes off once both dispatches are accepted | Not a test scope: dispatches the full profile on the head | — |
 | `test.yml`, `scale-tier.yml` | `dynamic-ci` filter (Trunk Dynamic CI) on pull requests; its gated jobs run unless the verdict is exactly `'false'` | Named exception ([below](#trunk-dynamic-ci)): pull requests only, Learning mode skips nothing | The full-ci dispatch, every push to master, the merge queue and the nightly schedules, which never run the filter |

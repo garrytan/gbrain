@@ -1,4 +1,5 @@
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
@@ -18,7 +19,13 @@ import type { EntityTypeFilter } from './schema-pack/entity-types.ts';
 import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
+import type { PageBodySizes } from './engine-sql/large-page.ts';
+import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
+import type { TakeFenceRow } from './engine-sql/takes.ts';
+import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
+import type * as DecideProposalsSql from './engine-sql/decide-proposals.ts';
+import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
@@ -131,6 +138,7 @@ export interface FileRow {
   metadata: Record<string, unknown>;
   created_at: Date;
 }
+export interface ListFilesOptions { pageSlug?: string | null; limit: number }
 
 /**
  * v0.27.1: spec for upsertFile. Identity is (source_id, storage_path).
@@ -206,6 +214,23 @@ export interface TransactionOptions {
   pipelineEarly?: (statement: string) => boolean;
   /** GBRA-156: Postgres opens `BEGIN READ ONLY` (a write inside fails with 25006); search's reads pass it. Ignored by PGLite and when nested. */
   readOnly?: boolean;
+}
+
+/** One wanted row as replaceWantedLinkRows writes it (wanted-links-store.ts `WantedLinkInput`). */
+export interface WantedLinkRowInput {
+  producer: 'body' | 'frontmatter';
+  ref_kind: 'slug' | 'name';
+  target_source_id: string;
+  target_ref: string;
+  link_type: string;
+  context: string;
+}
+
+/** What replaceWantedLinkRows replaces: the rows of `producers`, with `readAt` stamped on every bare-name row. */
+export interface WantedLinkRowsReplacement {
+  rows: readonly WantedLinkRowInput[];
+  producers: readonly ('body' | 'frontmatter')[];
+  readAt?: string;
 }
 
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -1327,6 +1352,8 @@ export interface BrainEngine {
   pagesLinkingTo(fromIds: number[], toIds: number[]): Promise<number[]>;
   /** One brain-wide MCP onboarding count (SQL in engine-sql/health.ts). */
   countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
+  /** `schema detect --fields`: live page type counts and per-type page samples (SQL and contract in engine-sql/field-usage.ts). */
+  readFieldUsageSamples(query: FieldUsageQuery): Promise<FieldUsageTypeSample[]>;
 
   // Chunks
   /**
@@ -1642,6 +1669,17 @@ export interface BrainEngine {
   replaceDerivedLinks(origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions): Promise<{ created: number; removed: number }>;
   /** replaceDerivedLinks for many origins in one transaction; any failure rolls back every origin (derived-links.ts). */
   replaceDerivedLinksBatch(items: readonly DerivedLinkBatchItem[]): Promise<Array<{ created: number; removed: number }>>;
+  /**
+   * The registered ids among `sourceIds`, by id, read `FOR SHARE` so none disappears before the caller's page-guard
+   * lock (wanted-links-store.ts possibleWantedRows).
+   */
+  lockRegisteredSourceIds(sourceIds: readonly string[]): Promise<string[]>;
+  /**
+   * Replace one origin page's wanted rows (wanted-links.ts) for `replacement.producers`: rows of those producers that
+   * `replacement.rows` does not name are deleted, then each row is written. Returns the rows written. The caller
+   * filters and locks the rows first (wanted-links-store.ts replaceWantedLinks).
+   */
+  replaceWantedLinkRows(origin: { pageId: number; sourceId: string }, replacement: WantedLinkRowsReplacement): Promise<number>;
   /**
    * Remove links from `from` to `to`. If linkType is provided, only that specific
    * (from, to, type) row is removed. If omitted, ALL link types between the pair
@@ -2040,6 +2078,19 @@ export interface BrainEngine {
    */
   upsertEventProjection(opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string }): Promise<{ projected: boolean }>;
 
+  /**
+   * Delete the page's own (non-event) timeline rows that `rows` name and that still match them on every field (id,
+   * date, source, summary, detail): a row changed since it was read stays, and an event projection (a row with an
+   * event page) is never touched. Returns each deleted row's date (`YYYY-MM-DD`) and its `removed` mark. A page write
+   * calls it inside its own transaction (engine-sql/timeline.ts).
+   */
+  removeTimelineRows(pageId: number, rows: readonly TimelineRowRemoval[]): Promise<Array<{ date: string; removed: boolean }>>;
+  /**
+   * Replace the detail of the page's own (non-event) timeline rows named in `rows` with `next` when the stored detail
+   * still equals the preimage `detail`; any other row stays. Event projections are never touched.
+   */
+  updateTimelineDetails(pageId: number, rows: readonly TimelineDetailRefresh[]): Promise<void>;
+
   // v0.42.x — Life Chronicle (#2390) per-entity ontology (rides `facts`).
   /**
    * Record one ontology observation (entity has dimension=value). Idempotent on
@@ -2078,6 +2129,8 @@ export interface BrainEngine {
   upsertFile(spec: FileSpec): Promise<{ id: number; created: boolean }>;
   getFile(sourceId: string, storagePath: string): Promise<FileRow | null>;
   listFilesForPage(pageId: number): Promise<FileRow[]>;
+  /** One page slug's files (any source) by filename, or every file by page slug then filename; at most `limit` (`files list`). */
+  listFiles(opts: ListFilesOptions): Promise<FileRow[]>;
 
   // ============================================================
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis evidence
@@ -2227,6 +2280,14 @@ export interface BrainEngine {
     pageIds: number[],
     opts?: { takesHoldersAllowList?: string[] },
   ): Promise<Map<number, Take[]>>;
+
+  /**
+   * The row numbers of the page's stored takes whose claim, kind or holder differs (null-safe) from the fence row of
+   * the same number in `rows`, ascending, at most `limit`. A page write refuses a fence that would take them over.
+   */
+  matchTakeRows(pageId: number, rows: readonly TakeFenceRow[], limit: number): Promise<number[]>;
+  /** Delete the page's takes at `rowNums`, with their synthesis evidence; an empty list deletes nothing. */
+  deleteTakeRows(pageId: number, rowNums: readonly number[]): Promise<void>;
 
   /**
    * Persist a single contradiction-probe run row. Caller supplies a full
@@ -2727,6 +2788,10 @@ export interface BrainEngine {
   getPageSealState(pageId: number): Promise<{ chunker_version: number | null } | null>;
   /** Record where a live page's file lives (`source_path`, and `source_uri` when given); a page already holding both writes nothing. */
   refreshPageOrigin(slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }): Promise<void>;
+  /** A live page's stored body size (segmented `body_bytes`, else the UTF-8 bytes of its body columns), or null (engine-sql/large-page.ts). */
+  readStoredBodyBytes(slug: string, sourceId: string): Promise<number | null>;
+  /** Page `pageId`'s body and truth sizes (deleted or not), append_page's read after its write, or null (engine-sql/large-page.ts). */
+  readPageBodySizes(pageId: number): Promise<PageBodySizes | null>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
@@ -2985,6 +3050,12 @@ export interface BrainEngine {
     acquisitionToken: string;
     maxAgeSeconds: number;
   }): Promise<{ deleted: boolean; lastRefreshedAt: Date | null }>;
+  /** The id and slug of the segmented pages among `slugs` in the source (engine-sql/withdrawal-pages.ts). */
+  listSegmentedPages(sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string }>>;
+  /** A fact withdrawal's page invalidation: a new knowledge revision, no text projection or embedding signature, for the inline pages among `slugs`. */
+  invalidateWithdrawnPages(sourceId: string, slugs: readonly string[]): Promise<Array<{ id: number; slug: string; knowledge_revision: string }>>;
+  /** Whether a withdrawal or purge tombstone covers a claim of a malformed fence, for `subject` or any subject when null (engine-sql/withdrawal-fence.ts). */
+  hasWithdrawnFenceClaim(sourceId: string, claims: ReadonlyArray<{ claim: string; visibility: string | null }>, subject: string | null): Promise<boolean>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)
@@ -3036,6 +3107,13 @@ export interface BrainEngine {
     chunkId: number,
     opts?: { direction?: 'in' | 'out' | 'both'; edgeType?: string; limit?: number },
   ): Promise<CodeEdgeResult[]>;
+  // jobs-tables group D: the code_traversal_cache table.
+  /** The memoised traversal at the key and generation, or null (code_blast and code_flow). */
+  getCodeTraversalCache(key: CodeTraversalCacheKey): Promise<CodeTraversalCacheRow | null>;
+  /** Upsert a memoised traversal on (symbol, depth, source); the response is stored as JSON. */
+  putCodeTraversalCache(key: CodeTraversalCacheKey, response: unknown, maxChunkUpdatedAt: string, xminMax: number): Promise<void>;
+  /** Delete one source's cached traversals, or all of them; returns the number deleted. */
+  clearCodeTraversalCache(opts: CodeTraversalCacheClear): Promise<number>;
 
   /**
    * Chunk-grain keyword search. Ranks by content_chunks.search_vector
@@ -3129,4 +3207,80 @@ export interface BrainEngine {
    * not a misleading mean of 1.
    */
   findAnomalies(opts: AnomaliesOpts): Promise<AnomalyResult[]>;
+  // ============================================================
+  // Decide proposals (group C; engine-sql/decide-proposals.ts, rust/docs/store/decide-proposals.md)
+  // ============================================================
+  /** Insert a supersede proposal. Returns its id, or null when its sweep slot or claim-sweep fact pair already carries one. */
+  insertDecideProposal(p: DecideProposalsSql.NewProposal): Promise<number | null>;
+  /** One supersede proposal; `lock` takes the row lock inside a transaction (a store with no row locks reads it plain). */
+  getDecideProposal(id: number, lock?: boolean): Promise<DecideProposalsSql.ProposalRow | null>;
+  /** The ids of one sweep's proposals in a status, by pair index. */
+  listDecideProposalIds(sweepId: string, status: DecideProposalsSql.ProposalStatus): Promise<number[]>;
+  /** Supersede proposals with both facts' text, oldest first; default status `pending`, default limit 200. */
+  listDecideProposals(opts?: { status?: DecideProposalsSql.ProposalStatus | 'all'; limit?: number }): Promise<DecideProposalsSql.ProposalListing[]>;
+  /** Compare-and-set a supersede proposal's status; false when it is no longer `from`. */
+  transitionDecideProposal(id: number, from: DecideProposalsSql.ProposalStatus, to: DecideProposalsSql.ProposalStatus, state?: { before?: string | null; after?: string | null }): Promise<boolean>;
+  /** The ordered fact pairs that already carry a proposal, in any status, and name `factId`. */
+  listDecideProposedPairs(sourceId: string, factId: number): Promise<Array<{ a: number; b: number }>>;
+  /** Insert a review proposal. Returns its id, or null when the (kind, source, a, b, subject) proposal exists. */
+  insertDecideReviewProposal(p: DecideProposalsSql.NewReviewProposal): Promise<number | null>;
+  /** Review proposals in a status (`all` for every one), by id. */
+  listDecideReviewProposals(status: string): Promise<DecideProposalsSql.ReviewProposalRecord[]>;
+  /** One review proposal; `lock` takes the row lock inside a transaction (a store with no row locks reads it plain). */
+  getDecideReviewProposal(id: number, lock?: boolean): Promise<DecideProposalsSql.ReviewProposalRecord | null>;
+  /** Compare-and-set a review proposal's status; false when it is no longer `from`. */
+  transitionDecideReviewProposal(id: number, from: string, to: string): Promise<boolean>;
+  /** The pending review proposals of one sweep, by id; withdrawals only when asked. */
+  listDecideReviewProposalIds(sweepId: string, includeWithdrawals: boolean): Promise<number[]>;
+  /** The doctor's review rates: per kind the pending count, oldest pending age in days and 30-day decisions, over both proposal tables. */
+  readProposalReviewRates(): Promise<DecideProposalsSql.ProposalReviewCounts[]>;
+  /** Review-queue rows of one kind and source that are due and not exhausted, oldest due first. */
+  listDueDecideReviewQueue(kind: string, sourceId: string, limit: number): Promise<DecideProposalsSql.ReviewQueueRow[]>;
+  /** Queue a review pair (idempotent), drop a queue row or defer it with a reason; the number of rows it touched. */
+  applyDecideReviewQueue(op: DecideProposalsSql.ReviewQueueOp): Promise<number>;
+  /** Due conflict-sweep retries of a source, oldest due first. */
+  listDueDecideSweepDeferred(sourceId: string, limit: number): Promise<Array<{ fact_id: number; attempts: number }>>;
+  /** Defer a swept fact, hand over relinked facts or clear a fact's retry row; the number of rows it touched. */
+  applyDecideSweepDeferred(sourceId: string, op: DecideProposalsSql.SweepDeferredOp): Promise<number>;
+  // Group A (decide store): `decide_state`, `decide_spend`, `decision_receipts`, `decide_calibrations` (engine-sql/decide-store.ts).
+  /** The value kept under a decide state key, or null. */
+  readDecideState(key: string): Promise<string | null>;
+  /** Keep a value under a decide state key, replacing an earlier one. */
+  upsertDecideState(key: string, value: string): Promise<void>;
+  /** Forget a decide state key (absent is fine). */
+  deleteDecideState(key: string): Promise<void>;
+  /** Keep the value only when the key is empty, then answer the stored value (null if it cannot be read back). */
+  ensureDecideState(key: string, value: string): Promise<string | null>;
+  /** Record spend rows; a request id already recorded keeps its first row, and a refused row records none. */
+  insertDecideSpend(rows: readonly DecideStoreSql.DecideSpendInsert[]): Promise<void>;
+  /** Third-party spend recorded at or after `since`: the total and the remote part. */
+  dailyDecideSpend(since: Date): Promise<{ total: number; remote: number }>;
+  /** Spend totals per slot over the whole ledger, in slot order. */
+  listDecideSpendBySlot(): Promise<DecideStoreSql.DecideSpendSlotTotals[]>;
+  /** Record receipt rows in order; a refused row records none. */
+  insertDecideReceipts(rows: readonly DecideStoreSql.DecideReceiptInsert[]): Promise<void>;
+  /** Delete receipts older than `retentionDays` (and spend older than `max(retentionDays, 31)` days); answers how many receipts went. */
+  pruneDecideReceipts(retentionDays: number): Promise<number>;
+  /** Receipt counts, mean answer value, latency percentiles and tokens per (slot, mode, outcome, error reason) over the window. */
+  listDecideReceiptStats(opts: { slot?: string; sinceHours: number }): Promise<DecideStoreSql.DecideReceiptStat[]>;
+  /** Per-slot decisions, rows, tokens, errors, skips and egress refusals over the window. */
+  decideSlotUsage(sinceHours: number): Promise<DecideStoreSql.DecideSlotUsageRow[]>;
+  /** Conflict receipts in the window and how many were `no_entity` skips. */
+  decideConflictNoEntityCounts(sinceHours: number): Promise<{ receipts: number; skipped: number }>;
+  /** The receipts of `slot` in the window that a replay reads, by decision id, rank, insertion order. */
+  listDecideReplayReceipts(slot: string, sinceHours: number): Promise<DecideStoreSql.DecideReplayReceipt[]>;
+  /** Each (slot, provider, resolved model) in the window with its count and latest time, latest first. */
+  listDecideResolvedModels(sinceHours: number): Promise<DecideStoreSql.DecideResolvedModel[]>;
+  /** Per slot, the receipts in the window marked `mixed_model`. */
+  listDecideMixedModelDecisions(sinceHours: number): Promise<Array<{ slot: string; n: number }>>;
+  /** Record one calibration, stamped now, and answer its id. */
+  insertDecideCalibration(row: DecideStoreSql.DecideCalibrationInsert): Promise<number>;
+  /** Replace the qualification columns of calibration `id` and stamp `qualified_at`; an unknown id changes nothing. */
+  storeDecideQualification(id: number, q: DecideStoreSql.DecideQualification): Promise<void>;
+  /** The calibrations by slot (byte order), newest first; retired ones only with `includeRetired`. */
+  listDecideCalibrations(opts?: { slot?: string; includeRetired?: boolean }): Promise<DecideStoreSql.DecideCalibration[]>;
+  /** Calibration `id`, or null. */
+  getDecideCalibration(id: number): Promise<DecideStoreSql.DecideCalibration | null>;
+  /** Retire calibration `id` or bring it back; answers whether the row exists. */
+  setDecideCalibrationRetired(id: number, retired: boolean): Promise<boolean>;
 }
