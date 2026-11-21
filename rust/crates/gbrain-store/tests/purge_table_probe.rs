@@ -688,3 +688,47 @@ fn the_derivation_probe_walks_batches_from_a_cursor_and_tells_swept_from_kept() 
         (Some(4), Some(0))
     );
 }
+
+#[test]
+fn a_derivation_with_no_output_or_receipt_is_sql_null_and_a_nested_null_is_the_text_null() {
+    let (_dir, store) = brain("purge-table-probe-null-derivations");
+    let (page, texts) = derived_page(&store);
+    let derivation = |occurrence: i64, output: Value, receipt: Value| {
+        let row: gbrain_store::page_body::SegmentDerivationInput = args(json!({
+            "pageId": page, "kind": "mentions", "occurrenceId": occurrence, "version": 1,
+            "segmentSha256": sha(&texts[0]), "contextHash": sha("ctx"), "state": "done",
+            "output": output, "receipt": receipt,
+        }));
+        store.upsert_segment_derivations(&[row]).unwrap();
+    };
+    // Neither written, and a top-level JSON null: SQL NULL. A null inside a document: text.
+    let omitted: gbrain_store::page_body::SegmentDerivationInput = args(json!({
+        "pageId": page, "kind": "mentions", "occurrenceId": 1, "version": 1,
+        "segmentSha256": sha(&texts[0]), "contextHash": sha("ctx"), "state": "done",
+    }));
+    store.upsert_segment_derivations(&[omitted]).unwrap();
+    derivation(2, Value::Null, Value::Null);
+    assert_eq!(
+        count(&store, "page_segment_derivations", "default", "null"),
+        0
+    );
+    derivation(3, json!({ "note": null }), json!({}));
+    assert_eq!(
+        count(&store, "page_segment_derivations", "default", "null"),
+        1
+    );
+    let batch = |needle: &str| -> Value {
+        let q: gbrain_store::page_body::purge_probe::DerivationProbeArgs = args(json!({
+            "sourceId": "default", "needles": [format!(" {needle} ")], "pageIds": [],
+            "patterns": [format!("%{needle}%")], "rows": 100,
+        }));
+        store.probe_purge_derivations(&q).unwrap()
+    };
+    // Seven rows: the four of derived_page, then the three here (the first two empty).
+    let nulls = batch("null");
+    assert_eq!(
+        (nulls["scanned"].as_i64(), nulls["normalized"].as_i64()),
+        (Some(7), Some(1)),
+        "{nulls}"
+    );
+}

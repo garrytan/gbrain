@@ -1,20 +1,33 @@
 /**
- * The members a purge's receipt reads that the Rust engine does not serve yet, and who owns each. The engine's refusal of one of
- * them names its owner (rust-engine.ts), so a receipt that stops there says whose lane lifts it. A member leaves this list in the
- * commit of the lane that serves it, together with its `members.ts` class changing to served.
+ * The members a purge's receipt or a recall reads that the Rust engine does not serve yet, who owns each and when it is due. The
+ * engine's refusal of one of them names its owner and due date (rust-engine.ts, in the message and in the refusal's detail), so a
+ * receipt that stops there says whose lane lifts it and by when. A member leaves this list in the commit of the lane that serves it,
+ * together with its `members.ts` class changing to served.
  *
- * Labels are `PURGE_OWNERS` (persistence/purge-path-members.ts), the same ones the page purge's pre-write check names.
+ * Owners are `PURGE_OWNERS` (persistence/purge-path-members.ts), the same labels the page purge's pre-write check names. Due dates:
+ * lane 3's ledger read and lane 4's fact-context read are due 5 PM PST Nov 24 (the step 4 ruling); lane 4's page receipt reads and
+ * the slot-end read are due 5 PM PST Nov 25, the date (and the rust-5a 12bee2c026 commit) test/engine-parity/slot-ends-callers.test.ts
+ * already names for `listSlotRows`.
+ *
+ * Not here: the page purge's own stops (the request index read, the origin-twin read, the publication stamp, the generation-ledger
+ * scrub) are listed with their owners in persistence/purge-path-members.ts and carry no due date anywhere in the tree.
  */
 import { PURGE_OWNERS } from '../persistence/purge-path-members.ts';
+import type { KnownStop } from './errors.ts';
 
-export const RECEIPT_STOP_OWNERS: Readonly<Record<string, string>> = {
+const NOV_24 = '5 PM PST Nov 24';
+const NOV_25 = '5 PM PST Nov 25';
+
+export const RECEIPT_STOP_OWNERS: Readonly<Record<string, KnownStop>> = {
   // The recorded values of the belief ledger (the fact purge receipt's ledger report).
-  listBeliefEventsForPurgeProbe: PURGE_OWNERS.beliefProbe,
+  listBeliefEventsForPurgeProbe: { owner: PURGE_OWNERS.beliefProbe, due: NOV_24 },
   // The live fact contexts that quote the purged claims (the same report).
-  listFactContextsForPurgeProbe: PURGE_OWNERS.factContextProbe,
+  listFactContextsForPurgeProbe: { owner: PURGE_OWNERS.factContextProbe, due: NOV_24 },
   // The page purge receipt's four reads.
-  listPageProseHits: PURGE_OWNERS.receiptReads,
-  readPurgeReceiptSourcePath: PURGE_OWNERS.receiptReads,
-  readDeletePageRequest: PURGE_OWNERS.receiptReads,
-  listPurgeEffects: PURGE_OWNERS.receiptReads,
+  listPageProseHits: { owner: PURGE_OWNERS.receiptReads, due: NOV_25 },
+  readPurgeReceiptSourcePath: { owner: PURGE_OWNERS.receiptReads, due: NOV_25 },
+  readDeletePageRequest: { owner: PURGE_OWNERS.receiptReads, due: NOV_25 },
+  listPurgeEffects: { owner: PURGE_OWNERS.receiptReads, due: NOV_25 },
+  // The read-time slot ends of recall.
+  listSlotRows: { owner: 'lane 4 (rust-5a 12bee2c026)', due: NOV_25 },
 };

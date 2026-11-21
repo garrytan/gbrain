@@ -430,8 +430,7 @@ for (const [member, cls] of Object.entries(RUST_ENGINE_MEMBERS)) {
     writable: true,
     enumerable: false,
     value: function refuse(this: RustEngine): Promise<never> {
-      const owner = RECEIPT_STOP_OWNERS[member];
-      return Promise.reject(capabilityMissing(capability, owner ? `${member} (owner ${owner})` : member));
+      return Promise.reject(capabilityMissing(capability, member, 'none', RECEIPT_STOP_OWNERS[member]));
     },
   });
 }

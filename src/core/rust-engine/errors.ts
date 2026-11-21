@@ -17,13 +17,16 @@ export type CapabilityOutcome = 'none' | 'partial' | 'unknown';
  * With the default `outcome: 'none'` nothing ran; the raw-SQL backstop passes `partial` or `unknown` when it is reached
  * after earlier steps of a caller already ran.
  */
-export function capabilityMissing(capability: Capability, member: string, outcome: CapabilityOutcome = 'none'): OperationError {
+export function capabilityMissing(capability: Capability, member: string, outcome: CapabilityOutcome = 'none', stop?: KnownStop): OperationError {
   const nothingRan = outcome === 'none';
   return opError('engine_capability_missing',
-    `This brain's engine does not support ${member} yet (it needs the ${capability} capability)${nothingRan ? ', so nothing ran.' : '.'}`,
+    `This brain's engine does not support ${member}${stop ? ` (owner ${stop.owner}, due ${stop.due})` : ''} yet (it needs the ${capability} capability)${nothingRan ? ', so nothing ran.' : '.'}`,
     'Run it on a pglite or postgres brain, or wait for a gbrain release whose Rust engine supports it.',
-    { reason: capability, detail: `member=${member} capability=${capability} outcome=${outcome} written=${nothingRan ? 'nothing' : outcome}` });
+    { reason: capability, detail: `member=${member} capability=${capability} outcome=${outcome} written=${nothingRan ? 'nothing' : outcome}${stop ? ` owner="${stop.owner}" due="${stop.due}"` : ''}` });
 }
+
+/** A stop a lane owes: who lifts it and when (rust-engine/receipt-stops.ts), so the refusal says both. */
+export interface KnownStop { owner: string; due: string }
 
 /**
  * True when `e` is a capability refusal (`engine_capability_missing`). Fail-soft reads that turn other errors into an

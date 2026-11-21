@@ -49,8 +49,8 @@ const P2 = new Date('2024-06-10T00:00:00Z');
 /** The refusal `engine.listSlotRows` gives on an engine that does not serve it (the exact text the Rust engine raises). */
 const RUST_KNOWN_STOP = {
   owner: 'lane 4 (listSlotRows, due 5 PM PST Nov 25)',
-  message: "This brain's engine does not support listSlotRows yet (it needs the facts capability), so nothing ran.",
-  detail: 'member=listSlotRows capability=facts outcome=none written=nothing',
+  message: "This brain's engine does not support listSlotRows (owner lane 4 (rust-5a 12bee2c026), due 5 PM PST Nov 25) yet (it needs the facts capability), so nothing ran.",
+  detail: 'member=listSlotRows capability=facts outcome=none written=nothing owner="lane 4 (rust-5a 12bee2c026)" due="5 PM PST Nov 25"',
 } as const;
 
 /** The employer facts of Alice: Acme, then Beta, which ends Acme at read time; plus one fact with no slot. */

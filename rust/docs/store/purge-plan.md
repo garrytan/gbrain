@@ -106,9 +106,15 @@ The receipt of a fact purge (`verifyFactPurge`) counts the rows that still carry
   of `foldSql` (a final sigma to sigma, a dotted i to i), distinct and non-empty. Sorted by byte here; Postgres sorts by the
   database's collation, and a needle's place in the list matters to nothing.
 
-Still stopped on Rust, each naming its owner in the refusal (`rust-engine/receipt-stops.ts`): `listBeliefEventsForPurgeProbe`
-(lane 3, rust-belief-purge e211982aba) and `listFactContextsForPurgeProbe` (lane 4, rust-5a 90e7bea933), the two reads of the
-ledger report. Pinned by `rust/crates/gbrain-store/tests/purge_table_probe.rs`, `test/engine-parity/fact-purge-inventory-probes.test.ts`
+A derivation result written with no output or receipt, or with a top-level JSON null, is SQL NULL in Postgres (the writer is
+`jsonb_to_recordset`): it matches no needle on either probe path and reads as an empty text in the prefilter. A JSON null inside a
+document stays the text `null`.
+
+Still stopped on Rust, each naming its owner and due date in the refusal's message and detail (`rust-engine/receipt-stops.ts`):
+`listBeliefEventsForPurgeProbe` (lane 3, rust-belief-purge e211982aba, due 5 PM PST Nov 24) and `listFactContextsForPurgeProbe`
+(lane 4, rust-5a 90e7bea933, due 5 PM PST Nov 24), the two reads of the ledger report; the page receipt's `listPageProseHits`,
+`readPurgeReceiptSourcePath`, `readDeletePageRequest` and `listPurgeEffects` (lane 4, rust-5a 90e7bea933) and recall's
+`listSlotRows` (lane 4), due 5 PM PST Nov 25. Pinned by `rust/crates/gbrain-store/tests/purge_table_probe.rs`, `test/engine-parity/fact-purge-inventory-probes.test.ts`
 and `test/engine-parity/fact-purge-probes.test.ts`.
 
 ## Not modeled

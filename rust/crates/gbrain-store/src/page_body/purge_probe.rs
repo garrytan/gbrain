@@ -201,6 +201,25 @@ pub(crate) fn probe_texts(read: &dyn KvRead, source_id: &str, f: EachRow) -> Res
     })
 }
 
+/// A derivation's `output` or `receipt` as the table holds it: the writer (`jsonb_to_recordset`) stores an omitted or top-level
+/// JSON null as SQL NULL, which matches no needle. A JSON null inside a document stays the text `null`.
+fn nullable(value: &Value) -> ProbeCell {
+    if value.is_null() {
+        ProbeCell::Null
+    } else {
+        ProbeCell::jsonb(value)
+    }
+}
+
+/// `COALESCE(col::text, '')` of that column.
+fn sql_text(value: &Value) -> String {
+    if value.is_null() {
+        String::new()
+    } else {
+        jsonb_text(value)
+    }
+}
+
 /// The `page_segment_derivations` rows as the table probe reads them: the table has no `source_id`, so the probe is brain-wide. The
 /// pipeline is in the key (after the page id, before the occurrence).
 pub(crate) fn probe_derivations(read: &dyn KvRead, f: EachRow) -> Result<()> {
@@ -215,8 +234,8 @@ pub(crate) fn probe_derivations(read: &dyn KvRead, f: EachRow) -> Result<()> {
                 ("segment_sha256", ProbeCell::bytea_hex(&d.segment_sha256)),
                 ("context_hash", ProbeCell::bytea_hex(&d.context_hash)),
                 ("state", ProbeCell::text(&d.state)),
-                ("output", ProbeCell::jsonb(&d.output)),
-                ("receipt", ProbeCell::jsonb(&d.receipt)),
+                ("output", nullable(&d.output)),
+                ("receipt", nullable(&d.receipt)),
             ],
         })
     })
@@ -415,7 +434,7 @@ impl Store {
                     (crate::keys::be8(&key[tail..]).unwrap_or(0) ^ (1u64 << 63)) as i64;
                 scanned += 1;
                 last = Some((page_id, pipeline, occurrence));
-                let text = format!("{} {}", jsonb_text(&d.output), jsonb_text(&d.receipt));
+                let text = format!("{} {}", sql_text(&d.output), sql_text(&d.receipt));
                 if has_words(&text, &q.patterns) {
                     normalized += 1;
                     if holds_claim(&d, &q.needles, &q.patterns) {
