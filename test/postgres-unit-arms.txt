@@ -815,6 +815,7 @@ test/sync-level-reuse-across-gbra133.test.ts
 test/sync-metafile-foreign-slug-7341.test.ts
 test/sync-mirror-catchup-gst2515.test.ts
 test/sync-mirror-parked-gst2843.test.ts
+test/sync-off-unattended-gst3337.test.ts
 test/sync-origin-live-wins-6517.test.ts
 test/sync-page-identity-hold-gbra130.test.ts
 test/sync-page-write-failed-gbra130.test.ts

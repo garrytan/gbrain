@@ -56,6 +56,7 @@ import { isManagedBrain } from './cycle/phase-table.ts';
 import { packGateSkip, resolvePackPhaseGate } from './cycle/pack-phase-gate.ts';
 import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
 import { assertValidSourceId } from './source-id.ts';
+import { isSyncDisabledConfig } from './sync-policy.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
@@ -2289,6 +2290,12 @@ async function runCycleUnscoped(
         });
       } else if (brainDir === null) {
         phaseResults.push(skipNoBrainDir('sync'));
+      } else if (cycleSourceId && isSyncDisabledConfig((await engine.getSource(cycleSourceId))?.config)) {
+        // GST-3337: `config.syncEnabled=false` keeps every unattended sync off the source (dream, the autopilot cycle); only an
+        // explicit `gbrain sync --source <id>` runs it, as the dispatchers already decide (sync-policy.ts automaticSyncSkip).
+        phaseResults.push({ phase: 'sync', status: 'skipped', duration_ms: 0,
+          summary: `automatic sync is off for source ${cycleSourceId} (config.syncEnabled=false); only an explicit gbrain sync --source ${cycleSourceId} syncs it`,
+          details: { reason: 'sync_disabled', source_id: cycleSourceId } });
       } else {
         progress.start('cycle.sync');
         syncAttempted = true; // sync ran its work; undefined pagesAffected now means failure
