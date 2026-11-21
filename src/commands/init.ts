@@ -18,6 +18,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from '../core/stored-embedding-identity.ts';
 import { deferInitJsonError, flushInitJsonResult, initJsonError, setInitJsonResult, writeDeferredInitJsonError } from './init-json.ts';
 import { deferredEmbeddingHint, firstRunBundle, firstRunJson, harnessRegistrationCommand } from './init-first-run.ts';
+import { keptEngineConfig, reportKeptRustBrain } from './init-existing-engine.ts';
 import { keptEmbeddingIdentity, keptEmbeddingNotice, recordInitEmbedding } from './init-embedding-plane.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
@@ -120,6 +121,11 @@ async function runInitBranches(args: string[]) {
     return initMigrateOnly({ jsonOutput });
   }
 
+  // An existing rust/pglite config is the engine when no engine flag says otherwise: a Rust brain is reported
+  // and left unchanged (the store is never opened here); --non-interactive on either takes the local branch below.
+  const kept = keptEngineConfig(fileState, isPGLite || isSupabase || !!manualUrl || args.includes('--prefer-postgres'));
+  if (kept?.engine === 'rust') return reportKeptRustBrain(kept, jsonOutput);
+
   // v0.14: AI provider selection.
   // --embedding-model PROVIDER:MODEL (verbose) or --model PROVIDER (shorthand, picks recipe default)
   const embModelIdx = args.indexOf('--embedding-model');
@@ -183,7 +189,7 @@ async function runInitBranches(args: string[]) {
   }
 
   // Explicit PGLite mode
-  if (!preservedPostgresUrl && (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive))) {
+  if (!preservedPostgresUrl && (isPGLite || (!isSupabase && !manualUrl && (!isNonInteractive || (kept && !effectiveEnvDatabaseUrl()))))) {
     // Smart detection: scan for .md files unless --pglite flag forces it
     if (!isPGLite && !isSupabase) {
       const fileCount = countMarkdownFiles(process.cwd());
@@ -198,7 +204,9 @@ async function runInitBranches(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, schemaPack, skipEmbedCheck, content });
+    // A kept config here is PGLite (a kept Rust brain returned above): it keeps its database_path unless --path names another.
+    const pglitePath = customPath ?? kept?.database_path ?? null;
+    return initPGLite({ jsonOutput, apiKey, customPath: pglitePath, aiOpts, schemaPack, skipEmbedCheck, content });
   }
 
   // Supabase/Postgres mode

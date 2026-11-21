@@ -1214,6 +1214,14 @@ impl Store {
             };
             if options.seal {
                 refuse_seal(&*tx, &page, slug, source)?;
+            } else if segmented(&page) {
+                // A plain write would replace the chunks of the page's live segments: refused before any write.
+                return Err(StoreError::new(
+                    INVALID_STATE,
+                    format!(
+                        "upsertChunks refuses segmented page {slug} (source={source}): its chunks are written through its segments"
+                    ),
+                ));
             }
             if let Some(expected) = &options.expected_revision {
                 if !crate::env::is_uuid(expected) {
@@ -1726,6 +1734,42 @@ mod seal_guard_tests {
                 after.text_projection_revision,
                 page.text_projection_revision
             );
+        }
+    }
+
+    /// A plain (unsealed) `upsertChunks` on a segmented page would replace the chunks of its live segments, so it is
+    /// refused before any chunk or page field is written, for a write with chunks and for the empty write that only
+    /// removes them.
+    #[test]
+    fn plain_upsert_refuses_a_segmented_page_before_it_touches_a_chunk() {
+        let store = crate::test_support::store();
+        let page = segmented(&store);
+        let before = stored_texts(&store, page.id);
+        assert!(!before.is_empty());
+        for chunks in [
+            Vec::new(),
+            vec![ChunkInput {
+                chunk_text: "inline".into(),
+                ..ChunkInput::default()
+            }],
+        ] {
+            let err = store
+                .upsert_chunks("big", &chunks, &UpsertChunksOptions::default())
+                .unwrap_err();
+            assert_eq!(err.code, crate::error::INVALID_STATE);
+            assert_eq!(
+                err.message,
+                "upsertChunks refuses segmented page big (source=default): its chunks are written through its segments"
+            );
+            assert_eq!(stored_texts(&store, page.id), before);
+            let after = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "big")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                after.text_projection_revision,
+                page.text_projection_revision
+            );
+            assert_eq!(after.chunker_version, page.chunker_version);
         }
     }
 
