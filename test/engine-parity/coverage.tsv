@@ -61,10 +61,10 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	42	yes	yes	yes	serves
+softDeletePage	pages	yes	43	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
-purgeDeletedPages	pages	yes	4	no	yes	yes	serves
+purgeDeletedPages	pages	yes	5	no	yes	yes	serves
 listPages	pages	yes	5	yes	yes	yes	serves
 findPages	pages	yes	1	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
