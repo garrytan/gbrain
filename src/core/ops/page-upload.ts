@@ -195,6 +195,8 @@ const begin_page_upload: Operation = {
       throw opError('revision_required', `Page ${slug} already exists, so an upload with mode create cannot write it; nothing was staged.`,
         "Read the page with get_page body: 'none', then begin with mode replace and its revision as expected_revision.", { fix: pageFix(slug, sourceId) });
     }
+    // pages-02: a local begin that names no source must not stage a new page that already lives in exactly one other source.
+    if (mode === 'create') await (await import('../persistence/unsourced-put-fork.ts')).assertUnsourcedPutKeepsSource(ctx, sourceId, p, { targetHasRow: !!snapshot });
     if (mode !== 'create' && (!snapshot || snapshot.page.deleted_at)) {
       if (ctx.remote !== false) throw pageNotVisibleError();
       throw opError('page_not_found', `Page not found: ${slug}`, `An upload with mode ${mode} writes an existing page; begin with mode create to make it.`);
@@ -385,7 +387,8 @@ const commit_page_upload: Operation = {
       if (ctx.remote !== false) await assertLargePageAdmission(ctx.engine, row.slug, row.source_id, params);
     }
     try {
-      return await submitPageMutation(ctx, { operation: 'put_page', params, stagedBody: true });
+      // pages-02: the source was fixed at begin, so a commit that names none re-checks that a new page was not meanwhile written in one other source.
+      return await submitPageMutation(ctx, { operation: 'put_page', params, stagedBody: true, ...(row.mode === 'create' ? { unsourcedForkGuard: true as const } : {}) });
     } catch (error) {
       if (row.mode === 'replace' && error instanceof OperationError && error.code === 'revision_conflict') throw revisionChanged(row.slug, row.source_id);
       throw error;

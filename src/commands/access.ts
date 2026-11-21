@@ -26,7 +26,8 @@ import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
 import { readClientGrant } from '../core/grants/service.ts';
 import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
 import { credentialReadSources } from '../core/grants/shared-exposure.ts';
-import { accessAllowedSql, folderRulesAllowedSql, isPrivacyPrivatePage, withCallerAccess } from '../core/search/private-visibility.ts';
+import { accessAllowedSql, folderRulesAllowedSql, isPrivacyPrivatePage, schemaVersionNow, withCallerAccess } from '../core/search/private-visibility.ts';
+import { ownerOnlyForm, ownerOnlyPageSql } from '../core/access/owner-only.ts';
 import { membersReadLineageOn, setMembersReadLineage } from '../core/access/lineage.ts';
 import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
 import { folderAccessFor } from '../core/access/caller.ts';
@@ -174,8 +175,14 @@ export interface WhoCanReadEntry {
 
 /** Who may read `slug` remotely: its normalized readers, privacy and the enabled members those readers admit. */
 export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: string): Promise<WhoCanReadEntry[]> {
-  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown; folder_rule_ids: string[] | null }>(
-    `SELECT slug, source_id, type, frontmatter, folder_rule_ids FROM pages WHERE slug = $1${sourceId ? ' AND source_id = $2' : ''} ORDER BY source_id`,
+  // The brain's schema version, as a remote read carries it: without it the owner-only test takes its closed form, and
+  // on a brain that has (or once had) an owner-only source every page would read as owner-only, unlike real reads.
+  const schema = await schemaVersionNow(engine);
+  const remotePolicy = { privacyRelaxed: false, restricted: true, ...schema };
+  // owner_only: the page is in, or derived from, an owner-only source (imessage, apple-contacts, owner_only: true), so only the owner reads it.
+  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown; folder_rule_ids: string[] | null; owner_only: boolean }>(
+    `SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', ownerOnlyForm(schema.schemaVersion))} AS owner_only
+       FROM pages p WHERE p.slug = $1${sourceId ? ' AND p.source_id = $2' : ''} ORDER BY p.source_id`,
     sourceId ? [slug, sourceId] : [slug]);
   if (!rows.length) {
     throw opError('not_found', `No page "${slug}"${sourceId ? ` in source ${sourceId}` : ''}.`, 'Check the slug with gbrain list or gbrain search.');
@@ -197,10 +204,11 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
     const readers = normalizeReaders(fm);
     const priv = isPrivacyPrivatePage({ type: row.type, frontmatter: fm });
     const ruled = (row.folder_rule_ids?.length ?? 0) > 0;
+    const ownerOnly = row.owner_only === true;
     const allowed: string[] = [];
-    if (readers !== null || ruled) {
+    if (readers !== null || ruled || ownerOnly) {
       for (const { id, identity, folder } of members) {
-        const admitted = await withCallerAccess({ identity, ...folder, restricted: true }, () => engine.executeRaw(
+        const admitted = await withCallerAccess({ identity, ...folder, restricted: true, owner: id === ownerId, remotePolicy }, () => engine.executeRaw(
           `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${accessAllowedSql('p', identity)}`, [row.source_id, row.slug]));
         if (admitted.length) allowed.push(id);
       }
@@ -211,17 +219,20 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
     if (ownerOpened) allowed.push(optIn!);
     const ownerRecord = members.find(m => m.id === ownerId);
     const audienceOpened = audiencePage && !!ownerRecord && !allowed.includes(ownerRecord.id) && (readers !== null || ruled)
-      && (await withCallerAccess({ identity: ownerRecord.identity, ...ownerRecord.folder, restricted: true }, () => engine.executeRaw(
+      && (await withCallerAccess({ identity: ownerRecord.identity, ...ownerRecord.folder, restricted: true, owner: true, remotePolicy }, () => engine.executeRaw(
         `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${folderRulesAllowedSql('p', ownerRecord.folder.satisfiedRuleIds)}`, [row.source_id, row.slug]))).length > 0;
     if (audienceOpened) allowed.push(ownerRecord!.id);
     const lineageRules = ruled ? await engine.executeRaw<{ n: number }>(
       `SELECT count(*)::int AS n FROM unnest($1::text[]) AS x WHERE NOT EXISTS (SELECT 1 FROM access_rules r WHERE r.source_id = $2 AND x = $2 || ':' || r.rule_id AND NOT r.covers_derived)`,
       [row.folder_rule_ids, row.source_id]) : [{ n: 0 }];
     const closesLineage = readers !== null || Number(lineageRules[0]?.n ?? 0) > 0;
-    const nobody = readByNobodyNote({ slug: row.slug, source_id: row.source_id, readers }, ruled, allowed.length, known, ownerId);
+    const nobody = ownerOnly ? null : readByNobodyNote({ slug: row.slug, source_id: row.source_id, readers }, ruled, allowed.length, known, ownerId);
     const notes = [
       ...(nobody ? [nobody] : []),
-      readers === null ? (ruled ? 'No readable_by, but folder rules cover it: only members who meet every rule read it remotely.' : 'No readable_by: every caller entitled to the source reads it.')
+      ...(ownerOnly ? [ownerId
+        ? `It is in, or derived from, an owner-only source (imessage, apple-contacts or owner_only: true), so only the owner (${ownerId}) reads it remotely, when its readable_by and rules admit the owner; no other member and no unbound credential reads it.`
+        : 'It is in, or derived from, an owner-only source (imessage, apple-contacts or owner_only: true), and no owner is set, so no remote caller reads it (gbrain access owner set <member> names the owner).'] : []),
+      readers === null ? (ruled ? 'No readable_by, but folder rules cover it: only members who meet every rule read it remotely.' : ownerOnly ? 'No readable_by.' : 'No readable_by: every caller entitled to the source reads it.')
         : readers.includes('!nobody') ? 'readable_by is malformed, so no remote caller reads it; fix the frontmatter.'
         : 'Only credentials bound to these members (directly or through a group) read it remotely; unbound credentials and stdio do not.',
       ...(readers !== null && ruled ? ['Folder rules cover it too: a member must meet readable_by and every rule.'] : []),
@@ -233,7 +244,7 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
       ...(audienceOpened || (audiencePage && ownerOpened) ? [`It is the member page of an audience member (gbrain access member kind), so the owner (${ownerId}) reads it, its older versions, its derived pages and its facts as if it named the owner.`] : []),
       ...(labelledOnlyIds.length ? [`Labelled-only members (${labelledOnlyIds.join(', ')}) read it only when it names them: readable_by or a rule listing them or their groups${readers === null && !ruled ? ', so none of them reads it' : ''}; a derived page or fact that names nobody is hidden from them${memberLineage ? ' unless every origin names them' : ''}.`] : []),
     ];
-    entries.push({ slug: row.slug, source_id: row.source_id, readers, private: priv, members: readers === null && !ruled ? 'every_source_reader' : allowed, note: notes.join(' ') });
+    entries.push({ slug: row.slug, source_id: row.source_id, readers, private: priv, members: readers === null && !ruled && !ownerOnly ? 'every_source_reader' : allowed, note: notes.join(' ') });
   }
   return entries;
 }
