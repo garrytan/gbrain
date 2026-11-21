@@ -14,6 +14,11 @@
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18).
  */
 import { describe, expect } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { performSync } from '../../src/commands/sync.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parseFindPattern, type FindPagesQuery } from '../../src/core/page-find.ts';
 import { QUARANTINE_KEY } from '../../src/core/quarantine.ts';
@@ -942,6 +947,10 @@ describe('engine parity: pages', () => {
     },
   );
 
+  // Generation differs by design: Postgres and PGLite return pages.generation, a counter that grows; the Rust store keeps
+  // no counter and returns a token from the page's knowledge_revision (rust/docs/store/entity_identities.md), equal while
+  // the page is unchanged and different after a change, but not increasing. Main compares generation for equality only
+  // (company-auto-link.ts plan pins, duplicates.ts), so the cases below assert equality and change, never order or value.
   parityTest(
     'listEntityKeyRows narrows to members and to pages with a token value, and names each page\'s identity and generation',
     { methods: ['putPage', 'linkEntityIdentityRow', 'listEntityKeyRows'] },
@@ -1023,6 +1032,48 @@ describe('engine parity: pages', () => {
       expect(after.filter(([, id]) => id !== null)).toEqual([
         ['i', { entity_id: 'dedupe/0000000000000002', established_by: 'dedupe:confirm' }], ['k', { entity_id: 'dedupe/0000000000000002', established_by: 'dedupe:confirm' }]]);
       return { first, again, linked, decided, swept, after, decisions };
+    },
+  );
+
+  parityTest(
+    'a sync of a changed company page runs the company sweep: it links the pair that shares an id, keeps it across a body edit and unlinks it when the ids part',
+    { methods: ['putPage', 'listEntityKeyRows', 'listIdentityDecisions', 'applyIdentityDecisions'] },
+    async (engine, backend) => {
+      // A folder source without git: each performSync passes the slugs it changed to the company sweep
+      // (syncIdentityDecisions -> autoLinkCompanies -> listEntityKeyRows + applyIdentityDecisions).
+      const dir = mkdtempSync(join(tmpdir(), 'parity-company-sweep-'));
+      try {
+        mkdirSync(join(dir, 'notes'), { recursive: true });
+        mkdirSync(join(dir, 'companies'), { recursive: true });
+        writeFileSync(join(dir, 'notes', 'start.md'), '---\ntype: note\ntitle: Start\n---\nStart.\n');
+        const git = (...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+        git('init', '-q', '-b', 'main'); git('config', 'user.email', 'parity@example.com'); git('config', 'user.name', 'Parity');
+        git('add', '-A'); git('commit', '-q', '-m', 'start');
+        await createSource(engine, backend, 'company-sync', {}, dir);
+        await engine.putPage('companies/acme-example', { ...ACME, frontmatter: { linkedin: 'https://www.linkedin.com/company/acme-example/', website: 'https://acme-example.com' } });
+        const file = (ids: string, body: string) => writeFileSync(join(dir, 'companies', 'acme-example.md'), `---\ntype: company\ntitle: Acme Example\n${ids}---\n${body}\n`);
+        const ACME_IDS = 'linkedin: https://www.linkedin.com/company/acme-example/\nwebsite: https://acme-example.com\n';
+        const sync = async () => { git('add', '-A'); try { git('commit', '-q', '-m', 'edit'); } catch { /* nothing new */ }
+          return performSync(engine, { sourceId: 'company-sync', repoPath: dir, noPull: true, noEmbed: true, concurrency: 1 }); };
+        const groups = async () => (await engine.listEntityKeyRows({ types: ['company'], keys: [], limit: 10 }))
+          .map(r => [r.source_id, r.slug, r.identity] as const);
+        const steps: Array<{ status: string; groups: Awaited<ReturnType<typeof groups>> }> = [];
+        const step = async () => { const r = await sync(); steps.push({ status: r.status, groups: await groups() }); };
+        await step();
+        file(ACME_IDS, 'Acme Example.');
+        await step();
+        file(ACME_IDS, 'Acme Example builds widgets.');
+        await step();
+        file('linkedin: https://www.linkedin.com/company/widget-co/\nwebsite: https://widget-co.example\n', 'Acme Example builds widgets.');
+        await step();
+        const linked = steps.map(s => s.groups.map(([, , id]) => id?.established_by ?? null));
+        expect(linked).toEqual([[null], ['dedupe:auto', 'dedupe:auto'], ['dedupe:auto', 'dedupe:auto'], [null, null]]);
+        expect(steps[1]!.groups[0]![2]!.entity_id).toBe(steps[2]!.groups[0]![2]!.entity_id);
+        expect(steps[1]!.groups[0]![2]!.entity_id).toMatch(/^dedupe-auto\//);
+        return steps;
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     },
   );
 
