@@ -140,7 +140,7 @@ src/commands/google-setup-tail.ts	execute_raw	1
 src/commands/google.ts	execute_raw	1
 src/commands/guests.ts	execute_raw	1
 src/commands/import-calls.ts	execute_raw	3	GST-2904 (open before #9641): reads the committed call page's id, frontmatter readers and whether a page_label_guards row exists, locked FOR UPDATE inside the maintenance transaction that raises the guard; no typed engine method exists yet
-src/commands/import.ts	execute_raw	5
+src/commands/import.ts	execute_raw	3
 src/commands/init-prefer-postgres.ts	execute_raw	5
 src/commands/init.ts	sql_template	2
 src/commands/integrity.ts	execute_raw	1

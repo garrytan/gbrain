@@ -98,7 +98,7 @@
       "out-of-scope:writer-versions (born in engine-sql/writer-versions.ts; pinned by test/engine-parity/writer-versions.test.ts)": 3,
       "pages": 41,
       "salience": 5,
-      "sources": 15,
+      "sources": 16,
       "tags": 3,
       "takes": 20,
       "timeline": 8
@@ -836,6 +836,7 @@
       "markPagesExtractedBatch": "pages",
       "markProjectionRebuildFailed": "out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)",
       "markRevertedEdgeProposals": "out-of-scope:contradictions-cycle (born in engine-sql/contradictions-cycle.ts; pinned byte-identical by test/family-tail-sites-sql-pin.test.ts and test/engine-parity/family-tail-sites.test.ts)",
+      "markSourceSynced": "sources",
       "markSpendUsageUnknown": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
       "matchSavedFacts": "out-of-scope:facts-trust (born in engine-sql/facts-trust.ts; pinned by test/engine-parity/facts-trust.test.ts)",
       "matchTakeRows": "out-of-scope:page-write-rows (born in engine-sql/timeline.ts and takes.ts; pinned by test/engine-parity/timeline.test.ts, takes.test.ts and test/fold-hook-noop-6712.test.ts)",
