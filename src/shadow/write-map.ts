@@ -43,6 +43,13 @@ const originLinks = (slug: string, source: string, del: boolean, extra: Record<s
   { relation: 'links', sel: { origin_page_id: ref(slug, source), ...extra }, del },
   { relation: 'links', sel: { from_page_id: ref(slug, source), ...extra }, del },
 ];
+// Writes a member makes through triggers or its own cleanup, so its arguments do not name them.
+/** BEFORE DELETE triggers on pages, facts, takes and timeline_entries (and sources changes) write the owner-only marks. */
+const OWNER_MARKS: Target[] = whole('owner_only_marks');
+/** What deleting a page leaves behind by slug (no foreign key): deletePages scrubs these stores. */
+const SLUG_STORES: Target[] = whole('slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops');
+/** A page write that carries `readable_by` frontmatter sets this config flag (trigger pages_access_mark_restricted). */
+const RESTRICTIONS_FLAG: Target = { relation: 'config', sel: { key: 'access.restrictions_present' } };
 const derivedLinks = (origin: { slug: string; sourceId: string }): Target[] => [
   ...originLinks(origin.slug, origin.sourceId, true),
   { relation: 'wanted_links', sel: { origin_page_id: ref(origin.slug, origin.sourceId) }, del: true },
@@ -51,16 +58,23 @@ const derivedLinks = (origin: { slug: string; sourceId: string }): Target[] => [
 
 export const WRITE_MAP: Record<string, WriteSpec> = {
   // Pages
-  putPage: { tables: ['pages'], plan: (a) => [pages(a[0], a[2]?.sourceId)] },
-  deletePage: { tables: ['pages'], plan: (a) => [pages(a[0], a[1]?.sourceId, true)] },
-  deletePages: { tables: ['pages'], plan: (a) => each<string>(a[0], (slug) => [pages(slug, a[1]?.sourceId, true)]) },
+  putPage: { tables: ['pages', 'config'], plan: (a) => [pages(a[0], a[2]?.sourceId), RESTRICTIONS_FLAG] },
+  deletePage: { tables: ['pages', 'owner_only_marks'], plan: (a) => [pages(a[0], a[1]?.sourceId, true), ...OWNER_MARKS] },
+  deletePages: {
+    tables: ['pages', 'owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops'],
+    plan: (a) => [...each<string>(a[0], (slug) => [pages(slug, a[1]?.sourceId, true)]), ...OWNER_MARKS, ...SLUG_STORES],
+  },
   softDeletePage: { tables: ['pages'], plan: (a) => [pages(a[0], a[1]?.sourceId)] },
   softDeletePages: { tables: ['pages'], plan: (a) => each<string>(a[0], (slug) => [pages(slug, a[1]?.sourceId)]) },
   restorePage: { tables: ['pages'], plan: (a) => [pages(a[0], a[1]?.sourceId)] },
-  purgeDeletedPages: { tables: ['pages'], plan: (a) => (a[1]?.dryRun ? [] : null) },
+  purgeDeletedPages: { tables: ['pages', 'owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops'], plan: (a) => (a[1]?.dryRun ? [] : null) },
   updateSlug: {
-    tables: ['pages', 'slug_aliases', 'slug_rename_history'],
-    plan: (a) => [pages(a[1], a[2]?.sourceId), ...whole('slug_aliases', 'slug_rename_history')],
+    tables: ['pages', 'slug_aliases', 'slug_rename_history', 'page_versions', 'page_aliases', 'facts', 'owner_only_marks'],
+    // A rename also snapshots the page, rebinds facts and aliases to the new slug, and can delete a fact it replaces.
+    plan: (a) => [
+      pages(a[1], a[2]?.sourceId), ...whole('slug_aliases', 'slug_rename_history', 'page_aliases'), child('page_versions', a[0], a[2]?.sourceId),
+      ...['entity_slug', 'source_markdown_slug'].map((column): Target => ({ relation: 'facts', sel: { [column]: a[0] }, del: true })), ...OWNER_MARKS,
+    ],
   },
   refreshPageBody: { tables: ['pages'], plan: (a) => [pages(a[0], a[1])] },
   refreshPageOrigin: { tables: ['pages'], plan: (a) => [pages(a[0], a[1]?.sourceId)] },
@@ -74,10 +88,10 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   setPageEmbeddingSignature: { tables: ['pages'], plan: (a) => [pages(a[0], a[1]?.sourceId)] },
   setChunkerVersion: { tables: ['pages'], plan: (a) => [pages(a[0], a[2]?.sourceId)] },
   writeTextProjectionSeal: { tables: ['pages'], plan: (a) => [pages(a[0], a[1]?.sourceId)] },
-  revertToVersion: { tables: ['pages'], plan: (a) => [pages(a[0], a[2]?.sourceId)] },
+  revertToVersion: { tables: ['pages', 'config'], plan: (a) => [pages(a[0], a[2]?.sourceId), RESTRICTIONS_FLAG] },
   setEmotionalWeightBatch: { tables: ['pages'], plan: (a) => each<any>(a[0], (r) => [pages(r.slug, r.source_id)]) },
   invalidateWithdrawnPages: { tables: ['pages'], plan: (a) => each<string>(a[1], (slug) => [pages(slug, a[0])]) },
-  createSegmentedPageShell: { tables: ['pages'], plan: (a) => [pages(a[0], a[2]?.sourceId)] },
+  createSegmentedPageShell: { tables: ['pages', 'config'], plan: (a) => [pages(a[0], a[2]?.sourceId), RESTRICTIONS_FLAG] },
   sealSegmentedPage: { tables: ['pages'], plan: (a) => [pageById(a[0])] },
   // Tags (a tag write also moves pages.knowledge_revision)
   addTag: { tables: ['tags', 'pages'], plan: (a) => [child('tags', a[0], a[2]?.sourceId, false, { tag: a[1] }), pages(a[0], a[2]?.sourceId)] },
@@ -113,7 +127,7 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   addTimelineEntry: { tables: ['timeline_entries'], plan: (a) => [child('timeline_entries', a[0], a[2]?.sourceId)] },
   addTimelineEntriesBatch: { tables: ['timeline_entries'], plan: (a) => each<any>(a[0], (e) => [child('timeline_entries', e.slug, e.source_id)]) },
   upsertEventProjection: { tables: ['timeline_entries'], plan: (a) => [child('timeline_entries', a[0]?.depthSlug, a[0]?.sourceId)] },
-  removeTimelineRows: { tables: ['timeline_entries'], plan: (a) => [childById('timeline_entries', a[0], true)] },
+  removeTimelineRows: { tables: ['timeline_entries', 'owner_only_marks'], plan: (a) => [childById('timeline_entries', a[0], true), ...OWNER_MARKS] },
   updateTimelineDetails: { tables: ['timeline_entries'], plan: (a) => [childById('timeline_entries', a[0])] },
   // Facts
   insertFact: {
@@ -121,21 +135,21 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
     plan: (a, r) => [{ relation: 'facts', sel: { id: id(r?.id) } }, ...(a[1]?.supersedeId != null ? [{ relation: 'facts', sel: { id: id(a[1].supersedeId) } }] : [])],
   },
   insertFacts: {
-    tables: ['facts'], late: true,
+    tables: ['facts', 'owner_only_marks'], late: true,
     plan: (a, r) => (a[2]?.deleteForPageFirst || !Array.isArray(r?.ids) ? null : r.ids.map((fid: unknown) => ({ relation: 'facts', sel: { id: id(fid) } }))),
   },
-  deleteFactsForPage: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { source_id: a[1], source_markdown_slug: a[0] }, del: true }] },
+  deleteFactsForPage: { tables: ['facts', 'owner_only_marks'], plan: (a) => [{ relation: 'facts', sel: { source_id: a[1], source_markdown_slug: a[0] }, del: true }, ...OWNER_MARKS] },
   expireFact: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[0]) } }] },
   consolidateFact: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[0]) } }] },
-  migrateFactsToCanonical: { tables: ['facts'] },
-  mergeOntologyFact: { tables: ['facts'] },
+  migrateFactsToCanonical: { tables: ['facts', 'owner_only_marks'] },
+  mergeOntologyFact: { tables: ['facts', 'owner_only_marks'] },
   // Takes
   addTakesBatch: { tables: ['takes'], plan: (a) => each<any>(a[0], (t) => [childById('takes', t.page_id)]) },
   updateTakeEmbeddings: { tables: ['takes'], plan: (a) => each<any>(a[0], (t) => [{ relation: 'takes', sel: { id: id(t.take_id) } }]) },
   updateTake: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
   resolveTake: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
   supersedeTake: { tables: ['takes'], plan: (a) => [childById('takes', a[0])] },
-  deleteTakeRows: { tables: ['takes'], plan: (a) => [childById('takes', a[0], true)] },
+  deleteTakeRows: { tables: ['takes', 'owner_only_marks'], plan: (a) => [childById('takes', a[0], true), ...OWNER_MARKS] },
   addSynthesisEvidence: { tables: ['synthesis_evidence'], plan: (a) => each<any>(a[0], (e) => [childById('synthesis_evidence', e.synthesis_page_id, false, 'synthesis_page_id')]) },
   // Everything else with a precise home
   putRawData: { tables: ['raw_data'], plan: (a) => [child('raw_data', a[0], a[3]?.sourceId, false, { source: a[1] })] },
@@ -144,7 +158,7 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   unsetConfig: { tables: ['config'], plan: (a) => [{ relation: 'config', sel: { key: a[0] }, del: true }] },
   setPageAliases: { tables: ['page_aliases'], plan: (a) => [{ relation: 'page_aliases', sel: { source_id: a[1], slug: a[0] }, del: true }] },
   replaceDerivedAliases: { tables: ['page_aliases'], plan: (a) => [{ relation: 'page_aliases', sel: { source_id: a[1], slug: a[0] }, del: true }] },
-  updateSourceConfig: { tables: ['sources'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }] },
+  updateSourceConfig: { tables: ['sources', 'owner_only_marks'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }, ...OWNER_MARKS] },
   createVersion: { tables: ['page_versions'], plan: (a) => [child('page_versions', a[0], a[1]?.sourceId, true)] },
   // Relation-level: no stable selector on the member's arguments
   applyIdentityDecisions: { tables: ['entity_identities', 'entity_identity_reviews'] },

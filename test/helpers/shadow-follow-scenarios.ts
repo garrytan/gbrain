@@ -50,6 +50,11 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect((await r.rust.getLinks('people/bob-example')).map((l) => l.to_slug)).toEqual(['companies/acme-example']);
         expect(await r.rust.getPage('people/alice-example')).toBeNull();
         expect(await r.rust.getLinks('people/alice-example')).toEqual([]);
+        // Deleting a page clears stores by slug that no key names: those relations are dirty until a pass for them.
+        expect(status(r).follower.coverage_watermark).toMatchObject({ valid: false, invalidated_reason: 'relation_dirty' });
+        await tick();
+        const dirty = await r.reconciler.run('dirty', ['owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops']);
+        expect(dirty.error).toBeUndefined();
         const s = status(r);
         expect(s.follower.state).toBe('following');
         expect(s.follower.applied_rows).toBeGreaterThan(0);

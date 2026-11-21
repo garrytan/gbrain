@@ -74,7 +74,10 @@ describe('committed writes publish once after commit', () => {
     const h = followHarness(engine);
     await h.engine.putPage('people/bob', PAGE('Bob'));
     expect(h.batches).toHaveLength(1);
-    expect(h.batches[0]!.items).toEqual([{ kind: 'rows', relation: 'pages', selector: { source_id: 'default', slug: 'people/bob' }, before_keys: null }]);
+    expect(h.batches[0]!.items).toEqual([
+      { kind: 'rows', relation: 'pages', selector: { source_id: 'default', slug: 'people/bob' }, before_keys: null },
+      { kind: 'rows', relation: 'config', selector: { key: 'access.restrictions_present' }, before_keys: null }, // a readable_by page sets it
+    ]);
     await h.engine.putPage('people/bob', PAGE('Bob again'));
     expect(h.batches[1]!.seq).toBe(h.batches[0]!.seq + 1);
     expect(h.batches[1]!.committed_at).toBeGreaterThan(0);
@@ -150,7 +153,7 @@ describe('rollbacks publish nothing', () => {
     const h = followHarness(engine);
     await expect(h.engine.putPage('', PAGE('Nobody'))).rejects.toThrow(/Invalid slug/);
     expect(h.batches).toHaveLength(1);
-    expect(h.batches[0]!.items).toEqual([{ kind: 'relation', relation: 'pages', reason: 'write_rejected' }]);
+    expect(h.batches[0]!.items).toEqual([{ kind: 'relation', relation: 'pages', reason: 'write_rejected' }, { kind: 'relation', relation: 'config', reason: 'write_rejected' }]);
   });
 });
 
@@ -224,7 +227,7 @@ describe('the shadow never changes what the caller sees', () => {
     const h = followHarness(engine, { failRawWith: new Error('pre-read down') });
     await h.engine.deletePage('people/liam');
     expect(await engine.getPage('people/liam')).toBeNull();
-    expect(h.batches[0]!.items).toEqual([{ kind: 'relation', relation: 'pages', reason: 'pre_read_failed' }]);
+    expect(h.batches[0]!.items).toEqual([{ kind: 'relation', relation: 'pages', reason: 'pre_read_failed' }, { kind: 'relation', relation: 'owner_only_marks', reason: 'pre_read_failed' }]);
   });
 
   test('a sink that throws does not fail the write', async () => {
@@ -307,7 +310,7 @@ describe('selectors match the real schema', () => {
     const used: Record<string, string[]> = {
       pages: ['id', 'source_id', 'slug'], tags: ['id', 'page_id', 'tag'], content_chunks: ['id', 'page_id'],
       links: ['id', 'from_page_id', 'to_page_id', 'origin_page_id', 'link_source'], wanted_links: ['id', 'origin_page_id'],
-      timeline_entries: ['id', 'page_id'], facts: ['id', 'source_id', 'source_markdown_slug'], takes: ['id', 'page_id', 'row_num'],
+      timeline_entries: ['id', 'page_id'], facts: ['id', 'source_id', 'source_markdown_slug', 'entity_slug'], takes: ['id', 'page_id', 'row_num'],
       synthesis_evidence: ['synthesis_page_id', 'take_page_id', 'take_row_num'], raw_data: ['id', 'page_id', 'source'], files: ['id', 'source_id', 'storage_path'],
       config: ['key'], page_aliases: ['id', 'source_id', 'slug'], page_versions: ['id', 'page_id'], sources: ['id'],
     };
@@ -335,7 +338,9 @@ describe('selectors match the real schema', () => {
     await h.engine.deleteFactsForPage('people/nina', 'default');
     await h.engine.deletePages(['people/nina', 'companies/orbit'], { sourceId: 'default' });
     const items = h.batches.flatMap((b) => b.items);
-    expect(items.filter((i) => i.kind !== 'rows')).toEqual([]);
+    // Only the relation-level items for what triggers and cleanup write (owner marks, slug stores); every row item has keys or none to read.
+    expect([...new Set(items.filter((i) => i.kind !== 'rows').map((i) => (i as { relation: string }).relation))].sort())
+      .toEqual(['open_loops', 'owner_only_marks', 'page_aliases', 'slug_aliases', 'slug_rename_history']);
     const withKeys = (relation: string) => rows(items, relation).flatMap((i) => i.before_keys ?? []);
     expect(withKeys('content_chunks').length).toBe(1);
     expect(withKeys('links').length).toBe(1);
@@ -343,6 +348,28 @@ describe('selectors match the real schema', () => {
     expect(withKeys('config')).toEqual([['follow_key']]);
     expect(withKeys('page_aliases').length).toBe(1);
     expect(withKeys('pages').length).toBe(2);
+  });
+});
+
+describe('members that write more than their arguments name', () => {
+  const relations = (items: Array<{ relation?: string }>) => [...new Set(items.map((i) => i.relation))];
+
+  test('a rename also reports the page versions, facts, page aliases and owner marks it rewrites', async () => {
+    await engine.putPage('people/rena', PAGE('Rena'));
+    await engine.insertFact({ fact: 'Rena builds boats', entity_slug: 'people/rena', source: 'mcp:remember' }, { source_id: 'default' });
+    const h = followHarness(engine);
+    await h.engine.updateSlug('people/rena', 'people/rena-new');
+    const items = h.batches.flatMap((b) => b.items) as Array<{ relation?: string }>;
+    expect(relations(items)).toEqual(expect.arrayContaining(['pages', 'slug_aliases', 'slug_rename_history', 'page_versions', 'page_aliases', 'facts', 'owner_only_marks']));
+    expect(await engine.getPage('people/rena-new')).not.toBeNull();
+  });
+
+  test('deleting pages also reports the owner marks and the slug stores it scrubs', async () => {
+    await engine.putPage('people/sven', PAGE('Sven'));
+    const h = followHarness(engine);
+    await h.engine.deletePages(['people/sven'], { sourceId: 'default' });
+    const items = h.batches.flatMap((b) => b.items) as Array<{ relation?: string }>;
+    expect(relations(items)).toEqual(expect.arrayContaining(['pages', 'owner_only_marks', 'slug_aliases', 'page_aliases', 'slug_rename_history', 'open_loops']));
   });
 });
 

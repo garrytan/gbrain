@@ -89,6 +89,6 @@ d('shadow follow producer on Postgres', () => {
     await h.engine.executeRaw(`INSERT INTO config (key, value) VALUES ('follow_probe', '1') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
     expect(h.batches[0]!.items).toEqual([{ kind: 'relation', relation: 'config', reason: 'raw_sql' }]);
     await expect(h.engine.putPage('', PAGE('Nobody'))).rejects.toThrow(/Invalid slug/);
-    expect(h.batches[1]!.items).toEqual([{ kind: 'relation', relation: 'pages', reason: 'write_rejected' }]);
+    expect(h.batches[1]!.items).toEqual([{ kind: 'relation', relation: 'pages', reason: 'write_rejected' }, { kind: 'relation', relation: 'config', reason: 'write_rejected' }]);
   }, 60_000);
 });
