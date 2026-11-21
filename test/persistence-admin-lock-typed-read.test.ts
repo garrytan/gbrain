@@ -11,6 +11,9 @@
  *    in-transaction refusal reached through the retired raw `readWriterAdminLock`.
  *  - Why existing coverage misses it: the graduation and deactivation tests assert the blockers, not how the lock is
  *    read, so a raw read passes them on PGLite and Postgres.
+ *  - Wrappers carried over: a batch's shared reads (`batchSharedReads`) answered the raw read once per batch through
+ *    its executeRaw branch; they now answer the typed read once through their getConfig branch, and a transaction
+ *    opened from the batch view still reads the lock live, after its FOR SHARE on persistence_brain.
  *  - Seam: a recording proxy over a real PGLite engine (and its transaction handle) that forwards every call and keeps
  *    the statements and config keys it saw. Nothing is answered by the proxy.
  */
@@ -19,7 +22,8 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { WRITER_ADMIN_LOCK_KEY } from '../src/core/persistence/admin-contract.ts';
-import { assertWriterAdminUnlocked } from '../src/core/persistence/admin-lock.ts';
+import { assertWriterAdminUnlocked, readWriterAdminLockTyped } from '../src/core/persistence/admin-lock.ts';
+import { batchSharedReads } from '../src/core/persistence/page-mutations.ts';
 import { deactivationBlockers } from '../src/core/persistence/deactivation.ts';
 import { graduationBlockers } from '../src/core/persistence/graduation-drain.ts';
 
@@ -85,6 +89,21 @@ describe('writer admin lock: typed config read', () => {
       expect({ graduation, deactivation, refusal }).toEqual({
         graduation: ['writer administration locked at unknown time'], deactivation: ['set at unknown'], refusal: 'writer_admin_locked',
       });
+    } finally { await engine.unsetConfig(WRITER_ADMIN_LOCK_KEY); }
+  }, 60_000);
+
+  test('a batch view answers the typed lock read once, and a transaction opened from it reads the lock live', async () => {
+    const seen: Seen = { sql: [], configKeys: [] };
+    const batch = batchSharedReads(recording(engine, seen));
+    try {
+      expect((await readWriterAdminLockTyped(batch)).locked).toBe(false);
+      await engine.setConfig(WRITER_ADMIN_LOCK_KEY, JSON.stringify({ locked: true, set_at: '2026-01-02T03:04:05Z', host_id: null, generation: 1 }));
+      expect((await readWriterAdminLockTyped(batch)).locked).toBe(false);
+      expect(seen.configKeys.filter(k => k === WRITER_ADMIN_LOCK_KEY)).toHaveLength(1);
+      const refusal = await batch.transaction(tx => assertWriterAdminUnlocked(tx)).then(() => null, (e: { code?: string }) => e.code ?? String(e));
+      expect(refusal).toBe('writer_admin_locked');
+      expect(seen.configKeys.filter(k => k === WRITER_ADMIN_LOCK_KEY)).toHaveLength(2);
+      expect(seen.sql).not.toContain(RAW_CONFIG_READ);
     } finally { await engine.unsetConfig(WRITER_ADMIN_LOCK_KEY); }
   }, 60_000);
 });
