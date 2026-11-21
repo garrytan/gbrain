@@ -90,8 +90,8 @@ transaction	lifecycle	yes	119	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	129	yes	yes	yes	serves
-readPageSnapshot	pages	yes	34	no	yes	yes	serves
+getPage	pages	yes	134	yes	yes	yes	serves
+readPageSnapshot	pages	yes	35	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
 putPage	pages	yes	562	yes	yes	yes	serves
@@ -378,7 +378,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	30	no	yes	yes	serves
+createVersion	versions	yes	31	no	yes	yes	serves
 getVersions	versions	yes	18	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves

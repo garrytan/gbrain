@@ -47,7 +47,7 @@ const COMMITTED = { ok: true, state: 'committed', status: 'created_or_updated' }
 
 describe('the bench save failures', () => {
   parityTest('case 1: put_page to a git-rooted source no writer claimed commits the page and its file', {
-    methods: [],
+    methods: ['getPage'],
     timeout: 60_000,
   }, async (engine, backend) => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-bench-save-parity-')));
@@ -79,7 +79,7 @@ describe('the bench save failures', () => {
     }
   });
 
-  parityTest('case 2: a forced update of an existing page commits, and a later write behind it commits', { methods: [] }, async (engine) => {
+  parityTest('case 2: a forced update of an existing page commits, and a later write behind it commits', { methods: ['createVersion', 'getPage'] }, async (engine) => {
     try {
       const created = await run(engine, 'put_page', { slug: 'people/carol-example', content: person('v1') });
       const updated = await run(engine, 'put_page', { slug: 'people/carol-example', content: person('v2'), force: true });
@@ -91,7 +91,7 @@ describe('the bench save failures', () => {
     } finally { await disposePersistenceConsumer(engine); }
   });
 
-  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: [] }, async (engine) => {
+  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: ['readPageSnapshot'] }, async (engine) => {
     try {
       const big = '---\ntitle: Conv\ntype: conversation\n---\n' + 'User: hello there, this is a long line of conversation text.\n'.repeat(90);
       const part = await run(engine, 'put_page', { slug: 'conversations/conv-example/part-1', content: big });

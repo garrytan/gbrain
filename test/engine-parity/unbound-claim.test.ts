@@ -103,19 +103,21 @@ async function remotePut(engine: BrainEngine, transport: 'stdio' | 'http', sourc
 
 // Held: an automatic claim binds a managed worktree, and journal.ts prepareAdmission still refuses a worktree write on
 // Rust (managed_persistence), so decideUnboundWrite refuses before it claims. Remove `requires` from each case when that
-// admission is typed; the cases then compare on Rust.
-const HELD = { methods: [], requires: 'managed_persistence', timeout: 60_000 } as const;
+// admission is typed; the cases then compare on Rust. Each case reads the page back with getPage on every arm it runs.
 
 describe('the first page write to a rooted source no writer claimed', () => {
-  parityTest('a local put_page: PGLite and Rust claim and commit, Postgres refuses owner_unavailable', HELD,
+  parityTest('a local put_page: PGLite and Rust claim and commit, Postgres refuses owner_unavailable',
+    { methods: ['getPage'], requires: 'managed_persistence', timeout: 60_000 },
     async (engine, backend) => withUnclaimedCheckout(engine, backend, 'vault', () => localPut(engine, 'vault')));
 
-  parityTest('an MCP put_page over stdio follows the same rule', HELD,
+  parityTest('an MCP put_page over stdio follows the same rule',
+    { methods: ['getPage'], requires: 'managed_persistence', timeout: 60_000 },
     async (engine, backend) => withUnclaimedCheckout(engine, backend, 'vault', () => remotePut(engine, 'stdio', 'vault')));
 
   // On `default` (sync.repo_path): a token minted with a grant to another source checks the grant through raw SQL
   // (access/attest-sources.ts), which the Rust engine refuses, a separate gap. On Rust the write's re-check of the live
   // token (readAccessTokenWriteGrant) also stops typed: the store keeps the token, not every grant column.
-  parityTest('an MCP put_page over http follows the same rule', HELD,
+  parityTest('an MCP put_page over http follows the same rule',
+    { methods: ['getPage'], requires: 'managed_persistence', timeout: 60_000 },
     async (engine, backend) => withUnclaimedCheckout(engine, backend, 'default', () => remotePut(engine, 'http', 'default')));
 });
