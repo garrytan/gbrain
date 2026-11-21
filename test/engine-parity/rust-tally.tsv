@@ -101,7 +101,7 @@ test/engine-parity/persistence-declaration.test.ts	7	3
 test/engine-parity/persistence.test.ts	43	0
 test/engine-parity/private-page-reads.test.ts	23	0
 test/engine-parity/raw-sql.test.ts	0	4
-test/engine-parity/reads-privacy.test.ts	51	0
+test/engine-parity/reads-privacy.test.ts	51	1
 test/engine-parity/remember-meta.test.ts	3	0
 test/engine-parity/remember-whole.test.ts	1	0
 test/engine-parity/remote-policy.test.ts	2	0
