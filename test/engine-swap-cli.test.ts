@@ -81,18 +81,23 @@ describe('engine swap --plan', () => {
     expect(plan.routes.env).toEqual(['GBRAIN_DATABASE_URL']);
     expect(plan.routes.services).toEqual([{ name: 'com.gbrain.serve.plist', kind: 'launchd', sets: ['GBRAIN_DATABASE_URL'] }]);
     expect(typeof plan.disk.free_bytes).toBe('number');
-    expect(Object.keys(plan.deferred).sort()).toEqual(['capability_report', 'expected_write_pause']);
+    expect(plan.policy.text).toContain('minimum shadow duration 14 days');
+    expect(plan.policy.hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(Array.isArray(plan.capability_report.served)).toBe(true);
+    expect(plan.write_pause.seconds).toBeGreaterThanOrEqual(1);
+    expect(plan.blockers).toEqual([]);
     expect(plan.plan_hash).toMatch(/^[0-9a-f]{16}$/);
     expect(r.stdout).not.toContain('VALUECANARY');
   });
 
-  test('the human plan names the verdict, every criterion and the deferred items, and no value', async () => {
+  test('the human plan names the verdict, every criterion, the policy, the capability report and the write pause, and no value', async () => {
     const r = await run(['--to', 'rust', '--dry-run']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('verdict: NOT READY (no_shadow)');
     expect(r.stdout).toContain('8. [reported] speed (reported, not gating: D23)');
     expect(r.stdout).toContain('Capability report: ');
-    expect(r.stdout).toContain('Expected write pause: ');
+    expect(r.stdout).toContain('Expected write pause: about ');
+    expect(r.stdout).toContain('Readiness policy: minimum shadow duration 14 days');
     expect(r.stdout).toContain('Nothing was written.');
     expect(r.stdout).not.toContain('VALUECANARY');
   });
@@ -106,8 +111,9 @@ describe('engine swap --plan', () => {
   });
 
   test.each([
-    [['--to', 'rust'], 'add --plan'],
-    [['--to', 'rust', '--yes', '--expect', 'abc'], 'not supported yet: --yes --expect'],
+    [['--to', 'rust', '--yes'], '--yes needs --expect'],
+    [['--to', 'rust', '--plan', '--resume'], 'Use one of'],
+    [['--to', 'rust', '--bogus'], 'Not a flag of engine swap: --bogus'],
     [['--to', 'postgres', '--plan'], '--to postgres is not available'],
     [['--plan'], '--to (missing) is not available'],
   ])('%j is refused as usage, before the brain is opened', async (args, text) => {

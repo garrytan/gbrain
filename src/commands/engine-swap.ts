@@ -243,8 +243,16 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const config = running ? loadedConfig() : null;
     if (running && config) {
       const path = toEngineConfig(config).database_path;
-      if (config.database_url || toEngineConfig(config).engine !== 'pglite') {
-        throw usage('This build swaps a PGLite brain only; a Postgres brain swaps in a later release.');
+      const kind = config.database_url ? 'postgres' : (toEngineConfig(config).engine ?? 'pglite');
+      switch (kind) {
+        case 'pglite': break;
+        case 'postgres':
+        case 'rust':
+          throw usage('This build swaps a PGLite brain only; a Postgres brain swaps in a later release.');
+        default: {
+          const unreachable: never = kind;
+          throw usage(`Unknown engine ${String(unreachable)}.`);
+        }
       }
       if (path && (deps.run?.brainInUse ?? ((p: string) => inspectLockHolder(p).held))(path)) {
         throw swapRefusal('brain_in_use', 'another process holds this brain (a gbrain serve, a shadow-serving process or a running command).',
@@ -257,18 +265,26 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const dataDir = deps.dataDir ?? home;
     const envNames = ENGINE_SELECTING_ENV.filter(v => (env[v] ?? '') !== '');
     const services = home ? serviceDefinitions(home) : [];
-    const brainKey = shadowBrainKey(toEngineConfig(config ?? loadedConfig()));
+    const configured = config ?? loadConfig();
+    const brainKey = configured ? shadowBrainKey(toEngineConfig(configured)) : null;
     const shadowDir = brainKey ? shadowDirFor(brainKey) : '';
     const plan = await planEngineSwap(engine, {
       readShadowStatus: deps.readShadowStatus ?? (async () => (shadowDir ? shadowStatusFromDir(shadowDir, deps.now) : null)),
       now: deps.now, policy: deps.policy,
       envNames, services,
       disk: { path: dataDir, free_bytes: dataDir ? freeBytes(dataDir) : null },
-      remoteMcpConfigured: !!(config ?? loadConfig())?.remote_mcp,
+      remoteMcpConfigured: !!configured?.remote_mcp,
     });
-    if (!running) {
+    if (!running && parsed.plan) {
       out(parsed.json ? JSON.stringify(plan, null, 2) : renderPlanText(plan));
       return 0;
+    }
+    if (!running) {
+      // No approval: the plan's hash and how to approve it; nothing ran (the graduation contract).
+      throw opError('confirmation_required', `The swap needs your approval of plan ${plan.plan_hash} (verdict ${plan.verdict}). Nothing was written.`,
+        `Read it with gbrain engine swap --to rust --plan, then run gbrain engine swap --to rust --yes --expect ${plan.plan_hash}.`,
+        { docs: 'docs/guides/engine-swap.md#run', fix: { argv: ['gbrain', 'engine', 'swap', '--to', 'rust', '--yes', '--expect', plan.plan_hash], consent: [], actor: 'user', requires_exclusive: true,
+          why: 'Moves this brain to the Rust engine under the plan the user read.', user_message: `Run the engine swap the plan describes (plan ${plan.plan_hash})?` } });
     }
     if (!brainKey || !config) throw noBrainError();
     const recordPath = swapRecordPath(brainKey);

@@ -1,13 +1,15 @@
-# Moving a brain to the Rust engine: the swap plan
+# Moving a brain to the Rust engine: the engine swap
 
 The Rust engine is opt-in. An existing brain moves to it by an engine swap, after a shadow has run beside the current
 engine long enough to prove it gives the same answers (docs/designs/RUST_ENGINE.md, "Shadow mode and swap"). This
-guide covers the read-only plan, which is what this release ships. The run (`--yes --expect <hash>`), `--resume`,
-`--status` and failback (`--to postgres` or `--to pglite`) arrive in a later release.
+guide covers the read-only plan and the run for a PGLite brain. Failback (`--to pglite`) and swapping a Postgres brain
+arrive in a later release.
 
 **Say to your agent:** *"Is my brain ready to move to the Rust engine?"*
 
 **Say to your agent:** *"Show me the engine swap plan and what still blocks it."*
+
+**Say to your agent:** *"Move my brain to the Rust engine with the plan I just read."*
 
 <a id="plan"></a>
 ## The plan
@@ -37,14 +39,61 @@ status --json` prints for this brain; with no shadow for it, the verdict is `NOT
 - the free disk space where the brain lives;
 - a plan hash that binds the verdict, each criterion's state and the routes, and ignores the time and the free space.
 
-Two plan items wait for the run's machinery, and the plan names them instead of guessing:
+The plan also prints:
 
-- **Capability report.** It compares what this brain uses with what the Rust engine serves, read through the addon
-  loader. That wiring lands with the CLI connect PR, so the report comes with the run.
-- **Expected write pause.** The pause is the drain plus the final digest, measured under the write fence the run
-  builds. The plan has no fence to measure.
+- **The readiness policy** in force and its hash (below).
+- **The capability report.** The capabilities the Rust engine serves, and, for each one your current engine reports
+  that Rust does not, the engine members that refuse there.
+- **The expected write pause.** An estimate of how long writes are refused during a run: the drain of pending requests
+  plus two digest passes over the brain's rows, with the inputs it used. It is printed, never bound into the plan hash.
+- **Blockers.** What the Rust engine cannot serve for this brain yet. A run refuses while any is listed:
+  folder rules (`folder_rules_unserved`) and remote callers (`remote_access_unserved`).
 
 `READY` is evidence, not permission. A `NOT READY` plan can be read but not run. There is no readiness override.
+
+<a id="run"></a>
+## The run
+
+```bash
+gbrain engine swap --to rust --yes --expect <hash>   # run the plan with that hash
+gbrain engine swap --status [--json]                 # the recorded run, without opening the brain
+gbrain engine swap --to rust --resume [--json]       # continue a stopped run from its last state
+```
+
+The command never prompts. Without `--yes` it answers `confirmation_required` (exit 3) with the plan hash to approve.
+A run checks, before it writes anything: that the plan for the brain as it is now has the hash you approved
+(`preview_changed` otherwise), the blockers above, the readiness verdict, the routes, that no other process holds the
+brain (`brain_in_use`), and that the Rust engine addon loads. Then it goes through these states, each recorded (0600,
+under `.gbrain/engine-swap/`) before the next starts:
+
+1. **Checkpoint.** A copy of the PGLite data directory, written and verified: it loads into a fresh PGLite with the
+   same row count in every table. A later step checks its hash again and never uses a checkpoint that changed.
+2. **Fence.** Pending requests are drained, then every table of the old brain gets a database-enforced write fence:
+   a write that is not part of this run is refused. The fence stays after the swap; it is the way back.
+3. **Verify.** A final reconcile copies anything the shadow missed, the Rust id counters are raised to at least the old
+   brain's highest ids (sequence values included), a second reconcile must find nothing left to repair, the fingerprint
+   probe must pass, and every copied relation must have the same row count and digest on both engines.
+4. **Switch and probe.** The config file is switched to the Rust store, then a fresh `gbrain` process opens the brain
+   the normal way and must report the Rust engine at that store. Only then does the run report success. If the probe
+   fails, the config is put back at once.
+
+A run that stops (a kill, a full disk, a failed digest, a failed probe) keeps its last state and a diagnostic id;
+`--status` shows them and `--resume` continues. Until the switch, the old engine keeps authority.
+
+<a id="resume"></a>
+### Resume
+
+`--resume` re-checks what the previous steps left (the checkpoint hash, the fence) and continues from the recorded
+state. A checkpoint file the run wrote but never recorded is replaced, never trusted. A second run of the same brain
+is refused while one is recorded and not finished.
+
+<a id="policy"></a>
+## The readiness policy
+
+Criterion 1's minimum shadow duration is a policy value, not a flag: 14 days by default (D14), or a number of days with
+an expiry date, or "not required", as an approved ruling sets it. The plan prints it and its hash; the hash is part of
+the plan hash, so a change needs a new plan. An expired value falls back to 14 days. Privacy, fingerprints, topology,
+platform, capabilities, recovery drills, caught-up following and the final digests are never part of a policy.
 
 <a id="readiness"></a>
 ## Readiness criteria
@@ -52,7 +101,7 @@ Two plan items wait for the run's machinery, and the plan names them instead of 
 The plan reads the shadow status (`gbrain engine shadow status --json`). A missing or malformed field is `missing`,
 never a pass. With no shadow running, every criterion is `missing`.
 
-1. At least 14 days of shadowing in the epoch, follower lag p99 under 60 s, three consecutive clean reconcile passes,
+1. At least the policy's minimum shadow duration in the epoch (14 days by default), follower lag p99 under 60 s, three consecutive clean reconcile passes,
    no unseeded gap rows, and a follower that is caught up. "Caught up" needs the follower's current lag, queue depth
    and coverage watermark in the status; a status that leaves any of them out is `missing`, never a pass, and a
    follower with lag, a queue or an invalid watermark fails.
@@ -164,3 +213,31 @@ A host would read something different through its planned credential. Needs the 
 
 The fingerprint probe failed: collation or server semantics differ between the engines. Report it; not retried until
 the engine or the source host changes.
+
+<a id="folder_rules_unserved"></a>
+### `folder_rules_unserved`
+
+The brain has folder rules (`.gbrain/access.yml` in a source, or access rule rows). The Rust engine cannot edit them
+yet (`gbrain access rule add`, `rm`, `revert` and `import` refuse on Rust), so a swapped brain could not change who
+reads its folders. Not retried until a release serves those edits on Rust.
+
+<a id="remote_access_unserved"></a>
+### `remote_access_unserved`
+
+Remote callers use the brain: an active access token, an OAuth client or remote MCP. The Rust engine does not check a
+bearer token yet, so every remote caller would be refused after the swap. Not retried until a release serves it. The
+refusal gives counts only, never a token name or hash.
+
+<a id="brain_in_use"></a>
+### `brain_in_use`
+
+Another process holds the brain: a `gbrain serve`, a shadow-serving process or a running command. The swap holds the
+brain for the whole run. Stop that process, then run the swap again.
+
+<a id="verification_incomplete"></a>
+### `verification_incomplete`
+
+The run could not prove the engines equal or could not finish a state: the checkpoint did not verify or changed, the
+fence could not be put in place, a reconcile failed, the id counters did not pass, or the route probe did not see the
+Rust engine. The old engine keeps authority (a failed probe undoes the switch at once), the diagnostics are in the run
+record, and `--resume` retries the step, up to three times before you report it.
