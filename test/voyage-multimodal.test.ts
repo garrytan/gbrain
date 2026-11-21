@@ -307,6 +307,23 @@ describe('gateway.embedMultimodal — multimodal_model override + model-level va
     expect(capturedBody.model).toBe('voyage-multimodal-3');
   });
 
+  test('voyage-multimodal-3.5 is accepted as the multimodal model and sent as-is', async () => {
+    configureGateway({
+      embedding_model: 'voyage:voyage-4',
+      embedding_dimensions: 1024,
+      embedding_multimodal_model: 'voyage:voyage-multimodal-3.5',
+      env: { VOYAGE_API_KEY: 'voyage-key' },
+    });
+    let capturedBody: { model?: string } = {};
+    fetchHandler = async (_url, init) => {
+      capturedBody = JSON.parse(init.body as string);
+      return fakeVoyageResponse(1);
+    };
+    const out = await embedMultimodal([makeImage()]);
+    expect(out.length).toBe(1);
+    expect(capturedBody.model).toBe('voyage-multimodal-3.5');
+  });
+
   test('falls back to embedding_model when embedding_multimodal_model is unset', async () => {
     // Regression guard for the existing single-model setup.
     configureVoyageMultimodal();

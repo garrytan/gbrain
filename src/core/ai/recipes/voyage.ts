@@ -40,7 +40,7 @@ export const voyage: Recipe = {
         'voyage-code-4',
         'voyage-3.5', 'voyage-3-large', 'voyage-3', 'voyage-3-lite',
         'voyage-code-3', 'voyage-finance-2', 'voyage-law-2',
-        'voyage-multimodal-3',
+        'voyage-multimodal-3', 'voyage-multimodal-3.5',
       ],
       // v0.46.3: canonical pick for every "choose a model for the user" surface.
       // models[0] is voyage-4-large (quality order); the new-install default is
@@ -68,7 +68,10 @@ export const voyage: Recipe = {
       // through local validation and Voyage would reject it with HTTP 400 —
       // which gateway.ts:626 misclassifies as transient (TODO: reclassify
       // 4xx).
-      multimodal_models: ['voyage-multimodal-3'],
+      // voyage-multimodal-3.5: same /multimodalembeddings wire and 1024-dim default as
+      // voyage-multimodal-3, and the only multimodal model some Voyage endpoints serve
+      // (MongoDB Atlas' Voyage API).
+      multimodal_models: ['voyage-multimodal-3', 'voyage-multimodal-3.5'],
     },
     reranker: {
       // rerank-3 / rerank-3-lite are Voyage's current generation (generally
