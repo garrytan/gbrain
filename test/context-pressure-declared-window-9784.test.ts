@@ -18,6 +18,11 @@ describe('context window for a bare Claude model id (#9784)', () => {
     expect(resolveContextWindow({ configured: null, model: 'claude-opus-4-6', maxSeen: 250_000 })).toBe(1_000_000);
   });
 
+  test('the session model decides; a configured default is read only when the transcript names none', () => {
+    expect(resolveContextWindow({ configured: null, model: 'claude-opus-4-6', configuredModel: 'claude-opus-5-5', maxSeen: 190_000 })).toBe(200_000);
+    expect(resolveContextWindow({ configured: null, model: 'claude-haiku-4-5', configuredModel: 'claude-opus-5-5', maxSeen: 0 })).toBe(200_000);
+  });
+
   test('explicit config still wins over the declared window', () => {
     expect(resolveContextWindow({ configured: 150_000, model: 'claude-opus-5-5', maxSeen: 0 })).toBe(150_000);
   });

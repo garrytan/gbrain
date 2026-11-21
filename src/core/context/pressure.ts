@@ -128,7 +128,8 @@ export function readTranscriptPressure(path: string): TranscriptPressure | null 
 
 /**
  * Context window for the session: explicit config wins; then a 1M marker on
- * the model id or the configured model; then, for a Claude 5-generation model,
+ * the model id or the configured model; then, for a Claude 5-generation model
+ * (the session's own, or the configured one when the transcript names none),
  * the window the Anthropic recipe declares (Claude Code records the bare API
  * id, with no marker); then an observed fill above the default window (only a
  * large window could hold it); else the default.
@@ -137,7 +138,7 @@ export function resolveContextWindow(opts: { configured: number | null; model: s
   if (opts.configured) return opts.configured;
   const marker = /\[1m\]|-1m\b|1m-context/i;
   if ((opts.model && marker.test(opts.model)) || (opts.configuredModel && marker.test(opts.configuredModel))) return PRESSURE_LARGE_WINDOW;
-  const declared = declaredContextWindow(opts.model) ?? declaredContextWindow(opts.configuredModel);
+  const declared = declaredContextWindow(opts.model ?? opts.configuredModel);
   if (declared) return declared;
   return opts.maxSeen > PRESSURE_DEFAULT_WINDOW ? PRESSURE_LARGE_WINDOW : PRESSURE_DEFAULT_WINDOW;
 }
