@@ -24,7 +24,7 @@ import type {
 } from '../../engine-sql/sync-status-reads.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { CycleLockRow, SourceDetailRow, SourceRow } from '../../engine.ts';
-import { SYNC_ADMISSION_SETTING_PARAMS } from '../../persistence/sync-admission.ts';
+import { SYNC_ADMISSION_KEY, SYNC_ADMISSION_SETTING_PARAMS } from '../../persistence/sync-admission.ts';
 import { SYNC_DELETES_WITHHELD_OP } from '../../persistence/sync-pass-row.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../persistence/sync-status-sql.ts';
 import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../../apple-contacts/review-status.ts';
@@ -95,8 +95,8 @@ export const readSyncStatusSourceRow: StoreMember<[sourceId: string], SyncStatus
   const locks: CycleLockRow[] = await storeCall({ member }, () => brain.readCycleLocks({ by: 'id', lockId: syncLockId(sourceId) }));
   const pass = await readRow(brain, member, MANAGED_SYNC_PASS_OP, key);
   const withheld = await readRow(brain, member, SYNC_DELETES_WITHHELD_OP, key);
-  const [configKey, setOp, setFingerprint] = SYNC_ADMISSION_SETTING_PARAMS;
-  const stored: string | null = await storeCall({ member }, () => brain.getConfig(configKey));
+  const [, setOp, setFingerprint] = SYNC_ADMISSION_SETTING_PARAMS;
+  const stored: string | null = await storeCall({ member }, () => brain.getConfig(SYNC_ADMISSION_KEY));
   const dating = first(await readRow(brain, member, setOp, setFingerprint));
   const rowValue = text(dating?.value);
   let pinned: boolean | null = null;

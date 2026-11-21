@@ -24,6 +24,8 @@ function fixture(root: string | null = null) {
   const engine = {
     // The typed source reads answer the fixture's one source, as the raw `FROM sources` branch below does.
     ...stubSourceMembers(() => [source], { defaultHasPages: () => hasPages }),
+    // The source policy reads the source through the typed readSourceState member (engine-sql/write-misc.ts).
+    readSourceState: async (id: string) => (id === source.id ? { incarnation: source.incarnation, archived: false, local_path: source.local_path, config: {} } : null),
     getConfig: async (key: string) => config.get(key) ?? null,
     setConfig: async (key: string, value: string) => { config.set(key, value); },
     executeRaw: async (sql: string) => {
