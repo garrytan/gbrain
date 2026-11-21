@@ -118,8 +118,9 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   // preparePagePurge: the request-index state read, then the origin-twin read.
   { site: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: requestIndexes, stop: 'the online-built request index read runs through raw SQL' },
   { site: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: repairOriginTwin, stop: 'the origin-twin read (page-prepare isOriginTwinPage, also :461 and :676) runs through raw SQL; member readPageDatabaseOnlyReason' },
-  // The publication transaction: the exclusive source lock.
-  { site: '<anonymous> (persistence/coordinator.ts)', owner: ours, stop: 'the exclusive source lock (SELECT ... FOR UPDATE on sources) runs through raw SQL' },
+  // The publication transaction of a recovered journaled purge: the `publication_started` stamp (the exclusive source lock
+  // before it is the typed member `lockSourceForUpdate`).
+  { site: '<anonymous> (persistence/coordinator.ts)', owner: ours, stop: 'the publication transaction of a recovered purge stamps publication_started through raw SQL (UPDATE persistence_requests ... RETURNING *)' },
   // sweepPurgedPage: the generation-ledger scrub.
   { site: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: ledgerScrub, stop: 'the generation-ledger scrub runs through raw SQL' },
   // verifyPagePurge: the receipt.
@@ -156,7 +157,7 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     // the persistence journal and consumer that run the purge request
     'declarePersistence', 'insertWriteRequest', 'completeWriteRow', 'completeEffectRow', 'insertPublicationEffects', 'readWriteRequest',
     'readWriteRequestById', 'readWriteRequestProgress', 'lockWriteRequest', 'lockWriteRequests', 'lockPageKeys', 'lockPersistenceCounters',
-    'lockEffectGuard', 'lockNoopEmbeddingWindow', 'hasClaimableWrite', 'hasRearmableTargets', 'selectClaimableWrite', 'selectClaimableEffect',
+    'lockEffectGuard', 'lockSourceForUpdate', 'lockNoopEmbeddingWindow', 'hasClaimableWrite', 'hasRearmableTargets', 'selectClaimableWrite', 'selectClaimableEffect',
     'selectProjectionWindowJobs', 'listPendingSegmentedProjections', 'stampWriteClaim', 'stampEffectClaim', 'renewWriteClaim',
     'expireStaleWriteClaims', 'redactWriteRequestRow', 'releaseTerminalBytes', 'trueUpReservations', 'listTrueUpRequests', 'listReservationsAfter',
     'listEffectRecoveries', 'listOverdueHeldWrites', 'listOwnerRecoveryHeads', 'listResumableRefreshes', 'listGatedMirrorRequests',

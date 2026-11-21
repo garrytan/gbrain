@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1430/1437
+# covered: 1431/1438
 # lifecycle: 12/12
-# pages: 59/59
+# pages: 60/60
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 13/13
@@ -95,8 +95,8 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	175	no	yes	yes	serves
-transactionDirect	lifecycle	yes	17	no	yes	yes	serves
+transaction	lifecycle	yes	178	no	yes	yes	serves
+transactionDirect	lifecycle	yes	18	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
@@ -140,7 +140,8 @@ listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
 countDefaultSourceSplit	pages	yes	1	no	yes	yes	serves
 listStaleSyncSourceIds	pages	yes	1	no	yes	yes	serves
 readSourceRow	pages	yes	1	no	yes	yes	serves
-lockSourceRow	pages	yes	6	no	yes	yes	serves
+lockSourceRow	pages	yes	7	no	yes	yes	serves
+lockSourceForUpdate	pages	yes	4	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	2	no	yes	yes	serves
@@ -470,7 +471,7 @@ listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	109	yes	yes	yes	serves
-insertFacts	facts	yes	146	no	yes	yes	serves
+insertFacts	facts	yes	147	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	62	no	yes	yes	serves
 listFactsByEntity	facts	yes	36	yes	yes	yes	serves
@@ -626,7 +627,7 @@ completeWriteRow	persistence_journal	yes	27	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	13	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	4	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	75	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	77	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	5	no	yes	yes	serves
@@ -1168,7 +1169,7 @@ readFactsFtsIndexState	facts_trust	yes	1	no	yes	yes	refuses:facts
 swapFactsFtsIndex	facts_trust	yes	1	no	yes	yes	refuses:facts
 readFactsEmbeddingColumn	facts_recall	yes	1	no	yes	yes	refuses:facts
 listNearestFacts	facts_recall	yes	1	no	yes	yes	refuses:facts
-listSlotRows	facts_recall	yes	1	no	yes	yes	refuses:facts
+listSlotRows	facts_recall	yes	2	no	yes	yes	refuses:facts
 listPoolUnbackedKeys	facts_recall	yes	1	no	yes	yes	refuses:facts
 listCallOffCueFacts	facts_recall	yes	1	no	yes	yes	refuses:facts
 listPoolEntityPairs	facts_recall	yes	1	no	yes	yes	refuses:facts

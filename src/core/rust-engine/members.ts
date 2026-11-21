@@ -159,6 +159,7 @@ export const RUST_ENGINE_MEMBERS = {
   listStaleSyncSourceIds: 'sources',
   readSourceRow: 'sources',
   lockSourceRow: 'sources',
+  lockSourceForUpdate: 'sources',
   countSourcePages: 'sources',
   insertSource: 'sources',
   advanceSourceCommit: 'sources',

@@ -898,7 +898,7 @@ export const DOMAIN_OF: Record<string, string> = {
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'countRepoBoundSources': 'sources', 'updateSourceConfig': 'sources',
   'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
-  'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'readSourceChunkerVersion': 'sources',
+  'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'lockSourceForUpdate': 'sources', 'readSourceChunkerVersion': 'sources',
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
   'advanceSourceCommit': 'sources', 'listSourcePathPages': 'sources', 'listQuarantinedSlugs': 'sources', 'readRenameIdentityRows': 'sources', 'readLiveIdentityHolders': 'sources', 'readPageSizeRows': 'sources', 'holdPageEmbedding': 'sources', 'readReasonPurgeTombstones': 'sources', 'writeReasonPurgeTombstones': 'sources',
@@ -1643,6 +1643,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('listStaleSyncSourceIds', [['default', (e) => e.listStaleSyncSourceIds()]]),
   ...variants('readSourceRow', [['default', (e) => e.readSourceRow(SRC)]]),
   ...variants('lockSourceRow', [['default', (e) => e.lockSourceRow(SRC)]]),
+  ...variants('lockSourceForUpdate', [['default', (e) => e.lockSourceForUpdate(SRC)]]),
   ...variants('readSourceChunkerVersion', [['default', (e) => e.readSourceChunkerVersion(SRC)]]),
   ...variants('isSourceClaimed', [['default', (e) => e.isSourceClaimed(SRC)]]),
   ...variants('setSourceChunkerVersion', [['default', (e) => e.setSourceChunkerVersion(SRC, '7')]]),

@@ -1553,6 +1553,8 @@ export interface BrainEngine {
   /** One source's id, local_path, raw config and archived flag, or null; `lockSourceRow` reads it FOR UPDATE (engine-sql/sources.ts). */
   readSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
   lockSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
+  /** Takes the source row's lock for the rest of the transaction and reads nothing; an unknown source is a no-op (`lockSourceForUpdate`, engine-sql/sources.ts). */
+  lockSourceForUpdate(sourceId: string): Promise<void>;
   /** Whether a writer binding claims the source's current incarnation; false for an unknown source (engine-sql/sources.ts). */
   isSourceClaimed(sourceId: string): Promise<boolean>;
   /** The source's stamped chunker version, or null (engine-sql/sources.ts). */

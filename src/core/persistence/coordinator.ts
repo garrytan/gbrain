@@ -631,7 +631,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
     const done = await publicationTransaction(engine, async tx => {
       await declarePublication(tx);
       const liveBinding = await guardOwnership(tx, row, hostId);
-      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [row.source_id]);
+      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.lockSourceForUpdate(row.source_id);
       if (prepared.exclusiveSources?.length) await lockCoreSources(tx, prepared.sourceExclusive ? [row.source_id, ...prepared.exclusiveSources] : prepared.exclusiveSources);
       if (binding && String(liveBinding?.owner_epoch) !== String(binding.owner_epoch)) throw opError('owner_unavailable', 'Owner epoch changed before publication.',
         `Source ${row.source_id}'s canonical owner changed (a transfer or re-claim) after request ${row.request_id} was prepared, so this host published nothing for it. Inspect the owner and the request before resubmitting; do not claim or transfer the source to push this write through.`,

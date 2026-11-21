@@ -1,6 +1,6 @@
 /**
  * BrainEngine parity — the exclusive source lock of the publication transaction (persistence/coordinator.ts
- * `publishMutation`): a mutation that declares `sourceExclusive` (a page purge, a sync checkpoint, a connector write)
+ * `publishMutation`) and the typed member that takes it (`lockSourceForUpdate`, engine-sql/sources.ts): a mutation that declares `sourceExclusive` (a page purge, a sync checkpoint, a connector write)
  * takes its source's row lock before anything else of the publication runs, unless it names `exclusiveSources`.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -12,7 +12,8 @@
  *    typed member.
  *  - Why existing coverage misses it: the lock was a raw `executeRaw` inside coordinator.ts, which no parity case can call
  *    (D18), and the publication tests run on PGLite and Postgres only.
- *  - Seam: coordinator.ts's own exported `publishMutation`, on a request admitted and claimed through the journal. The
+ *  - Seam: coordinator.ts's own exported `publishMutation`, and the member called directly (a known source, an unknown one,
+ *    inside a transaction, twice in one transaction), on a request admitted and claimed through the journal. The
  *    request names no worktree, so no canonical file is written. Generated values (journal ids, tokens, time stamps) are
  *    left out of the returned value.
  */
@@ -27,7 +28,6 @@ import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite, claimNextWrite } from '../../src/core/persistence/journal.ts';
 import { publishMutation, type PreparedMutation } from '../../src/core/persistence/coordinator.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { isCapabilityRefusal } from './arm-capabilities.ts';
 
 const { parityTest } = parityArms(testBackends());
 const REQUEST = 'b0000000-0000-4000-8000-0000000000b1';
@@ -52,51 +52,53 @@ async function claimedWrite(engine: BrainEngine, slug: string) {
   return claimed!;
 }
 
-/**
- * `engine`, keeping every raw_sql refusal a call on it (or on a transaction handle it opens) raised. publishMutation
- * catches a refusal inside its transaction and releases the claim, so the case reads the refusal from here.
- */
-function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {
-  return new Proxy(engine, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
-      if (typeof value !== 'function') return value;
-      return (...args: unknown[]) => {
-        if ((prop === 'transaction' || prop === 'transactionDirect') && typeof args[0] === 'function') {
-          const fn = args[0] as (tx: BrainEngine) => unknown;
-          args = [(tx: BrainEngine) => fn(keepingRefusals(tx, refusals)), ...args.slice(1)];
-        }
-        const result = (value as (...a: unknown[]) => unknown).apply(target, args);
-        if (!(result instanceof Promise)) return result;
-        return result.catch((error: unknown) => {
-          if (isCapabilityRefusal(error, 'raw_sql')) refusals.push(error);
-          throw error;
-        });
-      };
-    },
-  });
-}
-
 describe('engine parity: the publication transaction\'s exclusive source lock', () => {
   parityTest('a sourceExclusive mutation publishes through publishMutation and commits', {
-    methods: ['readSourceMembership', 'transaction', 'transactionDirect'],
-    requires: 'raw_sql',
+    methods: ['readSourceMembership', 'transaction', 'transactionDirect', 'lockSourceForUpdate'],
     timeout: 60_000,
   }, async (engine) => {
     const row = await claimedWrite(engine, 'notes/parity-exclusive');
     let applied = 0;
     const prepared: PreparedMutation = { observedRevision: null, sourceExclusive: true, apply: async () => { applied++; return { applied }; } };
-    const refusals: unknown[] = [];
-    const done = await publishMutation(keepingRefusals(engine, refusals), row, prepared);
-    if (refusals.length > 0) {
-      // A Rust brain: the publication refused and released the claim. The refusal is the lock statement at coordinator.ts.
-      expect(applied).toBe(0);
-      expect(String((refusals[0] as Error).stack)).toContain('persistence/coordinator.ts');
-      expect(done.state).toBe('queued');
-      throw refusals[0];
-    }
+    const done = await publishMutation(engine, row, prepared);
     expect(applied).toBe(1);
     expect({ state: done.state, error: done.error_code ?? null }).toEqual({ state: 'committed', error: null });
     return { state: done.state, error: done.error_code ?? null, outcome: done.outcome, applied };
+  });
+
+  parityTest('lockSourceForUpdate answers nothing for a known source, an unknown one and an empty id, outside a transaction', {
+    methods: ['lockSourceForUpdate'],
+  }, async (engine) => {
+    const known = await engine.lockSourceForUpdate('default');
+    const unknown = await engine.lockSourceForUpdate('no-such-source');
+    const empty = await engine.lockSourceForUpdate('');
+    return { known: known ?? null, unknown: unknown ?? null, empty: empty ?? null };
+  });
+
+  parityTest('lockSourceForUpdate inside a transaction leaves the source row and the transaction usable, and may be taken twice', {
+    methods: ['lockSourceForUpdate', 'transaction', 'readSourceMembership', 'lockSourceRow'],
+  }, async (engine) => {
+    const before = await engine.readSourceMembership('default');
+    const inside = await engine.transaction(async (tx) => {
+      const first = await tx.lockSourceForUpdate('default');
+      const second = await tx.lockSourceForUpdate('default');
+      const other = await tx.lockSourceForUpdate('no-such-source');
+      const row = await tx.lockSourceRow('default');
+      return { first: first ?? null, second: second ?? null, other: other ?? null, row: row && { id: row.id, archived: row.archived } };
+    });
+    const after = await engine.readSourceMembership('default');
+    expect(after).toEqual(before);
+    return { inside, unchanged: JSON.stringify(after) === JSON.stringify(before) };
+  });
+
+  parityTest('a transaction that rolls back after lockSourceForUpdate keeps nothing and the next transaction locks again', {
+    methods: ['lockSourceForUpdate', 'transaction'],
+  }, async (engine) => {
+    const failed = await engine.transaction(async (tx) => {
+      await tx.lockSourceForUpdate('default');
+      throw new Error('stop after the lock');
+    }).then(() => null, (error: Error) => error.message);
+    const next = await engine.transaction(async (tx) => (await tx.lockSourceForUpdate('default')) ?? null);
+    return { failed, next };
   });
 });

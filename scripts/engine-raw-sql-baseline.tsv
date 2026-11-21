@@ -548,7 +548,7 @@ src/core/persistence/consumer-diagnostics.ts	execute_raw	3
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	3
 src/core/persistence/context.ts	execute_raw	1
-src/core/persistence/coordinator.ts	execute_raw	9
+src/core/persistence/coordinator.ts	execute_raw	8
 src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
 src/core/persistence/deactivation.ts	execute_raw	19

@@ -127,7 +127,7 @@ test/engine-parity/pages.test.ts	38	2
 test/engine-parity/persistence-declaration.test.ts	7	3
 test/engine-parity/persistence.test.ts	51	1
 test/engine-parity/private-page-reads.test.ts	23	0
-test/engine-parity/publication-source-lock.test.ts	0	1
+test/engine-parity/publication-source-lock.test.ts	4	0
 test/engine-parity/purge-dry-run.test.ts	2	0
 test/engine-parity/purge-plan.test.ts	13	0
 test/engine-parity/purge-slug-stores.test.ts	0	2

@@ -3759,6 +3759,17 @@
         ],
         "flagOnScopes": []
       },
+      "lockSourceForUpdate#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "lockSourceRow#default": {
         "flagOffLanes": [
           "pool"
@@ -7393,6 +7404,7 @@
         "lockPurgeSource": "none",
         "lockReconcileRevision": "none",
         "lockRegisteredSourceIds": "none",
+        "lockSourceForUpdate": "none",
         "lockSourceRow": "none",
         "lockSourceShared": "none",
         "lockWriteRequest": "none",

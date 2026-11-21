@@ -120,7 +120,7 @@
       "out-of-scope:writer-versions (born in engine-sql/writer-versions.ts; pinned by test/engine-parity/writer-versions.test.ts)": 3,
       "pages": 41,
       "salience": 5,
-      "sources": 25,
+      "sources": 26,
       "tags": 3,
       "takes": 20,
       "timeline": 8
@@ -964,6 +964,7 @@
       "lockPurgeSource": "out-of-scope:fact-purge-sites (the fact purge plan, transaction and segment-storage statements of engine-sql/facts-purge.ts; pinned by test/fact-purge-sites-sql-pin.test.ts and test/engine-parity/fact-purge-sites.test.ts)",
       "lockReconcileRevision": "out-of-scope:facts-purge (born in engine-sql/facts-purge.ts; pinned by test/engine-parity/facts-purge.test.ts)",
       "lockRegisteredSourceIds": "out-of-scope:wanted-links (born in engine-sql/wanted-links.ts; pinned by test/engine-parity/wanted-links.test.ts)",
+      "lockSourceForUpdate": "sources",
       "lockSourceRow": "sources",
       "lockSourceShared": "out-of-scope:facts-rest-sites (write-path statements, born in engine-sql/facts-trust.ts; pinned byte-identical by test/facts-rest-sites-sql-pin.test.ts and test/engine-parity/facts-rest-sites.test.ts)",
       "lockWriteRequest": "out-of-scope:persistence-journal (born in engine-sql/persistence-journal.ts, persistence-claims.ts and persistence-housekeeping.ts; pinned by test/engine-parity/persistence.test.ts and test/persistence-journal-statements.test.ts)",
