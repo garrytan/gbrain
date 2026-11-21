@@ -22,6 +22,7 @@ import { MinionQueue } from '../src/core/minions/queue.ts';
 import { makeSyncHandler } from '../src/core/minions/handlers/sync.ts';
 import { recordConnectorSyncAttempt } from '../src/core/persistence/connector-state.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { checkCycleFreshness } from '../src/commands/doctor.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -109,6 +110,20 @@ test('a queued freshness sync job of a source with sync off is skipped and impor
   const result = await makeSyncHandler(engine)({ id: 1, name: 'sync', data: { sourceId: id, repoPath: repo, pull: false, embed_reason: 'autopilot_freshness' }, signal: new AbortController().signal } as never);
   expect(result).toMatchObject({ skipped: true, reason: 'sync_disabled', source_id: id });
   expect(await pages()).toBe(0);
+}), 120_000);
+
+test('doctor cycle_freshness reads a never-cycled source with sync off as sync off, not stale, and never names it in its fix', () => each(async engine => {
+  const id = `source-g-${randomUUID().replace(/-/g, '').slice(0, 12)}`, dir = join(home, id);
+  mkdirSync(dir, { recursive: true });
+  await insertSource(engine, id, dir, { kind: 'google', syncEnabled: false });
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+  await engine.executeRaw("INSERT INTO pages (source_id, slug, type, title, created_at) VALUES ($1, 'note-a', 'note', 'Note A', now() - interval '30 days')", [id]);
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+  const result = await checkCycleFreshness(engine);
+  expect(result.message).toContain(`Sync off (not checked; only an explicit gbrain sync --source <id> syncs `);
+  expect(result.message).toContain(`'${id}'`);
+  expect(result.message).not.toContain(`Source '${id}' has never completed a full cycle`);
+  expect(JSON.stringify(result.fix ?? null)).not.toContain(id);
 }), 120_000);
 
 test('the explicit gbrain sync --source <id> still syncs a source with sync off', () => each(async engine => {
