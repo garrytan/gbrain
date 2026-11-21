@@ -6,6 +6,6 @@
 - The plan now prints the readiness policy (including any dated override and whether it applies to your brain), which Rust engine capabilities your brain would lose, and how long writes would pause.
 
 ### Changed
-- A swap is refused, before anything changes, while the brain has folder rules or remote callers (access tokens, OAuth clients, remote MCP), because the Rust engine cannot serve them yet; while another process holds the brain; or while a variable or service still selects the old engine. Running the swap without `--yes` now answers `confirmation_required` with the plan hash.
+- A swap is refused, before anything changes, while the brain has remote callers (access tokens, OAuth clients, remote MCP), or folder rules in a build whose Rust engine cannot edit them, because the Rust engine cannot serve them yet; while another process holds the brain; or while a variable or service still selects the old engine. Running the swap without `--yes` now answers `confirmation_required` with the plan hash.
 
 <!-- behavior-change: engine_swap_run_s5b -->

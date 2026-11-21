@@ -1,6 +1,7 @@
 /**
  * The S5b gates a swap run checks before it writes anything, beyond S5a's readiness verdict: what the Rust engine
- * cannot serve yet for this brain (folder rules, row 32b-2; access tokens, OAuth clients and remote MCP, row 32g).
+ * cannot serve yet for this brain (folder rules, until the Rust engine reports `access_control`; access tokens, OAuth
+ * clients and remote MCP, until it checks a bearer token).
  *
  * Each gate reads only, and names what it found without values (rule ids, token names and secrets are never read
  * out). A table an older schema lacks counts as empty.
@@ -8,6 +9,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import type { EngineCapabilities } from '../engine-capabilities.ts';
+import { servedCapabilities } from '../rust-engine/store-capabilities.ts';
 import { swapRefusal } from './refusals.ts';
 import type { OperationError } from '../ops/contract.ts';
 
@@ -39,11 +42,17 @@ async function sourceRoots(engine: BrainEngine): Promise<string[]> {
 }
 
 /** Every S5b gate this brain trips, in a fixed order. Empty when none. */
-export async function swapBlockers(engine: BrainEngine, opts: { remoteMcpConfigured: boolean }): Promise<SwapBlocker[]> {
+export async function swapBlockers(
+  engine: BrainEngine,
+  opts: { remoteMcpConfigured: boolean; rustServes?: EngineCapabilities },
+): Promise<SwapBlocker[]> {
   const out: SwapBlocker[] = [];
+  // Folder rules lift once the Rust member table serves every access_control member (rule add, rm, revert and
+  // import included); rust-engine/access-serves-rust f9e6f6876f is the first head where it does.
+  const rulesServed = (opts.rustServes ?? servedCapabilities()).has('access_control');
   const rules = await count(engine, 'SELECT count(*)::int AS n FROM access_rules');
   const files = (await sourceRoots(engine)).filter(root => existsSync(join(root, '.gbrain', 'access.yml')));
-  if (rules > 0 || files.length > 0) {
+  if (!rulesServed && (rules > 0 || files.length > 0)) {
     out.push({ reason: 'folder_rules_unserved', detail: `${rules} access rule row(s); ${files.length} source(s) with .gbrain/access.yml` });
   }
   const tokens = await count(engine, 'SELECT count(*)::int AS n FROM access_tokens WHERE revoked_at IS NULL');
@@ -58,7 +67,7 @@ export async function swapBlockers(engine: BrainEngine, opts: { remoteMcpConfigu
 export function blockerRefusal(b: SwapBlocker): OperationError {
   return b.reason === 'folder_rules_unserved'
     ? swapRefusal('folder_rules_unserved', `this brain has folder rules (${b.detail}), which the Rust engine cannot edit yet.`,
-      'gbrain access rule add, rm, revert and import refuse on the Rust engine until row 32b-2 lands, so a swapped brain could not change who reads its folders.')
+      'gbrain access rule add, rm, revert and import refuse on this build\'s Rust engine (it does not report access_control), so a swapped brain could not change who reads its folders.')
     : swapRefusal('remote_access_unserved', `remote callers use this brain (${b.detail}), and the Rust engine cannot check their tokens yet.`,
-      'The bearer check still runs SQL (row 32g), so every remote caller would be refused after the swap.');
+      'The Rust engine does not check a bearer token yet, so every remote caller would be refused after the swap.');
 }

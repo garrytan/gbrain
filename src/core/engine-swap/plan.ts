@@ -9,6 +9,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import type { EngineCapabilities } from '../engine-capabilities.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { activeWorktreeRefreshes } from '../persistence/worktree-refresh.ts';
 import { evaluateReadiness, type ReadinessVerdict, type ShadowStatus } from './readiness.ts';
@@ -68,6 +69,8 @@ export interface SwapPlanInputs {
   policy?: ReadinessPolicy;
   /** The configured brain has remote MCP (config `remote_mcp`). */
   remoteMcpConfigured?: boolean;
+  /** The capabilities the Rust engine serves (default: this build's member table); tests pass another. */
+  rustServes?: EngineCapabilities;
 }
 
 /** Non-terminal refresh rows (draining, fenced, merged, syncing, recovery_required), through the reader
@@ -133,7 +136,7 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     policy: { text: inForce.text, hash: inForce.hash, override: inForce.override, brain_ref: inForce.brain_ref },
     capability_report: capabilityReport(String(engine.kind)),
     write_pause: await estimateWritePause(engine),
-    blockers: await swapBlockers(engine, { remoteMcpConfigured: !!deps.remoteMcpConfigured }),
+    blockers: await swapBlockers(engine, { remoteMcpConfigured: !!deps.remoteMcpConfigured, rustServes: deps.rustServes }),
   };
   return { ...base, plan_hash: planHash(base) };
 }
