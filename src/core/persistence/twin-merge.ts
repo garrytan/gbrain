@@ -123,6 +123,7 @@ export async function mergeTwinInto(tx: BrainEngine, input: { sourceId: string; 
   noteBelief({ kind: 'transferred', fromSlug: twin.slug, table: 'links', ids: movedLinks });
   noteBelief({ kind: 'transferred', fromSlug: twin.slug, table: 'facts', ids: factIds });
   await tx.softDeletePage(twin.slug, { sourceId });
-  await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [SYNC_IMPORT_PROVENANCE_OP, `${sourceId}:${input.incarnation}:${twin.page_id}`]);
+  // The twin's import record goes with the twin: the checkpoint member deletes the row when given no keys, on this tx.
+  await tx.writeOpCheckpointRecord(SYNC_IMPORT_PROVENANCE_OP, `${sourceId}:${input.incarnation}:${twin.page_id}`, null);
   return { links_moved: movedLinks, facts_moved: factIds, transitions_moved: movedTransitions.length, tags_moved: tagsMoved, deduplicated: linkLosers.length + transitionLosers.length };
 }
