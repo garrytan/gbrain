@@ -19,6 +19,7 @@
  * RECORD_ROWS_PER_CALL per call, allotted in input order.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { DegradedStageEntry } from '../types.ts';
 import { readAka, selectAcrossSources, type EntityLookupScope, type EntityNameMatch } from './entity-card.ts';
 import { readSiblingIdentity } from './entity-card-identity.ts';
 import { boundedProjectedPrefix } from '../page-window/document.ts';
@@ -47,16 +48,18 @@ export function pageLead(body: string | null, max = ENTITY_LEAD_CHARS): string {
 }
 
 export async function lookupEntityNames(engine: BrainEngine, sourceId: string, names: string[],
-  opts: { remote: boolean; sources?: readonly string[]; surfaceCeiling?: 'verbs' | 'starter' | 'full'; emitNotice?: (n: Notice) => void; variants?: boolean }): Promise<{ results: EntityNameRow[]; found: number; missing: number }> {
+  opts: { remote: boolean; sources?: readonly string[]; surfaceCeiling?: 'verbs' | 'starter' | 'full'; emitNotice?: (n: Notice) => void; variants?: boolean }): Promise<{ results: EntityNameRow[]; found: number; missing: number; degraded?: DegradedStageEntry[] }> {
   const unique = [...new Set(names.map(n => n.trim()).filter(Boolean))];
   // #6723: each name resolves in the first source (home first) with a hit; a source's lookup scope is read once per batch.
   const sources = opts.sources?.length ? opts.sources : [sourceId];
   const scopes = new Map<string, Promise<EntityLookupScope>>();
   const excludePrivate = new Map<string, boolean>();
   const rows = new Map<string, EntityNameRow>();
+  // A failed lookup read in any name's resolution: its `found: false` row is then not proof the entity is absent.
+  const degraded: DegradedStageEntry[] = [];
   for (let i = 0; i < unique.length; i += CONCURRENCY) {
     await Promise.all(unique.slice(i, i + CONCURRENCY).map(async name => {
-      const { sourceId: hitSource, scope, selected } = await selectAcrossSources(engine, sources, name, opts.remote, { omitQuarantined: opts.remote, scopes, variants: opts.variants });
+      const { sourceId: hitSource, scope, selected } = await selectAcrossSources(engine, sources, name, opts.remote, { omitQuarantined: opts.remote, scopes, variants: opts.variants, degraded });
       excludePrivate.set(hitSource, scope.excludePrivate);
       rows.set(name, await lookupOne(engine, hitSource, name, scope, selected, opts));
     }));
@@ -66,7 +69,7 @@ export async function lookupEntityNames(engine: BrainEngine, sourceId: string, n
     await attachReferences(engine, src, results.filter(r => r.found && r.source_id === src), exclude, { ...opts, home: sources[0]! });
   }
   const found = results.filter(r => r.found).length;
-  return { results, found, missing: results.length - found };
+  return { results, found, missing: results.length - found, ...(degraded.length ? { degraded } : {}) };
 }
 
 /** One batched reference read per source for every found page and sibling, in input order (page first, then its siblings). */
