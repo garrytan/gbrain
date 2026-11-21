@@ -325,7 +325,7 @@ fn identity_decisions_link_confirmed_members_and_refuse_a_stale_revision() {
 }
 
 #[test]
-fn identity_decisions_keep_non_empty_evidence_and_refuse_while_a_sync_link_exists() {
+fn identity_decisions_keep_non_empty_evidence_and_sweep_a_broken_sync_link() {
     use gbrain_store::identity_reviews::ApplyDecisions;
     let b = Brain::new("identity-decisions-evidence");
     b.page("default", "companies/acme-example");
@@ -354,8 +354,8 @@ fn identity_decisions_keep_non_empty_evidence_and_refuse_while_a_sync_link_exist
         evidence,
         [json!(["linkedin:acme-example"]), Value::Null, Value::Null]
     );
-    // A company link the sync made ('dedupe:auto') is swept by the SQL apply; the store has no
-    // sweep, so it refuses and writes nothing.
+    // A company link the sync made ('dedupe:auto') is swept by the apply, as the SQL apply does: a
+    // group left with one member is broken, so the apply removes it along with the decision.
     let auto = json!({ "entity_id": "company/acme", "slug": "companies/acme-example", "source_id": "default",
         "confidence": 1.0, "established_by": "dedupe:auto", "canonical": true });
     assert!(
@@ -363,16 +363,21 @@ fn identity_decisions_keep_non_empty_evidence_and_refuse_while_a_sync_link_exist
             .link_entity_identity(&de::<IdentityLink>(auto))
             .unwrap()
     );
-    let refused = b
+    assert_eq!(
+        b.members(),
+        ["company/acme:default:companies/acme-example:true"]
+    );
+    let applied = b
         .store
         .apply_identity_decisions(&de::<ApplyDecisions>(json!({ "remove": ["01"] })))
-        .unwrap_err();
-    assert_eq!(refused.code, "invalid_state");
+        .unwrap();
+    assert_eq!(applied["removed"], json!(1));
     assert_eq!(
         b.store.list_identity_decisions().unwrap()["decisions"]
             .as_array()
             .unwrap()
             .len(),
-        3
+        2
     );
+    assert!(b.members().is_empty());
 }

@@ -104,7 +104,7 @@ test/engine-parity/page-snapshot-alias.test.ts	2	0
 test/engine-parity/page-vector-flip.test.ts	1	0
 test/engine-parity/page-vector-overflow.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
-test/engine-parity/pages.test.ts	39	1
+test/engine-parity/pages.test.ts	43	0
 test/engine-parity/persistence-declaration.test.ts	7	3
 test/engine-parity/persistence.test.ts	50	0
 test/engine-parity/private-page-reads.test.ts	23	0
