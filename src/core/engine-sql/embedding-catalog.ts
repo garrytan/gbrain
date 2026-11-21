@@ -3,8 +3,8 @@
  * `content_chunks` vector column, the stored embedding identity, which tables carry an `embedding` column, and whether a
  * table holds any vector). Each function runs the statement its caller ran through `executeRaw`, with the same text and
  * parameters, on the engine's own `executeRaw`; only its home moved (embedding-dim-check.ts, stored-embedding-identity.ts,
- * commands/embeddings.ts). The Rust engine answers the same members from its per-vector records
- * (rust/crates/gbrain-store/src/embedding_catalog.rs).
+ * commands/embeddings.ts). The Rust engine has no raw SQL, so it refuses these members until its own
+ * catalog read lands (capability `raw_sql`, src/core/rust-engine/members.ts).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -103,8 +103,8 @@ export async function hasStoredVectors(raw: EngineRawRead, store: EmbeddingStore
   return !!row?.present;
 }
 
-/** The fixed-width `content_chunks` vector columns beside `embedding` (`vector(1024)` on Postgres and PGLite). */
-export const FIXED_VECTOR_COLUMNS = ['embedding_image', 'embedding_multimodal'] as const;
+/** The fixed-width `content_chunks` vector columns beside `embedding` the doctor counts (`vector(1024)` on Postgres and PGLite). */
+export const FIXED_VECTOR_COLUMNS = ['embedding_multimodal'] as const;
 export type FixedVectorColumn = typeof FIXED_VECTOR_COLUMNS[number];
 
 /** One source's `content_chunks` rows and how many of them hold a vector in the column. */
@@ -112,14 +112,6 @@ export interface ChunkVectorCoverageRow { source_id: string; total: number; cove
 
 /** One constant statement per column, so no column name is spliced into SQL (the doctor's unified_multimodal_coverage text). */
 const COVERAGE_SQL: Readonly<Record<FixedVectorColumn, string>> = {
-  // chunk-visibility-ok: doctor coverage ratio moved verbatim from doctor/checks/data-integrity.ts; it counts every chunk row, as before.
-  embedding_image: `SELECT
-           COALESCE(p.source_id, 'default') AS source_id,
-           COUNT(*)::text AS total,
-           SUM(CASE WHEN cc.embedding_image IS NOT NULL THEN 1 ELSE 0 END)::text AS covered
-         FROM content_chunks cc
-         JOIN pages p ON p.id = cc.page_id
-         GROUP BY p.source_id`,
   // chunk-visibility-ok: doctor coverage ratio moved verbatim from doctor/checks/data-integrity.ts; it counts every chunk row, as before.
   embedding_multimodal: `SELECT
            COALESCE(p.source_id, 'default') AS source_id,

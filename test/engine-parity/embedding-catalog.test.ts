@@ -1,19 +1,18 @@
 /**
- * BrainEngine parity — the vector catalog the embedding commands read, and the stale-fact count.
+ * BrainEngine parity — the vector catalog the embedding commands read.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readChunkVectorColumn, readEmbeddingIdentity, listEmbeddingStores, hasStoredVectors,
- *    countChunkVectorCoverage and countStaleFactEmbeddings return the same observable result on every engine arm (PGLite always; Postgres with
+ *    and countChunkVectorCoverage return the same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: `gbrain embeddings enable` on a keyless Rust brain read the Postgres catalog through `executeRaw`, which
  *    the Rust engine refuses, so the command failed and the readiness fix it named re-initialized the store as PGLite.
  *    An engine that answers one of these reads differently changes what `embeddings enable`, `migrate embeddings` and
  *    the vector-plan and fact-embedding doctor checks decide.
  *  - Why existing coverage misses it: the statements ran through `executeRaw`, which the parity cases cannot call (D18).
- *  - Seam: none. The width and model are seeded through setConfig (the Rust store has no column type; it reads the
- *    config when no vector is stored), the vectors through upsertChunks, insertFact and updateTakeEmbeddings.
- *    `embedding_image` and `embedding_multimodal` are fixed `vector(1024)` columns on Postgres and PGLite; the Rust store
- *    answers them at that width whatever the text width is.
+ *  - Seam: none. The width and model are seeded through setConfig, the vectors through upsertChunks, insertFact and
+ *    updateTakeEmbeddings. `embedding_image` and `embedding_multimodal` are fixed `vector(1024)` columns on Postgres and
+ *    PGLite. The Rust arm refuses these members as `raw_sql` until its store wiring lands.
  */
 import { describe, expect } from 'bun:test';
 import { basisEmbedding, createSource, parityArms } from './harness.ts';
@@ -71,7 +70,7 @@ describe('engine parity: embedding catalog', () => {
     return { before, after };
   });
 
-  parityTest('countChunkVectorCoverage counts each source\'s chunks and none covered in the fixed columns, soft-deleted pages too', { methods: ['countChunkVectorCoverage', 'upsertChunks', 'softDeletePage'] }, async (engine, backend) => {
+  parityTest('countChunkVectorCoverage counts each source\'s chunks and none covered in the multimodal column, soft-deleted pages too', { methods: ['countChunkVectorCoverage', 'upsertChunks', 'softDeletePage'] }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     await createSource(engine, backend, 'empty');
     const empty = await engine.countChunkVectorCoverage('embedding_multimodal');
@@ -83,11 +82,9 @@ describe('engine parity: embedding catalog', () => {
     await engine.putPage('notes/b', { type: 'note', title: 'B', compiled_truth: 'beta body' }, { sourceId: 'other' });
     await engine.upsertChunks('notes/b', [chunk(0, 'beta body')], { sourceId: 'other' });
     const multimodal = await engine.countChunkVectorCoverage('embedding_multimodal');
-    const image = await engine.countChunkVectorCoverage('embedding_image');
     expect(empty).toEqual([]);
     expect(multimodal).toEqual([{ source_id: 'default', total: 3, covered: 0 }, { source_id: 'other', total: 1, covered: 0 }]);
-    expect(image).toEqual(multimodal);
-    return { empty, multimodal, image };
+    return { empty, multimodal };
   });
 
   parityTest('readEmbeddingIdentity reads the configured model and the column width, before and after a vector is stored', { methods: ['readEmbeddingIdentity', 'upsertChunks'] }, async (engine) => {
@@ -128,19 +125,5 @@ describe('engine parity: embedding catalog', () => {
     expect(embedded).toEqual({ content_chunks: true, facts: true, query_cache: false, takes: true });
     expect(reworded).toEqual({ content_chunks: true, facts: true, query_cache: false, takes: false });
     return { empty, textOnly, embedded, reworded };
-  });
-
-  parityTest('countStaleFactEmbeddings counts the embeddable facts whose vector is missing or not current, with their length', { methods: ['countStaleFactEmbeddings'] }, async (engine, backend) => {
-    await createSource(engine, backend, 'other');
-    const vec = basisEmbedding(1);
-    await fact(engine, 'fresh', { embedding: vec, embedding_model: MODEL });
-    await fact(engine, 'no vector');
-    await fact(engine, 'other model', { embedding: vec, embedding_model: 'model-b' });
-    await fact(engine, '😀'.repeat(3));
-    await fact(engine, 'elsewhere', {}, 'other');
-    const all = await engine.countStaleFactEmbeddings({ model: MODEL, dims: 1536 });
-    const one = await engine.countStaleFactEmbeddings({ model: MODEL, dims: 1536, sourceId: 'other' });
-    const narrow = await engine.countStaleFactEmbeddings({ model: MODEL, dims: 1024, sourceId: 'default' });
-    return { all, one, narrow };
   });
 });

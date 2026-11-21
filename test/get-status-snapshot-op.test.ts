@@ -24,6 +24,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { operations, operationsByName } from '../src/core/operations.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 
 function makeCtx(engine: any): any {
   return {
@@ -65,11 +66,11 @@ describe('get_status_snapshot handler shape (schema_version 2)', () => {
     // and a synthetic SyncStatusReport; the cycle helper degrades to
     // {last_full: null, last_targeted: null}; the queue helpers degrade to
     // zero counts + an empty by_queue list.
-    const stubEngine: any = {
+    const stubEngine: any = withQueueMembers({
       kind: 'pglite',
       executeRaw: async () => [],
       getConfig: async () => null,
-    };
+    });
     const result = (await op.handler(makeCtx(stubEngine), {})) as Record<string, unknown>;
     expect(result.schema_version).toBe(2);
     expect(result).toHaveProperty('sync');
@@ -102,7 +103,7 @@ describe('get_status_snapshot handler shape (schema_version 2)', () => {
     // buildQueueCounts swallows its own errors (returns zeros); buildQueueDepths
     // does not — throwing from its GROUP BY queue SQL exercises the op-level
     // per-section catch.
-    const stubEngine: any = {
+    const stubEngine: any = withQueueMembers({
       kind: 'pglite',
       executeRaw: async (sql: string) => {
         if (typeof sql === 'string' && sql.includes('GROUP BY queue')) {
@@ -111,7 +112,7 @@ describe('get_status_snapshot handler shape (schema_version 2)', () => {
         return [];
       },
       getConfig: async () => null,
-    };
+    });
     const result = (await op.handler(makeCtx(stubEngine), {})) as Record<string, unknown>;
     expect(result.schema_version).toBe(2);
     expect(result.queue).toEqual({ error: 'unavailable' });

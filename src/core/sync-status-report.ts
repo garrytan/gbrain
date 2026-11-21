@@ -175,32 +175,15 @@ export async function buildSyncStatusReport(
   // minion_jobs table doesn't exist on every brain (a brain that never ran
   // a worker has the pre-minions schema), and the dashboard must not crash
   // for that. A failure → empty map → all sources report 0/null.
-  type BackfillRow = {
-    source_id: string | null;
-    queued: string | number;
-    active: string | number;
-    last_completed_at: string | Date | null;
-  };
   const backfillMap = new Map<string, { queued: number; active: number; last_completed_at: string | null }>();
   if (sourceIds.length > 0) {
     try {
-      const backfillRows = await engine.executeRaw<BackfillRow>(
-        `SELECT data->>'sourceId' AS source_id,
-                COUNT(*) FILTER (WHERE status IN ('waiting','delayed','waiting-children'))::int AS queued,
-                COUNT(*) FILTER (WHERE status = 'active')::int AS active,
-                MAX(finished_at) FILTER (WHERE status = 'completed') AS last_completed_at
-           FROM minion_jobs
-          WHERE name = 'embed-backfill' AND data->>'sourceId' = ANY($1::text[])
-          GROUP BY data->>'sourceId'`,
-        [sourceIds],
-      );
-      for (const r of backfillRows) {
+      for (const r of await engine.readEmbedBackfillBySource(sourceIds)) {
         if (!r.source_id) continue;
-        const last = r.last_completed_at;
         backfillMap.set(r.source_id, {
-          queued: Number(r.queued) || 0,
-          active: Number(r.active) || 0,
-          last_completed_at: last == null ? null : (last instanceof Date ? last.toISOString() : last),
+          queued: r.queued,
+          active: r.active,
+          last_completed_at: r.last_completed_at == null ? null : r.last_completed_at.toISOString(),
         });
       }
     } catch {

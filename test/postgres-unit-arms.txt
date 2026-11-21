@@ -150,11 +150,13 @@ test/engine-parity/decide-store.test.ts
 test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
+test/engine-parity/fence-holds.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
 test/engine-parity/jobs-health.test.ts
 test/engine-parity/jobs-insight.test.ts
+test/engine-parity/jobs-status.test.ts
 test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/links.test.ts
@@ -469,6 +471,7 @@ test/mirror-readonly-write-through-7098.test.ts
 test/moved-pages-gst2584.test.ts
 test/n3-sql-move-parity.test.ts
 test/n4-sql-move-parity.test.ts
+test/n5-sql-move-parity.test.ts
 test/n6-sql-move-parity.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts

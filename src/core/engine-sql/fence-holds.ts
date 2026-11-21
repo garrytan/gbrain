@@ -2,7 +2,7 @@
  * The held fence results read (generations/fence.ts `listFenceHolds`): the `derived_generations` rows a facts or takes
  * fence publish holds, as `gbrain get`, doctor and `gbrain sync status` list them. One SQL implementation for both
  * engines; the statement is the text `listFenceHolds` sent through `executeRaw`, byte for byte, on the engine's own
- * `executeRaw`. Only its home moved. The Rust engine holds no fence results (store-members/fence-holds.ts).
+ * `executeRaw`. Only its home moved. The Rust engine has no raw SQL, so it refuses the member (capability `raw_sql`).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 

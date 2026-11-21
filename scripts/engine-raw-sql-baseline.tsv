@@ -61,7 +61,6 @@ src/commands/doctor/checks/derived-visibility.ts	execute_raw	2
 src/commands/doctor/checks/edge-validity.ts	execute_raw	4
 src/commands/doctor/checks/embed-backfill-stalled.ts	execute_raw	2
 src/commands/doctor/checks/embedding-health.ts	execute_raw	4
-src/commands/doctor/checks/embedding-identity.ts	execute_raw	1
 src/commands/doctor/checks/entity-duplicates.ts	execute_raw	3
 src/commands/doctor/checks/extraction-input.ts	execute_raw	2
 src/commands/doctor/checks/extraction-sync.ts	execute_raw	12
@@ -180,14 +179,12 @@ src/commands/graph-query.ts	execute_raw	1
 src/commands/guests.ts	execute_raw	1
 src/commands/import-calls.ts	execute_raw	3	GST-2904 (open before #9641): reads the committed call page's id, frontmatter readers and whether a page_label_guards row exists, locked FOR UPDATE inside the maintenance transaction that raises the guard; no typed engine method exists yet
 src/commands/import.ts	execute_raw	6
-src/commands/init-embedding-plane.ts	execute_raw	1
 src/commands/init-prefer-postgres.ts	execute_raw	5
-src/commands/init.ts	execute_raw	1
 src/commands/init.ts	sql_template	2
 src/commands/integrity.ts	execute_raw	1
 src/commands/jobs-watch.ts	execute_raw	2
 src/commands/jobs/smoke.ts	execute_raw	2
-src/commands/jobs/stats.ts	execute_raw	5
+src/commands/jobs/stats.ts	execute_raw	1
 src/commands/jobs/work.ts	execute_raw	1
 src/commands/loops.ts	execute_raw	1
 src/commands/mcp-provision.ts	sql_template	4
@@ -354,7 +351,7 @@ src/core/company-brain/runtime.ts	execute_raw	14
 src/core/company-brain/status.ts	execute_raw	1
 src/core/company-brain/verification.ts	execute_raw	3
 src/core/config-db-merge.ts	execute_raw	1
-src/core/config-values.ts	execute_raw	1	the keyed config read for a narrow executeRaw-only handle (a test fake or wrapper without getConfigValues); real engines take the typed getConfigValues read, and 23 config sites moved here from their own executeRaw
+src/core/config-values.ts	execute_raw	1	the keyed config read for a narrow executeRaw-only handle (a test fake or wrapper without getConfigValues); real engines take the typed getConfigValues read
 src/core/connection-manager.ts	sql_template	3
 src/core/connectors/api-source.ts	execute_raw	2
 src/core/connectors/connector-hold-session.ts	execute_raw	1
@@ -419,7 +416,7 @@ src/core/eligibility/activation.ts	execute_raw	2
 src/core/eligibility/explain.ts	execute_raw	4
 src/core/eligibility/fence-overlay.ts	execute_raw	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/eligibility/generation.ts	execute_raw	1
-src/core/eligibility/scan.ts	execute_raw	7
+src/core/eligibility/scan.ts	execute_raw	6
 src/core/eligibility/stamp.ts	execute_raw	5	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/embed-backfill-stall.ts	execute_raw	1
 src/core/embed-backfill-submit.ts	execute_raw	2
@@ -521,7 +518,7 @@ src/core/generations/adapters/synthesis.ts	execute_raw	1
 src/core/generations/adapters/take-rows.ts	execute_raw	2
 src/core/generations/fence-evidence.ts	execute_raw	4
 src/core/generations/fence-restore.ts	execute_raw	3
-src/core/generations/fence.ts	execute_raw	5
+src/core/generations/fence.ts	execute_raw	4
 src/core/generations/ledger-scrub.ts	execute_raw	7
 src/core/generations/managed.ts	execute_raw	7
 src/core/generations/publish.ts	execute_raw	19
@@ -1070,7 +1067,6 @@ src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
 src/core/search/alias-fanout.ts	execute_raw	1
 src/core/search/dedup.ts	execute_raw	1
-src/core/search/embedding-column.ts	execute_raw	1
 src/core/search/entity-anchor.ts	execute_raw	4
 src/core/search/entity-facts.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
@@ -1126,7 +1122,7 @@ src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
 src/core/slack/slack-source.ts	execute_raw	4
 src/core/source-default-search.ts	execute_raw	2
 src/core/source-delete.ts	execute_raw	2
-src/core/source-health.ts	execute_raw	6
+src/core/source-health.ts	execute_raw	5
 src/core/source-resolver.ts	execute_raw	15
 src/core/sources-load.ts	execute_raw	2
 src/core/sources-not-readable.ts	execute_raw	1
@@ -1137,7 +1133,6 @@ src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/door.ts	execute_raw	1
 src/core/storage-manifest/find.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
-src/core/stored-embedding-identity.ts	execute_raw	3
 src/core/surface-audit.ts	execute_raw	1
 src/core/sweep.ts	execute_raw	3
 src/core/sync-anchor.ts	execute_raw	11
@@ -1150,7 +1145,7 @@ src/core/sync-identity-downgrades.ts	execute_raw	8
 src/core/sync-pending.ts	execute_raw	3
 src/core/sync-policy.ts	execute_raw	1
 src/core/sync-rename-identity.ts	execute_raw	4
-src/core/sync-status-report.ts	execute_raw	3
+src/core/sync-status-report.ts	execute_raw	2
 src/core/sync-upstream-rewrite.ts	execute_raw	2
 src/core/sync-upstream.ts	execute_raw	2
 src/core/sync.ts	execute_raw	1
@@ -1178,7 +1173,6 @@ src/core/transcripts/secret-audit.ts	execute_raw	1
 src/core/trust/allow-rules.ts	execute_raw	6
 src/core/trust/backfill.ts	execute_raw	15
 src/core/trust/channel.ts	execute_raw	2
-src/core/trust/claim-state.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	9
 src/core/trust/derived-gate.ts	execute_raw	1
 src/core/trust/fence-append.ts	execute_raw	3

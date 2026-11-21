@@ -45,9 +45,7 @@ import * as decideStore from './decide-store.ts';
 import * as openLoops from './open-loops.ts';
 import * as jobsInsight from './jobs-insight.ts';
 import * as jobsHealth from './jobs-health.ts';
-import * as fenceHolds from './fence-holds.ts';
 import * as jobsStatus from './jobs-status.ts';
-
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
 
@@ -70,8 +68,7 @@ export const STORE_MEMBERS = {
   ...jobsInsight,
   // Queue health reads (rust/crates/gbrain-store/src/jobs/health.rs).
   ...jobsHealth,
-  // The held fence results (engine-sql/fence-holds.ts) and the status reads (engine-sql/jobs-status.ts).
-  ...fenceHolds, ...jobsStatus,
-} as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
+  // The minion status reads (rust/docs/store/jobs-status.md).
+  ...jobsStatus,} as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
