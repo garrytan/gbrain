@@ -119,8 +119,9 @@ describe('engine parity: repair kind previews that list facts', () => {
   parityTest('ontology-facts lists the observations the fence step moved, and excludes the withdrawn, consolidated and duplicate ones', {
     methods: ['insertFacts', 'consolidateFact', 'insertFactWithdrawal', 'listOntologyFactCandidates', 'listSourceIncarnations', 'writeOpCheckpointRecord'], timeout: 60_000,
   }, async (engine) => {
+    // One valid_from for every observation: the duplicate test matches on it, and insertFacts stamps each row's own clock read.
     const obs = (value: string, extra: Record<string, unknown> = {}) => ({ fact: value, entity_slug: 'people/ana-example', dimension: 'role', value, value_hash: value,
-      source: 'mine', source_markdown_slug: 'people/ana-example', ...extra });
+      source: 'mine', source_markdown_slug: 'people/ana-example', valid_from: new Date('2026-01-02T03:04:05.000Z'), ...extra });
     const ids = await insert(engine, [
       obs('cto', { row_num: 1 }), obs('ceo', { expired_at: new Date('2026-02-03T04:05:06.123456Z') }), obs('cfo'), obs('coo'), obs('coo', { source_markdown_slug: 'mine' }),
       obs('cmo'), obs('cio', { source_markdown_slug: 'mine' }), obs('cxo', { source: `${EXTRACTOR}:v1`, source_markdown_slug: 'chats/x' }),
