@@ -333,13 +333,28 @@ their slug, two aliases their name. The store handles it in two steps.
    arrives or a reconcile restores it from the primary, so the caller marks the relation dirty when `displaced` is above
    zero.
 
+The generation rule applies to both steps. Before anything is removed, a row that moves a unique key (its old version
+held another value) is checked against the stored rows that hold the key it takes, with the same guard as for any write:
+the holder's entry generation, tombstone and covering fence. When one of them is newer than the call, the row is
+`skipped_older`: it is not released, so its old version stays, it is not stored and no entry is written for it, and
+nothing is displaced. A new row (no old version) that meets a newer holder when it is stored is skipped the same way,
+before the holder is removed. An older holder is displaced as before, so a newer call still wins either order.
+
+A page is the one row whose record holds rows of other relations: its tags and their sources. Displacing a page removes
+the record, so the tags go with it, and when the page is stored again nothing carries them back (a replace carries them
+across; a displacement has no row to carry them from). So displacing a page also deletes the digest entries of its
+`tags` rows (the `tags` entries whose `page_id` is the page's id): the next reconcile of `tags` finds them missing and
+restores them. The other dependents of a page (chunks, links, timeline entries, versions, raw data, takes, wanted links)
+are rows under keys of their own, which `Mode::Replace` leaves alone, and so are the code edges of a chunk, the evidence
+of a take and the referrers of a fact; they keep their entries.
+
 The relations whose rows are looked up this way, with the column sets that are unique, are the `unique` lists of each
 relation's follow spec: `pages` (source, slug), `tags` (page, tag), `content_chunks` (page, index), `links` (from, to,
 type, source, origin), `slug_aliases`, `page_aliases`, `facts` (the markdown row fence and the stint index), `takes`
 (page, row), `raw_data`, `files` (storage path), `open_loops`, `wanted_links`, `trust_proposals` (the pending key),
 `code_edges_chunk`, `code_edges_symbol`, `decide_proposals`, `decide_review_proposals` and `wake_forgets`. The holder is
-found through the digest entries' identity columns, scanning the relation's entries once per call that collides, so a
-swap costs a pass over the relation. A stored row that has no digest entry (imported without digests) cannot be found:
+found through the digest entries' identity columns, scanning the relation's entries once per call that has a row to
+check (a row that moves a key, or collides), so a swap costs a pass over the relation. A stored row that has no digest entry (imported without digests) cannot be found:
 the collision stays an error, except for a row with no entry of its own, which replaces the stored row it names by its
 primary key as before.
 

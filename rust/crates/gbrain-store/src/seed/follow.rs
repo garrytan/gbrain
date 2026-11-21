@@ -531,12 +531,27 @@ impl<'a> Apply<'a> {
         let wrap = |n: usize, e: StoreError| {
             StoreError::new(e.code, format!("{relation} row {n}: {}", e.message))
         };
+        // A row that moves a unique key onto a stored row newer than the call is skipped before
+        // anything of it is removed.
+        let named: BTreeSet<&[u8]> = todo.iter().map(|t| t.sort).collect();
+        let mut kept = Vec::new();
+        for t in todo {
+            if self.moves_key(&t) && self.blocked(tx, &t, &named).map_err(|e| wrap(t.n, e))? {
+                self.result.skipped_older += 1;
+            } else {
+                kept.push(t);
+            }
+        }
+        let mut todo = kept;
         for t in &mut todo {
             self.release(tx, t).map_err(|e| wrap(t.n, e))?;
         }
         let sorts: BTreeSet<&[u8]> = todo.iter().map(|t| t.sort).collect();
         for t in &todo {
-            let outcome = self.store(tx, t, &sorts).map_err(|e| wrap(t.n, e))?;
+            let Some(outcome) = self.store(tx, t, &sorts).map_err(|e| wrap(t.n, e))? else {
+                self.result.skipped_older += 1;
+                continue;
+            };
             match outcome {
                 Outcome::Imported | Outcome::Skipped => self.result.upserted += 1,
                 Outcome::Dropped(reason) => {
@@ -570,19 +585,22 @@ impl<'a> Apply<'a> {
     }
 
     /// Stores the new version of a row. A collision with a stored row that holds a natural key the
-    /// row takes displaces that row and tries once more.
+    /// row takes displaces that row and tries once more. `None`: a holder is newer than the call, so
+    /// the row is left unstored.
     fn store(
         &mut self,
         tx: &mut dyn KvWrite,
         todo: &Todo,
         sorts: &BTreeSet<&[u8]>,
-    ) -> Result<Outcome> {
+    ) -> Result<Option<Outcome>> {
         let first = self.import(tx, todo);
         if !collided(&first) {
-            return first;
+            return first.map(Some);
         }
-        if self.displace(tx, todo, sorts)? {
-            return self.import(tx, todo);
+        match self.displace(tx, todo, sorts)? {
+            Displaced::Newer => return Ok(None),
+            Displaced::Some => return self.import(tx, todo).map(Some),
+            Displaced::None => {}
         }
         // A row with no entry of its own may be a stored version the store has no entry for (the
         // rows `importRelation` stored without digests): replace it by what the row names.
@@ -590,9 +608,9 @@ impl<'a> Apply<'a> {
             && let (Replace::ByRemove, Some(remove)) = (self.follow.replace, self.follow.remove)
             && remove(tx, &todo.fresh, Mode::Replace)?
         {
-            return self.import(tx, todo);
+            return self.import(tx, todo).map(Some);
         }
-        first
+        first.map(Some)
     }
 
     fn import(&mut self, tx: &mut dyn KvWrite, todo: &Todo) -> Result<Outcome> {
@@ -617,44 +635,101 @@ impl<'a> Apply<'a> {
         }
     }
 
-    /// Removes the stored rows, other than the call's own, that hold a unique natural key of
-    /// `todo`'s row, with their digest entries (no tombstone: a reconcile restores them). `false`
-    /// when there are none.
-    fn displace(
+    /// Whether the row takes a unique natural key its old version did not hold.
+    fn moves_key(&self, todo: &Todo) -> bool {
+        let Some(old) = &todo.old else {
+            return false;
+        };
+        self.follow.unique.iter().any(|set| {
+            set.iter().any(|col| todo.fresh.contains_key(*col))
+                && set.iter().any(|col| old.get(*col) != todo.fresh.get(*col))
+        })
+    }
+
+    /// Whether a stored row that holds a unique natural key of the row is newer than the call.
+    fn blocked(
         &mut self,
         tx: &mut dyn KvWrite,
         todo: &Todo,
         sorts: &BTreeSet<&[u8]>,
     ) -> Result<bool> {
-        let Some(remove) = self.follow.remove else {
-            return Ok(false);
-        };
+        for (sort, entry) in self.holders(tx, todo, sorts)? {
+            if self.newer(&*tx, &sort, Some(&entry))? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The live entries, other than the call's own, that hold a unique natural key of the row.
+    fn holders(
+        &mut self,
+        tx: &mut dyn KvWrite,
+        todo: &Todo,
+        sorts: &BTreeSet<&[u8]>,
+    ) -> Result<Vec<(Vec<u8>, Entry)>> {
         if self.follow.unique.is_empty() {
-            return Ok(false);
+            return Ok(Vec::new());
         }
         if self.live.is_none() {
             self.live = Some(entries_in(&*tx, self.relation, None, None, None)?);
         }
+        let unique = self.follow.unique;
         let holds = |entry: &Entry| {
-            self.follow.unique.iter().any(|set| {
+            unique.iter().any(|set| {
                 set.iter().any(|col| todo.fresh.contains_key(*col))
                     && set
                         .iter()
                         .all(|col| entry.identity.get(*col) == todo.fresh.get(*col))
             })
         };
-        let live = self.live.take().unwrap_or_default();
-        let (holders, rest): (Vec<_>, Vec<_>) = live
-            .into_iter()
-            .partition(|(sort, entry)| !sorts.contains(sort.as_slice()) && holds(entry));
-        self.live = Some(rest);
+        Ok(self
+            .live
+            .iter()
+            .flatten()
+            .filter(|(sort, entry)| !sorts.contains(sort.as_slice()) && holds(entry))
+            .cloned()
+            .collect())
+    }
+
+    /// Removes the stored rows, other than the call's own, that hold a unique natural key of
+    /// `todo`'s row, with their digest entries (no tombstone: a reconcile restores them) and those
+    /// of the dependents the removal took with it ([`CARRIED`]). Removes nothing when one of them
+    /// is newer than the call: the same guard as for any write.
+    fn displace(
+        &mut self,
+        tx: &mut dyn KvWrite,
+        todo: &Todo,
+        sorts: &BTreeSet<&[u8]>,
+    ) -> Result<Displaced> {
+        let Some(remove) = self.follow.remove else {
+            return Ok(Displaced::None);
+        };
+        let holders = self.holders(tx, todo, sorts)?;
+        if holders.is_empty() {
+            return Ok(Displaced::None);
+        }
+        for (sort, entry) in &holders {
+            if self.newer(&*tx, sort, Some(entry))? {
+                return Ok(Displaced::Newer);
+            }
+        }
         for (sort, entry) in &holders {
             if remove(tx, &entry.identity, Mode::Replace)? {
                 self.result.displaced += 1;
             }
             tx.delete(&digest_key(self.relation, sort))?;
+            drop_entries_of(
+                tx,
+                CARRIED,
+                self.relation,
+                std::slice::from_ref(&entry.identity),
+            )?;
         }
-        Ok(!holders.is_empty())
+        if let Some(live) = &mut self.live {
+            live.retain(|(sort, _)| !holders.iter().any(|(h, _)| h == sort));
+        }
+        Ok(Displaced::Some)
     }
 
     fn unsupported(&self, what: &str) -> StoreError {
@@ -666,6 +741,16 @@ impl<'a> Apply<'a> {
             ),
         )
     }
+}
+
+/// What displacing the holders of a natural key came to.
+enum Displaced {
+    /// There were none.
+    None,
+    /// They were removed.
+    Some,
+    /// One is newer than the call, so nothing was removed.
+    Newer,
 }
 
 /// Whether an import met a stored row holding the natural key it takes: the importers refuse
@@ -906,9 +991,26 @@ const DEPENDENTS: &[(&str, &[Dependent])] = &[
     ),
 ];
 
+/// The rows a displaced row takes with it although they are not rows of the store's own: they live
+/// inside the parent's record, so removing the parent removes them, and nothing carries them back
+/// when the parent is stored again (a replace carries them across, a displacement has no row to
+/// carry them from). Their digest entries go with them, so a reconcile finds them missing. Only a
+/// page holds any: its tags and their sources. Chunks, takes and facts keep their dependents
+/// (code edges, citations, referrers) under keys of their own, which a replace leaves alone.
+const CARRIED: &[(&str, &[Dependent])] = &[("pages", &[("tags", &[("page_id", "id")])])];
+
 /// Deletes the digest entries of the rows that went with the deleted `rows` of `parent`.
 fn drop_dependent_entries(tx: &mut dyn KvWrite, parent: &str, rows: &[Identity]) -> Result<()> {
-    let Some((_, dependents)) = DEPENDENTS.iter().find(|(name, _)| *name == parent) else {
+    drop_entries_of(tx, DEPENDENTS, parent, rows)
+}
+
+fn drop_entries_of(
+    tx: &mut dyn KvWrite,
+    table: &[(&str, &[Dependent])],
+    parent: &str,
+    rows: &[Identity],
+) -> Result<()> {
+    let Some((_, dependents)) = table.iter().find(|(name, _)| *name == parent) else {
         return Ok(());
     };
     for (dependent, links) in *dependents {

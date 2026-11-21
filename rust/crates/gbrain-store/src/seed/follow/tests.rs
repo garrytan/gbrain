@@ -10,6 +10,7 @@ use crate::test_support::store;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
+mod displace;
 mod fences;
 mod swaps;
 
