@@ -37,9 +37,13 @@ async function gitAsync(root: string, args: string[]): Promise<string | null> {
   return r.error ? null : r.stdout.trim() || null;
 }
 
-function mtime(path: string | null): number {
+/** `requireContent`: a failed fetch leaves an empty FETCH_HEAD with a fresh mtime, which is no observation. */
+function mtime(path: string | null, requireContent = false): number {
   if (!path) return 0;
-  try { return statSync(path).mtimeMs; } catch { return 0; }
+  try {
+    const st = statSync(path);
+    return requireContent && st.size === 0 ? 0 : st.mtimeMs;
+  } catch { return 0; }
 }
 
 /** Whether the checkout's branch tracks an upstream (a `git pull` would have something to refresh). */
@@ -53,7 +57,7 @@ export async function observeUpstream(root: string, syncedCommit: string | null)
   const ref = commit && await gitAsync(root, ['rev-parse', '--symbolic-full-name', '@{upstream}']);
   if (!commit || !ref) return null;
   const checkedMs = Math.max(
-    mtime(await gitAsync(root, ['rev-parse', '--path-format=absolute', '--git-path', 'FETCH_HEAD'])),
+    mtime(await gitAsync(root, ['rev-parse', '--path-format=absolute', '--git-path', 'FETCH_HEAD']), true),
     mtime(await gitAsync(root, ['rev-parse', '--path-format=absolute', '--git-path', `logs/${ref}`])),
   );
   if (checkedMs === 0) return null;
