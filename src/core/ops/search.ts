@@ -60,12 +60,8 @@ import { entitySavedFacts, stripCollapseColumns } from '../search/entity-facts.t
 import { FACT_MATCH_STOPWORDS, matchingSavedFacts } from '../search/saved-facts-match.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
 import { mentionCoverageNotice, readMentionCoverage } from '../mentions/coverage.ts';
-import { keepEnumeratedRows, keywordCountMeta, parseSearchPaging, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
+import { keepEnumeratedRows, keywordCountMeta, keywordOnlyBounds, parseSearchPaging, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
-import { hasCJK } from '../cjk.ts';
-import { loadConfigWithEngine } from '../config.ts';
-import { resolveCjkKeywordDeadlineMs } from '../search/cjk-keyword-deadline.ts';
-import type { CjkKeywordMeta } from '../engine-sql/cjk-search.ts';
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
@@ -801,13 +797,8 @@ const search: Operation = {
       const keywordCount = page ? null : timings.overlap('keyword_count', startKeywordCount(ctx.engine, queryText, undefined, keywordOpts, lexicalDone.promise));
       // GBRA-200: the keyword rank bound (Postgres) is reported here as it is on the hybrid path.
       let keywordBound: DegradedStageEntry | undefined;
-      // #9936: the CJK keyword read runs bounded, as the hybrid arm's does (#5989): a cut read is degraded, never an error.
-      const cjkKeyword = !page && hasCJK(queryText) ? {
-        deadlineMs: resolveCjkKeywordDeadlineMs(await setup(() => loadConfigWithEngine(ctx.engine).catch(() => null))),
-        onMeta: (m: CjkKeywordMeta) => { if (m.incomplete) keywordBound = { stage: 'keyword_candidates_incomplete', reason: m.reason }; },
-      } : undefined;
-      const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts, ...(cjkKeyword ? { cjkKeyword } : {}),
-        onKeywordIncomplete: reason => { keywordBound = { stage: 'keyword_candidates_incomplete', reason }; } })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
+      const bounds = page ? {} : await keywordOnlyBounds(ctx.engine, queryText, bound => { keywordBound = bound; }, setup);
+      const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts, ...bounds })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
       await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings, paging.match === 'keyword' && !names);
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, null, snippetCap, timings,

@@ -29,6 +29,8 @@ import { invalidParam } from '../ops/op-fix.ts';
 import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
 import { KEYWORD_COUNT_CAP, type KeywordPageAfter } from './keyword-statement.ts';
 import { hasCJK } from '../cjk.ts';
+import { loadConfigWithEngine } from '../config.ts';
+import { resolveCjkKeywordDeadlineMs } from './cjk-keyword-deadline.ts';
 
 export type SearchMatch = 'hybrid' | 'keyword';
 
@@ -218,6 +220,18 @@ export async function readKeywordPage(engine: BrainEngine, p: Record<string, unk
     ...(degraded ? { degraded } : {}),
     ...(bound ? { bound } : {}),
   };
+}
+
+/**
+ * Keyword-only search's read bounds. Either cut (the Postgres rank bound, or
+ * #9936's CJK read running under the hybrid arm's deadline, #5989) reports
+ * keyword_candidates_incomplete through onBound instead of an error.
+ */
+export async function keywordOnlyBounds(engine: BrainEngine, query: string, onBound: (bound: DegradedStageEntry) => void, load: <T>(work: () => Promise<T>) => Promise<T> = work => work()): Promise<Pick<SearchOpts, 'cjkKeyword' | 'onKeywordIncomplete'>> {
+  const onKeywordIncomplete: SearchOpts['onKeywordIncomplete'] = reason => onBound({ stage: 'keyword_candidates_incomplete', reason });
+  if (!hasCJK(query)) return { onKeywordIncomplete };
+  const deadlineMs = resolveCjkKeywordDeadlineMs(await load(() => loadConfigWithEngine(engine).catch(() => null)));
+  return { onKeywordIncomplete, cjkKeyword: { deadlineMs, onMeta: m => { if (m.incomplete) onBound({ stage: 'keyword_candidates_incomplete', reason: m.reason }); } } };
 }
 
 /**
