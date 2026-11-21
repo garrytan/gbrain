@@ -16,7 +16,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
-import { encodeValue } from './codec.ts';
+import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, encodeArgs, encodeValue } from './codec.ts';
 import type { CapturedRead, MirrorCounters } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 
@@ -81,9 +81,9 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     }
     let encodedArgs: unknown;
     try {
-      encodedArgs = encodeValue(args);
-    } catch {
-      try { sink.counters.encode_error++; } catch { /* fail open */ }
+      encodedArgs = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
+    } catch (error) {
+      try { sink.counters[error instanceof CaptureTooLargeError ? 'shed_too_large' : 'encode_error']++; } catch { /* fail open */ }
       return fn.apply(engine, args);
     }
     const started = now();
@@ -92,7 +92,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     return out.then((result: unknown) => {
       const primaryMs = now() - started;
       try {
-        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result), primary_ms: primaryMs, at: Date.now() }));
+        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }), primary_ms: primaryMs, at: Date.now() }));
       } catch { /* the shadow never fails a call */ }
       return result;
     }, (error: unknown) => {

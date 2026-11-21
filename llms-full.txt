@@ -5957,13 +5957,22 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Fail-open.** Mirroring never slows or fails a primary call. The queue is bounded (`--queue-bound`, default 256)
   and sheds when full; reads inside a transaction are skipped; `--sample-rate` (default 0.1) picks which reads are
   mirrored. Only sampled reads are copied, at the moment the primary answers, so a caller that changes a result
-  afterwards cannot cause a false difference. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  afterwards cannot cause a false difference. The copy stops as soon as a call's arguments or result pass about
+  1 MiB, so a huge result is counted as too large and never built. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
   child silent for 60 seconds is killed, and a privacy divergence (Rust returns something the primary hid) pauses
   comparison.
+- **Brains and deleting.** Each brain gets its own directory, keyed by its engine, host, port, database and user name
+  (two Supabase projects behind one pooler differ by user name; the password is never part of it). `stop --delete`
+  removes the directory, and a child that is still running cannot write it back.
 - **No network in the background.** gbrain downloads no addon. `start --yes`, the child
   and `gbrain doctor` only use an addon that is already installed; without one they record `addon_unavailable`
   (`rust_engine_addon_missing`, reason `not_installed`).
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
+- **Evals.** `gbrain eval longmemeval` and `gbrain eval brainbench` take `--engine pglite|rust`. With `rust`, a missing
+  or mismatched addon stops the run with its code and reason, and so does a Rust store that cannot yet run the table
+  reset between fixtures (`rust_benchmark_unsupported`), so until the store is seeded and serves raw reads the flag
+  stops before any work. A longmemeval run records the engine in its resume hash, and the memory-trust brainbench
+  suites refuse `--engine rust` because they always build PGLite brains.
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, the Rust store is not
   seeded from your brain yet, and writes and the readiness decision come in later phases of the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record

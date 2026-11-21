@@ -142,9 +142,9 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     if (unavailable || !engine) { record(event, unavailable ?? { outcome: 'error', reason: 'no_engine' }, null, null); return; }
     const fn = engine[event.op];
     if (typeof fn !== 'function') { record(event, { outcome: 'capability_missing', reason: 'not_a_member' }, null, null); return; }
-    const args = decodeValue(event.args) as unknown[];
     const started = performance.now();
     try {
+      const args = decodeValue(event.args) as unknown[]; // inside the try: one malformed event is recorded, never a wedged loop
       const out = await withTimeout(Promise.resolve((fn as (...a: unknown[]) => unknown).apply(engine, args)), timeoutMs);
       const rustMs = performance.now() - started;
       if (out.timedOut) { record(event, { outcome: 'timeout' }, rustMs, null); return; }
@@ -158,8 +158,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   let draining: Promise<void> | null = null;
   const drain = (): Promise<void> => {
     draining ??= (async () => {
-      while (pending.length > 0) await handle(pending.shift()!);
-      draining = null;
+      try { while (pending.length > 0) await handle(pending.shift()!); } finally { draining = null; }
     })();
     return draining;
   };
@@ -167,9 +166,9 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   const rl = createInterface({ input: deps.input, crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line) continue;
-    let event: { t?: string; counters?: MirrorCounters };
+    let event: { t?: string; counters?: MirrorCounters; pid?: number };
     try { event = JSON.parse(line); } catch { continue; }
-    if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; continue; }
+    if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
     pending.push(event as ReadEvent);

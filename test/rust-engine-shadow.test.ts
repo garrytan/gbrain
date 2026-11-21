@@ -6,15 +6,19 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { classifyError, classifyResult } from '../src/shadow/classify.ts';
-import { canonicalJson, decodeValue, encodeValue } from '../src/shadow/codec.ts';
+import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, canonicalJson, decodeValue, encodeArgs, encodeValue } from '../src/shadow/codec.ts';
 import { runShadowChild } from '../src/shadow/child.ts';
-import { readFaults, readShadowSummary, type ShadowFault } from '../src/shadow/ledger.ts';
+import { appendFault, appendLedgerRows, readFaults, readShadowSummary, writeSummaryFile, type ShadowFault } from '../src/shadow/ledger.ts';
+import { readShadowState, shadowBrainKey, SHADOW_STATE_VERSION, writeShadowState } from '../src/shadow/state.ts';
+import { runBrainBench } from '../src/eval/brainbench/harness.ts';
+import { TRUST_SUITES } from '../src/eval/brainbench/types.ts';
+import { buildRunConfig, retrievalConfigHash } from '../src/eval/longmemeval/run-config.ts';
 import { MirrorQueue, newMirrorCounters, type CapturedRead } from '../src/shadow/mirror.ts';
 import { SHADOW_READ_MEMBERS } from '../src/shadow/reads.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
@@ -127,6 +131,22 @@ describe('wrapper', () => {
     expect(q2.depth).toBe(0);
   });
 
+  test('a result over the capture budget is counted too_large before its copy is built, and the caller still gets it', async () => {
+    const primary = fakePrimary();
+    const big = { rows: Array.from({ length: 4 }, () => 'x'.repeat(400 * 1024)) };
+    (primary as unknown as { getPage: () => Promise<unknown> }).getPage = async () => big;
+    const q = new MirrorQueue({ bound: 4, transport: { send: () => true }, schedule: () => {} });
+    const engine = wrapShadowEngine(primary, { counters: q.counters, offer: (c) => q.offer(c), active: () => true }, { sampleRate: 1 });
+    expect(await engine.getPage('a')).toBe(big as never);
+    expect(q.counters.shed_too_large).toBe(1);
+    expect(q.counters.encode_error).toBe(0);
+    expect(q.depth).toBe(0);
+    // An argument list over the budget sheds the same way and still calls the primary.
+    const huge = new Float32Array(200_000);
+    expect(await (engine.getPage as unknown as (arg: unknown) => Promise<unknown>)(huge)).toBeDefined();
+    expect(q.counters.shed_too_large).toBe(2);
+  });
+
   test('never mirrors writes, and passes a primary rejection through unchanged', async () => {
     const s = sink();
     const engine = wrapShadowEngine(fakePrimary(), s, { sampleRate: 1 });
@@ -225,6 +245,22 @@ describe('codec', () => {
     expect(back.i).toBe(-Infinity);
   });
 
+  test('an undefined argument stays distinct from null across the wire', () => {
+    const wire = JSON.parse(JSON.stringify(encodeArgs(['Example', undefined, null, undefined, 'default']))) as unknown;
+    const args = decodeValue(wire) as unknown[];
+    expect(args).toHaveLength(5);
+    expect(args[1]).toBeUndefined();
+    expect(args[2]).toBeNull();
+    expect(args[3]).toBeUndefined();
+    expect(args[4]).toBe('default');
+  });
+
+  test('the capture budget stops an encode before a big typed array or string is copied', () => {
+    expect(() => encodeValue(new Float32Array(200_000), undefined, { left: CAPTURE_BUDGET_BYTES })).toThrow(CaptureTooLargeError);
+    expect(() => encodeValue({ a: 'x'.repeat(CAPTURE_BUDGET_BYTES + 1) }, undefined, { left: CAPTURE_BUDGET_BYTES })).toThrow(CaptureTooLargeError);
+    expect(encodeValue({ a: 'small', v: new Float32Array(8) }, undefined, { left: CAPTURE_BUDGET_BYTES })).toEqual({ a: 'small', v: { $typed: 'Float32Array', v: Array.from(new Float32Array(8)) } });
+  });
+
   test('drops signals and functions, and canonical JSON ignores key order', () => {
     const enc = encodeValue({ a: 1, signal: new AbortController().signal, f: () => 1 });
     expect(enc).toEqual({ a: 1 });
@@ -313,6 +349,21 @@ describe('supervisor', () => {
     expect(h.faults.map((f) => f.kind)).toContain('child_hung');
     h.sup.stop();
     rmSync(h.dir, { recursive: true, force: true });
+  });
+
+  test('stop kills a child that never exits after its input ends, and leaves one that exits in time', async () => {
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const stuck = harness({ hangMs: 20 });
+    stuck.sup.send('x\n');
+    stuck.sup.stop();
+    const fine = harness({ hangMs: 20 });
+    fine.sup.send('x\n');
+    fine.sup.stop();
+    fine.children[0].emit('exit', 0, null);
+    await wait(80);
+    expect(stuck.children[0].killed).toBe('SIGKILL');
+    expect(fine.children[0].killed).toBeNull();
+    for (const h of [stuck, fine]) rmSync(h.dir, { recursive: true, force: true });
   });
 
   test('a pause from the child stops mirroring', async () => {
@@ -425,6 +476,18 @@ describe('child loop', () => {
     rmSync(r.dir, { recursive: true, force: true });
   });
 
+  test('one malformed event is recorded and the next event is still compared', async () => {
+    const fake = { async connect() {}, async disconnect() {}, async getPage(slug: string) { return { slug }; } };
+    const bad = JSON.stringify({ t: 'read', id: 1, at: Date.parse('2026-11-17T00:00:00Z'), op: 'getPage', primary_ms: 1, args: [{ $bigint: 'not-a-number' }], result: null }) + '\n';
+    const r = await run([bad, event('getPage', ['a'], { slug: 'a' })], {
+      loadAddon: async () => ({ ok: true, addon: {} as never }), openEngine: () => fake as never,
+    });
+    const counts = r.summary.by_op.getPage ?? {};
+    expect(counts.match).toBe(1);
+    expect(Object.values(counts).reduce((a, b) => a + (b ?? 0), 0)).toBe(2);
+    rmSync(r.dir, { recursive: true, force: true });
+  });
+
   test('stats events update the serving counters in the summary', async () => {
     const counters = { ...newMirrorCounters(), offered: 7, sent: 5 };
     const r = await run([JSON.stringify({ t: 'stats', at: 1, counters }) + '\n'], {
@@ -432,6 +495,55 @@ describe('child loop', () => {
     });
     expect(r.summary.primary.offered).toBe(7);
     rmSync(r.dir, { recursive: true, force: true });
+  });
+});
+
+describe('shadow state and evidence files', () => {
+  test('two brains behind one pooler differ by user name, and a password never changes the key', () => {
+    const pooler = (user: string, password: string) => ({ engine: 'postgres' as const, database_url: `postgresql://${user}:${password}@aws-0.pooler.example:6543/postgres` });
+    expect(shadowBrainKey(pooler('postgres.projecta', 'one'))).not.toBe(shadowBrainKey(pooler('postgres.projectb', 'one')));
+    expect(shadowBrainKey(pooler('postgres.projecta', 'one'))).toBe(shadowBrainKey(pooler('postgres.projecta', 'two')));
+  });
+
+  test('a state file with a bad sample rate or queue bound reads as off', () => {
+    const dir = tmp();
+    const good = { version: SHADOW_STATE_VERSION, enabled: true, started_at: '2026-11-17T00:00:00Z', sample_rate: 0.1, queue_bound: 256, plan_hash: 'p', brain: 'b', primary_engine: 'pglite' };
+    writeShadowState(dir, good);
+    expect(readShadowState(dir)?.enabled).toBe(true);
+    for (const bad of [{ sample_rate: 0 }, { sample_rate: 1.5 }, { sample_rate: Number.NaN }, { queue_bound: 0 }, { queue_bound: 2.5 }, { queue_bound: undefined }]) {
+      writeShadowState(dir, { ...good, ...bad } as never);
+      expect(readShadowState(dir)).toBeNull();
+    }
+    writeFileSync(join(dir, 'state.json'), '{not json');
+    expect(readShadowState(dir)).toBeNull();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a late write after the shadow directory was deleted does not bring it back', () => {
+    const dir = join(tmp(), 'brain');
+    mkdirSync(dir);
+    rmSync(dir, { recursive: true, force: true });
+    appendFault(dir, { ts: '2026-11-17T00:00:00Z', kind: 'child_exit', detail: 'late' });
+    appendLedgerRows(dir, [{ ts: '2026-11-17T00:00:00Z', op: 'getPage', outcome: 'match', primary_ms: 1, rust_ms: 1, primary_rows: 1, rust_rows: 1 }]);
+    writeSummaryFile(dir, { version: 1, child_id: 'late', started_at: '', updated_at: '', first_event_at: null, last_event_at: null, by_op: {}, child_shed: 0, primary: newMirrorCounters() });
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test('serving counters are not added twice when a restarted child reports the same process again', () => {
+    const dir = tmp();
+    const file = (id: string, pid: number, offered: number) => ({
+      version: 1, child_id: id, started_at: '', updated_at: '', first_event_at: null, last_event_at: null, by_op: {}, child_shed: 0,
+      primary: { ...newMirrorCounters(), offered, sent: offered }, primary_pid: pid,
+    });
+    mkdirSync(join(dir, 'summaries'));
+    writeFileSync(join(dir, 'summaries', 'a.json'), JSON.stringify(file('a', 100, 10)));
+    writeFileSync(join(dir, 'summaries', 'b.json'), JSON.stringify(file('b', 100, 25)));
+    writeFileSync(join(dir, 'summaries', 'c.json'), JSON.stringify(file('c', 200, 4)));
+    const total = readShadowSummary(dir);
+    expect(total.children).toBe(3);
+    expect(total.primary.offered).toBe(29);
+    expect(total.primary.sent).toBe(29);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 
@@ -487,13 +599,29 @@ describe('eval --engine rust', () => {
     expect(err).not.toBeInstanceOf(RustEngineAddonUnavailableError);
   });
 
-  withAddon('with the built addon the run opens a throwaway Rust store and removes it on disconnect', async () => {
+  withAddon('with the built addon the run is refused up front, before any work, and leaves no store behind', async () => {
     const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
-    const engine = await createBenchmarkBrain('rust', { loadAddon: async () => ({ ok: true, addon }) as never });
-    const store = (engine as unknown as { databasePath: string }).databasePath;
-    expect((engine as unknown as { kind: string }).kind).toBe('rust');
-    expect(existsSync(store)).toBe(true);
-    await engine.disconnect();
-    expect(existsSync(store)).toBe(false);
+    const stores = () => readdirSync(tmpdir()).filter((n) => n.startsWith('gbrain-bench-rust-')).sort();
+    const before = stores();
+    const err = await createBenchmarkBrain('rust', { loadAddon: async () => ({ ok: true, addon }) as never }).catch((e) => e);
+    expect(err).toBeInstanceOf(RustEngineAddonUnavailableError);
+    expect(err.code).toBe('rust_benchmark_unsupported');
+    expect(err.reason).toBe('raw_sql_missing');
+    expect(stores()).toEqual(before);
+  });
+
+  test('a Rust run keys its own resume hash and run config, and the default engine leaves both unchanged', () => {
+    const pins = { mode: 'balanced', keyword_only: false, reranker: { enabled: false, model: null }, autocut: false, expansion: false, expansion_variant_budget: null, embedder: 'e@1', top_k: 5, trajectory: false };
+    const knobs = { knobs_hash: 'k', knobs_hash_version: 1 };
+    const withEngine = { ...pins, engine: 'rust' as const };
+    expect(retrievalConfigHash(withEngine as never, knobs as never)).not.toBe(retrievalConfigHash(pins as never, knobs as never));
+    expect(buildRunConfig({ pins: withEngine } as never).engine).toBe('rust');
+    expect('engine' in buildRunConfig({ pins } as never)).toBe(false);
+  });
+
+  test('the memory-trust suites refuse --engine rust instead of benchmarking PGLite', async () => {
+    const corpus = { fixtures: [{ fixture: { suites: [TRUST_SUITES[0]], holdout: false } }] } as never;
+    await expect(runBrainBench(corpus, { harnesses: ['openclaw'], suites: [TRUST_SUITES[0]] as never, includeHoldout: true, llm: false, engine: 'rust' }))
+      .rejects.toThrow('--engine rust does not run the memory-trust suites');
   });
 });
