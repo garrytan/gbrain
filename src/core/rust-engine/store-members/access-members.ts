@@ -16,6 +16,7 @@
  * (rust/docs/store/access-tokens.md, oauth-clients.md); readLiveMember finds the member a live token or client names.
  * A time crosses the binding as ISO text and leaves here as a `Date`.
  */
+import type { ReadSharedSourceRow } from '../../engine-sql/read-shared-sources.ts';
 import type { AccessGroupRow, AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
 import type { AccessMemberInsert, AccessMemberKind, AccessMemberLinkRow, CredentialBinding, CredentialBindingRow, CredentialTarget, LinkedMemberRow } from '../../engine-sql/access-members.ts';
 import { withDates } from '../store-codec.ts';
@@ -194,3 +195,6 @@ export const writeCredentialReadsUnscoped: StoreMember<[target: CredentialTarget
   await write('writeCredentialReadsUnscoped', () => brain.writeCredentialReadsUnscoped(target.kind, target.id, readsUnscoped));
 };
 
+/** GST-2898: the source rows of the read-shared switch's shared set (engine-sql/read-shared-sources.ts, rust read_shared.rs). */
+export const readSharedSourceRows: StoreMember<[], ReadSharedSourceRow[]> = async (brain) =>
+  storeCall({ member: 'readSharedSourceRows' }, () => brain.readSharedSourceRows());

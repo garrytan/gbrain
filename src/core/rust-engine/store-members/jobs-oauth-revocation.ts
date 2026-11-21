@@ -30,6 +30,11 @@ export const setOauthClientRevision: StoreMember<[clientId: string, revision: nu
   await storeCall({ member: 'setOauthClientRevision' }, () => brain.setOauthClientRevision(clientId, revision, revoke));
 };
 
+/** GST-2898: the client's read-shared stamp (engine-sql/oauth-revocation.ts); a null revision clears the switch. */
+export const setOauthClientReadSharedRevision: StoreMember<[clientId: string, revision: number | null], void> = async (brain, clientId, revision) => {
+  await storeCall({ member: 'setOauthClientReadSharedRevision' }, () => brain.setOauthClientReadSharedRevision(clientId, revision));
+};
+
 export const insertOauthGrantAudit: StoreMember<[row: OauthGrantAuditInsert], void> = async (brain, row) => {
   await storeCall({ member: 'insertOauthGrantAudit' }, () => brain.insertOauthGrantAudit(row));
 };

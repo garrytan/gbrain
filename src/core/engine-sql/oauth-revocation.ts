@@ -20,6 +20,7 @@ export const OAUTH_REVOCATION_SQL = {
   delete_client: 'DELETE FROM oauth_clients WHERE client_id = $1',
   revision_revoke: 'UPDATE oauth_clients SET deleted_at = COALESCE(deleted_at, now()), grant_revision = $1 WHERE client_id = $2',
   revision_only: 'UPDATE oauth_clients SET grant_revision = $1 WHERE client_id = $2',
+  read_shared: 'UPDATE oauth_clients SET read_shared_revision = $2 WHERE client_id = $1',
   grant_audit: `INSERT INTO oauth_grant_audit (client_id, actor, action, revision, before_grant, after_grant)
       VALUES ($1, $2, $3, $4, $5::text::jsonb, $6::text::jsonb)`,
 } as const;
@@ -62,6 +63,14 @@ export async function deleteOauthClientRow(tx: Raw, clientId: string): Promise<v
 /** Set the client's grant revision; `revoke` also stamps `deleted_at` when the client is not already revoked. */
 export async function setOauthClientRevision(tx: Raw, clientId: string, revision: number, revoke: boolean): Promise<void> {
   await tx.executeRaw(revoke ? OAUTH_REVOCATION_SQL.revision_revoke : OAUTH_REVOCATION_SQL.revision_only, [revision, clientId]);
+}
+
+/**
+ * GST-2898: stamp the client's read-shared switch at `revision` (the switch is on while it equals grant_revision), or
+ * clear it with null. The grant writers (grants/service.ts stampReadShared) and invalidate-tokens (grants/lifecycle.ts) run it.
+ */
+export async function setOauthClientReadSharedRevision(tx: Raw, clientId: string, revision: number | null): Promise<void> {
+  await tx.executeRaw(OAUTH_REVOCATION_SQL.read_shared, [clientId, revision]);
 }
 
 /** Append one row to the grant audit. */

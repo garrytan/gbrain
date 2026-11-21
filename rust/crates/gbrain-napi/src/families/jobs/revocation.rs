@@ -79,6 +79,19 @@ impl Brain {
         })
     }
 
+    /// `setOauthClientReadSharedRevision(clientId, revision)`: whether a client has the id; a null revision clears it.
+    #[napi]
+    pub fn set_oauth_client_read_shared_revision<'env>(
+        &self,
+        env: &'env Env,
+        client_id: String,
+        revision: Option<i32>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.set_oauth_client_read_shared_revision(&client_id, revision)
+        })
+    }
+
     /// `insertOauthGrantAudit(row)`: null.
     #[napi]
     pub fn insert_oauth_grant_audit<'env>(

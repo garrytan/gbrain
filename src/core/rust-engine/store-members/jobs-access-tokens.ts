@@ -154,6 +154,12 @@ export const writeAccessTokenPrivateGrant: StoreMember<[id: string, axis: Access
   await refusing('writeAccessTokenPrivateGrant', () => brain.writeAccessTokenPrivateGrant(uuid, axis, value));
 };
 
+/** GST-2898: token `id`'s read-shared stamp (engine-sql/access-credentials.ts); a null revision clears the switch. */
+export const setAccessTokenReadSharedRevision: StoreMember<[id: string, revision: number | null], void> = async (brain, id, revision) => {
+  const uuid = uuidText(id);
+  await refusing('setAccessTokenReadSharedRevision', () => brain.setAccessTokenReadSharedRevision(uuid, revision));
+};
+
 /** The whole rows of the active tokens with no `source_grant`, oldest first, the times as Dates; the store takes no lock (one write at a time). */
 export const lockLegacyAccessTokens: StoreMember<[], Record<string, unknown>[]> = async (brain) => {
   const rows = await storeCall({ member: 'lockLegacyAccessTokens' }, () => brain.lockLegacyAccessTokens()) as Record<string, unknown>[];

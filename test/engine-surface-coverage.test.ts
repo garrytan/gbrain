@@ -448,6 +448,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'ageOutSessionState',
   'capSessionStatePerClient',
   'listAccessTokens', 'readActiveAccessTokenGrant', 'accessTokenLive', 'oauthClientLive', 'readOauthClientColumns', 'setOauthClientTokenTtl', 'insertOauthClientGrant', 'readTokenLifetimeClampedClients', 'readScopeSourceConfigs', 'readOauthAccessTokenRows', 'insertOauthToken', 'deleteExpiredOauthCredentials', 'convertLegacyAccessTokenGrant', 'lockActiveAccessTokens', 'writeAccessTokenGrant', 'writeAccessTokenPrivateGrant', 'lockLegacyAccessTokens', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed',
+  'setOauthClientReadSharedRevision', 'setAccessTokenReadSharedRevision', 'readSharedSourceRows',
   'readOauthClientForUpdate', 'readLiveOauthClients', 'readLiveAccessTokenRows', 'oauthClientHoldsAuthorization', 'readSourceArchivedForShare', 'readSourceAttestState', 'replaceSourceConfig', 'persistOauthClientGrant', 'readLatestCatalogProvenanceAudit', 'listOauthGrantAudit', 'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'readOauthCodeChallenge', 'issueOauthTokens', 'deleteOauthTokenByHash', 'softDeleteOauthClient', 'deleteOauthClientTokens', 'deleteOauthClientCodes', 'deleteOauthClientRow', 'setOauthClientRevision', 'insertOauthGrantAudit',
   'readMentionIndexStatus', 'countLivePagesInSource', 'countMentionDueSince', 'recountMentionIndexStatus',
   // The access setup members (engine-sql/access-setup.ts).

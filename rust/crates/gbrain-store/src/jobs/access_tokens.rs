@@ -321,6 +321,7 @@ impl TokenRecord {
             "member_id": t.member_id, "may_act_for": t.may_act_for, "attest_actor": t.attest_actor,
             "attest_ops": t.attest_ops, "attest_sources": t.attest_sources, "attest_read": t.attest_read,
             "reads_unscoped": t.reads_unscoped.map(iso), "private_facts": t.private_facts,
+            "read_shared_revision": t.read_shared_revision,
         })
     }
 
@@ -479,6 +480,24 @@ impl Store {
             t.check()?;
             put_json(tx, &token_key(&id), &t)?;
             Ok(Some(t.grant_revision))
+        })
+    }
+
+    /// `setAccessTokenReadSharedRevision(id, revision)`: `UPDATE access_tokens SET read_shared_revision = $2 WHERE id =
+    /// $1::uuid` (GST-2898; `None` clears the switch) for the token with this id (a UUID, so any case); nothing changes
+    /// when no token has the id.
+    pub fn set_access_token_read_shared_revision(
+        &self,
+        id: &str,
+        revision: Option<i32>,
+    ) -> Result<()> {
+        let id = id.to_ascii_lowercase();
+        self.write(|tx| {
+            let Some(mut t) = get_json::<TokenRecord>(&*tx, &token_key(&id))? else {
+                return Ok(());
+            };
+            t.read_shared_revision = revision;
+            put_json(tx, &token_key(&id), &t)
         })
     }
 
