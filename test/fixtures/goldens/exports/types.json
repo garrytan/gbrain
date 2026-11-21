@@ -810,7 +810,7 @@
         ],
         "name": "GBrainError",
         "signature": [
-          "new (problem: string, cause_description: string, fix: string, docs_url?: string | undefined) => GBrainError"
+          "new (problem: string, cause_description: string, fix: string, docs_url?: string | undefined, options?: ErrorOptions) => GBrainError"
         ],
         "statics": [
           "captureStackTrace: { (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; }",
@@ -10308,7 +10308,7 @@
         ],
         "name": "GBrainError",
         "signature": [
-          "new (problem: string, cause_description: string, fix: string, docs_url?: string | undefined) => GBrainError"
+          "new (problem: string, cause_description: string, fix: string, docs_url?: string | undefined, options?: ErrorOptions) => GBrainError"
         ],
         "statics": [
           "captureStackTrace: { (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; }",

@@ -44,6 +44,7 @@ import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import { isScopeErrorCode } from '../core/error-catalogue.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { printCuratedHelp } from './help/render.ts';
+import { postgresStatusReadError } from './postgres-status-read-error.ts';
 import { OWN_EQUALS_PARSERS, READER_ALIASES, findUnknownFlag, splitFlagEquals } from './flag-equals.ts';
 import { buildCliAliases, cliAliases, findUnknownOpFlag, validateCommandFlags } from './flag-validation.ts';
 import { cliSurface } from './skill-surface.ts';
@@ -2556,6 +2557,10 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
         return null;
       }
     })();
+    if (command === 'jobs' && args[0] === 'stats' && process.argv.includes('--json')) {
+      const error = postgresStatusReadError(serveConnectError, resolvedEngineKind);
+      if (error !== serveConnectError) exitCliError(error, 'jobs');
+    }
     // C10: a supervisor asked for fail-fast — exit non-zero with the classified envelope on stderr.
     if (command === 'serve') {
       const failFast = await import('../core/serve-fail-fast.ts');
