@@ -195,12 +195,24 @@ describe('writes by a stored spelling change that row in place, as on the merge 
     expect(await rowsOf()).toEqual([{ slug: stored, deleted: false }]);
   });
 
-  test('a capital spelling of a capital-stored page (beyond the merge base, which lowercased the slug): add_tag and delete_page act on that row, never a lowercase twin', async () => {
-    await fresh('Notes/W-Cafe');
-    await call('add_tag', { slug: 'Notes/W-Cafe', tag: 'cap' });
-    expect(await tagsOf('Notes/W-Cafe')).toEqual(['cap']);
-    await call('delete_page', { slug: 'Notes/W-Cafe', expected_revision: await revisionOf('Notes/W-Cafe') });
-    expect(await rowsOf()).toEqual([{ slug: 'Notes/W-Cafe', deleted: true }]);
+  test('a capital spelling of a capital-stored page (the merge base lowercased the slug and answered page_not_found): every write acts on that row, never a lowercase twin', async () => {
+    const cap = 'Notes/W-Cafe';
+    await fresh(cap);
+    const outs: Array<{ op: string; slug: unknown }> = [];
+    const run = async (op: string, params: Record<string, unknown>) => { const out = await call(op, { slug: cap, ...params }); outs.push({ op, slug: out.slug }); };
+    await run('add_tag', { tag: 'cap' });
+    await run('add_tag', { tag: 'gone' });
+    await run('remove_tag', { tag: 'gone' });
+    await run('add_timeline_entry', { date: '2026-03-04', summary: 'cap entry' });
+    await run('edit_page', { expected_revision: await revisionOf(cap), edits: [{ old_text: 'Body.', new_text: 'Changed.' }] });
+    await run('append_page', { text: 'Appended.', request_id: '7c2d9e41-3b6f-4d8a-a1e5-0f9b8c7d6e21' });
+    expect(outs).toEqual(['add_tag', 'add_tag', 'remove_tag', 'add_timeline_entry', 'edit_page', 'append_page'].map(op => ({ op, slug: cap })));
+    expect(await tagsOf(cap)).toEqual(['cap']);
+    const after = (await engine.getPage(cap))!;
+    expect({ changed: after.compiled_truth.startsWith('Changed.'), appended: `${after.compiled_truth}\n${after.timeline}`.includes('Appended.') }).toEqual({ changed: true, appended: true });
+    expect(await rowsOf()).toEqual([{ slug: cap, deleted: false }]);
+    await call('delete_page', { slug: cap, expected_revision: await revisionOf(cap) });
+    expect(await rowsOf()).toEqual([{ slug: cap, deleted: true }]);
   });
 });
 

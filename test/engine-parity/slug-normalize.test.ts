@@ -207,4 +207,37 @@ describe('engine parity: slug normal form', () => {
       rows: [stored], tags: ['added'], timeline: ['added entry'], changed: true, appended: true });
     return result;
   });
+  parityTest('every write by the exact spelling of a capital-stored page changes that row in place, with no lowercase twin (the merge base answered page_not_found)', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
+    const stored = 'Notes/Write-Cap';
+    const lower = 'notes/write-cap';
+    if (backend === 'rust') await engine.putPage(stored, { type: 'note', title: 'Cap', compiled_truth: 'Body.', timeline: '' });
+    else {
+      await engine.putPage(lower, { type: 'note', title: 'Cap', compiled_truth: 'Body.', timeline: '' });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, lower]);
+      await engine.executeRaw('UPDATE pages SET text_projection_revision = knowledge_revision WHERE slug = $1', [stored]);
+    }
+    const revision = async () => (await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true }))!.revision;
+    const outputs: Array<{ op: string; slug: unknown }> = [];
+    const run = async (op: string, params: Record<string, unknown>) => {
+      try {
+        const out = await operationsByName[op]!.handler(ctx(engine), { slug: stored, ...params }) as { slug?: unknown };
+        outputs.push({ op, slug: out.slug });
+      } catch (e) {
+        if (backend === 'rust') expect((e as Error).message).toBe(RUST_JOURNAL_STOP);
+        throw e;
+      }
+    };
+    await run('add_tag', { tag: 'cap' });
+    await run('add_timeline_entry', { date: '2026-03-04', summary: 'cap entry' });
+    await run('edit_page', { expected_revision: await revision(), edits: [{ old_text: 'Body.', new_text: 'Changed.' }] });
+    await run('append_page', { text: 'Appended.', request_id: randomUUID() });
+    await run('delete_page', { expected_revision: await revision() });
+    const rows = await engine.executeRaw<{ slug: string; deleted: boolean }>('SELECT slug, deleted_at IS NOT NULL AS deleted FROM pages WHERE lower(slug) = $1 ORDER BY slug', [lower]);
+    const tags = await engine.executeRaw<{ tag: string }>('SELECT t.tag FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.slug = $1', [stored]);
+    const result = { outputs, rows, tags: tags.map(t => t.tag) };
+    expect(result).toEqual({
+      outputs: ['add_tag', 'add_timeline_entry', 'edit_page', 'append_page', 'delete_page'].map(op => ({ op, slug: stored })),
+      rows: [{ slug: stored, deleted: true }], tags: ['cap'] });
+    return result;
+  });
 });
