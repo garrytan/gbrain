@@ -9,7 +9,10 @@
  *    normalizes to nothing records nothing. While a sweep is recorded, a derivation write of its source that the sweep would
  *    delete (its page rewritten by the purge, or no live segment backing it) and that holds the claim is not stored (the write stores the others, then throws `derivation_purge_pending` with the count dropped), and the row already stored there is left as it was; a write that holds no claim, or that a live segment on a page
  *    the purge did not rewrite backs, is stored. Every engine arm answers alike (PGLite always; Postgres with DATABASE_URL; the
- *    Rust arm with GBRAIN_TEST_RUST_ARM=1).
+ *    Rust arm with GBRAIN_TEST_RUST_ARM=1). The request id is read as Postgres reads a uuid: compact, brace-wrapped, with a hyphen
+ *    after any group of four digits and in capitals all name one request (record, state and conflict agree); other text refuses.
+ *    The drop happens before the CHECK constraints and the conflict handling, so a batch whose first row of a key holds the
+ *    claim stores its second row of that key, and a dropped row that would fail a CHECK is dropped, not refused.
  *  - Regression: an engine that cannot record the sweep stops the fact purge inside its transaction; one that records it but
  *    answers no state lets a purge report its derivation sweep complete; one that keeps no guard lets a derivation pipeline store
  *    the purged claim again after the sweep has passed its page.
@@ -36,6 +39,7 @@ const OTHER = 'other';
 const REQ = 'c0000000-0000-4000-8000-0000000000c1';
 const REQ2 = 'c0000000-0000-4000-8000-0000000000c2';
 const REQ3 = 'c0000000-0000-4000-8000-0000000000c3';
+const REQ4 = 'c0000000-0000-4000-8000-0000000000c4';
 const TABLE = 'page_segment_derivation_purges';
 const CLAIM = 'Alice likes tea';
 
@@ -117,5 +121,56 @@ describe('engine parity: the derivation sweep record of a fact purge', () => {
     expect(rows.map(r => `${r.page}:${r.kind}:${r.occurrence}`)).toEqual(['a:links:0', 'a:links:1', 'b:links:2']);
     expect(rows[0]!.output).toEqual({ excerpt: 'harmless' });
     return { state, refused, rows };
+  });
+  parityTest('a request id is one request in every spelling Postgres reads as a uuid, and text that is none refuses', {
+    methods: ['transaction', 'readDerivationPurgeState', 'countPurgeProbe', 'setPurgeProbeTimeout', 'listDerivationClaimForms'],
+    timeout: 120_000,
+  }, async (engine) => {
+    const plain = REQ4.replaceAll('-', '');
+    const spellings = {
+      canonical: REQ4, upper: REQ4.toUpperCase(), compact: plain, compactUpper: plain.toUpperCase(), braces: `{${REQ4}}`, bracesCompact: `{${plain}}`,
+      groupsOfEight: `${plain.slice(0, 8)}-${plain.slice(8, 16)}-${plain.slice(16, 24)}-${plain.slice(24)}`, groupsOfFour: plain.match(/.{4}/g)!.join('-'),
+    };
+    await record(engine, spellings.braces, [4], [CLAIM]);
+    const states: Record<string, unknown> = {};
+    for (const [name, spelling] of Object.entries(spellings)) states[name] = await derivationPurgeState(engine, spelling);
+    // Every spelling is the same request: a second record under any of them is a no-op.
+    for (const spelling of Object.values(spellings)) await record(engine, spelling, [5], ['Zebra crossing']);
+    const kept = { alice: await count(engine, ['alice likes tea']), zebra: await count(engine, ['zebra crossing']), bySource: await count(engine, [SRC]) };
+    const bad = ['', 'not-a-uuid', REQ4.slice(1), `${REQ4}0`, `{${REQ4}`, `${REQ4}}`, ` ${REQ4}`, REQ4.replace('c4', 'cg')];
+    const refused: Record<string, boolean> = {};
+    for (const spelling of bad) {
+      refused[spelling] = await record(engine, spelling, [1], [CLAIM]).then(() => false, () => true)
+        && await derivationPurgeState(engine, spelling).then(() => false, () => true);
+    }
+    expect(Object.values(states)).toEqual(Object.values(states).map(() => ({ state: 'pending', reason: null })));
+    expect(kept).toEqual({ alice: 1, zebra: 0, bySource: 1 });
+    expect(Object.values(refused).every(Boolean)).toBe(true);
+    return { states, kept, refused };
+  });
+
+  parityTest('a derivation write the sweep drops is dropped before the CHECK constraints and the conflict handling', {
+    methods: ['transaction', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration',
+      'setBodyStagingState', 'upsertSegmentDerivations', 'readSegmentDerivations', 'listDerivationClaimForms'],
+    timeout: 120_000,
+  }, async (engine) => {
+    const a0 = segmentText('# One\nfirst segment\n');
+    const a = await publishSegmentedPage(engine, 'notes/drop-first', [a0]);
+    const row = (output: unknown, version = 1) =>
+      ({ pageId: a.pageId, kind: 'links' as const, occurrenceId: a.occurrences[0]!, version, segmentSha256: a0.sha256, contextHash: sha256('ctx'), state: 'done' as const, output, receipt: {} });
+    await record(engine, REQ, [a.pageId], [CLAIM]);
+    const outcome = (error: { code?: unknown; refused?: unknown }) => ({ code: error.code, refused: error.refused });
+    // Two rows of one key: the first holds the claim and is dropped, the second is stored (no repeated-key refusal).
+    const twice = await engine.upsertSegmentDerivations([row({ excerpt: 'Alice likes tea' }), row({ excerpt: 'harmless' })]).then(() => null, outcome);
+    const afterTwice = (await engine.readSegmentDerivations(a.pageId)).map(r => r.output);
+    // The same with the harmless row first: both reach the conflict handling, so the batch is refused as a whole.
+    const repeated = await engine.upsertSegmentDerivations([row({ excerpt: 'again' }), row({ excerpt: 'and again' })]).then(() => 'stored', (error: { code?: unknown }) => typeof error.code);
+    // A dropped row that would fail a CHECK (a negative version) is dropped, not refused as a check violation.
+    const negative = await engine.upsertSegmentDerivations([row({ excerpt: 'Alice likes tea' }, -1)]).then(() => null, outcome);
+    const afterNegative = (await engine.readSegmentDerivations(a.pageId)).map(r => r.output);
+    expect(twice).toEqual({ code: 'derivation_purge_pending', refused: 1 });
+    expect(afterTwice).toEqual([{ excerpt: 'harmless' }]);
+    expect(negative).toEqual({ code: 'derivation_purge_pending', refused: 1 });
+    return { twice, afterTwice, repeated, negative, afterNegative };
   });
 });
