@@ -651,19 +651,22 @@ impl Store {
         state.base()?;
         let mut ordered: Vec<&PageKeyHint> = keys.iter().collect();
         ordered.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
-        let mut checked: BTreeMap<&str, ()> = BTreeMap::new();
+        // Each source is read once; every key is checked against it, so a later hinted key of a
+        // source is held to the same incarnation check as the first.
+        let mut incarnations: BTreeMap<&str, String> = BTreeMap::new();
         for key in &ordered {
-            if checked.insert(&key.source_id, ()).is_some() {
-                continue;
+            if !incarnations.contains_key(key.source_id.as_str()) {
+                let record = sources::read_source(&StateRead(&state), &key.source_id)?;
+                let Some(record) = record else {
+                    return Err(StoreError::new(
+                        SOURCE_NOT_FOUND,
+                        format!("Page source does not exist: {}", key.source_id),
+                    ));
+                };
+                incarnations.insert(&key.source_id, record.incarnation);
             }
-            let record = sources::read_source(&StateRead(&state), &key.source_id)?;
-            let Some(record) = record else {
-                return Err(StoreError::new(
-                    SOURCE_NOT_FOUND,
-                    format!("Page source does not exist: {}", key.source_id),
-                ));
-            };
-            if hinted && key.incarnation.as_deref() != Some(record.incarnation.as_str()) {
+            let incarnation = &incarnations[key.source_id.as_str()];
+            if hinted && key.incarnation.as_deref() != Some(incarnation.as_str()) {
                 return Err(StoreError::new(
                     SOURCE_CHANGED,
                     format!("Page source was recreated: {}", key.source_id),
