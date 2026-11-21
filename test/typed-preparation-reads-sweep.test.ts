@@ -42,6 +42,12 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['readManifest', 'FROM page_body_manifest m', e => e.readManifest(1)],
   ['readJournalCeiling', 'SELECT max(sequence)::text AS ceiling FROM persistence_requests', e => e.readJournalCeiling('default')],
   ['sweepJournalChunk', 'WITH chunk AS MATERIALIZED', e => e.sweepJournalChunk({ sourceId: 'default', needles: ['a claim'], after: '0', ceiling: '9', limit: 10, ids: null, exclude: null })],
+  // The page purge's preparation (persistence/page-purge.ts preparePagePurge) and the managed sync's purged-page screen.
+  ['listPurgeClaimFacts', 'SELECT id,fact,source FROM facts WHERE source_id=', e => e.listPurgeClaimFacts('default', 'notes/a')],
+  ['listPurgeClaimTakes', 'SELECT id,claim FROM takes WHERE page_id=$1', e => e.listPurgeClaimTakes(1)],
+  ['listQueuedPagePurges', 'FROM persistence_requests r\n    LEFT JOIN pages p', e => e.listQueuedPagePurges('default', '0', 7)],
+  ['listPageLinkStreams', 'SELECT DISTINCT COALESCE(o.slug, f.slug) AS slug FROM links l', e => e.listPageLinkStreams('default', 1)],
+  ['listPagePurgeTombstones', 'SELECT content_hash,slug FROM page_purges WHERE source_id=$1', e => e.listPagePurgeTombstones('default', 10)],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];
