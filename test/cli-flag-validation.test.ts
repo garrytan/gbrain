@@ -174,14 +174,14 @@ describe('#2185 parseOpArgs inline = form (regression rule: changed token consum
     expect(p.limit).toBe(5);
   });
 
-  test('boolean =false negates; =0 keeps the raw!==false rule (pinned semantics)', async () => {
+  test('boolean =false negates; =0 is refused, never read as true (#9918)', async () => {
     const { parseOpArgs } = await import('../src/cli/main.ts');
     const withBool = operations.find(o =>
       o.cliHints && Object.values(o.params).some(pp => pp.type === 'boolean'))!;
     const key = Object.entries(withBool.params).find(([, pp]) => pp.type === 'boolean')![0];
     const flag = `--${key.replace(/_/g, '-')}`;
     expect(parseOpArgs(withBool, [`${flag}=false`])[key]).toBe(false);
-    expect(parseOpArgs(withBool, [`${flag}=0`])[key]).toBe(true);
+    expect(() => parseOpArgs(withBool, [`${flag}=0`])).toThrow(`${flag}=… takes only true or false`);
   });
 
   test('undeclared =-form key keeps the historical junk-fallthrough (validator rejects it first)', async () => {
