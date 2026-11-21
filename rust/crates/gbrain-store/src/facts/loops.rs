@@ -17,10 +17,10 @@
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::jsonb;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
-use crate::raw_files::jsonb_order;
 use crate::sources::require_source;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,7 @@ struct LoopRecord {
     counterparty_source_id: Option<String>,
     counterparty_email: Option<String>,
     summary: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     evidence: Value,
     thread_id: Option<String>,
     page_slug: Option<String>,
@@ -178,7 +179,7 @@ fn row_json(id: u64, r: &LoopRecord) -> Value {
     m.insert("counterparty_slug".into(), json!(r.counterparty_slug));
     m.insert("counterparty_email".into(), json!(r.counterparty_email));
     m.insert("summary".into(), json!(r.summary));
-    m.insert("evidence".into(), r.evidence.clone());
+    m.insert("evidence".into(), jsonb::ordered(&r.evidence));
     m.insert("thread_id".into(), json!(r.thread_id));
     m.insert("page_slug".into(), json!(r.page_slug));
     m.insert("due_at".into(), json!(r.due_at_us.map(iso)));
@@ -284,7 +285,7 @@ impl Store {
                     counterparty_source_id: input.counterparty_source_id.clone(),
                     counterparty_email: input.counterparty_email.clone(),
                     summary: input.summary.clone(),
-                    evidence: jsonb_order(input.evidence.clone()),
+                    evidence: jsonb::order(input.evidence.clone()),
                     thread_id: input.thread_id.clone(),
                     page_slug: input.page_slug.clone(),
                     due_at_us,
@@ -338,7 +339,7 @@ impl Store {
             r.counterparty_slug = input.counterparty_slug.clone().or(r.counterparty_slug);
             r.counterparty_email = input.counterparty_email.clone().or(r.counterparty_email);
             r.summary = input.summary.clone();
-            r.evidence = jsonb_order(input.evidence.clone());
+            r.evidence = jsonb::order(input.evidence.clone());
             r.page_slug = input.page_slug.clone().or(r.page_slug);
             r.due_at_us = due_at_us.or(r.due_at_us);
             r.confidence = confidence;

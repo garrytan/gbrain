@@ -65,10 +65,23 @@ the shape `searchTakes` returns, with the cosine as `score`.
   store's refuses (`private-provenance.ts`). `excludePrivate` also turns on the safe-chunk rule, as in
   PGLite (`requiresSafeChunks`). A safe reader sees a page only when its `chunker_version` is 4 or more,
   as in SQL (`chunker_version >= 4`) and the keyword gate: a page that records no version is not safe.
-- **Refused options.** The store applies neither `where`, `afterDate`, `beforeDate`, `minTrust` nor
-  `suppressFlagged`, so a set one refuses with `engine_capability_missing` and nothing runs, even beside
-  `excludePrivate` (an empty `where` object is ignored). `searchTakesVector` refuses `excludePrivate`,
-  `eligibility.floor` and `eligibility.suppressFlagged` the same way.
+- **`where`.** Every key must hold; a key holds when the page's top-level frontmatter field equals one of its
+  values or is a list holding one (`frontmatterWhereClauses`). The TypeScript member sends a string's numeric and
+  boolean readings beside it (`search-filters.ts` `whereFields`), as the keyword members do. The filter applies per
+  page before ranking, so a limit counts only kept pages. An absent or empty `where` keeps every page.
+- **`afterDate` / `beforeDate`.** A page is dated by its `effective_date`, else its `updated_at` (a store page
+  always has one, so the SQL's `created_at` arm never applies). A bound is strict unless its `*Inclusive` flag is
+  set. The TypeScript member reads the bound as `$n::text::timestamptz` does under UTC (`search-filters.ts`
+  `dateMicros`), for the ISO shapes; any other shape refuses with `engine_capability_missing`. The bounds apply per
+  page before ranking, as the keyword members' do (`keyword::DateWindow`).
+- **`minTrust`.** A page whose stamped trust tier ranks below the floor drops per page before ranking
+  (`trustFloorSql`, the floor `buildVisibilityClause` adds), so a limit counts only kept pages. An unset or empty
+  floor keeps every tier; a name that is no tier refuses with `invalid_argument` (`keyword::parse_trust_floor`).
+- **`suppressFlagged`.** A page at or below `agent_written` with a `flag` receipt in an activation reason family
+  drops per page before ranking (`activationSuppressedSql`, `trust::activation_suppressed`), so a limit counts only
+  kept pages. A flag in another family, or on a page above `agent_written`, suppresses nothing.
+- **Refused options.** `searchTakesVector` refuses `excludePrivate`, `eligibility.floor` and
+  `eligibility.suppressFlagged` with `engine_capability_missing`, and nothing runs.
 - **One vector column.** The store keeps only the text column `embedding`, as the embedding members do.
   An `embeddingColumn` that names another column (`embedding_image`, a registered column), and a brain
   whose config sets `search_embedding_column` or `embedding_columns`, refuse with

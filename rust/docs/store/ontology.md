@@ -51,3 +51,20 @@ These do not show in the parity cases. Each is a documented edge, not a normalis
   member-page CASE. Any other caller whose policy differs refuses. `requireSafeChunks`, `minTrust`, `suppressFlagged` and
   `takesHoldersAllowList` are ignored: the member does not yet route the trust and suppression reads to this lookup.
 - The Rust `now()` is one value per member call. PGLite takes one value per statement.
+
+## Ontology re-key and repair statements (`src/core/engine-sql/ontology-repair.ts`)
+
+Six members for the statements `src/core/facts/ontology-rekey.ts` and `src/core/repair/ontology-facts.ts` ran as raw SQL:
+`listRekeyLosers`, `repointSupersededToKept`, `clearOntologySlots`, `deleteRekeyLosers`, `listOntologyFactCandidates` and
+`restoreOntologyFact`. (`listSourceIncarnations` is the existing facts-repair member.) None is served on Rust today: each is
+absent from `store-members/*`, so it refuses with `engine_capability_missing` naming the member (the capability in
+`members.ts` is `facts`). The caller sees the refusal; no member changes behaviour. What the store would need:
+
+| Members | Reads or writes | The store would need |
+| --- | --- | --- |
+| `listRekeyLosers` | the rows a re-key move would duplicate, for six where shapes, three entity shapes and three sms shapes | the fact slot index to find a row already at the target slot; the member takes the shape as SQL text validated against closed lists, and a text outside them throws before any statement is sent, so the store would key on the shape |
+| `repointSupersededToKept`, `clearOntologySlots`, `deleteRekeyLosers` | repoint `superseded_by`, clear the slot columns, delete the losers | the three writes over the fact records and their slot index entries |
+| `listOntologyFactCandidates` | the fenced and retired rows with their class, and whether another row duplicates them | a scan of the fact records for fenced and expired rows with the duplicate check |
+| `restoreOntologyFact` | restore a row only as previewed (class and expiry unchanged), returning whether it applied and the `expired` flag evaluated after the update | a conditional update that compares the previewed state |
+
+The conversation-slot and not-conversation-slot predicates are Postgres text only.

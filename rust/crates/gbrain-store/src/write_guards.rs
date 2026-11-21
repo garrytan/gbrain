@@ -4,7 +4,7 @@
 //! `engine-sql/write-guards.ts`).
 //!
 //! Members: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage,
-//! readLivePageBody, hasSegmentStorage.
+//! readLivePageBody, readPageIndexingState, readInlinePageRegions, readStoredPageTier, hasSegmentStorage.
 //!
 //! Locks: PGLite takes an advisory lock per origin spelling before it lists the claims, so two
 //! writes of one file queue. The store runs one write transaction at a time, so every lock is
@@ -108,6 +108,23 @@ pub struct LivePageBodyRow {
     pub timeline: Option<String>,
     pub body_storage: &'static str,
     pub content_hash: Option<String>,
+}
+
+/// What a text projection is keyed on, as PGLite's `SELECT chunker_version,corpus_generation`
+/// and `SELECT page_kind` of one page row.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PageIndexingState {
+    pub chunker_version: Option<i16>,
+    pub corpus_generation: Option<String>,
+    pub page_kind: String,
+}
+
+/// A page's stored body columns, as PGLite's `SELECT compiled_truth, timeline FROM pages WHERE
+/// id=$1`: `None` for a column the page does not store inline (a segmented shell).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InlinePageRegions {
+    pub compiled_truth: Option<String>,
+    pub timeline: Option<String>,
 }
 
 /// The id and the sealed page of `sealImportedPage`.
@@ -311,6 +328,41 @@ impl Store {
                     content_hash: page.content_hash,
                 }
             }))
+    }
+
+    /// `readPageIndexingState(pageId)`: the page's stored chunker version, corpus generation and
+    /// page kind, live or a tombstone, or `None` when no page has the id.
+    pub fn read_page_indexing_state(&self, page_id: u64) -> Result<Option<PageIndexingState>> {
+        let read = self.read()?;
+        let Some(page) = read_page_by_id(&*read, page_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(PageIndexingState {
+            chunker_version: page.chunker_version,
+            corpus_generation: crate::aliases::corpus_generation(&*read, page.id)?,
+            page_kind: page.page_kind,
+        }))
+    }
+
+    /// `readInlinePageRegions(pageId)`: the body columns of page `page_id`, live or a tombstone,
+    /// or `None` when no page has the id. The append path reads them raw, as PGLite does.
+    pub fn read_inline_page_regions(&self, page_id: u64) -> Result<Option<InlinePageRegions>> {
+        let read = self.read()?;
+        Ok(
+            read_page_by_id(&*read, page_id)?.map(|page| InlinePageRegions {
+                compiled_truth: text_of(&page.compiled_truth),
+                timeline: text_of(&page.timeline),
+            }),
+        )
+    }
+
+    /// `readStoredPageTier(sourceId, slug)`: the page's stored `trust_tier`, live or a tombstone, or
+    /// `None` without a page. A record that stores no tier reads `unknown`, the column default; the
+    /// value is returned as stored, as PGLite's raw column read is.
+    pub fn read_stored_page_tier(&self, source_id: &str, slug: &str) -> Result<Option<String>> {
+        let read = self.read()?;
+        Ok(read_page(&*read, source_id, slug)?
+            .map(|page| page.trust_tier.unwrap_or_else(|| "unknown".to_owned())))
     }
 
     /// `hasSegmentStorage()`: whether any segment text or body staging is stored.

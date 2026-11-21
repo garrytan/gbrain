@@ -101,7 +101,9 @@ struct ProposalRecord {
     target_id: i64,
     related_table: Option<String>,
     related_id: Option<i64>,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     before_state: Value,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     after_state: Value,
     proposer: String,
     status: String,
@@ -123,8 +125,8 @@ impl ProposalRecord {
             "target_id": self.target_id,
             "related_table": self.related_table,
             "related_id": self.related_id,
-            "before_state": self.before_state,
-            "after_state": self.after_state,
+            "before_state": crate::jsonb::ordered(&self.before_state),
+            "after_state": crate::jsonb::ordered(&self.after_state),
             "proposer": self.proposer,
             "proposer_principal_kind": Value::Null,
             "proposer_principal_id": Value::Null,
@@ -320,6 +322,27 @@ fn get_id(read: &dyn KvRead, key: &[u8]) -> Result<Option<u64>> {
     }
 }
 
+/// The open contest of one row (engine-sql/trust-fence.ts `OPEN_CONTEST_SQL`): a pending `forget`
+/// proposal whose target is the row.
+pub(crate) fn pending_forget(read: &dyn KvRead, table: &str, row_id: u64) -> Result<bool> {
+    let Ok(row_id) = i64::try_from(row_id) else {
+        return Ok(false);
+    };
+    for id in ids_naming(read, table, row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if p.status == "pending"
+            && p.action == "forget"
+            && p.target_table == table
+            && p.target_id == row_id
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The fence guard's held arm for one fact (engine-sql/trust-fence.ts `listFenceFactRows`): a
 /// `supersede_fact` or `confirm` proposal names it as `related`, is pending, rejected or undone,
 /// and its before state has a `visibility` key (`before_state->'visibility' IS NOT NULL`: a JSON
@@ -344,6 +367,59 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// The contested reference of one fact or take row (eligibility/sql.ts `contestedRefSql`): the
+/// lowest-id pending `supersede_fact` or `supersede_take` proposal naming it, as `tp<id>:challenger`
+/// when the row is the proposal's related row and `tp<id>:challenged` otherwise; `None` when no
+/// such proposal names it.
+pub(crate) fn contested_ref(read: &dyn KvRead, table: &str, row_id: i64) -> Result<Option<String>> {
+    for id in ids_naming(read, table, row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if p.status == "pending"
+            && matches!(p.action.as_str(), "supersede_fact" | "supersede_take")
+            && p.names(table, row_id)
+        {
+            let side = if p.related_table.as_deref() == Some(table) && p.related_id == Some(row_id)
+            {
+                "challenger"
+            } else {
+                "challenged"
+            };
+            return Ok(Some(format!("tp{}:{side}", p.id)));
+        }
+    }
+    Ok(None)
+}
+
+/// The targets (`target_table`, `target_id`) of the visibility proposals that name fact `fact_id` as their related row,
+/// whatever their status: the `supersede_fact` and `confirm` proposals whose `before_state` has a `visibility` key
+/// (`heldRowSql`'s grant clause, `eligibility/fence-overlay.ts`). Ascending by proposal id.
+pub(crate) fn visibility_proposal_targets(
+    read: &dyn KvRead,
+    fact_id: u64,
+) -> Result<Vec<(String, i64)>> {
+    let Ok(row_id) = i64::try_from(fact_id) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for id in ids_naming(read, "facts", row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if matches!(p.action.as_str(), "supersede_fact" | "confirm")
+            && p.related_table.as_deref() == Some("facts")
+            && p.related_id == Some(row_id)
+            && p.before_state
+                .as_object()
+                .is_some_and(|state| state.contains_key("visibility"))
+        {
+            out.push((p.target_table, p.target_id));
+        }
+    }
+    Ok(out)
 }
 
 impl Store {

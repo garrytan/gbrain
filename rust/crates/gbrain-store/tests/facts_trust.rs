@@ -1,7 +1,8 @@
-//! `listFactsForRelevance` and `countUncomparableFacts` (`facts/trust.rs`): the search pool and its two reads.
+//! `listFactsForRelevance` and `countUncomparableFacts` (`facts/trust.rs`): the search pool and its two reads; `matchSavedFacts` (`facts/saved_match.rs`).
 
 mod memory_env;
 
+use gbrain_store::facts::saved_match::SavedFactsMatchQuery;
 use gbrain_store::facts::trust::{RelevanceQuery, UncomparableQuery};
 use gbrain_store::facts::{InsertFactArgs, InsertFactsArgs};
 use memory_env::{T0, brain};
@@ -177,7 +178,7 @@ fn the_pool_hides_ended_audit_quarantined_deleted_and_private_rows() {
     let mut names = texts(&world);
     names.sort_unstable();
     assert_eq!(names, ["p-open", "p-private-page"]);
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     let public = relevance(
         &b,
         "entity",
@@ -341,4 +342,57 @@ fn uncomparable_facts_are_counted_per_source_by_the_declared_or_undeclared_rule(
         [json!({ "source_id": "default", "n": 4 })]
     );
     assert!(count(false, 1536, json!({ "worldOnly": true })).is_empty());
+}
+
+fn saved(b: &memory_env::Brain, terms: &[&str], pats: Value, supersede: bool) -> Vec<Value> {
+    let q = json!({ "sources": ["default"], "terms": terms, "pats": pats, "supersede": supersede });
+    b.match_saved_facts(&args::<SavedFactsMatchQuery>(q))
+        .unwrap()
+}
+
+#[test]
+fn saved_facts_match_counts_kept_words_and_lowers_the_bar_for_a_correction() {
+    let b = brain("facts-trust-saved-match");
+    for (fact, from) in [
+        (
+            "Mira leads the 東京 office budget",
+            "2026-01-01T00:00:00.000Z",
+        ),
+        (
+            "Correction: the budget office moved",
+            "2026-02-01T00:00:00.000Z",
+        ),
+        ("Mira budget office", "2026-03-01T00:00:00.000Z"),
+        ("Unrelated garden note", "2026-04-01T00:00:00.000Z"),
+    ] {
+        insert(
+            &b,
+            json!({ "fact": fact, "source": "s", "entity_slug": "people/mira-example", "valid_from": from }),
+        );
+    }
+    // "the" keeps no lexeme and no pattern: three kept words, need 3.
+    let terms = ["budget", "the", "東京", "office"];
+    let pats = json!([null, null, "%東京%", null]);
+    let rows = saved(&b, &terms, pats.clone(), true);
+    assert_eq!(
+        texts(&rows),
+        [
+            "Mira leads the 東京 office budget",
+            "Correction: the budget office moved"
+        ]
+    );
+    assert_eq!(rows[0]["matched"], json!([1, 3, 4]));
+    assert_eq!(rows[0]["need"], json!(3));
+    assert_eq!(rows[1]["matched"], json!([1, 4]));
+    assert_eq!(rows[1]["cue"], json!(true));
+    assert_eq!(rows[1]["pool_rank"], json!(1));
+    assert_eq!(rows[0]["trust_rank"], json!(2));
+    assert_eq!(rows[0]["valid_from"], json!("2026-01-01 00:00:00+00"));
+    // Without supersede the correction needs every kept word.
+    assert_eq!(
+        texts(&saved(&b, &terms, pats, false)),
+        ["Mira leads the 東京 office budget"]
+    );
+    // No kept word matches nothing.
+    assert!(saved(&b, &["the", "a"], json!([null, null]), true).is_empty());
 }

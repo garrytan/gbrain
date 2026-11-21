@@ -16,6 +16,13 @@
 //! | `d 0x04 <source incarnation> 0x00 <slug>` | one `page_projection_jobs` row (`projection_queue.rs`), JSON |
 //! | `d 0x05 <request id> 0x00 <kind>` | one `persistence_effects` row (`effects.rs`), JSON |
 //! | `d 0x06 <id, 8 bytes big-endian>` | the effect claim-order index (`effects.rs`), JSON |
+//! | `d 0x07 <op> 0x00 <fingerprint> 0x00 <path>` | one `op_checkpoint_paths` row (`op_checkpoint.rs`), empty |
+//!
+//! `d 0x05` and `d 0x06` are the `persistence_effects` rows and their claim-order index (`effects.rs`); no other
+//! family here uses them.
+//!
+//! A resumable op's checkpoint parent (`op_checkpoint.rs`) is an `op_checkpoints` row, so it is
+//! stored under `d 0x02` with the housekeeping turns, as Postgres keeps both in one table.
 //!
 //! A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`); it
 //! cannot hold NUL, as Postgres text cannot.
@@ -47,18 +54,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod effect_scans;
+mod effect_worker;
 mod effects;
 mod housekeeping;
+mod idle_probe;
+mod noop_settle;
+mod op_checkpoint;
 mod owner_scans;
-mod projection_queue;
+pub(crate) mod projection_queue;
+mod receipt_list;
 mod topology;
 mod writer_versions;
-pub use effects::{PublicationEffectsSpec, QueuedEffect};
-pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
-pub(crate) use projection_queue::queue_page_projection;
+pub use effect_worker::{EffectClaim, EffectSettle, Settle};
+pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
+pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
+pub use idle_probe::IdleProbeSpec;
+pub use noop_settle::NoopSettleCandidateSpec;
 pub use projection_queue::{
-    ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
+    ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
+pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
+pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
@@ -69,6 +85,9 @@ pub(crate) const HOUSEKEEPING: u8 = 0x02;
 const TOPOLOGY: u8 = 0x03;
 /// The byte after `keys::PERSISTENCE` of a page projection job (persistence/projection_queue.rs).
 const QUEUE: u8 = 0x04;
+/// The byte after `keys::PERSISTENCE` of a resumable op's checkpoint path (persistence/op_checkpoint.rs).
+/// Not 0x05 or 0x06: those are the `persistence_effects` rows and their claim-order index.
+const CHECKPOINT_PATH: u8 = 0x07;
 
 /// `persistence_requests.state` CHECK (with `deferred`, added by a later migration).
 const REQUEST_STATES: &[&str] = &[
@@ -118,7 +137,10 @@ pub(crate) fn fill_request_columns(row: &mut Map<String, Value>, extra: &Map<Str
         "transient_interruptions",
     ];
     let mut put = |column: &str, default: Value| {
-        row.insert(column.into(), extra.get(column).cloned().unwrap_or(default));
+        // The jsonb columns (recovery, error_detail, claim_phase) read in jsonb key order; ordering
+        // a scalar changes nothing.
+        let value = extra.get(column).cloned().map(crate::jsonb::order);
+        row.insert(column.into(), value.unwrap_or(default));
     };
     for column in NULLS {
         put(column, Value::Null);
@@ -219,7 +241,7 @@ fn extra_bool(record: &RequestRecord, column: &str) -> bool {
 }
 
 /// A `::uuid` parameter: lower-cased; anything else is refused, as Postgres refuses the cast.
-fn uuid_param(text: &str, what: &str) -> Result<String> {
+pub(crate) fn uuid_param(text: &str, what: &str) -> Result<String> {
     if is_uuid(text) {
         Ok(text.to_lowercase())
     } else {
@@ -754,6 +776,20 @@ pub struct WriteCompletion {
     pub probe_purges: bool,
 }
 
+/// `TRUE_UP_CLAMP_SQL`: adds `clamped` counters to `persistence.true_up.clamped` (a value that is
+/// not digits counts as 0); nothing is written when none clamped.
+fn add_true_up_clamped(tx: &mut dyn KvWrite, clamped: u64) -> Result<()> {
+    if clamped == 0 {
+        return Ok(());
+    }
+    let config = keys::text(keys::CONFIG, &[TRUE_UP_CLAMPED_KEY]);
+    let old = read_config(&*tx, TRUE_UP_CLAMPED_KEY)?
+        .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    tx.put(&config, (old + clamped).to_string().as_bytes())
+}
+
 /// `COMPLETE_WRITE_SQL`: the terminal state, the counter release and the true-up clamp count.
 /// The request's effect rows (`effects.rs`) add their bytes to the result; while one is not
 /// committed the reservation is kept whole. `None`, with nothing changed, when the result does not fit the
@@ -811,18 +847,12 @@ pub(crate) fn complete_write_row_in(
             .ok_or_else(out_of_range)?;
         write_counter(tx, &key, &counter)?;
     }
-    if clamped > 0 {
-        let config = keys::text(keys::CONFIG, &[TRUE_UP_CLAMPED_KEY]);
-        let old = read_config(&*tx, TRUE_UP_CLAMPED_KEY)?
-            .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0);
-        tx.put(&config, (old + clamped).to_string().as_bytes())?;
-    }
+    add_true_up_clamped(tx, clamped)?;
     let now = env.now_micros();
     let committed = c.state == "committed";
     record.state = c.state.clone();
-    record.outcome = (!c.outcome.is_null()).then(|| c.outcome.clone());
+    // Stored as `jsonb` stores it: keys shorter first, then by bytes, at every depth.
+    record.outcome = (!c.outcome.is_null()).then(|| crate::jsonb::ordered(&c.outcome));
     record.error_code = c.error_code.clone();
     record.error_message = c.error_message.clone();
     record.blocked_reason = None;
@@ -830,7 +860,10 @@ pub(crate) fn complete_write_row_in(
     record.updated_at_us = now;
     let extra = &mut record.extra;
     if !c.error_detail.is_null() {
-        extra.insert("error_detail".into(), c.error_detail.clone());
+        extra.insert(
+            "error_detail".into(),
+            crate::jsonb::ordered(&c.error_detail),
+        );
     }
     extra.insert("claim_expires_at".into(), Value::Null);
     if committed {
@@ -844,10 +877,57 @@ pub(crate) fn complete_write_row_in(
     write_request(tx, &record)?;
     let mut row = record.to_row();
     if c.probe_purges {
-        row["purge_has_facts"] = json!(false);
+        let has_facts = crate::facts::purge_ledger::has_fact_purges(&*tx, &record.source_id)?;
+        row["purge_has_facts"] = json!(has_facts);
+        // Page purges are not modeled: the store keeps no `page_purges` rows.
         row["purge_has_pages"] = json!(false);
     }
     Ok(Some(row))
+}
+
+/// `WriteCancellation` of `src/core/engine-sql/persistence-journal.ts`: a completion plus the state
+/// and execution token the caller read.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteCancellation {
+    #[serde(flatten)]
+    pub completion: WriteCompletion,
+    pub expect_state: String,
+    #[serde(default)]
+    pub expect_execution_token: Option<String>,
+}
+
+/// `cancelWriteRow`: the lock, the check and the completion in one write. `None` when the row does
+/// not exist. `kept` with the row unchanged when it is terminal, publishing, in recovery, or no
+/// longer in the state and claim the caller read; `too_large` when the result does not fit.
+pub(crate) fn cancel_write_row_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    c: &WriteCancellation,
+) -> Result<Option<Value>> {
+    if c.completion.state != "cancelled" {
+        return Err(violation(format!(
+            "cancelWriteRow completes a request as cancelled, not \"{}\"",
+            c.completion.state
+        )));
+    }
+    let Some(record) = request_by_id(&*tx, &c.completion.id)? else {
+        return Ok(None);
+    };
+    let token = json_text(record.extra.get("execution_token"));
+    let cancellable = !["committed", "conflict", "failed", "cancelled"]
+        .contains(&record.state.as_str())
+        && record.state == c.expect_state
+        && token == c.expect_execution_token
+        && !extra_bool(&record, "publication_started")
+        && extra_is_null(&record, "recovery");
+    if !cancellable {
+        return Ok(Some(json!({ "status": "kept", "row": record.to_row() })));
+    }
+    Ok(Some(match complete_write_row_in(tx, env, &c.completion)? {
+        Some(row) => json!({ "status": "cancelled", "row": row }),
+        None => json!({ "status": "too_large", "row": record.to_row() }),
+    }))
 }
 
 /// `renewWriteClaim({ id, token, leaseMs, phaseJson })`: true when the request is still running
@@ -1191,6 +1271,11 @@ impl Store {
     /// `completeWriteRow(completion)`: the completed row, or `None` when it does not fit.
     pub fn complete_write_row(&self, completion: &WriteCompletion) -> Result<Option<Value>> {
         self.write(|tx| complete_write_row_in(tx, &*self.env, completion))
+    }
+
+    /// `cancelWriteRow(cancellation)`: `{ status, row }`, or `None` when the row does not exist.
+    pub fn cancel_write_row(&self, cancellation: &WriteCancellation) -> Result<Option<Value>> {
+        self.write(|tx| cancel_write_row_in(tx, &*self.env, cancellation))
     }
 
     /// `renewWriteClaim(id, token, leaseMs, phaseJson)`.

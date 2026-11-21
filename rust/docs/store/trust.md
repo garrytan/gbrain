@@ -33,7 +33,9 @@ tier is refused with `invalid_argument` ("gbrain trust setting names no tier"; P
 only under backfill.
 
 The caller decides `content_changed` by comparing the content columns of the old and new row; `stamp` does not
-see the row.
+see the row. `trust::stamp_row(table, old, supplied, content_changed)` wraps it for a row whose writers never set
+the tier or the origin (takes and timeline entries, `trust::RowTrust`): it reads the open write's context, starts
+an update from the stored tier and origin, and stores `unknown` as no tier.
 
 Rust guesses and gaps (1x parity):
 
@@ -61,11 +63,33 @@ transaction (`move_subject_in`, the same move `moveFactWithdrawalSubject` makes)
 | Member | Store method | PGLite statement |
 | --- | --- | --- |
 | `hasCoveringFactWithdrawal` | `has_covering_fact_withdrawal`: four point reads (`*` and the subject, the hash and the v1 hash of the claim) | `SELECT 1 … fact_hash IN ($3, v1($5)) AND (subject='*' OR subject=$4)` |
+| `isFactWithdrawn` | `is_fact_withdrawn`: point reads for each visibility (the given one, or both when null), the hash and the v1 hash of the claim, and subject `*`, the entity and the member page; then the purge tombstones (hash only; `*` and the entity). A null entity or member page matches nothing | `SELECT 1 FROM fact_withdrawals … UNION ALL SELECT 1 FROM fact_purges … LIMIT 1` |
+| `isFactPurged` | `is_fact_purged` (facts/purge_ledger.rs): point reads for subject `*` and the entity; a visibility outside the CHECK matches nothing | `SELECT 1 FROM fact_purges … AND (subject='*' OR subject=$4) LIMIT 1` |
 | `insertFactWithdrawal` | `insert_fact_withdrawal`: false when the key exists, which keeps its time | `INSERT … COALESCE($5::timestamptz, now()) ON CONFLICT DO NOTHING RETURNING` |
 | `listFactWithdrawalDates` | `list_fact_withdrawal_dates`: per claim, point reads (subject given) or a scan of source and visibility (subject null); the minimum time per row number, sorted by row number | `min(withdrawn_at) … GROUP BY row_num` (no order) |
 | `moveFactWithdrawalSubject` | `move_fact_withdrawal_subject`: same slugs do nothing; otherwise each row moves unless the new subject already has the key | `MOVE_WITHDRAWAL_SUBJECT_SQL` |
 | `hasFactWithdrawalForSubject` | `has_fact_withdrawal_for_subject`: a scan of the source | `SELECT 1 … subject=$2 LIMIT 1` |
 | `listFactWithdrawalKeys` | `list_fact_withdrawal_keys`: sorted by visibility, fact_hash and subject in byte order, then cut to `limit` | `ORDER BY visibility, fact_hash, subject LIMIT $2` |
+| `readFactCacheWatermark` | `read_fact_cache_watermark`: a scan of the source's withdrawals for the count and the newest time (ISO, microseconds); the access digest is `md5('')` twice, because the store keeps no folder access rules or pending coverage | `SELECT count(*)::int, to_char(max(withdrawn_at) AT TIME ZONE 'UTC', …), md5(… access_rules) \|\| ':' \|\| md5(… access_pending_coverage) FROM fact_withdrawals WHERE source_id = $1` |
+| `readTrustGeneration` | `read_trust_generation`: the store's commit sequence as decimal text; it moves on every commit, a superset of the trigger events that bump the SQL generation, so a cache keyed on it rebuilds after any write | `SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1`, bumped by deferred WHEN-guarded triggers (eligibility/generation-schema.ts) |
+| `readSourcePurgeFlags` | `read_source_purge_flags`: `facts` from the fact purge ledger (any tombstone of the source, [facts.md](facts.md) "The fact purge ledger"); `takes` false, because the store keeps no take purge ledger | `EXISTS (… fact_purges …), EXISTS (… take_purges …)` |
+
+### The forget commit (`trust::withdrawal_commit`)
+
+The statements a `forget` commits around the ledger writes (`recordFactWithdrawal` in publication mode,
+`persistence/forget-prepare.ts`) and the read a `fact_withdrawn` refusal names (`factWithdrawnRefusal`,
+`facts/single-prepare.ts`). They read and write the `F 0x01`, page and withdrawal records; no new key prefix.
+
+| Member | Store method | PGLite statement |
+| --- | --- | --- |
+| `lockFactForWithdrawal` | `lock_fact_for_withdrawal`: a point read of the source's fact (the store's one writer is the lock); `worldOnly` admits a world fact or a private one on `memberPage`, the floor drops a hidden row; no outcome-marker filter | `SELECT visibility, fact, <subject> … FOR UPDATE` |
+| `queueWithdrawalReview` | `queue_withdrawal_review`: the decide review queue's enqueue, kind `withdraw`, `b_ref` `*` | `INSERT INTO decide_review_queue … ON CONFLICT DO NOTHING` |
+| `listSegmentedPagesBySlug` | `list_segmented_pages_by_slug`: a page whose `compiled_truth` and `timeline` are both null, by id | `SELECT id, slug … body_storage = 'segmented'` |
+| `bumpWithdrawnPageRevisions` | `bump_withdrawn_page_revisions`: a new knowledge revision for each inline page, its projection revision and embedding signature cleared | `UPDATE pages SET knowledge_revision = gen_random_uuid() … RETURNING` |
+| `readPageRevisions` | `read_page_revisions`: point reads by id, by id | `SELECT id, slug, knowledge_revision … id = ANY($1)` |
+| `appendFactForgetReason` | `append_fact_forget_reason`: the `concat_ws(' \| ', NULLIF(context, ''), note)` rule through `write_fact` | `UPDATE facts SET context = concat_ws(…)` |
+| `readFactWithdrawnRow` | `read_fact_withdrawn_row`: point reads for subject `*`, the entity and the owned page and both fingerprints; the most specific subject first, then the newest; under the floor only a withdrawal some row of which the caller sees, or that no row backs | `SELECT subject, visibility, withdrawn_at … GROUP BY … ORDER BY` |
+| `readFactWithdrawnBacking` | `read_fact_withdrawn_backing`: whether the caller sees one (`visible`) and fails to see one (`hidden`) of the expired rows the withdrawal reached; requires the floor | `SELECT bool_or(…) AS visible, bool_or(NOT …) AS hidden …` |
 
 ## Trust proposals (`trust::proposals`)
 
@@ -102,7 +126,8 @@ Rust guesses and gaps (1x parity):
 - The guest-source rules are not modelled (there is no `guest_sources` table).
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
-(`isFactWithdrawn`, the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
+(the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:
+the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
 request, the single-fact prepare, the repair and review lanes), and the meta-hook watermark. The `facts` insert guard
 `gbrain_preserve_fact_withdrawal` is built: every fact write (`write_fact`) saves a row that is not expired and matches a
 withdrawal of its claim as expired at the earliest such withdrawal, with `valid_until` no later than it
@@ -119,6 +144,12 @@ Rust guesses and gaps (1x parity):
 - A negative `limit` refuses with `invalid_argument`; Postgres raises `LIMIT must not be negative`.
 - The fingerprint is a copy of the facts family's (facts.rs on the facts-sites line). `pg_lower_char` follows the code
   points probed on PGLite (`LOWER_KEEP`); a Postgres built with a different Unicode table can differ.
+
+`listPendingContradictions` (the `trust review` read of a pending `decide_proposals` pair of two active facts) is the
+decide-proposals family's `list_pending_contradictions` (eval-capture, `eval_capture/decide_proposals.rs`): the pending
+proposals whose two facts both sit in the proposal's source and are active (not expired, `valid_until` unset or in the
+future), oldest first, at most 1000, with the new fact's tier, entity and claim, the slug of either fact and both claim
+values. An optional source and an ISO `since` filter by the proposal.
 
 ## The write gate (`trust::write_gate`)
 
@@ -142,6 +173,10 @@ Postgres, so a source or page delete leaves these rows, and the Rust store does 
 | `listWriteGateHoldRows` | `list_write_gate_hold_rows`: filters on status, kind, source list or source and `beforeId`; sorted by id descending, cut to `limit` | `… ORDER BY id DESC LIMIT $n` |
 | `getWriteGateHoldRow` | `get_write_gate_hold_row`: a point read | `… WHERE id = $1` |
 | `decideWriteGateHold` | `decide_write_gate_hold`: only a `held` hold moves to `released` or `dropped` | `UPDATE … WHERE id = $1 AND status = 'held'` |
+
+`listTrustAllowRuleRows` (the owner's allow rules, `trust_allow_rules`) answers `[]` without a store call: the store
+keeps no allow rule, because `trust allow` writes one through `executeRaw`, which the Rust engine refuses. So
+`trust review` and the write gate's allow check read an empty rule set on Rust instead of a refusal.
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the purge paths (`purge.ts`,
 `page-purge.ts`, `purge-slug-stores.ts`, `source-delete.ts`), `owner-actions.ts`, `release-publish.ts`, the
@@ -171,25 +206,38 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `countUnscannedTrustRows` | `count_unscanned_trust_rows`: the same rows, at or below `until` when set | `SELECT count(*) …` |
 | `listVersionTrustTiers` | `list_version_trust_tiers`: the snapshot tier of each listed version, by id | `SELECT pv.id, pv.trust_tier FROM page_versions pv WHERE pv.id = ANY($1)` |
 | `listVersionReasonWriters` | `list_version_reason_writers`: the type and tier of the page's next snapshot, else of the page (deleted or not) | `LEFT JOIN LATERAL (… ORDER BY n.id LIMIT 1)` |
+| `listPageRefsByIds` | `list_page_refs_by_ids`: the source, slug and type of each listed page record (deleted or not), by id, once each; an unknown or negative id answers nothing | `SELECT id, source_id, slug, type FROM pages WHERE id = ANY($1::bigint[]) ORDER BY id` |
 | `listValidTimeIdentities` | `list_valid_time_identities` (`trust/valid_time.rs`): the live pages with the slug in the source scope, by source in byte order, at most six, with the source's checkout and the no-caller page policy's verdict | `… ORDER BY p.source_id COLLATE "C" LIMIT 6` |
 | `pickValidTimeEdition` | `pick_valid_time_edition`: the edition in force on a date over the page and its `V` version records, the competing ordinals, the history counts and the prune marks (`successor_pruned`, the page's `version_history_gap_at`) | the `WITH rows AS (…)` pick |
 | `listAmendmentsNotApplied` | `list_amendments_not_applied` (`link_queries/link_temporal.rs`): the live pages with an `amends` link to the page whose relationship start in the scope is after the edition and on or before the date, or absent; under the source and page-policy filters, by slug then source, bytewise | `SELECT f.slug, … min(lr.first_start) … GROUP BY f.slug, f.source_id ORDER BY f.slug COLLATE "C" …` |
 | `readPageVersionEdition` | `read_page_version_edition` (`trust/valid_time.rs`): the page's `V` version record with the fields an edition reads, `body_storage` `inline` unless the snapshot is segmented; null for another page or an unknown id | `SELECT id, title, … FROM page_versions WHERE id = $1 AND page_id = $2` |
 | `readCursorEdition` | `read_cursor_edition` (`trust/valid_time.rs`): whether the page record (deleted or not) is still at the revision, and the newest `V` version record at it; null when the page is gone | `SELECT (p.knowledge_revision::text = $2) AS current, (SELECT max(v.id) …) FROM pages p WHERE p.id = $1` |
 | `pageAwaitsRederive` | none: the store keeps no `needs_rederive` queue (only a raw-SQL purge writes one, and `executeRaw` refuses), so the member answers false | `SELECT count(*)::int AS n FROM pages p WHERE p.id = $1 AND NOT NOT EXISTS (… needs_rederive …)` |
+| `listHeldRows` | `list_held_rows` (`trust/held_rows.rs`): the page's take or timeline records among the ids whose stored tier ranks above the writer (the named `writer`, else the declared tier of the write trust context; a name that is no tier ranks 0) or, with `pending`, that a pending `forget` proposal targets; `{ id, trust_tier }` by id. A take or timeline record stored before its tier reads `unknown`; any other table refuses with `invalid_argument`. The `FOR UPDATE` lock adds nothing under the store's one writer | `SELECT x.id, x.trust_tier FROM takes|timeline_entries x WHERE x.page_id = $1 AND x.id = ANY($2) AND (rank > writer OR OPEN_CONTEST) ORDER BY x.id FOR UPDATE` |
+| `listGuardedTakeRows` | `list_guarded_take_rows` (`trust/held_rows.rs`): the batch guard of `gbrain extract takes` (`guardTakeRows`). The stored takes on the batch's pages that a `gone` entry deletes or an incoming row of the same page and number changes (another claim, kind or holder, or deactivates an active take), and that rank above the declared tier of the write trust context or, with `pending`, that a pending `forget` proposal targets; `{ id, page_id, row_num, trust_tier, change }` by page then row, once per matching entry, `change` `removed`, `replaced` or `deactivated`. An empty batch reads nothing | `SELECT x.id, … CASE … END AS change FROM takes x LEFT JOIN jsonb_to_recordset($1) n … LEFT JOIN jsonb_to_recordset($2) g … WHERE x.page_id = ANY($3) AND (rank > writer OR OPEN_CONTEST) … ORDER BY x.page_id, x.row_num FOR UPDATE OF x` |
 
 - `beginSnapshotRead` needs a store transaction, which a Rust brain does not serve in this landing (a later landing adds
   it). It sets no isolation level: a store transaction holds the one writer from its start, so its reads
   see one state. With `readOnly` it calls `setTransactionReadOnly` (`transactions.md`), so every later write in the
   transaction refuses with Postgres's SQLSTATE `25006` and leaves nothing.
-- The TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
+- `listCorePageRows` serves a caller with a reader identity or a private-readable grant: with `forCaller` its
+  `excludePrivate` policy carries them (`callerReaders`), and the remote floor is the no-reader policy (`noReaders`).
+  Pinned by `test/engine-parity/core-page-member-reads.test.ts`.
+- `listValidTimeIdentities` serves a caller with a reader identity or a private-readable grant: its `excludePrivate`
+  policy carries them (`callerReaders`), and the `world` mark, which never reads the caller's readers, is the
+  no-reader policy (`noReaders`). `pickValidTimeEdition` serves the same callers when the caller's snapshot policy is
+  the canonical one for those readers: a version that names readers is visible when one of them is in the policy's
+  identity, and a private version when the page's source is a private-readable source and the page is not a pinned
+  question. Both pinned by `test/engine-parity/valid-time-member-reads.test.ts` and `tests/valid_time.rs`.
+- The other TypeScript members refuse a caller page policy that is not the no-caller one, the `takes` and
   `timeline_entries` scan tables, and a cursor, limit or id that is not an integer. The store refuses any other
   table and a NUL byte with `invalid_argument`.
 - The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) refuse in their TypeScript
   members before any store call, for every input: the store keeps no belief ledger, so it could only answer an empty
   one (TODOS.md `rust-belief-ledger`).
-- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller page
-  policy other than the no-caller one. A failure is an error: the old read answered an empty list for any failure.
+- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller
+  whose remote floor is not the page policy of no readers (a labelled-only caller); any other caller reads the floor
+  (`test/engine-parity/valid-time-member-reads.test.ts`). A failure is an error: the old read answered an empty list for any failure.
 - `pickValidTimeEdition` also refuses a date that is not `YYYY-MM-DD`. It reads the history the store keeps after its
   version prune (`pages.md`, "Version prune"). `reason` is a version's stored change reason and `introduced_because`
   the reason of the edition before, unless that edition's successor was pruned; under `excludePrivate` a reason reads

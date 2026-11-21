@@ -304,6 +304,54 @@ mod tests {
     }
 
     #[test]
+    fn a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let s = store();
+        let tier = strings(&[WRITE_TRUST_TIER]);
+        let tx1 = s.begin_transaction(false).unwrap();
+        tx1.apply_write_trust(&tier, &strings(&["agent_written"]))
+            .unwrap();
+        std::thread::scope(|scope| {
+            let (began, began_rx) = mpsc::channel();
+            let (go_on, go_on_rx) = mpsc::channel::<()>();
+            let (shared, names) = (&s, &tier);
+            let second = scope.spawn(move || {
+                let tx2 = shared.begin_transaction(false).unwrap();
+                began.send(tx2.read_write_trust(names).unwrap()).unwrap();
+                go_on_rx.recv().unwrap();
+                tx2.apply_write_trust(names, &strings(&["operator_curated"]))
+                    .unwrap();
+                let own = tx2.read_write_trust(names).unwrap();
+                tx2.commit_transaction().unwrap();
+                own
+            });
+            // The store has one writer: the second transaction cannot begin while the first is open.
+            assert!(
+                began_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+                "a second write transaction began while the first was open"
+            );
+            assert_eq!(s.read_write_trust(&tier).unwrap(), vec![None]);
+            assert_eq!(
+                tx1.read_write_trust(&tier).unwrap(),
+                vec![Some("agent_written".to_string())]
+            );
+            tx1.commit_transaction().unwrap();
+            assert_eq!(
+                began_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+                vec![None]
+            );
+            go_on.send(()).unwrap();
+            assert_eq!(
+                second.join().unwrap(),
+                vec![Some("operator_curated".to_string())]
+            );
+        });
+        assert_eq!(s.read_write_trust(&tier).unwrap(), vec![None]);
+    }
+
+    #[test]
     fn a_setting_never_set_reads_as_null_and_one_set_empty_reads_as_empty() {
         let s = store();
         let names = strings(&[WRITE_TRUST_TIER, WRITE_OPEN_FACTS]);

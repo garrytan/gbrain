@@ -284,6 +284,15 @@ pub struct ListDecideProposalsOptions {
     pub limit: Option<i64>,
 }
 
+/// The filter of `listPendingContradictions`: a source, and a lower bound on the proposal's
+/// creation time (an ISO timestamp).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PendingContradictionsFilter {
+    pub source_id: Option<String>,
+    pub since: Option<String>,
+}
+
 /// `transitionDecideProposal`: a status change and the state it records.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -457,6 +466,72 @@ impl Store {
             row["old_fact"] = json!(old.map(|(t, _)| t));
             row["entity_slug"] = json!(entity);
             out.push(row);
+        }
+        Ok(out)
+    }
+
+    /// `listPendingContradictions({ sourceId?, since? })`: the pending proposals whose two facts
+    /// are both active and in the proposal's source (a decided proposal, or a pair with a
+    /// superseded, expired or missing fact, is not listed), with the new fact's tier, entity and
+    /// claim and the claim values of both, `created_at, id` order, at most 1000.
+    pub fn list_pending_contradictions(
+        &self,
+        filter: &PendingContradictionsFilter,
+    ) -> Result<Vec<Value>> {
+        let since = match &filter.since {
+            Some(text) => Some(crate::env::parse_iso(text).ok_or_else(|| {
+                StoreError::invalid("listPendingContradictions since must be an ISO timestamp")
+            })?),
+            None => None,
+        };
+        let now = self.env.now_micros();
+        let read = self.read()?;
+        let mut rows: Vec<ProposalRecord> = read_all(&*read, &tagged(PROPOSAL))?;
+        rows.retain(|r| {
+            r.status == "pending"
+                && filter.source_id.as_ref().is_none_or(|s| *s == r.source_id)
+                && since.is_none_or(|t| r.created_at_us >= t)
+        });
+        rows.sort_by_key(|r| (r.created_at_us, r.id));
+        let mut out = Vec::new();
+        for record in rows {
+            if out.len() == 1000 {
+                break;
+            }
+            let (Some(new_id), Some(old_id)) =
+                (row_id(record.new_fact_id), row_id(record.old_fact_id))
+            else {
+                continue;
+            };
+            let (Some(new), Some(old)) = (read_fact(&*read, new_id)?, read_fact(&*read, old_id)?)
+            else {
+                continue;
+            };
+            if new.source_id != record.source_id
+                || old.source_id != record.source_id
+                || !new.active(now)
+                || !old.active(now)
+            {
+                continue;
+            }
+            out.push(json!({
+                "id": record.id,
+                "source_id": record.source_id,
+                "sweep_id": record.sweep_id,
+                "created_at": iso(record.created_at_us),
+                "new_fact_id": record.new_fact_id,
+                "old_fact_id": record.old_fact_id,
+                "new_fact": new.fact,
+                "old_fact": old.fact,
+                "trust_tier": new.tier().as_str(),
+                "entity_slug": new.entity_slug,
+                "slug": new.source_markdown_slug.or(old.source_markdown_slug),
+                "claim_metric": new.claim_metric,
+                "claim_unit": new.claim_unit,
+                "claim_period": new.claim_period,
+                "new_value": new.claim_value,
+                "old_value": old.claim_value,
+            }));
         }
         Ok(out)
     }

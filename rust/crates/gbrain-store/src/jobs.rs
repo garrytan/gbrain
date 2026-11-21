@@ -98,9 +98,9 @@ pub use wake::{
     CronRunInput, EndSpec, ForgetClaimSpec, ForgetSettle, WatchFilter, WatchInsert, WatchSettle,
 };
 
-use crate::dream::jsonb;
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
+use crate::jsonb::ordered as jsonb;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::timeline_queries::jsonb_field_text;

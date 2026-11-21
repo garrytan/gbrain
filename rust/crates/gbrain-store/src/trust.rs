@@ -29,27 +29,30 @@
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("trust").
 
-// Crate-only. The facts writer (`facts::write_fact`) and the pages writer (`pages::write_page`,
-// `pages::snapshot_in`) call it; the takes and timeline writers do not yet, so their parts of the
-// module are still unused.
+// Crate-only. The facts writer (`facts::write_fact`), the pages writer (`pages::write_page`,
+// `pages::snapshot_in`) and the takes and timeline writers (through `row_trust::stamp_row`) call it.
+// The rest of the TS contract it mirrors (`content_columns`, the exported constants) is read only
+// by its tests.
 #[allow(dead_code)]
 mod stamp;
 
 mod eligibility;
-mod fingerprint;
+pub(crate) mod fingerprint;
+pub mod held_rows;
 pub mod proposals;
+mod row_trust;
 pub mod tier_reads;
 pub mod valid_time;
+pub mod withdrawal_commit;
 pub mod withdrawals;
 pub mod write_gate;
 
 pub(crate) use eligibility::TrustPolicy;
+pub(crate) use row_trust::{RowTrust, stamp_row};
 pub(crate) use write_gate::activation_suppressed;
 
-#[allow(unused_imports)] // the takes and timeline parts wait for their writers
 pub(crate) use stamp::{
-    OWNER_TIER_FLOOR, OriginStamp, StampRow, Stamped, TRUST_EPHEMERAL_FRONTMATTER_KEYS,
-    TRUST_RAISE_REFUSED, TrustTable, TrustTier, WriteTrust, page_frontmatter_content,
+    OriginStamp, StampRow, TrustTable, TrustTier, WriteTrust, page_frontmatter_content,
     snapshot_version, stamp,
 };
 
