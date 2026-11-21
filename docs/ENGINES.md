@@ -1840,19 +1840,11 @@ runs on PGLite alone without the flag.
 
 ### Topology recovery on the Rust engine
 
-A managed source's lifecycle (a clone from a remote URL, a reclone, and the recovery of a change a crash interrupted)
-takes topology locks, reserves its checkout and publishes it through raw SQL. The Rust engine never reports `raw_sql`,
-so it stops these steps by name before any lock, row or directory is touched:
-
-- `managed_source_clone`: `gbrain sources add --url` and `gbrain sources reclone` refuse `engine_capability_missing`
-  with `member=managed_source_clone` and `written=nothing`. No source is registered and no partial clone directory is left.
-- `source_topology_recovery`: when a change is recovering on this host, the write owner's recovery scan refuses with
-  `member=source_topology_recovery`. The change stays exactly as recorded. The owner reports the stop once and asks again
-  after 10 minutes, so it neither spins nor crashes. With nothing recovering, the scan is served.
-
-`gbrain doctor` warns `topology_recovery_stopped` and names each stopped change, and `gbrain sources writer status --json`
-lists them under `topology_recoveries`. To finish such a change, open the brain with a pglite or postgres engine, or wait
-for a release whose Rust engine serves these steps.
+A managed clone (`sources add --url`, `sources reclone`) and the recovery of an interrupted source lifecycle change need
+raw SQL, which the Rust engine never serves. It refuses them by name (`member=managed_source_clone` or
+`member=source_topology_recovery`, `written=nothing`) before any lock, row or directory is touched. Doctor warns
+`topology_recovery_stopped`; `sources writer status --json` lists `topology_recoveries`. Finish the change from a
+pglite or postgres engine.
 
 ## Adding a new engine
 
