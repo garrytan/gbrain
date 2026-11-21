@@ -1,0 +1,47 @@
+/**
+ * LC-1 (decision E1): the paths a committed-mode stamp settled `deleted_same` only because a person's delete removed the
+ * file and the removal is not committed yet (the file is gone from disk, or differs there, while the commit still holds it).
+ * Restoring the file (`git checkout -- <path>`) moves neither HEAD nor a request, so the idle check would never read the
+ * path again and the restore would never be held for the file-drift consent step. The stamp records each such path with
+ * its disk stat (`PassConverged.removal_pending`), and the idle check re-stats them: a changed stat runs the pass.
+ */
+
+/** At most this many paths are recorded; more and the stamp records null, which is never idle. */
+export const REMOVAL_PENDING_CAP = 256;
+
+export type RemovalPending = Array<{ path: string; stat: string }> | null;
+
+interface PendingEntry {
+  path: string;
+  state: { removedFile?: true; dirty: string | null };
+  result: { cls: string };
+}
+
+const CLEAN_DIRTINESS = new Set<string | null>(['clean', 'clean_eol', 'clean_lfs', 'unknown']);
+
+/** A working-tree file's stat (`size:mtimeMs`, `absent` or `unreadable`); the caller owns the filesystem read. */
+export type StatFile = (path: string) => string;
+
+/** The level's `removalPending` field: the removal-pending paths of a committed-mode level, absent when there are none. */
+export function removalPendingField(mode: 'committed' | 'working', entries: Iterable<PendingEntry>, stat: StatFile): { removalPending?: RemovalPending } {
+  const pending = removalPending(mode, entries, stat);
+  return pending !== undefined ? { removalPending: pending } : {};
+}
+
+function removalPending(mode: 'committed' | 'working', entries: Iterable<PendingEntry>, stat: StatFile): RemovalPending | undefined {
+  if (mode !== 'committed') return undefined;
+  const pending: Array<{ path: string; stat: string }> = [];
+  for (const entry of entries) {
+    if (entry.result.cls !== 'deleted_same' || entry.state.removedFile !== true || CLEAN_DIRTINESS.has(entry.state.dirty)) continue;
+    if (pending.length >= REMOVAL_PENDING_CAP) return null;
+    pending.push({ path: entry.path, stat: stat(entry.path) });
+  }
+  return pending.length ? pending : undefined;
+}
+
+/** Whether a recorded removal-pending path changed on disk since the stamp (null, the overflowed set, always counts). */
+export function removalPendingChanged(pending: RemovalPending | undefined, stat: StatFile): boolean {
+  if (pending === undefined) return false;
+  if (pending === null) return true;
+  return pending.some(entry => stat(entry.path) !== entry.stat);
+}

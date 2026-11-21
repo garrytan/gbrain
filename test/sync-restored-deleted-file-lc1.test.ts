@@ -20,8 +20,11 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { compactReceipt } from '../src/core/persistence/journal.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { gitHoldFix } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { readFileRemovingDeletes } from '../src/core/persistence/sync-pass.ts';
 import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
@@ -81,6 +84,11 @@ for (const backend of testBackends()) describe(`[${backend}] LC-1: a file restor
       await performManagedSync(engine, OPTS);
       expect(await holds(engine)).toEqual({ 'notes/ivy-example.md': ['file_drift', 'deleted', state, true] });
       expect(await pageState(engine, 'notes/ivy-example')).toBe(purged ? 'none' : 'deleted');
+      // The hold names the restore, and its fix asks first (the restored-file wording, not the edited-file one).
+      const [record] = await engine.executeRaw<{ record: Parameters<typeof gitHoldFix>[0] & { message: string } }>("SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op='sync-hold'");
+      expect(record!.record.message).toContain('is back with the bytes');
+      expect(record!.record.message).toContain('without your yes');
+      expect(gitHoldFix(record!.record).why).toContain('(a restore)');
       // A second sync neither imports it nor drops the hold.
       await performManagedSync(engine, OPTS);
       expect(await holds(engine)).toEqual({ 'notes/ivy-example.md': ['file_drift', 'deleted', state, true] });
@@ -99,6 +107,93 @@ for (const backend of testBackends()) describe(`[${backend}] LC-1: a file restor
       expect(await pageState(engine, 'notes/jon-example')).toBe('live');
     }, { databaseUrl, setup }), 240_000);
   }
+
+  test('a later delete that left the file is not a restore: the removal evidence is the newest delete\'s, not one a consented repair already undid', () => managedBrain(async ({ engine, ctx, root }) => {
+    const slug = 'notes/ivy-example';
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await remove(engine, ctx, slug, false);
+    git(root, 'checkout', '--', `${slug}.md`);
+    await performManagedSync(engine, OPTS);
+    const preview = await fileDrift(engine, 'tombstone_edited');
+    await fileDrift(engine, 'tombstone_edited', preview.preview_hash!);
+    expect(await pageState(engine, slug)).toBe('live');
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual({});
+    await engine.setConfig('sync.write_through', 'false');
+    await remove(engine, ctx, slug, false);
+    expect(existsSync(join(root, `${slug}.md`))).toBe(true);
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual({});
+    expect(await pageState(engine, slug)).toBe('deleted');
+  }, { databaseUrl, setup }), 240_000);
+
+  test('an owner purge stays settled after its receipt is compacted (the purge is read from the receipt outcome, not the compactable intent)', () => managedBrain(async ({ engine, ctx, root }) => {
+    const slug = 'notes/kai-example';
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await remove(engine, ctx, slug, true);
+    git(root, 'checkout', 'HEAD', '--', `${slug}.md`);
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual({});
+    const receipts = await engine.executeRaw<{ id: string; principal_kind: string; principal_id: string }>(
+      "SELECT id::text AS id, principal_kind, principal_id FROM persistence_requests WHERE slug=$1 AND operation='delete_page' AND state='committed'", [slug]);
+    expect(receipts.length).toBe(1);
+    for (const receipt of receipts) expect(await compactReceipt(engine, receipt as never)).not.toHaveProperty('skipped');
+    const [compacted] = await engine.executeRaw<{ intent: unknown; status: string | null }>("SELECT intent, outcome->>'status' AS status FROM persistence_requests WHERE id=$1::uuid", [receipts[0]!.id]);
+    expect(compacted).toEqual({ intent: null, status: 'purged' });
+    await performManagedSync(engine, { ...OPTS, full: true });
+    expect(await holds(engine)).toEqual({});
+    expect(await pageState(engine, slug)).toBe('none');
+  }, { databaseUrl, setup }), 240_000);
+
+  test('a restore after the deletion already settled is still seen: the idle check re-reads a path whose removal was not committed', () => managedBrain(async ({ engine, ctx, root }) => {
+    const slug = 'notes/ivy-example';
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await remove(engine, ctx, slug, false);
+    await performManagedSync(engine, OPTS);
+    expect((await performManagedSync(engine, OPTS)).status).toBe('up_to_date');
+    expect(await holds(engine)).toEqual({});
+    git(root, 'checkout', '--', `${slug}.md`);
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual({ [`${slug}.md`]: ['file_drift', 'deleted', 'tombstone_edited', true] });
+    expect(await pageState(engine, slug)).toBe('deleted');
+  }, { databaseUrl, setup }), 240_000);
+
+  test('removal evidence is the page\'s own newest committed delete: other pages, other sources, uncommitted, undone, kept-file and owner-purge receipts are not', () => managedBrain(async ({ engine }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    const receipt = (slug: string, operation: string, o: { pageId?: number | null; state?: string; outcome?: unknown; intent?: unknown }) => engine.transaction(async tx => {
+      // The brain's writer floor is protocol 2: each fixture row is written in a transaction that declares it.
+      await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
+      await tx.executeRaw(
+      `INSERT INTO persistence_requests(principal_kind, principal_id, request_id, operation, source_id, source_incarnation, slug, page_id, digest, authority, intent_bytes,
+         terminal_reservation, state, intent, outcome)
+       VALUES ('local_cli', 'lc1', $1::uuid, $2, $3, (SELECT incarnation FROM sources WHERE id=$3), $4, $5, $6, '{}'::jsonb, 0, 0, $7, $8::text::jsonb, $9::text::jsonb)`,
+      [randomUUID(), operation, 'default', slug, o.pageId === undefined ? 7 : o.pageId, randomUUID(), o.state ?? 'committed',
+        o.intent === undefined ? JSON.stringify({ slug }) : o.intent === null ? null : JSON.stringify(o.intent), o.outcome === undefined ? null : JSON.stringify(o.outcome)]);
+    });
+    const removed = { status: 'soft_deleted', write_through: { written: true } }, kept = { status: 'soft_deleted', write_through: { written: false } };
+    const cases: Array<[string, Array<[string, Parameters<typeof receipt>[2]]>, boolean]> = [
+      ['a committed delete that removed the file', [['delete_page', { outcome: removed }]], true],
+      ['a delete with no page id recorded', [['delete_page', { pageId: null, outcome: removed }]], true],
+      ['another page\'s delete (an unrelated incarnation of the slug)', [['delete_page', { pageId: 8, outcome: removed }]], false],
+      ['a delete that did not commit', [['delete_page', { state: 'failed', outcome: removed }]], false],
+      ['a delete a restore_page undid', [['delete_page', { outcome: removed }], ['restore_page', {}]], false],
+      ['a delete a consented put_page undid', [['delete_page', { outcome: removed }], ['put_page', {}]], false],
+      ['a put_page of another page does not undo it', [['delete_page', { outcome: removed }], ['put_page', { pageId: 8 }]], true],
+      ['a later delete that kept the file', [['delete_page', { outcome: removed }], ['put_page', {}], ['delete_page', { outcome: kept }]], false],
+      ['a retention purge after the removal', [['delete_page', { outcome: removed }], ['delete_page', { outcome: { status: 'purged', retention: true } }]], true],
+      ['a retention purge read from the intent only', [['delete_page', { outcome: removed }], ['delete_page', { intent: { purge: true, retention: true }, outcome: { status: 'purged' } }]], true],
+      ['an owner purge', [['delete_page', { outcome: { status: 'purged', write_through: { written: true } } }]], false],
+      ['an owner purge whose receipt was compacted', [['delete_page', { intent: null, outcome: { status: 'purged', write_through: { written: true } } }]], false],
+    ];
+    for (const [i, [name, rows, expected]] of cases.entries()) {
+      const slug = `notes/lineage-${i}`;
+      for (const [operation, o] of rows) await receipt(slug, operation, o);
+      const found = await readFileRemovingDeletes(engine, 'default', [{ path: `${slug}.md`, slug, pageId: 7 }]);
+      expect([name, found.has(`${slug}.md`)]).toEqual([name, expected]);
+    }
+    // The read is per source: another source's sync never sees this source's receipts.
+    expect((await readFileRemovingDeletes(engine, 'other', [{ path: 'notes/lineage-0.md', slug: 'notes/lineage-0', pageId: 7 }])).size).toBe(0);
+  }, { databaseUrl, setup }), 240_000);
 
   test('a deletion that stands settles with no hold: the delete\'s own removal not committed yet, a delete that left the file, and an owner purge', () => managedBrain(async ({ engine, ctx, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
