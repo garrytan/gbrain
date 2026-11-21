@@ -1176,10 +1176,9 @@ export class PostgresEngine implements BrainEngine {
     }
 
     const detailLow = opts?.detail === 'low';
-    // Fetch headroom for dedup: if we only fetch `limit` chunks, a cluster of
-    // co-occurring terms in one page can eat the entire result set and we'd
-    // ship < limit pages. 3x gives dedup enough to pick top N distinct pages.
-    const innerLimit = Math.min(limit * 3, searchLimitCap() * 3);
+    // The distinct-page pool must retain OFFSET's prefix before slicing.
+    // Keep the existing per-page headroom and the separate candidate bound.
+    const innerLimit = offset + Math.min(limit * 3, searchLimitCap() * 3);
 
     // Source-aware ranking (v0.22): boost curated content (originals/,
     // concepts/, writing/) and dampen bulk content (chat/, daily/, media/x/)

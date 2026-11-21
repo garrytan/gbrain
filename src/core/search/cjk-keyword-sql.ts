@@ -139,7 +139,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
       * ${sourceFactorCase})
     `;
   const scoreExpr = any ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + ${tfScoreExpr})` : tfScoreExpr;
-  return assemble({ dedup, fromClause, scoreExpr, orderExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, innerLimitIndex, limitIndex, offsetIndex, params });
+  return assemble({ dedup, fromClause, scoreExpr, orderExpr, matchCountExpr: any ? matchedExpr : undefined, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, innerLimitIndex, limitIndex, offsetIndex, params });
 }
 
 /**
@@ -239,14 +239,14 @@ function shapeFilters(opts: SearchOpts | undefined, params: unknown[]): string {
 }
 
 function assemble(a: {
-  dedup: boolean; fromClause: string; scoreExpr: string; orderExpr: string; whereLikeClause: string; detailFilter: string; extraFilter: string;
+  dedup: boolean; fromClause: string; scoreExpr: string; orderExpr: string; matchCountExpr?: string; whereLikeClause: string; detailFilter: string; extraFilter: string;
   hardExcludeClause: string; visibilityClause: string; innerLimitIndex: number; limitIndex: number; offsetIndex: number; params: unknown[];
 }): CjkKeywordSql {
   const { dedup, fromClause, scoreExpr, orderExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, innerLimitIndex, limitIndex, offsetIndex, params } = a;
   if (dedup) {
     return {
       sql: `WITH ranked AS (
-           SELECT
+           SELECT * FROM (SELECT *, row_number() OVER (PARTITION BY page_id ORDER BY score DESC, chunk_id ASC) AS page_rank FROM (SELECT
              p.slug, p.id as page_id, p.title, p.type, p.source_id,
              p.effective_date, p.effective_date_source,
              CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
@@ -254,7 +254,7 @@ function assemble(a: {
              CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
                THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
              cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-             ${scoreExpr} AS score,
+             ${scoreExpr} AS score,${a.matchCountExpr ? ` ${a.matchCountExpr} AS matched_terms,` : ''}
              CASE WHEN p.updated_at < (
                SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
              ) THEN true ELSE false END AS stale
@@ -262,8 +262,8 @@ function assemble(a: {
            JOIN pages p ON p.id = cc.page_id
            JOIN sources s ON s.id = p.source_id
            WHERE ${whereLikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-             AND cc.modality = 'text'
-           ORDER BY ${orderExpr}, page_id ASC, chunk_id ASC
+             AND cc.modality = 'text') matched) per_page WHERE page_rank = 1
+           ORDER BY ${a.matchCountExpr ? 'matched_terms DESC, ' : ''}score DESC, page_id ASC, chunk_id ASC
            LIMIT $${innerLimitIndex}
          ),
          ${buildBestPerPagePoolCte('ranked')}
