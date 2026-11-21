@@ -144,6 +144,14 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // jobs_health: the queue health reads of doctor, the advisor and the submit probe (engine-sql/jobs-health.ts)
   jobs_health: ['readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth',
     'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName'],
+  // minion_status: job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts)
+  minion_status: ['readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+    'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
+    'readEmbedBackfillBySource'],
+  // embedding_catalog: the vector column catalog the embedding commands read (engine-sql/embedding-catalog.ts)
+  embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage'],
+  // fence_holds: the held fence results read (engine-sql/fence-holds.ts)
+  fence_holds: ['listFenceHoldRows'],
   // trust_tier_reads: the stamped-tier reads of core memory, the trust scan, belief history and page history (engine-sql/trust-tier-reads.ts)
   trust_tier_reads: ['listVersionTrustTiers', 'listVersionReasonWriters', 'listPageTypesByIds'],
   // withdrawal_discovery: the reads of a fact withdrawal's discovery pass (engine-sql/withdrawal-discovery.ts)
