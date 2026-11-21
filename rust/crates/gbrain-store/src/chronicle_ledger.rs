@@ -1,7 +1,8 @@
 //! The chronicle ledger: the `chronicle_page_state` and `chronicle_judge_reservations` tables of the PGLite engine, as
 //! the members of `src/core/engine-sql/collate-store-reads.ts` run them (rust/docs/store/chronicle-ledger.md).
 //!
-//! Members: upsertChronicleRow, reserveChronicleJudgeSlot, pruneChronicleReservations, readChronicleLedger.
+//! Members: upsertChronicleRow, reserveChronicleJudgeSlot, pruneChronicleReservations, readChronicleLedger, and the
+//! `chronicleStore()` executor statements (`executor.rs`).
 //!
 //! Keys (every record starts with `keys::TELEMETRY`, `a`):
 //! - `a 0x0E source \0 page_id BE8 hash \0 version BE4 -> LedgerRecord`: one row of `chronicle_page_state`, its
@@ -9,12 +10,18 @@
 //! - `a 0x0F id BE8 -> ReservationRecord`: one judge reservation, its id the `BIGSERIAL`.
 //! - `a 0x10 -> last id` (JSON integer): the reservation id sequence.
 //!
-//! The campaign and retry writers of the ledger (`campaign.ts`, `execute.ts`) stay raw SQL and refuse on a Rust brain;
-//! a row written here therefore keeps the default cost, unpriced and attempts columns, which the rollup still reads.
+//! The campaign, claim, retry and outcome writers of the ledger (`campaign.ts`, `execute.ts`) are the executor
+//! statements of `executor.rs`.
 
 use crate::error::{Result, StoreError};
+
+mod executor;
 use crate::kv::scan_prefix;
 use crate::{Store, get_json, keys, put_json};
+pub use executor::{
+    ChronicleCampaignQueue, ChronicleCandidates, ChronicleDiscovery, ChronicleFinish,
+    ChronicleKeyTuple,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;

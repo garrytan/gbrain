@@ -44,6 +44,7 @@ mod writer_status;
 mod alias_fanout_reads;
 mod aliases;
 mod calibration_profiles;
+mod chronicle_executor;
 mod chronicle_ledger;
 mod chronicle_state;
 mod chunk_queries;

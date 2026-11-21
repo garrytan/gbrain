@@ -155,6 +155,7 @@ test/engine-parity/bench-save-repro.test.ts
 test/engine-parity/bound-write.test.ts
 test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/chronicle-decision.test.ts
+test/engine-parity/chronicle-executor.test.ts
 test/engine-parity/chronicle-reservations.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
 test/engine-parity/chunk-reads.test.ts

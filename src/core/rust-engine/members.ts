@@ -149,6 +149,7 @@ export const RUST_ENGINE_MEMBERS = {
   hasPendingAutoChronicleRow: 'telemetry',
   countRecentChronicleReservations: 'telemetry',
   reserveChronicleJudgeSlot: 'telemetry',
+  chronicleStore: 'telemetry',
   pruneChronicleReservations: 'telemetry',
   insertConfigIfAbsent: 'config',
   readPageTruthLead: 'pages',

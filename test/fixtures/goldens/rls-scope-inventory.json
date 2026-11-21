@@ -6669,6 +6669,7 @@
         "bumpWithdrawnPageRevisions": "none",
         "cancelJobs": "none",
         "cancelWriteRow": "none",
+        "chronicleStore": "none",
         "chunkRead": "none",
         "claimHousekeepingTurn": "none",
         "claimNextJob": "none",

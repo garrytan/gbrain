@@ -15,6 +15,24 @@ of the chronicle (`src/core/chronicle/ledger.ts`, `ledger-stats.ts`). The SQL fo
 | `brain.pruneChronicleReservations()` | the number of reservations taken more than 48 hours ago that it deleted, in one write transaction (`reserved_at < now() - interval '48 hours'`); the id sequence keeps its value |
 | `brain.readChronicleLedger()` | `{ counts, reasons, calls, principals }` over the automatic rows. `counts` are pending (any age) and extracted, failed and skipped over the last 7 days, with the known spend, the unpriced calls and the incomplete records. `reasons` are `{ state, reason, n }` for skipped and failed rows, by count then byte of reason. `calls` counts the 24-hour reservations. `principals` are the five busiest, by calls then byte of principal (`kind:id`, `unattributed` for a missing kind) |
 
-A row written here keeps the default cost (none), unpriced (false) and attempts (0), and its `next_attempt_at` is kept as
-the text given. Not served: the campaign, retry and result writers of the ledger (`executeRaw` statements, which a
-Rust brain refuses).
+A row written by `upsertChronicleRow` keeps the default cost (none), unpriced (false) and attempts (0), and its
+`next_attempt_at` is kept as the text given.
+
+## Executor
+
+`brain.chronicleExecutor(op, args)` serves `chronicleStore()` (`src/core/engine-sql/chronicle-executor.ts`), the
+statements the chronicle executor, its campaigns and the event publication ran through `executeRaw`
+(`chronicle_ledger/executor.rs`). `op` names the statement and `args` are its arguments in the TypeScript method's
+order. Each answers what the statement answers on PGLite:
+
+- the row writes (`queueCampaignRow`, `failExhaustedCampaignRows`, `supersedeStaleRows`, `claim`, `setNextAttempt`,
+  `addAttemptCost`, `finish`, `addAttempt`) change the `a 0x0E` row in one write transaction with the statement's
+  guards; `claim` writes the lease as ISO text `now + leaseMs` and consumes a campaign attempt;
+- the reads (`campaignSpentUsd`, `discoveryPages`, `candidates`, `latestJudged`, `inputFailures`, `eventProducers`) read
+  the rows and the pages, in the statement's order where it has one and key order otherwise;
+- the event reads (`liveEventSlugs`, `liveEventHashes`, `livePageId`, `eventDiscriminators`, `eventTimelineEntry`) read
+  the pages and the timeline (`->>` text as Postgres gives it), and `deleteEventTimeline` removes the timeline rows the
+  event page projected and recomputes each depth page's latest entry.
+
+A comparison of `next_attempt_at` with now parses the stored text. A row's `cost_usd` reads as a number, where the SQL
+engines read the numeric column as text; callers read it through `Number`.

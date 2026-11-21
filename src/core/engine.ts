@@ -92,6 +92,7 @@ import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type { CounterColumn, WriterReleaseStore } from './engine-sql/writer-release.ts';
 import type { PublicationJournalStore } from './engine-sql/publication-journal.ts';
+import type { ChronicleStore } from './engine-sql/chronicle-executor.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import type { ActiveWorktreeRefreshRow, BlockingEffectRow, OnboardingSourceRow, WriterDiagnosticRows, WriterStatusRows } from './engine-sql/writer-status.ts';
 import type {
@@ -1629,6 +1630,8 @@ export interface BrainEngine {
    * Called on a transaction engine, every store call runs in that transaction.
    */
   publicationJournalStore(): Promise<PublicationJournalStore>;
+  /** The chronicle executor's ledger, campaign and event reads and writes (engine-sql/chronicle-executor.ts); on a transaction engine, in that transaction. */
+  chronicleStore(): Promise<ChronicleStore>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
   /** Records one chronicle ledger decision; false when its guards leave the existing row as it was. */
   upsertChronicleRow(w: ChronicleRowUpsert): Promise<boolean>;
