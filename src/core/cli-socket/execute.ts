@@ -48,12 +48,14 @@ export async function cliRequestContext(engine: BrainEngine, params: Record<stri
   let sourceId: string | undefined;
   let localFederated: string[] | undefined;
   let sourceImplicit = true;
+  let sourceFromCheckout = false;
   const explicit = opOwnsSource(op) ? null : (params.source as string | undefined) ?? null;
   const env = request.routing.source_env ?? undefined;
   try {
     const resolved = await resolveSourceWithTier(engine, explicit, request.routing.cwd, { env });
     sourceId = resolved.source_id;
     sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile';
+    sourceFromCheckout = resolved.tier === 'local_path';
     localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
   } catch (err) {
     if (explicit || err instanceof SourceTargetError) throw err;
@@ -71,6 +73,7 @@ export async function cliRequestContext(engine: BrainEngine, params: Record<stri
     brainId: 'host',
     ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
     ...(sourceImplicit ? { localSourceImplicit: true } : {}),
+    ...(sourceImplicit && sourceFromCheckout ? { localSourceFromCheckout: true } : {}),
     emitResponseMeta: sinks.emitResponseMeta,
     emitNotice: sinks.emitNotice,
   } as OperationContext;

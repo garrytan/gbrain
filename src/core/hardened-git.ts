@@ -181,6 +181,16 @@ export function hardenedGitSync(root: string, args: string[], limits: { timeoutM
   return { ok: true, stdout: run.stdout };
 }
 
+/**
+ * GBRA-706: whether HEAD in `root` is a branch with no commit yet (a fresh `git init`). Only Git's clean signal counts:
+ * `rev-parse --verify --quiet HEAD` exits exactly 1 with nothing on stderr. A timeout, a lock or any other failure is
+ * not proof the repository is empty (the same rule as sync-git.ts classifyHeadProbeError).
+ */
+export function unbornHead(root: string): boolean {
+  const probe = hardenedGitSync(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], { timeoutMs: 30_000, maxBytes: 4096, stderr: true });
+  return !probe.ok && probe.reason === 'exit' && probe.status === 1 && !(probe.stderr ?? '').trim();
+}
+
 export type HardenedGitStreamResult = { ok: true; exitCode: 0; signal: null; bytes: number; endsWithNul: boolean }
   | { ok: false; reason: 'exit' | 'signal' | 'timeout' | 'too_large' | 'unavailable' | 'stalled'; status?: number; signal?: NodeJS.Signals };
 

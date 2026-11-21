@@ -398,7 +398,7 @@ fn snapshot_json(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
         "tags": tags,
         "revision": page.knowledge_revision,
         "sourceIncarnation": incarnation,
-        "withdrawals": [],
+        "withdrawals": crate::trust::withdrawals::page_withdrawals(read, &page.source_id, &page.slug)?,
     }))
 }
 
@@ -934,7 +934,8 @@ impl Store {
     }
 
     /// `purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? })`: the pages soft-deleted more
-    /// than `floor(max(0, hours))` hours ago, minus `excludeIds` and the pages a retirement hold
+    /// than `floor(hours)` hours ago (an age that is NaN, negative or not finite is refused with
+    /// `invalid_argument` before anything is read or written), minus `excludeIds` and the pages a retirement hold
     /// keeps (`PurgeHolds`), ordered by `deleted_at`, then slug. Each purged page goes through
     /// `remove_page` and `scrub_purged_slugs`, as `deletePages` does. A dry run returns
     /// `{ slugs, count, pages: [{ slug, source_id, deleted_at }] }`; a real run removes them in one
@@ -944,11 +945,15 @@ impl Store {
         older_than_hours: f64,
         options: &PurgeOptions,
     ) -> Result<Value> {
-        let hours = if older_than_hours.is_nan() {
-            0
-        } else {
-            older_than_hours.floor().max(0.0) as i64
-        };
+        // Refuse an age that is not a finite number of hours, 0 or more (NaN, a negative number,
+        // ±Infinity) before anything is read or written: NaN used to read as 0 hours and purge every
+        // tombstone. The SQL engines refuse the same inputs (src/core/engine-errors.ts PurgeAgeError).
+        if !older_than_hours.is_finite() || older_than_hours < 0.0 {
+            return Err(StoreError::invalid(format!(
+                "purgeDeletedPages: the age must be a finite number of hours, 0 or more; got {older_than_hours}. Nothing was purged."
+            )));
+        }
+        let hours = older_than_hours.floor() as i64;
         let excluded: HashSet<i64> = options.exclude_ids.iter().flatten().copied().collect();
         let select = |read: &dyn KvRead, now: i64| -> Result<Vec<PageRecord>> {
             let cutoff = now.saturating_sub(hours.saturating_mul(3_600_000_000));

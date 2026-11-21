@@ -329,8 +329,11 @@ fn purge_deleted_pages_respects_the_cutoff_and_excluded_ids() {
     );
     let negative = store
         .purge_deleted_pages(-5.0, &de(json!({ "dryRun": true })))
-        .unwrap();
-    assert_eq!(negative["count"], 2, "a negative age clamps to 0");
+        .unwrap_err();
+    assert_eq!(
+        negative.code, "invalid_argument",
+        "a negative age is refused"
+    );
     let real = store
         .purge_deleted_pages(0.0, &de(json!({ "excludeIds": [id_of(&b)] })))
         .unwrap();
@@ -344,6 +347,41 @@ fn purge_deleted_pages_respects_the_cutoff_and_excluded_ids() {
         store.get_all_slugs(&de(json!({}))).unwrap(),
         vec!["notes/b", "notes/c"]
     );
+}
+
+#[test]
+fn purge_deleted_pages_refuses_an_age_that_is_nan_negative_or_not_finite_and_deletes_nothing() {
+    let dir = TempDir::new("ops-purge-nan");
+    let store = open(&dir);
+    put(&store, "notes/a", note("A", "a"));
+    put(&store, "notes/b", note("B", "b"));
+    store.soft_delete_page("notes/a", Some("default")).unwrap();
+    store.soft_delete_page("notes/b", Some("default")).unwrap();
+    for hours in [
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        -1.0,
+        -72.0,
+        -0.5,
+    ] {
+        for dry_run in [false, true] {
+            let error = store
+                .purge_deleted_pages(hours, &de(json!({ "dryRun": dry_run })))
+                .expect_err("an age that is NaN, negative or not finite must be refused");
+            assert_eq!(error.code, INVALID_ARGUMENT, "{hours} dryRun={dry_run}");
+        }
+    }
+    assert_eq!(
+        store.get_all_slugs(&de(json!({}))).unwrap().len(),
+        2,
+        "the tombstones are still there"
+    );
+    // 0 hours is still a valid age.
+    let zero = store
+        .purge_deleted_pages(0.0, &de(json!({ "dryRun": true })))
+        .unwrap();
+    assert!(zero["count"].as_u64().is_some());
 }
 
 #[test]

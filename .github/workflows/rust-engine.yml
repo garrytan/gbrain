@@ -294,6 +294,18 @@ jobs:
           for file in test/engine-parity/*.test.ts; do
             bun test --timeout=60000 "$file"
           done
+      # A withdrawn world claim stays out of a large page's lead on a Rust brain. GBRAIN_TEST_REQUIRE_RUST_ADDON
+      # makes a missing addon an error instead of a skip, and the next step fails the lane when no test ran.
+      # This job owns the file, so the stress gate does not stress it where no addon exists.
+      - name: Withdrawn claims stay out of a Rust page lead
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store withdrawn-lead -- bun test --timeout=60000 test/rust-engine-withdrawn-lead.test.ts
+      - name: Fail the withdrawn-lead lane when no test ran
+        shell: bash
+        run: bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" rust-store
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: gbrain-engine-addon-${{ matrix.target }}
