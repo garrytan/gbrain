@@ -9,6 +9,9 @@
  *    stored under is refused with the same text (detail legacy_slug_spelling); nothing moves and no twin appears. A
  *    delete_page, add_tag, remove_tag, add_timeline_entry, edit_page and append_page by the decomposed spelling a page is stored under
  *    change that row in place (the same answers as on a normalized slug), and no twin appears.
+ *    A put by the stored decomposed spelling is refused whether or not a composed twin exists. A read of a slug that no stored page
+ *    spells exactly finds the stored spelling that normalizeSlug maps to it (also `Unicode/CAFÉ-İ` for `cafe\u0301-i\u0307`),
+ *    and rows in another source never use up the candidates a readable source holds.
  *    A read that finds no page by any exact spelling, and two stored spellings that normalize to the asked slug, is refused.
  *  - Regression: an engine that keeps the caller's NFD bytes (two pages that print the same name), or an op
  *    path that looks the raw spelling up and answers page_not_found for `People/Alice-Example`.
@@ -28,6 +31,8 @@
  *  - NFC storage: member `putPage` (Rust pages area, gbrain-store pages.rs `validate_slug`): the Rust store
  *    lowercases a slug but does not compose it to NFC, so an NFD slug is stored as NFD and the NFC read
  *    misses it. Rust must compose to NFC in `validate_slug` and in its lowercased read lookups.
+ *  - put refusal beside a composed twin, and the final-review reads (a Unicode-expansion spelling, out-of-scope rows crowding the
+ *    candidates): the puts stop at `readPersistenceBrainId` as above, and the reads store their rows by renaming them, which stops at `executeRaw` / `raw_sql`.
  *  - legacy-spelling put refusal: member `readPersistenceBrainId`, capability `persistence_journal` (Rust
  *    persistence area): put_page needs the write journal, which the Rust store does not serve, so the op stops
  *    before admission. When it does, Rust must answer the same refusal text (it is built in TS admission from
@@ -239,5 +244,70 @@ describe('engine parity: slug normal form', () => {
       outputs: ['add_tag', 'add_timeline_entry', 'edit_page', 'append_page', 'delete_page'].map(op => ({ op, slug: stored })),
       rows: [{ slug: stored, deleted: true }], tags: ['cap'] });
     return result;
+  });
+
+  parityTest('a put by the stored decomposed spelling is refused even when its composed twin exists, and neither page changes', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
+    const stored = 'notes/twin-cafe\u0301';
+    const composed = 'notes/twin-caf\u00e9';
+    if (backend === 'rust') {
+      await engine.putPage(stored, { type: 'note', title: 'Legacy', compiled_truth: 'Old.', timeline: '' });
+      await engine.putPage(composed, { type: 'note', title: 'Twin', compiled_truth: 'Twin.', timeline: '' });
+    } else {
+      await engine.putPage(composed, { type: 'note', title: 'Legacy', compiled_truth: 'Old.', timeline: '' });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
+      await engine.putPage(composed, { type: 'note', title: 'Twin', compiled_truth: 'Twin.', timeline: '' });
+    }
+    const read = async (slug: string) => (await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true }))!;
+    const before = { stored: (await read(stored)).revision, composed: (await read(composed)).revision };
+    let answer: { code: unknown; detail: unknown; message: string };
+    try {
+      await operationsByName.put_page!.handler(ctx(engine), { slug: stored, content: '---\ntype: note\ntitle: Legacy\n---\nNew.\n', request_id: randomUUID() });
+      answer = { code: null, detail: null, message: 'written' };
+    } catch (e) {
+      if (backend === 'rust') { expect((e as Error).message).toBe(RUST_JOURNAL_STOP); throw e; }
+      answer = { code: (e as { code?: unknown }).code, detail: (e as { detail?: unknown }).detail, message: (e as Error).message };
+    }
+    const result = { answer, unchanged: (await read(stored)).revision === before.stored && (await read(composed)).revision === before.composed };
+    expect(result).toEqual({ answer: { code: 'invalid_params', detail: 'legacy_slug_spelling', message: LEGACY_REFUSAL(stored, composed) }, unchanged: true });
+    return result;
+  });
+  parityTest('a stored spelling that normalizeSlug maps to the asked slug answers it, including a capital that lowercases to two characters', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
+    const stored = 'Unicode/CAF\u00c9-\u0130';
+    try {
+      await engine.putPage('unicode/seed', { type: 'note', title: 'Expansion', compiled_truth: 'Body.', timeline: '' });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, 'unicode/seed']);
+    } catch (e) {
+      if (backend === 'rust') expect((e as Error).message).toBe(RUST_RAW_SQL_STOP);
+      throw e;
+    }
+    const page = await operationsByName.get_page!.handler(ctx(engine), { slug: 'unicode/cafe\u0301-i\u0307' }) as { slug: string; title: string };
+    expect({ slug: page.slug, title: page.title }).toEqual({ slug: stored, title: 'Expansion' });
+    return { slug: page.slug, title: page.title };
+  });
+  parityTest('rows of another source never use up the candidates the readable source holds: two readable spellings are ambiguous, byte for byte', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
+    const spell = (bits: number) => 'f7/' + [...'abcdefgh'].map((c, i) => (bits >> i) & 1 ? c.toUpperCase() : c).join('');
+    const put = async (slug: string, sourceId: string) => {
+      await engine.putPage('f7/seed', { type: 'note', title: slug, compiled_truth: 'Body.', timeline: '' }, { sourceId });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2 AND source_id = $3', [slug, 'f7/seed', sourceId]);
+    };
+    try {
+      await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('beta', 'beta') ON CONFLICT DO NOTHING`);
+      for (let bits = 1; bits <= 24; bits++) await put(spell(bits), 'beta');
+      await put(spell(128), 'default');
+      await put(spell(255), 'default');
+    } catch (e) {
+      if (backend === 'rust') expect((e as Error).message).toBe(RUST_RAW_SQL_STOP);
+      throw e;
+    }
+    let answer: { code: unknown; detail: unknown; named: boolean };
+    try {
+      await operationsByName.get_page!.handler(ctx(engine), { slug: 'F7/ABCDEFGH' });
+      answer = { code: null, detail: null, named: false };
+    } catch (e) {
+      const message = (e as Error).message;
+      answer = { code: (e as { code?: unknown }).code, detail: (e as { detail?: unknown }).detail, named: message.includes(JSON.stringify(spell(255))) && message.includes(JSON.stringify(spell(128))) };
+    }
+    expect(answer).toEqual({ code: 'invalid_params', detail: 'ambiguous_slug', named: true });
+    return answer;
   });
 });

@@ -18,6 +18,10 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { importFromContent } from '../src/core/import-file.ts';
+import { registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 
 let engine: PGLiteEngine;
 
@@ -34,11 +38,11 @@ async function errorOf(name: string, params: Record<string, unknown>): Promise<{
 const page = (title: string, body: string) => `---\ntitle: ${title}\ntype: note\n---\n${body}\n`;
 
 /** Write `seed` through put_page, then store the page under `stored`, as an older writer left it. */
-async function storeAs(seed: string, stored: string, title: string, body = 'body'): Promise<void> {
-  await call('put_page', { slug: seed, content: page(title, body) });
-  await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2 AND source_id = $3', [stored, seed, 'default']);
+async function storeAs(seed: string, stored: string, title: string, body = 'body', source = 'default'): Promise<void> {
+  await call('put_page', { slug: seed, content: page(title, body), ...(source === 'default' ? {} : { source_id: source }) });
+  await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2 AND source_id = $3', [stored, seed, source]);
   // A raw slug update changes the knowledge revision and clears the served-text one; a stored page kept both in step.
-  await engine.executeRaw('UPDATE pages SET text_projection_revision = knowledge_revision WHERE slug = $1 AND source_id = $2', [stored, 'default']);
+  await engine.executeRaw('UPDATE pages SET text_projection_revision = knowledge_revision WHERE slug = $1 AND source_id = $2', [stored, source]);
 }
 const tag = (slug: string, t: string) => engine.executeRaw('INSERT INTO tags (page_id, tag) SELECT id, $1 FROM pages WHERE slug = $2 AND source_id = $3', [t, slug, 'default']);
 const pageRows = async (like: string) => (await engine.executeRaw<{ slug: string; title: string }>(
@@ -71,7 +75,8 @@ describe('blocker 2: a page stored with capitals is read by its exact spelling',
     await tag('Up/Alice-Example', 'capital-tag');
     expect((await call('get_page', { slug: 'Up/Alice-Example' })).title).toBe('Capital Alice');
     expect(await call<string[]>('get_tags', { slug: 'Up/Alice-Example' })).toEqual(['capital-tag']);
-    expect((await errorOf('get_page', { slug: 'up/alice-example' }))?.code).toBe('page_not_found');
+    // The lowercase slug names no page by its own bytes, and the page stored with capitals is the only one that reads the same: it answers (final review 5; the merge base answered page_not_found).
+    expect((await call('get_page', { slug: 'up/alice-example' })).title).toBe('Capital Alice');
   });
 });
 
@@ -238,4 +243,129 @@ describe('blocker 4: importing content for a stored decomposed slug never writes
     const ok = await importFromContent(engine, 'imp/both-cafe\u0301', page('Composed again', 'two'), { noEmbed: true });
     expect(ok.status).toBe('imported');
   });
+});
+
+describe('final review: a read answers the page the exact input names, or refuses only where nothing answered', () => {
+  const NFD = (s: string) => s.normalize('NFD');
+  const tombstone = (slug: string) => engine.executeRaw('UPDATE pages SET deleted_at = now() WHERE slug = $1 AND source_id = $2', [slug, 'default']);
+
+  test('finding 3: a per-call source_id picks the spelling in that source, not in the default source', async () => {
+    const nfd = NFD('f3/caf\u00e9-src');
+    const nfc = 'f3/caf\u00e9-src';
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('beta', 'beta') ON CONFLICT DO NOTHING`);
+    await storeAs('f3/beta-nfd-seed', nfd, 'Beta decomposed', 'b', 'beta');
+    await call('put_page', { slug: nfc, content: page('Beta composed', 'b'), source_id: 'beta' });
+    await call('put_page', { slug: nfc, content: page('Default composed', 'd') });
+    expect((await call('get_page', { slug: nfd, source_id: 'beta' })).title).toBe('Beta decomposed');
+    expect((await call('get_page', { slug: nfd })).title).toBe('Default composed');
+  });
+
+  test('finding 4: an exact slug alias keeps answering with the page it names, not an unrelated composed page', async () => {
+    const nfd = NFD('f4/caf\u00e9-alias');
+    await call('put_page', { slug: 'f4/alias-target', content: page('Alias target', 't') });
+    await call('put_page', { slug: 'f4/caf\u00e9-alias', content: page('Composed page', 'c') });
+    await engine.executeRaw(`INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug) VALUES ('default', $1, 'f4/alias-target')`, [nfd]);
+    const out = await call('get_page', { slug: nfd });
+    expect({ title: out.title, slug: out.slug }).toEqual({ title: 'Alias target', slug: 'f4/alias-target' });
+  });
+
+  test('finding 5: a slug already in normal form finds the one other spelling, and is ambiguous between two', async () => {
+    await storeAs('f5/one-seed', 'F5/One-Cafe', 'Only capital', 'o');
+    expect((await call('get_page', { slug: 'f5/one-cafe' })).title).toBe('Only capital');
+    await storeAs('f5/two-seed-a', 'F5/Two-Caf\u00e9', 'Two composed', 'a');
+    await storeAs('f5/two-seed-b', NFD('F5/Two-Caf\u00e9'), 'Two decomposed', 'b');
+    const err = await errorOf('get_page', { slug: 'f5/two-caf\u00e9' });
+    expect({ code: err?.code, detail: err?.detail }).toEqual({ code: 'invalid_params', detail: 'ambiguous_slug' });
+    expect(err?.message).toContain(JSON.stringify('F5/Two-Caf\u00e9'));
+    expect(err?.message).toContain(JSON.stringify(NFD('F5/Two-Caf\u00e9')));
+  });
+
+  test('finding 6: include_deleted answers the exact tombstone, not the live composed twin', async () => {
+    const nfd = NFD('f6/caf\u00e9-gone');
+    await storeAs('f6/gone-seed', nfd, 'Exact tombstone', 'x');
+    await tombstone(nfd);
+    await call('put_page', { slug: 'f6/caf\u00e9-gone', content: page('Live twin', 'l') });
+    const withDeleted = await call('get_page', { slug: nfd, include_deleted: true });
+    expect({ title: withDeleted.title, deleted: !!withDeleted.deleted_at }).toEqual({ title: 'Exact tombstone', deleted: true });
+    expect((await call('get_page', { slug: nfd })).title).toBe('Live twin');
+  });
+
+  test('finding 7: rows of another source never use up the candidates a readable source holds', async () => {
+    const spell = (bits: number) => 'f7/' + [...'abcdefgh'].map((c, i) => (bits >> i) & 1 ? c.toUpperCase() : c).join('');
+    for (let bits = 1; bits <= 24; bits++) {
+      await call('put_page', { slug: `f7/seed-${bits}`, content: page(`Beta ${bits}`, 'b'), source_id: 'beta' });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2 AND source_id = $3', [spell(bits), `f7/seed-${bits}`, 'beta']);
+    }
+    await storeAs('f7/def-seed-a', spell(128), 'Default one', 'a');
+    await storeAs('f7/def-seed-b', spell(255), 'Default two', 'b');
+    const err = await errorOf('get_page', { slug: 'F7/ABCDEFGH' });
+    expect({ code: err?.code, detail: err?.detail }).toEqual({ code: 'invalid_params', detail: 'ambiguous_slug' });
+    // The first two readable spellings in code-unit order are named, whatever rows other sources hold.
+    expect(err?.message).toContain(JSON.stringify(spell(255)));
+    expect(err?.message).toContain(JSON.stringify(spell(128)));
+  });
+
+  test('finding 8: a stored spelling reads as the slug normalizeSlug makes of it, including characters that lowercase to two', async () => {
+    await storeAs('f8/seed', 'F8/CAF\u00c9-\u0130', 'Unicode stored', 'u');
+    expect((await call('get_page', { slug: 'f8/cafe\u0301-i\u0307' })).title).toBe('Unicode stored');
+  });
+});
+
+describe('final review: a put by a spelling a page is stored under is refused, with or without a composed twin', () => {
+  const content = '---\ntype: note\ntitle: Replaced\n---\nNew.\n';
+  const snap = async (slug: string) => await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true });
+
+  test('finding 1: a decomposed page beside its composed twin is not written by a put by the decomposed spelling', async () => {
+    const nfd = 'f1/caf\u0065\u0301-twin';
+    const nfc = 'f1/caf\u00e9-twin';
+    await storeAs('f1/twin-seed', nfd, 'Decomposed original', 'old');
+    await call('put_page', { slug: nfc, content: page('Composed original', 'composed') });
+    const before = { nfd: (await snap(nfd))!.revision, nfc: (await snap(nfc))!.revision };
+    const answers: Array<string | undefined> = [];
+    for (const extra of [{}, { expected_revision: before.nfd }, { expected_revision: before.nfc }]) {
+      answers.push((await errorOf('put_page', { slug: nfd, content, request_id: crypto.randomUUID(), ...extra }))?.detail);
+    }
+    expect(answers).toEqual(['legacy_slug_spelling', 'legacy_slug_spelling', 'legacy_slug_spelling']);
+    expect({ nfd: (await snap(nfd))!.revision, nfc: (await snap(nfc))!.revision }).toEqual(before);
+    expect((await snap(nfc))!.page.title).toBe('Composed original');
+  });
+
+  test('finding 1: a capital-stored page is not replaced by a put by its capital spelling, and no lowercase page appears', async () => {
+    await storeAs('f1/cap-seed', 'F1/Cap-Put', 'Capital original', 'old');
+    const before = (await snap('F1/Cap-Put'))!.revision;
+    const err = await errorOf('put_page', { slug: 'F1/Cap-Put', content, request_id: crypto.randomUUID() });
+    expect({ code: err?.code, detail: err?.detail }).toEqual({ code: 'invalid_params', detail: 'legacy_slug_spelling' });
+    expect(await snap('f1/cap-put')).toBeNull();
+    expect((await snap('F1/Cap-Put'))!.revision).toBe(before);
+  });
+});
+
+describe('final review finding 2: remember through an entity alias of a decomposed page ends', () => {
+  let rememberEngine: PGLiteEngine;
+  beforeAll(async () => {
+    configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
+    rememberEngine = new PGLiteEngine(); await rememberEngine.connect({}); await rememberEngine.initSchema();
+  }, 60_000);
+  afterAll(async () => { await disposePersistenceConsumer(rememberEngine); await rememberEngine.disconnect(); resetGateway(); });
+
+  test('the fact lands on the decomposed page and the composed twin is left as it was', async () => {
+    const e = rememberEngine;
+    const rctx = { engine: e, config: { engine: 'pglite', embedding_disabled: true } as never, remote: false, sourceId: 'default', dryRun: false, logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+    const run = (name: string, params: Record<string, unknown>) => operationsByName[name]!.handler(rctx, params) as Promise<Record<string, any>>;
+    const nfd = 'people/zo\u0065\u0301-rem';
+    const person = (title: string) => `---\ntitle: ${title}\ntype: person\n---\nbody\n`;
+    await run('put_page', { slug: 'people/zo\u00e9-rem', content: person('Zoe composed') });
+    await run('put_page', { slug: 'people/zoe-rem-seed', content: person('Zoe decomposed') });
+    await e.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [nfd, 'people/zoe-rem-seed']);
+    await e.executeRaw('UPDATE pages SET text_projection_revision = knowledge_revision WHERE slug = $1', [nfd]);
+    await e.executeRaw(`INSERT INTO page_aliases (source_id, alias_norm, slug) VALUES ('default', 'zozo unique', $1)`, [nfd]);
+    await e.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await registerLocalWriter(e, 'cli'); await registerLocalWriter(e, 'stdio');
+    await e.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const twinBefore = (await e.readPageSnapshot('people/zo\u00e9-rem', { sourceId: 'default' }))!.revision;
+    const out = await run('remember', { fact: 'Zoe likes tea', entity: 'Zozo Unique', provenance: 'chat 2026-10-21', infer_entity: false });
+    expect({ status: out.status, entity: out.entity_slug }).toEqual({ status: 'inserted', entity: nfd });
+    expect((await e.getPage(nfd))!.compiled_truth).toContain('Zoe likes tea');
+    expect((await e.readPageSnapshot('people/zo\u00e9-rem', { sourceId: 'default' }))!.revision).toBe(twinBefore);
+  }, 60_000);
 });

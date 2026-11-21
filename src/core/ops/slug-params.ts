@@ -22,8 +22,9 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeSlug } from '../utils.ts';
+import type { Page } from '../types.ts';
 import { opError, type Operation } from './contract.ts';
-import { sourceScopeOpts } from './context.ts';
+import { federatedSearchScope, parseSourceIdParam, sourceScopeOpts } from './context.ts';
 import { readFix } from './op-fix.ts';
 import { isPrivatePageForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 
@@ -174,19 +175,50 @@ function ambiguousSpelling(op: string, raw: string, a: string, b: string) {
     });
 }
 
+/** The source scope the op's own handler reads in: a per-call `source_id` and the caller's grant narrow it, as `get_page` resolves it. */
+function readScope(ctx: Ctx, op: string, params: Params): { sourceId?: string; sourceIds?: string[] } {
+  const sourceIdParam = parseSourceIdParam(params.source_id, op, { allowAll: true });
+  return op === 'get_page' || sourceIdParam !== undefined ? federatedSearchScope(ctx, sourceIdParam) : sourceScopeOpts(ctx);
+}
+
+/**
+ * The SQL side of `normalizeSlug`, cut down to ASCII letters and digits, so every row that normalizes to a slug shares its key with
+ * it (`storedSpellings` then compares with `normalizeSlug` itself). The capitals are lowered by hand, never by the engine's locale:
+ * ASCII, and the two whose lowercase holds ASCII (U+0130 lowers to `i` and a combining dot, U+212A to `k`); then the text is composed.
+ */
+const SPELLING_KEY_SQL = `regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g')`;
+
+/** Every stored spelling in `scope` that normalizes to `normalized` and is not in `skip`, in code-unit order (the scope applies before any row is kept). */
+async function storedSpellings(ctx: Ctx, normalized: string, scope: { sourceId?: string; sourceIds?: string[] }, skip: readonly string[]): Promise<string[]> {
+  const args: unknown[] = [normalized.replace(/[^a-z0-9]/g, '')];
+  let scoped = '';
+  if (scope.sourceIds) { args.push(scope.sourceIds); scoped = `AND source_id = ANY($${args.length}::text[])`; }
+  else if (scope.sourceId !== undefined) { args.push(scope.sourceId); scoped = `AND source_id = $${args.length}`; }
+  args.push('');
+  const found = new Set<string>();
+  for (;;) {
+    const rows = await ctx.engine.executeRaw<{ s: string }>(
+      `SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE ${SPELLING_KEY_SQL} = $1 ${scoped} AND slug COLLATE "C" > $${args.length} ORDER BY s LIMIT 200`, args);
+    for (const { s } of rows) if (!skip.includes(s) && normalizeSlug(s) === normalized) found.add(s);
+    if (rows.length < 200) return [...found].sort();
+    args[args.length - 1] = rows[rows.length - 1]!.s;
+  }
+}
+
 /**
  * The spelling of the scalar slug param `raw` that a read should receive, and the spellings `legacySpellings` offers.
- * Pages written before slugs were composed keep their stored spelling, so the caller's own spelling is read first and
- * the normalized spelling is the fallback (a prefix: the first spelling with rows under it). A spelling with no page of
- * its own may still key files and facts, so it is offered along with the chosen one; a spelling that is another page's
- * never is. Only the caller's own source scope and privacy gate are probed, so a page the caller cannot read never
- * decides a spelling or shows up in an ambiguity message.
+ * Pages written before slugs were composed keep their stored spelling, so a read answers as it did before: the page the
+ * caller's own bytes name (a stored page, or an alias of one, in the scope and with the deleted rows the op reads), then the
+ * lowercased bytes, then the normal form. Only where none of those answers, the other stored spellings that normalize to the
+ * same slug: one is the page, two are ambiguous. A spelling with no page of its own may still key files and facts, so it is
+ * offered along with the chosen one; a spelling that is another page's never is. Only the op's own source scope and privacy
+ * gate are probed, so a page the caller cannot read never decides a spelling or shows up in an ambiguity message.
  */
-async function chooseSpelling(ctx: Ctx, op: string, raw: string, normalized: string): Promise<{ slug: string; slugs: string[] }> {
+async function chooseSpelling(ctx: Ctx, op: string, params: Params, raw: string, normalized: string): Promise<{ slug: string; slugs: string[] }> {
   const lowered = raw.toLowerCase();
   const order = distinct([raw, lowered, normalized]);
   try {
-    const scope = sourceScopeOpts(ctx);
+    const scope = readScope(ctx, op, params);
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
     if (PREFIX_READS.has(op)) {
       const held: string[] = [];
@@ -195,28 +227,27 @@ async function chooseSpelling(ctx: Ctx, op: string, raw: string, normalized: str
       }
       return held.length > 0 ? { slug: held[0]!, slugs: held } : { slug: normalized, slugs: [normalized] };
     }
+    const includeDeleted = params.include_deleted === true;
     const pages = new Map(await Promise.all(order.map(async slug => [slug, await ctx.engine.getPage(slug, { ...scope, excludePrivate, includeDeleted: true })] as const)));
-    const live = (slug: string) => {
-      const page = pages.get(slug) ?? null;
-      return page !== null && !page.deleted_at && !(excludePrivate && isPrivatePageForCaller(page));
-    };
-    const visible = (slug: string) => {
-      const page = pages.get(slug) ?? null;
-      return page !== null && !(excludePrivate && isPrivatePageForCaller(page));
-    };
+    const readable = (page: Page | null | undefined) => page !== null && page !== undefined && !(excludePrivate && isPrivatePageForCaller(page));
+    const visible = (slug: string) => readable(pages.get(slug));
+    // get_page also answers a former slug of a page (an alias), which no row of this name holds.
+    const reached = op === 'get_page'
+      ? new Map(await Promise.all(order.map(async slug => [slug, (await ctx.engine.readPageSnapshot(slug, { ...scope, excludePrivate, includeDeleted, resolveAlias: true }))?.page ?? null] as const)))
+      : null;
+    const eligible = (slug: string) => reached ? readable(reached.get(slug)) : visible(slug) && (includeDeleted || !pages.get(slug)!.deleted_at);
     const offered = (slug: string) => [slug, ...order.filter(other => other !== slug && !pages.get(other))];
     // (a) the caller's exact bytes, (b) the lowercased bytes, which is what a read looked up before slugs were composed,
-    // (c) the normal form: the first stored page wins, so a read that found a page before still finds that page.
-    const first = order.find(live);
+    // (c) the normal form: the first answer wins, so a read that found a page before still finds that page.
+    const first = order.find(eligible);
     if (first !== undefined) return { slug: first, slugs: offered(first) };
     // (d) no page under any of those: the stored spellings that normalize to the same slug. One is the page; two or more are ambiguous.
     const liveOthers: string[] = [];
     try {
-      const others = (await ctx.engine.executeRaw<{ slug: string }>(
-        `SELECT DISTINCT slug FROM pages WHERE normalize(lower(slug), NFC) = $1 ORDER BY slug LIMIT 20`, [normalized])).map(r => r.slug).filter(slug => !order.includes(slug)).sort(); // code-unit order, so both engines name the same two
-      for (const slug of others) {
+      for (const slug of await storedSpellings(ctx, normalized, scope, order)) {
         const page = await ctx.engine.getPage(slug, { ...scope, excludePrivate, includeDeleted: true });
-        if (page !== null && !page.deleted_at && !(excludePrivate && isPrivatePageForCaller(page))) liveOthers.push(slug);
+        if (readable(page) && (includeDeleted || !page!.deleted_at)) liveOthers.push(slug);
+        if (liveOthers.length > 1) break;
       }
     } catch { /* an engine without raw reads: no other spelling is known */ }
     if (liveOthers.length > 1) throw ambiguousSpelling(op, raw, liveOthers[0]!, liveOthers[1]!);
@@ -242,18 +273,31 @@ export function withNormalizedSlugParams(op: Operation, handler: Operation['hand
   const scalars = SLUG_PARAMS[op.name]!.filter(path => !/[.[]/.test(path));
   return async (ctx, params) => {
     const normalized = normalizeSlugParams(op.name, params);
-    if (normalized === params || write) return handler(ctx, normalized);
-    let chosen = normalized;
-    const spellings = new Map<string, string[]>();
-    for (const path of scalars) {
-      const raw = scalarAt(params, path);
-      const wanted = scalarAt(normalized, path);
-      if (raw === undefined || wanted === undefined || raw === wanted) continue;
-      const pick = await chooseSpelling(ctx, op.name, raw, wanted);
-      chosen = normalizeAt(chosen, path, () => pick.slug);
-      if (pick.slugs.length > 1) spellings.set(pick.slug, pick.slugs);
+    if (write) return handler(ctx, normalized);
+    // `onlyChanged`: a param already in normal form needs no probe unless the read found nothing (below).
+    const choose = async (onlyChanged: boolean) => {
+      let chosen = normalized;
+      const spellings = new Map<string, string[]>();
+      for (const path of scalars) {
+        const raw = scalarAt(params, path);
+        const wanted = scalarAt(normalized, path);
+        if (raw === undefined || wanted === undefined || onlyChanged && raw === wanted) continue;
+        const pick = await chooseSpelling(ctx, op.name, params, raw, wanted);
+        chosen = normalizeAt(chosen, path, () => pick.slug);
+        if (pick.slugs.length > 1) spellings.set(pick.slug, pick.slugs);
+      }
+      return { chosen, run: (args: Params) => spellings.size > 0 ? spellingStore.run(spellings, () => handler(ctx, args)) : handler(ctx, args) };
+    };
+    if (normalized === params) {
+      // Already in normal form: master read it as sent. Only where that finds no page, a page stored under another spelling of the name answers.
+      try { return await handler(ctx, params); } catch (err) {
+        if ((err as { code?: unknown } | null)?.code !== 'page_not_found' || scalars.length === 0) throw err;
+        const { chosen, run } = await choose(false);
+        if (JSON.stringify(chosen) === JSON.stringify(params)) throw err;
+        try { return await run(chosen); } catch (again) { throw (again as { code?: unknown } | null)?.code === 'page_not_found' ? err : again; }
+      }
     }
-    const run = (args: Params) => spellings.size > 0 ? spellingStore.run(spellings, () => handler(ctx, args)) : handler(ctx, args);
+    const { chosen, run } = await choose(true);
     try {
       return await run(chosen);
     } catch (err) {
