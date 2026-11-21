@@ -17,7 +17,6 @@ import { DOCTOR_PAGES_SQL, OVERSIZED_PAGE_ROWS, SLUG_PATH_CANDIDATE_PATTERN, SLU
 import { EMBED_SKIP_FILTER_FRAGMENT } from '../src/core/embed-skip.ts';
 import { unverifiedExtractionFragment } from '../src/core/extraction-review.ts';
 import { TRANSCRIPT_PAGE_PREDICATE } from '../src/core/transcripts/secret-audit.ts';
-import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
 import { SLUG_PATH_SCAN_LIMIT } from '../src/commands/doctor/checks/slug-path-mismatch.ts';
 
 const RAW_PROVENANCE_WHERE = `
@@ -60,10 +59,8 @@ describe('doctor pages SQL text', () => {
     expect<string>(DOCTOR_PAGES_SQL.unverifiedExtractionsInSource).toBe(unverified('AND p.source_id = $2'));
   });
 
-  test('transcript pages and facts bodies use the shared predicate and prefix builders', () => {
+  test('transcript pages use the shared predicate builder', () => {
     expect(DOCTOR_PAGES_SQL.transcriptImportPages).toBe(`SELECT count(*) AS n FROM pages WHERE ${TRANSCRIPT_PAGE_PREDICATE}`);
-    expect<string>(DOCTOR_PAGES_SQL.factsPageBodies).toBe(`SELECT p.slug, p.source_id, p.body_storage = 'segmented' AS segmented, ${boundedBodyPrefixSql('p')} AS body
-         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id, p.slug`);
   });
 
   test('slug-path candidates: the scan limit plus one, with and without a source scope', () => {

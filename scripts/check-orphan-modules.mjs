@@ -54,7 +54,6 @@ const ALLOWLIST = new Map([
 // reason 'script-reachable', which the guard verifies.
 const PERMITTED_TEST_ONLY = [
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
-  { path: 'src/core/apple/send-sign.ts', reason: "held: the GBrain Helper send signer (plan plans/apple-send, PR S1); the agent's computer calls it today, and the apple-setup plan's gbrain apple send command wires it into the CLI" },
   { path: 'src/eval/longmemeval/diagnostics.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/evidence-brief.ts', reason: 'held: eval-only wave 1 brief builder (10x memory advantage plan A3), loaded by path from gbrain-evals eval/runner/pilot; product wiring is plan item A8, conditional on the A5 pilot' },
   { path: 'src/eval/longmemeval/evidence-packet.ts', reason: 'script-reachable' },

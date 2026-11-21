@@ -42,6 +42,10 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['readManifest', 'FROM page_body_manifest m', e => e.readManifest(1)],
   // A page purge's preparation reads the slug index's state (persistence/page-purge.ts preparePagePurge).
   ['readRequestIndexStates', 'pg_stat_progress_create_index', e => e.readRequestIndexStates(['persistence_requests_slug_intent'])],
+  ['hasLabelledOnlyMember', 'FROM access_members WHERE labelled_only', e => e.hasLabelledOnlyMember()],
+  ['readSegmentedPageHead', 'segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1', e => e.readSegmentedPageHead(1)],
+  ['readSourceIncarnation', 'SELECT config,incarnation FROM sources WHERE id=$1', e => e.readSourceIncarnation('default')],
+  ['readStoredPageTier', 'SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', e => e.readStoredPageTier('default', 'a')],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];

@@ -1,7 +1,7 @@
 /**
  * Doctor reads, second set: the statements doctor checks and the repairs they share (privacy labels, safe-chunk index,
  * credential re-seal, schema packs, derived visibility, segmented bodies, timeline history, atom fences and retirements,
- * embedding backlog and budget holds, extraction receipts, derived generations, ontology facts, atom provenance, the
+ * embedding backlog and budget holds, extraction receipts, derived generations, atom provenance, the
  * extract rollup) ran through `executeRaw`. Each function runs the statement its caller ran, with the same text and
  * parameters, on the engine's own `executeRaw` and returns the rows unchanged; only its home moved
  * (src/commands/doctor/**, src/core/**). Doctor output on PGLite and Postgres does not change. Every statement is one
@@ -31,7 +31,7 @@ export const DOCTOR_DERIVED_MEMBERS: readonly string[] = [
   'listAtomFenceCandidates', 'readPageCompiledTruths', 'readEmbeddingBacklogAge', 'listBudgetLimitedRows', 'readBudgetHoldAge',
   'listImageAssetFiles', 'listAmbiguousExtractionInputs', 'listExtractionInputReceipts', 'listUnpricedDerivationModels',
   'listRestorableAtomRetirements', 'countLedgerCoveredAtomRetirements', 'listLiveGenerationRetirements', 'listHeldGenerations',
-  'listPendingGenerationMembers', 'listOrphanGenerationCandidates', 'listOntologyFactCandidates', 'readAtomProvenanceCounts',
+  'listPendingGenerationMembers', 'listOrphanGenerationCandidates', 'readAtomProvenanceCounts',
   'readExtractRollup7d', 'listRecordedHaltReasons7d',
 ];
 
@@ -563,32 +563,7 @@ export function listOrphanGenerationCandidates(raw: EngineRawRead, sourceIds: re
   return raw<OrphanGenerationCandidateRow>(ORPHAN_GENERATION_CANDIDATES_SQL, [[...sourceIds], kind]);
 }
 
-// ---- ontology facts, atom provenance, extract rollup -------------------------------------------------------------
-
-export interface OntologyFactRow {
-  id: number | string; source_id: string; entity_slug: string; dimension: string; source: string; page: string | null;
-  row_num: number | string | null; expired_at: string | null; withdrawn: boolean; consolidated: boolean; duplicate: boolean;
-}
-
-const ONTOLOGY_FACTS_SQL = `
-    SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.source, f.source_markdown_slug AS page, f.row_num,
-           to_char(f.expired_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS expired_at,
-           EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-             AND (w.subject='*' OR w.subject=f.entity_slug)
-             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
-           f.consolidated_into IS NOT NULL AS consolidated,
-           EXISTS (SELECT 1 FROM facts d WHERE d.source_id=f.source_id AND d.entity_slug=f.entity_slug
-  AND d.dimension=f.dimension AND d.value_hash=f.value_hash AND d.source_markdown_slug=f.source
-  AND d.valid_from=f.valid_from AND d.id<>f.id) AS duplicate
-      FROM facts f
-     WHERE f.source_id=ANY($1::text[]) AND f.dimension IS NOT NULL AND f.entity_slug IS NOT NULL AND f.source IS NOT NULL
-       AND (f.row_num IS NOT NULL OR f.source_markdown_slug IS DISTINCT FROM f.source) AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'
-     ORDER BY f.id`;
-
-/** Facts the ontology fence step moved, with their withdrawn, consolidated and duplicate verdicts, in id order. */
-export function listOntologyFactCandidates(raw: EngineRawRead, sourceIds: string[]): Promise<OntologyFactRow[]> {
-  return raw<OntologyFactRow>(ONTOLOGY_FACTS_SQL, [sourceIds]);
-}
+// ---- atom provenance, extract rollup ----------------------------------------------------------------------------
 
 export interface AtomProvenanceCounts {
   total: number; slug_unbound: number; drifted: number; source_changed: number; source_gone: number;
@@ -725,5 +700,5 @@ export const COMPOSED_SQL = {
   PRIVACY_LABEL_SQL, PRIVACY_LABEL_SCOPED_SQL, SAFE_INDEX_SQL, SAFE_INDEX_SCOPED_SQL, CREDENTIAL_PENDING_SQL, CREDENTIAL_PENDING_SCOPED_SQL,
   PAGE_TYPE_OWNER_SQL, PAGE_TYPE_OWNER_SCOPED_SQL, RECORDED_TOMBSTONES_SQL, DERIVED_VISIBILITY_SQL, UNTILED_SQL, TIMELINE_BATCH_SQL,
   BACKLOG_AGE_SQL, BUDGET_LIMITED_SQL, BUDGET_LIMITED_SOURCE_SQL, BUDGET_AGE_SQL, ATOM_RETIREMENTS_SQL, ATOM_RETIREMENTS_COVERED_SQL,
-  ONTOLOGY_FACTS_SQL, ATOM_PROVENANCE_SQL,
+  ATOM_PROVENANCE_SQL,
 } as const;

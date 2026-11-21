@@ -26,7 +26,7 @@ of its own. The TypeScript side is `src/core/rust-engine/store-members/doctor-pa
 | `countPagesWithMentionLinks()` | live pages with an outgoing `mentions` link | `stale_mentions` |
 | `countImageModalityMismatches()` | always 0 (see below) | `cross_modal_modality_backfill` |
 | `readImagePageCoverage()` | `{image_pages, without_image_vector, null_source_path}` | `image_embedding_coverage` |
-| `listFactsPageBodies()` | live `facts` pages: `{slug, source_id, segmented, body}` by source and slug | `facts_undated_lines` |
+| `listFactsPageBodies()` | live `facts` pages: `{slug, source_id, segmented, body}` by source and slug (the member and its SQL are `engine-sql/facts-doctor.ts`; this store answers it on Rust) | `facts_undated_lines` |
 | `listBracketPathPages()` | live pages whose `source_path` holds `[`, `]` or a control character | `malformed_path_pages` |
 | `listSlugPathCandidates(sourceIds \| null)` | live pages with a source path and an unusual slug, in id order, in unarchived sources, at most 20001 | `slug_path_mismatch` |
 

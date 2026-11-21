@@ -24,6 +24,13 @@
  * the repair core's own raw SQL, its cursor read on op_checkpoints (src/core/repair/core.ts readCursor). The case pins
  * that refusal and ends on it, so the harness counts it stopped. Lane 10 (rust-engine/repair-rust) types that core;
  * whichever of rust-engine/doctor-checks-3 and rust-engine/repair-rust lands second removes the pin.
+ *
+ * Links table on Rust: the Rust engine answers a catalog probe for the links table from the `links` capability
+ * (store-members/catalog.ts TABLE_CAPABILITY), and reports a capability only when every member of the family is served.
+ * The edge-proposal members (rust-engine/main 0895649aab) still refuse, so `links` is not reported and
+ * links_link_source_check prints "no links table yet" (status ok) on Rust, though the links store holds links and
+ * refuses a non-kebab link_source on every write. The (a) case compares name, status and the written links on all arms
+ * and pins the message per arm; when the family is served again the Rust message changes and the case names the pin.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -49,6 +56,14 @@ const { parityTest } = parityArms(testBackends());
 /** The pin's failure once the repair core is typed (the known stop in the header). */
 const REPAIR_CORE_STOP_LIFTED = 'lane 10 rust-engine/repair-rust 8982a86c49 typed readOpCheckpointRecord/writeOpCheckpointRecord/readCounterRows: '
   + 'remove this pin and compare the printed output on 3 arms';
+
+/** Read when a links_link_source_check message changes on Rust: the links family is reported again, so drop the pin. */
+const LINKS_CAPABILITY_LIFTED = 'the Rust links capability is withheld while the edge-proposal members of rust-engine/main 0895649aab refuse: when they are served, the Rust message becomes the v114 one; remove linkSourceGateMessage and compare the whole check on 3 arms';
+
+/** The links_link_source_check message each arm prints on a fresh brain (the Rust one: see "Links table on Rust" above). */
+function linkSourceGateMessage(backend: string): string {
+  return backend === 'rust' ? 'no links table yet' : 'links_link_source_check has the v114 kebab-case gate';
+}
 
 const OTHER = 'other-source';
 
@@ -223,12 +238,15 @@ describe('doctor catalog checks', () => {
   parityTest(
     'links_link_source_check (a): a fresh brain has the kebab-case gate, and a kebab provenance link is written',
     { methods: ['putPage', 'addLink', 'getLinks'] },
-    async (engine) => {
+    async (engine, backend) => {
       await put(engine, 'concepts/from');
       await put(engine, 'notes/to');
       await engine.addLink('concepts/from', 'notes/to', '', 'synthesized_from', 'concept-provenance');
       const links = (await engine.getLinks('concepts/from')).map(l => ({ to: l.to_slug, source: l.link_source }));
-      return { check: await linkSourceCheckConstraintCheck(engine), links };
+      const check = await linkSourceCheckConstraintCheck(engine);
+      expect({ backend, message: check.message, lifted: LINKS_CAPABILITY_LIFTED })
+        .toEqual({ backend, message: linkSourceGateMessage(backend), lifted: LINKS_CAPABILITY_LIFTED });
+      return { check: { name: check.name, status: check.status }, links };
     },
   );
 
@@ -242,7 +260,8 @@ describe('doctor catalog checks', () => {
       if (backend === 'rust') {
         const refused = await engine.addLink('concepts/from', 'notes/to', '', 'cites', 'Not Kebab').then(() => null, (e: Error) => e.message);
         expect(refused).not.toBeNull();
-        expect(await linkSourceCheckConstraintCheck(engine)).toEqual({ name: 'links_link_source_check', status: 'ok', message: 'links_link_source_check has the v114 kebab-case gate' });
+        expect({ check: await linkSourceCheckConstraintCheck(engine), lifted: LINKS_CAPABILITY_LIFTED })
+          .toEqual({ check: { name: 'links_link_source_check', status: 'ok', message: linkSourceGateMessage(backend) }, lifted: LINKS_CAPABILITY_LIFTED });
         return 'pinned';
       }
       const [row] = await engine.executeRaw<{ def: string }>(`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = to_regclass('links') AND conname = 'links_link_source_check'`);

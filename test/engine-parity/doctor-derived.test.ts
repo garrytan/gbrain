@@ -255,13 +255,11 @@ describe('doctor-derived reads', () => {
   );
 
   parityTest(
-    'listOntologyFactCandidates and readAtomProvenanceCounts read an empty facts brain',
-    { methods: ['putPage', 'listOntologyFactCandidates', 'readAtomProvenanceCounts'] },
+    'readAtomProvenanceCounts reads an empty facts brain',
+    { methods: ['putPage', 'readAtomProvenanceCounts'] },
     async (engine) => {
       await put(engine, 'notes/a');
-      const facts = await engine.listOntologyFactCandidates(SRC);
-      const provenance = await engine.readAtomProvenanceCounts();
-      return { facts, provenance };
+      return engine.readAtomProvenanceCounts();
     },
   );
 });

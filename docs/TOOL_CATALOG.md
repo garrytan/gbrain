@@ -216,7 +216,7 @@ Every non-localOnly operation on the MCP surface: 180 tools across 28 areas. **S
 | `revert_version` | Restore a page to an earlier version from its history (a new revision; history is kept). | write |  |  |
 | `unpurge_page` | Owner-only (`gbrain pages unpurge <slug>`). | admin |  |  |
 | `upload_page_part` | Send the next part of an upload: part equals next_part, the whole call within part_max_frame_bytes, cut between code points. | write |  |  |
-| `whois` | Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. | read |  |  |
+| `whois` | Exact identity lookup: entity pages whose email, phone, title or declared alias equals an email address, phone number or name, ignoring case, accents and quotes; phones compare in one canonical form (+, country code, digits). | read |  |  |
 
 ## questions
 

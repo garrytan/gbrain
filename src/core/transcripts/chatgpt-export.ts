@@ -167,6 +167,7 @@ export const chatgptExportAdapter: TranscriptAdapter = {
             title: typeof c.title === 'string' ? c.title : null,
             source_path: path,
           },
+          ownerBasis: 'export_user',
         },
         messages,
       };

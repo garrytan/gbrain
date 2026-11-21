@@ -17,7 +17,7 @@ export const DOCTOR_PAGES_MEMBERS: readonly string[] = [
   'listOversizedPages', 'listScraperJunkCandidates', 'countMarkedPages', 'countOversizedCorePages', 'readRawProvenanceGaps',
   'countUnverifiedExtractions', 'listContentHashDuplicates', 'countTranscriptImportPages', 'countPageRows',
   'countPagesBySlugPrefix', 'countLivePages', 'readOldestPageCreatedAt', 'countPageTrustTiers', 'countPagesWithMentionLinks',
-  'countImageModalityMismatches', 'readImagePageCoverage', 'listFactsPageBodies', 'listBracketPathPages', 'listSlugPathCandidates',
+  'countImageModalityMismatches', 'readImagePageCoverage', 'listBracketPathPages', 'listSlugPathCandidates',
 ];
 
 /** Rows `listOversizedPages` reads: the list limit of the oversized_pages check plus one (a full list means a floor). */
@@ -33,7 +33,6 @@ export interface RawProvenanceGaps { count: number; slugs: string[] }
 export interface ContentHashDuplicateRow { source_id: string; content_hash: string; slugs: string }
 export interface TrustTierCount { tier: string | null; n: number }
 export interface ImagePageCoverage { image_pages: number; without_image_vector: number; null_source_path: number }
-export interface FactsPageBody { slug: string; source_id: string; segmented: boolean; body: string | null }
 export interface BracketPathPage { slug: string; source_id: string; source_path: string }
 export interface SlugPathCandidate { source_id: string; slug: string; source_path: string }
 /** A frontmatter key doctor counts pages by. */
@@ -144,9 +143,6 @@ const IMAGE_PAGE_COVERAGE_SQL = `SELECT count(*)::int AS image_pages,
          count(*) FILTER (WHERE p.source_path IS NULL)::int AS null_source_path
        FROM pages p WHERE p.page_kind = 'image' AND p.deleted_at IS NULL`;
 
-const FACTS_PAGE_BODIES_SQL = `SELECT p.slug, p.source_id, p.body_storage = 'segmented' AS segmented, left(coalesce(p.compiled_truth, p.truth_lead), 65536) AS body
-         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`;
-
 const BRACKET_PATH_PAGES_SQL = `SELECT slug, source_id, source_path FROM pages
           WHERE source_path IS NOT NULL AND deleted_at IS NULL
             AND (source_path LIKE '%[%' OR source_path LIKE '%]%'
@@ -181,7 +177,6 @@ export const DOCTOR_PAGES_SQL = {
   pagesWithMentions: PAGES_WITH_MENTIONS_SQL,
   imageModalityMismatch: IMAGE_MODALITY_MISMATCH_SQL,
   imagePageCoverage: IMAGE_PAGE_COVERAGE_SQL,
-  factsPageBodies: FACTS_PAGE_BODIES_SQL,
   bracketPathPages: BRACKET_PATH_PAGES_SQL,
   slugPathCandidates: SLUG_PATH_CANDIDATES_SQL,
   slugPathCandidatesInSources: SLUG_PATH_CANDIDATES_IN_SOURCES_SQL,
@@ -285,11 +280,6 @@ export async function countImageModalityMismatches(raw: EngineRawRead): Promise<
 export async function readImagePageCoverage(raw: EngineRawRead): Promise<ImagePageCoverage> {
   const [row] = await raw<{ image_pages: number | string; without_image_vector: number | string; null_source_path: number | string }>(IMAGE_PAGE_COVERAGE_SQL);
   return { image_pages: Number(row?.image_pages ?? 0), without_image_vector: Number(row?.without_image_vector ?? 0), null_source_path: Number(row?.null_source_path ?? 0) };
-}
-
-/** Live `facts` pages in (source, slug) order with the bounded body prefix. */
-export async function listFactsPageBodies(raw: EngineRawRead): Promise<FactsPageBody[]> {
-  return raw<FactsPageBody>(FACTS_PAGE_BODIES_SQL);
 }
 
 /** Live pages whose `source_path` has a bracket or a control character. */

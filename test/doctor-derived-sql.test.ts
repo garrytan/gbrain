@@ -27,8 +27,6 @@ import { atomMovedOriginPrivateSql, atomOriginSlugSql, atomOriginSlugsSql } from
 import { untiledSql, liveTilingSql } from '../src/core/page-body/schema.ts';
 import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
 import { ATOM_PROVENANCE_CTE } from '../src/commands/doctor/checks/atom-body-recheck.ts';
-import { NOT_CONVERSATION_SLOT_SQL } from '../src/core/chronicle/ontology.ts';
-import { DUPLICATE_SQL, EXPIRY_TEXT } from '../src/core/repair/ontology-facts.ts';
 
 /** SQL whitespace outside string literals carries no meaning, and the constants are indented for reading. */
 const flat = (sql: string): string => sql.replace(/\s+/g, ' ').trim();
@@ -81,10 +79,6 @@ describe('doctor-derived composed SQL', () => {
     const scoped = atomRetirementsSql('p.source_id=ANY($1::text[])');
     holds(COMPOSED_SQL.ATOM_RETIREMENTS_SQL, `FROM (${scoped}) c JOIN pages p ON p.id=c.id`, `interval '${ATOM_RESTORE_HOLD_DAYS} days'`);
     holds(COMPOSED_SQL.ATOM_RETIREMENTS_COVERED_SQL, `FROM (${scoped}) c WHERE c.restorable AND c.ledger_generation IS NOT NULL`);
-  });
-
-  test('the ontology facts read holds the expiry text and duplicate predicate', () => {
-    holds(COMPOSED_SQL.ONTOLOGY_FACTS_SQL, EXPIRY_TEXT('f.expired_at'), `${DUPLICATE_SQL('f')} AS duplicate`, NOT_CONVERSATION_SLOT_SQL);
   });
 
   test('the atom provenance read starts with the shared CTE', () => {
