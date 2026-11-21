@@ -105,7 +105,9 @@ pub use notifier::{
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
-pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
+pub(crate) use projection_queue::{
+    activation_started_us, parse_timestamptz, queue_page_projection,
+};
 pub use projection_rebuild::{
     ProjectionJobKey, ProjectionWindowCandidate, QueuedProjectionFilter, QueuedProjectionKey,
     QueuedProjectionPages,

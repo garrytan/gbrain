@@ -1,6 +1,6 @@
 //! The count and list reads of takes, salience and code edges: `countOffGridTakeWeights`, `countTakes`,
 //! `planFactPurgeTakes`, `listTakeRowsForPage`, `countMcpResolvedTakes`, `listTakeSupersessionCandidates`,
-//! `countZeroWeightWithTakes` and `hasCodeEdgesSymbol`, matched to the SQL in
+//! `countZeroWeightWithTakes`, `hasCodeEdgesSymbol` and `readTakePreimages`, matched to the SQL in
 //! `src/core/engine-sql/takes-reads.ts`.
 
 mod memory_env;
@@ -12,7 +12,9 @@ use gbrain_store::facts::purge::PurgeTargetArgs;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::salience::EmotionalWeightRow;
 use gbrain_store::sources::SourceInput;
-use gbrain_store::takes::{McpResolvedInput, PurgeTakesInput, ResolveTakeInput, TakeInput};
+use gbrain_store::takes::{
+    McpResolvedInput, PurgeTakesInput, ResolveTakeInput, TakeInput, TakePreimageInput,
+};
 use memory_env::{Brain, brain};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
@@ -529,4 +531,84 @@ fn a_source_owns_symbol_edges_only_when_one_of_its_edges_is_unresolved() {
     assert!(!b.has_code_edges_symbol("other").unwrap());
     assert!(!b.has_code_edges_symbol("empty").unwrap());
     assert!(!b.has_code_edges_symbol("nowhere").unwrap());
+}
+
+/// `[(claim, gone)]` of a `readTakePreimages` answer.
+fn preimage_claims(b: &Brain, read: Value) -> Vec<(String, bool)> {
+    b.read_take_preimages(&de::<TakePreimageInput>(read))
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["preimage"]["claim"].as_str().unwrap().to_string(),
+                r["gone"].as_bool().unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn take_preimages_list_the_gone_and_replaced_takes_once_per_joined_row() {
+    let b = brain("takes-reads-preimages");
+    let a = page(&b, "default", "a");
+    let other = page(&b, "default", "other");
+    add(
+        &b,
+        &[
+            take(a, 3, "third", json!({"weight": 0.7})),
+            take(a, 1, "first", json!({})),
+            take(a, 2, "second", json!({"kind": "bet"})),
+            take(other, 1, "elsewhere", json!({})),
+        ],
+    );
+    resolve(&b, a, 2, Some("garry"));
+    let first = take_id(&b, a, 1) as i64;
+    // By id: the named take is gone; an incoming row of another claim replaces row 3, the same row
+    // keeps row 2, and a row with no stored take adds nothing.
+    let by_id = preimage_claims(
+        &b,
+        json!({"pageId": a, "by": "id", "gone": [first], "incoming": [
+            {"row_num": 3, "claim": "changed", "kind": "take", "holder": "garry"},
+            {"row_num": 2, "claim": "second", "kind": "bet", "holder": "garry"},
+            {"row_num": 9, "claim": "new", "kind": "take", "holder": "garry"},
+        ]}),
+    );
+    assert_eq!(by_id, vec![("first".into(), true), ("third".into(), false)]);
+    // By row number, with two incoming rows at a gone number and a missing holder (NULL differs).
+    let by_row = preimage_claims(
+        &b,
+        json!({"pageId": a, "by": "row_num", "gone": [1], "incoming": [
+            {"row_num": 1, "claim": "first", "kind": "take", "holder": "garry"},
+            {"row_num": 1, "claim": "x", "kind": "take", "holder": "garry"},
+            {"row_num": 2, "claim": "second", "kind": "bet"},
+        ]}),
+    );
+    assert_eq!(
+        by_row,
+        vec![
+            ("first".into(), true),
+            ("first".into(), true),
+            ("second".into(), false)
+        ]
+    );
+    let full = b
+        .read_take_preimages(&de::<TakePreimageInput>(
+            json!({"pageId": a, "by": "row_num", "gone": [2, 3], "incoming": []}),
+        ))
+        .unwrap();
+    assert_eq!(full[0]["preimage"]["kind"], json!("bet"));
+    assert_eq!(full[0]["preimage"]["resolved_quality"], json!("correct"));
+    assert_eq!(full[0]["preimage"]["resolved_by"], json!("garry"));
+    assert!(
+        full[0]["preimage"]["resolved_at"]
+            .as_str()
+            .unwrap()
+            .ends_with("+00:00")
+    );
+    assert_eq!(full[1]["preimage"]["weight"], json!(0.7));
+    assert_eq!(full[1]["preimage"]["resolved_at"], Value::Null);
+    let none = json!({"pageId": 9999, "by": "id", "gone": [first], "incoming": []});
+    assert!(b.read_take_preimages(&de(none)).unwrap().is_empty());
+    let bad = json!({"pageId": a, "by": "slug", "gone": [], "incoming": []});
+    assert!(b.read_take_preimages(&de(bad)).is_err());
 }

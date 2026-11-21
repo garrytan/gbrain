@@ -22,6 +22,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | `listUnattributedFacts` | The review-list read of `src/core/review-lists.ts`: active rows with no `entity_slug` in any of `sourceIds` (duplicates read once), less rows whose page or entity page is soft-deleted, `worldOnly` keeping `visibility = 'world'`, newest id first, then `offset` and `limit`. Each row is `id, fact, kind, visibility, source_id, created_at, source`, `created_at` in the `timestamptz::text` form (`2026-06-18 09:00:00.5+00`). `excludePrivate` applies the private-provenance policy below, as `src/core/review-lists.ts:30` does. The `BrainEngine` member `listUnattributedFacts` (`src/core/rust-engine/store-members/facts.ts`) calls it in place of the SQL of `src/core/engine-sql/cli-reads-ops.ts`; its `excludePrivateProvenance` becomes this policy. |
 | `pageCollapseFacts` | The collapse-stage read of hybrid search (`facts/collapse.rs`, SQL in `src/core/engine-sql/search-reads.ts`): one `{ id, target, body_chars, body, lead }` row per page row whose id is in `ids`, soft-deleted pages and every source included, by id (the SQL has no `ORDER BY`); a missing id has no row. `target` is the first of `redirect_to`, `redirect` and `merged_into` that is a non-empty string after trimming spaces, then `superseded_by` when the lower-cased `status` holds the word `alias`, `redirect` or `redirected`. `BODY` is the first 65,536 code points of `compiled_truth`, or of the stored `truth_lead` for a segmented page (`coalesce(compiled_truth, truth_lead)`), spaces trimmed; `body_chars` is its length in code points, `body` its md5 hex for an id in `bodyIds` with at least 200 code points, `lead` its first 4,000 code points for an id in `bodyIds`. The TypeScript member refuses an id that is not a 32-bit integer, as the SQL casts both lists to `int[]`. It reads pages, not facts; it sits here because its `BrainEngine` capability class is `facts`. |
 | `listFenceRetireCandidates`, `listFenceFactRows` | The fence guard's two reads of a page's fence rows (`facts/fence.rs`): the rows a publication would retire, and the live rows the writer may not supersede. See "The fence guard's reads". |
+| `readFactPreimages` | The fact rows adapter's before-state of named facts of one source (`facts/fence.rs`). See "The fence guard's reads". |
 | `listHeldFenceCells` | The fence row lines a caller with world-only fact reads may not see (`facts/held_cells.rs`), member callers and callers with a private-facts grant included. See "Held fence cells". |
 | `readFenceOverlayRows` | The fence overlay's read of one page body's world fence rows (`facts/fence_overlay.rs`): page tier, newest row fact tier and flag, held hold, narrower fact. See "The fence overlay". |
 | `migrateFactsToCanonical` | Moves a phantom page's active rows onto the canonical slug, `row_num` offset past the canonical page's largest. The ontology duplicates the move would make are dropped first, in its own write, as PGLite runs the two statements outside one transaction. |
@@ -607,6 +608,25 @@ raises).
 - `list_fence_fact_rows`: the live (`expired_at` null) rows under the same filters that are more
   trusted than the writer (`above`), held narrower by a widening proposal, or opened (`opened`):
   `{ id, row_num, fact, visibility, trust_tier, above, opened }`, by row number.
+
+`read_fact_preimages` (`engine-sql/facts.ts` `readFactPreimages`, for `generations/adapters/fact-rows.ts`
+`factPreimages`) is the same before-state for named fact ids of one source, each id once, in id order,
+expired rows included. An id of another source, or no row, is left out. The member refuses an id that
+is not a whole number before it reads, on every engine.
+
+`restore_fact_preimage` (`engine-sql/facts.ts` `restoreFactPreimage`, for `restoreFactRow`) writes such a
+before-state back: `expired_at`, `valid_until`, `superseded_by`, `consolidated_at` and `consolidated_into`, and
+`row_num` only when no other row of the page holds that number. It changes only the row of that id and source
+whose claim and visibility still match, and returns whether it did. Every argument is checked first, as Postgres
+casts the parameters before it reads a row, and a `superseded_by` that names no fact is the
+`facts_superseded_by_fkey` refusal.
+
+`list_fact_ids_by_source_prefix` (`engine-sql/facts.ts` `listFactIdsBySourcePrefix`, for
+`generations/adapters/extracted-facts.ts` `storedRows`) lists the ids of one page's fact rows whose `source`
+starts with a prefix, in id order, expired rows included (`COALESCE(source,'') LIKE prefix || '%'`). The
+member refuses a prefix that holds `%`, `_` or `\` on every engine, so the match is a plain prefix.
+`expire_fact_rows` (`expireFactRows`, for `retireItems`) sets `expired_at` to now on each still-live row of
+the named ids in that source; another source's row, a struck row and a missing id are left as they are.
 
 What PGLite reads from the transaction, the store takes as a `FenceContext`: the writer's tier
 (`gbrain.write_trust_tier`, undeclared reads as `unknown`, a name that is no tier ranks 0) and the

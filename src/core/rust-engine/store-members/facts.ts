@@ -2,7 +2,8 @@
  * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact, expireFactSuperseded, expireFactAtDate,
  * listFactsByEntity, listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions, countUnconsolidatedFacts,
  * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical, listUnattributedFacts,
- * pageCollapseFacts, listFenceRetireCandidates).
+ * pageCollapseFacts, listFenceRetireCandidates, readFactPreimages, restoreFactPreimage, listFactIdsBySourcePrefix,
+ * expireFactRows).
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
  * store cannot answer exactly refuses with `engine_capability_missing` (a read eligibility policy goes to the store on
@@ -24,6 +25,7 @@ import { storePrivacyPolicy } from './private-provenance.ts';
 import { storeVisibility } from './fact-visibility.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
+import { checkFactIds, checkFactSourcePrefix, type FactPreimage } from '../../engine-sql/facts.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type FactRow = Awaited<ReturnType<BrainEngine['listFactsByEntity']>>[number];
@@ -258,14 +260,38 @@ export const countUnconsolidatedFacts: Member<'countUnconsolidatedFacts'> = (bra
   storeCall({ member: 'countUnconsolidatedFacts' }, () => brain.countUnconsolidatedFacts(sourceId));
 
 /** The store reads the page's rows by number; ids come back as numbers, and the times as the `jsonb` text PGLite's statement gives. */
-export const listFenceRetireCandidates: Member<'listFenceRetireCandidates'> = async (brain, target) => {
-  const rows = await storeCall({ member: 'listFenceRetireCandidates', slug: target.slug, sourceId: target.sourceId },
-    () => brain.listFenceRetireCandidates({ sourceId: target.sourceId, slug: target.slug, incoming: target.incoming })) as Row[];
-  return rows.map((row) => ({
-    ...row, id: Number(row.id),
-    superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
-    consolidated_into: row.consolidated_into == null ? null : Number(row.consolidated_into),
-  })) as unknown as Awaited<ReturnType<BrainEngine['listFenceRetireCandidates']>>;
+/** A before-state row as the store returns it: ids as numbers, the times as the `jsonb` text PGLite's statement gives. */
+const preimageRows = (rows: Row[]): FactPreimage[] => rows.map((row) => ({
+  ...row, id: Number(row.id),
+  superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
+  consolidated_into: row.consolidated_into == null ? null : Number(row.consolidated_into),
+})) as unknown as FactPreimage[];
+
+export const listFenceRetireCandidates: Member<'listFenceRetireCandidates'> = async (brain, target) =>
+  preimageRows(await storeCall({ member: 'listFenceRetireCandidates', slug: target.slug, sourceId: target.sourceId },
+    () => brain.listFenceRetireCandidates({ sourceId: target.sourceId, slug: target.slug, incoming: target.incoming })) as Row[]);
+
+/** The store reads each fact by id and keeps those of the source; ids that are not whole numbers refuse as on PGLite. */
+export const readFactPreimages: Member<'readFactPreimages'> = async (brain, sourceId, ids) => {
+  checkFactIds('readFactPreimages', ids);
+  if (!ids.length) return [];
+  return preimageRows(await storeCall({ member: 'readFactPreimages', sourceId }, () => brain.readFactPreimages(sourceId, [...ids])) as Row[]);
+};
+
+/** The store checks every argument as Postgres casts it, then rewrites the row when its source, claim and visibility match. */
+export const restoreFactPreimage: Member<'restoreFactPreimage'> = (brain, sourceId, preimage) =>
+  storeCall({ member: 'restoreFactPreimage', sourceId }, () => brain.restoreFactPreimage(sourceId, preimage));
+
+/** The prefix is matched literally (`starts_with`), so a LIKE wildcard refuses here as it does on every engine. */
+export const listFactIdsBySourcePrefix: Member<'listFactIdsBySourcePrefix'> = async (brain, sourceId, slug, sourcePrefix) => {
+  checkFactSourcePrefix('listFactIdsBySourcePrefix', sourcePrefix);
+  return (await storeCall({ member: 'listFactIdsBySourcePrefix', sourceId }, () => brain.listFactIdsBySourcePrefix({ sourceId, slug, sourcePrefix })) as number[]).map(Number);
+};
+
+export const expireFactRows: Member<'expireFactRows'> = async (brain, sourceId, ids) => {
+  checkFactIds('expireFactRows', ids);
+  if (!ids.length) return;
+  await storeCall({ member: 'expireFactRows', sourceId }, () => brain.expireFactRows(sourceId, [...ids]));
 };
 
 export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async (brain, sourceId, entitySlug, factText, opts) => {

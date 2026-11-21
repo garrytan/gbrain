@@ -11,10 +11,12 @@
  *    no SQL, so every read and write on the path has to be a typed member.
  *  - Why existing coverage misses it: the reads ran through `executeRaw` inside cycle/extract-takes.ts and
  *    trust/fence-guard.ts, which the parity cases cannot call (D18); test/extract-takes*.test.ts run PGLite only.
- *  - Rust: the write publishes a take-fence generation (generations/publish.ts `publishFenceGeneration`), whose ledger
- *    statements still run through `executeRaw`, so on the Rust arm both cases end on the typed `raw_sql` refusal, and
- *    `atFenceGeneration` pins that the refusal comes from inside `publishFenceGeneration`: every read before it on the
- *    path (the page, tier, fence, guard, preimage and coverage reads) is a typed member the store serves.
+ *  - Rust: the write publishes a take-fence generation (generations/publish.ts `publishFenceGeneration`) through typed
+ *    ledger members, then records the takes' taint edges (trust/taint.ts `recordTaintEdges`, the `recordDerivationEdges`
+ *    member), which the store does not serve yet, so on the Rust arm both cases end on that typed refusal, and
+ *    `atFenceGeneration` pins where it comes from: inside `publishFenceGeneration`, or the `recordDerivationEdges` call
+ *    after it. Every read before them on the path (the page, tier, fence, guard, preimage and coverage reads) is a typed
+ *    member the store serves.
  *  - Seam: `withWriteTrustSettings` stamps the operator-curated take (the transaction-local `gbrain.write_trust_tier`
  *    every arm sets with `applyTransactionSettings`). The FS path reads a markdown checkout in a temp directory.
  */
@@ -73,7 +75,8 @@ async function takeProposals(engine: BrainEngine, claimOf: Map<number, string>) 
 }
 
 /**
- * On the Rust arm, run `fn` and require it to stop on the typed refusal raised inside `publishFenceGeneration`; the
+ * On the Rust arm, run `fn` and require it to stop on the typed refusal raised inside `publishFenceGeneration` or by
+ * the `recordDerivationEdges` call of `recordTaintEdges` after it; the
  * refusal is rethrown so the harness counts the case as stopped. Any other failure, or a finish, fails the case.
  */
 async function atFenceGeneration<T>(backend: string, fn: () => Promise<T>): Promise<T> {
@@ -83,7 +86,8 @@ async function atFenceGeneration<T>(backend: string, fn: () => Promise<T>): Prom
     value = await fn();
   } catch (error) {
     const e = error as { code?: unknown; stack?: unknown };
-    if (e?.code !== 'engine_capability_missing' || !String(e.stack ?? '').includes('publishFenceGeneration')) {
+    const stack = String(e?.stack ?? '');
+    if (e?.code !== 'engine_capability_missing' || !(stack.includes('publishFenceGeneration') || stack.includes('recordTaintEdges'))) {
       throw new Error(`the takes re-extract stopped outside publishFenceGeneration: ${String(e?.stack ?? error)}`);
     }
     throw error;

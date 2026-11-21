@@ -13,6 +13,7 @@
 
 use super::*;
 use crate::facts::{PrivacyPolicy, fact_fingerprint, page_hidden, read_fact};
+use crate::timeline_queries::timestamptz_text;
 
 /// The widest `10^-exp` the grid check works on exactly. A weight with more places than this is
 /// within 1e-30 of zero, and zero is on the grid.
@@ -52,6 +53,70 @@ pub struct PurgeTakesInput {
     pub fact_hash: String,
     /// A page slug, or `*` for every page of the source.
     pub subject: String,
+}
+
+/// `listHeldFenceTakeRows` arguments.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeldFenceTakeSpec {
+    pub source_id: String,
+    pub kind: String,
+    pub owner_key: String,
+    pub page_id: i64,
+}
+
+/// `readTakePreimages` arguments. The TypeScript member checks every number first
+/// (`checkTakePreimageRead`), so the numbers arrive whole and in range.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TakePreimageInput {
+    pub page_id: f64,
+    /// `id`: `gone` names takes by id; `row_num`: by row number.
+    pub by: String,
+    #[serde(default)]
+    pub gone: Vec<f64>,
+    #[serde(default)]
+    pub incoming: Vec<IncomingTakeRow>,
+}
+
+/// One `jsonb_to_recordset` row of `readTakePreimages`: a missing column reads as SQL NULL.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct IncomingTakeRow {
+    pub row_num: Option<f64>,
+    pub claim: Option<String>,
+    pub kind: Option<String>,
+    pub holder: Option<String>,
+}
+
+/// A take's before-state as `TAKE_PREIMAGE_SQL` builds it (`jsonb_build_object`).
+fn take_preimage(t: &TakeRecord) -> Value {
+    json!({
+        "id": t.id,
+        "page_id": t.page_id,
+        "row_num": t.row_num,
+        "claim": t.claim,
+        "kind": t.kind,
+        "holder": t.holder,
+        "weight": real_out(t.weight),
+        "since_date": t.since_date,
+        "until_date": t.until_date,
+        "source": t.source,
+        "superseded_by": t.superseded_by,
+        "active": t.active,
+        "resolved_at": t.resolved_at_us.map(jsonb_time),
+        "resolved_outcome": t.resolved_outcome,
+        "resolved_value": t.resolved_value.map(real_out),
+        "resolved_unit": t.resolved_unit,
+        "resolved_source": t.resolved_source,
+        "resolved_by": t.resolved_by,
+        "resolved_quality": t.resolved_quality,
+    })
+}
+
+/// `timestamptz` as `jsonb_build_object` writes it under a UTC session: `2026-06-18T09:00:00.5+00:00`.
+fn jsonb_time(micros: i64) -> String {
+    format!("{}:00", timestamptz_text(micros).replacen(' ', "T", 1))
 }
 
 /// `countMcpResolvedTakes` arguments: the scope the caller's read policy resolved to.
@@ -131,6 +196,104 @@ impl Store {
             .into_iter()
             .map(|t| json!({ "row_num": t.row_num, "claim": t.claim }))
             .collect())
+    }
+
+    /// `listHeldFenceTakeRows(spec)`: the page's takes by row number, resolution cells included,
+    /// while the `(sourceId, kind, ownerKey)` generation is held `fence_absent`; none otherwise.
+    pub fn list_held_fence_take_rows(&self, spec: &HeldFenceTakeSpec) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let key = crate::generations::GenerationKey {
+            source_id: spec.source_id.clone(),
+            kind: spec.kind.clone(),
+            owner_key: spec.owner_key.clone(),
+        };
+        if !crate::generations::held_for(&*read, &key, "fence_absent")? {
+            return Ok(Vec::new());
+        }
+        let Ok(page_id) = u64::try_from(spec.page_id) else {
+            return Ok(Vec::new());
+        };
+        let mut takes = page_takes(&*read, page_id)?;
+        takes.sort_by_key(|t| t.row_num);
+        Ok(takes
+            .iter()
+            .map(|t| {
+                json!({
+                    "row_num": t.row_num,
+                    "claim": t.claim,
+                    "kind": t.kind,
+                    "holder": t.holder,
+                    "weight": real_out(t.weight),
+                    "since_date": t.since_date,
+                    "until_date": t.until_date,
+                    "source": t.source,
+                    "active": t.active,
+                    "resolved_at": t.resolved_at_us.map(iso),
+                    "resolved_quality": t.resolved_quality,
+                    "resolved_outcome": t.resolved_outcome,
+                    "resolved_source": t.resolved_source,
+                    "resolved_value": t.resolved_value.map(real_out),
+                    "resolved_unit": t.resolved_unit,
+                    "resolved_by": t.resolved_by,
+                })
+            })
+            .collect())
+    }
+
+    /// `readTakePreimages(read)`: `[{ preimage, gone }]` by row number. A take is listed when
+    /// `gone` names it, or when an incoming row of its number has another claim, kind or holder
+    /// (`IS DISTINCT FROM`, so an incoming NULL differs). The `LEFT JOIN` gives a take once per
+    /// incoming row of its number (once when there is none), and each joined row is kept or dropped
+    /// on its own.
+    pub fn read_take_preimages(&self, input: &TakePreimageInput) -> Result<Vec<Value>> {
+        let Some(page_id) = (input.page_id >= 0.0).then_some(input.page_id as u64) else {
+            return Ok(Vec::new());
+        };
+        let by_id = match input.by.as_str() {
+            "id" => true,
+            "row_num" => false,
+            other => {
+                return Err(StoreError::invalid(format!(
+                    "readTakePreimages: by must be id or row_num, not {other:?}"
+                )));
+            }
+        };
+        let gone: HashSet<i64> = input.gone.iter().map(|n| *n as i64).collect();
+        let mut out = Vec::new();
+        for take in page_takes(&*self.read()?, page_id)? {
+            let named = if by_id {
+                i64::try_from(take.id).is_ok_and(|id| gone.contains(&id))
+            } else {
+                gone.contains(&i64::from(take.row_num))
+            };
+            let joined: Vec<&IncomingTakeRow> = input
+                .incoming
+                .iter()
+                .filter(|n| {
+                    n.row_num
+                        .is_some_and(|r| r as i64 == i64::from(take.row_num))
+                })
+                .collect();
+            let kept = |n: Option<&IncomingTakeRow>| {
+                named
+                    || n.is_some_and(|n| {
+                        n.claim.as_deref() != Some(take.claim.as_str())
+                            || n.kind.as_deref() != Some(take.kind.as_str())
+                            || n.holder.as_deref() != Some(take.holder.as_str())
+                    })
+            };
+            let rows: Vec<Option<&IncomingTakeRow>> = if joined.is_empty() {
+                vec![None]
+            } else {
+                joined.into_iter().map(Some).collect()
+            };
+            for n in rows {
+                if kept(n) {
+                    out.push(json!({ "preimage": take_preimage(&take), "gone": named }));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// `countMcpResolvedTakes(scope)`: the resolved takes whose `resolved_by` starts with `mcp:`,

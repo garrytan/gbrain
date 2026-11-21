@@ -266,11 +266,10 @@ src/core/calibration/think-ab.ts	execute_raw	2
 src/core/calibration/undo-wave.ts	execute_raw	7
 src/core/chronicle/backfill.ts	execute_raw	1
 src/core/chronicle/campaign.ts	execute_raw	3
-src/core/chronicle/event-identity.ts	execute_raw	1
 src/core/chronicle/execute.ts	execute_raw	9
 src/core/chronicle/ledger-stats.ts	execute_raw	5
 src/core/chronicle/ledger.ts	execute_raw	10	#9636: add_link carries a still-pending automatic decision to its revision, read from chronicle_page_state by page; no typed engine method for the ledger exists yet
-src/core/chronicle/publish.ts	execute_raw	4
+src/core/chronicle/publish.ts	execute_raw	2
 src/core/chunkers/symbol-resolver.ts	execute_raw	7
 src/core/claw-test/seed-pglite.ts	driver_call	1
 src/core/code-chunks.ts	execute_raw	3
@@ -376,21 +375,6 @@ src/core/fence-repair/repair-io.ts	execute_raw	1
 src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
 src/core/function-search-path.ts	execute_raw	3
-src/core/generations/adapters/atoms.ts	execute_raw	3
-src/core/generations/adapters/chronicle-events.ts	execute_raw	13
-src/core/generations/adapters/extracted-facts.ts	execute_raw	4
-src/core/generations/adapters/fact-rows.ts	execute_raw	6
-src/core/generations/adapters/page.ts	execute_raw	2
-src/core/generations/adapters/single-page.ts	execute_raw	1
-src/core/generations/adapters/synthesis.ts	execute_raw	1
-src/core/generations/adapters/take-rows.ts	execute_raw	1
-src/core/generations/fence-evidence.ts	execute_raw	4
-src/core/generations/fence-restore.ts	execute_raw	3
-src/core/generations/fence.ts	execute_raw	4
-src/core/generations/ledger-scrub.ts	execute_raw	7
-src/core/generations/managed.ts	execute_raw	7
-src/core/generations/publish.ts	execute_raw	19
-src/core/generations/repair.ts	execute_raw	6
 src/core/ghost-pages.ts	execute_raw	3
 src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
@@ -563,7 +547,6 @@ src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
 src/core/persistence/deactivation.ts	execute_raw	19
 src/core/persistence/derived-origin-hold.ts	execute_raw	10
-src/core/persistence/derived-retirement-hold.ts	execute_raw	1
 src/core/persistence/detached-pages.ts	execute_raw	4
 src/core/persistence/diagnostics.ts	execute_raw	7
 src/core/persistence/drift-conflicts.ts	execute_raw	9

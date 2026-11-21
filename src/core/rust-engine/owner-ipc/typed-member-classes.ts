@@ -198,6 +198,19 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readSyncRecoveryProbeRow', 'readSyncStatusCommittedRow', 'readSyncStatusSourceRow', 'readSynopsisTierSources',
   'readTrigramCandidates', 'readUnembeddedPageSummary', 'readUnfinishedAccessMigration', 'readWantedMarkers',
   'readWorktreeAdmission', 'readWriteRequestsByRequestIds', 'readWriteWatermarkRow', 'readWriterAdminState',
+  // The derived-generation ledger, its fence evidence and repair, the chronicle event, atom and take/fact preimage
+  // reads (SELECTs only; the Rust store answers each from a read snapshot).
+  'countDerivedRowTaint', 'hasBodylessPageVersion', 'hasChronicleSkipDecision', 'heldGenerationRowsForInput',
+  'listAtomWriteReceipts', 'listChronicleEventSlotRows', 'listChronicleOwnedHashes', 'listEventProjectionRows',
+  'listFactIdsBySourcePrefix', 'listFenceVersionBodies', 'listGenerationOrphanCandidates',
+  'listGenerationSourceIncarnations', 'listHeldGenerationRows', 'listLiveGenerationItems',
+  'listOrphanedChronicleOwners', 'listOwnedGenerationItems', 'listPageContentHashes', 'listPendingGenerationMembers',
+  'listProducerVersionRows', 'listRecordedFenceItemKeys', 'listRestorableGenerationRows',
+  'listRetiredGenerationItemKeys', 'listUnmatchedGenerationRows', 'liveGenerationForOperation', 'pageSlugExists',
+  'readAtomOriginInput', 'readChronicleDepthRow', 'readEventProjectionId', 'readFactPreimages', 'readFenceHoldFiles',
+  'readFenceOriginGone', 'readGenerationActivationState', 'readGenerationFenceBlocks', 'readGenerationItemsByIds',
+  'readGenerationPageRows', 'readGenerationRestored', 'readGenerationValve', 'readHeldGenerationContext',
+  'readHeldGenerationProposal', 'readLiveGenerationId', 'readLiveGenerationRow', 'readTakePreimages',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';
@@ -445,4 +458,26 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   lockAccessPolicy: nothingLock,
   declareSyncImportPageCursor: nothingCursor,
   fetchSyncImportPageCursor: nothingCursor,
+  // The derived-generation ledger writes, the fence-evidence renumbering, the derived-row trust writes and the chronicle
+  // event projection writes, each with the read that shows its row.
+  activateGenerationRows: 'readLiveGenerationRow for that generation key',
+  bumpGenerationValve: 'readGenerationValve for that key and window',
+  clearFenceHoldRows: 'listFenceHoldRows for that generation key',
+  clearGenerationAttempts: 'listHeldGenerationRows for that source (each held row carries its attempt count)',
+  clearTieHeldGenerationRows: 'listHeldGenerationRows for that source',
+  countGenerationAttempt: 'listHeldGenerationRows for that source (each held row carries its attempt count)',
+  deleteEventProjections: 'listEventProjectionRows for the depth page ids',
+  expireFactRows: 'readFactPreimages for those fact ids (their expired_at)',
+  lockGenerationKey: nothingLock,
+  lowerTrustTier: 'readStoredPageTier for each page id (a take or timeline row: readTakePreimages or listEventProjectionRows of its page)',
+  markGenerationActivated: 'readGenerationActivationState for that activation',
+  moveKeptFactRows: 'readFactPreimages for those fact ids (their row numbers)',
+  recordGenerationActivation: 'readGenerationActivationState for that activation',
+  recordHeldGenerationRow: 'heldGenerationRowsForInput for that key and input pin',
+  restoreEventProjection: 'readEventProjectionId for that depth page and date',
+  restoreFactPreimage: 'readFactPreimages for those fact ids',
+  scrubGenerationPageRows: 'listHeldGenerationRows for that source and readLiveGenerationRow for each key',
+  scrubGenerationTextRows: 'listHeldGenerationRows for that source and readLiveGenerationRow for each key',
+  settleGenerationMember: 'listPendingGenerationMembers for that activation',
+  stampPageFrontmatter: 'getPage for each stamped slug (its frontmatter)',
 };

@@ -6,6 +6,7 @@ pub mod entities;
 pub mod export;
 pub mod import;
 mod pg_case;
+pub(crate) mod pg_jsonb;
 pub(crate) mod pg_text;
 pub mod reads;
 pub mod remote_reads;

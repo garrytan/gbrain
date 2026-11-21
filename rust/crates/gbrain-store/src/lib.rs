@@ -60,6 +60,7 @@ pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
 pub mod field_usage;
+pub mod generations;
 pub mod identity_auto;
 pub mod identity_reviews;
 pub mod import_members;

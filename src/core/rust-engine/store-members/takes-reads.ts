@@ -10,7 +10,8 @@
  * The reads and the delete of `gbrain extract takes` (readLivePageIdBySlug through findTakeId) refuse a page, take or
  * row id that is not an integer, as the SQL's integer casts refuse it.
  */
-import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakesLeavingFence } from '../../engine-sql/takes-reads.ts';
+import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PageTierRef, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead,
+  type TakesLeavingFence } from '../../engine-sql/takes-reads.ts';
 import { storedTrustTier } from '../../trust/tier.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -29,11 +30,24 @@ export const planFactPurgeTakes: StoreMember<[spec: PurgeTakesSpec], Array<{ id:
 export const listTakeRowsForPage: StoreMember<[pageId: number], Array<{ row_num: number; claim: string }>> = (brain, pageId) =>
   storeCall({ member: 'listTakeRowsForPage' }, () => brain.listTakeRowsForPage(pageId));
 
+/** The store reads the page's takes by row number and joins the incoming rows as the SQL does; the arguments are checked first. */
+export const readTakePreimages: StoreMember<[read: TakePreimageRead], Array<{ preimage: TakePreimage; gone: boolean }>> = async (brain, read) => {
+  checkTakePreimageRead(read);
+  if (!read.gone.length && !read.incoming.length) return [];
+  return storeCall({ member: 'readTakePreimages' }, () => brain.readTakePreimages({
+    pageId: read.pageId, by: read.by, gone: [...read.gone], incoming: read.incoming.map(take => ({ ...take })),
+  }));
+};
+
 /**
- * The store keeps no fence generations (`derived_generations`), so no take_fence generation is ever held
- * `fence_absent`, and the answer is none, as PGLite gives for a page whose fence generation is not held.
+ * The page's takes by row number while its take_fence generation is held `fence_absent` in the store's generation
+ * ledger (`derived_generations`), none otherwise. `resolved_at` comes back as a Date, as the SQL engines read it.
  */
-export const listHeldFenceTakeRows: StoreMember<[spec: HeldFenceTakeSpec], HeldFenceTakeRow[]> = async () => [];
+export const listHeldFenceTakeRows: StoreMember<[spec: HeldFenceTakeSpec], HeldFenceTakeRow[]> = async (brain, spec) => {
+  const rows = await storeCall<HeldFenceTakeRow[]>({ member: 'listHeldFenceTakeRows', sourceId: spec.sourceId }, () => brain.listHeldFenceTakeRows({
+    sourceId: spec.sourceId, kind: spec.kind, ownerKey: spec.ownerKey, pageId: spec.pageId }));
+  return rows.map(row => ({ ...row, resolved_at: row.resolved_at == null ? null : new Date(row.resolved_at) }));
+};
 
 export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number> = (brain, spec) => {
   const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate, { callerReaders: true });
