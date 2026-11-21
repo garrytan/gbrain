@@ -408,7 +408,7 @@ function getTimeInTz(tz: string): { iso: string; dayOfWeek: string; hour: number
   const abs = Math.abs(offset);
   const offsetStr = `${sign}${String(abs).padStart(2, '0')}:00`;
 
-  const iso = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}${offsetStr}`;
+  const iso = `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:00:00${offsetStr}`; // hour precision: minutes/seconds would change the system prompt every turn and rewrite the prompt cache
   const dayOfWeek = now.toLocaleDateString('en-US', { timeZone: tz, weekday: 'long' });
 
   return { iso, dayOfWeek, hour: localH };
@@ -500,7 +500,7 @@ function formatShortTimeInTz(tz: string): string | null {
   try {
     return new Intl.DateTimeFormat('en-US', {
       timeZone: tz,
-      hour: 'numeric', minute: '2-digit', hour12: true, weekday: 'short',
+      hour: 'numeric', hour12: true, weekday: 'short',
       timeZoneName: 'short',
     }).format(new Date());
   } catch {
