@@ -11,7 +11,6 @@ import { safeHexEqual } from '../core/timing-safe.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { rescopeClientGrant } from '../core/grants/service.ts';
 import { resolveOwnerHolder } from '../core/owner-holder.ts';
-import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { lifetimeUsage, readMcpLogRetentionDays } from '../core/mcp-request-log-retention.ts';
 import { readMcpUsageCoverage } from '../core/mcp-usage.ts';
 import { VERSION } from '../version.ts';
@@ -71,7 +70,6 @@ export async function queryHealthIndicators(engine: BrainEngine): Promise<{
   expiring_soon: number; error_rate: string; pending_writes: number;
   oldest_pending_write_age_seconds: number; pending_writes_later_failed: number;
 }> {
-  const sql = sqlQueryForEngine(engine);
   const now = Math.floor(Date.now() / 1000);
   const expiring = await engine.countOauthAccessTokens(now, now + 86400);
   // Excluded from the error numerator: success, success_with_warnings
@@ -87,19 +85,11 @@ export async function queryHealthIndicators(engine: BrainEngine): Promise<{
   // #5249/O-CEO-14: pending writes are tracked apart from the error rate —
   // how many are still in flight, how old the oldest is, and how many
   // reported as pending in the last 24 hours later ended without committing.
-  const [pending] = await sql`SELECT count(*)::int AS count,
-    COALESCE(floor(extract(epoch FROM now() - min(created_at))), 0)::int AS oldest_age_seconds
-    FROM persistence_requests WHERE state IN ('queued', 'deferred', 'running', 'recovering')`;
-  const [laterFailed] = await sql`SELECT count(DISTINCT r.id)::int AS count FROM mcp_request_log l
-    JOIN persistence_requests r ON r.request_id::text = l.params->>'write_request_id'
-    WHERE l.status = 'accepted_pending' AND l.created_at > now() - interval '24 hours'
-      AND r.state IN ('conflict', 'failed', 'cancelled')`;
+  const writes = await engine.readPendingWriteHealth();
   return {
     expiring_soon: expiring,
     error_rate: `${errorRate}%`,
-    pending_writes: (pending as any).count,
-    oldest_pending_write_age_seconds: (pending as any).oldest_age_seconds,
-    pending_writes_later_failed: (laterFailed as any).count,
+    ...writes,
   };
 }
 

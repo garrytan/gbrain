@@ -328,6 +328,32 @@ impl Brain {
         self.run(env, move |s| s.delete_oauth_code(&hash, &client_id))
     }
 
+    /// `readOauthRefreshTokenForUpdate(hash, clientId)`: the refresh token's whole row, or null.
+    #[napi]
+    pub fn read_oauth_refresh_token_for_update<'env>(
+        &self,
+        env: &'env Env,
+        hash: String,
+        client_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_oauth_refresh_token_for_update(&hash, &client_id)
+        })
+    }
+
+    /// `deleteOauthRefreshToken(hash, clientId)`: null.
+    #[napi]
+    pub fn delete_oauth_refresh_token<'env>(
+        &self,
+        env: &'env Env,
+        hash: String,
+        client_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.delete_oauth_refresh_token(&hash, &client_id)
+        })
+    }
+
     /// `readOauthCodeChallenge(hash, clientId, now)`: the PKCE challenge of an unexpired code of a live client, or null.
     #[napi]
     pub fn read_oauth_code_challenge<'env>(
@@ -360,5 +386,11 @@ impl Brain {
         now: i64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.delete_expired_oauth_credentials(now))
+    }
+
+    /// `expireAllOauthCredentials()`: every OAuth token and code expires (`expires_at = 0`), in one write.
+    #[napi]
+    pub fn expire_all_oauth_credentials<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.expire_all_oauth_credentials())
     }
 }

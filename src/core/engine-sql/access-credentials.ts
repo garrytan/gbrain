@@ -429,6 +429,18 @@ export const OAUTH_SWEEP_SQL = {
     `,
 } as const;
 
+/** The restore quarantine's expiry of every OAuth token and code (shared-skills/restore.ts), byte for byte as it sent them. */
+export const OAUTH_EXPIRE_ALL_SQL = {
+  tokens: 'UPDATE oauth_tokens SET expires_at=0',
+  codes: 'UPDATE oauth_codes SET expires_at=0',
+} as const;
+
+/** Expire every OAuth token and code (`expires_at = 0`), so a restored brain honors no grant the archive carried. */
+export async function expireAllOauthCredentials(tx: Raw): Promise<void> {
+  await tx.executeRaw(OAUTH_EXPIRE_ALL_SQL.tokens);
+  await tx.executeRaw(OAUTH_EXPIRE_ALL_SQL.codes);
+}
+
 /** Delete the OAuth tokens and codes that expired before `nowEpochSeconds`; the count of both. */
 export async function deleteExpiredOauthCredentials(tx: Raw, nowEpochSeconds: number): Promise<number> {
   const tokens = await tx.executeRaw(OAUTH_SWEEP_SQL.tokens, [nowEpochSeconds]);
@@ -479,6 +491,46 @@ export interface OauthTokenInsert {
   /** Epoch seconds (the issue time, `to_timestamp`). */
   created_at: number;
   grant_type?: 'authorization_code' | 'refresh_token' | 'client_credentials';
+}
+
+/**
+ * The refresh-token read and delete of `OAuthGrants.refresh` (oauth-grants.ts), byte for byte as the SqlQuery tag sends
+ * them: only a `refresh` row of the named client matches, so an access token or another client's token reads null.
+ */
+export const OAUTH_REFRESH_SQL = {
+  for_update: "SELECT * FROM oauth_tokens WHERE token_hash = $1 AND token_type = 'refresh' AND client_id = $2 FOR UPDATE",
+  delete: "DELETE FROM oauth_tokens WHERE token_hash = $1 AND token_type = 'refresh' AND client_id = $2",
+} as const;
+
+/** An `oauth_tokens` row as `SELECT *` returns it, `expires_at` a number (or null) and `created_at` a Date on every engine. */
+export interface OauthTokenRow {
+  token_hash: string;
+  token_type: string;
+  client_id: string;
+  scopes: string[] | null;
+  expires_at: number | null;
+  resource: string | null;
+  created_at: Date;
+  grant_type?: string | null;
+}
+
+/** The row with each engine's `timestamptz` and `bigint` spelling brought to one: a `Date` and a number. */
+export function normalizeOauthTokenRow(raw: Record<string, unknown>): OauthTokenRow {
+  const row = { ...raw };
+  if (row.created_at != null && !(row.created_at instanceof Date)) row.created_at = new Date(String(row.created_at));
+  if (row.expires_at != null) row.expires_at = Number(row.expires_at);
+  return row as unknown as OauthTokenRow;
+}
+
+/** The refresh token of this hash and client, taken FOR UPDATE (a single-writer store takes no lock), or null. Expiry is the caller's check. */
+export async function readOauthRefreshTokenForUpdate(tx: Raw, tokenHash: string, clientId: string): Promise<OauthTokenRow | null> {
+  const [row] = await tx.executeRaw<Record<string, unknown>>(OAUTH_REFRESH_SQL.for_update, [tokenHash, clientId]);
+  return row ? normalizeOauthTokenRow(row) : null;
+}
+
+/** Delete the refresh token of this hash and client (a refresh token is single use: the refresh deletes it before it issues). */
+export async function deleteOauthRefreshToken(tx: Raw, tokenHash: string, clientId: string): Promise<void> {
+  await tx.executeRaw(OAUTH_REFRESH_SQL.delete, [tokenHash, clientId]);
 }
 
 /** Insert one OAuth token. A repeated hash is 23505 (`oauth_tokens_pkey`), a client with no row 23503 (`oauth_tokens_client_id_fkey`). */

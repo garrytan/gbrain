@@ -159,8 +159,10 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readOauthAccessTokenRows', 'lockActiveAccessTokens', 'writeAccessTokenGrant', 'writeAccessTokenPrivateGrant', 'lockLegacyAccessTokens',
     'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed',
     'deleteExpiredOauthCredentials', 'insertOauthToken', 'convertLegacyAccessTokenGrant',
+    'expireAllOauthCredentials',
     // OAuth authorization codes and the grant transaction (engine-sql/access-credentials.ts OAUTH_CODE_SQL)
     'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'readOauthCodeChallenge', 'issueOauthTokens',
+    'readOauthRefreshTokenForUpdate', 'deleteOauthRefreshToken',
     // grant writes and reads for rescope, first consent and attest sources (engine-sql/client-grants.ts)
     'readOauthClientForUpdate', 'readLiveOauthClients', 'readLiveAccessTokenRows', 'oauthClientHoldsAuthorization', 'readSourceArchivedForShare', 'readSourceAttestState', 'replaceSourceConfig', 'persistOauthClientGrant', 'readLatestCatalogProvenanceAudit', 'listOauthGrantAudit',
     // revoke deletes of a token and a client, and the client lifecycle writes (engine-sql/oauth-revocation.ts)
@@ -307,7 +309,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore', 'logMcpRequest',
     'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch', 'readMcpLifetimeUsage', 'logChatUsage', 'readChatUsage',
     // the admin dashboard's request counts of the last day
-    'countMcpRequestsLastDay', 'countMcpRequestsLastDayByToken',
+    'countMcpRequestsLastDay', 'countMcpRequestsLastDayByToken', 'readPendingWriteHealth',
   ],
   // field_usage: schema detect --fields page samples (engine-sql/field-usage.ts)
   field_usage: ['readFieldUsageSamples'],

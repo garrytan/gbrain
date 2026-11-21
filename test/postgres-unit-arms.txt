@@ -132,6 +132,7 @@ test/engine-parity/access-setup.test.ts
 test/engine-parity/access-sort-order.test.ts
 test/engine-parity/access-tokens.test.ts
 test/engine-parity/admin-counts.test.ts
+test/engine-parity/admin-http.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
@@ -235,6 +236,7 @@ test/engine-parity/notifier-freshness.test.ts
 test/engine-parity/notifier-resident.test.ts
 test/engine-parity/notifier.test.ts
 test/engine-parity/oauth-clients.test.ts
+test/engine-parity/oauth-http.test.ts
 test/engine-parity/oauth-lifecycle.test.ts
 test/engine-parity/oauth-revocation.test.ts
 test/engine-parity/open-loops.test.ts

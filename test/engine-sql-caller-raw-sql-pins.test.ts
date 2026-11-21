@@ -24,8 +24,9 @@ import { accessAllowedSql, privacyPartSql } from '../src/core/search/private-vis
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterFastForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 import { planManualClient } from '../src/core/oauth-provider.ts';
 import { clientGrantInsert, grantValidationContext, insertClientGrant } from '../src/core/grants/service.ts';
-import { CREDENTIAL_SQL, OAUTH_CODE_SQL } from '../src/core/engine-sql/access-credentials.ts';
+import { CREDENTIAL_SQL, OAUTH_CODE_SQL, OAUTH_EXPIRE_ALL_SQL, OAUTH_REFRESH_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { CLIENT_GRANT_SQL } from '../src/core/engine-sql/client-grants.ts';
+import { PENDING_WRITE_HEALTH_SQL } from '../src/core/engine-sql/telemetry.ts';
 import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { markedScopeSources } from '../src/core/access/attest-sources.ts';
@@ -2261,9 +2262,10 @@ describe('the OAuth code flow and the token grant send the same statements throu
     client_secret_hash: hashToken('secret'), client_secret_expires_at: 0, deleted_at: null, grant_revision: 0, registered_via: 'manual', attest_actor: false };
   const CODE_ROW = { code_hash: 'x', client_id: 'pin-code', scopes: ['read'], code_challenge: CHALLENGE, code_challenge_method: 'S256', redirect_uri: REDIRECT,
     state: null, resource: null, expires_at: NOW / 1000 + 300, created_at: new Date(NOW) };
+  const REFRESH_ROW = { token_hash: 'r', token_type: 'refresh', client_id: 'pin-code', scopes: ['read'], expires_at: NOW / 1000 + 3600, resource: null, created_at: new Date(NOW) };
   const sentBy = async (variant: string, run: (e: any) => Promise<unknown>) => {
     const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'issue', variant, run: async e => { await run(e); },
-      rows: [[/FROM oauth_clients WHERE client_id = \$1/, [CLIENT]], [/FROM oauth_codes WHERE code_hash/, [CODE_ROW]], [/SELECT code_challenge FROM oauth_codes/, [{ code_challenge: CHALLENGE }]]] }));
+      rows: [[/FROM oauth_clients WHERE client_id = \$1/, [CLIENT]], [/FROM oauth_codes WHERE code_hash/, [CODE_ROW]], [/SELECT code_challenge FROM oauth_codes/, [{ code_challenge: CHALLENGE }]], [/FROM oauth_tokens WHERE token_hash = \$1 AND token_type = 'refresh'/, [REFRESH_ROW]]] }));
     expect(capture.error).toBeUndefined();
     // The random code and token hashes differ per run; every other parameter must match.
     return capture.trace.filter(s => s.kind === 'query').map(s => ({ text: s.text, params: (s.params as unknown[]).map(p => typeof p === 'string' && /^[a-f0-9]{64}$/.test(p) ? 'hash' : p) }));
@@ -2274,24 +2276,53 @@ describe('the OAuth code flow and the token grant send the same statements throu
     const g = grants(e, handle);
     const id = await g.begin('pin-code', { redirectUri: REDIRECT, codeChallenge: CHALLENGE, scopes: ['read'], state: undefined } as never);
     const code = new URL(await g.decide(id, true)).searchParams.get('code')!;
-    await g.exchangeCode('pin-code', code, VERIFIER, REDIRECT, undefined, hashToken('secret'));
+    const issued = await g.exchangeCode('pin-code', code, VERIFIER, REDIRECT, undefined, hashToken('secret'));
+    await g.refresh('pin-code', issued.refresh_token!, undefined, undefined, hashToken('secret'));
     await g.clientCredentials('pin-code', 'secret');
     await new GBrainOAuthProvider({ sql: sqlQueryForEngine(e), ...(handle ? { engine: e } : {}) }).challengeForAuthorizationCode({ client_id: 'pin-code' } as never, code);
   };
-  test('begin, decide, the code lookup, exchangeCode and clientCredentials', async () => {
+  test('begin, decide, the code lookup, exchangeCode, refresh and clientCredentials', async () => {
     const template = await sentBy('flow-template', flow(false));
     const member = await sentBy('flow-member', flow(true));
     expect(template.map(s => s.text.trim().split(/\s+/).slice(0, 3).join(' '))).toEqual([
       'SELECT * FROM', 'SELECT * FROM', 'INSERT INTO oauth_codes', 'SELECT * FROM', 'SELECT * FROM',
-      'DELETE FROM oauth_codes', 'INSERT INTO oauth_tokens', 'INSERT INTO oauth_tokens', 'SELECT * FROM', 'INSERT INTO oauth_tokens', 'SELECT code_challenge FROM']);
+      'DELETE FROM oauth_codes', 'INSERT INTO oauth_tokens', 'INSERT INTO oauth_tokens', 'SELECT * FROM', 'SELECT * FROM', 'DELETE FROM oauth_tokens',
+      'INSERT INTO oauth_tokens', 'INSERT INTO oauth_tokens', 'SELECT * FROM', 'INSERT INTO oauth_tokens', 'SELECT code_challenge FROM']);
     expect(member).toEqual(template);
   });
   test('the member texts are the constants the templates were captured into', async () => {
     const sent = await sentBy('flow-constants', flow(true));
     const texts = new Set(sent.map(s => s.text));
-    for (const text of [CLIENT_GRANT_SQL.client_for_update, OAUTH_CODE_SQL.insert, OAUTH_CODE_SQL.for_update, OAUTH_CODE_SQL.delete, OAUTH_CODE_SQL.challenge, OAUTH_TOKEN_SQL.insert_grant]) {
+    for (const text of [CLIENT_GRANT_SQL.client_for_update, OAUTH_CODE_SQL.insert, OAUTH_CODE_SQL.for_update, OAUTH_CODE_SQL.delete, OAUTH_CODE_SQL.challenge, OAUTH_TOKEN_SQL.insert_grant, OAUTH_REFRESH_SQL.for_update, OAUTH_REFRESH_SQL.delete]) {
       expect(texts.has(text)).toBe(true);
     }
+  });
+  test('the refresh-token read and delete members send their constants with the hash and client id', async () => {
+    const read = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'readOauthRefreshTokenForUpdate', variant: 'member', run: e => e.readOauthRefreshTokenForUpdate('h', 'pin-code') }));
+    const del = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'deleteOauthRefreshToken', variant: 'member', run: e => e.deleteOauthRefreshToken('h', 'pin-code') }));
+    for (const [capture, text] of [[read, OAUTH_REFRESH_SQL.for_update], [del, OAUTH_REFRESH_SQL.delete]] as const) {
+      expect(capture.error).toBeUndefined();
+      expect(capture.trace.flatMap(t => (t.kind === 'query' ? [{ text: t.text, params: t.params }] : []))).toEqual([{ text, params: ['h', 'pin-code'] }]);
+    }
+  });
+  test('the restore quarantine member sends the two expiry statements restore.ts sent, tokens first, with no params', async () => {
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'expireAllOauthCredentials', variant: 'member', run: e => e.expireAllOauthCredentials() }));
+    expect(capture.error).toBeUndefined();
+    expect(OAUTH_EXPIRE_ALL_SQL).toEqual({ tokens: 'UPDATE oauth_tokens SET expires_at=0', codes: 'UPDATE oauth_codes SET expires_at=0' });
+    expect(capture.trace.flatMap(t => (t.kind === 'query' ? [t.text] : []))).toEqual([OAUTH_EXPIRE_ALL_SQL.tokens, OAUTH_EXPIRE_ALL_SQL.codes]);
+  });
+  test('the pending-write health member sends the two statements serve-http-admin-api.ts sent, in flight first, with no params', async () => {
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'readPendingWriteHealth', variant: 'member', run: e => e.readPendingWriteHealth() }));
+    expect(capture.error).toBeUndefined();
+    // The texts at 982540fd6e src/commands/serve-http-admin-api.ts:90-96, byte for byte.
+    expect(PENDING_WRITE_HEALTH_SQL.pending).toBe(`SELECT count(*)::int AS count,
+    COALESCE(floor(extract(epoch FROM now() - min(created_at))), 0)::int AS oldest_age_seconds
+    FROM persistence_requests WHERE state IN ('queued', 'deferred', 'running', 'recovering')`);
+    expect(PENDING_WRITE_HEALTH_SQL.later_failed).toBe(`SELECT count(DISTINCT r.id)::int AS count FROM mcp_request_log l
+    JOIN persistence_requests r ON r.request_id::text = l.params->>'write_request_id'
+    WHERE l.status = 'accepted_pending' AND l.created_at > now() - interval '24 hours'
+      AND r.state IN ('conflict', 'failed', 'cancelled')`);
+    expect(capture.trace.flatMap(t => (t.kind === 'query' ? [t.text] : []))).toEqual([PENDING_WRITE_HEALTH_SQL.pending, PENDING_WRITE_HEALTH_SQL.later_failed]);
   });
   test('issueOauthTokens runs on the transaction handle, never on the pool', async () => {
     // The client row is locked by the grant's transaction: a token INSERT on another connection waits on its foreign key.

@@ -227,3 +227,32 @@ fn a_grant_writes_all_its_tokens_in_one_write_or_none() {
         .unwrap_err();
     assert!(orphan.message.contains("oauth_tokens_client_id_fkey"));
 }
+
+#[test]
+fn the_restore_quarantine_expires_every_code_and_token_and_keeps_the_rows() {
+    let b = brain("ocode-expire-all");
+    client(&b, "c1");
+    client(&b, "c2");
+    b.insert_oauth_code(&code("k1", "c1", 1_900_000_000))
+        .unwrap();
+    b.insert_oauth_code(&code("k2", "c2", 300)).unwrap();
+    b.insert_oauth_token(&token("t-acc", "c1", "access"))
+        .unwrap();
+    b.insert_oauth_token(&token("t-ref", "c2", "refresh"))
+        .unwrap();
+    let mut never = token("t-never", "c1", "access");
+    never.expires_at = None;
+    b.insert_oauth_token(&never).unwrap();
+    b.expire_all_oauth_credentials().unwrap();
+    for (hash, client_id) in [("k1", "c1"), ("k2", "c2")] {
+        let row = b.read_oauth_code_for_update(hash, client_id).unwrap();
+        assert_eq!(row["expires_at"], 0, "{hash} expires and stays");
+    }
+    let refresh = b
+        .read_oauth_refresh_token_for_update("t-ref", "c2")
+        .unwrap();
+    assert_eq!(refresh["expires_at"], 0);
+    // The sweep then removes every row: each now expires before any later clock.
+    assert_eq!(b.delete_expired_oauth_credentials(1).unwrap(), 5);
+    b.expire_all_oauth_credentials().unwrap();
+}

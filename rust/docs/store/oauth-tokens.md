@@ -48,13 +48,20 @@ lock on the foreign key and deadlock), and on the store both reads and writes ar
 without the handle keeps the same statements through the SqlQuery. The sweep of
 expired credentials calls `deleteExpiredOauthCredentials` (tokens and codes, [oauth-codes.md](oauth-codes.md)).
 
+`OAuthGrants.refresh` reads the presented refresh token through `readOauthRefreshTokenForUpdate(hash, clientId)`
+(`read_oauth_refresh_token_for_update`: the row only when it is a `refresh` token of that client, else null; the lock is a
+no-op on the store, one writer) and deletes it through `deleteOauthRefreshToken(hash, clientId)`
+(`delete_oauth_refresh_token`: only that client's refresh row), both on the grant transaction's handle. A grant built
+without the handle keeps the same statements through the SqlQuery. With `getClient` reading through `readOauthClient`,
+/authorize, /token (code and refresh) and the owner consent serve on a Rust brain.
+
 Differences from PGLite and PostgreSQL:
 
 - Not kept: the secondary indexes. The `oauth_codes` table is kept, see [oauth-codes.md](oauth-codes.md).
 - An expired row stays until the sweep runs or its client is deleted; the bearer check refuses it either way.
 - `active_read_sources` is sorted by id; PostgreSQL's order is unspecified.
-- Still raw SQL, so a Rust brain refuses them: `grants/lifecycle.ts`, `grants/service.ts`, the refresh-token read of
-  `OAuthGrants.refresh`, and the two counts in `serve-http-admin-api.ts`.
+- Still raw SQL, so a Rust brain refuses them: the SqlQuery fallbacks of `grants/service.ts` and the two
+  `persistence_requests` counts in `serve-http-admin-api.ts`.
 
 ## Revoke members
 

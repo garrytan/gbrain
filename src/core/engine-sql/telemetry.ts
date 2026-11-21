@@ -257,6 +257,39 @@ export async function countMcpRequestsLastDay(exec: LegacyUnscopedRead, kind: Mc
   return Number(rows[0]?.count ?? 0);
 }
 
+/**
+ * The pending-write health of `/admin/api/health-indicators` (#5249), byte for byte as the SqlQuery tag in
+ * serve-http-admin-api.ts sent it at 982540fd6e: the writes still in flight with the age of the oldest, and the writes
+ * reported as pending in the last 24 hours that later ended without committing.
+ */
+export const PENDING_WRITE_HEALTH_SQL = {
+  pending: `SELECT count(*)::int AS count,
+    COALESCE(floor(extract(epoch FROM now() - min(created_at))), 0)::int AS oldest_age_seconds
+    FROM persistence_requests WHERE state IN ('queued', 'deferred', 'running', 'recovering')`,
+  later_failed: `SELECT count(DISTINCT r.id)::int AS count FROM mcp_request_log l
+    JOIN persistence_requests r ON r.request_id::text = l.params->>'write_request_id'
+    WHERE l.status = 'accepted_pending' AND l.created_at > now() - interval '24 hours'
+      AND r.state IN ('conflict', 'failed', 'cancelled')`,
+} as const;
+
+/** How many writes are in flight, how old the oldest is in whole seconds (0 with none), and how many pending writes of the last day later failed. */
+export interface PendingWriteHealth {
+  pending_writes: number;
+  oldest_pending_write_age_seconds: number;
+  pending_writes_later_failed: number;
+}
+
+/** The admin dashboard's pending-write health; reads `persistence_requests` and the request log of the last 24 hours. */
+export async function readPendingWriteHealth(exec: LegacyUnscopedRead): Promise<PendingWriteHealth> {
+  const [pending] = await exec.executeRaw<{ count: number | string; oldest_age_seconds: number | string }>(PENDING_WRITE_HEALTH_SQL.pending);
+  const [laterFailed] = await exec.executeRaw<{ count: number | string }>(PENDING_WRITE_HEALTH_SQL.later_failed);
+  return {
+    pending_writes: Number(pending?.count ?? 0),
+    oldest_pending_write_age_seconds: Number(pending?.oldest_age_seconds ?? 0),
+    pending_writes_later_failed: Number(laterFailed?.count ?? 0),
+  };
+}
+
 /** One asked token's request count of the last 24 hours. */
 export interface McpTokenRequestCount {
   token_name: string;

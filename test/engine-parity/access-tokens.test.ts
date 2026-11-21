@@ -583,6 +583,37 @@ describe('engine parity: access_tokens members', () => {
       return out;
     });
 
+  parityTest('the restore quarantine expires every OAuth token and code of every client and keeps the rows, so the next sweep removes them',
+    { methods: ['insertOauthClient', 'insertOauthToken', 'insertOauthCode', 'readOauthCodeForUpdate', 'readOauthRefreshTokenForUpdate', 'readOauthCodeChallenge', 'expireAllOauthCredentials', 'deleteExpiredOauthCredentials'] }, async (engine) => {
+      const now = Math.floor(Date.now() / 1000);
+      for (const id of ['oc-qa', 'oc-qb']) await engine.insertOauthClient({ client_id: id, client_name: id, scope: 'read', client_id_issued_at: 1_700_000_000 });
+      await engine.insertOauthCode({ code_hash: hashToken('qcode-a'), client_id: 'oc-qa', scopes: ['read'], code_challenge: CHALLENGE, code_challenge_method: 'S256',
+        redirect_uri: REDIRECT, state: null, resource: null, expires_at: now + 600 });
+      await engine.insertOauthCode({ code_hash: hashToken('qcode-b'), client_id: 'oc-qb', scopes: ['read'], code_challenge: CHALLENGE, code_challenge_method: 'S256',
+        redirect_uri: REDIRECT, state: 'st', resource: null, expires_at: now + 600 });
+      const token = (name: string, client: string, type: 'access' | 'refresh', expires: number | null) => engine.insertOauthToken({
+        token_hash: hashToken(name), token_type: type, client_id: client, scopes: ['read'],
+        // The column is nullable (a token that never expires); the insert type is narrower, and the quarantine must expire that one too.
+        expires_at: expires as number, resource: null, created_at: now });
+      await token('qtok-a', 'oc-qa', 'access', now + 3600);
+      await token('qtok-r', 'oc-qb', 'refresh', now + 86_400);
+      await token('qtok-never', 'oc-qa', 'access', null);
+      const code = async (name: string, client: string) => (await engine.readOauthCodeForUpdate(hashToken(name), client))?.expires_at;
+      const out: Record<string, unknown> = {};
+      out.before = { a: await code('qcode-a', 'oc-qa'), live: await engine.readOauthCodeChallenge(hashToken('qcode-a'), 'oc-qa', now) };
+      out.expired = await engine.expireAllOauthCredentials();
+      out.after = {
+        a: await code('qcode-a', 'oc-qa'), b: await code('qcode-b', 'oc-qb'),
+        refresh: (await engine.readOauthRefreshTokenForUpdate(hashToken('qtok-r'), 'oc-qb'))?.expires_at,
+        challenge: await engine.readOauthCodeChallenge(hashToken('qcode-a'), 'oc-qa', now),
+      };
+      out.swept = await engine.deleteExpiredOauthCredentials(now);
+      out.again = await engine.expireAllOauthCredentials();
+      // Not vacuous: each code and token is still there with expires_at 0, and one sweep then removes all five rows.
+      if (out.swept !== 5 || (out.after as { a: unknown }).a !== 0) throw new Error(`quarantine: ${JSON.stringify(out)}`);
+      return out;
+    });
+
   parityTest('the grant members on one transaction: the client lock read, a code read and deleted by its own client only, a token pair written all or none',
     { methods: ['insertOauthClient', 'readOauthClientForUpdate', 'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'issueOauthTokens', 'readOauthAccessTokenRows', 'transaction'] }, async (engine) => {
       const now = Math.floor(Date.now() / 1000);

@@ -13,7 +13,7 @@
 //! code hash, and the store never logs one.
 
 use super::oauth_clients::load_client;
-use super::oauth_tokens::delete_expired_tokens;
+use super::oauth_tokens::{delete_expired_tokens, expire_all_tokens};
 use super::*;
 use crate::env::iso;
 
@@ -207,6 +207,21 @@ impl Store {
                 tx.delete(key)?;
             }
             Ok(tokens.saturating_add(u32::try_from(expired.len()).unwrap_or(u32::MAX)))
+        })
+    }
+
+    /// `UPDATE oauth_tokens SET expires_at=0` and `UPDATE oauth_codes SET expires_at=0` of the shared-skill restore
+    /// quarantine, in one write: every token and code expires, so no grant the archive carried is honored.
+    pub fn expire_all_oauth_credentials(&self) -> Result<()> {
+        self.write(|tx| {
+            expire_all_tokens(tx)?;
+            for key in scan_codes(&*tx, |_| true)? {
+                if let Some(mut row) = get_json::<OauthCodeRecord>(&*tx, &key)? {
+                    row.expires_at = 0;
+                    put_json(tx, &key, &row)?;
+                }
+            }
+            Ok(())
         })
     }
 }

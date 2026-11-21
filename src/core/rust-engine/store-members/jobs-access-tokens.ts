@@ -8,7 +8,7 @@
  */
 import type { AccessTokenInsert, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
 import { normalizeOauthClientRow, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';
-import { normalizeAccessTokenListRow, type AccessTokenGrantWrite, type AccessTokenListRow, type AccessTokenPrivateAxis, type ActiveTokenGrantField, type LegacyTokenGrantColumns, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller, type ActiveTokenTarget, normalizeOauthCodeRow, type OauthCodeInsert, type OauthCodeRow } from '../../engine-sql/access-credentials.ts';
+import { normalizeAccessTokenListRow, type AccessTokenGrantWrite, type AccessTokenListRow, type AccessTokenPrivateAxis, type ActiveTokenGrantField, type LegacyTokenGrantColumns, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller, type ActiveTokenTarget, normalizeOauthCodeRow, type OauthCodeInsert, type OauthCodeRow, normalizeOauthTokenRow, type OauthTokenRow } from '../../engine-sql/access-credentials.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
 import { uuidText, withDates } from '../store-codec.ts';
@@ -84,6 +84,11 @@ export const insertOauthToken: StoreMember<[row: OauthTokenInsert], void> = asyn
 export const deleteExpiredOauthCredentials: StoreMember<[nowEpochSeconds: number], number> = async (brain, now) =>
   Number(await storeCall({ member: 'deleteExpiredOauthCredentials' }, () => brain.deleteExpiredOauthCredentials(now)));
 
+/** Every OAuth token and code expires (`expires_at = 0`), in one write. */
+export const expireAllOauthCredentials: StoreMember<[], void> = async (brain) => {
+  await storeCall({ member: 'expireAllOauthCredentials' }, () => brain.expireAllOauthCredentials());
+};
+
 /** One authorization code; a repeated hash and a client with no row are refused as 23505 and 23503, as the SQL engines refuse them. */
 export const insertOauthCode: StoreMember<[row: OauthCodeInsert], void> = async (brain, row) => {
   await refusing('insertOauthCode', () => brain.insertOauthCode({ ...row, scopes: [...row.scopes] }));
@@ -97,6 +102,16 @@ export const readOauthCodeForUpdate: StoreMember<[codeHash: string, clientId: st
 
 export const deleteOauthCode: StoreMember<[codeHash: string, clientId: string], void> = async (brain, codeHash, clientId) => {
   await storeCall({ member: 'deleteOauthCode' }, () => brain.deleteOauthCode(codeHash, clientId));
+};
+
+/** The refresh token of this hash and client, `created_at` a Date and `expires_at` a number as PGLite and Postgres return them; or null. */
+export const readOauthRefreshTokenForUpdate: StoreMember<[tokenHash: string, clientId: string], OauthTokenRow | null> = async (brain, tokenHash, clientId) => {
+  const raw = await storeCall({ member: 'readOauthRefreshTokenForUpdate' }, () => brain.readOauthRefreshTokenForUpdate(tokenHash, clientId)) as Record<string, unknown> | null;
+  return raw ? normalizeOauthTokenRow(raw) : null;
+};
+
+export const deleteOauthRefreshToken: StoreMember<[tokenHash: string, clientId: string], void> = async (brain, tokenHash, clientId) => {
+  await storeCall({ member: 'deleteOauthRefreshToken' }, () => brain.deleteOauthRefreshToken(tokenHash, clientId));
 };
 
 export const readOauthCodeChallenge: StoreMember<[codeHash: string, clientId: string, nowEpochSeconds: number], string | null> = async (brain, codeHash, clientId, now) =>

@@ -195,10 +195,11 @@ export class OAuthGrants {
     }
     const editable = row.registered_via === 'dcr' && Number(row.grant_revision) === 0
       && !row.grant_types.includes('client_credentials') && row.source_grant !== 'none'
-      && !await clientHoldsAuthorization(this.options.sql, clientId);
-    const options = editable
-      ? (await this.options.sql`SELECT id, name FROM sources WHERE archived = false ORDER BY id COLLATE "C"`).map(r => ({ id: String(r.id), name: String(r.name) }))
-      : [];
+      && !await clientHoldsAuthorization(engine ?? this.options.sql, clientId);
+    // An engine lists the active sources through its member; ids sort byte for byte, so every engine and locale shows one order.
+    const options = !editable ? []
+      : engine ? (await engine.listAllSources({ includeArchived: false })).map(r => ({ id: String(r.id), name: String(r.name) })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+        : (await this.options.sql`SELECT id, name FROM sources WHERE archived = false ORDER BY id COLLATE "C"`).map(r => ({ id: String(r.id), name: String(r.name) }));
     // No await between the capacity check and insert: concurrent DB reads cannot overfill the store or a client's budget.
     this.assertCapacity(clientId);
     const id = generateToken('');
@@ -258,7 +259,7 @@ export class OAuthGrants {
         if (sourceChoice.editable) {
           // The first consent always consumes eligibility (revision 0 → 1), with or without a new source.
           try {
-            await recordFirstConsentInTransaction(sql, pending.details.clientId, choice?.sourceId, 'owner');
+            await recordFirstConsentInTransaction(tx ?? sql, pending.details.clientId, choice?.sourceId, 'owner');
           } catch (error) {
             if (error instanceof GrantError) throw new OAuthConsentError(409, 'client_policy_changed', 'Client permissions changed. Restart the connection and review the new request.');
             throw error;
@@ -315,7 +316,8 @@ export class OAuthGrants {
     const requestedResource = this.canonicalResource(resource);
     return this.locked(clientId, async (sql, client, tx) => {
       this.assertCredentialPolicy(client, secretHash);
-      const [row] = await sql`SELECT * FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId} FOR UPDATE`;
+      const row: Record<string, unknown> | undefined = tx ? asRow(await tx.readOauthRefreshTokenForUpdate(hashToken(token), clientId))
+        : (await sql`SELECT * FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId} FOR UPDATE`)[0];
       if (!row) throw new InvalidGrantError('Refresh token not found');
       if (row.expires_at == null || !Number.isFinite(Number(row.expires_at)) || Number(row.expires_at) <= Math.floor(this.now() / 1000)) throw new InvalidGrantError('Refresh token expired');
       const original = Array.isArray(row.scopes) ? row.scopes as string[] : [];
@@ -323,7 +325,8 @@ export class OAuthGrants {
       if (requested?.some(scope => !hasScope(parseScopeString(client.scope as string | undefined), scope))) throw new InvalidGrantError('Requested scope exceeds current client grant');
       const scopes = this.currentScopes(client, requested ?? original);
       const target = this.resource(row.resource, requestedResource);
-      await sql`DELETE FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId}`;
+      if (tx) await tx.deleteOauthRefreshToken(hashToken(token), clientId);
+      else await sql`DELETE FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId}`;
       return this.issue(sql, tx, client, scopes, target, true, 'refresh_token');
     });
   }
