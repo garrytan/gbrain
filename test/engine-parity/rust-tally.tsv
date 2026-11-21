@@ -119,7 +119,7 @@ test/engine-parity/search-private-fence.test.ts	5	0
 test/engine-parity/search-reads.test.ts	18	0
 test/engine-parity/search.test.ts	23	0
 test/engine-parity/segmented-body.test.ts	19	1
-test/engine-parity/segmented-purge-writes.test.ts	6	0
+test/engine-parity/segmented-purge-writes.test.ts	7	0
 test/engine-parity/source-resolver-reads.test.ts	14	0
 test/engine-parity/source-verify-reads.test.ts	2	0
 test/engine-parity/spend-log.test.ts	11	0

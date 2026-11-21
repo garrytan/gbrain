@@ -59,6 +59,31 @@ async function apply(engine: BrainEngine, slug: string, pageId: number | null, p
   });
 }
 
+const SETTINGS = ['gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id'];
+
+/** Admits one queued request of `local_cli:principalId` (as test/engine-parity/write-attribution.test.ts does); its journal id. */
+async function admit(engine: BrainEngine, requestId: string, principalId: string, slug: string): Promise<string> {
+  const source = await engine.readSourceMembership(SRC);
+  const keys = [`principal:local_cli:${principalId}`, 'brain'];
+  await engine.lockPersistenceCounters(keys);
+  const row = await engine.insertWriteRequest({
+    principalKind: 'local_cli', principalId, requestId, operation: 'put_page', sourceId: SRC, sourceIncarnation: source!.incarnation,
+    pageId: null, slug, worktreeId: null, topologyGeneration: null, digest: 'd'.repeat(64), intent: { kind: 'put_page', slug },
+    authority: { scopes: ['write'], agentLabel: 'agent-put_page' }, intentBytes: 100, terminalReservation: 4096, targetKind: 'page',
+    protocolVersion: 1, admitterVersion: 'parity', admitterHostId: null, counterKeys: keys, clientRequestId: null, state: 'queued',
+    deferredRefreshId: null,
+  });
+  return row.id;
+}
+
+/** Runs `fn` in a transaction whose write settings name `request` and the principal `local_cli:id`. */
+function as<T>(engine: BrainEngine, request: string, id: string, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  return engine.transaction(async tx => {
+    await tx.applyTransactionSettings(SETTINGS, [request, 'local_cli', id]);
+    return fn(tx);
+  });
+}
+
 const chunkTexts = async (engine: BrainEngine, slug: string) => (await engine.getChunks(slug, { sourceId: SRC, includeUnsealed: true })).map(c => c.chunk_text).sort();
 
 describe('engine parity: segmented purge writes', () => {
@@ -175,6 +200,29 @@ describe('engine parity: segmented purge writes', () => {
     return { revisionIsPreimage: revisions.saved === revisions.preimage, body_storage: v?.body_storage ?? null,
       body_generation: v?.body_generation ?? null, body_bytes: v?.body_bytes ?? null, compiled_truth: v?.compiled_truth ?? null,
       title: v?.title, frontmatter: v?.frontmatter };
+  });
+
+  parityTest('createVersion with a preimage of an older revision names no writer for it; with the current one, its writer', {
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'transaction', 'applyTransactionSettings', 'putPage',
+      'readPageSnapshot', 'createVersion', 'readVersionAttributions'],
+  }, async (engine) => {
+    const slug = 'notes/purge-attributed';
+    const reqA = await admit(engine, 'a0000000-0000-4000-8000-0000000000a1', 'writer-a', slug);
+    const reqB = await admit(engine, 'a0000000-0000-4000-8000-0000000000b2', 'writer-b', slug);
+    const role = (req: string | null) => req === reqA ? 'reqA' : req === reqB ? 'reqB' : req;
+    await as(engine, reqA, 'writer-a', tx => tx.putPage(slug, { type: 'note', title: 'Attributed', compiled_truth: 'v1', timeline: '' }, { sourceId: SRC }));
+    const saved = await as(engine, reqB, 'writer-b', async tx => {
+      const stale = await tx.readPageSnapshot(slug, { sourceId: SRC, includeDeleted: true });
+      await tx.putPage(slug, { type: 'note', title: 'Attributed', compiled_truth: 'v2', timeline: '' }, { sourceId: SRC });
+      const fresh = await tx.readPageSnapshot(slug, { sourceId: SRC, includeDeleted: true });
+      return [await tx.createVersion(slug, { sourceId: SRC, preimage: stale! }), await tx.createVersion(slug, { sourceId: SRC, preimage: fresh! })];
+    });
+    const rows = await engine.readVersionAttributions(saved.map(v => ({ id: Number(v.id), page_id: Number(v.page_id) })));
+    const byId = new Map(rows.map(r => [Number(r.id), r]));
+    return saved.map(v => {
+      const r = byId.get(Number(v.id));
+      return { body: v.compiled_truth, written: role(r?.w_req ?? null), writer: r?.w_id ?? null, archived: role(r?.a_req ?? null), archiver: r?.a_id ?? null };
+    });
   });
 
   parityTest('listPurgeVersionBodies reads the inline versions of the source that the purge redacts, in id order after the keyset', {
