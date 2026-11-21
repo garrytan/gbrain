@@ -42,7 +42,9 @@ test/access-room.test.ts
 test/access-rule-hints-owner-gst2128.test.ts
 test/access-rule-owner-gst2698.test.ts
 test/access-token-grant-columns.test.ts
+test/access-unborn-head-gbra706.test.ts
 test/access-ungranted-member-writes.test.ts
+test/access-who-can-read-owner-only.test.ts
 test/access-writes.test.ts
 test/activation-unbound-rooted-6449.test.ts
 test/adopt-local-edit.test.ts
@@ -158,8 +160,10 @@ test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/private-page-reads.test.ts
+test/engine-parity/put-source-fork.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
+test/engine-parity/repair-frontmatter-holds.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts
@@ -787,6 +791,7 @@ test/sync-drain-effect-recovery-blocked.test.ts
 test/sync-drain-head-blocked-6543.test.ts
 test/sync-drain-inpass-stall.test.ts
 test/sync-drain-write-capacity.test.ts
+test/sync-drift-history-gst3328.test.ts
 test/sync-drift-rescreen-progress-gst2515.test.ts
 test/sync-dry-run-drain-7167.test.ts
 test/sync-exits-l4-6712.test.ts
@@ -819,6 +824,7 @@ test/sync-level-reuse-across-gbra133.test.ts
 test/sync-metafile-foreign-slug-7341.test.ts
 test/sync-mirror-catchup-gst2515.test.ts
 test/sync-mirror-parked-gst2843.test.ts
+test/sync-off-unattended-gst3337.test.ts
 test/sync-origin-live-wins-6517.test.ts
 test/sync-page-identity-hold-gbra130.test.ts
 test/sync-page-write-failed-gbra130.test.ts
@@ -837,6 +843,7 @@ test/sync-restored-file-purge.test.ts
 test/sync-sigterm-gst2869.test.ts
 test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
+test/sync-status-automatic-sync-gst3329.test.ts
 test/sync-status-commits-waiting-gst2515.test.ts
 test/sync-status-failure-detail-6513.test.ts
 test/sync-status-truthful-7243.test.ts

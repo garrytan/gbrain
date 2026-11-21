@@ -307,6 +307,7 @@ Refused writes a caller never saw land (`lost_caller_writes`) have their own rep
 | `local_path_missing` | This host owns the worktree but has no checkout path registered. | Register the checkout again on the brain host. |
 | `coordination_path_missing` | This host's registration has no coordination directory. | Repair the registration on the brain host. |
 | `not_sent`, `outcome_unknown` | The local owner's IPC lane did not take the write, or lost its acknowledgment. | `gbrain sources writer status --probe --json`; for `outcome_unknown` read the receipt (`gbrain write-request -- <id>`) before resubmitting. |
+| `earlier_call_running` | Rust brain only: the owner held this read back because an earlier write it would confirm is still running. Nothing ran, and the read tells nothing about that write. | Wait for the earlier call to end, then run the read again. Do not rerun the earlier write before the read answers. |
 
 A running sync is not one of these: `gbrain repair fences` now runs during a catch-up for every candidate the sync does not still name ([fence repair during a sync](repair.md#fence-repair-during-a-sync)), and a candidate it does name is `sync_in_progress`, not `owner_unavailable`.
 
