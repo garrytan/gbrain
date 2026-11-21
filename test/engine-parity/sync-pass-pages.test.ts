@@ -25,6 +25,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { PageInput } from '../../src/core/types.ts';
 import type { SyncImportPageRow } from '../../src/core/engine-sql/sync-pass-pages.ts';
 import { SYNC_IMPORT_PROVENANCE_OP, syncImportParser } from '../../src/core/persistence/sync-holds.ts';
+import { refusesInput } from './input-refusal.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -139,7 +140,7 @@ parityTest('readSyncImportPageRows refuses a keyset page size that is not a posi
   const sizes = [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 2];
   const refused: Record<string, boolean> = {};
   for (const limit of sizes) {
-    refused[String(limit)] = await engine.readSyncImportPageRows(Q, { after: 0, limit }).then(() => false, () => true);
+    refused[String(limit)] = await refusesInput(engine.readSyncImportPageRows(Q, { after: 0, limit }));
   }
   // Control: the smallest valid size still answers the page.
   const one = (await engine.readSyncImportPageRows(Q, { after: 0, limit: 1 })).map(row => row.slug);

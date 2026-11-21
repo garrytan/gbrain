@@ -431,9 +431,12 @@ mod tests {
         let q = query(json!({}));
         for limit in [0, MAX_SAFE_INTEGER + 1] {
             let window = SyncImportPageWindow::After { after: 0, limit };
+            let err = store.read_sync_import_page_rows(&q, &window).unwrap_err();
+            assert_eq!(err.code, crate::error::INVALID_ARGUMENT, "limit {limit}");
             assert!(
-                store.read_sync_import_page_rows(&q, &window).is_err(),
-                "limit {limit}"
+                err.message.contains("limit must be a positive integer"),
+                "limit {limit}: {}",
+                err.message
             );
         }
         let window = SyncImportPageWindow::After {

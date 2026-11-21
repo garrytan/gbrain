@@ -22,6 +22,7 @@ import { expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { refusesInput } from './input-refusal.ts';
 import { readAdmitted } from '../../src/core/persistence/sync-admitted.ts';
 import { concurrentWriteProof } from '../../src/core/persistence/sync-concurrent-write.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
@@ -145,7 +146,7 @@ parityTest('readPageRevisionWriter and readRevisionWriterRequest name a page\'s 
 parityTest('the sync run reads refuse a malformed request id instead of answering nothing', {
   methods: ['readAdmittedWriteRequests', 'readRevisionWriterRequest'],
 }, async (engine) => {
-  const refuses = (p: Promise<unknown>) => p.then(() => false, () => true);
+  const refuses = refusesInput;
   return {
     admitted: await refuses(engine.readAdmittedWriteRequests('local_cli', 'writer-a', ['not-a-uuid'], false)),
     writerRequest: await refuses(engine.readRevisionWriterRequest('not-a-uuid')),

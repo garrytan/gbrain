@@ -24,6 +24,7 @@ import { expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { refusesInput } from './input-refusal.ts';
 import { syncLockId } from '../../src/core/db-lock.ts';
 import { SYNC_ADMISSION_DESTRUCTIVE_KINDS, SYNC_ADMISSION_KEY, SYNC_ADMISSION_SET_OP, writeSyncAdmission } from '../../src/core/persistence/sync-admission.ts';
 import { MANAGED_SYNC_PASS_OP, passFingerprint } from '../../src/core/persistence/sync-pass-row.ts';
@@ -188,7 +189,7 @@ parityTest('readSyncAdmissionEffects refuses a malformed incarnation or set_at, 
   methods: ['readSyncAdmissionEffects', 'writeSyncAdmissionStamp', 'readOpCheckpointRecords', 'readSourceMembership'],
 }, async (engine) => {
   const incarnation = await incarnationOf(engine);
-  const refuses = (p: Promise<unknown>) => p.then(() => false, () => true);
+  const refuses = refusesInput;
   const badIncarnation = await refuses(effects(engine, 'not-a-uuid', null));
   const badSetAt = await refuses(effects(engine, incarnation, 'not-a-time'));
   // Control: the same probe with valid inputs answers.
