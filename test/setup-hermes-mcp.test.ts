@@ -225,18 +225,32 @@ describe('gbrain setup hermes registers MCP through hermes mcp add', () => {
     expect(calls(b)).toHaveLength(0);
     expect((load(config(b)) as any).mcp_servers).toBeUndefined();
   });
-  test('an update keeps the entry\'s own environment and member binding', async () => {
+  test('an update keeps the member binding and connect timeout', async () => {
     const b = box({ hermes: true });
     await setup(b, []);
     const doc = load(config(b)) as any;
-    doc.mcp_servers.gbrain.env.GBRAIN_DATABASE_URL = 'postgresql://brain.example/db';
     doc.mcp_servers.gbrain.args.push('--stdio-member', 'alice-example');
+    doc.mcp_servers.gbrain.connect_timeout = 120;
     writeFileSync(join(b.home, '.hermes', 'config.yaml'), dump(doc));
     const r = await setup(b, ['--surface', 'full']);
     expect(r.doc.mcp.setup).toBe('write');
     const entry = (load(config(b)) as any).mcp_servers.gbrain;
     expect(entry.args).toEqual([b.bin, 'serve', '--surface', 'full', '--stdio-member', 'alice-example']);
-    expect(entry.env).toEqual({ GBRAIN_HOME: b.home, GBRAIN_DATABASE_URL: 'postgresql://brain.example/db' });
+    expect(entry.connect_timeout).toBe(120);
+  });
+
+  test('an entry with environment beyond GBRAIN_HOME is left alone, so no value travels on a command line', async () => {
+    const b = box({ hermes: true });
+    await setup(b, []);
+    const doc = load(config(b)) as any;
+    doc.mcp_servers.gbrain.env.GBRAIN_DATABASE_URL = 'postgresql://brain.example/db';
+    writeFileSync(join(b.home, '.hermes', 'config.yaml'), dump(doc));
+    const r = await setup(b, ['--surface', 'full']);
+    expect(r.doc.mcp.setup).toBe('skip');
+    expect(r.doc.mcp.detail).toContain('env GBRAIN_DATABASE_URL');
+    expect(calls(b).filter((c) => c.argv[1] === 'add')).toHaveLength(1);
+    expect(calls(b).some((c) => c.argv.some((a: string) => a.includes('brain.example')))).toBe(false);
+    expect((load(config(b)) as any).mcp_servers.gbrain.env.GBRAIN_DATABASE_URL).toBe('postgresql://brain.example/db');
   });
 
   test('an entry with settings hermes mcp add would drop is left alone', async () => {

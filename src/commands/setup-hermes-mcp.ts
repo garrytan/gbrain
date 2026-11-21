@@ -12,8 +12,10 @@
  * block is set aside around each call and put back unchanged. An
  * `mcp_servers.<name>` entry gbrain did not write is left alone. Without a
  * hermes command, setup prints the one command to run. An update keeps the
- * entry's own environment and member binding; an entry with settings setup
- * cannot carry through `hermes mcp add` is left for the user. When an update
+ * entry's member binding and connect timeout; an entry with settings setup
+ * cannot carry through `hermes mcp add` (environment beyond GBRAIN_HOME,
+ * which would otherwise travel on a command line, among them) is left for the
+ * user. When an update
  * fails, the entry gbrain had before is put back with `hermes config set`, and
  * a run without GBRAIN_HOME keeps the brain the entry already points at.
  */
@@ -83,12 +85,13 @@ const MANAGED_KEYS = new Set(['command', 'args', 'env', 'enabled', 'connect_time
 const SERVE_FLAGS = new Set(['--surface', '--advertise', STDIO_MEMBER_FLAG]);
 const canon = (v: unknown) => JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort()) : x));
 
-/** What gbrain's entry holds that `hermes mcp add` cannot carry over: keys beyond command/args/env, and serve flags setup does not write. */
+/** What gbrain's entry holds that setup does not carry over: keys beyond command/args/env, env beyond GBRAIN_HOME, and serve flags setup does not write. */
 function unmanaged(entry: Record<string, unknown>): string[] {
   const args = Array.isArray(entry.args) ? entry.args.map(String) : [];
   const rest = args.slice(args.indexOf('serve') + 1);
   const flags = rest.filter((a, i) => !SERVE_FLAGS.has(a) && !SERVE_FLAGS.has(rest[i - 1] ?? ''));
-  return [...Object.keys(entry).filter((k) => !MANAGED_KEYS.has(k)), ...flags];
+  const env = entry.env && typeof entry.env === 'object' ? Object.keys(entry.env).filter((k) => k !== 'GBRAIN_HOME').map((k) => `env ${k}`) : [];
+  return [...Object.keys(entry).filter((k) => !MANAGED_KEYS.has(k)), ...env, ...flags, ...(SERVE_FLAGS.has(rest.at(-1) ?? '') ? [rest.at(-1)!] : [])];
 }
 
 const tail = (s: string) => s.split('\n').filter(Boolean).slice(-3).join(' / ');
@@ -105,14 +108,14 @@ export function syncHermesMcp(o: HermesMcpOptions): HermesMcpOutcome {
     }
     const prior = entry?.env && typeof entry.env === 'object' ? entry.env as Record<string, unknown> : {};
     const gbrainHome = o.gbrainHome ?? (typeof prior.GBRAIN_HOME === 'string' ? prior.GBRAIN_HOME : process.env.HOME?.trim() || homedir());
-    const env: Record<string, string> = { ...Object.fromEntries(Object.entries(prior).map(([k, v]) => [k, String(v)])), GBRAIN_HOME: gbrainHome };
+    const env = { GBRAIN_HOME: gbrainHome };
+    const timeout = typeof entry?.connect_timeout === 'number' ? String(entry.connect_timeout) : '60';
     const priorArgs = Array.isArray(entry?.args) ? (entry.args as unknown[]).map(String) : [];
     const member = priorArgs.includes(STDIO_MEMBER_FLAG) ? priorArgs[priorArgs.indexOf(STDIO_MEMBER_FLAG) + 1] : undefined;
     const wanted = { command: o.command, args: stdioServeArgv(o.gbrainBin, o.surface, o.advertise, member), env };
     const matches = (e: Record<string, unknown> | null) => !!e && e.enabled !== false && e.command === wanted.command && canon(e.args) === canon(wanted.args) && canon(e.env) === canon(env);
-    const pairs = (show: boolean) => Object.entries(env).map(([k, v]) => `${k}=${show || k === 'GBRAIN_HOME' ? v : `<${k} from ${path}>`}`);
-    const argv = (show: boolean) => [bin ?? 'hermes', 'mcp', 'add', o.name, '--env', ...pairs(show), '--connect-timeout', '60', '--command', o.command, '--args', ...wanted.args];
-    command = `printf 'y\\ny\\n' | ${argv(false).map(quote).join(' ')}`;
+    const argv = [bin ?? 'hermes', 'mcp', 'add', o.name, '--env', `GBRAIN_HOME=${gbrainHome}`, '--connect-timeout', timeout, '--command', o.command, '--args', ...wanted.args];
+    command = `printf 'y\\ny\\n' | ${argv.map(quote).join(' ')}`;
     if (matches(entry)) return { action: 'keep', path, detail: `MCP server ${o.name} in ${path}` };
     const extra = entry ? unmanaged(entry) : [];
     if (extra.length) return { action: 'skip', path, detail: `gbrain's MCP server ${o.name} in ${path} has settings setup would drop (${extra.join(', ')}), so setup left it; edit it with hermes mcp, or remove it and run setup again` };
@@ -125,7 +128,7 @@ export function syncHermesMcp(o: HermesMcpOptions): HermesMcpOutcome {
       const restored = back.ok && canon(readEntry(path, o.name)) === canon(entry);
       return { action: 'error', path, detail: `${detail}; ${restored ? 'the previous entry was put back' : `putting the previous entry back failed too (${tail(back.output) || 'no output'})`}`, command };
     };
-    const added = withHermesHookBlockSetAside(o.hermesHome, () => run(argv(true), 'y\ny\n'));
+    const added = withHermesHookBlockSetAside(o.hermesHome, () => run(argv, 'y\ny\n'));
     if (!matches(readEntry(path, o.name))) {
       return fail(`hermes mcp add did not save the requested ${o.name} entry (${tail(added.output) || 'no output'}); run \`hermes mcp test ${o.name}\` to see why`);
     }
