@@ -1344,7 +1344,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
         } else {
           keepPaths.add(relative(cfg.dir, cardPath).replace(/\\/g, '/'));
         }
-        succeededRepos.add(`gh/${repo}`);
+        if (!opts.signal?.aborted) succeededRepos.add(`gh/${repo}`);
       } catch (err) {
         if (managed) rethrowConnectorWriteError(err);
         deps.client.log?.(`[github] repo ${repo} failed: ${err instanceof Error ? err.message : String(err)}`);
