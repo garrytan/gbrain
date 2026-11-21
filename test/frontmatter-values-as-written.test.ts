@@ -209,6 +209,18 @@ describe('pages-03: frontmatter values as written', () => {
     expect(page.frontmatter).toMatchObject({ zip: 2134, version: 1.1 });
   }, { setup: userFileSetup }), 120_000);
 
+  test('on an older page\'s first write, a nested value the caller changed keeps the new value and its untouched siblings get their written text back', () => managedBrain(async ({ engine, ctx, root }) => {
+    await importedUnderOldTyping(engine);
+    const read = serializePageToMarkdown((await engine.getPage('people/hal-example'))!, []);
+    expect(read).toContain('role: cto');
+    const rev = (await engine.readPageSnapshot('people/hal-example', { sourceId: 'default' }))!.revision;
+    await call(ctx, 'put_page', { slug: 'people/hal-example', expected_revision: rev, content: read.replace('role: cto', 'role: ceo') });
+    await settleManagedGitEffects(engine);
+    const expected = { ...AS_WRITTEN, details: { role: 'ceo', since: '2020-01-01' } };
+    expect((await engine.getPage('people/hal-example'))!.frontmatter).toMatchObject(expected);
+    expect(parseMarkdown(readFileSync(join(root, 'people/hal-example.md'), 'utf8')).frontmatter).toMatchObject(expected);
+  }, { setup: userFileSetup }), 120_000);
+
   test('on an older page\'s first write, a value the caller changed keeps the new value and the others get their written text back', () => managedBrain(async ({ engine, ctx, root }) => {
     await importedUnderOldTyping(engine);
     // The caller reads the page as an older gbrain renders it (the old typing) and changes two of those values.

@@ -76,8 +76,27 @@ export function alignLegacyTyped(parsed: { frontmatter: Record<string, unknown> 
  */
 export function restoreWrittenValues(incoming: Record<string, unknown>, stored: Record<string, unknown> | null | undefined, written: Map<string, unknown>): void {
   if (!stored) return;
-  for (const [key, value] of written) if (Object.hasOwn(incoming, key) && same(incoming[key], stored[key])) incoming[key] = value;
+  for (const [key, value] of written) if (Object.hasOwn(incoming, key)) incoming[key] = keptWritten(incoming[key], stored[key], value);
 }
+
+/**
+ * The caller's value with the written text kept wherever it left the stored value: the whole value when unchanged, else
+ * each untouched entry of a mapping or an equal-length list (the written value's old typing equals the stored value, so
+ * every entry's does too). An entry the caller changed, added or removed is its own.
+ */
+function keptWritten(incoming: unknown, stored: unknown, written: unknown): unknown {
+  if (same(incoming, stored)) return written;
+  if (Array.isArray(incoming) && Array.isArray(stored) && Array.isArray(written) && incoming.length === stored.length && stored.length === written.length) {
+    return incoming.map((entry, i) => keptWritten(entry, stored[i], written[i]));
+  }
+  if (!isMapping(incoming) || !isMapping(stored) || !isMapping(written)) return incoming;
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(incoming)) {
+    out[key] = Object.hasOwn(stored, key) && Object.hasOwn(written, key) ? keptWritten(entry, stored[key], written[key]) : entry;
+  }
+  return out;
+}
+const isMapping = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date);
 
 /**
  * The frontmatter a page stored under the old typing held for this parse: each value whose file text the old parser
