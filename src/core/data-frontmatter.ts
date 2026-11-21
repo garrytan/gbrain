@@ -236,7 +236,10 @@ export function parseDataFrontmatter(input: string, schema: Schema = FRONTMATTER
  * omits the key (conditional spread) or writes null instead.
  */
 export function dumpFrontmatterYaml(data: unknown, opts: { lineWidth?: number } = {}): string {
-  return dump(data, { ...opts, schema: FRONTMATTER_SCHEMA, replacer: (key: string, value: unknown) => {
+  // Quoting follows js-yaml's default schema, not FRONTMATTER_SCHEMA: a string whose plain text any YAML reader (an
+  // older gbrain, PyYAML, Obsidian) would type, like '02134', '1.10', '0x1F' or '2024-03-01', is written quoted, so
+  // every reader of the file gets the same string. FRONTMATTER_SCHEMA reads the quoted and the plain text alike.
+  return dump(data, { ...opts, schema: DEFAULT_SCHEMA, replacer: (key: string, value: unknown) => {
     if (value === undefined) {
       throw new TypeError(`Frontmatter field "${key}" is undefined. Why: YAML has no undefined, so the field would be dropped silently. Fix: omit the key at the write site (\`...(v ? { ${key}: v } : {})\`) or pass null.`);
     }

@@ -21,23 +21,37 @@ export type ValidTimeWhy = 'history_pruned' | 'history_gap' | 'history_unknown' 
   | 'edition_pruned' | 'ambiguous_edition_dates' | 'undated_editions';
 
 /**
- * The accepted forms; the same pattern runs in TypeScript and in Postgres (ARE), the date is the first group.
- * pages-03: frontmatter keeps a timestamp as written, so midnight with a `t` or space separator or no zone (UTC
- * midnight to the YAML parser that typed these values before) is accepted as well as the ISO forms stored before.
+ * The accepted forms; the same patterns run in TypeScript and in Postgres (ARE). pages-03: frontmatter keeps a
+ * timestamp as written, so a value counts when the YAML parser that typed these values before (js-yaml's timestamp)
+ * read it as UTC midnight: a calendar date, or any YAML timestamp whose instant is midnight UTC (`T00:00:00Z`, a space
+ * or `t` separator, no zone, `+00`, `-00:00`, a space before the zone, `02:00:00+02:00`). Its date is the UTC date.
  */
-const DATE_FORM = '^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:[Tt ]00:00:00(?:[.]0+)?(?:Z|[+]00:00)?)?$';
-const DATE_RE = new RegExp(DATE_FORM);
+const DAY_FORM = '^([0-9]{4})-([0-9]{2})-([0-9]{2})$';
+/** js-yaml's timestamp grammar: 1 year, 2 month, 3 day, 4 hour, 5 minute, 6 second, 7 fraction, 8 sign, 9-10 zone. */
+const STAMP_FORM = '^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})(?:[Tt]|[ \\t]+)([0-9]{1,2}):([0-9]{2}):([0-9]{2})(?:[.]([0-9]*))?(?:[ \\t]*(?:Z|([-+])([0-9]{1,2})(?::([0-9]{2}))?))?$';
+const DAY_RE = new RegExp(DAY_FORM), STAMP_RE = new RegExp(STAMP_FORM);
+const DAY_MS = 86_400_000;
+
+/** A real calendar day of a four-digit year from 1000 (the old parser kept a calendar-invalid date as text). */
+const inCalendar = (y: number, m: number, d: number) => y >= 1000 && m >= 1 && m <= 12 && d >= 1 && d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
 
 /** The calendar date a frontmatter value declares, or null when it is not one of the accepted forms. */
 export function validDate(value: unknown): string | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : validDate(value.toISOString());
   if (typeof value !== 'string') return null;
-  const m = DATE_RE.exec(value);
+  const day = DAY_RE.exec(value);
+  if (day) return Number(day[1]) >= 1000 && inCalendar(Number(day[1]), Number(day[2]), Number(day[3])) ? value : null;
+  const m = STAMP_RE.exec(value);
   if (!m) return null;
-  const date = m[1]!;
-  const [year, month, day] = [Number(date.slice(0, 4)), Number(date.slice(5, 7)), Number(date.slice(8, 10))];
-  if (year < 1000 || month < 1 || month > 12 || day < 1) return null;
-  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate() ? date : null;
+  const [y, mo, d, h, mi, sec] = m.slice(1, 7).map(Number) as [number, number, number, number, number, number];
+  if (!inCalendar(y, mo, d)) return null;
+  // As js-yaml built the instant: the fraction's first three digits are milliseconds, out-of-range fields roll over.
+  const ms = Number((m[7] ?? '').slice(0, 3).padEnd(3, '0'));
+  const zone = m[8] ? (m[8] === '-' ? -1 : 1) * (Number(m[9]) * 60 + Number(m[10] ?? 0)) * 60_000 : 0;
+  const instant = Date.UTC(y, mo - 1, d, h, mi, sec, ms) - zone;
+  if (instant % DAY_MS !== 0) return null;
+  const date = new Date(instant).toISOString().slice(0, 10);
+  return Number(date.slice(0, 4)) >= 1000 ? date : null;
 }
 
 /**
@@ -45,11 +59,26 @@ export function validDate(value: unknown): string | null {
  * NULL. Nested CASE so a bad month never reaches make_date; it never raises on any input.
  */
 export function validDateSql(textExpr: string): string {
-  const d = `substring(${textExpr} from '${DATE_FORM}')`;
-  const y = `substr(${d}, 1, 4)::int`, m = `substr(${d}, 6, 2)::int`, day = `substr(${d}, 9, 2)::int`;
-  return `(CASE WHEN ${d} IS NULL THEN NULL
-    WHEN ${y} < 1000 OR ${m} NOT BETWEEN 1 AND 12 THEN NULL
-    WHEN ${day} BETWEEN 1 AND extract(day from make_date(${y}, ${m}, 1) + interval '1 month' - interval '1 day')::int THEN ${d}
+  const day = (form: string) => {
+    const g = (i: number) => `(regexp_match(${textExpr}, '${form}'))[${i}]::int`;
+    return { y: g(1), m: g(2), d: g(3), last: `extract(day from make_date(${g(1)}, ${g(2)}, 1) + interval '1 month' - interval '1 day')::int` };
+  };
+  // Each step is its own CASE, so make_date never sees a month or day the step before refused.
+  const inCalendar = (form: string, then: string) => {
+    const { y, m, d, last } = day(form);
+    return `CASE WHEN ${y} >= 1000 AND ${m} BETWEEN 1 AND 12 AND ${d} >= 1 THEN CASE WHEN ${d} <= ${last} THEN ${then} END END`;
+  };
+  const g = (i: number) => `(regexp_match(${textExpr}, '${STAMP_FORM}'))[${i}]`;
+  // Seconds from the written date's midnight to the instant, and its milliseconds (the fraction's first three digits).
+  const seconds = `(${g(4)}::int * 3600 + ${g(5)}::int * 60 + ${g(6)}::int - CASE WHEN ${g(8)} IS NULL THEN 0
+      ELSE (CASE WHEN ${g(8)} = '-' THEN -1 ELSE 1 END) * (${g(9)}::int * 3600 + coalesce(${g(10)}, '0')::int * 60) END)`;
+  const ms = `rpad(substr(coalesce(${g(7)}, ''), 1, 3), 3, '0')::int`;
+  const { y, m, d } = day(STAMP_FORM);
+  const stamp = `(make_date(${y}, ${m}, ${d}) + (${seconds} / 86400))`;
+  const stampDate = `CASE WHEN ${ms} = 0 AND ${seconds} % 86400 = 0 THEN
+      CASE WHEN extract(year from ${stamp}) >= 1000 THEN to_char(${stamp}, 'YYYY-MM-DD') END END`;
+  return `(CASE WHEN ${textExpr} ~ '${DAY_FORM}' THEN ${inCalendar(DAY_FORM, textExpr)}
+    WHEN ${textExpr} ~ '${STAMP_FORM}' THEN ${inCalendar(STAMP_FORM, stampDate)}
     END)`;
 }
 

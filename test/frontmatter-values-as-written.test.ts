@@ -2,8 +2,9 @@
  * pages-03: frontmatter values are kept exactly as the user wrote them.
  *
  * 1. Protects: a date (`born: 1990-05-01`), an offset timestamp (`2024-03-01T10:00:00+02:00`), a zip code with a
- *    leading zero (`02134`) and a version (`1.10`) are stored, read back by get/export and written back to the user's
- *    file as written, also after an agent edits one word of the body. A page stored before this fix (the old typing in
+ *    leading zero (`02134`) and a version (`1.10`) are stored and read back by get/export as written, and written back to
+ *    the user's file as the same values (quoted where another YAML reader would type the plain text), also after an agent
+ *    edits one word of the body. A page stored before this fix (the old typing in
  *    the database, the user's text in the file) is not reported as a local edit, and its first write puts the user's
  *    values back: a value the caller changed in that write keeps the caller's value. Readers of those values (effective date, valid time, core priority, pack subtypes, chronicle dates)
  *    read the kept text as they read the old typed value.
@@ -12,9 +13,9 @@
  * 3. Runs on PGLite (the managed-brain fixture). No embedding, no model calls.
  */
 import { describe, expect, test } from 'bun:test';
-import { DEFAULT_SCHEMA, dump } from 'js-yaml';
+import { DEFAULT_SCHEMA, dump, load } from 'js-yaml';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dumpFrontmatterYaml, parseDataFrontmatter } from '../src/core/data-frontmatter.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../src/core/markdown.ts';
@@ -23,6 +24,8 @@ import { validDate } from '../src/core/valid-time.ts';
 import { corePriority } from '../src/core/core-memory.ts';
 import { legacyTypedFrontmatter } from '../src/core/frontmatter-legacy.ts';
 import { endedInviteProposal } from '../src/core/chronicle/invite-projection.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
@@ -45,6 +48,23 @@ const BLOCK = [
   '  role: cto',
   '  since: 2020-01-01',
 ];
+/** BLOCK as gbrain writes it back: a string any YAML reader would type is quoted, so every reader gets the same value. */
+const WRITTEN_BACK = [
+  'company: acme-example',
+  "born: '1990-05-01'",
+  "last_met: '2024-03-01T10:00:00+02:00'",
+  "naive: '2024-03-01 10:00:00'",
+  "zip: '02134'",
+  "version: '1.10'",
+  "one: '1.0'",
+  "big: '12345678901234567890'",
+  'count: 42',
+  'ratio: 0.5',
+  'flag: true',
+  'details:',
+  '  role: cto',
+  "  since: '2020-01-01'",
+];
 const FILE = `---\ntitle: Hal Example\ntype: person\n${BLOCK.join('\n')}\n---\n# Hal Example\n\nHal likes tea.\n`;
 const AS_WRITTEN = {
   company: 'acme-example', born: '1990-05-01', last_met: '2024-03-01T10:00:00+02:00', naive: '2024-03-01 10:00:00',
@@ -55,9 +75,12 @@ const AS_WRITTEN = {
 describe('pages-03: frontmatter values as written', () => {
   test('the parser keeps timestamps and numbers whose text does not print back the same as the written text', () => {
     expect(parseDataFrontmatter(FILE).data).toEqual({ title: 'Hal Example', type: 'person', ...AS_WRITTEN });
-    // Each value line dumps back exactly as written.
+    // Each value dumps back as the same value; a string another YAML reader would type is quoted.
     const dumped = dumpFrontmatterYaml(AS_WRITTEN).trimEnd().split('\n');
-    expect(dumped).toEqual(BLOCK);
+    expect(dumped).toEqual(WRITTEN_BACK);
+    expect(parseDataFrontmatter(`---\n${dumped.join('\n')}\n---\n`).data).toEqual(AS_WRITTEN);
+    // js-yaml's default schema (an older gbrain, most YAML tools) reads the written-back file as the same strings.
+    expect(load(dumped.join('\n'), { schema: DEFAULT_SCHEMA })).toEqual(AS_WRITTEN);
     // A string that reads as another type is still quoted, so it reads back as the same string.
     const strings = { a: '2134', b: 'true', c: 'null', d: '1e+21' };
     expect(parseDataFrontmatter(`---\n${dumpFrontmatterYaml(strings)}---\n`).data).toEqual(strings);
@@ -103,54 +126,72 @@ describe('pages-03: frontmatter values as written', () => {
   const call = (ctx: OperationContext, name: string, params: Record<string, unknown>) =>
     operationsByName[name]!.handler(ctx, { request_id: randomUUID(), wait_ms: 30_000, ...params }) as Promise<Record<string, any>>;
   const setup = ({ root }: { root: string }) => { writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore']); };
-  const valueLines = (text: string) => BLOCK.filter(line => text.split('\n').includes(line));
+  /** The user's file committed, imported by sync, and the database then holding what an older gbrain stored for it. */
+  const userFileSetup = ({ root }: { root: string }) => {
+    mkdirSync(join(root, 'people'), { recursive: true }); writeFileSync(join(root, 'people/hal-example.md'), FILE);
+    writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore', 'people/hal-example.md']);
+  };
+  const importedUnderOldTyping = async (engine: BrainEngine) => {
+    expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
+    const stored = (await engine.getPage('people/hal-example'))!.frontmatter;
+    const legacy = legacyTypedFrontmatter(FILE)!;
+    const old = { ...stored, ...Object.fromEntries(Object.entries(legacy).filter(([k]) => k in AS_WRITTEN)) };
+    await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw("UPDATE pages SET frontmatter=$1::text::jsonb WHERE slug='people/hal-example'", [JSON.stringify(old)]));
+  };
+  const parseMarkdownHeadText = (file: string) => file.split('\n---\n')[0]!.replace(/^---\n/, '');
+  const valueLines = (text: string) => WRITTEN_BACK.filter(line => text.split('\n').includes(line));
 
   test('put, get, export and a one-word edit keep the written values in the database and the file', () => managedBrain(async ({ engine, ctx, root }) => {
     await call(ctx, 'put_page', { slug: 'people/hal-example', content: FILE });
     await settleManagedGitEffects(engine);
     const page = (await engine.getPage('people/hal-example'))!;
     expect(page.frontmatter).toMatchObject(AS_WRITTEN);
-    expect(valueLines(serializePageToMarkdown(page, []))).toEqual(BLOCK);
-    expect(valueLines(readFileSync(join(root, 'people/hal-example.md'), 'utf8'))).toEqual(BLOCK);
+    expect(valueLines(serializePageToMarkdown(page, []))).toEqual(WRITTEN_BACK);
+    expect(valueLines(readFileSync(join(root, 'people/hal-example.md'), 'utf8'))).toEqual(WRITTEN_BACK);
     const rev = (await engine.readPageSnapshot('people/hal-example', { sourceId: 'default' }))!.revision;
     await call(ctx, 'edit_page', { slug: 'people/hal-example', expected_revision: rev, edits: [{ old_text: 'likes tea', new_text: 'likes coffee' }] });
     await settleManagedGitEffects(engine);
     const file = readFileSync(join(root, 'people/hal-example.md'), 'utf8');
     expect(file).toContain('Hal likes coffee.');
-    expect(valueLines(file)).toEqual(BLOCK);
+    expect(valueLines(file)).toEqual(WRITTEN_BACK);
     expect((await engine.getPage('people/hal-example'))!.frontmatter).toMatchObject(AS_WRITTEN);
+  }, { setup }), 120_000);
+
+  test('values the author quoted keep their quotes through put and edit, so every YAML reader gets the same string', () => managedBrain(async ({ engine, ctx, root }) => {
+    const quoted = ["id: '001'", 'zip: "02134"', "ver: '1.10'", "hex: '0x1F'", "day: '2024-03-01'", "plus: '+1'", "half: '.5'", "exp: '1e3'"];
+    const strings = { id: '001', zip: '02134', ver: '1.10', hex: '0x1F', day: '2024-03-01', plus: '+1', half: '.5', exp: '1e3' };
+    await call(ctx, 'put_page', { slug: 'notes/quoted', content: `---\ntype: note\ntitle: Quoted\n${quoted.join('\n')}\n---\n# Quoted\n\nPlain words.\n` });
+    await settleManagedGitEffects(engine);
+    const rev = (await engine.readPageSnapshot('notes/quoted', { sourceId: 'default' }))!.revision;
+    await call(ctx, 'edit_page', { slug: 'notes/quoted', expected_revision: rev, edits: [{ old_text: 'Plain words', new_text: 'Other words' }] });
+    await settleManagedGitEffects(engine);
+    const file = readFileSync(join(root, 'notes/quoted.md'), 'utf8');
+    expect(file).toContain('Other words.');
+    expect((await engine.getPage('notes/quoted'))!.frontmatter).toMatchObject(strings);
+    for (const [key, value] of Object.entries(strings)) expect(file.split('\n')).toContain(`${key}: '${value}'`);
+    expect(load(parseMarkdownHeadText(file), { schema: DEFAULT_SCHEMA })).toMatchObject(strings);
   }, { setup }), 120_000);
 
   test('a page stored under the old typing is not a local edit, and its first write puts the written values back', () => managedBrain(async ({ engine, ctx, root }) => {
-    await call(ctx, 'put_page', { slug: 'people/hal-example', content: FILE });
-    await settleManagedGitEffects(engine);
-    // What an older gbrain stored for the same file.
-    const legacy = { ...legacyTypedFrontmatter(FILE)!, trust_tier: undefined };
-    const stored = (await engine.getPage('people/hal-example'))!.frontmatter;
-    const old = { ...stored, ...Object.fromEntries(Object.entries(legacy).filter(([k]) => k in AS_WRITTEN)) };
-    await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw("UPDATE pages SET frontmatter=$1::text::jsonb WHERE slug='people/hal-example'", [JSON.stringify(old)]));
+    await importedUnderOldTyping(engine);
+    expect((await engine.getPage('people/hal-example'))!.frontmatter).toMatchObject({ zip: 2134, version: 1.1 });
     const rev = (await engine.readPageSnapshot('people/hal-example', { sourceId: 'default' }))!.revision;
     await call(ctx, 'edit_page', { slug: 'people/hal-example', expected_revision: rev, edits: [{ old_text: 'likes tea', new_text: 'likes coffee' }] });
     await settleManagedGitEffects(engine);
     const file = readFileSync(join(root, 'people/hal-example.md'), 'utf8');
     expect(file).toContain('Hal likes coffee.');
-    expect(valueLines(file)).toEqual(BLOCK);
+    expect(valueLines(file)).toEqual(WRITTEN_BACK);
     expect((await engine.getPage('people/hal-example'))!.frontmatter).toMatchObject(AS_WRITTEN);
     expect(parseMarkdown(file).frontmatter).toMatchObject(AS_WRITTEN);
-  }, { setup }), 120_000);
+  }, { setup: userFileSetup }), 120_000);
 
   test('on an older page\'s first write, a value the caller changed keeps the new value and the others get their written text back', () => managedBrain(async ({ engine, ctx, root }) => {
-    await call(ctx, 'put_page', { slug: 'people/hal-example', content: FILE });
-    await settleManagedGitEffects(engine);
-    const legacy = legacyTypedFrontmatter(FILE)!;
-    const stored = (await engine.getPage('people/hal-example'))!.frontmatter;
-    const old = { ...stored, ...Object.fromEntries(Object.entries(legacy).filter(([k]) => k in AS_WRITTEN)) };
-    await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw("UPDATE pages SET frontmatter=$1::text::jsonb WHERE slug='people/hal-example'", [JSON.stringify(old)]));
+    await importedUnderOldTyping(engine);
     // The caller reads the page as an older gbrain renders it (the old typing) and changes two of those values.
     const read = serializePageToMarkdown((await engine.getPage('people/hal-example'))!, []);
     expect(read).toContain('zip: 2134');
-    expect(read).toContain('born: 1990-05-01T00:00:00.000Z');
-    const sent = read.replace('zip: 2134', "zip: '02139'").replace('born: 1990-05-01T00:00:00.000Z', 'born: 1991-06-02');
+    expect(read).toContain("born: '1990-05-01T00:00:00.000Z'");
+    const sent = read.replace('zip: 2134', "zip: '02139'").replace("born: '1990-05-01T00:00:00.000Z'", 'born: 1991-06-02');
     const rev = (await engine.readPageSnapshot('people/hal-example', { sourceId: 'default' }))!.revision;
     await call(ctx, 'put_page', { slug: 'people/hal-example', expected_revision: rev, content: sent });
     await settleManagedGitEffects(engine);
@@ -158,8 +199,8 @@ describe('pages-03: frontmatter values as written', () => {
     expect((await engine.getPage('people/hal-example'))!.frontmatter).toMatchObject(expected);
     const file = readFileSync(join(root, 'people/hal-example.md'), 'utf8');
     expect(parseMarkdown(file).frontmatter).toMatchObject(expected);
-    expect(file).toContain('zip: 02139');
-    expect(file).toContain('born: 1991-06-02');
-    for (const line of BLOCK.filter(line => !/^(zip|born):/.test(line))) expect(file.split('\n')).toContain(line);
-  }, { setup }), 120_000);
+    expect(file).toContain("zip: '02139'");
+    expect(file).toContain("born: '1991-06-02'");
+    for (const line of WRITTEN_BACK.filter(line => !/^(zip|born):/.test(line))) expect(file.split('\n')).toContain(line);
+  }, { setup: userFileSetup }), 120_000);
 });
