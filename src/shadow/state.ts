@@ -61,6 +61,10 @@ export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_pa
     case 'pglite':
       if (!config.database_path) return null;
       return { engine, identity: `pglite:${resolve(config.database_path)}` };
+    case 'rust':
+      // A Rust brain is its store directory, as a PGLite brain is its data directory.
+      if (!config.database_path) return null;
+      return { engine, identity: `rust:${resolve(config.database_path)}` };
     default: {
       const unreachable: never = engine;
       return unreachable;
