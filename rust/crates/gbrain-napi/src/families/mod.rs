@@ -50,6 +50,7 @@ mod embedding_catalog;
 mod embedding_install;
 mod embeddings;
 mod eval_capture;
+mod extract_rollup;
 mod extraction;
 mod facts;
 mod facts_captured;

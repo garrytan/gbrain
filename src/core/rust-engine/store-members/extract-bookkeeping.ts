@@ -3,15 +3,19 @@
  * SQL in engine-sql/extract-bookkeeping.ts). The receipt reads are served from the store's page records
  * (rust/crates/gbrain-store/src/cli_reads/extract_receipt.rs, rust/docs/store/sweep-reads.md).
  *
- * `upsertExtractRollup` writes nothing and resolves: the store keeps no `extract_rollup_7d` rows yet, so doctor's
- * extract_health reads no rollup rows on this engine (a known difference, rust/docs/store/sweep-reads.md). The rollup is
- * a best-effort cache on every engine; its caller records a failed write and goes on.
+ * `upsertExtractRollup` adds the event to the store's `extract_rollup_7d` row of its (kind, source, day)
+ * (rust/crates/gbrain-store/src/facts/extract_rollup.rs, rust/docs/store/facts.md). `form` picks the statement of a
+ * brain behind migration v141, as in Postgres. The rollup is a best-effort cache on every engine; its caller records a
+ * failed write and goes on.
  */
 import type { ExtractReceiptPriorRow, ExtractRollupRow } from '../../engine-sql/extract-bookkeeping.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../../search/safe-chunks.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
-export const upsertExtractRollup: StoreMember<[row: ExtractRollupRow, form?: 'pre_v141'], void> = async () => {};
+export const upsertExtractRollup: StoreMember<[row: ExtractRollupRow, form?: 'pre_v141'], void> = async (brain, row, form) => {
+  await storeCall({ member: 'upsertExtractRollup', sourceId: row.sourceId }, () =>
+    brain.upsertExtractRollup({ ...row, form: form ?? null }));
+};
 
 export const readExtractReceiptPrior: StoreMember<[sourceId: string, slug: string], ExtractReceiptPriorRow | undefined> = async (brain, sourceId, slug) => {
   const row: ExtractReceiptPriorRow | null = await storeCall({ member: 'readExtractReceiptPrior', sourceId }, () =>

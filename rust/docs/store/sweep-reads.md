@@ -30,6 +30,6 @@ as before, now in `src/core/engine-sql/extract-bookkeeping.ts`.
 | `brain.readExtractReceiptPrior({ sourceId, slug })` | `{ type, source_path, source_uri, withheld_source_path }` of the page at (source, slug), deleted or not; null when there is none. The store keeps no withheld source path, so `withheld_source_path` is always null | `readExtractReceiptPrior` |
 | `brain.readExtractReceiptSealed({ sourceId, slug, safeVersion })` | `{ sealed }` of the page at (source, slug): `chunker_version >= safeVersion AND text_projection_revision = knowledge_revision`, with SQL's NULL rules; null when there is none | `readExtractReceiptSealed` |
 
-`upsertExtractRollup` makes no store call: on a Rust brain it writes nothing and resolves. The store keeps no
-`extract_rollup_7d` rows, so doctor's `extract_health` check reads no rollup rows on a Rust brain (a known difference
-from PGLite and Postgres). The rollup is a best-effort cache on every engine.
+`upsertExtractRollup` writes the store's `extract_rollup_7d` rows (`facts/extract_rollup.rs`; see
+[facts.md](facts.md#extract-rollup-factsextract_rolluprs-family-extract_rollup)). The rollup is a best-effort cache on
+every engine.

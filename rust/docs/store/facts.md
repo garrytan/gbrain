@@ -136,6 +136,7 @@ counter is `M next_facts_id`.
 | `F 0x0A source fact_id` | `AttemptRecord` (JSON) | One `fact_relink_attempts` row (primary key `(source_id, fact_id)`). `fact_id` is sign-flipped big-endian, so key order is numeric order. |
 | `F 0x0B source tier target_slug fact_id` | empty | Attempts that carry both a tier and a target page, for `deleteFactRelinkMemos` and the paid memo read. |
 | `F 0x0F source visibility subject fact_hash` | `PurgeRecord` (JSON: `request_id`, `actor`, `reason`, `purged_at_us`) | One `fact_purges` row (primary key `(source_id, visibility, subject, fact_hash)`); `facts/purge_ledger.rs`. |
+| `F 0x11 kind source_id day` | `RollupRecord` (JSON: the counts, `cost_usd`, `halt_reasons`, `updated_at_us`) | One `extract_rollup_7d` row (primary key `(kind, source_id, day)`, `day` as `YYYY-MM-DD`); `facts/extract_rollup.rs`. |
 
 ### Relink attempts (`facts/relink.rs`)
 
@@ -1270,3 +1271,27 @@ the trunk takes its file, which holds everything here.
 
 The write-attribution trigger. Inputs whose PGLite outcome the store cannot
 reproduce refuse in the member with `engine_capability_missing`.
+
+## Extract rollup (`facts/extract_rollup.rs`, family `extract_rollup`)
+
+Served on Rust: `upsertExtractRollup` (src/core/engine-sql/extract-bookkeeping.ts). The family also serves the two
+doctor reads of the rollup, `brain.readExtractRollup7d({ withExpected })` and `brain.listRecordedHaltReasons7d()`, for
+the `readExtractRollup7d` and `listRecordedHaltReasons7d` members (doctor's `extract_health` check).
+
+- The writer is the SQL's insert-or-add. A new `(kind, source_id, day)` row takes the event's values; an existing row
+  adds them. `halt_reasons` starts as `{}` with no reason and `{reason: halts}` with one; on conflict a reason adds
+  `halts` to its bucket. `updated_at` is the write time.
+- `form: 'pre_v141'` is the statement of a brain behind migration v141: it adds the expected-limit stops to
+  `halt_count` and leaves `expected_limit_count` and `halt_reasons` alone.
+- `cost_usd` is a `REAL`, kept and added as a 4-byte float. A value that does not fit refuses with `invalid_argument`,
+  as Postgres's `value out of range` does. Postgres keeps `NaN` and `Infinity` in a `REAL`; the store refuses them.
+- The counts are `INT`: a sum past 2^31 - 1 refuses with `invalid_argument`, as `integer out of range` does. A day that
+  is not a date refuses as the `::date` cast does.
+- The reads take the rows with `day >= CURRENT_DATE - 7`; `CURRENT_DATE` is the UTC date, as the writer's default day
+  is. `readExtractRollup7d` resolves one row per kind: the `REAL` sum as a 4-byte float, the `INT` sums,
+  `expected_limit_count` (0 when `withExpected` is false), `last_updated_at` as ISO text, and `last_halt_age_days`
+  (days since the newest day with a halt; null without one). `listRecordedHaltReasons7d` resolves `{ kind, reason, n }`
+  in (kind, reason) order.
+- Kinds and reasons sort in byte order. Postgres sorts them by the database collation, which can differ for kinds
+  that hold punctuation.
+- The table has no foreign key, so deleting a source keeps its rollup rows, as in Postgres.

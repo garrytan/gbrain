@@ -29,6 +29,7 @@
 //! - `F 0x0F source visibility subject fact_hash`: the `fact_purges` ledger
 //!   (`facts/purge_ledger.rs`).
 //! - `F 0x10 source commit path`: the `reason_purge_tombstones` table (`facts/purge_journal.rs`).
+//! - `F 0x11 kind source day`: the `extract_rollup_7d` table (`facts/extract_rollup.rs`).
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -48,6 +49,7 @@ pub mod cycle_fence;
 pub mod doctor;
 pub mod doctor_pages;
 mod embedding;
+pub mod extract_rollup;
 pub mod extractor_classify;
 mod fence;
 mod fence_overlay;
