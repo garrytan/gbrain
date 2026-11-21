@@ -564,7 +564,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
           const sum: RunCounts = carried ?? { added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0 };
           carried = { added: sum.added + last.added, modified: sum.modified + last.modified, deleted: sum.deleted + last.deleted, renamed: sum.renamed + last.renamed, chunksCreated: sum.chunksCreated + last.chunksCreated };
         }
-        last = result;
+        result = last = carryDeletesWithheldResult(last, result);
       } catch (error) {
         // #6706: a retryable stop or the drain's own abort that lands after its deadline is the deadline, reported resumable; a fatal error still throws.
         const retryable = isWriteCapacityWait(error) || isConnectionDrop(error) || error === coop.signal?.reason || error instanceof DrainPassAbandoned
@@ -905,14 +905,22 @@ async function headOfSource(engine: BrainEngine, opts: SyncOpts): Promise<string
   } catch { return null; }
 }
 
+/** Preserve `newly_withheld: true` across passes in one invocation when a later pass reports the same withheld set hash. */
+function carryDeletesWithheldResult(prev: SyncResult | undefined, next: SyncResult): SyncResult {
+  if (!prev?.deletes_withheld?.newly_withheld || !next.deletes_withheld || prev.deletes_withheld.set_hash !== next.deletes_withheld.set_hash) return next;
+  return { ...next, deletes_withheld: { ...next.deletes_withheld, newly_withheld: true } };
+}
+
 /** #6340: the first drain's report plus the extra pass's: page counts and holds add up, the outcome and `next` are the extra pass's. */
-function mergeExtraPass(first: SyncResult, extra: SyncResult, span: { from: string; to: string }): SyncResult {
+export function mergeExtraPass(first: SyncResult, extra: SyncResult, span: { from: string; to: string }): SyncResult {
   const f = first.drain!, e = extra.drain;
   const held = [...(first.held ?? []), ...(extra.held ?? [])];
+  const withheld = extra.deletes_withheld ? carryDeletesWithheldResult(first, extra).deletes_withheld : undefined;
   return { ...extra, added: first.added + extra.added, modified: first.modified + extra.modified, deleted: first.deleted + extra.deleted, renamed: first.renamed + extra.renamed,
     chunksCreated: first.chunksCreated + extra.chunksCreated, fromCommit: first.fromCommit,
     waived: { imports: (first.waived?.imports ?? 0) + (extra.waived?.imports ?? 0), deletes: (first.waived?.deletes ?? 0) + (extra.waived?.deletes ?? 0) },
     ...(held.length ? { held, held_count: held.length } : {}),
+    ...(withheld ? { deletes_withheld: withheld } : {}),
     drain: { ...(e ?? f), outcome: e?.outcome ?? 'synced', passes: f.passes + (e?.passes ?? 1), processed: f.processed + (e?.processed ?? 0), written: f.written + (e?.written ?? 0),
       waived: f.waived + (e?.waived ?? 0), extra_pass: span } };
 }

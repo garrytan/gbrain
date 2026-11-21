@@ -37,7 +37,7 @@ import { openPassRequests, settleCarried } from './sync-pass-carried.ts';
 import { loopYield } from './sync-yield.ts';
 import { pathBlobHistories, recallWorkingStatCache, rememberWorkingStatCache, SyncTreeReadIncomplete } from './sync-git-stream.ts';
 import { syncPassKind } from './sync-classify.ts';
-import { passBanked } from './sync-pass-status.ts';
+import { passBanked, syncDeletesWithheld } from './sync-pass-status.ts';
 import { PASS_BATCH_KEY_PREFIX, readConvergedWatermark, SyncAdmissionPaused, type PassEntry } from './sync-pass-batch.ts';
 import { assertDrainLease, currentDrainLease } from './sync-lease.ts';
 import { idleClear, readIdleFacts } from './sync-idle-skips.ts';
@@ -58,7 +58,7 @@ import { readPassSwitches } from './sync-held-deletions.ts';
 import { keepPassPages, takePassPages } from './sync-tree-reuse.ts';
 import { syncOriginPath } from './sync-origin.ts';
 import { databaseOnlyPageSql } from './unbound-pages.ts';
-import { originMarkerFingerprint } from './sync-markers.ts';
+import { originMarkerFingerprint, readDeletesWithheld } from './sync-markers.ts';
 import { SYNC_SLICE_OP } from './sync-slices.ts';
 import { passResumeArgs } from './sync-pass-readers.ts';
 import { applyPassRound, sweepLegacy, finishPassApply, holdPassIdentities, newPassApplyState, passApplyCounts, remoteReconcile } from './sync-pass-apply.ts';
@@ -547,7 +547,10 @@ async function stampIdlePass(engine: BrainEngine, input: SyncPassInput, lease: N
   // Nor can a tail be owed since the pin read none: the lease's holder reads none after it (sync-run.ts).
   lease.tailClear = !tail;
   lease.idleClear = idleClear({ tail: !!tail, holds: holds.length, ...idleFacts });
-  return { ...emptyPassResult(context, remote, 'up_to_date'), toCommit: remote ? '' : head, ...(inherited.length ? { inherited_options: inherited } : {}), ...passCarriedFields(holds) };
+  // Best-effort: an idle tick should not fail because a status-only withheld read failed.
+  const withheld = !remote && value.obligations.deletes_withheld ? await readDeletesWithheld(engine, sourceId, incarnation).catch(() => null) : null;
+  return { ...emptyPassResult(context, remote, 'up_to_date'), toCommit: remote ? '' : head, ...(inherited.length ? { inherited_options: inherited } : {}), ...passCarriedFields(holds),
+    ...(withheld ? { deletes_withheld: syncDeletesWithheld(withheld, withheld.set_hash) } : {}) };
 }
 
 /** GBRA-542: the result's `carried` (holds kept by design, by class) and `skipped` (dangling links the pass did not hold) fields. */
@@ -799,7 +802,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
   let lastMismatch: ShadowPath[] = [];
   let lastLevel: ShadowLevel | null = null;
   const rememberLevel = () => { if (lastLevel?.workingCache) rememberWorkingStatCache(cacheKey, lastLevel.workingCache); };
-  const applied = newPassApplyState();
+  const applied = newPassApplyState(obligations.deletes_withheld ?? null);
   const readmitted = new Set<string>();
   // #6926, folded into 4b: the head a round's last import stamped, and what the pass had done by then.
   let folded: { head: string; done: string } | null = null, batchFolded = false;
@@ -830,7 +833,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
     filesImported: sliceBase.pages, bankedFiles: sliceBase.pages, waived: { imports: counts.waivedImports, deletes: counts.waivedDeletes }, prescreened: 0,
     ...(counts.skippedContextualMode || counts.skippedCanonicalBytes ? { legacySkips: { contextualMode: counts.skippedContextualMode, canonicalBytes: counts.skippedCanonicalBytes } } : {}),
     ...(collisions.length ? { slugCollisions: collisions } : {}), ...(fileRefusals.size ? { fileRefusals: [...fileRefusals.values()] } : {}), ...(identityDowngrades.length ? { identityDowngrades } : {}), ...(inherited.length ? { inherited_options: inherited } : {}), ...(reason ? { reason } : {}),
-    ...(sizeStates ? { size_states: sizeStates } : {}), ...(keptCount() ? { working_tree_kept: keptCount() } : {}), ...passCarriedFields(holds, applied.dangling.skipped),
+    ...(sizeStates ? { size_states: sizeStates } : {}), ...(keptCount() ? { working_tree_kept: keptCount() } : {}), ...passCarriedFields(holds, applied.dangling.skipped), ...(applied.withheld ? { deletes_withheld: syncDeletesWithheld(applied.withheld, applied.priorWithheld) } : {}),
     pass: { pass_id: passId, kind, round: value.telemetry.round, outcome: value.telemetry.outcome, stop_reason: value.telemetry.stop_reason, candidates: candidatesFirst,
       settled: S.size + yieldSettled, remaining: value.telemetry.remaining, not_converged_streak: value.obligations.not_converged_streak } });
   // A caller abort records the stop on the pass row (the pin it rolled back is replaced).

@@ -85,6 +85,8 @@ export interface PassApplyState {
   /** The first full round of the incarnation swept every legacy page (the pass records it in `obligations.legacy_sweep`). */
   sweptAll: boolean;
   withheld: DeletesWithheld | null;
+  /** `obligations.deletes_withheld` hash before this pass ran, for computing `newly_withheld`. */
+  priorWithheld: string | null;
   /** Deletes the valve withheld in the newest round. */
   withheldCount: number;
   keepDb: { admitted: number; pending: number; paused: number; refused: Record<string, number> };
@@ -107,9 +109,9 @@ export interface PassApplyState {
   dangling: { skipped: Set<string>; released: number };
 }
 
-export function newPassApplyState(): PassApplyState {
+export function newPassApplyState(priorWithheld: string | null = null): PassApplyState {
   return { markersRetired: 0, holds: { file_gone: 0, tombstone_edited: 0, purged_differs: 0, settle_mismatch: 0, origin_conflict: 0, page_identity_changed: 0, uncommitted: 0 }, settleMismatch: [], adopted: 0,
-    swept: { screened: 0, recorded: 0, paths: new Set() }, sweptAll: false, withheld: null, withheldCount: 0, keepDb: { admitted: 0, pending: 0, paused: 0, refused: {} }, keepDbTaken: [], originHeld: new Set(), matchedSlugs: new Set(), classes: {}, summary: null, recorded: new Set(), heldDeletions: newHeldDeletionState(), dangling: { skipped: new Set(), released: 0 } };
+    swept: { screened: 0, recorded: 0, paths: new Set() }, sweptAll: false, withheld: null, priorWithheld, withheldCount: 0, keepDb: { admitted: 0, pending: 0, paused: 0, refused: {} }, keepDbTaken: [], originHeld: new Set(), matchedSlugs: new Set(), classes: {}, summary: null, recorded: new Set(), heldDeletions: newHeldDeletionState(), dangling: { skipped: new Set(), released: 0 } };
 }
 
 export interface PassApplyInput {
