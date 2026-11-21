@@ -118,6 +118,30 @@ describe('swap readiness', () => {
     expect(v.missing_fields).toContain(field);
   });
 
+  test('missing current follower evidence is never caught up (no lag, queue or watermark)', () => {
+    const v = evaluateReadiness(edit(d => { delete d.follower!.lag_ms; delete d.follower!.queue_depth; delete d.follower!.coverage_watermark; }), NOW);
+    expect(v.verdict).toBe('NOT READY');
+    expect(row(v, 1).state).toBe('missing');
+    expect(v.missing_fields).toEqual(expect.arrayContaining(['follower.lag_ms', 'follower.queue_depth', 'follower.coverage_watermark.valid']));
+  });
+
+  test.each([
+    ['NaN lag', (d: ShadowStatus) => { d.follower!.lag_ms_p99_epoch = Number.NaN; }, 1],
+    ['a string count', (d: ShadowStatus) => { (d as Record<string, unknown>).privacy_diverged = '0'; }, 6],
+    ['a malformed reads row', (d: ShadowStatus) => { d.reads!.ops = [{ op: 'search', successful: Number.POSITIVE_INFINITY, minimum: 1 }]; }, 2],
+    ['an unparsable epoch start', (d: ShadowStatus) => { d.epoch_started_at = 'yesterday'; }, 1],
+  ] as Array<[string, (d: ShadowStatus) => void, number]>)('malformed evidence (%s) never passes', (_name, patch, n) => {
+    const v = evaluateReadiness(edit(patch), NOW);
+    expect(v.verdict).toBe('NOT READY');
+    expect(['missing', 'fail']).toContain(row(v, n).state);
+  });
+
+  test('ts_rank keyword disagreements fail, and a default ranker with E1 and E2 passes', () => {
+    expect(row(evaluateReadiness(edit(d => { d.search!.keyword_title = { ranker: 'ts_rank', exact_disagreements: 2 }; }), NOW), 4).state).toBe('fail');
+    expect(evaluateReadiness(edit(d => { d.search!.keyword_title = { ranker: 'default', e1_e2_at_least_both: true }; }), NOW).verdict).toBe('READY');
+    expect(row(evaluateReadiness(edit(d => { d.search!.keyword_title = { ranker: 'ts_rank' }; }), NOW), 4).state).toBe('missing');
+  });
+
   test('write comparisons the shadow cannot make refuse (capability_missing)', () => {
     const v = evaluateReadiness(edit(d => { d.write_comparisons!.state = 'capability_missing'; }), NOW);
     expect(v.verdict).toBe('NOT READY');

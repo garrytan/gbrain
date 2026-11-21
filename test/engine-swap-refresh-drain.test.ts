@@ -27,7 +27,7 @@ async function swapPlan(engine: BrainEngine): Promise<Run> {
   let statusReads = 0;
   const code = await runEngineSwap(ARGS, {
     openEngine: async () => Object.assign(Object.create(engine), { disconnect: async () => undefined }) as BrainEngine,
-    readShadowStatus: async () => { statusReads++; return null; },
+    readShadowStatus: async () => { statusReads++; return null; }, resolveBrain: () => 'host',
     env: {}, home: '', now: new Date('2026-11-21T00:00:00Z'),
     out: t => { stdout += t; },
     writeError: (e, o) => { const r = renderCliError(e, { json: o.json, command: 'engine swap', tty: false }); error = r.stdout ?? r.stderr ?? ''; return r.exitCode; },
@@ -77,7 +77,7 @@ describe(`engine swap refuses a brain with an unfinished worktree refresh (L7-1,
     let text = '';
     const code = await runEngineSwap(['--to', 'rust', '--plan'], {
       openEngine: async () => Object.assign(Object.create(engine), { disconnect: async () => undefined }) as BrainEngine,
-      env: {}, home: '', out: () => undefined,
+      env: {}, home: '', out: () => undefined, resolveBrain: () => 'host',
       writeError: (e, o) => { const r = renderCliError(e, { json: o.json, command: 'engine swap', tty: false }); text = r.stderr ?? ''; return r.exitCode; },
     });
     expect(code).toBe(1);
@@ -110,6 +110,18 @@ describe(`engine swap refuses a brain with an unfinished worktree refresh (L7-1,
     const plan = JSON.parse(run.stdout);
     expect(plan.verdict).toBe('NOT READY');
     expect(plan.reason).toBe('writer_coverage_unknown');
+  });
+
+  test('several unfinished refreshes are all named, and a source-less one asks the user', async () => {
+    const a = await addRefresh(engine, 'fenced');
+    const [wt] = await engine.executeRaw<{ id: string }>('INSERT INTO persistence_worktrees(owner_host_id) VALUES(gen_random_uuid()) RETURNING id::text AS id');
+    const [b] = await engine.executeRaw<{ id: string }>(
+      `INSERT INTO persistence_worktree_refreshes (worktree_id,source_ids,principal_id,owner_epoch,topology_generation,state,old_head,target_head,upstream_ref)
+       VALUES ($1::uuid,ARRAY[]::text[],gen_random_uuid(),1,1,'draining','a','b','origin/main') RETURNING id::text AS id`, [wt!.id]);
+    const env = JSON.parse((await swapPlan(engine)).error);
+    expect(env.message).toContain('2 worktree refresh row(s)');
+    expect(env.message).toContain(a.id);
+    expect(env.message).toContain(`${b!.id} (draining; sources none)`);
   });
 
   test('the plan writes nothing', async () => {

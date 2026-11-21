@@ -133,7 +133,13 @@ function shadowDuration(r: Reader, now: Date): Check {
     const started = r.s('epoch_started_at');
     const p99 = r.n('follower.lag_ms_p99_epoch');
     const clean = r.n('reconcile.consecutive_clean_full_passes');
-    if (started === undefined || p99 === undefined || clean === undefined) return { state: 'missing', detail: '' };
+    // Caught-up following needs current evidence too: a document without it never reads as caught up.
+    const lag = r.n('follower.lag_ms');
+    const queue = r.n('follower.queue_depth');
+    const watermark = r.b('follower.coverage_watermark.valid');
+    if (started === undefined || p99 === undefined || clean === undefined || lag === undefined || queue === undefined || watermark === undefined) {
+      return { state: 'missing', detail: '' };
+    }
     const t = Date.parse(started);
     if (!Number.isFinite(t)) return { state: 'fail', detail: `epoch_started_at is not a time: ${started}` };
     const days = (now.getTime() - t) / DAY_MS;

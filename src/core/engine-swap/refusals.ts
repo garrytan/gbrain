@@ -87,3 +87,14 @@ export function refreshUnsettledError(rows: readonly UnsettledRefresh[]): Operat
     'Finish each refresh (fix), then read the swap plan again. Nothing changed; the brain stays on its current engine.',
     { reason: 'refresh_unsettled', why, docs: row.anchor, fix, detail: `refreshes: ${list}. Next: ${rows.map(r => `${r.id}: ${r.next ?? `gbrain sources refresh ${r.source_ids[0] ?? '<source>'} --resume`}`).join('; ')}. ${row.authority}` });
 }
+
+/** `engine_swap_refused` / `team_brain` for a mounted brain: the preview swaps the host's personal brain only. */
+export function mountedBrainError(brainId: string): OperationError {
+  const row = SWAP_RECOVERY.team_brain;
+  const why = `The selected brain is the mounted brain ${brainId}, not this machine's own brain. The preview swaps a personal brain only, and a mount is never opened in its place.`;
+  return opError('engine_swap_refused', `The swap is refused: ${brainId} is a mounted brain; only the host brain can be previewed.`,
+    'Ask the user whether they meant their own brain (fix); nothing changed.',
+    { reason: 'team_brain', why, docs: row.anchor, detail: row.authority,
+      fix: { ask_user: true, argv: ['gbrain', '--brain', 'host', 'engine', 'swap', '--to', 'rust', '--plan', '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: row.anchor, verify: PLAN_VERIFY, why,
+        user_message: `${brainId} is a mounted brain, and the Rust engine preview moves only your own brain. Do you want the plan for your own brain instead? Nothing changed.` } });
+}

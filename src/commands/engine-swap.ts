@@ -17,9 +17,11 @@ import type { BrainEngine } from '../core/engine.ts';
 import { noBrainError } from '../core/engine-connect.ts';
 import { opError } from '../core/ops/contract.ts';
 import { ENGINE_SELECTING_ENV, planEngineSwap, type ServiceDefinition, type SwapPlan, type SwapPlanInputs } from '../core/engine-swap/plan.ts';
-import { SWAP_RECOVERY } from '../core/engine-swap/refusals.ts';
+import { mountedBrainError, SWAP_RECOVERY } from '../core/engine-swap/refusals.ts';
+import { HOST_BRAIN_ID } from '../core/brain-registry.ts';
+import { resolveBrainId } from '../core/brain-resolver.ts';
 
-export interface EngineSwapArgs { to?: string; plan: boolean; json: boolean; help: boolean; unsupported: string[] }
+export interface EngineSwapArgs { to?: string; brain?: string; plan: boolean; json: boolean; help: boolean; unsupported: string[] }
 
 export function parseEngineSwapArgs(args: readonly string[]): EngineSwapArgs {
   const out: EngineSwapArgs = { plan: false, json: false, help: false, unsupported: [] };
@@ -30,6 +32,7 @@ export function parseEngineSwapArgs(args: readonly string[]): EngineSwapArgs {
     if (a.startsWith('--to=')) { out.to = a.slice(5); continue; }
     if (a === '--plan' || a === '--dry-run') { out.plan = true; continue; }
     if (a === '--json') { out.json = true; continue; }
+    if (a === '--brain') { out.brain = args[++i]; continue; }
     if (a === '--help' || a === '-h') { out.help = true; continue; }
     if (a === '--expect') { out.unsupported.push(a); i++; continue; }
     out.unsupported.push(a);
@@ -99,6 +102,8 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
   dataDir?: string;
   /** Opens the brain without migrating it (default: the configured engine). */
   openEngine?: () => Promise<BrainEngine>;
+  /** Resolves the selected brain id (default: resolveBrainId, which reads --brain, GBRAIN_BRAIN_ID and .gbrain-mount). */
+  resolveBrain?: (explicit: string | null) => string;
   out?: (text: string) => void;
   writeError?: (e: unknown, opts: { json: boolean }) => number;
 }
@@ -106,8 +111,13 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
 async function openConfiguredEngine(): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) throw noBrainError();
-  const { createEngine } = await import('../core/engine-factory.ts');
+  // Read only: PGLite creates a database at a missing path on connect, so a missing store is refused, never made.
   const engineConfig = toEngineConfig(config);
+  if (engineConfig.engine === 'pglite' && (!engineConfig.database_path || !existsSync(engineConfig.database_path))) {
+    throw opError('no_brain', `No brain exists at ${engineConfig.database_path ?? '(no path configured)'}; the swap plan creates nothing.`,
+      'Check the configured path with `gbrain engine status --json`; nothing was created.', { docs: 'docs/guides/engine-swap.md#plan' });
+  }
+  const { createEngine } = await import('../core/engine-factory.ts');
   const engine = await createEngine(engineConfig);
   await engine.connect(engineConfig);
   return engine;
@@ -122,6 +132,9 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
   if (parsed.unsupported.length) return writeError(usage(`Only --to rust --plan is available in this build; not supported yet: ${parsed.unsupported.join(' ')}.`), parsed);
   if (parsed.to !== 'rust') return writeError(usage(`--to ${parsed.to ?? '(missing)'} is not available: this build previews a move to rust only.`), parsed);
   if (!parsed.plan) return writeError(usage('Only the read-only plan is available in this build: add --plan.'), parsed);
+  let brainId: string;
+  try { brainId = (deps.resolveBrain ?? resolveBrainId)(parsed.brain ?? null); } catch (e) { return writeError(e, parsed); }
+  if (brainId !== HOST_BRAIN_ID) return writeError(mountedBrainError(brainId), parsed);
   let engine: BrainEngine | null = null;
   try {
     engine = await (deps.openEngine ?? openConfiguredEngine)();

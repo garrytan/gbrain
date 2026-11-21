@@ -15,6 +15,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { renderCliError } from '../src/core/agent-output.ts';
 import { runEngineSwap, type EngineSwapCliDeps } from '../src/commands/engine-swap.ts';
+import { existsSync } from 'node:fs';
+import { withEnv } from './helpers/with-env.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { SWAP_RECOVERY, SWAP_REFUSAL_REASONS } from '../src/core/engine-swap/refusals.ts';
 
@@ -37,7 +39,7 @@ async function run(args: string[], extra: Partial<EngineSwapCliDeps> = {}) {
   const code = await runEngineSwap(args, {
     openEngine: async () => Object.assign(Object.create(engine), { disconnect: async () => undefined }) as BrainEngine,
     env: { GBRAIN_DATABASE_URL: 'postgresql://db.example/brain?app=VALUECANARY', HOME: home },
-    home, dataDir: home,
+    home, dataDir: home, resolveBrain: () => 'host',
     out: t => { stdout += t; },
     writeError: (e, o) => { const r = renderCliError(e, { json: o.json, command: 'engine swap', tty: false }); error = r.stdout ?? r.stderr ?? ''; return r.exitCode; },
     ...extra,
@@ -94,6 +96,42 @@ describe('engine swap --plan', () => {
     expect(r.code).toBe(2);
     expect(opened).toBe(false);
     expect(r.error).toContain(text);
+  });
+});
+
+describe('engine swap --plan opens only the host brain, and only if it exists', () => {
+  test('a mounted brain is refused before anything is opened', async () => {
+    let opened = false;
+    const r = await run(['--to', 'rust', '--plan', '--json'], { resolveBrain: () => 'team-x', openEngine: async () => { opened = true; throw new Error('opened'); } });
+    expect(opened).toBe(false);
+    expect(r.code).toBe(3);
+    const env = JSON.parse(r.error);
+    expect(env.code).toBe('engine_swap_refused');
+    expect(env.reason).toBe('team_brain');
+    expect(env.message).toContain('team-x is a mounted brain');
+  });
+
+  test('--brain reaches the brain resolver', async () => {
+    let asked: string | null = null;
+    await run(['--to', 'rust', '--plan', '--brain', 'mount-a', '--json'], { resolveBrain: e => { asked = e; return 'mount-a'; } });
+    expect(asked).toBe('mount-a');
+  });
+
+  test('a configured PGLite path that does not exist is refused and never created', async () => {
+    const gh = mkdtempSync(join(tmpdir(), 'gbrain-swap-cfg-'));
+    const missing = join(gh, 'no-such-brain');
+    mkdirSync(join(gh, '.gbrain'), { recursive: true });
+    writeFileSync(join(gh, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: missing }));
+    try {
+      let error = '';
+      const code = await withEnv({ GBRAIN_HOME: gh, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_BRAIN_ID: undefined }, () => runEngineSwap(['--to', 'rust', '--plan', '--json'], {
+        resolveBrain: () => 'host', env: {}, home: '', out: () => undefined,
+        writeError: (e, o) => { const r = renderCliError(e, { json: o.json, command: 'engine swap', tty: false }); error = r.stdout ?? ''; return r.exitCode; },
+      }));
+      expect(code).not.toBe(0);
+      expect(JSON.parse(error).code).toBe('no_brain');
+      expect(existsSync(missing)).toBe(false);
+    } finally { rmSync(gh, { recursive: true, force: true }); }
   });
 });
 
