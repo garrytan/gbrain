@@ -105,64 +105,164 @@ pub struct ValidTimePickQuery {
     pub policy: PrivacyPolicy,
 }
 
-/// The calendar date a frontmatter value declares (`validDate`): `YYYY-MM-DD`, optionally followed
-/// by `T`, `t` or a space, `00:00:00`, a zero fraction and an optional `Z` or `+00:00`, with a real
-/// calendar date from year 1000.
+/// The calendar date a frontmatter value declares, as the pick reads it (`validDateSql` in
+/// src/core/valid-time.ts, the SQL twin of `validDate`), or `None`.
+///
+/// Two forms count, as `DAY_FORM` and `STAMP_FORM` there:
+/// - a day `YYYY-MM-DD`, a real calendar date from year 1000, kept as written;
+/// - a timestamp `YYYY-M-D`, then `T`, `t` or a run of spaces and tabs, `H:MM:SS`, an optional `.`
+///   with digits, and an optional zone (spaces or tabs, then `Z` or `+H`, `+HH`, `+HH:MM`, or the
+///   same with `-`). The written day must be a real calendar date from year 1000. The instant is
+///   built as js-yaml builds it (the first three fraction digits are milliseconds, a field out of
+///   range rolls over, the zone is subtracted); it must be midnight UTC on a day from year 1000, and
+///   that day is the answer. A day that rolls into year 10000 reads as `validDateSql` reads it
+///   (`10000-01-01`), where `validDate` answers null.
 pub(crate) fn valid_date(value: Option<&Value>) -> Option<String> {
     let s = value?.as_str()?;
-    let b = s.as_bytes();
-    if b.len() < 10 {
-        return None;
-    }
-    let digits = |r: std::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);
-    if !digits(0..4) || b[4] != b'-' || !digits(5..7) || b[7] != b'-' || !digits(8..10) {
-        return None;
-    }
-    if !midnight_utc(&s[10..]) {
-        return None;
-    }
-    let num = |r: std::ops::Range<usize>| s[r].parse::<u32>().ok();
-    let (year, month, day) = (num(0..4)?, num(5..7)?, num(8..10)?);
-    if year < 1000 || !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) {
-        return None;
-    }
-    Some(s[..10].to_string())
-}
-
-/// The accepted tail after the date (`DATE_FORM` in src/core/valid-time.ts): nothing, or `T`, `t` or a
-/// space, `00:00:00`, an optional `.0…`, then nothing, `Z` or `+00:00`.
-fn midnight_utc(tail: &str) -> bool {
-    if tail.is_empty() {
-        return true;
-    }
-    let Some(rest) = tail
-        .strip_prefix(['T', 't', ' '])
-        .and_then(|rest| rest.strip_prefix("00:00:00"))
-    else {
-        return false;
+    let mut c = Cursor {
+        b: s.as_bytes(),
+        i: 0,
     };
-    let rest = match rest.strip_prefix('.') {
-        Some(fraction) => {
-            let zeros = fraction.bytes().take_while(|&c| c == b'0').count();
-            if zeros == 0 {
-                return false;
-            }
-            &fraction[zeros..]
+    let year = c.digits(4, 4)?;
+    c.byte(b'-')?;
+    let (month_at, month) = (c.i, c.digits(1, 2)?);
+    c.byte(b'-')?;
+    let (day_at, day) = (c.i, c.digits(1, 2)?);
+    if !in_calendar(year, month, day) {
+        return None;
+    }
+    if c.done() {
+        // `DAY_FORM`: two-digit month and day, no time.
+        return (c.i - day_at == 2 && day_at - month_at == 3).then(|| s.to_string());
+    }
+    if !c.eat(|b| b == b'T' || b == b't') && c.run(|b| b == b' ' || b == b'\t') == 0 {
+        return None;
+    }
+    let hour = c.digits(1, 2)?;
+    c.byte(b':')?;
+    let minute = c.digits(2, 2)?;
+    c.byte(b':')?;
+    let second = c.digits(2, 2)?;
+    let mut millis = 0;
+    if c.eat(|b| b == b'.') {
+        let at = c.i;
+        c.run(|b| b.is_ascii_digit());
+        let fraction = &s[at..c.i];
+        millis = format!("{:0<3}", &fraction[..fraction.len().min(3)])
+            .parse::<i64>()
+            .ok()?;
+    }
+    let mut zone_minutes = 0;
+    if !c.done() {
+        c.run(|b| b == b' ' || b == b'\t');
+        if !c.eat(|b| b == b'Z') {
+            let sign = match c.b.get(c.i) {
+                Some(b'+') => 1,
+                Some(b'-') => -1,
+                _ => return None,
+            };
+            c.i += 1;
+            let zone_hour = c.digits(1, 2)?;
+            let zone_minute = if c.eat(|b| b == b':') {
+                c.digits(2, 2)?
+            } else {
+                0
+            };
+            zone_minutes = sign * (zone_hour * 60 + zone_minute);
         }
-        None => rest,
-    };
-    rest.is_empty() || rest == "Z" || rest == "+00:00"
+        if !c.done() {
+            return None;
+        }
+    }
+    let instant = days_from_civil(year, month, day) * DAY_MS
+        + ((hour * 60 + minute) * 60 + second) * 1000
+        + millis
+        - zone_minutes * 60_000;
+    if instant.rem_euclid(DAY_MS) != 0 {
+        return None;
+    }
+    let (y, m, d) = civil_from_days(instant.div_euclid(DAY_MS));
+    (y >= 1000).then(|| format!("{y:04}-{m:02}-{d:02}"))
 }
 
-fn days_in_month(year: u32, month: u32) -> u32 {
+const DAY_MS: i64 = 86_400_000;
+
+/// A left-to-right reader over the bytes of one value.
+struct Cursor<'a> {
+    b: &'a [u8],
+    i: usize,
+}
+
+impl Cursor<'_> {
+    fn done(&self) -> bool {
+        self.i == self.b.len()
+    }
+
+    /// Takes one byte that passes `ok`.
+    fn eat(&mut self, ok: impl Fn(u8) -> bool) -> bool {
+        let hit = self.b.get(self.i).is_some_and(|&b| ok(b));
+        self.i += usize::from(hit);
+        hit
+    }
+
+    fn byte(&mut self, want: u8) -> Option<()> {
+        self.eat(|b| b == want).then_some(())
+    }
+
+    /// Takes every byte that passes `ok`, and says how many.
+    fn run(&mut self, ok: impl Fn(u8) -> bool) -> usize {
+        let at = self.i;
+        while self.eat(&ok) {}
+        self.i - at
+    }
+
+    /// Takes `min..=max` ASCII digits (as many as there are, up to `max`) and reads them.
+    fn digits(&mut self, min: usize, max: usize) -> Option<i64> {
+        let at = self.i;
+        while self.i - at < max && self.eat(|b| b.is_ascii_digit()) {}
+        if self.i - at < min {
+            return None;
+        }
+        std::str::from_utf8(&self.b[at..self.i]).ok()?.parse().ok()
+    }
+}
+
+/// A real calendar day of a year from 1000 (`inCalendar`).
+fn in_calendar(year: i64, month: i64, day: i64) -> bool {
+    year >= 1000 && (1..=12).contains(&month) && day >= 1 && day <= days_in_month(year, month)
+}
+
+fn days_in_month(year: i64, month: i64) -> i64 {
     match month {
-        2 if (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400) => {
-            29
-        }
+        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
         2 => 28,
         4 | 6 | 9 | 11 => 30,
         _ => 31,
     }
+}
+
+/// Days from 1970-01-01 to a proleptic Gregorian date (H. Hinnant's `days_from_civil`).
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// The proleptic Gregorian date of a day count from 1970-01-01 (H. Hinnant's `civil_from_days`).
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + i64::from(month <= 2), month, day)
 }
 
 /// One row of the pick: a version, or the current page.
@@ -535,14 +635,14 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn valid_date_accepts_a_calendar_date_at_midnight_in_the_typescript_forms_only() {
+    fn valid_date_answers_what_the_sql_pick_answers() {
         let cases = [
+            // Every row is what `validDateSql` (src/core/valid-time.ts at PR 9908, af0ec1146e) answers on PGLite.
             ("2026-01-01", Some("2026-01-01")),
             ("2026-01-01T00:00:00Z", Some("2026-01-01")),
             ("2026-01-01T00:00:00.000Z", Some("2026-01-01")),
             ("2026-01-01T00:00:00.0+00:00", Some("2026-01-01")),
             ("2026-01-01T00:00:00+00:00", Some("2026-01-01")),
-            // A `t` or a space before the time, and no zone (PR 9908 keeps a timestamp as written).
             ("2026-01-01T00:00:00", Some("2026-01-01")),
             ("2026-01-01T00:00:00.000", Some("2026-01-01")),
             ("2026-01-01t00:00:00Z", Some("2026-01-01")),
@@ -574,24 +674,96 @@ mod tests {
             ("2026/01/01", None),
             ("2026-01-01T09:00:00Z", None),
             ("2026-01-01 12:00:00", None),
-            ("2026-01-01T00:00:00.Z", None),
+            ("2026-01-01T00:00:00.Z", Some("2026-01-01")),
             ("2026-01-01T00:00:00.001Z", None),
-            ("2026-01-01T00:00:00.", None),
+            ("2026-01-01T00:00:00.", Some("2026-01-01")),
             ("2026-01-01T00:00:00+01:00", None),
             ("2026-01-01T00:00:00z", None),
-            ("2026-01-01T00:00:00+00", None),
-            ("2026-01-01T00:00:00-00:00", None),
-            ("2026-01-01 00:00:00 +00:00", None),
-            ("2026-01-01T02:00:00+02:00", None),
+            ("2026-01-01T00:00:00+00", Some("2026-01-01")),
+            ("2026-01-01T00:00:00-00:00", Some("2026-01-01")),
+            ("2026-01-01 00:00:00 +00:00", Some("2026-01-01")),
+            ("2026-01-01T02:00:00+02:00", Some("2026-01-01")),
             ("2026-01-02T00:00:00+02:00", None),
-            ("2026-01-01  00:00:00", None),
-            ("2026-01-01\t00:00:00", None),
+            ("2026-01-01  00:00:00", Some("2026-01-01")),
+            ("2026-01-01\t00:00:00", Some("2026-01-01")),
             ("2026-01-01x00:00:00", None),
-            ("2026-01-01T0:00:00", None),
+            ("2026-01-01T0:00:00", Some("2026-01-01")),
             ("2026-01-01 ", None),
             ("2026-01-01T", None),
             ("2026-01-01 00:00:00\n", None),
             ("2026-1a-01", None),
+            ("2026-02-01", Some("2026-02-01")),
+            ("2026-02-01T00:00:00Z", Some("2026-02-01")),
+            ("2026-02-01 00:00:00 +00:00", Some("2026-02-01")),
+            ("2026-02-01T00:00:00+00", Some("2026-02-01")),
+            ("2026-02-01T00:00:00-00:00", Some("2026-02-01")),
+            ("2026-02-01T02:00:00+02:00", Some("2026-02-01")),
+            ("2026-2-1T00:00:00Z", Some("2026-02-01")),
+            ("2026-02-01\t00:00:00", Some("2026-02-01")),
+            ("2026-01-31T22:00:00-02:00", Some("2026-02-01")),
+            ("2026-02-01T00:00:00.0001Z", Some("2026-02-01")),
+            ("2026-02-01T0:00:00Z", Some("2026-02-01")),
+            ("2026-02-01  00:00:00", Some("2026-02-01")),
+            ("2026-02-01T00:00:00 Z", Some("2026-02-01")),
+            ("2026-02-01T00:00:00.Z", Some("2026-02-01")),
+            ("2026-02-01T00:00:00.", Some("2026-02-01")),
+            ("2026-01-31T24:00:00Z", Some("2026-02-01")),
+            ("2026-02-01T00:60:00+01:00", Some("2026-02-01")),
+            ("2026-02-01T02:00:00+2", Some("2026-02-01")),
+            ("2026-02-01T00:00:00+00:00", Some("2026-02-01")),
+            ("2026-02-01T01:00:00Z", None),
+            ("2026-02-01T00:00:00+01:00", None),
+            ("2026-02-01T00:00:00.5Z", None),
+            ("2026-02-01T00:00:00z", None),
+            ("2026-02-01T12:00:00Z", None),
+            ("2026-02-30T00:00:00Z", None),
+            ("2026-02-01T00:00:00+0100", None),
+            ("2026-02-01 00:00:00\n", None),
+            // validDate answers null here; the pick reads validDateSql, which the store mirrors.
+            ("9999-12-31T24:00:00Z", Some("10000-01-01")),
+            ("1000-01-01T00:00:00+00:30", None),
+            ("1000-01-01T00:00:00-24:00", Some("1000-01-02")),
+            ("0999-12-31T24:00:00Z", None),
+            ("2026-02-01 \t 00:00:00", Some("2026-02-01")),
+            ("2026-02-01T00:00:00\t+00:00", Some("2026-02-01")),
+            ("2026-02-01T00:00:00+00:", None),
+            ("2026-02-01T99:99:99Z", None),
+            ("2026-02-01x00:00:00", None),
+            ("2026-02-01T", None),
+            ("2026-02-01T00:00:00.999Z", None),
+            ("2026-02-01T00:00:00.0009Z", Some("2026-02-01")),
+            ("2026-02-01T00:00:00Z ", None),
+            (" 2026-02-01", None),
+            ("2026-12-31T23:59:60Z", Some("2027-01-01")),
+            ("2026-02-01t00:00:00 -00", Some("2026-02-01")),
+            ("20260-02-01T00:00:00Z", None),
+            ("9999-12-31T00:00:00Z", Some("9999-12-31")),
+            ("2026-02-01T00:00:00-0:00", Some("2026-02-01")),
+            ("2026-02-01T00:00:00+00:0", None),
+            ("2026-02-01T00:00:00+100", None),
+            ("2026-123-01T00:00:00Z", None),
+            ("2026-02-01T123:00:00Z", None),
+            ("2026-02-01T00:0:00Z", None),
+            ("2026-02-01 \t", None),
+            ("2026-02-01T00:00:00 ", None),
+            ("2026-2-1", None),
+            ("2026-02-1", None),
+            ("1969-12-31T24:00:00Z", Some("1970-01-01")),
+            ("2026-02-01T00:00:00.000000000Z", Some("2026-02-01")),
+            ("2026-02-01TT00:00:00Z", None),
+            ("2026-02-01T 00:00:00Z", None),
+            ("2026-02-01T00:00:00Z+00:00", None),
+            ("2024-03-01T01:30:00+01:30", Some("2024-03-01")),
+            ("2024-02-29T23:00:00-01:00", Some("2024-03-01")),
+            ("2024-03-01T00:00:00.000000Z", Some("2024-03-01")),
+            ("1000-01-01T01:00:00+01:00", Some("1000-01-01")),
+            ("2024-03-01T00:00:01Z", None),
+            ("2024-03-01T00:60:00Z", None),
+            ("2024-13-01", None),
+            ("2024-03", None),
+            ("nope", None),
+            // validDate answers null here; the pick reads validDateSql, which the store mirrors.
+            ("9999-12-31T72:00:00Z", Some("10000-01-03")),
         ];
         for (input, want) in cases {
             assert_eq!(
