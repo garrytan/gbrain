@@ -499,10 +499,10 @@ function isRelayedSessionMessage(e: Record<string, unknown>): boolean {
 }
 
 function hasNonHumanOrigin(e: Record<string, unknown>): boolean {
-  const kind = typeof e.origin === 'object' && e.origin !== null ? (e.origin as Record<string, unknown>).kind : undefined;
-  if (kind === 'human') return false;
   if (isRelayedSessionMessage(e)) return true;
-  return typeof kind === 'string' && kind.length > 0;
+  if (typeof e.origin !== 'object' || e.origin === null) return false;
+  const kind = (e.origin as Record<string, unknown>).kind;
+  return typeof kind === 'string' && kind.length > 0 && kind !== 'human';
 }
 
 /** One transcript line → a turn plus its structural human-prompt origin. */
