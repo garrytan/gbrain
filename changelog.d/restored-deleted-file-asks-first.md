@@ -1,0 +1,6 @@
+**A file you restore after `gbrain delete` is no longer ignored by sync: it is held for the file-drift step, which asks you first before the page comes back.**
+
+<!-- behavior-change: sync_restored_file_asks_first_lc1 -->
+
+### Fixed
+- When `gbrain delete` removed a page's file and the same file came back (`git checkout -- <path>`, a revert, a commit that re-adds it), managed sync settled it as "Already up to date" and never imported it. After the 72-hour retention purge the page was gone for good, and doctor's `gbrain sources retry-held --unindexed` found nothing to import. Now sync holds the file `file_drift` on the deleted side (`tombstone_edited`, or `purged_differs` after the purge, with `restored: true`), `gbrain sources status` and doctor list it, and `gbrain repair file-drift --held --side deleted --state <state> --prefer file` previews bringing the page back and does it only on your yes (`--prefer database` keeps the deletion). The first managed sync after the upgrade reads the checkout once more, so it finds such a file even when nothing else changed. A deletion that stands still settles with no hold: a delete that left the file (`sync.write_through` off, a read-only mirror), a delete whose removal is not committed yet, a `--purge` delete, and a git-canonical source.

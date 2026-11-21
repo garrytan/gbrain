@@ -31,7 +31,7 @@ import { OPEN_AT_STAMP_CAP, passFingerprint, readPassRow, SYNC_ORIGIN_DELETED_OP
   type PassKind, type PassOutcome, type SyncSelection } from './sync-pass-row.ts';
 import { readSyncAdmission, type SyncAdmission } from './sync-admission.ts';
 import { faultPoint } from './fault-points.ts';
-import { passFoldBase, passIdleProbe, readShadowLevel, workingIdleChange, type PassLevelCache, type ShadowLevel, type ShadowPath } from './sync-pass.ts';
+import { passFoldBase, passIdleProbe, readShadowLevel, workingFileStat, workingIdleChange, type PassLevelCache, type ShadowLevel, type ShadowPath } from './sync-pass.ts';
 import { ownWritebackCommit, type PassFold } from './sync-pass-fold.ts';
 import { openPassRequests, settleCarried } from './sync-pass-carried.ts';
 import { loopYield } from './sync-yield.ts';
@@ -68,6 +68,7 @@ import { unbornHead } from '../hardened-git.ts';
 import { SIZE_STATE_SAMPLE, type SyncSizeStates } from '../page-embedding-budget.ts';
 import { massReconcileAllowed } from '../sync-reconcile.ts';
 import { keepDbHeadroom } from '../repair/keep-db-policy.ts';
+import { removalPendingChanged } from './sync-removal-pending.ts';
 
 /** Rounds a pass runs before it stops `not_converged` (design §3.1). */
 export const PASS_MAX_ROUNDS = 4;
@@ -446,8 +447,10 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   const { heldDeletions, levelReuse } = await readPassSwitches(engine, sourceId);
   // GST-2201: `sync_deleted_restore` marks the classifier that imports a file restored over its sync-made tombstone, so the first
   // pass after the upgrade reads the whole level once and brings back pages an older pass left deleted beside their file.
+  // LC-1: `restored_file_hold` does the same for the classifier that holds a restored file: a stamp from before it carries no
+  // `removal_pending`, so its idle check would never see a file restored after its delete settled.
   const selectionFp = digest({ ...selection, ...(metafilePages === 'off' ? {} : { metafile_pages: metafilePages }), ...(heldDeletions ? { apply_held_deletions: true } : {}), ...(strict ? { canonical: 'git' } : {}),
-    sync_deleted_restore: 1 }), parserFp = parserFingerprint();
+    sync_deleted_restore: 1, restored_file_hold: 1 }), parserFp = parserFingerprint();
   const obligations: ManagedSyncPassValue['obligations'] = prior ? structuredClone(prior.value.obligations)
     : { baseline_commit: context.source.last_commit, mismatch: {}, not_converged_streak: 0, faults: {} };
   obligations.mismatch ??= {}; obligations.faults ??= {}; obligations.not_converged_streak ??= 0;
@@ -479,7 +482,9 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   // Working mode (design §2.2): the stat cache this process kept from the round its last stamp used; a cold process has none.
   const cacheKey = passFingerprint(sourceId, incarnation);
   const kindStarted = Date.now();
-  const working = mode === 'working' && converged ? await workingIdleChange(context, recallWorkingStatCache(cacheKey)) : { changed: mode === 'working', cache: null };
+  // LC-1: committed mode re-stats the paths the stamp settled on a delete's uncommitted removal (sync-removal-pending.ts).
+  const working = mode === 'working' && converged ? await workingIdleChange(context, recallWorkingStatCache(cacheKey))
+    : { changed: mode === 'working' || removalPendingChanged(converged?.removal_pending, path => workingFileStat(context.gitRoot, path)), cache: null };
   // A configured stamp writes last_commit = converged.target: a source whose last_commit moved since (a topology re-clone
   // clears it, as an upgrade's catch-up does) has no converged state to be idle against.
   const stamped = converged && (!configured || context.source.last_commit === converged.target) ? converged : null;
@@ -622,7 +627,7 @@ async function stampUnchangedPass(engine: BrainEngine, input: SyncPassInput, rou
     for (const path of [...level.releasableHolds, ...await settledDeletionHolds(tx, sourceId, level.deletionCandidates)]) await clearGitHold(tx, { sourceId, incarnation, path, observedAt: startedAt });
     await recordPassFenceTrend(tx, { worktreeId: context.binding.worktree_id, sourceId, passId, since: converged?.request_hwm ?? null, prefix: trend });
     const watermark = await readConvergedWatermark(tx, { worktreeId: context.binding.worktree_id, sourceId, incarnation }, null, OPEN_AT_STAMP_CAP, { prior: converged?.writeback });
-    value.obligations.converged = { target: head, at, ...watermark, parser_fp: parserFp, pack, selection_fp: selectionFp,
+    value.obligations.converged = { target: head, at, ...watermark, ...(level.removalPending !== undefined ? { removal_pending: level.removalPending } : {}), parser_fp: parserFp, pack, selection_fp: selectionFp,
       last_full_at: kind === 'full' || !converged ? at : converged.last_full_at, passes_since_full: kind === 'full' || !converged ? 0 : converged.passes_since_full + 1 };
     Object.assign(value.obligations, { not_converged_streak: 0, mismatch: {}, stuck_since: null });
     value.telemetry = { ...value.telemetry, outcome: 'up_to_date', ended_at: at, remaining: 0, duration_ms: Date.now() - started, counts: { ...counts, ...passApplyCounts(applied) },
@@ -691,7 +696,7 @@ async function passStampFor(engine: BrainEngine, input: { context: ManagedSyncCo
   const closesEpisode = closure?.closes === true;
   if (closure?.released) counts.episodeReleased = closure.released;
   return { leaseToken: input.leaseToken, incarnation: context.incarnation, configured, stampChunker: configured && (context.source.last_commit === null || (closesEpisode && !!episode?.full_id && closure!.stampChunker)),
-    closesEpisode, retryTaken: [...input.retry], releasedHolds: input.level.releasableHolds, ...(input.level.deletionCandidates.length ? { deletionCandidates: input.level.deletionCandidates } : {}), selectionFp: input.selectionFp, parserFp: input.parserFp, pack: input.pack, full: input.full,
+    closesEpisode, retryTaken: [...input.retry], releasedHolds: input.level.releasableHolds, ...(input.level.deletionCandidates.length ? { deletionCandidates: input.level.deletionCandidates } : {}), ...(input.level.removalPending !== undefined ? { removalPending: input.level.removalPending } : {}), selectionFp: input.selectionFp, parserFp: input.parserFp, pack: input.pack, full: input.full,
     changed: counts.added + counts.modified + counts.deleted + counts.renamed, extract: input.extract, since: input.since, ...(input.rescreen ? { rescreen: true as const } : {}) };
 }
 

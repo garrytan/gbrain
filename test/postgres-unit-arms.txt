@@ -174,6 +174,7 @@ test/engine-parity/segmented-body.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
+test/engine-parity/sync-restored-file-holds.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/title-fuzzy-like-bound.test.ts
@@ -839,6 +840,7 @@ test/sync-pass-stop-in-level-gbra133.test.ts
 test/sync-plain-directory-7973.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
+test/sync-restored-deleted-file-lc1.test.ts
 test/sync-restored-file-purge.test.ts
 test/sync-sigterm-gst2869.test.ts
 test/sync-slug-root-mode-6694.test.ts
