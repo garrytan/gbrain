@@ -278,7 +278,7 @@ export async function redactRequestIntents(tx: BrainEngine, targets: readonly In
   const ids = targets.map(t => t.id).filter(id => id !== exclude);
   if (!ids.length) return 0;
   await lockCounters(tx, ['brain', ...redactionCounterKeys(targets)]);
-  const rows = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+  const rows = await tx.lockWriteRequestsById(ids);
   // A page purge leaves later queued writes for the slug in place (they fail on the missing page); a fact purge refuses.
   const blocked = opts.skipPending ? undefined : rows.find(row => !isTerminal(row) || row.recovery);
   if (blocked) {

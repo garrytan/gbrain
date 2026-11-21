@@ -628,7 +628,7 @@ src/core/persistence/import-deferral.ts	execute_raw	1
 src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
-src/core/persistence/intent-redaction.ts	execute_raw	9
+src/core/persistence/intent-redaction.ts	execute_raw	8
 src/core/persistence/journal.ts	execute_raw	40
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/legacy-locks.ts	execute_raw	1

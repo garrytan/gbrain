@@ -88,7 +88,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	146	no	yes	yes	serves
+transaction	lifecycle	yes	147	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -478,7 +478,7 @@ getConfigValues	config	yes	6	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	5	no	yes	yes	serves
-readLocalWriterRow	import_guards	yes	7	no	yes	yes	serves
+readLocalWriterRow	import_guards	yes	8	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	68	no	yes	yes	serves
@@ -494,7 +494,7 @@ readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	1	no	yes	yes	serves
 listFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequest	persistence_journal	yes	9	no	yes	yes	serves
+readWriteRequest	persistence_journal	yes	10	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	9	no	yes	yes	serves
 listWriteRequestRows	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
@@ -505,8 +505,8 @@ readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	4	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	47	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	51	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	48	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	52	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	23	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	6	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	19	no	yes	yes	serves
