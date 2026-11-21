@@ -67,7 +67,7 @@ export function segmentObservationDate(page: Pick<Page, 'slug' | 'frontmatter' |
  * Rows are numbered from `rowNum`; publication renumbers them under the page lock.
  */
 export async function extractConversationWindow(run: ConversationWindowRun, page: Page, seg: ConversationSegment, text: string, rowNum: number,
-  entityHints: ExtractInput['entityHints']): Promise<{ extracted: number; rows: ConversationFactRow[]; resolution: SaveTimeResolutionCounts }> {
+  entityHints: ExtractInput['entityHints'], quietFrom: ConversationSegment['messages'] = seg.messages): Promise<{ extracted: number; rows: ConversationFactRow[]; resolution: SaveTimeResolutionCounts }> {
   const sessionId = `${CONVERSATION_FACTS_SOURCE_PREFIX}:${page.slug}`;
   let extracted: ExtractedFact[];
   const input: ExtractInput = { turnText: text, sessionId, source: CONVERSATION_FACTS_SOURCE_PREFIX, engine: run.engine, abortSignal: run.signal,
@@ -106,7 +106,7 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
   })));
   // GST-3170: a fact restating a claim its speaker asked to keep quiet is stored private, unless the claim was withdrawn
   // or purged at any visibility: the guards match the row's own visibility, so narrowing must never bring one back.
-  const quiet = visibility === 'world' ? keepQuietClaims(seg.messages) : [];
+  const quiet = visibility === 'world' ? keepQuietClaims(quietFrom) : [];
   const rows = await Promise.all(inferred.map(async row => keptQuiet(row.fact, quiet)
     && !await isFactWithdrawn(run.engine, run.sourceId, null, row.fact, row.entity_slug ?? null) ? { ...row, visibility: 'private' as const } : row));
   // GBRA-574: slots come from a second call over facts whose person was named exactly: by identity evidence alone (an
@@ -138,19 +138,20 @@ function declinedReason(error: unknown): DeclinedWindow['reason'] | null {
 /**
  * GST-3251: one whole-page window, where a window the model declines does not fail the page. A declined window of two or
  * more messages is retried once as its two halves (at most two more calls, over the same text once more); what still
- * declines is returned in `declined` with the facts of everything that read. Every other failure, BudgetExhausted
- * included, is thrown as before.
+ * declines is returned in `declined` with the facts of everything that read, and `read` says whether any of the window
+ * read (GST-3347). A half keeps the whole window's keep-quiet cues, so a cue in a declined half still narrows the claim
+ * its sibling half restates. Every other failure, BudgetExhausted included, is thrown as before.
  */
 export async function extractConversationWindowOrHalves(run: ConversationWindowRun, page: Page, seg: ConversationSegment, rowNum: number,
-  entityHints: ExtractInput['entityHints']): Promise<{ extracted: number; rows: ConversationFactRow[]; resolution: SaveTimeResolutionCounts; declined: DeclinedWindow[] }> {
+  entityHints: ExtractInput['entityHints']): Promise<{ extracted: number; rows: ConversationFactRow[]; resolution: SaveTimeResolutionCounts; declined: DeclinedWindow[]; read: boolean }> {
   const title = page.title || page.slug;
   const attempt = async (part: ConversationSegment, at: number) => {
     try {
-      return { ...(await extractConversationWindow(run, page, part, renderSegmentForExtraction(title, part), at, entityHints)), declined: [] as DeclinedWindow[] };
+      return { ...(await extractConversationWindow(run, page, part, renderSegmentForExtraction(title, part), at, entityHints, seg.messages)), declined: [] as DeclinedWindow[], read: true };
     } catch (error) {
       const reason = run.signal?.aborted ? null : declinedReason(error);
       if (!reason) throw error;
-      return { extracted: 0, rows: [] as ConversationFactRow[], resolution: emptySaveTimeResolutionCounts(), declined: [{ start: part.startIso, end: part.endIso, reason }] };
+      return { extracted: 0, rows: [] as ConversationFactRow[], resolution: emptySaveTimeResolutionCounts(), declined: [{ start: part.startIso, end: part.endIso, reason }], read: false };
     }
   };
   const whole = await attempt(seg, rowNum);
@@ -161,7 +162,7 @@ export async function extractConversationWindowOrHalves(run: ConversationWindowR
   const resolution = emptySaveTimeResolutionCounts();
   mergeSaveTimeResolutionCounts(resolution, first.resolution);
   mergeSaveTimeResolutionCounts(resolution, second.resolution);
-  return { extracted: first.extracted + second.extracted, rows: [...first.rows, ...second.rows], resolution, declined: [...first.declined, ...second.declined] };
+  return { extracted: first.extracted + second.extracted, rows: [...first.rows, ...second.rows], resolution, declined: [...first.declined, ...second.declined], read: first.read || second.read };
 }
 
 /**
