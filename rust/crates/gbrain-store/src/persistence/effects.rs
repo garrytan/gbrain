@@ -180,8 +180,12 @@ pub(crate) fn request_effects(read: &dyn KvRead, request_id: &str) -> Result<Vec
     Ok(out)
 }
 
-/// Every stored effect, in id order (the claim-order index).
-pub(crate) fn all_effects(read: &dyn KvRead) -> Result<Vec<EffectRecord>> {
+/// Calls `f` with each stored effect in id order (the claim-order index) until it returns false. The index holds only a
+/// request id and kind per effect; a record is read when its turn comes, so a stop leaves the later ones unread.
+pub(crate) fn for_each_effect(
+    read: &dyn KvRead,
+    f: &mut dyn FnMut(EffectRecord) -> Result<bool>,
+) -> Result<()> {
     let mut entries = Vec::new();
     scan_prefix(
         read,
@@ -192,18 +196,49 @@ pub(crate) fn all_effects(read: &dyn KvRead) -> Result<Vec<EffectRecord>> {
             true
         },
     )?;
-    let mut out = Vec::with_capacity(entries.len());
     for entry in entries {
         let entry = entry.map_err(|e| {
             StoreError::new(STORE_CORRUPT, format!("unreadable effect order entry: {e}"))
         })?;
         if let Some(record) =
             get_json::<EffectRecord>(read, &effect_key(&entry.request_id, &entry.kind))?
+            && !f(record)?
         {
-            out.push(record);
+            break;
         }
     }
+    Ok(())
+}
+
+/// Every stored effect, in id order (the claim-order index).
+pub(crate) fn all_effects(read: &dyn KvRead) -> Result<Vec<EffectRecord>> {
+    let mut out = Vec::new();
+    for_each_effect(read, &mut |record| {
+        out.push(record);
+        Ok(true)
+    })?;
     Ok(out)
+}
+
+/// The keys and values a store holds for `effects` (test seeding of a read-only fake).
+#[cfg(test)]
+pub(crate) fn effect_entries_for_test(effects: &[EffectRecord]) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let mut out = Vec::new();
+    for e in effects {
+        out.push((
+            effect_key(&e.request_id, &e.kind),
+            serde_json::to_vec(e).unwrap(),
+        ));
+        out.push((
+            order_key(e.id),
+            serde_json::to_vec(&OrderEntry {
+                request_id: e.request_id.clone(),
+                kind: e.kind.clone(),
+            })
+            .unwrap(),
+        ));
+    }
+    out
 }
 
 /// Effect `id`, or none.

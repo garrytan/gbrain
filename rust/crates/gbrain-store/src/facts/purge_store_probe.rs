@@ -27,10 +27,10 @@ use crate::journal::RequestRecord;
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
-use crate::persistence::effects::{EffectRecord, all_effects};
+use crate::persistence::effects::{EffectRecord, for_each_effect};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{BinaryHeap, HashSet};
 
 /// `ORDER BY item LIMIT 20` of the effect probe.
 const PROBE_ITEMS: usize = 20;
@@ -127,7 +127,7 @@ fn field_text(data: &Value, key: &str) -> Option<String> {
 }
 
 /// The requests of `source_id` that still name the page: another request, filed on the slug and finished, or whose intent,
-/// outcome, error detail or error message holds a needle, or (on the slug) a reason.
+/// outcome, error detail or error message holds a needle, or (on the slug) a reason. The journal walk stops at `cap` matches.
 fn requests_naming(
     read: &dyn KvRead,
     source_id: &str,
@@ -135,6 +135,7 @@ fn requests_naming(
     request_id: &str,
     needles: &[String],
     reasons: &[String],
+    cap: usize,
 ) -> Result<usize> {
     let mut count = 0;
     let mut failure = None;
@@ -168,38 +169,70 @@ fn requests_naming(
         if (on_slug && finished) || holds(needles) || (on_slug && holds(reasons)) {
             count += 1;
         }
-        true
+        count < cap
     })?;
     failure.map_or(Ok(count), Err)
 }
 
-/// The effects of `source_id` whose payload holds a form, or (given the page) its Git effects on the slug whose data holds a
-/// reason form, as `effect:<id> <kind> <state>` items.
+/// Whether effect `e` of `source_id` is named: its payload, outcome or recovery holds a form, or (given the page) it is a
+/// Git effect on the slug whose data holds a reason form.
+fn effect_named(
+    e: &EffectRecord,
+    source_id: &str,
+    forms: &[String],
+    page: Option<&EffectPage>,
+) -> bool {
+    if e.source_id.as_deref() != Some(source_id) {
+        return false;
+    }
+    let data = jsonb_text(&e.data);
+    any_in(&data, forms)
+        || any_in(&jsonb_or_empty(e.outcome.as_ref()), forms)
+        || any_in(&jsonb_or_empty(e.recovery.as_ref()), forms)
+        || page.is_some_and(|p| {
+            e.kind == "git"
+                && field_text(&e.data, "slug").as_deref() == Some(p.slug.as_str())
+                && any_in(&data, &p.reason_forms)
+        })
+}
+
+/// How many effects are named, stopping at `cap`; no item text is built.
+fn count_effects(
+    read: &dyn KvRead,
+    source_id: &str,
+    forms: &[String],
+    page: Option<&EffectPage>,
+    cap: usize,
+) -> Result<usize> {
+    let mut count = 0;
+    for_each_effect(read, &mut |e| {
+        if effect_named(&e, source_id, forms, page) {
+            count += 1;
+        }
+        Ok(count < cap)
+    })?;
+    Ok(count)
+}
+
+/// The first `PROBE_ITEMS` named effects as `effect:<id> <kind> <state>` items in byte order. Only the smallest items seen so
+/// far are kept.
 fn effect_items(
     read: &dyn KvRead,
     source_id: &str,
     forms: &[String],
     page: Option<&EffectPage>,
 ) -> Result<Vec<String>> {
-    let mut items = Vec::new();
-    for e in all_effects(read)? {
-        if e.source_id.as_deref() != Some(source_id) {
-            continue;
+    let mut kept = BinaryHeap::new();
+    for_each_effect(read, &mut |e| {
+        if effect_named(&e, source_id, forms, page) {
+            kept.push(item_of(&e));
+            if kept.len() > PROBE_ITEMS {
+                kept.pop();
+            }
         }
-        let data = jsonb_text(&e.data);
-        let named = any_in(&data, forms)
-            || any_in(&jsonb_or_empty(e.outcome.as_ref()), forms)
-            || any_in(&jsonb_or_empty(e.recovery.as_ref()), forms);
-        let own = page.is_some_and(|p| {
-            e.kind == "git"
-                && field_text(&e.data, "slug").as_deref() == Some(p.slug.as_str())
-                && any_in(&data, &p.reason_forms)
-        });
-        if named || own {
-            items.push(item_of(&e));
-        }
-    }
-    Ok(items)
+        Ok(true)
+    })?;
+    Ok(kept.into_sorted_vec())
 }
 
 fn item_of(e: &EffectRecord) -> String {
@@ -275,8 +308,8 @@ impl StoreProbe {
         }
     }
 
-    /// How many rows match, uncapped.
-    fn count(&self, read: &dyn KvRead, op: &str) -> Result<usize> {
+    /// How many rows match. The scans of requests, effects and segment texts stop at `cap`; the others count all of theirs.
+    fn count(&self, read: &dyn KvRead, op: &str, cap: usize) -> Result<usize> {
         match self {
             StoreProbe::SlugKey {
                 store,
@@ -331,12 +364,12 @@ impl StoreProbe {
                 request_id,
                 needles,
                 reasons,
-            } => requests_naming(read, source_id, slug, request_id, needles, reasons),
+            } => requests_naming(read, source_id, slug, request_id, needles, reasons, cap),
             StoreProbe::PageSegmentTexts {
                 source_id,
                 shas,
                 forms,
-            } => crate::page_body::purge_probe::count_page_texts(read, source_id, shas, forms),
+            } => crate::page_body::purge_probe::count_page_texts(read, source_id, shas, forms, cap),
             StoreProbe::SegmentTexts {
                 source_id,
                 needles,
@@ -346,12 +379,13 @@ impl StoreProbe {
                 source_id,
                 needles,
                 *referenced,
+                cap,
             ),
             StoreProbe::EffectPayload {
                 source_id,
                 forms,
                 page,
-            } => Ok(effect_items(read, source_id, forms, page.as_ref())?.len()),
+            } => count_effects(read, source_id, forms, page.as_ref(), cap),
         }
     }
 }
@@ -391,7 +425,7 @@ impl Store {
             .map_err(|_| invalid(format!("{OP}: rows must not be negative")))?
             .saturating_add(1);
         let read = self.read()?;
-        Ok(q.probe.count(&*read, OP)?.min(cap) as i64)
+        Ok(q.probe.count(&*read, OP, cap)?.min(cap) as i64)
     }
 
     /// `listPurgeProbeItems` of an effect probe: the first 20 `effect:<id> <kind> <state>` items in byte order. A probe of
@@ -410,9 +444,154 @@ impl Store {
             )));
         };
         let read = self.read()?;
-        let mut items = effect_items(&*read, source_id, forms, page.as_ref())?;
-        items.sort();
-        items.truncate(PROBE_ITEMS);
-        Ok(json!(items))
+        Ok(json!(effect_items(
+            &*read,
+            source_id,
+            forms,
+            page.as_ref()
+        )?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::persistence::effects::effect_entries_for_test;
+    use std::cell::Cell;
+    use std::collections::BTreeMap;
+
+    /// A read-only store that counts the entries scans hand out and the keys read.
+    #[derive(Default)]
+    struct Counting {
+        entries: BTreeMap<Vec<u8>, Vec<u8>>,
+        delivered: Cell<usize>,
+        gets: Cell<usize>,
+    }
+
+    impl KvRead for Counting {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+            self.gets.set(self.gets.get() + 1);
+            Ok(self.entries.get(key).cloned())
+        }
+        fn scan(
+            &self,
+            start: &[u8],
+            end: &[u8],
+            reverse: bool,
+            f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+        ) -> Result<()> {
+            let range = self.entries.range(start.to_vec()..end.to_vec());
+            let mut each = |(k, v): (&Vec<u8>, &Vec<u8>)| {
+                self.delivered.set(self.delivered.get() + 1);
+                f(k, v)
+            };
+            if reverse {
+                for entry in range.rev() {
+                    if !each(entry) {
+                        break;
+                    }
+                }
+            } else {
+                for entry in range {
+                    if !each(entry) {
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    fn request(n: usize, source: &str) -> (Vec<u8>, Vec<u8>) {
+        let record: RequestRecord = serde_json::from_value(json!({
+            "id": format!("r{n:03}"), "principal_kind": "local_cli", "principal_id": "writer",
+            "request_id": format!("b0000000-0000-4000-8000-{n:012}"), "operation": "put_page",
+            "source_id": source, "source_incarnation": "i", "slug": "notes/other", "digest": "d",
+            "intent": { "text": "mentions notes/doomed" }, "authority": {}, "sequence": n,
+            "state": "queued", "created_at_us": 0, "updated_at_us": 0,
+        }))
+        .unwrap();
+        let mut key = vec![keys::REQUEST];
+        key.extend_from_slice(format!("{n:03}").as_bytes());
+        (key, serde_json::to_vec(&record).unwrap())
+    }
+
+    fn effect(id: i64, source: &str, payload: &str) -> EffectRecord {
+        serde_json::from_value(json!({
+            "id": id, "request_id": format!("b0000000-0000-4000-8000-{id:012}"), "kind": "git",
+            "revision": null, "data": { "note": payload }, "state": "queued", "execution_token": null,
+            "updated_at_us": 0, "source_id": source, "source_incarnation": null, "worktree_id": null,
+            "claim_expires_at_us": null, "next_attempt_at_us": 0, "attempts": 0, "error_code": null,
+            "recovery_bytes": 0,
+        }))
+        .unwrap()
+    }
+
+    fn forms() -> Vec<String> {
+        vec!["notes/doomed".to_string()]
+    }
+
+    #[test]
+    fn the_journal_walk_stops_at_the_cap() {
+        let mut store = Counting::default();
+        store.entries.extend((0..50).map(|n| request(n, "default")));
+        let walk = |cap| {
+            store.delivered.set(0);
+            let found = requests_naming(
+                &store,
+                "default",
+                "notes/doomed",
+                "b0000000-0000-4000-8000-ffffffffffff",
+                &forms(),
+                &[],
+                cap,
+            )
+            .unwrap();
+            (found, store.delivered.get())
+        };
+        assert_eq!(walk(1), (1, 1));
+        assert_eq!(walk(4), (4, 4));
+        assert_eq!(walk(500), (50, 50));
+    }
+
+    #[test]
+    fn the_effect_count_stops_at_the_cap_and_reads_no_later_effect() {
+        let mut store = Counting::default();
+        let effects: Vec<_> = (1..=40)
+            .map(|id| effect(id, "default", "removes notes/doomed"))
+            .collect();
+        store.entries.extend(effect_entries_for_test(&effects));
+        let probe = |cap| {
+            store.gets.set(0);
+            let found = count_effects(&store, "default", &forms(), None, cap).unwrap();
+            (found, store.gets.get())
+        };
+        // Each effect read is one get; a stop leaves the rest of the index unread.
+        assert_eq!(probe(1), (1, 1));
+        assert_eq!(probe(6), (6, 6));
+        assert_eq!(probe(500), (40, 40));
+    }
+
+    #[test]
+    fn the_item_list_holds_the_twenty_smallest_items_in_byte_order() {
+        let mut store = Counting::default();
+        let effects: Vec<_> = (1..=25)
+            .map(|id| effect(id, "default", "removes notes/doomed"))
+            .collect();
+        store.entries.extend(effect_entries_for_test(&effects));
+        store.entries.extend(effect_entries_for_test(&[effect(
+            26,
+            "other",
+            "notes/doomed",
+        )]));
+        let items = effect_items(&store, "default", &forms(), None).unwrap();
+        let mut all: Vec<String> = effects.iter().map(item_of).collect();
+        all.sort();
+        all.truncate(PROBE_ITEMS);
+        assert_eq!(items, all);
+        // Byte order: "effect:10" sorts before "effect:2", and "effect:1 " before "effect:10".
+        assert_eq!(items[0], "effect:1 git queued");
+        assert_eq!(items[1], "effect:10 git queued");
+        assert!(!items.iter().any(|i| i.starts_with("effect:26")));
     }
 }

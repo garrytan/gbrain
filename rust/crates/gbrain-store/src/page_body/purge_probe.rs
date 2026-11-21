@@ -36,12 +36,13 @@ fn has_bytes(body: &[u8], needle: &str) -> bool {
 }
 
 /// The texts of `source_id` that no manifest row names and no live staging recorded, with the sha (hex) of one of `shas`
-/// or holding one of the lowered `forms`.
+/// or holding one of the lowered `forms`; the walk stops at `cap` matches.
 pub(crate) fn count_page_texts(
     read: &dyn KvRead,
     source_id: &str,
     shas: &[String],
     forms: &[String],
+    cap: usize,
 ) -> Result<usize> {
     let mut wanted = HashSet::new();
     for sha in shas {
@@ -57,6 +58,9 @@ pub(crate) fn count_page_texts(
         }
         if wanted.contains(&key.1) {
             count += 1;
+            if count >= cap {
+                break;
+            }
             continue;
         }
         if forms.is_empty() {
@@ -68,17 +72,22 @@ pub(crate) fn count_page_texts(
         let lowered = pg_lower(&decoded);
         if forms.iter().any(|f| lowered.contains(f.as_str())) {
             count += 1;
+            if count >= cap {
+                break;
+            }
         }
     }
     Ok(count)
 }
 
-/// The texts of `source_id` holding one of `needles` byte for byte that a manifest row names (`referenced`) or none does.
+/// The texts of `source_id` holding one of `needles` byte for byte that a manifest row names (`referenced`) or none does;
+/// the walk stops at `cap` matches.
 pub(crate) fn count_texts_holding(
     read: &dyn KvRead,
     source_id: &str,
     needles: &[String],
     referenced: bool,
+    cap: usize,
 ) -> Result<usize> {
     let named = named_texts(read)?;
     let mut count = 0;
@@ -89,6 +98,9 @@ pub(crate) fn count_texts_holding(
         let bytes = body(&text)?;
         if needles.iter().any(|n| has_bytes(&bytes, n)) {
             count += 1;
+            if count >= cap {
+                break;
+            }
         }
     }
     Ok(count)
