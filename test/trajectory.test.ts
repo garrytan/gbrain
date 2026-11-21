@@ -205,6 +205,42 @@ describe('detectRegressions — lower-is-better metrics', () => {
     expect(detectRegressions(series('burn', 'USD', -150, 50))).toEqual([]);
   });
 
+  test('the sign convention is picked once per series: net_loss -50000 -> 100000 -> -50000 flags the return to a loss', () => {
+    const pts = [-50000, 100000, -50000].map((value, i) => ({
+      ...point({ id: i + 1, metric: 'net_loss', value, date: `2026-0${i + 1}-01` }), unit: 'USD',
+    }));
+    const regs = detectRegressions(pts);
+    expect(regs).toHaveLength(1);
+    expect(regs[0]).toMatchObject({ metric: 'net_loss', from_value: 100000, to_value: -50000, from_date: '2026-02-01', to_date: '2026-03-01', direction: 'up' });
+    expect(regs[0].delta_pct).toBeCloseTo(1.5, 6);
+  });
+
+  test('a signed series that keeps growing into profit raises no flag at any step', () => {
+    const pts = [-50000, 100000, 200000].map((value, i) => ({
+      ...point({ id: i + 1, metric: 'net_loss', value, date: `2026-0${i + 1}-01` }), unit: 'USD',
+    }));
+    expect(detectRegressions(pts)).toEqual([]);
+  });
+
+  test('a series that starts positive keeps the plain convention even if a later value is negative', () => {
+    const pts = [50000, -20000, -60000].map((value, i) => ({
+      ...point({ id: i + 1, metric: 'net_loss', value, date: `2026-0${i + 1}-01` }), unit: 'USD',
+    }));
+    // plain: 50000 -> -20000 is a fall (fine), -20000 -> -60000 is a fall (fine)
+    expect(detectRegressions(pts)).toEqual([]);
+  });
+
+  test('each series (metric, unit, period) picks its own convention', () => {
+    const pts = [
+      { ...point({ id: 1, metric: 'net_loss', value: -50000, date: '2026-01-01' }), unit: 'USD' },
+      { ...point({ id: 2, metric: 'net_loss', value: 50000, date: '2026-01-01' }), unit: 'EUR' },
+      { ...point({ id: 3, metric: 'net_loss', value: -100000, date: '2026-02-01' }), unit: 'USD' },
+      { ...point({ id: 4, metric: 'net_loss', value: 100000, date: '2026-02-01' }), unit: 'EUR' },
+    ];
+    const regs = detectRegressions(pts);
+    expect(regs.map(r => r.to_value).sort((a, b) => a - b)).toEqual([-100000, 100000]);
+  });
+
   test('a rise of exactly the threshold is flagged whatever the float rounding (0.05 -> 0.055 churn)', () => {
     // (0.055 - 0.05) / 0.05 is 0.09999999999999995 in floating point.
     expect(detectRegressions(series('churn', 'pct', 0.05, 0.055))).toHaveLength(1);
@@ -285,11 +321,20 @@ describe('isLowerIsBetter', () => {
       'churn_rate_target', 'latencyz', 'paybacks']) no(m);
   });
 
+  test('a ratio name stays higher-is-better even with cost or loss inside (benefit_cost_ratio, loss_ratio ...)', () => {
+    for (const m of ['benefit_cost_ratio', 'revenue_to_cost_ratio', 'cash_to_debt_ratio', 'loss_ratio', 'cost_ratio',
+      'gross_margin_to_expense_ratio', 'Benefit-Cost-Ratio', 'benefit cost ratio']) no(m);
+    for (const m of ['cost_ratios', 'loss_ratios']) no(m);
+    // Only the whole token `ratio` or `ratios` excepts a name, never a substring: `cost_migration` has no such token.
+    for (const m of ['cost_migration', 'loss_operations', 'cost_gyration']) yes(m);
+    for (const m of ['burn_rate', 'churn_rate', 'cac', 'burn', 'churn']) yes(m);
+  });
+
   test('a name that also holds saving, savings, saved, recovered, recovery, reduction, reduced, avoided or coverage is not lower-is-better', () => {
     for (const m of ['cost_savings', 'revenue_loss_recovered', 'cost_saving', 'costs_saved', 'loss_recovery', 'cost_reduction',
       'expense_reduced', 'losses_avoided', 'debt_reduction', 'debt_service_coverage_ratio', 'interest_coverage_debt', 'Cost-Savings', 'cloud cost recovered', 'latency_reduction_ms']) no(m);
     expect(trajectory.LOWER_IS_BETTER.exceptWords).toEqual(
-      ['saving', 'savings', 'saved', 'recovered', 'recovery', 'reduction', 'reduced', 'avoided', 'coverage']);
+      ['saving', 'savings', 'saved', 'recovered', 'recovery', 'reduction', 'reduced', 'avoided', 'coverage', 'ratio', 'ratios']);
   });
 
   test('the exception words do not touch the exact names or a name with no lower-is-better word', () => {

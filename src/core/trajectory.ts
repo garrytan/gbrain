@@ -42,14 +42,16 @@ export const TRAJECTORY_SCHEMA_VERSION = 1;
 export const LOWER_IS_BETTER = {
   metrics: ['burn_rate', 'churn_rate', 'cac', 'burn', 'churn'],
   words: ['cost', 'costs', 'expense', 'expenses', 'loss', 'losses', 'latency', 'payback', 'debt', 'debts'],
-  exceptWords: ['saving', 'savings', 'saved', 'recovered', 'recovery', 'reduction', 'reduced', 'avoided', 'coverage'],
+  exceptWords: ['saving', 'savings', 'saved', 'recovered', 'recovery', 'reduction', 'reduced', 'avoided', 'coverage', 'ratio', 'ratios'],
 } as const;
 
 /**
  * True when a lower value of this metric is the good direction. The name is split on every run of
  * non-alphanumeric characters (`_`, `-`, spaces, ...) and each part lowercased; it matches when the
  * parts joined with `_` equal a LOWER_IS_BETTER.metrics name, or when any one part is a LOWER_IS_BETTER.words
- * word and no part is a LOWER_IS_BETTER.exceptWords word.
+ * word and no part is a LOWER_IS_BETTER.exceptWords word. Only whole parts count, never substrings.
+ * A `ratio` part excepts the name: which way a ratio should move depends on what is on each side of it
+ * (`benefit_cost_ratio` is better when higher), so it keeps the ordinary rule.
  */
 export function isLowerIsBetter(metric: string): boolean {
   const parts = metric.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
@@ -69,7 +71,8 @@ export interface TrajectoryRegression {
   to_date: string;
   /**
    * Relative change over abs(from_value): negative for a drop, positive for a rise; may be < -1 across zero.
-   * For a lower-is-better metric whose older value is negative it is the change in magnitude (-50000 -> -100000 is +1; -50000 -> 100000 is -3).
+   * For a lower-is-better series whose first non-zero value is negative it is the change in magnitude, for every
+   * pair of the series (-50000 -> -100000 is +1; -50000 -> 100000 is -3; 100000 -> -50000 is +1.5).
    */
   delta_pct: number;
   /**
@@ -119,6 +122,11 @@ function cosineSim(a: Float32Array, b: Float32Array): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
+/** The series a point belongs to: same metric, unit and period. */
+function seriesKey(p: TrajectoryPoint): string {
+  return JSON.stringify([p.metric, p.unit?.trim().toLowerCase() ?? null, p.period?.trim().toLowerCase() ?? null]);
+}
+
 /**
  * Consecutive comparable observations, oldest first: the same metric, unit
  * and period (so a monthly figure never pairs with an annual one, nor USD
@@ -134,7 +142,7 @@ export function comparablePairs(points: TrajectoryPoint[]): Array<[TrajectoryPoi
   const series = new Map<string, TrajectoryPoint[]>();
   for (const p of points) {
     if (p.metric === null || p.value === null || !Number.isFinite(p.value) || !Number.isFinite(p.valid_from.getTime())) continue;
-    const key = JSON.stringify([p.metric, p.unit?.trim().toLowerCase() ?? null, p.period?.trim().toLowerCase() ?? null]);
+    const key = seriesKey(p);
     const s = series.get(key);
     if (s) s.push(p);
     else series.set(key, [p]);
@@ -171,17 +179,23 @@ export function detectRegressions(
   threshold: number = DEFAULT_REGRESSION_THRESHOLD,
 ): TrajectoryRegression[] {
   const out: TrajectoryRegression[] = [];
+  // The sign convention of a lower-is-better series, fixed once per series from its first non-zero value (pairs
+  // come oldest first): a series that starts negative stores outflows as negative numbers.
+  const signed = new Map<string, boolean>();
   for (const [older, newer] of comparablePairs(points)) {
     const oldVal = older.value!;
     const newVal = newer.value!;
+    const lowerIsBetter = isLowerIsBetter(older.metric!);
+    const key = seriesKey(older);
+    if (lowerIsBetter && oldVal !== 0 && !signed.has(key)) signed.set(key, oldVal < 0);
     // Guard against division-by-zero: a metric starting at exactly 0
     // can't compute a relative delta. Skip.
     if (oldVal === 0) continue;
-    const lowerIsBetter = isLowerIsBetter(older.metric!);
-    // A lower-is-better metric stored as a negative outflow (a loss of -50000, a burn of -150) compares by
-    // magnitude, so -50000 -> -100000 is a +100% rise and a loss that turns into a profit (-50000 -> 100000) is
-    // an improvement, never a rise; a positive older value uses the plain signed change.
-    const magnitude = lowerIsBetter && oldVal < 0;
+    // A lower-is-better series stored as negative outflows (a loss of -50000, a burn of -150) compares by
+    // magnitude at every step, so -50000 -> -100000 is a +100% rise, a loss that turns into a profit
+    // (-50000 -> 100000) is an improvement, and the return to a loss (100000 -> -50000) is a rise. A series that
+    // starts positive uses the plain signed change throughout.
+    const magnitude = lowerIsBetter && signed.get(key) === true;
     const delta = (magnitude ? oldVal - newVal : newVal - oldVal) / Math.abs(oldVal);
     // A tiny tolerance keeps a change of exactly the threshold from slipping under it through float
     // rounding ((0.055 - 0.05) / 0.05 is 0.09999999999999995).

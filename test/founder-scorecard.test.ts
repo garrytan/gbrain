@@ -339,6 +339,32 @@ describe('computeFounderScorecard — signed lower-is-better values', () => {
     expect(card.red_flags).toEqual([]);
   });
 
+  test('a net_loss that goes -50000 -> 100000 -> -50000 raises a red flag for the return to a loss', () => {
+    const c = computeFounderScorecard({
+      entitySlug: 'companies/acme-example', windowSince: null, windowUntil: null, takes: [],
+      points: [
+        pt({ id: 1, metric: 'net_loss', value: -50000, date: '2026-01-01' }),
+        pt({ id: 2, metric: 'net_loss', value: 100000, date: '2026-02-01' }),
+        pt({ id: 3, metric: 'net_loss', value: -50000, date: '2026-03-01' }),
+      ],
+    });
+    expect(c.red_flags).toHaveLength(1);
+    expect(c.red_flags[0].text).toContain('net_loss rose');
+  });
+
+  test('a benefit_cost_ratio that falls 2 -> 1 is a red flag and a rise is not', () => {
+    const run = (a: number, b: number) => computeFounderScorecard({
+      entitySlug: 'companies/acme-example', windowSince: null, windowUntil: null, takes: [],
+      points: [
+        pt({ id: 1, metric: 'benefit_cost_ratio', value: a, date: '2026-01-01' }),
+        pt({ id: 2, metric: 'benefit_cost_ratio', value: b, date: '2026-02-01' }),
+      ],
+    }).red_flags;
+    expect(run(2, 1)).toHaveLength(1);
+    expect(run(2, 1)[0].text).toContain('benefit_cost_ratio fell');
+    expect(run(1, 2)).toEqual([]);
+  });
+
   function card(metric: string, a: number, b: number) {
     return computeFounderScorecard({
       entitySlug: 'companies/acme-example', windowSince: null, windowUntil: null, takes: [],
