@@ -1432,3 +1432,365 @@ fn every_fixture_row_has_the_primary_key_columns_of_its_relation() {
     }
     assert!(missing.is_empty(), "{missing:?}");
 }
+
+// ---- relationEntries -------------------------------------------------------------------------
+
+fn entry_sorts(entries: &[crate::seed::EntryInfo]) -> Vec<String> {
+    entries.iter().map(|e| e.sort.clone()).collect()
+}
+
+#[test]
+fn entries_come_in_sort_order_within_the_half_open_interval_and_stop_at_the_limit() {
+    let s = store();
+    // Imported out of order, with sort keys of different lengths: 01, 0100, 02, 0200ff.
+    let sorts = ["0200ff", "01", "02", "0100"];
+    let digests: Vec<DigestInput> = sorts
+        .iter()
+        .enumerate()
+        .map(|(n, sort)| DigestInput {
+            sort: (*sort).to_owned(),
+            digest: hex(&[n as u8 + 1; 32]),
+        })
+        .collect();
+    let rows: Vec<SeedRow> = (0..4).map(|n| config_row(&format!("k{n}"), "v")).collect();
+    s.import_relation_with_digests(SEED, "config", rows, &digests)
+        .unwrap();
+    let list = |lo: Option<&str>, hi: Option<&str>, limit: u64| {
+        s.relation_entries(SEED, "config", lo, hi, limit).unwrap()
+    };
+    let all = list(None, None, 5000);
+    assert_eq!(entry_sorts(&all), ["01", "0100", "02", "0200ff"]);
+    // Each entry carries its digest and generation 0.
+    assert_eq!(all[1].digest, hex(&[4; 32]));
+    assert_eq!(all[1].generation, 0);
+    // The limit keeps the first entries in order.
+    assert_eq!(entry_sorts(&list(None, None, 2)), ["01", "0100"]);
+    assert_eq!(entry_sorts(&list(None, None, 1)), ["01"]);
+    // lo is inclusive, hi exclusive.
+    assert_eq!(entry_sorts(&list(Some("0100"), Some("02"), 10)), ["0100"]);
+    assert_eq!(
+        entry_sorts(&list(Some("0100"), Some("0200ff"), 10)),
+        ["0100", "02"]
+    );
+    assert_eq!(entry_sorts(&list(Some("02"), None, 10)), ["02", "0200ff"]);
+    assert_eq!(
+        entry_sorts(&list(None, Some("01"), 10)),
+        Vec::<String>::new()
+    );
+    assert!(list(Some("02"), Some("02"), 10).is_empty());
+    assert!(list(Some("03"), Some("01"), 10).is_empty());
+    // The interval digest is over the same entries.
+    assert_eq!(digest_of(&s, "config").0, 4);
+}
+
+#[test]
+fn entries_report_the_generation_of_the_call_that_wrote_them() {
+    let s = seeded_config();
+    s.replace_relation_rows(
+        SEED,
+        "config",
+        7,
+        &[key(2, &[("key", "b")])],
+        &[config_row("b", "changed")],
+        &[digv(2, 9)],
+    )
+    .unwrap();
+    let all = s.relation_entries(SEED, "config", None, None, 10).unwrap();
+    assert_eq!(all.iter().map(|e| e.generation).collect::<Vec<_>>(), [0, 7]);
+    assert_eq!(all[1].digest, hex(&[9; 32]));
+}
+
+#[test]
+fn entries_refuse_a_limit_outside_1_to_5000_a_bad_bound_a_foreign_seed_and_an_unknown_relation() {
+    let s = seeded_config();
+    for limit in [0, 5001, u64::MAX] {
+        let err = s
+            .relation_entries(SEED, "config", None, None, limit)
+            .unwrap_err();
+        assert_eq!(err.code, INVALID_ARGUMENT, "limit {limit}");
+    }
+    assert!(s.relation_entries(SEED, "config", None, None, 5000).is_ok());
+    assert!(s.relation_entries(SEED, "config", None, None, 1).is_ok());
+    for bad in ["0", "zz", "0A"] {
+        let err = s
+            .relation_entries(SEED, "config", Some(bad), None, 10)
+            .unwrap_err();
+        assert_eq!(err.code, INVALID_ARGUMENT, "{bad}");
+    }
+    let err = s
+        .relation_entries(SEED, "nope", None, None, 10)
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+    let err = s
+        .relation_entries("seed-2", "config", None, None, 10)
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_STATE);
+    let err = store()
+        .relation_entries(SEED, "config", None, None, 10)
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_STATE);
+}
+
+// ---- allocatorCheck --------------------------------------------------------------------------
+
+/// The store's id counters and sequences: `M<name>` and the jobs family's `m 00 <name>`.
+fn sequences(s: &Store) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let read = s.read().unwrap();
+    let mut out = Vec::new();
+    crate::kv::KvRead::scan(&*read, &[], &[0xFF; 64], false, &mut |k, v| {
+        let counter =
+            (k.first() == Some(&crate::keys::META) && !k.starts_with(b"Mshadow") && v.len() == 8)
+                || k.starts_with(&[crate::keys::JOBS, 0]);
+        if counter {
+            out.push((k.to_vec(), v.to_vec()));
+        }
+        true
+    })
+    .unwrap();
+    out
+}
+
+fn maxima(pairs: &[(&str, Option<&str>)]) -> std::collections::BTreeMap<String, Option<String>> {
+    pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), v.map(str::to_owned)))
+        .collect()
+}
+
+fn check_of(s: &Store, relation: &str, max: Option<&str>) -> crate::seed::AllocatorCheck {
+    s.allocator_check(SEED, &maxima(&[(relation, max)]))
+        .unwrap()
+        .into_iter()
+        .find(|c| c.relation == relation)
+        .unwrap_or_else(|| panic!("{relation} is not checked"))
+}
+
+/// A fixture row with its id moved to `id`.
+fn with_id(row: &SeedRow, id: u64) -> SeedRow {
+    let mut moved = row.clone();
+    moved.insert("id".into(), Some(id.to_string()));
+    moved
+}
+
+#[test]
+fn the_relations_the_check_covers_are_exactly_the_ones_whose_import_raises_a_counter() {
+    let all = fixtures();
+    let counted = super::allocators::counted_relations();
+    for (n, (relation, rows)) in all.iter().enumerate() {
+        let s = store();
+        for (earlier, earlier_rows) in &all[..n] {
+            import_with_digests(&s, earlier, earlier_rows);
+        }
+        let before = sequences(&s);
+        import_with_digests(&s, relation, rows);
+        // `decide_spend` numbers its time-index entries; it has no integer id the primary could reuse.
+        let raised = sequences(&s) != before && *relation != "decide_spend";
+        assert_eq!(
+            raised,
+            counted.contains(relation),
+            "{relation}: the import {} a counter, the check {} it",
+            if raised { "raises" } else { "leaves" },
+            if counted.contains(relation) {
+                "covers"
+            } else {
+                "omits"
+            },
+        );
+        if !raised {
+            continue;
+        }
+        // The counter the check reads is the one the import raised: above every fixture id, not above
+        // a higher one.
+        let top = rows
+            .iter()
+            .map(|r| {
+                r.get("id")
+                    .unwrap()
+                    .clone()
+                    .unwrap()
+                    .parse::<u64>()
+                    .unwrap()
+            })
+            .max()
+            .unwrap();
+        let ok = check_of(&s, relation, Some(&top.to_string()));
+        assert!(ok.ok, "{relation}: {ok:?}");
+        assert!(ok.counter.parse::<u64>().unwrap() > top, "{relation}");
+        let counter = ok.counter.clone();
+        let not_ok = check_of(&s, relation, Some(&counter));
+        assert!(!not_ok.ok, "{relation}: {not_ok:?}");
+        assert_eq!(not_ok.primary_max.as_deref(), Some(counter.as_str()));
+    }
+}
+
+#[test]
+fn the_check_reports_the_next_id_as_text_and_passes_an_empty_table() {
+    let s = linked_pages();
+    let report = s.allocator_check(SEED, &maxima(&[])).unwrap();
+    let pages = report.iter().find(|c| c.relation == "pages").unwrap();
+    assert_eq!(pages.counter, "10");
+    assert_eq!(pages.primary_max, None);
+    assert!(pages.ok);
+    // Reported in import order, only for relations that keep a counter: not tags or config.
+    let names: Vec<&str> = report.iter().map(|c| c.relation.as_str()).collect();
+    assert_eq!(&names[..3], ["pages", "content_chunks", "links"]);
+    assert!(!names.contains(&"tags") && !names.contains(&"config"));
+    // A counter nothing raised starts at 1.
+    let untouched = report.iter().find(|c| c.relation == "facts").unwrap();
+    assert_eq!(untouched.counter, "1");
+    // At and above the counter is not ok; below is.
+    assert!(!check_of(&s, "pages", Some("10")).ok);
+    assert!(!check_of(&s, "pages", Some("11")).ok);
+    assert!(check_of(&s, "pages", Some("9")).ok);
+    // An explicit null is an empty table; a very large id does not overflow.
+    assert!(check_of(&s, "pages", None).ok);
+    assert!(!check_of(&s, "pages", Some("9223372036854775807")).ok);
+}
+
+#[test]
+fn a_jobs_sequence_reports_the_next_id_not_the_last_one() {
+    let s = store();
+    let all = fixtures();
+    for (relation, rows) in &all {
+        import_with_digests(&s, relation, rows);
+    }
+    let spend_id = all
+        .iter()
+        .find(|(r, _)| *r == "mcp_spend_log")
+        .map(|(_, rows)| rows[0].get("id").unwrap().clone().unwrap())
+        .unwrap();
+    let next = spend_id.parse::<u64>().unwrap() + 1;
+    let c = check_of(&s, "mcp_spend_log", Some(&spend_id));
+    assert_eq!(c.counter, next.to_string());
+    assert!(c.ok);
+    assert!(!check_of(&s, "mcp_spend_log", Some(&next.to_string())).ok);
+    let fresh = seeded_config();
+    assert_eq!(check_of(&fresh, "wake_forgets", None).counter, "1");
+}
+
+#[test]
+fn the_check_refuses_an_unknown_relation_a_bad_id_a_foreign_seed_and_an_unseeded_store() {
+    let s = seeded_config();
+    for bad in [
+        maxima(&[("nope", Some("1"))]),
+        maxima(&[("pages", Some("abc"))]),
+        maxima(&[("pages", Some("-1"))]),
+        maxima(&[("pages", Some("1.5"))]),
+        maxima(&[("pages", Some(""))]),
+        maxima(&[("pages", Some("18446744073709551616"))]),
+    ] {
+        let err = s.allocator_check(SEED, &bad).unwrap_err();
+        assert_eq!(err.code, INVALID_ARGUMENT, "{bad:?}");
+    }
+    let err = s.allocator_check("seed-2", &maxima(&[])).unwrap_err();
+    assert_eq!(err.code, INVALID_STATE);
+    let err = store().allocator_check(SEED, &maxima(&[])).unwrap_err();
+    assert_eq!(err.code, INVALID_STATE);
+    let err = s.allocator_check("", &maxima(&[])).unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+    // A relation with no counter may be named: it is not reported.
+    let report = s
+        .allocator_check(SEED, &maxima(&[("tags", Some("5")), ("config", None)]))
+        .unwrap();
+    assert!(
+        report
+            .iter()
+            .all(|c| c.relation != "tags" && c.relation != "config")
+    );
+}
+
+#[test]
+fn the_check_reads_only() {
+    let s = linked_pages();
+    let before = snapshot(&s);
+    let counters = sequences(&s);
+    s.allocator_check(SEED, &maxima(&[("pages", Some("3"))]))
+        .unwrap();
+    s.relation_entries(SEED, "pages", None, None, 10).unwrap();
+    assert_eq!(snapshot(&s), before);
+    assert_eq!(sequences(&s), counters);
+}
+
+#[test]
+fn a_follow_upsert_of_a_row_above_the_counter_raises_the_counter_past_it() {
+    let relations = plan().relations;
+    let all = fixtures();
+    let counted = super::allocators::counted_relations();
+    assert!(!counted.is_empty());
+    for relation in counted {
+        let n = all.iter().position(|(r, _)| *r == relation).unwrap();
+        let rows = &all[n].1;
+        let spec = relations.iter().find(|r| r.relation == relation).unwrap();
+        let fresh_world = || {
+            let s = store();
+            for (earlier, earlier_rows) in &all[..n] {
+                import_with_digests(&s, earlier, earlier_rows);
+            }
+            s
+        };
+        let high = 5000 + n as u64;
+        let moved: Vec<SeedRow> = rows.iter().map(|r| with_id(r, high)).collect();
+        let moved = &moved[..1];
+        let keys: Vec<KeyInput> = vec![KeyInput {
+            sort: hex(&[1]),
+            key: spec
+                .key
+                .iter()
+                .map(|c| {
+                    let value = moved[0].get(*c).unwrap().clone().unwrap_or_default();
+                    (c.to_string(), value)
+                })
+                .collect(),
+        }];
+        // replaceRelationRows
+        let s = fresh_world();
+        let r = s
+            .replace_relation_rows(SEED, relation, 1, &keys, moved, &[dig(1)])
+            .unwrap_or_else(|e| panic!("{relation}: {e:?}"));
+        assert_eq!(r.upserted + r.dropped, 1, "{relation}: {r:?}");
+        let c = check_of(&s, relation, Some(&high.to_string()));
+        assert!(
+            c.ok,
+            "replaceRelationRows left the {relation} counter at {}",
+            c.counter
+        );
+        // replaceInterval
+        let s = fresh_world();
+        let r = s
+            .replace_interval(SEED, relation, 1, None, None, moved, &[dig(1)])
+            .unwrap_or_else(|e| panic!("{relation}: {e:?}"));
+        assert_eq!(r.upserted + r.dropped, 1, "{relation}: {r:?}");
+        let c = check_of(&s, relation, Some(&high.to_string()));
+        assert!(
+            c.ok,
+            "replaceInterval left the {relation} counter at {}",
+            c.counter
+        );
+    }
+}
+
+#[test]
+fn a_chunk_the_store_drops_still_moves_the_counter_past_its_id() {
+    let s = linked_pages();
+    let mut retired = chunk_row("900", "7", "5", "An old chunk.");
+    retired.insert("retired_generation".into(), Some("3".into()));
+    let r = s
+        .import_relation_with_digests(SEED, "content_chunks", vec![retired], &[dig(9)])
+        .unwrap();
+    assert_eq!(r.dropped, 1);
+    assert!(check_of(&s, "content_chunks", Some("900")).ok);
+    let mut segment = chunk_row("950", "7", "6", "A segment chunk.");
+    segment.insert("occurrence_id".into(), Some("12".into()));
+    let r = s
+        .replace_relation_rows(
+            SEED,
+            "content_chunks",
+            1,
+            &[key(10, &[("id", "950")])],
+            &[segment],
+            &[dig(10)],
+        )
+        .unwrap();
+    assert_eq!(r.dropped, 1);
+    assert!(check_of(&s, "content_chunks", Some("950")).ok);
+}

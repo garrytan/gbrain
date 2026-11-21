@@ -385,7 +385,8 @@ fn chunks_keep_ids_vectors_and_hashes() {
     assert_eq!(chunk.meta["parent_symbol_path"], json!(["a", "b c"]));
     assert!(chunk.length > 0);
     drop(read);
-    assert_eq!(counter(&s, crate::chunks::NEXT_CHUNK_ID), 43);
+    // The dropped chunks (43, 44) used their ids on the primary: the counter passes them too.
+    assert_eq!(counter(&s, crate::chunks::NEXT_CHUNK_ID), 45);
 
     let vectors = s.get_embeddings_by_chunk_ids(&[41, 42]).unwrap();
     assert_eq!(vectors.len(), 2);
