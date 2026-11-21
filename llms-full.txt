@@ -3737,7 +3737,7 @@ chmod +x ~/.local/bin/gbrain
 ~/.local/bin/gbrain setup hermes
 ```
 
-Then start a new Hermes session. Setup registers the MCP server (`hermes mcp test gbrain` checks it) and adds the brain-first rule to `~/.hermes/SOUL.md` with a per-turn hook; nothing in Hermes's security settings changes. If setup prints a `hermes mcp add` command instead of registering, run that command as printed. To paste it to Hermes instead, use the prompt above. Details: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+Then start a new Hermes session. Setup registers the MCP server (`hermes mcp test gbrain` checks it) and adds the brain-first rule to `~/.hermes/SOUL.md` with a per-turn hook. Hermes's approval and command-scanner settings stay as they are; setup only records the approval for its own per-turn hook. If setup prints a `hermes mcp add` command instead of registering, run that command as printed. To paste it to Hermes instead, use the prompt above. Details: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
 
 Postgres, thin clients, API keys and upgrades: [docs/INSTALL.md](docs/INSTALL.md). Agents: [INSTALL_FOR_AGENTS.md](INSTALL_FOR_AGENTS.md). Memory-only walkthrough: [give your coding agent a memory](docs/tutorials/connect-coding-agent.md).
 

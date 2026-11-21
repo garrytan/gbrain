@@ -1,4 +1,4 @@
-**gbrain installs and connects to Hermes without changing Hermes's security settings: `gbrain setup hermes` now registers the MCP server through Hermes's own `hermes mcp add`, and the install docs add a release-binary route Hermes's command scanner allows.**
+**gbrain installs and connects to Hermes without changing Hermes's approval or command-scanner settings: `gbrain setup hermes` now registers the MCP server through Hermes's own `hermes mcp add`, and the install docs add a release-binary route Hermes's command scanner allows.**
 
 <!-- behavior-change: setup_hermes_registers_mcp_gst2714 -->
 
