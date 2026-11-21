@@ -20,9 +20,12 @@
  * the registry test in test/slug-normalize-reads.test.ts fails when an op gains a slug-named param that is
  * on neither list.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeSlug } from '../utils.ts';
-import type { Operation } from './contract.ts';
+import { opError, type Operation } from './contract.ts';
 import { sourceScopeOpts } from './context.ts';
+import { readFix } from './op-fix.ts';
+import { isPrivatePageForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 
 export const SLUG_PARAMS: Readonly<Record<string, readonly string[]>> = {
   // page reads
@@ -64,6 +67,17 @@ export const SLUG_PARAM_EXEMPT: Readonly<Record<string, Readonly<Record<string, 
   submit_agent: { allowed_slug_prefixes: 'write prefixes, compared with normalizeSlugPrefix' },
   capture: { who: 'names or slugs (entity resolution)' },
   think: { anchor: 'name or slug (entity resolution)' },
+  // Params that carry a slug but not under a slug name. Each is left as sent, because it is compared to stored text as
+  // written (a holder, a source, a ref the caller copies from a result) or is not a whole slug; normalizing it would change what the op returns.
+  query: { explain_target: '`slug` or `source:slug` diagnostic target: probeTarget matches the stored slug as sent and a miss is a typed diagnosis' },
+  confirm_memory: { ref: '`f<id>`, `t<id>` or `p:<source>/<slug>` trust ref: parsed by parseTrustRef and bound to the owner confirmation as sent' },
+  rate_answer: { 'pages[].ref': '`source:slug` ref matched exactly against the pages the answer listed (the caller copies it from the answer)' },
+  takes_list: { holder: 'holder label (world, garry, brain or a slug): compared to the stored holder as written' },
+  get_calibration_profile: { holder: 'holder label (world, garry, brain or a slug): compared to the stored holder as written' },
+  resolve_slugs: { partial: 'partial slug or title fuzzy-matched by resolveSlugs, not a whole slug' },
+  find_pages: { pattern: 'glob, slug prefix or plain name parsed by parseFindPattern, echoed back as sent' },
+  add_timeline_entry: { source: 'provenance stored with the entry as written: a source slug or a URL' },
+  ontology_propose: { source: 'provenance stored with the observation as written: a page slug or a URI' },
   assemble_evidence: { hits: 'search hits: each hit.slug is the stored slug a search returned, joined to its evidence by exact source and slug, so a decomposed page and its composed twin stay apart' },
 };
 
@@ -109,12 +123,7 @@ export function normalizeSlugParams(opName: string, params: Params): Params {
   return paths.reduce((acc, path) => normalizeAt(acc, path, normalizeValue), params);
 }
 
-/**
- * A read whose normalized slug missed may name a page stored before writes
- * composed slugs to NFC (a decomposed `café` written through put_page).
- * Such a read retries once with the caller's spelling, lowercased as writes
- * always did, so a slug that list or search printed still opens.
- */
+/** `raw` with each slug param lowercased as writes always did, or null when that is no change from `normalized`. */
 function legacySpellingParams(opName: string, raw: Params, normalized: Params): Params | null {
   const paths = SLUG_PARAMS[opName] ?? [];
   const lowered = paths.reduce((acc, path) => normalizeAt(acc, path, v => typeof v === 'string' ? v.toLowerCase() : v), raw);
@@ -127,51 +136,109 @@ function scalarAt(params: Params, path: string): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
 
+/** Ops whose scalar slug param is a prefix, not a page: the stored form that has rows under it wins. */
+const PREFIX_READS: ReadonlySet<string> = new Set(['list_pages', 'search_exact', 'takes_scorecard', 'get_recent_salience']);
+
+type Ctx = Parameters<Operation['handler']>[0];
+
+/** The spellings a read names, by the param value the handler receives (see `legacySpellings`). */
+const spellingStore = new AsyncLocalStorage<Map<string, string[]>>();
+
 /**
- * Params for a read of a page that exists only under its legacy (decomposed) spelling. The normalized form
- * is tried first; when no page has it but one has the caller's spelling lowercased, that spelling is used,
- * so reads that answer an empty list instead of page_not_found (get_tags, get_timeline) still find it.
+ * Every stored spelling a read of `slug` may name: `slug` itself, then the caller's other spellings (as sent, lowercased,
+ * normal form) that no page of its own holds, since files and facts can outlive their page or be keyed by the caller's
+ * spelling. Outside a wrapped read, just `slug`.
  */
-async function legacyIfOnlyLegacyExists(ctx: Parameters<Operation['handler']>[0], opName: string, raw: Params, normalized: Params): Promise<Params | null> {
-  const legacy = legacySpellingParams(opName, raw, normalized);
-  const path = (SLUG_PARAMS[opName] ?? [])[0];
-  const wanted = path === undefined ? undefined : scalarAt(normalized, path);
-  const old = legacy === null || path === undefined ? undefined : scalarAt(legacy, path);
-  if (legacy === null || wanted === undefined || old === undefined || old === wanted) return null;
-  try {
-    // Only the caller's own source scope is probed: a page outside the grant must not decide the spelling.
-    const probe = { ...sourceScopeOpts(ctx), includeDeleted: true };
-    if (await ctx.engine.getPage(wanted, probe) !== null) return null;
-    return await ctx.engine.getPage(old, probe) !== null ? legacy : null;
-  } catch {
-    return null;
-  }
+export function legacySpellings(slug: string): string[] {
+  return spellingStore.getStore()?.get(slug) ?? [slug];
+}
+
+const distinct = (values: readonly string[]): string[] => [...new Set(values)];
+const spellingKind = (s: string): string => (s === s.normalize('NFC') ? 'composed' : 'decomposed');
+
+/** Two pages are stored under spellings that normalize to one slug and the caller sent neither: name both, never pick one. */
+function ambiguousSpelling(op: string, raw: string, a: string, b: string) {
+  const retry = (slug: string) => ({ argv: ['gbrain', 'get', '--', slug], mcp: { tool: op, arguments: { slug } } });
+  return opError('invalid_params',
+    `The slug ${JSON.stringify(raw)} is ambiguous: this brain stores two pages whose slugs read the same, ${JSON.stringify(a)} (${spellingKind(a)}) and ${JSON.stringify(b)} (${spellingKind(b)}), and ${JSON.stringify(raw)} is neither of them exactly.`,
+    `Send the exact stored spelling, ${JSON.stringify(a)} or ${JSON.stringify(b)} (copy it from list_pages or search), and nothing is read until then.`, {
+      detail: 'ambiguous_slug',
+      why: 'Slugs are stored lowercase and in composed Unicode (NFC) form; a page stored before that rule keeps its decomposed spelling, so one name can belong to two pages.',
+      fix: { ...readFix('Reads the page under one of its exact stored spellings.', retry(a)), verify: retry(b) },
+    });
 }
 
 /**
- * Wraps an operation handler so a read receives normalized slug params (see the file comment). A mutating
- * operation is passed through as sent, except `NORMALIZED_WRITES`: a page write normalizes the slug itself
- * (validateSlug), and its request digest covers what the caller sent, so a retry of a request journaled before
- * this change still replays.
+ * The spelling of the scalar slug param `raw` that a read should receive, and the spellings `legacySpellings` offers.
+ * Pages written before slugs were composed keep their stored spelling, so the caller's own spelling is read first and
+ * the normalized spelling is the fallback (a prefix: the first spelling with rows under it). A spelling with no page of
+ * its own may still key files and facts, so it is offered along with the chosen one; a spelling that is another page's
+ * never is. Only the caller's own source scope and privacy gate are probed, so a page the caller cannot read never
+ * decides a spelling or shows up in an ambiguity message.
+ */
+async function chooseSpelling(ctx: Ctx, op: string, raw: string, normalized: string): Promise<{ slug: string; slugs: string[] }> {
+  const lowered = raw.toLowerCase();
+  const order = distinct([raw, lowered, normalized]);
+  try {
+    const scope = sourceScopeOpts(ctx);
+    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+    if (PREFIX_READS.has(op)) {
+      for (const slugPrefix of order) {
+        if ((await ctx.engine.listPages({ slugPrefix, limit: 1, ...scope, excludePrivate })).length > 0) return { slug: slugPrefix, slugs: [slugPrefix] };
+      }
+      return { slug: normalized, slugs: [normalized] };
+    }
+    const pages = new Map(await Promise.all(order.map(async slug => [slug, await ctx.engine.getPage(slug, { ...scope, excludePrivate, includeDeleted: true })] as const)));
+    const live = (slug: string) => {
+      const page = pages.get(slug) ?? null;
+      return page !== null && !page.deleted_at && !(excludePrivate && isPrivatePageForCaller(page));
+    };
+    const offered = (slug: string) => [slug, ...order.filter(other => other !== slug && !pages.get(other))];
+    if (live(raw)) return { slug: raw, slugs: offered(raw) };
+    if (live(lowered) && live(normalized) && lowered !== normalized) throw ambiguousSpelling(op, raw, lowered, normalized);
+    const found = order.find(live) ?? order.find(slug => pages.get(slug) && !(excludePrivate && isPrivatePageForCaller(pages.get(slug)!)));
+    if (found !== undefined) return { slug: found, slugs: offered(found) };
+  } catch (err) {
+    if ((err as { detail?: unknown } | null)?.detail === 'ambiguous_slug') throw err;
+  }
+  return { slug: normalized, slugs: distinct([normalized, ...order]) };
+}
+
+/**
+ * Wraps an operation handler so a read receives normalized slug params (see the file comment), except that a page
+ * stored under the caller's exact spelling (a capital, or the decomposed Unicode form older writes kept) is read as
+ * stored. A mutating operation is passed through as sent, except `NORMALIZED_WRITES`: a page write normalizes the
+ * slug itself (validateSlug), and its request digest covers what the caller sent, so a retry of a request journaled
+ * before this change still replays.
  */
 export function withNormalizedSlugParams(op: Operation, handler: Operation['handler']): Operation['handler'] {
   const write = op.mutating === true;
   if (!SLUG_PARAMS[op.name] || (write && !NORMALIZED_WRITES.has(op.name))) return handler;
+  const scalars = SLUG_PARAMS[op.name]!.filter(path => !/[.[]/.test(path));
   return async (ctx, params) => {
     const normalized = normalizeSlugParams(op.name, params);
     if (normalized === params || write) return handler(ctx, normalized);
-    const legacyFirst = await legacyIfOnlyLegacyExists(ctx, op.name, params, normalized);
-    if (legacyFirst !== null) return handler(ctx, legacyFirst);
+    let chosen = normalized;
+    const spellings = new Map<string, string[]>();
+    for (const path of scalars) {
+      const raw = scalarAt(params, path);
+      const wanted = scalarAt(normalized, path);
+      if (raw === undefined || wanted === undefined || raw === wanted) continue;
+      const pick = await chooseSpelling(ctx, op.name, raw, wanted);
+      chosen = normalizeAt(chosen, path, () => pick.slug);
+      if (pick.slugs.length > 1) spellings.set(pick.slug, pick.slugs);
+    }
+    const run = (args: Params) => spellings.size > 0 ? spellingStore.run(spellings, () => handler(ctx, args)) : handler(ctx, args);
     try {
-      return await handler(ctx, normalized);
+      return await run(chosen);
     } catch (err) {
-      const legacy = (err as { code?: unknown } | null)?.code === 'page_not_found' ? legacySpellingParams(op.name, params, normalized) : null;
-      if (legacy === null) throw err;
-      try {
-        return await handler(ctx, legacy);
-      } catch {
-        throw err;
+      if ((err as { code?: unknown } | null)?.code !== 'page_not_found') throw err;
+      // The probe found no page the handler could read (another source scope than the probe's): try the spellings the caller may have meant.
+      const lowered = legacySpellingParams(op.name, params, chosen);
+      for (const retry of [lowered, params].filter((v): v is Params => v !== null && JSON.stringify(v) !== JSON.stringify(chosen))) {
+        try { return await run(retry); } catch { /* keep the first error */ }
       }
+      throw err;
     }
   };
 }

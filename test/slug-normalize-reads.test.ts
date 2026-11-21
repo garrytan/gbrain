@@ -96,6 +96,15 @@ describe('slug param registry', () => {
     expect(unclassified).toEqual([]);
   });
 
+  test('the slug-carrying params that are not named slug are classified too', () => {
+    const carrying: Array<[string, string]> = [['query', 'explain_target'], ['confirm_memory', 'ref'], ['rate_answer', 'pages[].ref'], ['takes_list', 'holder'],
+      ['get_calibration_profile', 'holder'], ['resolve_slugs', 'partial'], ['find_pages', 'pattern'], ['add_timeline_entry', 'source'], ['ontology_propose', 'source']];
+    const unclassified = carrying.filter(([op, path]) => !(SLUG_PARAMS[op] ?? []).includes(path) && !SLUG_PARAM_EXEMPT[op]?.[path]).map(([op, path]) => `${op}.${path}`);
+    expect(unclassified).toEqual([]);
+    // Each exemption is a promise that master's output for the param is unchanged: the params are not rewritten.
+    for (const [op, path] of carrying) expect(SLUG_PARAMS[op] ?? []).not.toContain(path);
+  });
+
   test('every registry entry names a param the op declares', () => {
     const byName = new Map(operations.map(op => [op.name, new Set(paramPaths(op.params).map(p => p.path))]));
     const stale = Object.entries(SLUG_PARAMS).flatMap(([op, paths]) => paths
@@ -103,7 +112,7 @@ describe('slug param registry', () => {
       .filter(path => !byName.get(op)?.has(path) && !byName.get(op)?.has(path.replace(/\[\]\..*$/, '[]')))
       .map(path => `${op}.${path}`));
     const staleExempt = Object.entries(SLUG_PARAM_EXEMPT).flatMap(([op, params]) =>
-      Object.keys(params).filter(name => ![...(byName.get(op) ?? [])].some(path => path.replace('[]', '') === name)).map(name => `${op}.${name}`));
+      Object.keys(params).filter(name => ![...(byName.get(op) ?? [])].some(path => path.replace('[]', '') === name.replace(/\[\]\..*$/, ''))).map(name => `${op}.${name}`));
     expect({ stale, staleExempt }).toEqual({ stale: [], staleExempt: [] });
   });
 });
@@ -317,5 +326,68 @@ describe('assemble_evidence joins on the stored slug', () => {
     const twin = await evidence(composed);
     expect(twin.results.map(r => r.chunk_text).join(' ')).toContain('composed-only-marker');
     expect(twin.results.map(r => r.chunk_text).join(' ')).not.toContain('legacy-only-marker');
+  });
+});
+
+describe('two stored spellings of one slug (ambiguity refusal)', () => {
+  const nfd = 'notes/ambig-cafe\u0301';
+  const nfc = 'notes/ambig-caf\u00e9';
+  const asked = 'Notes/Ambig-Cafe\u0301';
+  const REFUSAL = `The slug "${asked}" is ambiguous: this brain stores two pages whose slugs read the same, "${nfd}" (decomposed) and "${nfc}" (composed), and "${asked}" is neither of them exactly.`;
+
+  test('a spelling that matches neither stored page is refused with both spellings named, on a page read and on a tag read', async () => {
+    await legacyPage('notes/ambig-seed', nfd, 'decomposed body');
+    await call('put_page', { slug: nfc, content: page('Composed twin', 'note', 'composed body') });
+    for (const op of ['get_page', 'get_tags', 'get_timeline']) {
+      const err = await errorOf(op, { slug: asked }) as { code?: string; detail?: string; message?: string; suggestion?: string } | null;
+      expect({ op, code: err?.code, detail: err?.detail, message: err?.message }).toEqual({ op, code: 'invalid_params', detail: 'ambiguous_slug', message: REFUSAL });
+      expect(err?.suggestion).toBe(`Send the exact stored spelling, "${nfd}" or "${nfc}" (copy it from list_pages or search), and nothing is read until then.`);
+    }
+  });
+
+  test('each exact stored spelling still reads its own page, so the refusal never hides a page', async () => {
+    expect((await call('get_page', { slug: nfd })).title).toBe('Legacy notes/ambig-seed');
+    expect((await call('get_page', { slug: nfc })).title).toBe('Composed twin');
+    expect((await call('get_page', { slug: 'NOTES/AMBIG-CAF\u00c9' })).title).toBe('Composed twin');
+  });
+
+  test('a twin the caller cannot read never makes a read ambiguous (no existence oracle)', async () => {
+    const stored = 'notes/hidden-cafe\u0301';
+    await legacyPage('notes/hidden-seed', stored, 'visible decomposed body');
+    await call('put_page', { slug: 'notes/hidden-caf\u00e9', content: `---\ntitle: Hidden twin\ntype: note\nvisibility: private\n---\nsecret\n` });
+    const remote = { ...ctx(), remote: true } as OperationContext;
+    const err = await operationsByName.get_page!.handler(remote, { slug: 'Notes/Hidden-Cafe\u0301' }).then(() => null, (e: { detail?: string }) => e);
+    expect(err?.detail).not.toBe('ambiguous_slug');
+  });
+});
+
+describe('prefixes and file/ontology keys use the stored spelling, normalized as the fallback', () => {
+  const seen = async (opName: string, key: string, value: string): Promise<unknown> => {
+    let reached: unknown;
+    await withNormalizedSlugParams({ ...operationsByName[opName]! }, async (_c, p) => { reached = p[key]; return null; })(ctx(), { [key]: value });
+    return reached;
+  };
+
+  test('takes_scorecard and get_recent_salience receive the prefix spelling that has pages, never both', async () => {
+    await legacyPage('pre/seed-a', 'pre/cafe\u0301-a', 'a');
+    await call('put_page', { slug: 'pre/caf\u00e9-b', content: page('B', 'note', 'b') });
+    for (const [op, key] of [['takes_scorecard', 'domain_prefix'], ['get_recent_salience', 'slugPrefix']] as const) {
+      expect(await seen(op, key, 'pre/cafe\u0301')).toBe('pre/cafe\u0301');
+      expect(await seen(op, key, 'pre/caf\u00e9')).toBe('pre/caf\u00e9');
+      expect(await seen(op, key, 'Pre/Nothing-Here')).toBe('pre/nothing-here');
+    }
+  });
+
+  test('file_verify and ontology_get are offered the caller\'s spellings only when no other page owns them', async () => {
+    const { legacySpellings } = await import('../src/core/ops/slug-params.ts');
+    let offered: string[] = [];
+    const probe = (opName: string, key: string) => withNormalizedSlugParams({ ...operationsByName[opName]! }, async (_c, p) => { offered = legacySpellings(String(p[key])); return null; });
+    await probe('file_verify', 'slug')(ctx(), { slug: 'Orphan/Cafe\u0301-Files' });
+    expect(offered).toEqual(['orphan/caf\u00e9-files', 'Orphan/Cafe\u0301-Files', 'orphan/cafe\u0301-files']);
+    await legacyPage('own/seed', 'own/cafe\u0301', 'owned');
+    await call('put_page', { slug: 'own/caf\u00e9', content: page('Own twin', 'note', 'twin') });
+    await probe('ontology_get', 'entity')(ctx(), { entity: 'own/cafe\u0301' });
+    expect(offered).toEqual(['own/cafe\u0301']);
+    expect(legacySpellings('anything')).toEqual(['anything']);
   });
 });

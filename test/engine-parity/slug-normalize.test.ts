@@ -13,6 +13,9 @@
  *  - Seam: none. Real engines; get_page runs through the registry operation.
  *
  * Rust arm known stops (each case asserts the exact Rust answer, then rethrows or throws the typed refusal):
+ *  - ambiguity refusal: member `getPage` (Rust pages area, gbrain-store pages.rs): the Rust store lowercases the slug it
+ *    reads, so a capitalised spelling already reads the decomposed page, the exact-spelling probe never sees two pages,
+ *    and get_page stops at resolveAlias. Rust must read a slug exactly as sent (no case fold) for the refusal to be reachable.
  *  - get_page: member `readPageSnapshot`, option `resolveAlias` (Rust pages area, store-members/pages.ts):
  *    the Rust store does not serve resolveAlias on master yet, so the op refuses before any slug is read.
  *  - NFC storage: member `putPage` (Rust pages area, gbrain-store pages.rs `validate_slug`): the Rust store
@@ -39,6 +42,7 @@ const NFC_ZOE = 'people/zoë-example';
 const NFD_ZOE = 'people/zoë-example';
 const LEGACY_REFUSAL = (stored: string, composed: string) => `Page ${stored} is stored under an older decomposed Unicode spelling of its name, so a put by that spelling is refused and nothing was changed. `
   + `A fix that moves the page to the composed spelling ${composed} is coming; until then the page cannot be replaced by put.`;
+const AMBIGUOUS_REFUSAL = (asked: string, decomposed: string, composed: string) => `The slug "${asked}" is ambiguous: this brain stores two pages whose slugs read the same, "${decomposed}" (decomposed) and "${composed}" (composed), and "${asked}" is neither of them exactly.`;
 const RUST_JOURNAL_STOP =
   "This brain's engine does not support readPersistenceBrainId yet (it needs the persistence_journal capability), so nothing ran.";
 const RUST_RESOLVE_ALIAS_STOP =
@@ -107,5 +111,31 @@ describe('engine parity: slug normal form', () => {
     const refusal = { code: 'invalid_params', detail: 'legacy_slug_spelling', message: LEGACY_REFUSAL(stored, composed) };
     expect(result).toEqual({ answers: [refusal, refusal], unchanged: true, twin: null });
     return result;
+  });
+  parityTest('two pages stored under spellings of one slug: a read that names neither is refused with both named, byte for byte', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
+    const nfd = 'notes/ambig-cafe\u0301';
+    const nfc = 'notes/ambig-caf\u00e9';
+    const asked = 'Notes/Ambig-Cafe\u0301';
+    const stored = (slug: string) => engine.putPage(slug, { type: 'note', title: slug === nfd ? 'Decomposed' : 'Composed', compiled_truth: 'Body.', timeline: '' });
+    // The Rust store keeps the NFD bytes a caller sends (the NFC-storage stop above), so it stores both directly;
+    // the TS engines compose, so the decomposed row is moved back to its old spelling.
+    if (backend === 'rust') { await stored(nfd); await stored(nfc); }
+    else { await stored(nfc); await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [nfd, nfc]); await stored(nfc); }
+    let answer: { code: unknown; detail: unknown; message: string };
+    try {
+      await operationsByName.get_page!.handler(ctx(engine), { slug: asked });
+      answer = { code: null, detail: null, message: 'read' };
+    } catch (e) {
+      answer = { code: (e as { code?: unknown }).code, detail: (e as { detail?: unknown }).detail, message: (e as Error).message };
+    }
+    if (backend === 'rust') {
+      // The exact Rust difference today: getPage lowercases the slug it is given, so the capitalised spelling the caller sent
+      // already reads the decomposed page and the op never sees an ambiguity; get_page then stops at resolveAlias.
+      expect({ read: (await engine.getPage(asked))?.slug ?? null, answer }).toEqual({ read: nfd, answer: { code: 'engine_capability_missing',
+        detail: 'member=readPageSnapshot (option resolveAlias) capability=pages outcome=none written=nothing', message: RUST_RESOLVE_ALIAS_STOP } });
+      throw capabilityMissing('pages', 'getPage (a slug read exactly as sent, without case folding)', 'partial');
+    }
+    expect(answer).toEqual({ code: 'invalid_params', detail: 'ambiguous_slug', message: AMBIGUOUS_REFUSAL(asked, nfd, nfc) });
+    return answer;
   });
 });
