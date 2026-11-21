@@ -5,6 +5,8 @@
  * fallback, so a Rust brain reports a read it cannot serve instead of answering "nothing".
  * Regression it catches: a matcher that misses `.catch(() => [])` or a try/catch fallback, or that
  * flags a handler which already rethrows (a false failure the guard would baseline for ever).
+ * It also catches a matcher that misses a raw-SQL call reached through a promise a callback hands
+ * back, or a fallback returned from a loop or block before the refusal check.
  * No existing coverage: the rule is new; the guard it plugs into has its own rules and fixtures.
  * Seam: none. The sites are built from source text the way the guard's visitor builds them.
  */
@@ -75,6 +77,41 @@ describe('capability-refusal rule', () => {
     expect(flagged(`async function f(e) { try { return await e.getPage('a'); } catch { return null; } }`)).toBe(0);
     // The call runs inside a callback, not inside the try.
     expect(flagged(`function f(e) { try { schedule(() => e.executeRaw('x')); } catch { return null; } }`)).toBe(0);
+  });
+
+  test('flags a raw-SQL call reached through a promise a callback hands back', () => {
+    const swallowed = [
+      `async function f(e, ids) { try { return await e.transaction(tx => Promise.all(ids.map(id => tx.executeRaw('x', [id])))); } catch { return []; } }`,
+      `const r = await e.transaction(tx => Promise.all(ids.map(id => tx.executeRaw('x', [id])))).catch(() => []);`,
+      `async function f(e) { try { await e.transaction(async tx => { await tx.executeRaw('x'); }); } catch { return null; } }`,
+      `async function f(e) { try { const rows = await withLock(function () { return e.executeRawJsonb('x', [{}]); }); return rows; } catch { return null; } }`,
+    ];
+    for (const text of swallowed) expect({ text, n: flagged(text) }).toEqual({ text, n: 1 });
+    const ok = [
+      `async function f(e, ids) { try { return await e.transaction(tx => Promise.all(ids.map(id => tx.executeRaw('x', [id])))); } catch (err) { rethrowCapabilityRefusal(err); return []; } }`,
+      // Nothing awaits the callback's promise, so its failure never reaches this catch.
+      `function f(e) { try { schedule(async () => { await e.executeRaw('x'); }); } catch { return null; } }`,
+      `function f(e) { try { const job = later(() => e.executeRaw('x')); job.start(); } catch { return null; } }`,
+    ];
+    for (const text of ok) expect({ text, n: flagged(text) }).toEqual({ text, n: 0 });
+  });
+
+  test('flags a fallback returned on any path before the refusal check', () => {
+    const swallowed = [
+      `async function f(e, xs) { try { await e.executeRaw('x'); } catch (err) { for (const x of xs) { if (x) return []; } rethrowCapabilityRefusal(err); return []; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { { return []; } rethrowCapabilityRefusal(err); } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { while (retry()) return []; if (isEngineCapabilityRefusal(err)) throw err; return []; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { switch (mode) { case 'quiet': return []; } rethrowCapabilityRefusal(err); return []; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { out: { if (quiet) return null; break out; } rethrowCapabilityRefusal(err); return null; } }`,
+      `const r = await e.executeRaw('x').catch(err => { for (const x of xs) return x; rethrowCapabilityRefusal(err); return []; });`,
+    ];
+    for (const text of swallowed) expect({ text, n: flagged(text) }).toEqual({ text, n: 1 });
+    const ok = [
+      `async function f(e, xs) { try { await e.executeRaw('x'); } catch (err) { for (const x of xs) log(x); rethrowCapabilityRefusal(err); return []; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { { console.warn(err); rethrowCapabilityRefusal(err); } return []; } }`,
+      `async function f(e, xs) { try { await e.executeRaw('x'); } catch (err) { xs.forEach(x => { return x; }); rethrowCapabilityRefusal(err); return []; } }`,
+    ];
+    for (const text of ok) expect({ text, n: flagged(text) }).toEqual({ text, n: 0 });
   });
 
   test('ignores engine implementation files, which Rust never runs', () => {
