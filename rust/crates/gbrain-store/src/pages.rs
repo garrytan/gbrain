@@ -1819,10 +1819,9 @@ impl Store {
         })
     }
 
-    /// `createVersion(slug, {sourceId})`: snapshots the page as it is. A segmented page (NULL body)
-    /// is refused with `invalid_state` before anything is written: PGLite versions it as a reference
-    /// to its live body generation, which pins that generation's manifest rows against the segment
-    /// sweep, and this store keeps no such reference.
+    /// `createVersion(slug, {sourceId})`: snapshots the page as it is. A segmented page's snapshot
+    /// references its live body generation (`snapshot_in`), as PGLite's `insertSegmentedVersion`
+    /// does, which pins that generation's manifest rows against the segment sweep.
     pub fn create_version(&self, slug: &str, source_id: Option<&str>) -> Result<Value> {
         self.create_version_with(slug, source_id, None)
     }
@@ -1841,6 +1840,7 @@ impl Store {
                 source_id: source_id.map(str::to_owned),
                 reason: reason.map(str::to_owned),
                 history_gap: None,
+                reason_source: None,
             },
         )
     }
@@ -1849,18 +1849,35 @@ impl Store {
     /// `historyGap` the page first records `version_history_gap_at`, as PGLite's
     /// `createPageVersion` does before it inserts.
     pub fn create_version_opts(&self, slug: &str, options: &CreateVersionOptions) -> Result<Value> {
-        let source_id = options.source_id.as_deref();
-        let reason = options.reason.as_deref();
-        if let Some(reason) = reason {
-            crate::links::no_nul("createVersion", &[("reason", reason)])?;
-        }
+        // Postgres refuses a NUL byte in text, so neither the tombstone read nor the insert takes one.
+        let from = options.reason_source.as_ref();
+        crate::links::no_nul(
+            "createVersion",
+            &[
+                ("reason", options.reason.as_deref().unwrap_or("")),
+                (
+                    "reasonSource.commit",
+                    from.map_or("", |f| f.commit.as_str()),
+                ),
+                ("reasonSource.path", from.map_or("", |f| f.path.as_str())),
+            ],
+        )?;
         self.write(|tx| {
-            let source = source_id.unwrap_or(DEFAULT_SOURCE);
+            let source = options.source_id.as_deref().unwrap_or(DEFAULT_SOURCE);
             let Some(page) = read_page(&*tx, source, &slug.to_lowercase())? else {
                 return Err(StoreError::new(
                     PAGE_NOT_FOUND,
                     format!("createVersion failed: page \"{slug}\" (source={source}) not found"),
                 ));
+            };
+            // `stampableReason`: a non-empty reason whose (commit, path) a purge tombstoned is
+            // dropped. The tombstone is read in this write, so a purge commits wholly before or after.
+            let reason = match (options.reason.as_deref(), from) {
+                (Some(reason), Some(from)) if !reason.is_empty() => {
+                    (!crate::reason_tombstones::tombstoned(&*tx, source, &from.commit, &from.path)?)
+                        .then_some(reason)
+                }
+                (reason, _) => reason,
             };
             if options.history_gap == Some(true) {
                 crate::version_prune::record_history_gap(tx, &*self.env, page.id)?;
@@ -1879,12 +1896,12 @@ impl Store {
     }
 
     /// `getVersions(slug, opts)`, newest first; under `excludePrivate`, only the versions the page
-    /// and version policies keep.
+    /// and version policies keep, each reason withheld when its successor is hidden or pruned.
     pub fn get_versions(&self, slug: &str, options: &VersionsOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
         let include_body = options.include_body.unwrap_or(true);
-        let mut rows: Vec<VersionRecord> = Vec::new();
+        let mut rows: Vec<(VersionRecord, Option<String>)> = Vec::new();
         let sources = scope_sources(&*read, &options.source_id, &options.source_ids)?;
         for id in sources {
             if let Some(page) = read_page(&*read, &id, &slug)? {
@@ -1894,38 +1911,64 @@ impl Store {
                 {
                     continue;
                 }
+                let mut versions: Vec<VersionRecord> = Vec::new();
                 scan_prefix(
                     &*read,
                     &keys::version_prefix(page.id),
                     false,
                     &mut |_, v| {
-                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v)
-                            && !policy.is_some_and(|policy| {
-                                crate::facts::caller_version_hidden(
-                                    &page,
-                                    &row.page_type,
-                                    &row.frontmatter,
-                                    policy,
-                                )
-                            })
-                        {
-                            rows.push(row);
+                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v) {
+                            versions.push(row);
                         }
                         true
                     },
                 )?;
+                versions.sort_by_key(|v| v.id);
+                // `replacedBecauseSql`: a reader held to world-visible pages sees a reason only when
+                // the next version (over every version, never only the visible ones) is visible too
+                // and was not pruned; the last version's successor is the page, which the page
+                // check above already let through. `pickValidTimeEdition` judges it the same way.
+                let reasons: Vec<Option<String>> = (0..versions.len())
+                    .map(|i| {
+                        let v = &versions[i];
+                        v.change_reason.clone().filter(|_| {
+                            policy.is_none_or(|policy| {
+                                !v.successor_pruned
+                                    && versions.get(i + 1).is_none_or(|n| {
+                                        !crate::facts::version_hidden(
+                                            &page,
+                                            &n.page_type,
+                                            &n.frontmatter,
+                                            policy,
+                                        )
+                                    })
+                            })
+                        })
+                    })
+                    .collect();
+                for (row, reason) in versions.into_iter().zip(reasons) {
+                    if !policy.is_some_and(|policy| {
+                        crate::facts::caller_version_hidden(
+                            &page,
+                            &row.page_type,
+                            &row.frontmatter,
+                            policy,
+                        )
+                    }) {
+                        rows.push((row, reason));
+                    }
+                }
             }
         }
-        rows.sort_by_key(|a| std::cmp::Reverse(a.id));
+        rows.sort_by_key(|(a, _)| std::cmp::Reverse(a.id));
         if let Some(limit) = options.limit {
             rows.truncate(limit);
         }
         Ok(rows
             .iter()
-            .map(|r| {
+            .map(|(r, reason)| {
                 let mut v = r.to_json(include_body);
-                // The trusted read's `replaced_because` is the stored reason (`replacedBecauseSql`).
-                v["replaced_because"] = json!(r.change_reason);
+                v["replaced_because"] = json!(reason);
                 v
             })
             .collect())
@@ -2027,12 +2070,23 @@ pub struct PageTrustRestore {
     pub write_origin: Option<String>,
 }
 
-/// `createVersion`'s options: the page's source, the snapshot's change reason and the history gap.
+/// The (commit, path) a version's reason came from (`VersionHistory.reasonSource`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReasonSource {
+    pub commit: String,
+    pub path: String,
+}
+
+/// `createVersion`'s options: the page's source, the snapshot's change reason, the (commit, path)
+/// that reason came from and the history gap.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CreateVersionOptions {
     pub source_id: Option<String>,
     pub reason: Option<String>,
+    /// Drop `reason` when a purge tombstoned this (commit, path) for the source (`stampableReason`).
+    pub reason_source: Option<ReasonSource>,
     /// Record that the page lost history (`version_history_gap_at`) before the snapshot.
     pub history_gap: Option<bool>,
 }
@@ -2405,15 +2459,16 @@ mod tests {
     }
 
     #[test]
-    fn update_slug_refuses_a_segmented_page_and_moves_nothing() {
+    fn update_slug_refuses_a_null_body_with_no_segmented_generation_and_moves_nothing() {
         let store = crate::test_support::store();
         put(&store, "big");
+        // A NULL body with no body state behind it: PGLite's CHECK makes this row impossible.
         make_shell(&store, "big");
         let err = store.update_slug("big", "big-2", None).unwrap_err();
         assert_eq!(err.code, crate::error::INVALID_STATE);
         assert_eq!(
             err.message,
-            "updateSlug refuses segmented page big (source=default)"
+            "updateSlug refuses page big (source=default): its body is NULL and no segmented body generation holds it"
         );
         let scope = ReadScope::default();
         assert!(store.read_page_snapshot("big", &scope).unwrap().is_some());

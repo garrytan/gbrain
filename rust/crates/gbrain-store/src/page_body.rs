@@ -2834,6 +2834,38 @@ mod segment_chunk_tests {
         id
     }
 
+    /// A published segmented page renames: its version references the live generation and keeps no
+    /// body copy, and the moved page reads the same body under its new slug.
+    #[test]
+    fn update_slug_moves_a_segmented_page_and_versions_it_by_reference() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        assert_eq!(store.update_slug("notes/a", "notes/b", None).unwrap(), 1);
+        let read = store.read().unwrap();
+        let page = read_page_by_id(&*read, id as u64).unwrap().unwrap();
+        assert_eq!(page.slug, "notes/b");
+        assert!(page.compiled_truth.is_null());
+        assert_eq!(
+            segmented_reference(&*read, id as u64).unwrap(),
+            Some((1, Some(8)))
+        );
+        drop(read);
+        let versions = store
+            .get_versions("notes/b", &crate::pages::VersionsOptions::default())
+            .unwrap();
+        assert_eq!(versions.len(), 1);
+        let v = &versions[0];
+        assert_eq!(
+            (
+                &v["body_storage"],
+                &v["body_generation"],
+                &v["body_bytes"],
+                &v["compiled_truth"]
+            ),
+            (&json!("segmented"), &json!(1), &json!(8), &Value::Null)
+        );
+    }
+
     #[test]
     fn a_retention_purge_deletes_the_texts_only_the_purged_page_needed() {
         // PGLite's purgeDeletedPages deletes the purged pages' segment texts in the same

@@ -60,7 +60,7 @@ export async function recordReasonTombstones(tx: BrainEngine, input: { sourceId:
   if (recheck.status === 'no_repository') throw scanFailed(input.sourceId, input.rawId, 'the Git checkout scanned before the purge is gone');
   const hits = [...plan.hits, ...(recheck.status === 'complete' ? recheck.hits : [])];
   if (!hits.length) return 0;
-  return tx.insertReasonPurgeTombstones(input.sourceId, hits.map(hit => hit.commit), hits.map(hit => hit.path));
+  return tx.writeReasonPurgeTombstones(input.sourceId, hits.map(hit => ({ commit_sha: hit.commit, path: hit.path })));
 }
 
 /** A Git effect a worker is running may have its commit message in flight: the purge waits for it. */

@@ -1,11 +1,12 @@
 /**
- * BrainEngine parity — the source-resolution reads (`listLocalPathSources`, `listSourceRoutingRows`,
+ * BrainEngine parity — the source-resolution reads (`listLocalPathSources`, `countRepoBoundSources`, `listSourceRoutingRows`,
  * `countDefaultSourceSplit`, `listAllSources`, `getSource`, `listSourceRecords`, `listStaleSyncSourceIds`, `readSourceRow`,
  * `lockSourceRow`, `readSourceChunkerVersion`, `countSourcePages`, `insertSource`) that `src/core/source-resolver.ts`
  * and the other `sources` readers make to pick a source or list the registered ones.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: every engine arm answers the same rows: sources with a checkout path keep their archived flag; every
+ *  - Contract: every engine arm answers the same rows: sources with a checkout path keep their archived flag; the
+ *    readiness sync probe counts only live sources with a non-empty path; every
  *    source row carries its config, archived flag and whether `default` holds a live page; the default-write guard's
  *    split counts live pages only and counts distinct non-default sources; `listAllSources` hides archived sources
  *    unless asked, orders `default` first then by id, and its local-path filter also drops the storage manifest;
@@ -113,6 +114,18 @@ describe('engine parity: source-resolution reads', () => {
     expect(configs.missing).toBeNull();
     expect(verdicts).toEqual({ plain: false, flagstr: false, phone: true, flag: true, missing: false, present: true });
     return { none, stillNone, archivedKind, configs, verdicts };
+  });
+
+  parityTest('countRepoBoundSources counts live sources with a non-empty local path', { methods: ['countRepoBoundSources'] }, async (engine, backend) => {
+    const empty = await engine.countRepoBoundSources();
+    await createSource(engine, backend, 'alpha', {}, '/srv/brain/alpha');
+    await createSource(engine, backend, 'beta', {}, '/srv/brain/beta');
+    await createSource(engine, backend, 'blank', {}, '');
+    await createSource(engine, backend, 'nopath');
+    await archiveSource(engine, backend, 'beta');
+    const bound = await engine.countRepoBoundSources();
+    expect({ empty, bound }).toEqual({ empty: 0, bound: 1 });
+    return { empty, bound };
   });
 
   parityTest('listSourceRoutingRows carries config, archived and whether default has a live page', { methods: ['listSourceRoutingRows'] }, async (engine, backend) => {

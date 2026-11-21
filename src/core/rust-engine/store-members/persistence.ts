@@ -1,10 +1,11 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
- * insertLocalWriterRow, readJournalLimitRows, readHeldPageRows, readHeldCoverageRows), the request rows the put path
+ * insertLocalWriterRow, readJournalLimitRows; the held-file reads are in sync-hold-store.ts), the request rows the put path
  * reads and writes (readWriteRequest, readWriteRequestById, listWriteRequestRows, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
+ * insertWriteRequestGroup, readWriteRequestsByRequestIds, readOwnerHostBinding,
  * stampWriteClaim, lockWriteRequest, completeWriteRow, cancelWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
- * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the lifecycle receipts
+ * deleteConsumerRow, stampWorktreeHeartbeats), the admission reads (readSourceMembership, findTopologyChanges), the topology recovery scan (listTopologyRecoveries), the lifecycle receipts
  * (readTopologyChange, insertTopologyChange) and readLedgerSource, and the effects a publication or a managed-request
  * withdrawal queues (insertPublicationEffects, insertWithdrawalEffects).
  *
@@ -16,14 +17,19 @@
  * rust/docs/store/persistence.md.
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
+import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
+import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../../engine-sql/applied-watermark-reads.ts';
+import type { SourceDetailRow } from '../../engine.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
+// The managed-worktree admission members (managed_persistence), served beside the journal's.
+export * from './persistence-admission.ts';
 
 /** The store keeps no managed brains: a brain on this engine is always unmanaged, one singleton row. */
 export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async () => [{ enabled: false }];
@@ -66,12 +72,27 @@ export const readJournalLimitRows: StoreMember<[], Array<{ key: string | null; v
   return rows;
 };
 
-/** Sync holds are written only by the git sync path, which this engine refuses: no page is ever held. */
-export const readHeldPageRows: StoreMember<[pageIds: string[]], Array<{ record: never; revision: string | null }>> = async () => [];
+/** The source row's sync point (getSource) and the journal's outstanding requests of its current incarnation. */
+export const readWriteWatermarkRow: StoreMember<[sourceId: string], WriteWatermarkRow> = async (brain, sourceId) => {
+  const member = 'readWriteWatermarkRow';
+  const source: SourceDetailRow | null = await storeCall({ member, sourceId }, () => brain.getSource(sourceId));
+  const state: SourceStateRow | null = source ? await storeCall({ member, sourceId }, () => brain.readSourceState(sourceId)) : null;
+  const journal = await storeCall({ member, sourceId }, () => brain.readRequestWatermark(sourceId, state?.incarnation ?? null)) as Pick<WriteWatermarkRow, 'pending_min' | 'pending_count' | 'pending_since' | 'newest_sequence'>;
+  return { last_commit: source?.last_commit ?? null, last_sync_at: source?.last_sync_at ?? null, ...journal };
+};
 
-/** No hold rows exist on this engine (see readHeldPageRows), so no source has held coverage. */
-export const readHeldCoverageRows: StoreMember<[sourceIds: string[] | null], HeldCoverageRow[]> = async () => [];
+/** This engine keeps no host bindings, so the checkout is the source's own path. */
+export const readSourceCheckoutRoot: StoreMember<[sourceId: string, hostId: string | null], SourceCheckoutRoot | null> = async (brain, sourceId) => {
+  const state: SourceStateRow | null = await storeCall({ member: 'readSourceCheckoutRoot', sourceId }, () => brain.readSourceState(sourceId));
+  return state ? { incarnation: state.incarnation, root: state.local_path } : null;
+};
 
+/** The store holds one vector column, so `column` is the text column; it keeps no embedding budget rows, so `held` is 0. */
+export const readUnembeddedPageSummary: StoreMember<[sourceId: string, column: string], UnembeddedPageSummary> = async (brain, sourceId) => {
+  await requireTextColumn(brain, 'readUnembeddedPageSummary');
+  const row: UnembeddedPageSummary = await storeCall({ member: 'readUnembeddedPageSummary', sourceId }, () => brain.readUnembeddedPageSummary(sourceId));
+  return { ...row, oldest: row.oldest == null ? null : new Date(String(row.oldest)) };
+};
 
 /** The request a principal admitted under `requestId`, or null. */
 export const readWriteRequest: StoreMember<[principalKind: string, principalId: string, requestId: string], WriteRequest | null> =
@@ -138,11 +159,49 @@ export const lockPersistenceCounters: StoreMember<[keys: readonly string[]], Cou
   storeCall({ member: 'lockPersistenceCounters' }, () => brain.lockPersistenceCounters([...keys]));
 
 /**
- * The admitted request row with its counter charge. A worktree or a refresh id refuses with the foreign-key violation
- * PGLite gives: this engine keeps no persistence worktrees.
+ * The admitted request row with its counter charge. A worktree or a refresh id that names no row refuses with the
+ * foreign-key violation PGLite gives.
  */
 export const insertWriteRequest: StoreMember<[row: WriteRequestInsert], WriteRequest> = async (brain, row) =>
   requestRow<WriteRequest>(await storeCall({ member: 'insertWriteRequest' }, () => brain.insertWriteRequest(row)))!;
+
+/**
+ * A grouped admission: one store write that inserts the rows in item order, so each row takes the next sequence and
+ * charges its counters by one request and its own bytes; the sums are the one counter update the SQL statement makes.
+ * Every row is a queued page write (target `page`, protocol 1), as the statement inserts it. A refusal at any item
+ * drops the whole write, so no row and no counter charge is kept, as the one SQL statement does.
+ */
+export const insertWriteRequestGroup: StoreMember<[group: WriteRequestGroupInsert], WriteRequest[]> = async (brain, group) => {
+  const rows = group.items.map(item => ({
+    principalKind: group.principalKind, principalId: group.principalId, requestId: item.requestId, operation: group.operation,
+    sourceId: group.sourceId, sourceIncarnation: group.sourceIncarnation, pageId: item.pageId, slug: item.slug, worktreeId: group.worktreeId,
+    topologyGeneration: group.topologyGeneration, digest: item.digest, intent: item.intent, authority: group.authority, intentBytes: item.intentBytes,
+    terminalReservation: item.terminalReservation, targetKind: 'page', protocolVersion: 1, admitterVersion: group.admitterVersion,
+    admitterHostId: group.admitterHostId, counterKeys: group.counterKeys, clientRequestId: item.clientRequestId, state: 'queued', deferredRefreshId: null,
+  } satisfies WriteRequestInsert));
+  if (!rows.length) return [];
+  const stored = await storeCall({ member: 'insertWriteRequestGroup' }, () => brain.insertWriteRequestGroup(rows)) as unknown[];
+  return stored.map(row => requestRow<WriteRequest>(row)!);
+};
+
+/**
+ * The requests a principal admitted under any of `requestIds`: one `readWriteRequest` each, the ones found, each row
+ * once. Two spellings of one uuid (letter case) name one row, as `request_id = ANY($3::uuid[])` returns it once.
+ */
+export const readWriteRequestsByRequestIds: StoreMember<[principalKind: string, principalId: string, requestIds: readonly string[]], WriteRequest[]> =
+  async (brain, kind, id, requestIds) => {
+    const rows: WriteRequest[] = [];
+    const seen = new Set<string>();
+    for (const requestId of new Set(requestIds.map(requestId => requestId.toLowerCase()))) {
+      const row = requestRow<WriteRequest>(await storeCall({ member: 'readWriteRequestsByRequestIds' }, () => brain.readWriteRequest({ kind, id }, requestId)));
+      if (row && !seen.has(row.id)) { seen.add(row.id); rows.push(row); }
+    }
+    return rows;
+  };
+
+/** The owner host's checkout path of a worktree, or null; a worktree id that is not a uuid refuses as the cast does. */
+export const readOwnerHostBinding: StoreMember<[worktreeId: string], string | null> = async (brain, worktreeId) =>
+  (await storeCall({ member: 'readOwnerHostBinding' }, () => brain.readOwnerHostBinding(worktreeId))) as string | null;
 
 /** The claim stamp; `passed_sync` is false and the refresh barrier never refuses (this engine has no worktrees). */
 export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: number, phaseJson: string], ClaimedWriteRow | null> =
@@ -197,18 +256,24 @@ export const expireStaleWriteClaims: StoreMember<[expiry: ClaimExpiry, opts?: { 
   await storeCall({ member: 'expireStaleWriteClaims' }, () => brain.expireStaleWriteClaims(expiry));
 };
 
-/** Whether a claim would find a row now. The host id selects worktree rows, which this engine never has. */
+/**
+ * Whether a claim would find a row now. The host id selects worktree rows; a row on a worktree refuses
+ * `engine_capability_missing` until the store can read its worktree.
+ */
 export const hasClaimableWrite: StoreMember<[hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }], boolean> =
-  (brain, _hostId, excludeRoots, opts) =>
-    storeCall({ member: 'hasClaimableWrite' }, () => brain.hasClaimableWrite({ excludeRoots, priority: opts?.priority ?? null }));
+  (brain, hostId, excludeRoots, opts) =>
+    storeCall({ member: 'hasClaimableWrite' }, () => brain.hasClaimableWrite({ hostId, excludeRoots, priority: opts?.priority ?? null }));
 
 /**
- * The request a FIFO claim takes next, or null. The host id, nonce, sync-seen map and lease holder select worktree and
- * managed-sync rows, which this engine never has; one process owns the store, so no row is locked against another.
+ * The request a FIFO claim takes next, or null. The whole spec goes to the store: the lease holder ranks a managed-sync
+ * row whose drain lease another process holds last, and the host id, nonce and sync-seen map select worktree rows (a
+ * row on a worktree refuses `engine_capability_missing` until the store can read its worktree). One process owns the
+ * store, so no row is locked against another.
  */
 export const selectClaimableWrite: StoreMember<[spec: ClaimHeadSpec], WriteRequest | null> = async (brain, spec) =>
-  requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' },
-    () => brain.selectClaimableWrite({ excludeRoots: spec.excludeRoots, fifoRoots: spec.fifoRoots, laneRoots: spec.laneRoots, priority: spec.priority })));
+  requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' }, () => brain.selectClaimableWrite({
+    hostId: spec.hostId, excludeRoots: spec.excludeRoots, fifoRoots: spec.fifoRoots, laneRoots: spec.laneRoots, nonce: spec.nonce,
+    syncSeen: spec.syncSeen, priority: spec.priority, leaseHolder: spec.leaseHolder })));
 
 // The consumer rows. One process owns this engine's brain, so the store keeps no consumer heartbeat rows and no
 // worktrees: the reads answer none (PGLite's callers answer the same without a read) and the writes change nothing.
@@ -220,8 +285,11 @@ export const probeLiveConsumerRows: StoreMember<[probe: ConsumerProbe, opts?: { 
 export const renewConsumerRow: StoreMember<[renewal: ConsumerRenewal, opts?: { signal?: AbortSignal }], void> = async () => undefined;
 /** The heartbeat's row delete; there is no row. */
 export const deleteConsumerRow: StoreMember<[key: ConsumerRowKey, opts?: { signal?: AbortSignal }], void> = async () => undefined;
-/** The worktree heartbeat stamp; this engine has no worktrees. */
-export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+/** The worktree heartbeat stamp: `heartbeat_at` now on every worktree the host owns (the claims an unmanaged brain keeps). */
+export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async (brain, hostId, opts) => {
+  opts?.signal?.throwIfAborted();
+  await storeCall({ member: 'stampWorktreeHeartbeats' }, () => brain.stampWorktreeHeartbeats(hostId));
+};
 
 /** A source's incarnation and archive flag, or null. FOR SHARE changes nothing in one store write. */
 export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?: boolean }], SourceMembership | null> = (brain, sourceId) =>
@@ -230,6 +298,10 @@ export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?
 /** The first of `requestIds` a lifecycle change of local writer `principalId` used, as `[{ request_id }]`, or []. */
 export const findTopologyChanges: StoreMember<[principalId: string, requestIds: string[]], Array<{ request_id: string }>> = (brain, principalId, requestIds) =>
   storeCall({ member: 'findTopologyChanges' }, () => brain.findTopologyChanges(principalId, [...requestIds]));
+
+/** The topology recovery scan: this host's changes with a recovery after the cursor, in id order; timestamps as Dates. */
+export const listTopologyRecoveries: StoreMember<[hostId: string, after: string | null, limit: number], TopologyChange[]> = async (brain, hostId, after, limit) =>
+  ((await storeCall({ member: 'listTopologyRecoveries' }, () => brain.listTopologyRecoveries(hostId, after, limit))) as unknown[]).map(row => topologyRow(row)!);
 
 /** The lifecycle receipt of (principal, request id), or null; its two timestamps as Dates, as PGLite returns them. */
 export const readTopologyChange: StoreMember<[principalId: string, requestId: string], TopologyChange | null> = async (brain, principalId, requestId) =>
