@@ -1,4 +1,4 @@
-//! The chronicle ledger: the decision upsert, the judge slot and the rollup members of
+//! The chronicle ledger: the decision upsert, the judge slot, its pruning and the rollup members of
 //! `engine-sql/collate-store-reads.ts` (rust/docs/store/chronicle-ledger.md).
 
 use gbrain_store::chronicle_ledger::{ChronicleJudgeKey, ChronicleRowInput};
@@ -36,6 +36,12 @@ impl Brain {
             let key: ChronicleJudgeKey = required(key, "reserveChronicleJudgeSlot key")?;
             s.reserve_chronicle_judge_slot(limit, &key)
         })
+    }
+
+    /// `pruneChronicleReservations()`: resolves the number of reservations older than 48 hours it deleted.
+    #[napi]
+    pub fn prune_chronicle_reservations<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.prune_chronicle_reservations())
     }
 
     /// `readChronicleLedger()`: `{ counts, reasons, calls, principals }` of the automatic rows.

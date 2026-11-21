@@ -1269,6 +1269,18 @@ const PINS: Pin[] = [
     texts: ["SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'"],
   },
   {
+    from: 'src/core/chronicle/ledger.ts:92 reserveChronicleSlot, at e4420913f5',
+    case: { method: 'reserveChronicleJudgeSlot', variant: 'default', run: e => e.reserveChronicleJudgeSlot(2, { sourceId: 'default', pageId: 1, contentHash: 'h' }) },
+    texts: ["SELECT pg_advisory_xact_lock(hashtext('gbrain:chronicle:daily_reservation'))",
+      "SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'",
+      'INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) VALUES ($1, $2, $3)'],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:107 pruneChronicleReservations, at e4420913f5',
+    case: { method: 'pruneChronicleReservations', variant: 'default', run: e => e.pruneChronicleReservations() },
+    texts: ["DELETE FROM chronicle_judge_reservations WHERE reserved_at < now() - interval '48 hours'"],
+  },
+  {
     from: 'src/core/chronicle/ledger.ts:195 recordChronicleDecision (the activation insert), at ac7d551949',
     case: { method: 'insertConfigIfAbsent', variant: 'default', run: e => e.insertConfigIfAbsent('chronicle.activated_at', '2026-01-01T00:00:00.000Z') },
     texts: ['INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING'],

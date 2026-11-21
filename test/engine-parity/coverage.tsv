@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1027/1033
+# covered: 1029/1035
 # lifecycle: 9/9
 # pages: 59/59
 # search: 7/7
@@ -64,7 +64,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 15/15
 # wanted_links: 2/2
-# write_misc: 73/79
+# write_misc: 75/81
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -939,7 +939,9 @@ hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 upsertChronicleRow	write_misc	yes	3	no	yes	yes	serves
 readChronicleRow	write_misc	yes	8	no	yes	yes	serves
 hasPendingAutoChronicleRow	write_misc	yes	1	no	yes	yes	serves
-countRecentChronicleReservations	write_misc	yes	1	no	yes	yes	serves
+countRecentChronicleReservations	write_misc	yes	3	no	yes	yes	serves
+reserveChronicleJudgeSlot	write_misc	yes	2	no	yes	yes	serves
+pruneChronicleReservations	write_misc	yes	1	no	yes	yes	serves
 insertConfigIfAbsent	write_misc	yes	1	no	yes	yes	serves
 readPageTruthLead	write_misc	yes	2	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	1	no	yes	yes	serves

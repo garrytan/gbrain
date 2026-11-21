@@ -73,6 +73,7 @@ test/capacity-bounded-read-6803.test.ts
 test/capture-consent-admission.test.ts
 test/capture-dispatch-provenance-6524.test.ts
 test/chronicle-backfill-max-usd.test.ts
+test/chronicle-reservations-prune.test.ts
 test/claim-fifo-foreground-waiting.test.ts
 test/claim-head-deferred-decisions.test.ts
 test/claim-lease-holder-only-6712.test.ts
@@ -154,6 +155,7 @@ test/engine-parity/bench-save-repro.test.ts
 test/engine-parity/bound-write.test.ts
 test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/chronicle-decision.test.ts
+test/engine-parity/chronicle-reservations.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
 test/engine-parity/chunk-reads.test.ts
 test/engine-parity/chunk-safe-fence.test.ts

@@ -3946,6 +3946,17 @@
         ],
         "flagOnScopes": []
       },
+      "pruneChronicleReservations#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "pruneSatisfiedWantedMarkers#default": {
         "flagOffLanes": [
           "pool"
@@ -5436,6 +5447,17 @@
         "flagOnScopes": []
       },
       "requireSynchronousCommit#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "reserveChronicleJudgeSlot#default": {
         "flagOffLanes": [
           "tx"
         ],
@@ -7239,6 +7261,7 @@
         "probeNoopEmbeddingSettle": "none",
         "projectionRebuildProgress": "none",
         "promoteDelayedJobs": "none",
+        "pruneChronicleReservations": "none",
         "pruneDecideReceipts": "none",
         "pruneFrontmatterTags": "none",
         "pruneHoldingPageVersions": "none",
@@ -7529,6 +7552,7 @@
         "replaceWantedLinkRows": "none",
         "requeueEffectRow": "none",
         "requireSynchronousCommit": "none",
+        "reserveChronicleJudgeSlot": "none",
         "reserveClientSpend": "none",
         "reserveGroupSpend": "none",
         "reservePageEmbedding": "none",

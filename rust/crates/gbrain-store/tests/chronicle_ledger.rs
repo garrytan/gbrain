@@ -1,5 +1,5 @@
-//! `upsertChronicleRow`, `reserveChronicleJudgeSlot` and `readChronicleLedger`: the guards of an upsert, the 24-hour
-//! limit of a reservation, and the rollup's windows and byte order.
+//! `upsertChronicleRow`, `reserveChronicleJudgeSlot`, `pruneChronicleReservations` and `readChronicleLedger`: the guards
+//! of an upsert, the 24-hour limit of a reservation, the 48-hour prune, and the rollup's windows and byte order.
 
 mod memory_env;
 
@@ -131,4 +131,23 @@ fn a_row_older_than_a_week_leaves_the_counts_and_pending_stays() {
     assert_eq!(r["counts"]["skipped"], 0);
     assert_eq!(r["counts"]["pending"], 1);
     assert_eq!(r["reasons"], json!([]));
+}
+
+#[test]
+fn a_prune_deletes_only_the_reservations_older_than_two_days() {
+    let b = brain("chronicle-prune");
+    assert!(b.reserve_chronicle_judge_slot(9, &key(1, "h")).unwrap());
+    b.clock.advance(DAY);
+    assert!(b.reserve_chronicle_judge_slot(9, &key(2, "h")).unwrap());
+    b.clock.advance(DAY);
+    assert!(b.reserve_chronicle_judge_slot(9, &key(3, "h")).unwrap());
+    // At exactly 48 hours the first reservation is not older than the window, as `reserved_at < now() - 48h` reads it.
+    assert_eq!(b.prune_chronicle_reservations().unwrap(), 0);
+    b.clock.advance(1);
+    assert_eq!(b.prune_chronicle_reservations().unwrap(), 1);
+    assert_eq!(b.prune_chronicle_reservations().unwrap(), 0);
+    // The two newer reservations stay: one is inside the 24-hour window.
+    assert_eq!(b.count_recent_chronicle_reservations().unwrap(), 1);
+    b.clock.advance(DAY);
+    assert_eq!(b.prune_chronicle_reservations().unwrap(), 1);
 }

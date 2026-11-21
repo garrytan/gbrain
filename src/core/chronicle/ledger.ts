@@ -86,25 +86,18 @@ export async function chronicleDailyRemaining(engine: BrainEngine, limit: number
 
 /**
  * E3: take one automatic judge slot immediately before the call. Serialized
- * across every executor by a transaction-scoped advisory lock, so concurrent
- * hosts cannot both take the last slot. false = the limit is used up.
+ * across every executor (a transaction-scoped advisory lock on the SQL engines,
+ * one store write transaction on Rust; engine-sql/chronicle-ledger.ts), so
+ * concurrent hosts cannot both take the last slot. false = the limit is used up.
  */
 export async function reserveChronicleSlot(engine: BrainEngine, limit: number,
   key: { sourceId: string; pageId: number; contentHash: string }): Promise<boolean> {
-  return engine.transaction(async (tx) => {
-    await tx.executeRaw("SELECT pg_advisory_xact_lock(hashtext('gbrain:chronicle:daily_reservation'))");
-    const [row] = await tx.executeRaw<{ n: number | string }>(
-      "SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'");
-    if (Number(row?.n ?? 0) >= limit) return false;
-    await tx.executeRaw('INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) VALUES ($1, $2, $3)',
-      [key.sourceId, key.pageId, key.contentHash]);
-    return true;
-  });
+  return engine.reserveChronicleJudgeSlot(limit, key);
 }
 
 /** Reservations older than the window serve nothing; keep two days for doctor. */
 export async function pruneChronicleReservations(engine: BrainEngine): Promise<void> {
-  await engine.executeRaw("DELETE FROM chronicle_judge_reservations WHERE reserved_at < now() - interval '48 hours'");
+  await engine.pruneChronicleReservations();
 }
 
 export interface ChronicleRowWrite {

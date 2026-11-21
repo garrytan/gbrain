@@ -1,7 +1,7 @@
 //! The chronicle ledger: the `chronicle_page_state` and `chronicle_judge_reservations` tables of the PGLite engine, as
 //! the members of `src/core/engine-sql/collate-store-reads.ts` run them (rust/docs/store/chronicle-ledger.md).
 //!
-//! Members: upsertChronicleRow, reserveChronicleJudgeSlot, readChronicleLedger.
+//! Members: upsertChronicleRow, reserveChronicleJudgeSlot, pruneChronicleReservations, readChronicleLedger.
 //!
 //! Keys (every record starts with `keys::TELEMETRY`, `a`):
 //! - `a 0x0E source \0 page_id BE8 hash \0 version BE4 -> LedgerRecord`: one row of `chronicle_page_state`, its
@@ -9,9 +9,8 @@
 //! - `a 0x0F id BE8 -> ReservationRecord`: one judge reservation, its id the `BIGSERIAL`.
 //! - `a 0x10 -> last id` (JSON integer): the reservation id sequence.
 //!
-//! The campaign, retry and pruning writers of the ledger (`campaign.ts`, `execute.ts`, `pruneChronicleReservations`)
-//! stay raw SQL and refuse on a Rust brain; a row written here therefore keeps the default cost, unpriced and attempts
-//! columns, which the rollup still reads.
+//! The campaign and retry writers of the ledger (`campaign.ts`, `execute.ts`) stay raw SQL and refuse on a Rust brain;
+//! a row written here therefore keeps the default cost, unpriced and attempts columns, which the rollup still reads.
 
 use crate::error::{Result, StoreError};
 use crate::kv::scan_prefix;
@@ -334,6 +333,40 @@ impl Store {
             )?;
             put_json(tx, &sequence_key(), &last)?;
             Ok(true)
+        })
+    }
+
+    /// `pruneChronicleReservations()`: deletes the reservations taken more than 48 hours ago (`reserved_at < now() -
+    /// interval '48 hours'`) in one write transaction and answers how many it deleted; the sequence keeps its value.
+    pub fn prune_chronicle_reservations(&self) -> Result<i64> {
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let mut old: Vec<Vec<u8>> = Vec::new();
+            let mut bad = None;
+            scan_prefix(
+                &*tx,
+                &reservation_prefix(),
+                false,
+                &mut |k, v| match decode::<ReservationRecord>(v, "chronicle reservation") {
+                    Ok(r) => {
+                        if r.reserved_at < now - 2 * DAY_US {
+                            old.push(k.to_vec());
+                        }
+                        true
+                    }
+                    Err(e) => {
+                        bad = Some(e);
+                        false
+                    }
+                },
+            )?;
+            if let Some(e) = bad {
+                return Err(e);
+            }
+            for k in &old {
+                tx.delete(k)?;
+            }
+            Ok(old.len() as i64)
         })
     }
 

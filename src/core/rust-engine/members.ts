@@ -148,6 +148,8 @@ export const RUST_ENGINE_MEMBERS = {
   readChronicleRow: 'telemetry',
   hasPendingAutoChronicleRow: 'telemetry',
   countRecentChronicleReservations: 'telemetry',
+  reserveChronicleJudgeSlot: 'telemetry',
+  pruneChronicleReservations: 'telemetry',
   insertConfigIfAbsent: 'config',
   readPageTruthLead: 'pages',
   // sources

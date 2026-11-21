@@ -65,6 +65,9 @@ export const CHRONICLE_STATE_SQL = {
   pendingAuto: `SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND state='pending'
       AND trigger='auto' AND no_extract=false AND extractor_version=$3 LIMIT 1`,
   dailyCount: "SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'",
+  reserveLock: "SELECT pg_advisory_xact_lock(hashtext('gbrain:chronicle:daily_reservation'))",
+  reserveInsert: 'INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) VALUES ($1, $2, $3)',
+  pruneReservations: "DELETE FROM chronicle_judge_reservations WHERE reserved_at < now() - interval '48 hours'",
   insertConfigIfAbsent: 'INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING',
   truthLead: 'SELECT truth_lead FROM pages WHERE id=$1',
 } as const;
@@ -86,6 +89,32 @@ export async function hasPendingAutoChronicleRow(tx: Raw, sourceId: string, page
 export async function countRecentChronicleReservations(tx: Raw): Promise<number> {
   const [row] = await tx.executeRaw<{ n: number | string }>(CHRONICLE_STATE_SQL.dailyCount);
   return Number(row?.n ?? 0);
+}
+
+/** The page an automatic judge reservation is taken for. */
+export interface ChronicleJudgeKey {
+  sourceId: string;
+  pageId: number;
+  contentHash: string;
+}
+
+/**
+ * Takes one automatic judge slot: true when fewer than `limit` reservations were taken in the last 24 hours and one is
+ * recorded now, false otherwise. One transaction serialized by a transaction-scoped advisory lock, so concurrent hosts
+ * cannot both take the last slot (the statements chronicle/ledger.ts reserveChronicleSlot ran).
+ */
+export function reserveChronicleJudgeSlot(engine: Pick<BrainEngine, 'transaction'>, limit: number, key: ChronicleJudgeKey): Promise<boolean> {
+  return engine.transaction(async (tx) => {
+    await tx.executeRaw(CHRONICLE_STATE_SQL.reserveLock);
+    if (await countRecentChronicleReservations(tx) >= limit) return false;
+    await tx.executeRaw(CHRONICLE_STATE_SQL.reserveInsert, [key.sourceId, key.pageId, key.contentHash]);
+    return true;
+  });
+}
+
+/** Deletes the reservations older than 48 hours (the window serves 24; doctor reads two days). */
+export async function pruneChronicleReservations(tx: Raw): Promise<void> {
+  await tx.executeRaw(CHRONICLE_STATE_SQL.pruneReservations);
 }
 
 /** Sets a config key only when it has none; an existing value stays. */

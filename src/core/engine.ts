@@ -86,7 +86,7 @@ import type {
 import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
-import type { ChronicleRowKey, ChronicleRowUpsert } from './engine-sql/chronicle-ledger.ts';
+import type { ChronicleJudgeKey, ChronicleRowKey, ChronicleRowUpsert } from './engine-sql/chronicle-ledger.ts';
 import type { ChronicleLedgerRow } from './chronicle/contract.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
@@ -1638,6 +1638,10 @@ export interface BrainEngine {
   hasPendingAutoChronicleRow(sourceId: string, pageId: number, extractorVersion: number): Promise<boolean>;
   /** The automatic chronicle judge reservations taken in the last 24 hours. */
   countRecentChronicleReservations(): Promise<number>;
+  /** Takes one automatic chronicle judge slot when fewer than `limit` were taken in the last 24 hours; false at the limit. Serialized across hosts. */
+  reserveChronicleJudgeSlot(limit: number, key: ChronicleJudgeKey): Promise<boolean>;
+  /** Deletes the chronicle judge reservations older than 48 hours. */
+  pruneChronicleReservations(): Promise<void>;
   /** Sets a config key only when it has none (`ON CONFLICT (key) DO NOTHING`). */
   insertConfigIfAbsent(key: string, value: string): Promise<void>;
   /** The stored `truth_lead` of a page by id (a segmented page's body prefix), or null. */

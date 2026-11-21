@@ -56,6 +56,14 @@ export const hasPendingAutoChronicleRow: Member<'hasPendingAutoChronicleRow'> = 
 export const countRecentChronicleReservations: Member<'countRecentChronicleReservations'> = (brain) =>
   storeCall({ member: 'countRecentChronicleReservations' }, () => brain.countRecentChronicleReservations());
 
+/** The store's write transaction serializes the reserve, as the advisory lock does on the SQL engines. */
+export const reserveChronicleJudgeSlot: Member<'reserveChronicleJudgeSlot'> = (brain, limit, key) =>
+  storeCall({ member: 'reserveChronicleJudgeSlot', sourceId: key.sourceId }, () => brain.reserveChronicleJudgeSlot(limit, key));
+
+export const pruneChronicleReservations: Member<'pruneChronicleReservations'> = async (brain) => {
+  await storeCall({ member: 'pruneChronicleReservations' }, () => brain.pruneChronicleReservations());
+};
+
 export const insertConfigIfAbsent: Member<'insertConfigIfAbsent'> = async (brain, key, value) => {
   await storeCall({ member: 'insertConfigIfAbsent' }, () => brain.insertConfigIfAbsent(key, value));
 };

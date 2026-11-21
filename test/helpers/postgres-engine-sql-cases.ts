@@ -838,6 +838,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readChronicleRow': OOS.callerRawSql,
   'hasPendingAutoChronicleRow': OOS.callerRawSql,
   'countRecentChronicleReservations': OOS.callerRawSql,
+  'reserveChronicleJudgeSlot': OOS.callerRawSql,
+  'pruneChronicleReservations': OOS.callerRawSql,
   'insertConfigIfAbsent': OOS.callerRawSql,
   'readPageTruthLead': OOS.callerRawSql,
   'listActiveAccessMembers': OOS.writeMisc,
@@ -1894,6 +1896,8 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readChronicleRow', [['default', (e) => e.readChronicleRow({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2 })]]),
   ...variants('hasPendingAutoChronicleRow', [['default', (e) => e.hasPendingAutoChronicleRow('default', 1, 2)]]),
   ...variants('countRecentChronicleReservations', [['default', (e) => e.countRecentChronicleReservations()]]),
+  ...variants('reserveChronicleJudgeSlot', [['default', (e) => e.reserveChronicleJudgeSlot(2, { sourceId: 'default', pageId: 1, contentHash: 'h' })]]),
+  ...variants('pruneChronicleReservations', [['default', (e) => e.pruneChronicleReservations()]]),
   ...variants('insertConfigIfAbsent', [['default', (e) => e.insertConfigIfAbsent('chronicle.activated_at', '2026-01-01T00:00:00.000Z')]]),
   ...variants('readPageTruthLead', [['default', (e) => e.readPageTruthLead(1)]]),
 ];
