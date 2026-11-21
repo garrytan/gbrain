@@ -115,3 +115,28 @@ fn a_worktree_id_that_is_not_a_uuid_refuses() {
     assert!(store.topology_canonical_stamp("not-a-uuid").is_err());
     assert!(store.topology_members(&["not-a-uuid".to_string()]).is_err());
 }
+
+#[test]
+fn the_lifecycle_read_answers_the_source_row_and_none_for_an_unknown_source() {
+    let dir = TempDir::new("topology-lifecycle-source");
+    let store = open(&dir);
+    assert_eq!(store.topology_lifecycle_source("work").unwrap(), None);
+    assert_eq!(store.topology_lifecycle_source("bad\0id").unwrap(), None);
+    let work = source(&store, "work");
+    assert_eq!(
+        store.topology_lifecycle_source("work").unwrap(),
+        Some(json!({
+            "id": "work",
+            "incarnation": work,
+            "archived": false,
+            "local_path": "/var/tmp/work",
+            "config": { "remote_url": "https://example.invalid/x.git" },
+            "name": "work",
+            "last_commit": Value::Null,
+        }))
+    );
+    assert!(store.set_source_archived("work", true).unwrap());
+    let archived = store.topology_lifecycle_source("work").unwrap().unwrap();
+    assert_eq!(archived["archived"], json!(true));
+    assert_eq!(archived["incarnation"], json!(work));
+}

@@ -167,7 +167,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
   if(['rebind','claim'].includes(input.operation)&&!root) throw opError('invalid_params','The source operation requires its canonical path.',
     `Pass the canonical directory for '${input.sourceId}' (the one the command in fix reports, or its verified successor), then rerun the ${input.operation}.`,
     {fix:ownerStatusFix(input.sourceId)});
-  const [before]=await engine.executeRaw<SourceState>('SELECT id,incarnation,archived,local_path,config,name,last_commit FROM sources WHERE id=$1',[input.sourceId]);
+  const before:SourceState|null=await (await engine.topologyStore()).lifecycleSource(input.sourceId);
   // #8984: idempotency is per principal, so a request_id another CLI registration admitted against an earlier incarnation
   // (the registration was replaced since) refuses too; one bound to this incarnation still resumes under the new registration.
   const [superseded]=prior?[prior]:['remove','purge'].includes(input.operation)?await engine.executeRaw<TopologyChange>(`SELECT * FROM persistence_topology_changes

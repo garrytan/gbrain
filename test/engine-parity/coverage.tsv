@@ -421,7 +421,7 @@ applyTransactionSettings	import_guards	yes	71	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
-readLedgerSource	import_guards	yes	12	no	yes	yes	serves
+readLedgerSource	import_guards	yes	13	no	yes	yes	serves
 listCoveredSources	import_guards	yes	1	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	4	no	yes	yes	serves
 claimNotifierLease	persistence_journal	yes	4	no	yes	yes	serves
@@ -942,7 +942,7 @@ sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	10	no	yes	yes	serves
 worktreeClaimStore	write_misc	yes	17	no	yes	yes	serves
-topologyStore	write_misc	yes	3	no	yes	yes	serves
+topologyStore	write_misc	yes	4	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	9	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves

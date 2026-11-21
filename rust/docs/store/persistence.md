@@ -624,14 +624,15 @@ admission is typed. The owner pending-wait read in `owner-activity.ts` stays raw
 
 ## Topology store
 
-A source lifecycle change (`src/core/persistence/topology-locks.ts`, `topology-clone.ts`,
-`topology-transaction.ts`) reads its source, worktrees, owners and pending requests through
+A source lifecycle change (`src/core/persistence/source-lifecycle.ts`, `topology-locks.ts`,
+`topology-clone.ts`, `topology-transaction.ts`) reads its source, worktrees, owners and pending requests through
 `engine.topologyStore()` before its first write. On PGLite and Postgres the store is the SQL in
 `src/core/engine-sql/topology-store.ts`, statement for statement as the callers ran it; on this engine it
 is the reads below, on the handle it was taken from (a transaction's store reads the transaction).
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
+| `brain.topologyLifecycleSource(sourceId)` | `{ id, incarnation, archived, local_path, config, name, last_commit }`; `null` for an unknown source | `source-lifecycle.ts`' first `SELECT … FROM sources` |
 | `brain.topologySource(sourceId)` | `{ incarnation, config, last_commit, local_path }`; `null` for an unknown source | the clone's `SELECT … FROM sources` |
 | `brain.topologyHostWorktrees(hostId)` | host `hostId`'s bindings with their worktree's owner, epoch and generation as text | `withTopologyLocks`' additional-root read |
 | `brain.topologyMembers(worktreeIds)` | the source ids bound to the worktrees, sorted | `lockTopologyRows`' member read, `firstMember`, `anyMember` |

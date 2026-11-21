@@ -13,7 +13,7 @@
  * What each member answers and why: rust/docs/store/persistence.md ("Topology store").
  */
 import type {
-  LockedTopologySourceRow, TopologyBlockingEffectRow, TopologyHostBindingRow, TopologyHostWorktreeRow, TopologyOwnerRow,
+  LockedTopologySourceRow, TopologyLifecycleSourceRow, TopologyBlockingEffectRow, TopologyHostBindingRow, TopologyHostWorktreeRow, TopologyOwnerRow,
   TopologySourceRow, TopologyStore,
 } from '../../engine-sql/topology-store.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
@@ -34,6 +34,7 @@ function rustTopologyStore(brain: StoreBrain): TopologyStore {
     syncCommit: nothing,
     lockBrain: nothing,
     source,
+    lifecycleSource: sourceId => call<TopologyLifecycleSourceRow | null>(() => brain.topologyLifecycleSource(sourceId), sourceId),
     async lockedSource(sourceId) {
       const row = await source(sourceId);
       return row ? { incarnation: row.incarnation, last_commit: row.last_commit, config: row.config } satisfies LockedTopologySourceRow : null;

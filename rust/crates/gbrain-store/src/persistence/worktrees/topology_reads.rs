@@ -43,6 +43,28 @@ pub(crate) fn topology_source_in(read: &dyn KvRead, source_id: &str) -> Result<O
     }))
 }
 
+/// `SELECT id,incarnation,archived,local_path,config,name,last_commit FROM sources WHERE id=$1`,
+/// the first read of a source lifecycle change (`source-lifecycle.ts`), or None.
+pub(crate) fn topology_lifecycle_source_in(
+    read: &dyn KvRead,
+    source_id: &str,
+) -> Result<Option<Value>> {
+    if source_id.contains('\0') {
+        return Ok(None);
+    }
+    Ok(read_source(read, source_id)?.map(|s| {
+        json!({
+            "id": s.id,
+            "incarnation": s.incarnation,
+            "archived": s.archived,
+            "local_path": s.local_path,
+            "config": Value::Object(s.config),
+            "name": s.name,
+            "last_commit": s.last_commit,
+        })
+    }))
+}
+
 /// The worktrees host `host_id` binds, with their owner, epoch, state and generation: the
 /// `persistence_host_bindings JOIN persistence_worktrees` read of `withTopologyLocks`.
 pub(crate) fn topology_host_worktrees_in(read: &dyn KvRead, host_id: &str) -> Result<Vec<Value>> {
@@ -194,6 +216,12 @@ impl Store {
     /// local path, or None.
     pub fn topology_source(&self, source_id: &str) -> Result<Option<Value>> {
         topology_source_in(&*self.read()?, source_id)
+    }
+
+    /// `topologyStore().lifecycleSource(sourceId)`: the source's id, incarnation, archived flag,
+    /// local path, config, name and last commit, or None.
+    pub fn topology_lifecycle_source(&self, source_id: &str) -> Result<Option<Value>> {
+        topology_lifecycle_source_in(&*self.read()?, source_id)
     }
 
     /// `topologyStore().hostWorktrees(hostId)`.

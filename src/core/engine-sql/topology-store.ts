@@ -1,7 +1,7 @@
 /**
  * The reads a source lifecycle change (sources add --url, reclone, remove, set-path, refresh) makes before its first
  * write, as `BrainEngine.topologyStore()` (Rust engine lane 7, step A). The statements are the ones
- * persistence/topology-clone.ts, topology-locks.ts and topology-transaction.ts ran through executeRaw, kept
+ * persistence/source-lifecycle.ts, topology-clone.ts, topology-locks.ts and topology-transaction.ts ran through executeRaw, kept
  * byte-identical: tests and benches match their text, and each runs on the engine the caller holds (the root engine
  * before the locks, the transaction engine inside them), so a wrapper of that engine sees it. What the rows mean
  * (an overlapping root, a draining owner, a busy request) stays with the callers.
@@ -16,6 +16,10 @@ type RawSql = Pick<BrainEngine, 'executeRaw'>;
 
 /** A source as a clone reads it before its locks; null when it is not registered. */
 export interface TopologySourceRow { incarnation: string; config: Record<string, unknown>; last_commit: string | null; local_path: string | null }
+/** A source as a lifecycle change (source-lifecycle.ts) reads it first; null when it is not registered. */
+export interface TopologyLifecycleSourceRow {
+  id: string; incarnation: string; archived: boolean; local_path: string | null; config: Record<string, unknown>; name: string; last_commit: string | null;
+}
 /** A source as a clone re-reads it under its locks. */
 export interface LockedTopologySourceRow { incarnation: string; last_commit: string | null; config: unknown }
 /** One worktree host `hostId` binds, with its owner, epoch, state, generation and paths on that host. */
@@ -43,6 +47,8 @@ export interface TopologyStore {
   lockBrain(): Promise<void>;
   /** The source before the topology locks; null when it is not registered. */
   source(sourceId: string): Promise<TopologySourceRow | null>;
+  /** The source as a lifecycle change reads it before anything else (id, incarnation, archived, path, config, name, last commit); null when it is not registered. */
+  lifecycleSource(sourceId: string): Promise<TopologyLifecycleSourceRow | null>;
   /** The source re-read under the topology locks; null when it is not registered. */
   lockedSource(sourceId: string): Promise<LockedTopologySourceRow | null>;
   /** Every worktree host `hostId` binds. */
@@ -85,6 +91,10 @@ export function sqlTopologyStore(exec: RawSql): TopologyStore {
     async lockBrain() { await exec.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE'); },
     async source(sourceId) {
       const [row] = await exec.executeRaw<TopologySourceRow>('SELECT incarnation,config,last_commit,local_path FROM sources WHERE id=$1', [sourceId]);
+      return row ?? null;
+    },
+    async lifecycleSource(sourceId) {
+      const [row] = await exec.executeRaw<TopologyLifecycleSourceRow>('SELECT id,incarnation,archived,local_path,config,name,last_commit FROM sources WHERE id=$1', [sourceId]);
       return row ?? null;
     },
     async lockedSource(sourceId) {

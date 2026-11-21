@@ -12,6 +12,9 @@
  *    read as `member=executeRaw`.
  *  - Why existing coverage misses it: topology-named-stop.test.ts runs the clone to its first write and never reaches
  *    the reclone's canonical stamp or the additional-root reads.
+ *    The lifecycle read (`lifecycleSource`, source-lifecycle.ts's first read of every lifecycle change) answers a
+ *    registered source's id, incarnation, archived flag, local path, config, name and last commit, an archived source
+ *    as archived, and an unknown one as null.
  *  - Seam: none. The real writer claim and typed members; ids that differ per engine are compared, not returned.
  */
 import { createHash } from 'node:crypto';
@@ -19,7 +22,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms } from './harness.ts';
+import { archiveSource, createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
@@ -32,6 +35,28 @@ const { parityTest } = parityArms(testBackends());
 const UNKNOWN = 'd0000000-0000-4000-8000-0000000000f9';
 
 describe('engine parity: the topology store', () => {
+  parityTest('the lifecycle read answers a registered, an archived and an unknown source the same on every engine', {
+    methods: ['topologyStore', 'readLedgerSource'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'work', { remote_url: 'https://example.invalid/example.git' }, '/srv/example/work');
+    await createSource(engine, backend, 'old');
+    await archiveSource(engine, backend, 'old');
+    const store = await engine.topologyStore();
+    const work = await store.lifecycleSource('work');
+    const incarnation = (await engine.readLedgerSource('work'))!.incarnation;
+    const read = {
+      work: work && { ...work, incarnation: work.incarnation === incarnation },
+      old: await store.lifecycleSource('old').then(row => row && { id: row.id, archived: row.archived, local_path: row.local_path, name: row.name }),
+      missing: await store.lifecycleSource('missing'),
+    };
+    expect(read).toEqual({
+      work: { id: 'work', incarnation: true, archived: false, local_path: '/srv/example/work', config: { remote_url: 'https://example.invalid/example.git' }, name: 'work', last_commit: null },
+      old: { id: 'old', archived: true, local_path: null, name: 'old' },
+      missing: null,
+    });
+    return read;
+  });
+
   parityTest('the topology reads answer a claimed checkout the same on every engine', {
     methods: ['topologyStore', 'getWorktreeBinding', 'readLedgerSource', 'putPage'],
     timeout: 60_000,

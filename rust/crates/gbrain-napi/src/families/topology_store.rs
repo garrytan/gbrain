@@ -22,6 +22,16 @@ impl Brain {
         self.run(env, move |s| s.topology_source(&source_id))
     }
 
+    /// The source's `{ id, incarnation, archived, local_path, config, name, last_commit }`, or null.
+    #[napi]
+    pub fn topology_lifecycle_source<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.topology_lifecycle_source(&source_id))
+    }
+
     /// Host `hostId`'s worktrees with owner, epoch, state, generation and paths.
     #[napi]
     pub fn topology_host_worktrees<'env>(

@@ -724,7 +724,7 @@ src/core/persistence/segmented-apply.ts	execute_raw	9
 src/core/persistence/semantic-pages.ts	execute_raw	2
 src/core/persistence/skill-activation.ts	execute_raw	12
 src/core/persistence/soak-counters.ts	execute_raw	4
-src/core/persistence/source-lifecycle.ts	execute_raw	33
+src/core/persistence/source-lifecycle.ts	execute_raw	32
 src/core/persistence/sync-administration.ts	execute_raw	1
 src/core/persistence/sync-admission.ts	execute_raw	4
 src/core/persistence/sync-admitted.ts	execute_raw	1
