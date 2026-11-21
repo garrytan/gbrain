@@ -94,6 +94,41 @@ describe('capability-refusal rule', () => {
     expect(flagged(`async function f(e) { try { await e.executeRaw('x'); } catch (err) { switch (err.code) { case '42P01': break; default: return []; } rethrowCapabilityRefusal(err); return []; } }`)).toBe(1);
   });
 
+  test('flags a raw-SQL call reached through a promise a callback hands back', () => {
+    const swallowed = [
+      `async function f(e, ids) { try { return await e.transaction(tx => Promise.all(ids.map(id => tx.executeRaw('x', [id])))); } catch { return []; } }`,
+      `const r = await e.transaction(tx => Promise.all(ids.map(id => tx.executeRaw('x', [id])))).catch(() => []);`,
+      `async function f(e) { try { await e.transaction(async tx => { await tx.executeRaw('x'); }); } catch { return null; } }`,
+      `async function f(e) { try { const rows = await withLock(function () { return e.executeRawJsonb('x', [{}]); }); return rows; } catch { return null; } }`,
+    ];
+    for (const text of swallowed) expect({ text, n: flagged(text) }).toEqual({ text, n: 1 });
+    const ok = [
+      `async function f(e, ids) { try { return await e.transaction(tx => Promise.all(ids.map(id => tx.executeRaw('x', [id])))); } catch (err) { rethrowCapabilityRefusal(err); return []; } }`,
+      // Nothing awaits the callback's promise, so its failure never reaches this catch.
+      `function f(e) { try { schedule(async () => { await e.executeRaw('x'); }); } catch { return null; } }`,
+      `function f(e) { try { const job = later(() => e.executeRaw('x')); job.start(); } catch { return null; } }`,
+    ];
+    for (const text of ok) expect({ text, n: flagged(text) }).toEqual({ text, n: 0 });
+  });
+
+  test('flags a fallback returned on any path before the refusal check', () => {
+    const swallowed = [
+      `async function f(e, xs) { try { await e.executeRaw('x'); } catch (err) { for (const x of xs) { if (x) return []; } rethrowCapabilityRefusal(err); return []; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { { return []; } rethrowCapabilityRefusal(err); } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { while (retry()) return []; if (isEngineCapabilityRefusal(err)) throw err; return []; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { switch (mode) { case 'quiet': return []; } rethrowCapabilityRefusal(err); return []; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { out: { if (quiet) return null; break out; } rethrowCapabilityRefusal(err); return null; } }`,
+      `const r = await e.executeRaw('x').catch(err => { for (const x of xs) return x; rethrowCapabilityRefusal(err); return []; });`,
+    ];
+    for (const text of swallowed) expect({ text, n: flagged(text) }).toEqual({ text, n: 1 });
+    const ok = [
+      `async function f(e, xs) { try { await e.executeRaw('x'); } catch (err) { for (const x of xs) log(x); rethrowCapabilityRefusal(err); return []; } }`,
+      `async function f(e) { try { await e.executeRaw('x'); } catch (err) { { console.warn(err); rethrowCapabilityRefusal(err); } return []; } }`,
+      `async function f(e, xs) { try { await e.executeRaw('x'); } catch (err) { xs.forEach(x => { return x; }); rethrowCapabilityRefusal(err); return []; } }`,
+    ];
+    for (const text of ok) expect({ text, n: flagged(text) }).toEqual({ text, n: 0 });
+  });
+
   test('ignores engine implementation files, which Rust never runs', () => {
     const text = `async function f(e) { try { await e.executeRaw('x'); } catch { return []; } }`;
     expect(flagged(text, 'src/core/pglite-engine.ts')).toBe(0);
