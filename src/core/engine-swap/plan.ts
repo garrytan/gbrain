@@ -11,16 +11,13 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { activeWorktreeRefreshes } from '../persistence/worktree-refresh.ts';
 import { evaluateReadiness, type ReadinessVerdict, type ShadowStatus } from './readiness.ts';
+import { capabilityReport, estimateWritePause, type CapabilityReport, type WritePauseEstimate } from './capability.ts';
+import { swapBlockers, type SwapBlocker } from './gates.ts';
+import { describePolicy, policyHash, READINESS_POLICY, type ReadinessPolicy } from './policy.ts';
 import { refreshUnsettledError, type SwapRefusalReason, type UnsettledRefresh } from './refusals.ts';
 
 /** Environment variables that can select the current engine or its database (names only; values are never read out). */
 export const ENGINE_SELECTING_ENV = ['GBRAIN_DATABASE_URL', 'DATABASE_URL', 'GBRAIN_HOME', 'GBRAIN_BRAIN_ID'] as const;
-
-/** Plan items that need the swap run's machinery (S5b); the plan names them instead of guessing. */
-export const DEFERRED_TO_S5B: Readonly<Record<'capability_report' | 'expected_write_pause', string>> = {
-  capability_report: 'The Rust capability set is read through the addon loader wiring, which the CLI connect PR lands; S5b prints the report against it.',
-  expected_write_pause: 'The pause is the graduation drain plus the final digest, measured under the write fence S5b builds; S5a has no fence to measure.',
-};
 
 export interface ServiceDefinition {
   /** The file name only, never its content. */
@@ -44,7 +41,14 @@ export interface SwapPlan {
   refreshes: { unsettled: 0; checked: true };
   routes: { env: string[]; services: ServiceDefinition[] };
   disk: { path: string; free_bytes: number | null };
-  deferred: typeof DEFERRED_TO_S5B;
+  /** The readiness policy in force (criterion 1's minimum shadow duration) and its hash. */
+  policy: { text: string; hash: string };
+  /** What the Rust engine does not serve that the current engine does. */
+  capability_report: CapabilityReport;
+  /** The estimated time writes are refused during a run. */
+  write_pause: WritePauseEstimate;
+  /** What the Rust engine cannot serve for this brain yet; a run refuses while any is listed. */
+  blockers: SwapBlocker[];
   plan_hash: string;
 }
 
@@ -56,6 +60,10 @@ export interface SwapPlanInputs {
   services?: ServiceDefinition[];
   disk?: { path: string; free_bytes: number | null };
   now?: Date;
+  /** The readiness policy (default: the approved `READINESS_POLICY`); tests pass another. */
+  policy?: ReadinessPolicy;
+  /** The configured brain has remote MCP (config `remote_mcp`). */
+  remoteMcpConfigured?: boolean;
 }
 
 /** Non-terminal refresh rows (draining, fenced, merged, syncing, recovery_required), through the reader
@@ -86,6 +94,7 @@ function planHash(p: Omit<SwapPlan, 'plan_hash'>): string {
   const bound = {
     to: p.to, from: p.from, verdict: p.verdict, reason: p.reason,
     criteria: p.criteria.map(c => [c.n, c.state]), routes: p.routes,
+    policy: p.policy.hash, blockers: p.blockers.map(b => b.reason), lost: p.capability_report.lost.map(l => l.capability),
   };
   return createHash('sha256').update(JSON.stringify(bound)).digest('hex').slice(0, 16);
 }
@@ -93,8 +102,10 @@ function planHash(p: Omit<SwapPlan, 'plan_hash'>): string {
 /** Builds the read-only plan. Throws `engine_swap_refused` (`refresh_unsettled`) before reading any criterion. */
 export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs = {}): Promise<SwapPlan> {
   await assertRefreshesSettled(engine);
+  const now = deps.now ?? new Date();
+  const policy = deps.policy ?? READINESS_POLICY;
   const status = deps.readShadowStatus ? await deps.readShadowStatus() : null;
-  const readiness = evaluateReadiness(status, deps.now ?? new Date());
+  const readiness = evaluateReadiness(status, now, policy);
   const base: Omit<SwapPlan, 'plan_hash'> = {
     schema_version: 1,
     to: 'rust',
@@ -107,7 +118,10 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     refreshes: { unsettled: 0, checked: true },
     routes: { env: [...(deps.envNames ?? [])], services: [...(deps.services ?? [])] },
     disk: deps.disk ?? { path: '', free_bytes: null },
-    deferred: DEFERRED_TO_S5B,
+    policy: { text: describePolicy(policy, now), hash: policyHash(policy) },
+    capability_report: capabilityReport(String(engine.kind)),
+    write_pause: await estimateWritePause(engine),
+    blockers: await swapBlockers(engine, { remoteMcpConfigured: !!deps.remoteMcpConfigured }),
   };
   return { ...base, plan_hash: planHash(base) };
 }
