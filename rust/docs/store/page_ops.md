@@ -44,7 +44,9 @@ hybrid search hands them that whole bag as their policy; any other key still ref
 | `brain.revertToVersion(slug, versionId, { sourceId? }?)` | `null`. Copies the version's `compiled_truth` and `frontmatter` onto the page and sets `updated_at`; a missing page or version does nothing. When a page it would revert, or the version, is segmented, it refuses `page_body_segmented` and writes nothing; the TypeScript member throws PGLite's `segmentedRevertRefusal` | `revertToVersion` |
 
 A domain-bank row is `{ slug, prefix, connection_count, representative_chunk_id,
-last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `null`.
+last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `null`. `representative_chunk_id` is the
+page's embedded chunk with the lowest `chunk_index`, or `null` when no chunk of the page has an embedding, as
+`src/core/engine-sql/pages.ts` picks it.
 
 ## Retrieval records
 
@@ -58,7 +60,6 @@ last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `
 
 ## Differences from Postgres
 
-- `representative_chunk_id` is always `null`.
 - The store keeps no legacy `pages.last_retrieved_at` column, so the retrieval record is the only
   source of `last_retrieved_at` (Postgres takes the later of the two).
 - `listCorpusSample` uses a SplitMix64 shuffle seeded from `seed`. A seed gives a fixed pick, but not
@@ -110,10 +111,14 @@ Other differences:
 - A real run returns its slugs ordered by `deleted_at`, then slug. PGLite returns them in the
   `DELETE ... RETURNING` order, which is the table's row order, so the parity cases compare a real
   run's slugs sorted. A dry run orders by `deleted_at`, then slug, on both.
-- PGLite also expires the facts of the purged pages (`expireGonePageFacts`). The Rust facts family
-  refuses every member, so the store holds no facts; that family must add the expiry when it lands.
-  PGLite also deletes the pages' body stagings and orphaned segment texts; the store keeps neither
-  yet, and the `page_body` family's `remove_page_rows` hook must remove them when it lands.
+- The purge expires the facts of the purged pages in the same write, as PGLite's
+  `expireGonePageFacts` (`src/core/facts/gone-page-facts.ts`) does: filed facts, the slot facts of a
+  filed conversation (dimension, value and status cleared), facts extracted from the page and facts
+  about the page whose entity no longer has a page. `deletePages` does not expire facts, on either
+  engine.
+- The purge also deletes the body stagings at each purged source and slug, and then each segment text
+  the purged pages named that no manifest row or live staging still needs, in the same write, as
+  PGLite does (see [page_body.md](page_body.md)).
 - The parity cases cannot stand a tombstone days in the past (the Rust arm reads the system clock),
   so every stamped page there is inside its window. The store unit tests in
   `crates/gbrain-store/src/page_ops.rs` set `deleted_at` directly and cover the windows closing,

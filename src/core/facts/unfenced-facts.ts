@@ -269,8 +269,7 @@ export function fenceableRowCount(plan: UnfencedFactsPlan): number {
  */
 async function databaseOnlyPlacement(engine: BrainEngine, sourceId: string, slug: string):
   Promise<{ kind: 'fence'; reason: NonNullable<WriteAuthority['databaseOnlyReason']> } | { kind: 'refused' } | { kind: 'missing' }> {
-  const [page] = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
-    'SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
+  const page = await engine.readPageFileOrigin(sourceId, slug);
   if (!page || page.source_path?.trim() || page.source_uri?.trim()) return { kind: 'missing' };
   const row = await engine.readSourceRow(sourceId);
   const source = row ? { local_path: row.local_path, kind: sourceConfigText(row.config, 'kind') } : undefined;
@@ -389,11 +388,7 @@ export async function planFence(engine: BrainEngine, sourceId: string, entitySlu
   body = (await withHeldFactsFence(engine, sourceId, entitySlug, { compiled_truth: body })).compiled_truth;
   const existingFence = parseFactsFenceFor(body, { slug: entitySlug });
   if (existingFence.warnings.length > 0) return { warnings: existingFence.warnings };
-  const occupiedRows = await engine.executeRaw<{ row_num: number; fact: string; source: string | null }>(
-    `SELECT row_num, fact, source FROM facts
-      WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL`,
-    [sourceId, entitySlug],
-  );
+  const occupiedRows = await engine.listFenceRowClaims(sourceId, entitySlug);
   const occupied = new Map(occupiedRows.map(row => [Number(row.row_num), row]));
   let nextRowNum = Math.max(0, ...occupied.keys(), ...existingFence.facts.map(f => f.rowNum)) + 1;
   const claimed = new Set<number>();
@@ -675,11 +670,7 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
       // vectors and provenance (the reconcile would retire a row whose text
       // differs from its fence row).
       for (const a of fence.assignments) {
-        await tx.executeRaw(
-          `UPDATE facts SET row_num = $1, source_markdown_slug = $2, fact = $5
-            WHERE id = $3 AND source_id = $4 AND row_num IS NULL`,
-          [a.row_num, entitySlug, a.id, sourceId, a.fact],
-        );
+        await tx.adoptFactIntoFence(sourceId, a.id, a.row_num, entitySlug, a.fact);
       }
       assertSourceFilesystemActive();
       if (readFileSync(filePath, 'utf-8') !== bytes) throw new FileChangedDuringFence();

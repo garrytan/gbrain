@@ -36,7 +36,6 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSy
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
-import { bunSpawnSync } from '../spawn.ts';
 import { VERSION } from '../../version.ts';
 import { buildSkillIndex, catalogStatus } from '../skills/resolver/build.ts';
 import { ResolverError } from '../skills/resolver/errors.ts';
@@ -44,7 +43,7 @@ import { logsDir, skillIndexRoot } from '../skills/resolver/paths.ts';
 import { readDirSources } from '../skills/resolver/sources.ts';
 import { openclawConfigPath, openclawStateDir, parseJson5ish, resolveOpenclawWorkspace } from './brain-first.ts';
 import { openclawSkillLoaderJs, openclawSkillWorkerJs } from './openclaw-skill-plugin-code.ts';
-import { openclawPluginRegistered } from './openclaw-turn-plugin.ts';
+import { openclawPluginRegistered, runOpenclawCli } from './openclaw-turn-plugin.ts';
 import { catalogSkillIds, pinnedBlockFor } from './skill-pins.ts';
 import { readResolverConfig } from './skill-resolver-config.ts';
 import { laneTurnSettings } from '../skills/resolver/config.ts';
@@ -94,11 +93,6 @@ export interface OpenclawSkillDeps {
 export const openclawSkillPluginDir = (): string => join(openclawStateDir(), 'gbrain', OPENCLAW_SKILL_PLUGIN_ID);
 export const openclawSkillStatePath = (home: string): string => join(home, OPENCLAW_SKILL_STATE_FILE);
 export const openclawSkillLibDir = (home: string): string => join(home, 'lib');
-
-function defaultRun(argv: string[], timeout = 120_000): { ok: boolean; output: string; stdout: string } {
-  const r = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout });
-  return { ok: r.exitCode === 0, output: `${r.stdout.toString()}${r.stderr.toString()}`.trim(), stdout: r.stdout.toString() };
-}
 
 function which(name: string): string | null {
   try { return Bun.which(name, { PATH: process.env.PATH ?? '' }); } catch { return null; }
@@ -225,7 +219,7 @@ function hostSkills(run: Run, bin: string, agentId: string): { listed: Set<strin
 export function openclawHostDrift(agentId: string, catalogIds: string[], excluded: string[], deps: OpenclawSkillDeps = {}): { hidden: string[]; cut: string[] } | null {
   const bin = deps.openclawBin !== undefined ? deps.openclawBin : which('openclaw');
   if (!bin) return null;
-  const host = hostSkills(deps.run ?? ((argv) => defaultRun(argv, 20_000)), bin, agentId);
+  const host = hostSkills(deps.run ?? ((argv) => runOpenclawCli(argv, 20_000)), bin, agentId);
   if (!host || !catalogIds.some((n) => host.listed.has(n))) return null;
   const offered = catalogIds.filter((n) => !excluded.includes(n) && !host.visible.has(n));
   const cut = offered.filter((n) => !host.listed.has(n));
@@ -260,7 +254,7 @@ function openclawLaneConfig(home: string): { top_k: number; min_match: string; t
 export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): Promise<OpenclawSkillResult> {
   const { home, dryRun } = opts;
   const deps = opts.deps ?? {};
-  const run = deps.run ?? defaultRun;
+  const run = deps.run ?? runOpenclawCli;
   const out: OpenclawSkillResult = { mode: opts.mode ?? 'live', steps: [], agents: [], notes: [] };
   const fail = (e: OpenclawSkillError) => ({ ...out, error: e });
   const bin = deps.openclawBin !== undefined ? deps.openclawBin : which('openclaw');
@@ -432,7 +426,7 @@ export function removeOpenclawSkillPlugin(opts: { home: string; agents: string[]
     const uninstall = [bin ?? 'openclaw', 'plugins', 'uninstall', OPENCLAW_SKILL_PLUGIN_ID, '--force'];
     if (opts.dryRun) out.steps.push({ step: 'install', action: 'remove', detail: `${shown(uninstall)}, then ${dir}` });
     else {
-      const r = bin ? (deps.run ?? defaultRun)(uninstall) : { ok: false, output: 'no openclaw on PATH' };
+      const r = bin ? (deps.run ?? runOpenclawCli)(uninstall) : { ok: false, output: 'no openclaw on PATH' };
       if (!r.ok) {
         if (prior) atomicWriteTextFile(openclawSkillStatePath(opts.home), `${JSON.stringify({ ...prior, agents }, null, 2)}\n`, { freshMode: 0o600 });
         return { ...out, error: { code: 'skill_resolver_plugin_not_installed', message: `Every agent is off (the plugin injects nothing now), but \`${shown(uninstall)}\` did not run (${lastLine(r.output)}), so ${dir} stays in place.`, commands: [shown(uninstall)], argv: uninstall, recovery: `partial: state set to off; run the command on the OpenClaw host, then delete ${dir}` } };

@@ -10,7 +10,6 @@ import type { Check } from '../../doctor.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { agentFix, checkError, withSkippedSegmented } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
-import { boundedBodyPrefixSql } from '../../../core/page-window/bounded-lead.ts';
 
 const DATE_RE = /\b\d{4}-\d{2}-\d{2}\b/;
 const LIST_LINE_RE = /^\s*(?:[-*+]|\d+[.)])\s+\S/;
@@ -22,9 +21,7 @@ export function undatedFactLines(body: string): number[] {
 
 export async function factsUndatedLines(engine: BrainEngine): Promise<Omit<Check, 'name'>> {
   try {
-    const rows = await engine.executeRaw<{ slug: string; source_id: string; segmented: boolean; body: string | null }>(
-      `SELECT p.slug, p.source_id, p.body_storage = 'segmented' AS segmented, ${boundedBodyPrefixSql('p')} AS body
-         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`);
+    const rows = await engine.listFactsPageBodies();
     const segmented = rows.filter(r => r.segmented).length;
     const pages = rows.flatMap(r => {
       const lines = r.segmented || r.body == null ? [] : undatedFactLines(r.body);

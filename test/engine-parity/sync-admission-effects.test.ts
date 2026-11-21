@@ -47,14 +47,16 @@ async function pass(engine: BrainEngine, incarnation: string, token: string, sta
 }
 
 /** One request of the source incarnation with intent kind `kind`, in `state` (queued unless named). */
-async function request(engine: BrainEngine, n: number, kind: string, incarnation: string, state: 'queued' | 'deferred' = 'queued'): Promise<void> {
+async function request(engine: BrainEngine, n: number, kind: string, incarnation: string, state = 'queued'): Promise<void> {
   const keys = ['principal:local_cli:parity-admission', 'brain'];
   await engine.lockPersistenceCounters(keys);
   await engine.insertWriteRequest({
     principalKind: 'local_cli', principalId: 'parity-admission', requestId: rid(n), operation: 'submit_job', sourceId: 'default',
     sourceIncarnation: incarnation, pageId: null, slug: `notes/alice-example-${n}`, worktreeId: null, topologyGeneration: null, digest: 'd'.repeat(64),
     intent: { kind }, authority: { scopes: ['write'] }, intentBytes: 100, terminalReservation: 4096, targetKind: 'page', protocolVersion: 1,
-    admitterVersion: 'parity', admitterHostId: null, counterKeys: keys, clientRequestId: null, state, deferredRefreshId: null,
+    admitterVersion: 'parity', admitterHostId: null, counterKeys: keys, clientRequestId: null,
+    // The member types an admission's own states; this case also stores rows already in later states, which the column accepts.
+    state: state as 'queued' | 'deferred', deferredRefreshId: null,
   });
 }
 

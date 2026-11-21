@@ -441,6 +441,62 @@ fn a_flip_retires_inline_chunks_or_defers_past_the_cap() {
     );
 }
 
+/// Minder's row 1 on #9730: after a deferred retirement and a seal, a title hit must not carry a retired chunk's text.
+/// PGLite picks the representative chunk with `chunkGenerationFilter` (title-statement.ts), which drops an inline chunk
+/// left on a segmented page; the hit then has no chunk (`chunk_id` 0, empty text).
+#[test]
+fn a_title_hit_does_not_show_a_chunk_a_deferred_retire_left() {
+    use gbrain_store::keyword::{KeywordOptions, TitleAttempt, TitleAttemptKind};
+    let dir = TempDir::new("pb-title-retired");
+    let store = open(&dir);
+    let input: PageInput = serde_json::from_value(
+        json!({"type": "note", "title": "A", "compiled_truth": "retired inline body"}),
+    )
+    .unwrap();
+    store
+        .put_page("notes/b", &input, &PutPageOptions::default())
+        .unwrap();
+    let id = page(&store, "notes/b")["id"].as_i64().unwrap();
+    let mut s = staging(STAGING, Some(id), "66666666-6666-4666-8666-666666666666");
+    s.slug = "notes/b".into();
+    store.open_body_staging(&s).unwrap();
+    store
+        .stage_segment_texts(
+            "default",
+            &[text("one\n")],
+            &serde_json::from_value(json!({"stagingId": STAGING})).unwrap(),
+        )
+        .unwrap();
+    store
+        .stage_manifest_rows(&[row(id, 1, 0, 0, "one\n", Some(STAGING))])
+        .unwrap();
+    let deferred = store
+        .flip_body_generation(&flip(
+            id,
+            0,
+            STAGING,
+            4,
+            json!({"retireInlineChunks": true, "retireMaxRows": 0}),
+        ))
+        .unwrap();
+    assert!(deferred.retire_deferred);
+    store.seal_segmented_page(id, "", None).unwrap();
+    let attempts = [TitleAttempt {
+        texts: vec!["Flipped".into()],
+        kind: TitleAttemptKind::Title,
+        limit: 10.0,
+        offset: 0.0,
+    }];
+    let result = store
+        .search_titles_attempts(&attempts, "flipped", 100.0, &KeywordOptions::default())
+        .unwrap();
+    let rows = result[0]["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{result:?}");
+    assert_eq!(rows[0]["slug"], json!("notes/b"));
+    assert_eq!(rows[0]["chunk_text"], json!(""), "{result:?}");
+    assert_eq!(rows[0]["chunk_id"], json!(0));
+}
+
 #[test]
 fn manifest_rows_refuse_broken_checks_and_keys() {
     let dir = TempDir::new("pb-manifest");

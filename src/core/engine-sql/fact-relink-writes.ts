@@ -18,7 +18,7 @@ const CONVERSATION_SOURCE_SQL = "f.source LIKE 'cli:extract-conversation-facts%'
 /** The SQL predicate (on alias `f`, audit sources as `$audit`) of a conversation extractor's derived fact row. */
 export const derivedConversationRow = (audit: string) => `${CONVERSATION_SOURCE_SQL} AND f.source <> ALL(${audit}::text[])`;
 /** `derivedConversationRow` as a fragment that binds the audit sources itself. */
-const derivedConversationFragment = (): SqlFragment =>
+export const derivedConversationFragment = (): SqlFragment =>
   sqlFragment`${trustedSql(CONVERSATION_SOURCE_SQL)} AND f.source <> ALL(${[...AUDIT_ROW_SOURCES]}::text[])`;
 /** A live row: not expired, and its validity has not lapsed. */
 export const LIVE_FACT_SQL = 'f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())';
