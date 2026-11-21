@@ -12,11 +12,13 @@
  * It runs on PGLite: the proxy records what the purge calls, which does not depend on the engine.
  *
  * Scenarios: a rich page (fact fence, version, verbatim take, derived fact, take and page, take proposal, open loop,
- * core edit notice), a belief-ledger brain, and the `--status --continue` of a committed purge. A dry run and `--match`
+ * core edit notice), a segmented page with a retained segmented version plus a staged upload and the write that would
+ * publish it (the branches that reach the segmented rewrite and the cancellation of staged writes), a belief-ledger brain,
+ * and the `--status --continue` of a committed purge. The order test compares each run's calls with the list order. A dry run and `--match`
  * are recorded as well, to prove they call no stop.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,6 +30,7 @@ import { rustMemberCapability } from '../src/core/rust-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { recordDerivationInputs } from '../src/core/facts/derivation-inputs.ts';
@@ -47,6 +50,12 @@ const sites = new Set<string>();
 const sitesBy: Record<string, Set<string>> = { real: new Set(), dry: new Set(), match: new Set(), status: new Set(), resume: new Set() };
 type Phase = keyof typeof phases;
 let phase: Phase = 'real';
+/** The calls of each recorded run, in the order they were first made (a member or a raw site, by name): the order the list must follow. */
+const traces: Array<{ scenario: string; phase: Phase; names: string[] }> = [];
+let scenario = '';
+/** Starts a recorded run: the next calls are those of `which` in the current scenario. */
+function begin(which: Phase): void { phase = which; traces.push({ scenario, phase: which, names: [] }); }
+const note = (name: string): void => { const names = traces[traces.length - 1]?.names; if (names && !names.includes(name)) names.push(name); };
 
 /** Wraps `engine` (and the transaction handles it hands out) so every member call and every raw-SQL call site is recorded. */
 function recording<T extends object>(engine: T): T {
@@ -55,8 +64,8 @@ function recording<T extends object>(engine: T): T {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function' || typeof prop !== 'string') return value;
       return (...args: unknown[]) => {
-        if (RAW_PRIMITIVES.includes(prop)) { const site = rawSite(new Error().stack ?? ''); sites.add(site); sitesBy[phase]!.add(site); }
-        else phases[phase].add(prop);
+        if (RAW_PRIMITIVES.includes(prop)) { const site = rawSite(new Error().stack ?? ''); sites.add(site); sitesBy[phase]!.add(site); note(site); }
+        else { phases[phase].add(prop); note(prop); }
         if ((prop === 'transaction' || prop === 'transactionDirect') && typeof args[0] === 'function') {
           const fn = args[0] as (tx: object) => unknown;
           args = [(tx: object) => fn(recording(tx)), ...args.slice(1)];
@@ -81,10 +90,11 @@ const pageBody = (title: string) => `---\ntitle: ${title}\ntype: person\n---\n# 
 const ctxOf = (engine: object, extra: Record<string, unknown> = {}) =>
   ({ engine, config: { engine: 'pglite', embedding_disabled: true }, logger: quiet, dryRun: false, remote: false, sourceId: 'default', ...extra }) as unknown as OperationContext;
 const purge = operationsByName.purge_fact!;
-const run = (engine: object, params: Record<string, unknown>, which: Phase = 'real') => { phase = which; return purge.handler(ctxOf(recording(engine)), params) as Promise<Record<string, any>>; };
+const run = (engine: object, params: Record<string, unknown>, which: Phase = 'real') => { begin(which); return purge.handler(ctxOf(recording(engine)), params) as Promise<Record<string, any>>; };
 
 let home: string;
 let lite: PGLiteEngine;
+let seg: PGLiteEngine;
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'fact-purge-path-'));
   await withEnv({ GBRAIN_HOME: home }, async () => {
@@ -92,12 +102,18 @@ beforeAll(async () => {
     await lite.connect({});
     await lite.initSchema();
     await registerLocalWriter(lite, 'cli');
+    seg = new PGLiteEngine();
+    await seg.connect({});
+    await seg.initSchema();
+    await seg.setConfig('pages.segmented_storage', 'on');
+    await registerLocalWriter(seg, 'cli');
   });
 }, 120_000);
-afterAll(async () => { await lite?.disconnect().catch(() => undefined); rmSync(home, { recursive: true, force: true }); });
+afterAll(async () => { await lite?.disconnect().catch(() => undefined); await seg?.disconnect().catch(() => undefined); rmSync(home, { recursive: true, force: true }); });
 
 describe('the fact purge calls only what the list names', () => {
   test('a rich page, its derived rows, and the status read of the committed purge', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    scenario = 'rich page';
     const slug = 'people/zed-example';
     await importFromContent(lite, slug, pageBody('zed'), { noEmbed: true, sourceId: 'default' });
     await runExtractFacts(lite, { slugs: [slug] });
@@ -124,13 +140,49 @@ describe('the fact purge calls only what the list names', () => {
     await run(lite, { status: true, continue: true, request_id: request }, 'resume');
   }), 120_000);
 
+  test('a segmented page with a retained segmented version, a staged upload and the request that would publish it', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    scenario = 'segmented page and staged upload';
+    const slug = 'people/seg-example';
+    // Over the inline ceiling, so the page is stored as segments; the second import saves generation 1 as a version.
+    const filler = Array.from({ length: 6000 }, (_, i) => `Paragraph ${i} about the garden and the weather ${'x'.repeat(200)}`).join('\n\n');
+    const content = `---\ntitle: Seg\ntype: person\n---\n# Seg\n\n${filler}\n\n## Facts\n\n${fence([`| 1 | ${CLAIM} | fact | 1.0 | world | medium | 2026-01-01 |  | chat |  |`])}\n`;
+    await importFromContent(seg, slug, content, { noEmbed: true, sourceId: 'default' });
+    await runExtractFacts(seg, { slugs: [slug] });
+    await importFromContent(seg, slug, content.replace('Paragraph 5 ', 'Paragraph five '), { noEmbed: true, sourceId: 'default' });
+    const [storage] = await seg.executeRaw<{ body_storage: string }>('SELECT body_storage FROM pages WHERE slug=$1', [slug]);
+    expect(storage!.body_storage).toBe('segmented');
+    const [fact] = await seg.executeRaw<{ id: number }>('SELECT id FROM facts WHERE fact=$1 AND entity_slug=$2', [CLAIM, slug]);
+    // Two uploads that hold the claim: one left open (its parts hold it), and one over the inline ceiling that is committed without
+    // waiting, so the write that would publish it stays queued while its staged segments hold the claim.
+    const uploads = ctxOf(seg);
+    const stage = async (body: string, slugOfUpload: string, commit: boolean): Promise<void> => {
+      const sha = createHash('sha256').update(body).digest('hex');
+      const begin = await operationsByName.begin_page_upload!.handler(uploads, { slug: slugOfUpload, mode: 'create', total_bytes: Buffer.byteLength(body), sha256: sha, request_id: randomUUID() }) as { upload_id: string };
+      await operationsByName.upload_page_part!.handler(uploads, { upload_id: begin.upload_id, part: 0, text: body, part_sha256: sha });
+      if (commit) await operationsByName.commit_page_upload!.handler(uploads, { upload_id: begin.upload_id, wait_ms: 0 }).catch(() => undefined);
+    };
+    await stage(`---\ntitle: Open\ntype: note\n---\nThe note says ${CLAIM} twice.\n`, 'notes/open-upload', false);
+    await stage(`---\ntitle: Queued\ntype: note\n---\nThe note says ${CLAIM}.\n\n${filler}\n`, 'notes/queued-upload', true);
+    // Stop the resident consumer, so the queued write is not claimed (a claimed one refuses the purge).
+    await disposePersistenceConsumer(seg);
+    const [queued] = await seg.executeRaw<{ state: string }>(`SELECT state FROM persistence_requests WHERE intent->'body_ref'->>'kind'='staging'`);
+    expect(queued!.state).toBe('queued');
+    const dry = await run(seg, { id: fact!.id, dry_run: true }, 'dry');
+    // No expected_revision: the plan's revision moves between the dry run and the transaction while the open upload settles.
+    const done = await run(seg, { id: fact!.id, confirm: dry.confirm_token, request_id: randomUUID() });
+    expect(done.state).toBe('committed');
+    expect(done.purge.removed.persistence_requests_cancelled).toBe(1);
+    expect(done.purge.removed.page_body_stagings).toBe(2);
+  }), 180_000);
+
   test('a belief-ledger brain', async () => {
     await beliefBrain(async (brain) => {
       await brain.put('notes/ledger', beliefPage({ facts: [CLAIM] }));
       const [fact] = await brain.engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE fact=$1', [CLAIM]);
-      phase = 'dry';
+      scenario = 'belief ledger';
+      begin('dry');
       const dry = await purge.handler({ ...brain.ctx, engine: recording(brain.engine) } as OperationContext, { id: fact!.id, dry_run: true }) as Record<string, any>;
-      phase = 'real';
+      begin('real');
       const done = await purge.handler({ ...brain.ctx, engine: recording(brain.engine) } as OperationContext,
         { id: fact!.id, confirm: dry.confirm_token, expected_revision: dry.expected_revision, request_id: randomUUID() }) as Record<string, any>;
       expect(done.state).toBe('committed');
@@ -185,6 +237,23 @@ describe('the fact purge calls only what the list names', () => {
     expect(FACT_PURGE_PATH.filter(entry => !entry.owner).map(purgeEntryName)).toEqual([]);
     expect(FACT_PURGE_PATH.filter(entry => 'site' in entry && !entry.stop && !entry.guarded).map(purgeEntryName)).toEqual([]);
     expect(new Set(FACT_PURGE_PATH.map(purgeEntryName)).size).toBe(FACT_PURGE_PATH.length);
+  });
+
+  test('the list is in the order the purge reaches its stops: every recorded run calls them in list order', () => {
+    const names = FACT_PURGE_PATH.map(purgeEntryName);
+    const stops = new Set(stopEntries.map(purgeEntryName));
+    // A derived row's table is hidden and then marked, table by table, so the four hidden-row members share one rank.
+    const hiding = ['expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive'];
+    const rank = (name: string): number => names.indexOf(hiding.includes(name) ? hiding[0]! : name);
+    const runs = traces.filter(trace => trace.phase === 'real' || trace.phase === 'resume');
+    expect(runs.map(trace => `${trace.scenario}: ${trace.phase}`).sort()).toEqual(
+      ['belief ledger: real', 'rich page: real', 'rich page: resume', 'segmented page and staged upload: real']);
+    for (const trace of runs) {
+      const called = trace.names.filter(name => stops.has(name));
+      expect(called.length).toBeGreaterThan(trace.phase === 'resume' ? 1 : 10);
+      // Lists, not sets: the order in which a run first made each call, against the order of the list.
+      expect({ run: `${trace.scenario}: ${trace.phase}`, called }).toEqual({ run: `${trace.scenario}: ${trace.phase}`, called: [...called].sort((a, b) => rank(a) - rank(b)) });
+    }
   });
 
   test('every stop names its owner and its due date', () => {
