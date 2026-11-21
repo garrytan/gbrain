@@ -515,8 +515,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // These checks come from rust-engine/main and read through members the Rust engine does not serve yet, so each warns
       // with the typed refusal and says its health is unknown: access_pages_read_by_nobody and owner_identity read through
       // executeRaw (raw_sql), owner_only_marks_triggers through ownerOnlyMarkTriggers (raw_sql: it reads and installs
-      // triggers), entity_duplicates through listIdentityDecisions (the store keeps no identity decisions).
-      typedRefusals: ['access_pages_read_by_nobody', 'entity_duplicates', 'owner_identity', 'owner_only_marks_triggers'],
+      // triggers). entity_duplicates is gone from this list: the store serves listIdentityDecisions and the entity key rows,
+      // so the check answers as it does on PGLite.
+      typedRefusals: ['access_pages_read_by_nobody', 'owner_identity', 'owner_only_marks_triggers'],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });
