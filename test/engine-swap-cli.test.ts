@@ -112,9 +112,9 @@ describe('engine swap --plan opens only the host brain, and only if it exists', 
   });
 
   test('--brain reaches the brain resolver', async () => {
-    let asked: string | null = null;
-    await run(['--to', 'rust', '--plan', '--brain', 'mount-a', '--json'], { resolveBrain: e => { asked = e; return 'mount-a'; } });
-    expect(asked).toBe('mount-a');
+    const asked: Array<string | null> = [];
+    await run(['--to', 'rust', '--plan', '--brain', 'mount-a', '--json'], { resolveBrain: e => { asked.push(e); return 'mount-a'; } });
+    expect(asked).toEqual(['mount-a']);
   });
 
   test('a configured PGLite path that does not exist is refused and never created', async () => {

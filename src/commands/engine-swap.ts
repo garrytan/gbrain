@@ -85,7 +85,9 @@ export function serviceDefinitions(home: string): ServiceDefinition[] {
     for (const name of names.filter(n => /gbrain/i.test(n)).sort()) {
       let text = '';
       try { text = readFileSync(join(dir, name), 'utf8'); } catch { /* unreadable: listed with no names */ }
-      out.push({ name, kind, sets: ENGINE_SELECTING_ENV.filter(v => new RegExp(`\\b${v}\\b`).test(text)) });
+      // Whole-word names only, by token set (no dynamic regular expression).
+      const words = new Set(text.split(/[^A-Za-z0-9_]+/));
+      out.push({ name, kind, sets: ENGINE_SELECTING_ENV.filter(v => words.has(v)) });
     }
   }
   return out;
@@ -113,7 +115,8 @@ async function openConfiguredEngine(): Promise<BrainEngine> {
   if (!config) throw noBrainError();
   // Read only: PGLite creates a database at a missing path on connect, so a missing store is refused, never made.
   const engineConfig = toEngineConfig(config);
-  if (engineConfig.engine === 'pglite' && (!engineConfig.database_path || !existsSync(engineConfig.database_path))) {
+  // A brain with no server URL is a file datastore: its path must already exist.
+  if (!engineConfig.database_url && (!engineConfig.database_path || !existsSync(engineConfig.database_path))) {
     throw opError('no_brain', `No brain exists at ${engineConfig.database_path ?? '(no path configured)'}; the swap plan creates nothing.`,
       'Check the configured path with `gbrain engine status --json`; nothing was created.', { docs: 'docs/guides/engine-swap.md#plan' });
   }

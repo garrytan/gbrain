@@ -108,8 +108,9 @@ class Reader {
   get<T>(path: string, ok: (v: unknown) => boolean): T | undefined {
     let cur: unknown = this.doc;
     for (const key of path.split('.')) {
-      if (cur === null || typeof cur !== 'object') { cur = undefined; break; }
-      cur = (cur as Record<string, unknown>)[key];
+      // Own data properties only: an inherited or accessor key (e.g. __proto__) is never evidence.
+      cur = cur !== null && typeof cur === 'object' ? Object.getOwnPropertyDescriptor(cur, key)?.value : undefined;
+      if (cur === undefined) break;
     }
     if (cur === undefined || cur === null || !ok(cur)) { if (!this.missing.includes(path)) this.missing.push(path); return undefined; }
     return cur as T;
