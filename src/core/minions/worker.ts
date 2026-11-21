@@ -878,16 +878,9 @@ export class MinionWorker extends EventEmitter {
               break;
             }
             this.pendingClaim = null;
-            // issue #1678 (Codex #1): a reaped pooler socket / nulled instance
-            // pool throws a retryable conn error here. Blind-retrying claim is
-            // UNSAFE — if the UPDATE...RETURNING committed but the connection
-            // died before the row reached us, a retry would claim a SECOND
-            // job (invisible active job, no renewal, later stall). So instead:
-            // reconnect once and let the NEXT poll tick re-claim against a live
-            // pool. Non-retryable errors propagate (real bug → PM restart). A vanished
-            // local socket or a server refusing connections is the same lost connection (#9540).
+            // UPDATE ... RETURNING may have committed before its reply was lost (#1678).
+            // Poll on the next tick and let the normal lease recovery handle any unacknowledged claim.
             if (isWatchdogConnectionLoss(e)) {
-              // The driver already retired this socket. Other pool connections may be serving active jobs.
               console.error('[worker] claim connection retired by the Postgres watchdog; polling resumes on the next tick');
             } else {
               if (!isRetryableConnError(e) && !isVanishedSocketError(e) && !isServerRefusingConnections(e)) throw e;

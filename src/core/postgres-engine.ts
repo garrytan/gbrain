@@ -3034,14 +3034,10 @@ export class PostgresEngine implements BrainEngine {
    *   rebuild a genuinely WEDGED-but-live pool (db.connect() no-ops there) — a
    *   different failure mode postgres.js owns.
    *
-   * - INSTANCE pools (worker engines, `poolSize` set) own their `_sql` — tearing
-   *   it down and rebuilding is correct and isolated; nobody else shares it. This
-   *   path also records a pool-recovery audit event (#1685 GAP B) so the
-   *   `pool_reap_health` doctor check can answer "reaped N times AND not
-   *   auto-recovering." `ctx.error` (threaded by retry.ts) is classified: a
-   *   CONNECTION_ENDED match is a true pooler reap; anything else (or no error,
-   *   e.g. the supervisor's health-check reconnect) is `reconnect_other`. All
-   *   audit calls are best-effort and never block the reconnect (CODEX #8).
+   * - INSTANCE pools own their `_sql`. A watchdog retirement affects a single
+   *   socket; the remaining sessions can still hold active transactions.
+   *   Whole-pool recovery records CONNECTION_ENDED as a pooler reap and
+   *   other rebuilds as reconnect_other for pool_reap_health (#1685).
    */
   async reconnect(ctx?: { error?: unknown }): Promise<void> {
     if (!this._savedConfig || this._reconnecting) return;
