@@ -121,6 +121,12 @@ export class FollowChild {
     w.valid = false; w.through = null; w.invalidated_reason = reason;
   }
 
+  /** The store removed rows to make room for a write: the relation differs from the primary until a pass for it repairs it. */
+  private relationDisplaced(relation: string): void {
+    this.invalidate('relation_dirty', relation);
+    try { this.o.writeControl(`${JSON.stringify({ t: 'dirty', relation })}\n`); } catch { /* parent gone */ }
+  }
+
   /** Not the owner: leaves a line for the owner (at most one a second; the last one waits for its turn). */
   private noteForeign(reason: string): void {
     const wait = FOREIGN_LEASE_MS - (this.now() - this.lastForeign);
@@ -176,6 +182,7 @@ export class FollowChild {
       const result = await store.replaceRelationRows(file.epoch_id, e.relation, e.generation, e.keys, e.rows, e.digests);
       file.applied_rows += result.upserted + result.deleted;
       file.last_seq = e.seq;
+      if (result.displaced > 0) this.relationDisplaced(e.relation);
       const at = this.now();
       const bucket = lagBucket(Math.max(0, at - e.committed_at));
       const hour = String(Math.floor(at / 3_600_000));
@@ -220,6 +227,7 @@ export class FollowChild {
       case 'replaceInterval': {
         const result = await store.replaceInterval(id, a.relation as string, a.generation as number, lo, hi, a.rows as ApplyEvent['rows'], a.digests as ApplyEvent['digests']);
         file.applied_rows += result.upserted + result.deleted;
+        if (result.displaced > 0) this.relationDisplaced(a.relation as string);
         return result;
       }
       case 'allocatorCheck': {

@@ -163,6 +163,23 @@ describe('follow child', () => {
     expect(state(3)).toMatchObject({ valid: true });
   });
 
+  test('rows the store displaced make the relation dirty, and the parent is told', async () => {
+    const dir = tmp();
+    writeSeedRecord(dir, SEED);
+    let clock = 1_000;
+    const { child, lines } = childOn(dir, { replaceRelationRows: async () => ({ ...RESULT, displaced: 1 }) }, true, () => clock);
+    child.handle(rpc(1, 'watermark', { valid: true, since: 1_500 }));
+    await child.close();
+    clock = 2_000;
+    child.handle(apply(1_900, { relation: 'content_chunks' }));
+    child.handle(rpc(2, 'watermark', { valid: true, since: 2_500, relations: ['tags'] }));
+    child.handle(rpc(3, 'watermark', { valid: true, since: 2_600, relations: ['content_chunks'] }));
+    await child.close();
+    expect(lines.find((l) => l.t === 'dirty')).toEqual({ t: 'dirty', relation: 'content_chunks' });
+    expect(lines.find((l) => l.id === 2)).toMatchObject({ value: { valid: false, invalidated_reason: 'relation_dirty' } });
+    expect(lines.find((l) => l.id === 3)).toMatchObject({ value: { valid: true } });
+  });
+
   test('a child that does not own the store answers not_owner and writes nothing', async () => {
     const dir = tmp();
     writeSeedRecord(dir, SEED);

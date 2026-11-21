@@ -42,7 +42,7 @@ export async function openFollowRig(primary: BrainEngine, addon: RustAddon, dir:
   const waiters = new Map<number, (resp: { ok: boolean; value?: unknown; error?: { code: string; message: string } }) => void>();
   const child = new FollowChild({
     dir, store: async () => store, owner: () => true,
-    writeControl: (line) => { const msg = JSON.parse(line); waiters.get(msg.id)?.(msg); },
+    writeControl: (line) => { const msg = JSON.parse(line); if (msg.t === 'dirty') opts.dirty?.(msg.relation); else waiters.get(msg.id)?.(msg); },
   });
   await new Promise((resolve) => setTimeout(resolve, 5)); // a pass settles only what was invalidated before it started: not in the session's own millisecond
   let nextId = 0;

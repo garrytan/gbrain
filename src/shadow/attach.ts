@@ -48,7 +48,7 @@ export function shadowChildArgv(dir: string, gbrainArgv?: string[]): string[] {
 }
 
 export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string, state: ShadowState, deps: AttachShadowDeps = {}): AttachedShadow<E> {
-  const supervisor = new ShadowSupervisor({ dir, argv: shadowChildArgv(dir, deps.gbrainArgv), ...deps.supervisor });
+  const supervisor = new ShadowSupervisor({ dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation), ...deps.supervisor });
   const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor });
   const sink = {
     counters: queue.counters,

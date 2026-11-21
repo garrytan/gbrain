@@ -219,10 +219,10 @@ export class Reconciler {
     });
     for (const e of entries.values()) if (!seen.has(e.sort) && e.generation <= generation) differing++;
     if (differing === 0) return { repaired: 0, displaced: 0 };
-    const result = await this.o.rpc<SeedFollowResult & { displaced?: number }>('replaceInterval', {
+    const result = await this.o.rpc<SeedFollowResult>('replaceInterval', {
       relation, generation, lo, hi, rows: rows.map((r) => r.values),
       digests: sorts.map((sort, i) => ({ sort: sort.toString('hex'), digest: digests[i]!.toString('hex') })),
     }, 120_000);
-    return { repaired: differing, displaced: result.displaced ?? 0 };
+    return { repaired: differing, displaced: result.displaced };
   }
 }

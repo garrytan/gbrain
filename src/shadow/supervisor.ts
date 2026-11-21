@@ -38,6 +38,8 @@ export interface ShadowSupervisorOptions {
   recordFault?: (fault: ShadowFault) => void;
   /** Seam for tests; default re-reads state.json. */
   stillEnabled?: () => boolean;
+  /** The child's store displaced rows while applying a relation: it is dirty and wants a reconcile pass. */
+  onDirty?: (relation: string) => void;
 }
 
 export class ShadowSupervisor implements MirrorTransport {
@@ -52,7 +54,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private controlBuffer = '';
   private nextRequestId = 0;
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-  private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled'>;
+  private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty'>;
 
   constructor(opts: ShadowSupervisorOptions) {
     this.o = {
@@ -178,12 +180,13 @@ export class ShadowSupervisor implements MirrorTransport {
     while ((nl = this.controlBuffer.indexOf('\n')) >= 0) {
       const line = this.controlBuffer.slice(0, nl);
       this.controlBuffer = this.controlBuffer.slice(nl + 1);
-      let msg: { t?: string; reason?: string; id?: number; ok?: boolean; value?: unknown; error?: { code?: string; message?: string } };
+      let msg: { t?: string; reason?: string; relation?: string; id?: number; ok?: boolean; value?: unknown; error?: { code?: string; message?: string } };
       try { msg = JSON.parse(line); } catch { continue; }
       if (msg.t === 'hb') this.lastHeartbeat = this.o.now();
       else if (msg.t === 'resp' && typeof msg.id === 'number') {
         this.settleRequest(msg.id, msg.value, msg.ok ? undefined : Object.assign(new Error(msg.error?.message ?? 'rpc failed'), { code: msg.error?.code ?? 'rpc_failed' }));
       }
+      else if (msg.t === 'dirty' && msg.relation) { try { this.o.onDirty?.(msg.relation); } catch { /* best effort */ } }
       else if (msg.t === 'pause') this.disable('privacy_diverged', msg.reason ?? 'child requested a pause');
     }
     // A `resp` line can carry thousands of digest entries; only a runaway partial line is dropped.

@@ -154,6 +154,25 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
       } finally { await base.close(); await r.close(); }
     }, 90_000);
 
+    test('an interval read before a delete does not bring the deleted row back', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      let stale = true;
+      // The pass's first read of pages is taken, then the page is deleted and followed before the pass uses the rows.
+      const reads = { pauseMs: 0, close: () => base.close(), read: async <T>(fn: Parameters<typeof base.read<T>>[0]): Promise<T> => {
+        const out = await base.read(fn);
+        if (stale && Array.isArray(out) && out.some((row) => (row as { values?: { slug?: string } })?.values?.slug === 'people/alice-example')) { stale = false; await r.wrapped.deletePage('people/alice-example'); await r.settle(); }
+        return out;
+      } };
+      try {
+        const pass = await new Reconciler({ dir: r.dir, reads, rpc: r.rpc, follower: r.follower }).run('full');
+        expect(pass.error).toBeUndefined();
+        expect(stale).toBe(false);
+        expect(await r.rust.getPage('people/alice-example')).toBeNull();
+        expect((await r.reconciler.run('full')).repaired_rows).toBe(0);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
     test('it repairs a missing row and an extra row', async () => {
       const r = await rig();
       try {
