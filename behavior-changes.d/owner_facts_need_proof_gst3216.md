@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+Facts extracted from a conversation are filed under you only when the page shows which speaker you are: a speaker_owner entry gbrain's own importer wrote (interactive Claude Code and Codex sessions, your own ChatGPT and Claude exports, iMessages and Gmail messages you sent). On other pages, such as meeting transcripts, imported chat logs or pages an MCP caller wrote, a fact the extractor filed under you now has no subject and the note "speaker unknown"; it stays on its page and in search. A name in the text no longer makes you a fact's subject. When your email is on several person pages, such as directory entries and a contact card, each counts as you and your facts go to your member page (or memory/owner); none of those pages is changed, and gbrain doctor no longer warns about it. On a brain other people share, transcript imports mark your turns only in a source bound to you. Facts extracted earlier are not changed.

@@ -22,6 +22,7 @@ import type { FactsBackstopCtx } from './backstop.ts';
 import type { ExtractedFact } from './extract.ts';
 import type { ManagedFactsSession } from '../persistence/facts-maintenance.ts';
 import { inferFactSubject, isEntityInferenceEnabled, type InferredVia } from './subject-infer.ts';
+import { isOwnerSubject, sourceOwner } from './conversation-owner-guard.ts';
 import { isNullLikeEntity } from './write-single.ts';
 
 /** The context note an inferred link carries, in the DB row and the fence cell alike. */
@@ -40,12 +41,15 @@ export async function inferMissingSubjects(ctx: FactsBackstopCtx, facts: Extract
   const fromPage = remote ? pageSlug : ctx.sourceSlug ?? pageSlug;
   const out: ExtractedFact[] = [];
   const fences = new Map<string, Promise<boolean>>();
+  let owner: ReturnType<typeof sourceOwner> | undefined;
   for (const f of facts) {
     // An extractor-named entity is kept even when it has no page: that name
     // competes with any page the text mentions, so inference never overrides it.
     if (!isNullLikeEntity(f.entity_slug)) { out.push(f); continue; }
     const inferred = await inferFactSubject(engine, ctx.sourceId, { fact: f.fact, pageSlug: fromPage, mode: 'write', excludePrivate });
-    if (inferred.slug !== null && await linkAllowed(ctx, inferred.slug, f.fact, visibility, remote, managed, fences)) {
+    // GST-3216: a name in the text is not identity, so a mention never makes the brain's owner the subject.
+    const ownerMention = inferred.slug !== null && inferred.via === 'mention' && isOwnerSubject(await (owner ??= sourceOwner(engine, ctx.sourceId)), inferred.slug);
+    if (inferred.slug !== null && !ownerMention && await linkAllowed(ctx, inferred.slug, f.fact, visibility, remote, managed, fences)) {
       out.push({ ...f, entity_slug: inferred.slug, entity_inferred: inferred.via });
     } else out.push(f);
   }
