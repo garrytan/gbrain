@@ -39,6 +39,18 @@
           }
         ]
       },
+      "advanceSourcePurgeEpoch": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "UPDATE sources SET purge_epoch = purge_epoch + 1 WHERE id = $1 RETURNING purge_epoch",
+            "textSha256": "721766be7aeeba6e28865f96d60b8b7947dbc82744a81e607be9d5fb31ff10a6"
+          }
+        ]
+      },
       "countDefaultSourceSplit": {
         "default": [
           {
@@ -262,6 +274,18 @@
           }
         ]
       },
+      "readPageIdentity": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "number"
+            ],
+            "sql": "SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL",
+            "textSha256": "a1f8f456f2ecc89509b160fe011762a794cb4ade0a7a4e03f19ac496229637be"
+          }
+        ]
+      },
       "readPageSizeRows": {
         "default": [
           {
@@ -408,6 +432,33 @@
             ],
             "sql": "INSERT INTO reason_purge_tombstones(source_id, commit_sha, path) SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1",
             "textSha256": "2ab69214bd925579e0d8c99815705bef88e0801fcdf600f6f875563acc631ba4"
+          }
+        ]
+      },
+      "writeSourceSyncHeartbeat": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_sync_at = now() WHERE id = $1",
+            "textSha256": "85b867a0c243b7fd9544f0ac401151155a5aa4c2dab1b36d98cafec96a6953ba"
+          }
+        ]
+      },
+      "writeSourceUpstreamObservation": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "number",
+              "string"
+            ],
+            "sql": "UPDATE sources SET upstream_checked_at=$1::timestamptz,upstream_commit=$2,upstream_behind=$3 WHERE id=$4",
+            "textSha256": "701c47b7784e866510f5478ccf327f8c3c7dc75a9f74cfd08ad51a96a0cea95b"
           }
         ]
       }

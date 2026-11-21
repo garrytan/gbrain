@@ -820,7 +820,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'setSourceChunkerVersion': 'sources', 'isSourceClaimed': 'sources', 'advanceSourceCommit': 'sources',
   'readSourceLastCommit': 'sources',
   'countSourcePages': 'sources', 'insertSource': 'sources',
-  'listSourcePathPages': 'sources', 'readRenameIdentityRows': 'sources', 'readLiveIdentityHolders': 'sources', 'readPageSizeRows': 'sources', 'holdPageEmbedding': 'sources', 'readReasonPurgeTombstones': 'sources', 'writeReasonPurgeTombstones': 'sources',
+  'listSourcePathPages': 'sources', 'readRenameIdentityRows': 'sources', 'readLiveIdentityHolders': 'sources', 'readPageSizeRows': 'sources', 'holdPageEmbedding': 'sources', 'readReasonPurgeTombstones': 'sources', 'writeReasonPurgeTombstones': 'sources', 'advanceSourcePurgeEpoch': 'sources',
+  'readPageIdentity': 'sources', 'writeSourceSyncHeartbeat': 'sources', 'writeSourceUpstreamObservation': 'sources',
   // files
   'upsertFile': 'files', 'getFile': 'files', 'listFilesForPage': 'files', 'listFiles': 'files',
   // chunks
@@ -1468,6 +1469,9 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('setSourceChunkerVersion', [['default', (e) => e.setSourceChunkerVersion(SRC, '7')]]),
   ...variants('advanceSourceCommit', [['default', (e) => e.advanceSourceCommit(SRC, 'abc123')], ['newest-content', (e) => e.advanceSourceCommit(SRC, 'abc123', '2026-01-02T03:04:05.000Z')], ['newest-cleared', (e) => e.advanceSourceCommit(SRC, 'abc123', null)]]),
   ...variants('countSourcePages', [['default', (e) => e.countSourcePages(SRC)], ['includeDeleted', (e) => e.countSourcePages(SRC, { includeDeleted: true })]]),
+  ...variants('readPageIdentity', [['default', (e) => e.readPageIdentity(1)]]),
+  ...variants('writeSourceSyncHeartbeat', [['default', (e) => e.writeSourceSyncHeartbeat(SRC)]]),
+  ...variants('writeSourceUpstreamObservation', [['default', (e) => e.writeSourceUpstreamObservation(SRC, { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'c1', behind: 2 })]]),
   ...variants('insertSource', [['default', (e) => e.insertSource({ id: SRC, name: SRC, local_path: '/srv/brain/src', config: { federated: true } })]]),
   ...variants('listSourcePathPages', [['default', (e) => e.listSourcePathPages(SRC)]]),
   ...variants('readRenameIdentityRows', [['default', (e) => e.readRenameIdentityRows(SRC, ['a.md'], ['a'])]]),
@@ -1476,6 +1480,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('holdPageEmbedding', [['default', (e) => e.holdPageEmbedding(1, 'awaiting_approval')]]),
   ...variants('readReasonPurgeTombstones', [['default', (e) => e.readReasonPurgeTombstones(SRC)], ['pair', (e) => e.readReasonPurgeTombstones(SRC, { commit_sha: 'abc', path: 'notes/a.md' })]]),
   ...variants('writeReasonPurgeTombstones', [['default', (e) => e.writeReasonPurgeTombstones(SRC, [{ commit_sha: 'abc', path: 'notes/a.md' }])]]),
+  ...variants('advanceSourcePurgeEpoch', [['default', (e) => e.advanceSourcePurgeEpoch(SRC)]]),
 
   // ── files ──
   ...variants('upsertFile', [

@@ -122,6 +122,30 @@ export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: strin
   await exec.executeRaw('UPDATE sources SET chunker_version = $1 WHERE id = $2', [version, sourceId]);
 }
 
+/** The 0-change sync heartbeat statement (src/core/sync-upstream.ts), verbatim. */
+export const SOURCE_SYNC_HEARTBEAT_SQL = 'UPDATE sources SET last_sync_at = now() WHERE id = $1';
+
+/**
+ * The 0-change sync heartbeat: stamps `last_sync_at` with the database clock and leaves `last_commit` alone, so doctor's
+ * sync freshness sees a quiet source as synced. An unknown source changes nothing.
+ */
+export async function writeSourceSyncHeartbeat(exec: SqlExecutor, sourceId: string): Promise<void> {
+  await exec.executeRaw(SOURCE_SYNC_HEARTBEAT_SQL, [sourceId]);
+}
+
+/** What sync observed of the checkout's Git upstream (`observeUpstream` in sync-upstream.ts). */
+export interface SourceUpstreamObservation { checkedAt: string; commit: string; behind: number | null }
+/** The statement `recordUpstreamObservation` (src/core/sync-upstream.ts) sends, verbatim. */
+export const SOURCE_UPSTREAM_OBSERVATION_SQL = 'UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1';
+
+/**
+ * The sync's upstream observation: sets `upstream_checked_at` (an ISO time), `upstream_commit` and `upstream_behind`
+ * (null when the synced commit is unknown). An unknown source changes nothing.
+ */
+export async function writeSourceUpstreamObservation(exec: SqlExecutor, sourceId: string, observed: SourceUpstreamObservation): Promise<void> {
+  await exec.executeRaw(SOURCE_UPSTREAM_OBSERVATION_SQL, [sourceId, observed.checkedAt, observed.commit, observed.behind]);
+}
+
 /** The commit the source's last sync advanced to (`last_commit`), or null before the first sync and for an unknown source. */
 export async function readSourceLastCommit(exec: LegacyUnscopedRead, sourceId: string): Promise<string | null> {
   const [row] = await exec.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [sourceId]);
@@ -297,6 +321,17 @@ export async function countDefaultSourceSplit(exec: LegacyUnscopedRead): Promise
   };
 }
 
+/** The stored frontmatter id and title of one live page, by id. */
+export interface PageIdentityRow { fm_id: string | null; title: string | null }
+
+export const PAGE_IDENTITY_SQL = `SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL`;
+
+/** The frontmatter id and title of live page `pageId`; null for a missing or soft-deleted page. Unscoped on master. */
+export async function readPageIdentity(exec: LegacyUnscopedRead, pageId: number): Promise<PageIdentityRow | null> {
+  const [row] = await exec.executeRaw<PageIdentityRow>(PAGE_IDENTITY_SQL, [pageId]);
+  return row ?? null;
+}
+
 /** Pages of one source (`SELECT COUNT(*)::int AS n FROM pages WHERE source_id=$1`); soft-deleted pages count only with `includeDeleted`. Unscoped on master. */
 export async function countSourcePages(exec: LegacyUnscopedRead, sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number> {
   const sql = opts?.includeDeleted === true
@@ -320,7 +355,8 @@ const PAGE_SIZE_ROWS_FOR_SLUGS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage =
 
 /**
  * The live pages of one source (only `slugs` when given) that carry embed_skip, have a body over `maxBytes`, are
- * segmented or have a page_embedding_budget row, by slug: the rows page-embedding-budget.ts readPageSizeStates maps.
+ * segmented or have a page_embedding_budget row, in slug byte order (COLLATE "C", so a Postgres brain on a locale
+ * collation answers in PGLite's order): the rows page-embedding-budget.ts readPageSizeStates maps.
  */
 export async function readPageSizeRows(exec: LegacyUnscopedRead, sourceId: string, maxBytes: number, slugs: readonly string[] | null): Promise<PageSizeRow[]> {
   return slugs
@@ -351,6 +387,16 @@ export async function writeReasonPurgeTombstones(exec: SqlExecutor, sourceId: st
   return (await exec.executeRaw(`INSERT INTO reason_purge_tombstones(source_id, commit_sha, path)
     SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1`,
   [sourceId, pairs.map(pair => pair.commit_sha), pairs.map(pair => pair.path)])).length;
+}
+
+/**
+ * Adds one to the source's purge epoch and returns the new value as stored, or null for an unknown source: the bump a
+ * fact, page or replayed purge makes in its transaction, so a request prepared under the old epoch is refused
+ * (belief/purge.ts `bumpPurgeEpoch`) and a cached sync reason scan is not reused (reason-trailers.ts).
+ */
+export async function advanceSourcePurgeEpoch(exec: SqlExecutor, sourceId: string): Promise<string | number | null> {
+  const [row] = await exec.executeRaw<{ purge_epoch: string | number }>('UPDATE sources SET purge_epoch = purge_epoch + 1 WHERE id = $1 RETURNING purge_epoch', [sourceId]);
+  return row?.purge_epoch ?? null;
 }
 
 /** Sets the page's embedding hold to `held` with `reason`, adding its page_embedding_budget row when it has none (page-embedding-budget.ts). */

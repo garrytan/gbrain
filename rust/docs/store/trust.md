@@ -206,7 +206,7 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `listVersionReasonWriters` | `list_version_reason_writers`: the type and tier of the page's next snapshot, else of the page (deleted or not) | `LEFT JOIN LATERAL (… ORDER BY n.id LIMIT 1)` |
 | `listPageRefsByIds` | `list_page_refs_by_ids`: the source, slug and type of each listed page record (deleted or not), by id, once each; an unknown or negative id answers nothing | `SELECT id, source_id, slug, type FROM pages WHERE id = ANY($1::bigint[]) ORDER BY id` |
 | `listValidTimeIdentities` | `list_valid_time_identities` (`trust/valid_time.rs`): the live pages with the slug in the source scope, by source in byte order, at most six, with the source's checkout and the no-caller page policy's verdict | `… ORDER BY p.source_id COLLATE "C" LIMIT 6` |
-| `pickValidTimeEdition` | `pick_valid_time_edition`: the edition in force on a date over the page and its `V` version records, the competing ordinals and the history counts, plus `history_unpruned` | the `WITH rows AS (…)` pick |
+| `pickValidTimeEdition` | `pick_valid_time_edition`: the edition in force on a date over the page and its `V` version records, the competing ordinals and the history counts, each version's `change_reason` as `reason` (and the previous row's as `introduced_because`), the page's `version_history_gap_at_us` as `gap_at`, plus `history_unpruned` | the `WITH rows AS (…)` pick |
 | `listAmendmentsNotApplied` | `list_amendments_not_applied` (`link_queries/link_temporal.rs`): the live pages with an `amends` link to the page whose relationship start in the scope is after the edition and on or before the date, or absent; under the source and page-policy filters, by slug then source, bytewise | `SELECT f.slug, … min(lr.first_start) … GROUP BY f.slug, f.source_id ORDER BY f.slug COLLATE "C" …` |
 | `readPageVersionEdition` | `read_page_version_edition` (`trust/valid_time.rs`): the page's `V` version record with the fields an edition reads, `body_storage` `inline` unless the snapshot is segmented; null for another page or an unknown id | `SELECT id, title, … FROM page_versions WHERE id = $1 AND page_id = $2` |
 | `readCursorEdition` | `read_cursor_edition` (`trust/valid_time.rs`): whether the page record (deleted or not) is still at the revision, and the newest `V` version record at it; null when the page is gone | `SELECT (p.knowledge_revision::text = $2) AS current, (SELECT max(v.id) …) FROM pages p WHERE p.id = $1` |
@@ -234,8 +234,8 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   (`test/engine-parity/valid-time-member-reads.test.ts`). A failure is an error: the old read answered an empty list for any failure.
 - `pickValidTimeEdition` also refuses a date that is not `YYYY-MM-DD` and a history PGLite would have pruned
   (`history_unpruned`: more large inline versions than PGLite keeps, a segmented version, or a holding page over the
-  kept count; TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
-  `introduced_because` read null (TODOS.md `rust-version-change-reason`), and no gap or pruned successor.
+  kept count; TODOS.md `rust-version-prune`). `reason`, `introduced_because` and `gap_at` read only what
+  `createVersion` stamped (TODOS.md `rust-version-change-reason`), and no successor is ever pruned.
 - Pinned by `test/engine-parity/trust-tier-reads.test.ts` on every arm and by `tests/trust_tier_reads.rs` and `tests/valid_time.rs`.
 
 ## Trust scan state (`trust::scan_state`, `persistence::trust_scan_cursor`)

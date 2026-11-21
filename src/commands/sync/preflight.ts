@@ -192,10 +192,7 @@ export async function preflightIncrementalSync(engine: BrainEngine, opts: SyncOp
     // #3583 review: NOT under --dry-run — a preview that bumps the freshness
     // heartbeat masks real staleness from doctor.
     if (opts.sourceId && !opts.dryRun) {
-      await engine.executeRaw(
-        `UPDATE sources SET last_sync_at = now() WHERE id = $1`,
-        [opts.sourceId],
-      );
+      await engine.writeSourceSyncHeartbeat(opts.sourceId);
     }
     // #3479 blocker 2: quiet runs bypass the failure gate below, and an
     // orphaned `<rename:…>` sentinel would otherwise sit open forever.

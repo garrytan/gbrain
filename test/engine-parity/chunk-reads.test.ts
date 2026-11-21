@@ -640,3 +640,28 @@ describe('engine parity: owner-only sources on excludePrivate chunk and code rea
     },
   );
 });
+
+describe('engine parity: the safe-chunk fence on getChunks', () => {
+  parityTest(
+    'getChunks with requireSafeChunks reads a page only when its chunker version meets the safe fence, as the import chunk reuse asks',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'getChunks'] },
+    async (engine) => {
+      // sealChunks stamps the current chunker version, so each page's version under test is stamped after the seal.
+      const versions: Array<[string, number]> = [['notes/fence-old', 3], ['notes/fence-safe', 4], ['notes/fence-high', 9], ['notes/fence-zero', 0]];
+      for (const [slug] of versions) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '' });
+        await installChunks(engine, slug, [chunk(0, `${slug} first`), chunk(1, `${slug} second`)]);
+      }
+      for (const [slug, version] of versions) await engine.setChunkerVersion(slug, version, { sourceId: 'default' });
+      const read = async (slug: string, requireSafeChunks?: boolean) =>
+        (await engine.getChunks(slug, { sourceId: 'default', includeEmbedding: true, requireSafeChunks })).map(c => `${c.chunk_index}:${c.chunk_text}`);
+      const out: Record<string, unknown> = {};
+      for (const slug of ['notes/fence-old', 'notes/fence-safe', 'notes/fence-high', 'notes/fence-zero', 'notes/missing']) {
+        out[slug] = { safe: await read(slug, true), plain: await read(slug, false), unset: await read(slug) };
+      }
+      expect(out['notes/fence-old']).toEqual({ safe: [], plain: ['0:notes/fence-old first', '1:notes/fence-old second'], unset: ['0:notes/fence-old first', '1:notes/fence-old second'] });
+      expect((out['notes/fence-safe'] as { safe: string[] }).safe).toEqual(['0:notes/fence-safe first', '1:notes/fence-safe second']);
+      return out;
+    },
+  );
+});

@@ -241,6 +241,7 @@ test/engine-parity/oauth-clients.test.ts
 test/engine-parity/oauth-http.test.ts
 test/engine-parity/oauth-lifecycle.test.ts
 test/engine-parity/oauth-revocation.test.ts
+test/engine-parity/op-checkpoint.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/open-pages.test.ts
 test/engine-parity/owner-only-reads.test.ts
@@ -280,6 +281,7 @@ test/engine-parity/sweep-reads.test.ts
 test/engine-parity/sync-aliases.test.ts
 test/engine-parity/sync-requests.test.ts
 test/engine-parity/sync-route.test.ts
+test/engine-parity/sync-run.test.ts
 test/engine-parity/take-held-rows.test.ts
 test/engine-parity/take-trust-fields.test.ts
 test/engine-parity/take-trust-reads.test.ts

@@ -334,6 +334,76 @@ fn sources_survive_a_reopen() {
 }
 
 #[test]
+fn the_sync_anchor_advances_one_source_and_survives_a_reopen() {
+    let dir = TempDir::new("src-anchor");
+    let store = open(&dir);
+    store.upsert_source(&input("wiki", None)).unwrap();
+    store.upsert_source(&input("other", None)).unwrap();
+    assert_eq!(store.get_source("wiki").unwrap().unwrap().last_commit, None);
+    store
+        .advance_source_commit("wiki", "c1", Some(Some("2026-01-02T03:04:05.000Z")))
+        .unwrap();
+    store.advance_source_commit("wiki", "c2", None).unwrap();
+    store
+        .attach_source_path("wiki", "/srv/wiki", None, None)
+        .unwrap();
+    // An unknown source changes nothing, as the UPDATE matches no row.
+    store.advance_source_commit("missing", "c9", None).unwrap();
+    store
+        .attach_source_path("missing", "/srv/missing", None, None)
+        .unwrap();
+    assert!(
+        store
+            .advance_source_commit("wiki", "c3", Some(Some("not a time")))
+            .is_err()
+    );
+    store.close();
+    let store = open(&dir);
+    let wiki = store.get_source("wiki").unwrap().unwrap();
+    assert_eq!(wiki.last_commit.as_deref(), Some("c2"));
+    assert!(wiki.last_sync_at.is_some());
+    assert_eq!(wiki.local_path.as_deref(), Some("/srv/wiki"));
+    let records = store.list_source_records().unwrap();
+    let newest = |id: &str| {
+        records
+            .iter()
+            .find(|r| r.id == id)
+            .and_then(|r| r.newest_content_at.clone())
+    };
+    assert_eq!(
+        newest("wiki").as_deref(),
+        Some("2026-01-02T03:04:05.000000Z")
+    );
+    store
+        .advance_source_commit("wiki", "c4", Some(None))
+        .unwrap();
+    assert_eq!(
+        store
+            .list_source_records()
+            .unwrap()
+            .iter()
+            .find(|r| r.id == "wiki")
+            .unwrap()
+            .newest_content_at,
+        None
+    );
+    assert_eq!(
+        store.get_source("other").unwrap().unwrap().last_commit,
+        None
+    );
+    assert_eq!(store.get_source("missing").unwrap(), None);
+    assert_eq!(
+        store
+            .read_plain_sync_source("wiki")
+            .unwrap()
+            .unwrap()
+            .last_commit
+            .as_deref(),
+        Some("c4")
+    );
+}
+
+#[test]
 fn a_fresh_brain_records_the_callers_initial_config_and_a_reopen_keeps_its_own() {
     let dir = TempDir::new("cfg-initial");
     let path = dir.path().join("brain");
@@ -382,4 +452,23 @@ fn initial_config_refuses_the_version_key() {
         panic!("a version row in initial config must be refused");
     };
     assert_eq!(err.code, gbrain_store::error::INVALID_ARGUMENT);
+}
+
+#[test]
+fn the_purge_epoch_advances_one_source_and_survives_a_reopen() {
+    let dir = TempDir::new("src-purge-epoch");
+    let store = open(&dir);
+    store.upsert_source(&input("wiki", None)).unwrap();
+    assert_eq!(store.read_source_purge_epoch("wiki").unwrap(), Some(0));
+    assert_eq!(store.advance_source_purge_epoch("wiki").unwrap(), Some(1));
+    assert_eq!(store.advance_source_purge_epoch("wiki").unwrap(), Some(2));
+    // An unknown source changes nothing and returns no row, as the UPDATE ... RETURNING does.
+    assert_eq!(store.advance_source_purge_epoch("missing").unwrap(), None);
+    assert_eq!(store.read_source_purge_epoch("missing").unwrap(), None);
+    assert_eq!(store.read_source_purge_epoch("default").unwrap(), Some(0));
+    let before = store.get_source("wiki").unwrap();
+    drop(store);
+    let store = open(&dir);
+    assert_eq!(store.read_source_purge_epoch("wiki").unwrap(), Some(2));
+    assert_eq!(store.get_source("wiki").unwrap(), before);
 }

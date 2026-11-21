@@ -106,7 +106,7 @@ import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow } from './engine-sql/entity-reads.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow } from './engine-sql/sources.ts';
+import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
   NotifierFirstDueRow, PendingWantedMarker, SourceSyncShapeRow, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput,
@@ -1533,6 +1533,12 @@ export interface BrainEngine {
   setSourceChunkerVersion(sourceId: string, version: string): Promise<void>;
   /** Advances the sync anchor: last_commit, last_sync_at and, when given, newest_content_at (null clears it); an unknown source changes nothing (engine-sql/sources.ts). */
   advanceSourceCommit(sourceId: string, commit: string, newestContentAt?: string | null): Promise<void>;
+  /** The 0-change sync heartbeat: `last_sync_at` = now, the commit anchor untouched. An unknown source changes nothing. */
+  writeSourceSyncHeartbeat(sourceId: string): Promise<void>;
+  /** The sync's upstream observation of the source's checkout (engine-sql/sources.ts); an unknown source changes nothing. */
+  writeSourceUpstreamObservation(sourceId: string, observed: SourceUpstreamObservation): Promise<void>;
+  /** The frontmatter `id` and title of live page `pageId`; null for a missing or soft-deleted page. */
+  readPageIdentity(pageId: number): Promise<PageIdentityRow | null>;
   /** The commit the source's last sync advanced to, or null before the first sync and for an unknown source (engine-sql/sources.ts). */
   readSourceLastCommit(sourceId: string): Promise<string | null>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
@@ -1547,6 +1553,8 @@ export interface BrainEngine {
   readReasonPurgeTombstones(sourceId: string, pair?: ReasonPurgeTombstone): Promise<ReasonPurgeTombstone[]>;
   /** Stores the pairs not stored yet and returns how many it added; an unknown source throws (engine-sql/sources.ts). */
   writeReasonPurgeTombstones(sourceId: string, pairs: readonly ReasonPurgeTombstone[]): Promise<number>;
+  /** Adds one to the source's purge epoch and returns the new value as stored, or null for an unknown source (engine-sql/sources.ts). */
+  advanceSourcePurgeEpoch(sourceId: string): Promise<string | number | null>;
   /** The live pages of one source that have a source_path, in no set order (engine-sql/sources.ts). */
   listSourcePathPages(sourceId: string): Promise<SourcePathPageRow[]>;
   /** The live pages of one source whose source_path is in `paths` or whose slug is in `slugs`, in no set order (engine-sql/sources.ts). */

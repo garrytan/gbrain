@@ -12,8 +12,8 @@
  *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres; pageAwaitsRederive says whether a purge hid the
  *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end; listPageRefsByIds names
  *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
- *    the page, fact, version and valid-time reads, refuses the belief reads, scans the takes and timeline entries too, and stops typed where the pick would need a
- *    change reason or a history gap the store does not keep.
+ *    the page, fact, version and valid-time reads (with the change reason and history gap createVersion stamps),
+ *    refuses the belief reads, and scans the takes and timeline entries too.
  *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
  *    members; an engine that drops an option shows a page the reader may not see or a row the scan should skip.
  *  - Why existing coverage misses it: the reads were raw SQL inside their callers, so no engine arm ran them as members.
@@ -646,7 +646,7 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
-    'pickValidTimeEdition reads the reason a version was replaced for; the Rust store keeps none and refuses the write',
+    'pickValidTimeEdition reads the reason a version was replaced for, and the reason it was introduced',
     { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
     async (engine) => {
       const write = (validFrom: string) => engine.putPage('vt/reason', { type: 'note', title: 'VT', compiled_truth: `body ${validFrom}`, timeline: '', frontmatter: { valid_from: validFrom } });
@@ -664,7 +664,7 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
-    'pickValidTimeEdition reads the gap a version history records; the Rust store records none and refuses the write',
+    'pickValidTimeEdition reads the gap a version history records',
     { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
     async (engine) => {
       await engine.putPage('vt/gap', { type: 'note', title: 'VT', compiled_truth: 'body', timeline: '', frontmatter: { valid_from: '2026-01-01' } });

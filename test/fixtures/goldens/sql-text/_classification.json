@@ -90,7 +90,7 @@
       "out-of-scope:writer-versions (born in engine-sql/writer-versions.ts; pinned by test/engine-parity/writer-versions.test.ts)": 3,
       "pages": 40,
       "salience": 5,
-      "sources": 29,
+      "sources": 33,
       "tags": 3,
       "takes": 20,
       "timeline": 8
@@ -119,6 +119,7 @@
       "admitJob": "out-of-scope:minion-jobs (born in engine-sql/jobs.ts and engine-sql/jobs-queue.ts; pinned by test/engine-parity/jobs.test.ts and jobs-queue.test.ts)",
       "advanceEffectRow": "out-of-scope:persistence-effect-worker (born in engine-sql/persistence-effect-worker.ts; pinned by test/engine-parity/persistence.test.ts)",
       "advanceSourceCommit": "sources",
+      "advanceSourcePurgeEpoch": "sources",
       "ageOutSessionState": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "aliasCanonicalRefs": "out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)",
       "aliasFanoutRead": "out-of-scope:internal-helper (private; exercised through public callers)",
@@ -1099,6 +1100,7 @@
       "readPageCompiledTruths": "out-of-scope:doctor-derived (born in engine-sql/doctor-derived.ts; pinned by test/engine-parity/doctor-derived.test.ts and test/doctor-derived-sql.test.ts)",
       "readPageEmbeddingBudget": "out-of-scope:page-embedding-budget (born in engine-sql/page-embedding-budget.ts; pinned by test/engine-parity/page-embedding-budget.test.ts and test/page-embedding-budget.test.ts)",
       "readPageHiddenFromCaller": "out-of-scope:page-visibility (born in engine-sql/page-visibility.ts; pinned by test/engine-parity/page-visibility.test.ts and test/page-visibility-sql-pin.test.ts)",
+      "readPageIdentity": "sources",
       "readPageIndexingState": "out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)",
       "readPageOrigin": "out-of-scope:write-guards (born in engine-sql/write-guards.ts; pinned by test/engine-parity/write-guards.test.ts and test/fold-hook-noop-6712.test.ts)",
       "readPageRevisionAttribution": "out-of-scope:write-attribution (born in engine-sql/write-attribution.ts; pinned by test/engine-parity/write-attribution.test.ts)",
@@ -1421,6 +1423,8 @@
       "writeReasonPurgeTombstones": "sources",
       "writeSharedSkillPolicy": "out-of-scope:shared-skill-members (born in engine-sql/shared-skill-members.ts; pinned by test/engine-parity/shared-skill-members.test.ts)",
       "writeSharedSkillRevision": "out-of-scope:shared-skill-members (born in engine-sql/shared-skill-members.ts; pinned by test/engine-parity/shared-skill-members.test.ts)",
+      "writeSourceSyncHeartbeat": "sources",
+      "writeSourceUpstreamObservation": "sources",
       "writeSyncPassRow": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "writeTextProjectionSeal": "out-of-scope:import-writes (born in engine-sql/chunks.ts, tags.ts, pages.ts; pinned by test/engine-parity/import-writes.test.ts)",
       "writeTrustScanCursor": "out-of-scope:trust-scan (born in engine-sql/trust-scan.ts; pinned by test/engine-parity/trust-tier-reads.test.ts)"

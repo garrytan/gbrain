@@ -2189,10 +2189,14 @@ export class PGLiteEngine implements BrainEngine {
   isSourceClaimed(sourceId: string) { return sourcesImpl.isSourceClaimed(unscopedExecutor(this.engineSql, 'sources: sync-authority read the claim unscoped through executeRaw'), sourceId); }
   readSourceChunkerVersion(sourceId: string) { return sourcesImpl.readSourceChunkerVersion(unscopedExecutor(this.engineSql, 'sources: sync preflight read it unscoped through executeRaw'), sourceId); }
   setSourceChunkerVersion(sourceId: string, version: string) { return sourcesImpl.setSourceChunkerVersion(this.engineSql, sourceId, version); }
-  advanceSourceCommit(sourceId: string, commit: string, newestContentAt?: string | null) { return sourcesImpl.advanceSourceCommit(this.engineSql, sourceId, commit, newestContentAt); }
+  writeSourceSyncHeartbeat(sourceId: string) { return sourcesImpl.writeSourceSyncHeartbeat(this.engineSql, sourceId); }
+  writeSourceUpstreamObservation(sourceId: string, observed: sourcesImpl.SourceUpstreamObservation) { return sourcesImpl.writeSourceUpstreamObservation(this.engineSql, sourceId, observed); }
+  readPageIdentity(pageId: number) { return sourcesImpl.readPageIdentity(unscopedExecutor(this.engineSql, 'sources: the held-rename redecision read a page identity unscoped through executeRaw'), pageId); }
   readSourceLastCommit(sourceId: string) { return sourcesImpl.readSourceLastCommit(unscopedExecutor(this.engineSql, 'sources: the resident notifier read the last commit unscoped through executeRaw'), sourceId); }
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }) { return sourcesImpl.countSourcePages(unscopedExecutor(this.engineSql, 'sources: source commands counted pages unscoped through executeRaw'), sourceId, opts); }
   insertSource(row: sourcesImpl.SourceInsert) { return sourcesImpl.insertSource(this.engineSql, row); }
+  advanceSourcePurgeEpoch(sourceId: string) { return sourcesImpl.advanceSourcePurgeEpoch(this.engineSql, sourceId); }
+  advanceSourceCommit(sourceId: string, commit: string, newestContentAt?: string | null) { return sourcesImpl.advanceSourceCommit(this.engineSql, sourceId, commit, newestContentAt); }
   async countRepoBoundSources(): Promise<number> {
     return sourcesImpl.countRepoBoundSources(unscopedExecutor(this.engineSql, 'sources: unscoped on master (the readiness sync probe read it through executeRaw)'));
   }

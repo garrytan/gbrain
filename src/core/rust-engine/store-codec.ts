@@ -144,7 +144,7 @@ function versionHash(version: object): Row {
 export function toVersion<T extends object>(version: T): T {
   const rest = versionHash(version);
   const frontmatter = (rest.frontmatter ?? {}) as Row;
-  return { ...rest, replaced_because: null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
+  return { ...rest, replaced_because: (rest as Row).replaced_because ?? null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
 }
 
 /**

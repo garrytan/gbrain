@@ -13,7 +13,8 @@ use crate::store_binding::{Brain, arg};
 
 #[napi]
 impl Brain {
-    /// `createVersion(slug, { sourceId? }?)`: snapshots the page and resolves the version row.
+    /// `createVersion(slug, { sourceId?, reason?, historyGap? }?)`: snapshots the page and resolves
+    /// the version row.
     #[napi]
     pub fn create_version<'env>(
         &self,
@@ -22,8 +23,9 @@ impl Brain {
         options: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            let scope: gbrain_store::pages::ReadScope = arg(options, "createVersion options")?;
-            s.create_version(&slug, scope.source_id.as_deref())
+            let options: gbrain_store::pages::CreateVersionOptions =
+                arg(options, "createVersion options")?;
+            s.create_version_with(&slug, &options)
         })
     }
 

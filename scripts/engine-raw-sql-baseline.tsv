@@ -153,7 +153,7 @@ src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	1
 src/commands/sync/holds.ts	execute_raw	3
 src/commands/sync/plain-directory.ts	execute_raw	1
-src/commands/sync/preflight.ts	execute_raw	3
+src/commands/sync/preflight.ts	execute_raw	2
 src/commands/sync/rename-collision.ts	execute_raw	2
 src/commands/sync/renames.ts	execute_raw	1
 src/commands/sync/run.ts	execute_raw	3
@@ -198,7 +198,7 @@ src/core/belief/lifetimes.ts	execute_raw	6
 src/core/belief/page-at-time.ts	execute_raw	8
 src/core/belief/preimages.ts	execute_raw	2
 src/core/belief/purge-mirror.ts	execute_raw	24
-src/core/belief/purge.ts	execute_raw	19
+src/core/belief/purge.ts	execute_raw	18
 src/core/belief/retier.ts	execute_raw	3
 src/core/belief/state.ts	execute_raw	4
 src/core/belief/writers.ts	execute_raw	2
@@ -874,9 +874,7 @@ src/core/sync-git.ts	execute_raw	3
 src/core/sync-identity-downgrades.ts	execute_raw	7
 src/core/sync-pending.ts	execute_raw	1
 src/core/sync-policy.ts	execute_raw	1
-src/core/sync-rename-identity.ts	execute_raw	1
 src/core/sync-status-report.ts	execute_raw	1
-src/core/sync-upstream.ts	execute_raw	1
 src/core/synopsis-sweep.ts	execute_raw	3
 src/core/take-proposals.ts	execute_raw	8
 src/core/takes-horizon.ts	execute_raw	5

@@ -5004,6 +5004,19 @@
           }
         ]
       },
+      "advanceSourcePurgeEpoch": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "countDefaultSourceSplit": {
         "default": [
           {
@@ -5260,6 +5273,19 @@
           }
         ]
       },
+      "readPageIdentity": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "readPageSizeRows": {
         "default": [
           {
@@ -5403,6 +5429,32 @@
         "default": [
           {
             "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "writeSourceSyncHeartbeat": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "writeSourceUpstreamObservation": {
+        "default": [
+          {
+            "paramCount": 4,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

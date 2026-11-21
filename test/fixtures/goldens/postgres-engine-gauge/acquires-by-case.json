@@ -30,6 +30,9 @@
     "advanceSourceCommit#newest-content": {
       "raw": 1
     },
+    "advanceSourcePurgeEpoch#default": {
+      "raw": 1
+    },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
     "clearCodeTraversalCache#allSources": {
@@ -384,6 +387,9 @@
     "readLiveIdentityHolders#default": {
       "raw": 1
     },
+    "readPageIdentity#default": {
+      "raw": 1
+    },
     "readPageSizeRows#default": {
       "raw": 1
     },
@@ -560,6 +566,12 @@
     "upsertFile#default": {},
     "writeContradictionsRun#default": {},
     "writeReasonPurgeTombstones#default": {
+      "raw": 1
+    },
+    "writeSourceSyncHeartbeat#default": {
+      "raw": 1
+    },
+    "writeSourceUpstreamObservation#default": {
       "raw": 1
     }
   },

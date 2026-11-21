@@ -474,20 +474,15 @@ describe('engine parity: write journal', () => {
     return seen;
   });
 
-  // Leak case: one source's tombstones never answer for another, and a bumped epoch is read as stored. The Rust store
-  // purges nothing (0 and none above), so the tombstone write stops on the raw_sql refusal.
+  // Leak case: one source's tombstones never answer for another, and a bumped epoch is read as stored. Every arm writes
+  // through the typed members the purge uses (advanceSourcePurgeEpoch, writeReasonPurgeTombstones).
   parityTest('readReasonPurgeTombstones reads only the named source; readSourcePurgeEpoch reads a bumped epoch', {
-    methods: ['readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
+    methods: ['readSourcePurgeEpoch', 'readReasonPurgeTombstones', 'advanceSourcePurgeEpoch', 'writeReasonPurgeTombstones'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'purged');
-    const write = await engine.executeRaw("UPDATE sources SET purge_epoch = 3 WHERE id = 'purged'").then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(String(await engine.readSourcePurgeEpoch('purged'))).toBe('0');
-      throw write;
-    }
-    await engine.executeRaw(`INSERT INTO reason_purge_tombstones (source_id, commit_sha, path) VALUES
-      ('purged', 'c1', 'notes/a.md'), ('purged', 'c2', 'notes/b.md'), ('default', 'c3', 'notes/c.md')`);
+    for (let i = 0; i < 3; i++) await engine.advanceSourcePurgeEpoch('purged');
+    await engine.writeReasonPurgeTombstones('purged', [{ commit_sha: 'c1', path: 'notes/a.md' }, { commit_sha: 'c2', path: 'notes/b.md' }]);
+    await engine.writeReasonPurgeTombstones('default', [{ commit_sha: 'c3', path: 'notes/c.md' }]);
     const order = (rows: Array<{ commit_sha: string; path: string }>) => rows.map(r => ({ commit_sha: r.commit_sha, path: r.path })).sort((a, b) => a.commit_sha.localeCompare(b.commit_sha));
     const seen = {
       epoch: String(await engine.readSourcePurgeEpoch('purged')),

@@ -39,6 +39,7 @@ import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from './hardened-git.ts';
 import { explicitMarkdownTitle } from './markdown.ts';
 import { isMarkdownFilePath, resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason, type RenameSideSource, type SyncManifest } from './sync.ts';
 import { computeSyncDelta, type SyncDeltaResult } from './sync-delta.ts';
+import { inSlugByteOrder } from './sync-reconcile.ts';
 
 const HEAD_BYTES = 64 * 1024;
 
@@ -313,8 +314,9 @@ export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'readRen
       return rows;
     }
   };
-  const stored = await perPath(titled, paths => engine.readRenameIdentityRows(opts.sourceId,
-    [...new Set(paths.flatMap(path => [path, sourcePathOf(path)]))], paths.map(path => resolveSlugForPath(sourcePathOf(path)))));
+  // Slug byte order: two live pages can share a source_path, and the first match below must be the same page on every engine.
+  const stored = inSlugByteOrder(await perPath(titled, paths => engine.readRenameIdentityRows(opts.sourceId,
+    [...new Set(paths.flatMap(path => [path, sourcePathOf(path)]))], paths.map(path => resolveSlugForPath(sourcePathOf(path))))));
   for (const path of titled) {
     const row = stored.find(page => page.source_path === path || page.source_path === sourcePathOf(path))
       ?? stored.find(page => page.source_path === null && page.slug === resolveSlugForPath(sourcePathOf(path)));
@@ -357,10 +359,9 @@ export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'readRen
  * GBRA-133 S-51: decides a held pair again (its file changed, or a retry asked): the base side is the page the hold
  * kept (its stored id and title), the target the file at `target`. `held` when the database still refuses a value.
  */
-export async function redecideHeldRename(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveIdentityHolders'>, repo: string, target: string,
+export async function redecideHeldRename(engine: Pick<BrainEngine, 'readPageIdentity' | 'readLiveIdentityHolders'>, repo: string, target: string,
   pair: { from: string; to: string; gitTo: string; pageId: number }, opts: ConfirmRenameOpts): Promise<'confirmed' | 'downgraded' | 'held'> {
-  const [page] = await engine.executeRaw<{ fm_id: string | null; title: string | null }>(
-    `SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL`, [pair.pageId]);
+  const page = await engine.readPageIdentity(pair.pageId);
   if (!page) return 'downgraded';
   const before: FrontmatterIdentity = { ...NO_IDENTITY, id: queryable(page.fm_id?.trim() || null), title: queryable(page.title?.trim() || null) };
   const [head] = pair.gitTo.includes('\n') ? [null] : await catFileHeads(repo, [`${target}:${pair.gitTo}`]);

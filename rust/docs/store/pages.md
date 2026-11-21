@@ -26,7 +26,7 @@ secondary indexes yet.
 | `brain.getTags(slug, { sourceId?, sourceIds?, excludePrivate? }?)` | sorted `string[]`; a page the `excludePrivate` page policy hides has none | `getTags` |
 | `brain.addTag(slug, tag, { sourceId? }?)` | `null`; `page_not_found` for a missing page | `addTag` |
 | `brain.removeTag(slug, tag, { sourceId? }?)` | `null`; no error when the page or tag is absent | `removeTag` |
-| `brain.createVersion(slug, { sourceId? }?)` | the version row, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own); `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
+| `brain.createVersion(slug, { sourceId?, reason?, historyGap? }?)` | the version row, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own) and `reason` stamped as its `change_reason` (versions.ts passes null when `reasonSource` names a pair `readReasonPurgeTombstones` holds); `historyGap` first sets the page's `version_history_gap_at_us`; `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
 | `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody?, excludePrivate? }?)` | version rows, newest first; `includeBody: false` leaves out `compiled_truth` and `timeline`; `excludePrivate` (the caller's page policy) drops a hidden page's versions and each version whose own readers or fields the caller may not read, before `limit` | `getVersions` |
 
 `putPage` follows PGLite:

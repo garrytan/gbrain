@@ -22,8 +22,9 @@
  *  - `pickValidTimeEdition` on a date that is not `YYYY-MM-DD`, rather than guess at Postgres's text order, and over
  *    a history PGLite would have pruned (more large inline versions than it keeps, a segmented version, a long
  *    holding page): the store never prunes, so its answer would count editions PGLite no longer has and miss the gap
- *    it records (TODOS.md `rust-version-prune`). The store keeps no change reason, so `reason` and
- *    `introduced_because` read null where PGLite may have one (TODOS.md `rust-version-change-reason`);
+ *    it records (TODOS.md `rust-version-prune`). `reason`, `introduced_because` and `gap_at` read what
+ *    `createVersion` stamped (a sync's Git reason and history gap); the raw-SQL reason writers are still refused
+ *    (TODOS.md `rust-version-change-reason`);
  *  - `listAmendmentsNotApplied` under `excludePrivate` for a caller whose remote read floor is not the page policy of
  *    no readers (a labelled-only caller), and on dates that are not `YYYY-MM-DD`;
  *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
@@ -151,7 +152,7 @@ export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain
   if (got.history_unpruned) refuseMember(member, 'a version history PGLite would have pruned, which the store keeps whole');
   if (!got.row) return null;
   const row = got.row;
-  return { ...row, replaced_at: asDate(row.replaced_at), recorded_since: asDate(row.recorded_since), created_at: asDate(row.created_at) };
+  return { ...row, replaced_at: asDate(row.replaced_at), recorded_since: asDate(row.recorded_since), created_at: asDate(row.created_at), gap_at: asDate(row.gap_at) };
 };
 
 export const listAmendmentsNotApplied: Member<'listAmendmentsNotApplied'> = (brain, spec) => {

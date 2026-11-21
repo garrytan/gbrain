@@ -73,9 +73,9 @@ export const readJournalLimitRows: StoreMember<[], Array<{ key: string | null; v
   return rows;
 };
 
-/** The store purges no facts, so a known source's purge epoch stays 0; an unknown source has none (null). */
+/** The source's purge epoch as `advanceSourcePurgeEpoch` left it (0 before any purge); an unknown source has none (null). */
 export const readSourcePurgeEpoch: StoreMember<[sourceId: string], string | number | null> = async (brain, sourceId) =>
-  (await storeCall({ member: 'readSourcePurgeEpoch', sourceId }, () => brain.getSource(sourceId))) ? 0 : null;
+  (await storeCall({ member: 'readSourcePurgeEpoch', sourceId }, () => brain.readSourcePurgeEpoch(sourceId))) as number | null;
 
 /** The source row's sync point (getSource) and the journal's outstanding requests of its current incarnation. */
 export const readWriteWatermarkRow: StoreMember<[sourceId: string], WriteWatermarkRow> = async (brain, sourceId) => {
@@ -275,16 +275,17 @@ export const insertTopologyChange: StoreMember<[row: TopologyChangeInsert], Topo
   topologyRow(await storeCall({ member: 'insertTopologyChange' }, () => brain.insertTopologyChange(row)))!;
 
 /**
- * The belief ledger's view of a source. Belief events, the purge epoch and take and page purges are written only
- * through `executeRaw`, which this engine refuses, so the epoch is 0 and coverage is null; a purge is possible when the
- * source holds a fact purge tombstone (`insertFactPurge`). A batch also returns the one unmanaged brain row and the
- * plan-cache mode PGLite reports, which it never changes here.
+ * The belief ledger's view of a source. Belief events and take and page purges are written only through `executeRaw`,
+ * which this engine refuses, so coverage is null; the epoch is the stored one (`advanceSourcePurgeEpoch`), and a purge
+ * is possible when the source holds a fact purge tombstone (`insertFactPurge`). A batch also returns the one unmanaged
+ * brain row and the plan-cache mode PGLite reports, which it never changes here.
  */
 export const readLedgerSource: StoreMember<[sourceId: string, opts?: { batch?: boolean }], LedgerSource | null> = async (brain, sourceId, opts) => {
   const membership = await storeCall({ member: 'readLedgerSource' }, () => brain.readSourceMembership(sourceId)) as SourceMembership | null;
   if (!membership) return null;
+  const epoch = await storeCall({ member: 'readLedgerSource', sourceId }, () => brain.readSourcePurgeEpoch(sourceId)) as number | null;
   const purgesPossible = await storeCall({ member: 'readLedgerSource' }, () => brain.hasFactPurges(sourceId)) as boolean;
-  return { incarnation: String(membership.incarnation), purgeEpoch: 0, coverage: null, purgesPossible,
+  return { incarnation: String(membership.incarnation), purgeEpoch: Number(epoch ?? 0), coverage: null, purgesPossible,
     ...(opts?.batch ? { managedRows: [{ enabled: false }], planModePrev: PLAN_CACHE_MODE } : {}) };
 };
 

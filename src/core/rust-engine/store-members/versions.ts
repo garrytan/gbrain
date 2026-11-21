@@ -4,13 +4,27 @@
  * through raw SQL.
  */
 import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-state/version-types.ts';
+import type { VersionHistory } from '../../page-state/versions.ts';
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
-export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string }], PageVersion> = async (brain, slug, opts) => {
-  const scope = takeOptions('createVersion', opts, ['sourceId']);
-  return toCreatedVersion(await storeCall({ member: 'createVersion', slug, sourceId: scope.sourceId as string | undefined },
+/**
+ * A sync import's history (`VersionHistory`) rides along: `reason` is stamped as `change_reason` unless its
+ * `reasonSource` (commit, path) is tombstoned (`readReasonPurgeTombstones`, as `createPageVersion` checks on SQL);
+ * `historyGap` marks the page's `version_history_gap_at`. A `preimage` is the caller's own read of the page in its
+ * transaction, before its page write; the store snapshots the page under its write instead, which on the store is the
+ * same page (the import's statements run in order, pipelined()).
+ */
+export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string } & VersionHistory & { preimage?: unknown }], PageVersion> = async (brain, slug, opts) => {
+  const scope = takeOptions('createVersion', opts, ['sourceId', 'reason', 'historyGap'], ['reasonSource', 'preimage']);
+  const sourceId = scope.sourceId as string | undefined;
+  if (scope.reason && opts?.reasonSource) {
+    const pair = { commit_sha: opts.reasonSource.commit, path: opts.reasonSource.path };
+    const purged: unknown[] = await storeCall({ member: 'createVersion', slug, sourceId }, () => brain.readReasonPurgeTombstones(sourceId ?? 'default', pair));
+    if (purged.length) scope.reason = null;
+  }
+  return toCreatedVersion(await storeCall({ member: 'createVersion', slug, sourceId },
     () => brain.createVersion(slug, scope)));
 };
 

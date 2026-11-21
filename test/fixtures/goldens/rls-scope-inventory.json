@@ -166,6 +166,17 @@
         ],
         "flagOnScopes": []
       },
+      "advanceSourcePurgeEpoch#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "applyAccessRuleChanges#default": {
         "flagOffLanes": [
           "pool"
@@ -5751,6 +5762,17 @@
         ],
         "flagOnScopes": []
       },
+      "readPageIdentity#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPageSizeRows#default": {
         "flagOffLanes": [
           "pool"
@@ -7624,6 +7646,28 @@
           "pool"
         ],
         "flagOnScopes": []
+      },
+      "writeSourceSyncHeartbeat#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "writeSourceUpstreamObservation#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       }
     },
     "static": {
@@ -7690,6 +7734,7 @@
         "admitJob": "none",
         "advanceEffectRow": "none",
         "advanceSourceCommit": "none",
+        "advanceSourcePurgeEpoch": "none",
         "ageOutSessionState": "none",
         "aliasCanonicalRefs": "none",
         "aliasFanoutRead": "none",
@@ -8669,6 +8714,7 @@
         "readPageCompiledTruths": "none",
         "readPageEmbeddingBudget": "none",
         "readPageHiddenFromCaller": "none",
+        "readPageIdentity": "none",
         "readPageIndexingState": "none",
         "readPageOrigin": "none",
         "readPageRevisionAttribution": "none",
@@ -8991,6 +9037,8 @@
         "writeReasonPurgeTombstones": "none",
         "writeSharedSkillPolicy": "none",
         "writeSharedSkillRevision": "none",
+        "writeSourceSyncHeartbeat": "none",
+        "writeSourceUpstreamObservation": "none",
         "writeSyncPassRow": "none",
         "writeTextProjectionSeal": "none",
         "writeTrustScanCursor": "none"

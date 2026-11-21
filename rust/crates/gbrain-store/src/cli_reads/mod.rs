@@ -24,6 +24,7 @@ pub(crate) mod pg_jsonb;
 pub(crate) mod pg_text;
 pub mod reads;
 pub mod remote_reads;
+pub mod rename_identity;
 pub mod resolve_reads;
 pub mod search_reads_pages;
 pub mod sources;

@@ -53,6 +53,26 @@ interface Pin {
 
 const PINS: Pin[] = [
   {
+    from: 'src/commands/sync/preflight.ts:195 the 0-change sync heartbeat',
+    case: { method: 'writeSourceSyncHeartbeat', variant: 'default', run: e => e.writeSourceSyncHeartbeat('default') },
+    texts: ['UPDATE sources SET last_sync_at = now() WHERE id = $1'],
+  },
+  {
+    from: 'src/core/sync-upstream.ts:71 recordUpstreamObservation',
+    case: { method: 'writeSourceUpstreamObservation', variant: 'default', run: e => e.writeSourceUpstreamObservation('default', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'c1', behind: 2 }) },
+    texts: ['UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1'],
+  },
+  {
+    from: 'src/core/sync-rename-identity.ts:365 redecideHeldRename',
+    case: { method: 'readPageIdentity', variant: 'default', run: e => e.readPageIdentity(1) },
+    texts: [`SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/belief/purge.ts:50 bumpPurgeEpoch',
+    case: { method: 'advanceSourcePurgeEpoch', variant: 'default', run: e => e.advanceSourcePurgeEpoch('default') },
+    texts: ['UPDATE sources SET purge_epoch = purge_epoch + 1 WHERE id = $1 RETURNING purge_epoch'],
+  },
+  {
     from: 'src/core/access/caller.ts:376 appliedAccessSummary (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
     case: { method: 'listAppliedPolicyRevisions', variant: 'default', run: e => e.listAppliedPolicyRevisions() },
     texts: [`SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL

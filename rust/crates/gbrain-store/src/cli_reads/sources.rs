@@ -4,6 +4,7 @@
 //! `listSourcePathPages` and `readRenameIdentityRows` are the page reads of a git sync: the live
 //! pages a full sync reconciles, and the stored side a rename's identity check compares.
 
+use crate::cli_reads::pg_text::fm_text;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::kv::{KvRead, scan_prefix};
 use crate::pages::PageRecord;
@@ -263,7 +264,7 @@ impl Store {
 
     /// `readLiveIdentityHolders(sourceId, ids, titles)`: the live pages of one source whose
     /// frontmatter `id` is in `ids` or whose title is in `titles`, in slug order. `fm_id` is the
-    /// id as Postgres `frontmatter->>'id'` reads it. The SQL engines return them in no set order.
+    /// id as Postgres `frontmatter->>'id'` reads it: a non-string value in jsonb's text form. The SQL engines return them in no set order.
     pub fn read_live_identity_holders(
         &self,
         source_id: &str,
@@ -278,11 +279,7 @@ impl Store {
         let read = self.read()?;
         let mut rows = Vec::new();
         scan_live_origins(&*read, source_id, &mut |page| {
-            let fm_id = match page.frontmatter.get("id") {
-                None | Some(Value::Null) => None,
-                Some(Value::String(id)) => Some(id.clone()),
-                Some(other) => Some(other.to_string()),
-            };
+            let fm_id = fm_text(&page.frontmatter, "id");
             let by_id = fm_id.as_deref().is_some_and(|id| ids.contains(id));
             let by_title = page
                 .title
@@ -472,6 +469,10 @@ impl Store {
                 chunker_version: None,
                 last_commit: None,
                 newest_content_at_us: None,
+                upstream_checked_at_us: None,
+                upstream_commit: None,
+                upstream_behind: None,
+                purge_epoch: 0,
             };
             put_json(tx, &keys::text(keys::SOURCE, &[id]), &record)?;
             Ok(SourceRow::from(record))

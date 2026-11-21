@@ -14,7 +14,7 @@ test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/attested-actor-link.test.ts	1	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
 test/engine-parity/chronicle-publish-parity.test.ts	2	1
-test/engine-parity/chunk-reads.test.ts	13	0
+test/engine-parity/chunk-reads.test.ts	14	0
 test/engine-parity/chunks.test.ts	14	1
 test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-import.test.ts	17	0
@@ -101,7 +101,7 @@ test/engine-parity/jobs-subagent.test.ts	16	0
 test/engine-parity/jobs-wake.test.ts	20	0
 test/engine-parity/jobs.test.ts	15	0
 test/engine-parity/keyword-visibility.test.ts	7	0
-test/engine-parity/large-page.test.ts	1	0
+test/engine-parity/large-page.test.ts	2	0
 test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-read-options.test.ts	17	0
 test/engine-parity/link-reads.test.ts	14	1
@@ -116,6 +116,7 @@ test/engine-parity/oauth-clients.test.ts	17	0
 test/engine-parity/oauth-http.test.ts	2	0
 test/engine-parity/oauth-lifecycle.test.ts	4	0
 test/engine-parity/oauth-revocation.test.ts	4	0
+test/engine-parity/op-checkpoint.test.ts	2	0
 test/engine-parity/open-loops.test.ts	6	0
 test/engine-parity/open-pages.test.ts	3	1
 test/engine-parity/owner-only-reads.test.ts	3	0
@@ -127,11 +128,11 @@ test/engine-parity/page-snapshot-alias.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/pages.test.ts	37	0
 test/engine-parity/persistence-declaration.test.ts	9	2
-test/engine-parity/persistence.test.ts	58	1
+test/engine-parity/persistence.test.ts	59	0
 test/engine-parity/person-duplicates.test.ts	5	0
 test/engine-parity/private-page-reads.test.ts	25	0
 test/engine-parity/raw-sql.test.ts	0	4
-test/engine-parity/reason-tombstones.test.ts	2	0
+test/engine-parity/reason-tombstones.test.ts	3	0
 test/engine-parity/referrer-reads.test.ts	5	0
 test/engine-parity/relational-reads.test.ts	4	0
 test/engine-parity/remote-policy.test.ts	2	0
@@ -147,7 +148,7 @@ test/engine-parity/session-state.test.ts	7	0
 test/engine-parity/shared-skill-members.test.ts	10	1
 test/engine-parity/source-last-commit.test.ts	1	0
 test/engine-parity/source-order-callers.test.ts	2	3
-test/engine-parity/source-resolver-reads.test.ts	20	0
+test/engine-parity/source-resolver-reads.test.ts	27	0
 test/engine-parity/spend-log.test.ts	10	0
 test/engine-parity/stats-vectors.test.ts	3	0
 test/engine-parity/stats.test.ts	9	0
@@ -155,6 +156,7 @@ test/engine-parity/sweep-reads.test.ts	2	1
 test/engine-parity/sync-aliases.test.ts	10	0
 test/engine-parity/sync-requests.test.ts	3	0
 test/engine-parity/sync-route.test.ts	6	0
+test/engine-parity/sync-run.test.ts	1	0
 test/engine-parity/take-held-rows.test.ts	2	0
 test/engine-parity/take-trust-fields.test.ts	7	0
 test/engine-parity/take-trust-reads.test.ts	3	0
@@ -172,7 +174,7 @@ test/engine-parity/traversal-cache.test.ts	7	0
 test/engine-parity/trust-fence.test.ts	4	0
 test/engine-parity/trust-proposals.test.ts	4	1
 test/engine-parity/trust-reads.test.ts	13	0
-test/engine-parity/trust-tier-reads.test.ts	19	3
+test/engine-parity/trust-tier-reads.test.ts	21	1
 test/engine-parity/trust-withdrawals.test.ts	6	0
 test/engine-parity/trust-write-gate.test.ts	5	1
 test/engine-parity/typed-config-reads.test.ts	3	0
@@ -180,7 +182,7 @@ test/engine-parity/unrestricted-caller-reads.test.ts	2	0
 test/engine-parity/unrestricted-fact-list-reads.test.ts	2	0
 test/engine-parity/unrestricted-member-page-reads.test.ts	1	0
 test/engine-parity/valid-time-member-reads.test.ts	3	0
-test/engine-parity/versions-raw.test.ts	12	0
+test/engine-parity/versions-raw.test.ts	13	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/wanted-markers.test.ts	3	0
 test/engine-parity/whoami-embedding-fix.test.ts	1	0

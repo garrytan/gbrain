@@ -126,6 +126,15 @@ export interface ReconcilePlan {
 }
 
 /**
+ * Rows in slug byte order. The page reads a sync plans from (listSourcePathPages, readRenameIdentityRows) carry no
+ * ORDER BY, so each engine answers in its own order (heap order on Postgres and PGLite, slug order in the Rust store);
+ * sorting here makes the delete plan and the rename-identity pick the same on every engine.
+ */
+export function inSlugByteOrder<T extends { slug: string }>(rows: readonly T[]): T[] {
+  return [...rows].sort((a, b) => Buffer.compare(Buffer.from(a.slug, 'utf8'), Buffer.from(b.slug, 'utf8')));
+}
+
+/**
  * #2828: decide which file-backed pages a full-sync reconcile should delete, and
  * whether that deletion is suspiciously large. Pure and exported so both the
  * separator normalization and the mass-delete valve are unit-testable without a

@@ -7,8 +7,8 @@ last_sync_at: null, config: { federated: true } }`. A row is PGLite's `SourceRow
 `incarnation` (a UUID that changes when a source is deleted and created again), with
 `last_sync_at` as an ISO string. The record also keeps the source's `chunker_version` stamp, absent
 until the first stamp; the import members read and write it ([import-members.md](import-members.md)).
-It keeps the `last_commit` and `newest_content_at` the sync anchor last advanced, absent before the
-first advance; `getSource`, `listSourceRecords` and the notifier reads return them.
+It keeps the sync anchor too: `last_commit` and `newest_content_at`, absent until the first sync
+advances them. Records written before these fields existed read them as absent.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -21,10 +21,18 @@ first advance; `getSource`, `listSourceRecords` and the notifier reads return th
 | `brain.advanceSourceCommit(id, commit, setNewest, newestContentAt)` | nothing; one write that sets `last_commit` and `last_sync_at` (the process clock), and `newest_content_at` when `setNewest` is true (`null` clears it); archived sources advance too, and an unknown source changes nothing | `advanceSourceCommit` (the sync anchor) |
 | `brain.readSourceLastCommit(id)` | the source's `last_commit`, archived sources included, or `null` before a sync and for a missing source | `readSourceLastCommit` (the resident notifier's `lastCommit`) |
 | `brain.countRepoBoundSources()` | `number`, the sources that are not archived and have a non-empty `local_path` | `countRepoBoundSources` (the readiness sync probe) |
+| `brain.listSourcePathPages(sourceId)` | `{ slug, source_path }[]`, the source's live pages that record a source path, in slug byte order | `listSourcePathPages` (the full sync's stale-page reconcile) |
+| `brain.readRenameIdentityRows(sourceId, paths, slugs)` | `{ slug, source_path, title }[]`, the source's live pages whose source path is in `paths` or slug in `slugs`, in slug byte order | `readRenameIdentityRows` (a sync's rename confirmation) |
+| `brain.readLiveIdentityHolders(sourceId, ids, titles)` | `{ slug, source_path, fm_id, title }[]`, the source's live pages whose frontmatter `id` (a string as is, any other value as its JSON text) is in `ids` or title in `titles`, in slug byte order | `readLiveIdentityHolders` (a sync's rename confirmation) |
+| `brain.readPageIdentity(pageId)` | `{ fm_id, title }` of a live page, or `null` | `readPageIdentity` (a held rename decided again) |
 | `brain.holdPageEmbedding(pageId, reason)` | `null`; sets the page's embedding hold to `{ state: 'held', reason }`, replacing a held reason; an unknown page id refuses `page_not_found`; a hard page delete drops the hold | `holdPageEmbedding` (page-embedding-budget.ts) |
 | `brain.readReasonPurgeTombstones(sourceId, pair)` | `{ commit_sha, path }[]`, the source's purged change-reason pairs by commit then path, or only `pair` (when not `null`) if it is stored | `readReasonPurgeTombstones` (`reason_purge_tombstones`) |
 | `brain.writeReasonPurgeTombstones(sourceId, pairs)` | `number`, the pairs added; a stored or repeated pair adds nothing; an unknown source refuses `source_not_found` and stores nothing; a source delete drops its pairs | `writeReasonPurgeTombstones` (facts purge) |
+| `brain.advanceSourcePurgeEpoch(sourceId)`, `brain.readSourcePurgeEpoch(sourceId)` | `number`, the source's purge epoch after adding one / as stored (0 before any purge); `null` for an unknown source, which changes nothing | `advanceSourcePurgeEpoch` (`belief/purge.ts` `bumpPurgeEpoch`), `readSourcePurgeEpoch` (`reason-trailers.ts` `cachedSyncReasonScan`, `readLedgerSource`) |
 | `brain.countSourcePages(sourceId, includeDeleted)` | `number`, the source's pages; soft-deleted pages count only with `includeDeleted`; an unknown source has none | `countSourcePages` (`sources list`, `status`, `remove`) |
+| `brain.advanceSourceCommit(sourceId, commit, setNewest, newestContentAt)` | `undefined`; sets `last_commit` and stamps `last_sync_at` now; with `setNewest` also sets `newest_content_at` (an ISO time, or `null` to clear it); an unknown source changes nothing | `advanceSourceCommit` (`writeSyncAnchor` of `src/core/sync-anchor.ts`) |
+| `brain.writeSourceSyncHeartbeat(sourceId)` | `undefined`; sets `last_sync_at` to the store clock and leaves `last_commit` alone; an unknown source changes nothing | `writeSourceSyncHeartbeat` (the 0-change sync heartbeat in preflight) |
+| `brain.writeSourceUpstreamObservation(sourceId, checkedAt, commit, behind)` | `undefined`; sets `upstream_checked_at` (an ISO time; anything else refuses `invalid`), `upstream_commit` and `upstream_behind` (null allowed); an unknown source changes nothing | `writeSourceUpstreamObservation` (`recordUpstreamObservation`, after every sync) |
 
 `upsertSource` and `setSourceArchived` are not in PGLite's engine interface; the store needs a way
 to make a source, and the page methods below are source-scoped.
@@ -54,6 +62,9 @@ The source members below behave differently on the Rust engine. Each difference 
   with `FOR UPDATE`; no parity case checks that lock.
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one
   `readSourceIncarnation` call per source.
+- `advanceSourceCommit` stamps `last_sync_at` with the process clock. The SQL engines use the
+  database clock (`now()`). `getSource`, `readPlainSyncSource` and `listSourceRecords` read the
+  stored `last_commit`; `listSourceRecords` also reads the stored `newest_content_at`.
 - The store keeps only the `state` and `reason` of a page's `page_embedding_budget` row
   (`holdPageEmbedding`, key tag `2`). The spend columns (signature, spent, reserved, cap) have no
   record: the embedding plan that writes them still runs raw SQL and refuses on this engine.

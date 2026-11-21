@@ -8,9 +8,12 @@
  *    nothing; no pairs add nothing; an unknown source throws and stores nothing. A read returns the source's pairs
  *    (never another source's), or only the asked pair when it is stored. A sync's reason scan drops the reason of a
  *    tombstoned pair and keeps the others.
+ *    A purge advances the source's purge epoch (`advanceSourcePurgeEpoch`, through `bumpPurgeEpoch`), so the next
+ *    cached reason scan of the same range scans again and drops the reason the purge tombstoned.
  *  - Regression: an engine that forgets a tombstone (a later sync then stamps the purged reason again), counts a
  *    duplicate as added, leaks another source's pairs into the scan, or refuses the read (the Rust engine refused it
- *    as raw SQL, which stopped every incremental sync).
+ *    as raw SQL, which stopped every incremental sync). An engine whose purge epoch stays put (the Rust engine read
+ *    it as 0 always), so a sync after a purge reuses the scan cached before it and stamps the purged reason.
  *  - Why existing coverage misses it: the reason-trailer tests run on PGLite and Postgres only.
  *  - Seam: none. Real engines, typed members only, and a real temp Git repository for the scan.
  */
@@ -19,7 +22,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanSyncReasons } from '../../src/core/reason-trailers.ts';
+import { bumpPurgeEpoch } from '../../src/core/belief/purge.ts';
+import { cachedSyncReasonScan, clearReasonScanCache, scanSyncReasons } from '../../src/core/reason-trailers.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -97,6 +101,32 @@ describe('engine parity: purged change-reason tombstones', () => {
     const reasons = Object.fromEntries([...(scan?.byPath ?? new Map()).entries()].map(([path, d]) => [path, d.reason]));
     const result = { status: scan?.status ?? null, reasons };
     expect(result).toEqual({ status: 'complete', reasons: { 'notes/a.md': null, 'notes/b.md': 'Added the second note.' } });
+    return result;
+  });
+
+  parityTest('a purge between two syncs advances the purge epoch, so the second sync scans again and drops the purged reason', {
+    methods: ['advanceSourcePurgeEpoch', 'readSourcePurgeEpoch', 'writeReasonPurgeTombstones', 'readReasonPurgeTombstones'],
+  }, async (engine, backend) => {
+    clearReasonScanCache();
+    const { root, sha } = repoWithReasons();
+    await createSource(engine, backend, 'repo', {}, root);
+    const reasonsOf = async () => {
+      const scan = await cachedSyncReasonScan(engine, { sourceId: 'repo', sourceRoot: root, from: null, to: sha });
+      return Object.fromEntries([...(scan?.byPath ?? new Map()).entries()].map(([path, d]) => [path, d.reason]));
+    };
+    const epochOf = async (id: string) => { const epoch = await engine.readSourcePurgeEpoch(id); return epoch === null ? null : Number(epoch); };
+    const before = { epoch: await epochOf('repo'), reasons: await reasonsOf() };
+    // The purge's storage effects, as facts/purge.ts makes them in one transaction: the epoch bump, then the tombstone.
+    const bumped = await bumpPurgeEpoch(engine, 'repo');
+    await engine.writeReasonPurgeTombstones('repo', [{ commit_sha: sha, path: 'notes/a.md' }]);
+    const after = { epoch: await epochOf('repo'), reasons: await reasonsOf() };
+    const result = { before, bumped, after, again: await bumpPurgeEpoch(engine, 'repo'), unknown: await bumpPurgeEpoch(engine, 'missing'), unknownEpoch: await epochOf('missing') };
+    expect(result).toEqual({
+      before: { epoch: 0, reasons: { 'notes/a.md': 'Rewrote the intro.', 'notes/b.md': 'Added the second note.' } },
+      bumped: 1,
+      after: { epoch: 1, reasons: { 'notes/a.md': null, 'notes/b.md': 'Added the second note.' } },
+      again: 2, unknown: 0, unknownEpoch: null,
+    });
     return result;
   });
 });
