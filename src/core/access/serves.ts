@@ -35,7 +35,7 @@ export async function brainServes(engine: Pick<BrainEngine, 'getConfig' | 'listA
 export interface PeopleFolder { source: string; prefix: string; pages: number }
 
 /** Top-level people/<x>/ folders holding pages that no applied rule covers (a rule on people/<x>/ or on people/). */
-export async function unlabeledPeopleFolders(engine: Pick<BrainEngine, 'executeRaw'>): Promise<PeopleFolder[]> {
+export async function unlabeledPeopleFolders(engine: Pick<BrainEngine, 'executeRaw' | 'listAccessRules'>): Promise<PeopleFolder[]> {
   const folders = await engine.executeRaw<{ source_id: string; folder: string; pages: number }>(
     `SELECT source_id, split_part(slug, '/', 2) AS folder, count(*)::int AS pages FROM pages
       WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY 1, 2`);

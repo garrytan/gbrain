@@ -278,24 +278,13 @@ export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityB
 
 /**
  * Fixture: put a folder access rule (`kind: 'rule'`) or a pending coverage prefix (`kind: 'pending'`) on `prefix` of a
- * source, so the folder-restriction read has something to find. Harness-only SQL behind the backend switch.
+ * source, so the folder-restriction read has something to find. Every arm writes through the typed policy members
+ * (engine-sql/access-policy.ts; gbrain-store `access_rules` on Rust): the policy row, then the rule or the prefix.
  */
-export async function restrictFolder(engine: BrainEngine, backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending'): Promise<void> {
-  switch (backend) {
-    // The Rust arm has no access-rule store yet; the same SQL stops on the engine's typed raw_sql refusal.
-    case 'rust':
-    case 'pglite':
-    case 'postgres':
-      await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [sourceId]);
-      if (kind === 'rule') {
-        await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES ($1, 'parity-rule', $2, ARRAY['member:parity'], 1)`, [sourceId, prefix]);
-      } else {
-        await engine.executeRaw(`INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ($1, $2, 'pending')`, [sourceId, prefix]);
-      }
-      return;
-    default:
-      return assertNever(backend);
-  }
+export async function restrictFolder(engine: BrainEngine, _backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending'): Promise<void> {
+  await engine.ensureAccessPolicyState(sourceId);
+  const rule = { rule_id: 'parity-rule', prefix, readable_by: ['member:parity'], covers_derived: true };
+  await engine.applyAccessRuleChanges(sourceId, { remove: [], insert: kind === 'rule' ? [rule] : [], pending: kind === 'pending' ? [prefix] : [], revision: 1, actor: 'parity' });
 }
 
 /**

@@ -110,10 +110,9 @@ describe('the open-page count', () => {
     return { all, excluded, ownerOnly, none, missing, closed };
   });
 
-  // The Rust store keeps no folder rules or pending prefixes (rust/docs/store/access_rules.md), so the fixture stops on
-  // the raw_sql refusal there; the SQL arms show a covered page leaves the count.
+  // Every arm writes the rule through the typed policy members (rust/docs/store/access_rules.md on Rust).
   parityTest('the count leaves out a page under an applied folder rule', {
-    methods: ['countOpenPages', 'executeRaw'], requires: 'raw_sql',
+    methods: ['countOpenPages', 'ensureAccessPolicyState', 'applyAccessRuleChanges'],
   }, async (engine, backend) => {
     await seedPages(engine, backend, () => restrictFolder(engine, backend, 'default', 'notes/', 'rule'));
     const all = byJson(await inOpenScope(engine, () => engine.countOpenPages(['default', 'team'], [])));
@@ -223,7 +222,8 @@ describe('the reports built on the count, on a brain with no member', () => {
 describe('the Rust arm still refuses gbrain access serves several', () => {
   // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine and pin the exact refusal:
   // each pin fails when Rust stops refusing, and its loss row must then leave docs/designs/RUST_ENGINE.md.
-  const RAW_SQL_REFUSAL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
+  // The first read of the label pass that Rust does not serve yet; row 32b-2 serves the pass.
+  const LABEL_REFUSAL = "This brain's engine does not support listUnarchivedSourceIds yet (it needs the facts capability), so nothing ran.";
   const refusal = async (run: () => Promise<unknown>) => {
     try {
       await run();
@@ -233,13 +233,13 @@ describe('the Rust arm still refuses gbrain access serves several', () => {
     }
   };
 
-  test('loss: gbrain access serves several stops on the raw_sql refusal, in its preview and with --yes', async () => {
+  test('loss: gbrain access serves several stops on a typed refusal, in its preview and with --yes', async () => {
     const rust = arms().find((arm) => arm.backend === 'rust');
     if (!rust) return;
     await resetArm(rust);
     await rust.engine.setConfig('access.serves', 'several');
-    expect(await refusal(() => labelSeveral(rust.engine, ['alice-example'], 'default', false, true))).toEqual({ code: 'engine_capability_missing', message: RAW_SQL_REFUSAL });
-    expect(await refusal(() => labelSeveral(rust.engine, ['alice-example'], 'default', true, true))).toEqual({ code: 'engine_capability_missing', message: RAW_SQL_REFUSAL });
+    expect(await refusal(() => labelSeveral(rust.engine, ['alice-example'], 'default', false, true))).toEqual({ code: 'engine_capability_missing', message: LABEL_REFUSAL });
+    expect(await refusal(() => labelSeveral(rust.engine, ['alice-example'], 'default', true, true))).toEqual({ code: 'engine_capability_missing', message: LABEL_REFUSAL });
     expect(await rust.engine.listActiveAccessMembers()).toEqual([]);
   });
 });

@@ -68,8 +68,8 @@ PGLite adds `privatePagesFilterForCaller('p')` (`src/core/search/private-visibil
 The store copies it with `page_hidden` (`facts/privacy.rs`), lane 4's private-provenance rules applied to the read's
 own page: a page is hidden when it names readers, when a non-plain page's origin names readers, or, with
 `entityPrivacy`, when its snapshot, derived origin or declared lineage is private (the rules table in
-[facts.md](facts.md#private-provenance-policy-factsprivacyrs)). The store keeps no folder rules or pending folder
-coverage, so `folder_rule_ids IS NULL` and the `access_pending_coverage` clause always pass there. The filter drops a
+[facts.md](facts.md#private-provenance-policy-factsprivacyrs)). Folder rules and pending
+prefixes are judged as the policy's folder test does ([access_rules.md](access_rules.md)). The filter drops a
 page before `getRecentSalience` ranks and limits.
 
 The member (`store-members/private-provenance.ts` `storePagePolicy`) renders `privatePagesFilterForCaller('p')` in

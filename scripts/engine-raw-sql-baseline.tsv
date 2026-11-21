@@ -6,7 +6,6 @@
 src/cli/enforced-commit-push.ts	execute_raw	1
 src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	1
-src/commands/access-rules.ts	execute_raw	4
 src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/commands/access.ts	execute_raw	1
 src/commands/agent-logs.ts	execute_raw	1
@@ -226,7 +225,6 @@ src/core/access/members.ts	sql_template	1
 src/core/access/open-pages.ts	execute_raw	1	the statement timeout bounded() sets on a Postgres transaction (SET LOCAL statement_timeout); PGLite and the Rust engine never run it
 src/core/access/open-twins.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
-src/core/access/policy.ts	execute_raw	31
 src/core/access/requester-scope.ts	execute_raw	3
 src/core/access/room.ts	execute_raw	2
 src/core/access/serves.ts	execute_raw	1

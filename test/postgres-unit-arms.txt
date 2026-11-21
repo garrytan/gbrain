@@ -150,6 +150,7 @@ test/enforced-member.serial.test.ts
 test/engine-parity/access-flag.test.ts
 test/engine-parity/access-members.test.ts
 test/engine-parity/access-reports.test.ts
+test/engine-parity/access-rules.test.ts
 test/engine-parity/access-tokens.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts

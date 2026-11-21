@@ -61,7 +61,7 @@ const PINNED = {
 const TABLES: Record<string, boolean> = {
   pages: true, // read_page / read_page_by_id
   sources: true, // OwnerOnlySources
-  access_pending_coverage: false, // the store keeps no access rules or pending coverage: empty
+  access_pending_coverage: true, // pending_covers (access_rules.rs)
   slug_aliases: true, // read_slug_alias (aliases.rs)
   slug_rename_history: true, // renamed_to (aliases.rs)
   jsonb_array_elements_text: true, // declared_slugs
@@ -70,9 +70,9 @@ const TABLES: Record<string, boolean> = {
 const FUNCTIONS: Record<string, boolean> = {
   gbrain_access_origin_restricted: true, // origin_restricted
   gbrain_access_state_unreadable: false, // the store keeps no access state: never unreadable
-  gbrain_access_folder_rules: false, // no folder rules
-  gbrain_access_lineage_rules: false, // no folder rules
-  gbrain_access_pending_covers: false, // no pending coverage
+  gbrain_access_folder_rules: true, // stamped_rules / folder_rules (access_rules.rs)
+  gbrain_access_lineage_rules: true, // origin_closed: the stamped rules that cover derived pages
+  gbrain_access_pending_covers: true, // pending_covers (access_rules.rs)
 };
 const KEYS = ['access', 'captured_via', 'confidentiality', 'derived_from', 'event', 'pinned_question', 'readable_by', 'source_slug', 'synthesized_by', 'visibility'];
 

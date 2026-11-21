@@ -8,7 +8,8 @@
  * fresh record of only a reader identity and a private-readable grant (`page_hidden` in facts/privacy.rs). The member
  * renders the PGLite fragment over `p` in the current context and serves the read only when it equals one of those:
  * the `read` part through storePageTextPolicy, the `access` part (member access alone) here, with the privacy part
- * off. Any other caller (folder rules, an audience, lineage, a labelled-only grant) refuses with
+ * off. The `read` part also serves the caller's satisfied folder rules and folder coverage. Any other caller (an
+ * audience, lineage, a labelled-only grant, and folder access in the `access` part) refuses with
  * `engine_capability_missing`, before any read.
  *
  * The store keeps no OAuth clients, so an OAuth client's fence refuses; a local writer's fence is its stored grant

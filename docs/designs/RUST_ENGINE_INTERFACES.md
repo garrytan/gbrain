@@ -171,6 +171,7 @@ Reserved tags:
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
 | access_members | `x` | `ACCESS_MEMBERS` | no |
+| access_rules | `z` | `ACCESS_RULES` | no |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -1787,8 +1788,8 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   - Withdrawal: `insertFactWithdrawal`, `isFactWithdrawn` (one member for the current and v1 forms), `isFactPurged`,
     `planFactWithdrawal`, `listWithdrawals` (one filtered list for the discovery, dates and export readers),
     `hasSourcePurges`, `readFactCacheWatermark` (the hot-memory cache watermark: the source's withdrawal count, the
-    newest withdrawal in UTC with microseconds, and the folder access digest, which the store reports as the digest of
-    two empty tables because it keeps no folder rules; the newest withdrawal is UTC ISO text, not `::text`, which
+    newest withdrawal in UTC with microseconds, and the folder access digest of the store's rules and pending prefixes
+    (`access_rules::folder_access_digest`, the same md5 text as the SQL); the newest withdrawal is UTC ISO text, not `::text`, which
     followed the session time zone; the text is a cache key only, so no answer changed).
   - Review: `insertWithdrawReviewItem`, `countPurgeReviewQueueRefs`.
   - Beliefs (`belief_ledger`): `readCoverageIntervals`, `listCoveredSources`, `readOpenLifetimes`,

@@ -45,7 +45,7 @@ mod collapse;
 pub mod contest;
 pub mod cycle;
 pub mod doctor;
-mod embedding;
+pub(crate) mod embedding;
 pub mod extractor_classify;
 mod fence;
 mod fence_overlay;
@@ -80,8 +80,8 @@ pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{
-    OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs,
-    hidden_by_provenance_page, page_hidden, page_hidden_with, version_hidden,
+    OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs, folder_restricted,
+    hidden_by_provenance_page, page_hidden, page_hidden_with, stamped_rules, version_hidden,
 };
 pub use widen::VisibilityWidening;
 use widen::{visibility_admits, world_admits};

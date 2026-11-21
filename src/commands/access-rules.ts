@@ -22,12 +22,12 @@ import type { BrainEngine } from '../core/engine.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { opError } from '../core/ops/contract.ts';
-import { classifyRulebook, coversDerived, folderRulesAllow, normalizeRule, ruleCovers, ruleCoversSql, parsePolicyYaml, serializePolicyYaml, sortRules, type FolderRule, type RuleChange } from '../core/access/folder-rules.ts';
+import { classifyRulebook, coversDerived, folderRulesAllow, normalizeRule, ruleCovers, parsePolicyYaml, serializePolicyYaml, sortRules, type FolderRule, type RuleChange } from '../core/access/folder-rules.ts';
 import { folderHoldingSlug, UNATTRIBUTED_MEMORY_SLUG } from '../core/facts-fence.ts';
 import { heldRowsInVersions } from '../core/facts/fence-fact-append.ts';
 import { identityFor } from '../core/access/principals.ts';
 import { ruleReadByNobodyLines } from './access-read-by-nobody.ts';
-import { openTwins, openTwinsLines, OPEN_TWINS_PAGES, type OpenTwins } from '../core/access/open-twins.ts';
+import { openTwins, openTwinsLines, type OpenTwins } from '../core/access/open-twins.ts';
 import { boundCredentials, listGroups, listMembers } from '../core/access/members.ts';
 import { ownerReadsRestrictedOn, ownerView, readersOmitOwnerError, readersOwner } from '../core/access/owner.ts';
 import {
@@ -147,15 +147,13 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
   const prefixes = [...new Set(cls.changes.map(c => c.prefix).concat(cls.changes.map(c => current.find(r => r.id === c.rule)?.prefix ?? c.prefix)))];
   const matched: Record<string, number> = {};
   for (const prefix of prefixes) {
-    const [row] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')}`, [sourceId, prefix]);
-    matched[prefix] = Number(row?.n ?? 0);
+    matched[prefix] = await engine.countRuleCoveredPages(sourceId, prefix);
   }
   const members = await listMembers(engine, { includeRemoved: true });
   const groups = new Set((await listGroups(engine)).map(g => g.id));
   const known = (p: string) => p.startsWith('group:') ? groups.has(p.slice(6)) : members.some(m => m.id === p.slice(7) && m.status !== 'removed');
   const unknown = [...new Set(desired.flatMap(r => r.readable_by))].filter(p => !known(p)).map(reader).sort();
-  const slugs = prefixes.length ? (await engine.executeRaw<{ slug: string }>(
-    `SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE ${ruleCoversSql('slug', 'pfx')})`, [sourceId, prefixes])).map(r => r.slug) : [];
+  const slugs = prefixes.length ? await engine.listRuleCoveredSlugs(sourceId, prefixes) : [];
   const losing: string[] = [];
   for (const m of members.filter(x => x.status === 'enabled')) {
     const identity = identityFor(m.id, m.groups);
@@ -194,17 +192,16 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
   const twins: OpenTwins = { count: 0, twins: [], commands: [] };
   const ruleOwner = (await readersOwner(engine)).owner;
   for (const rule of cls.changes.filter(c => c.narrowing).map(c => cls.target.find(r => r.id === c.rule)).filter(r => r !== undefined)) {
-    const covered = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT source_id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')} ORDER BY slug LIMIT ${OPEN_TWINS_PAGES}`, [sourceId, rule.prefix]);
+    const covered = await engine.listRuleCoveredPages(sourceId, rule.prefix);
     const found = await openTwins(engine, covered, rule.readable_by,
       source => `gbrain access rule add ${rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${rule.prefix} --readers ${rule.readable_by.map(reader).join(',')}${ruleOwner && !rule.readable_by.includes(`member:${ruleOwner}`) ? ' --allow-without-owner' : ''} --source ${source}`);
     Object.assign(twins, { count: twins.count + found.count, twins: [...twins.twins, ...found.twins], commands: [...twins.commands, ...found.commands] });
   }
   const owner = await ownerReadsRestrictedOn(engine) ? (await ownerView(engine)).owner : null;
   const covering = [...new Set(cls.target.filter(r => !current.some(c => c.id === r.id && c.prefix === r.prefix)).map(r => r.prefix))].sort();
-  const [ownerPages] = owner && covering.length ? await engine.executeRaw<{ n: number }>(
-    `SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE ${ruleCoversSql('slug', 'pfx')})`, [sourceId, covering]) : [];
+  const ownerPages = owner && covering.length ? await engine.countRuleCoveredPages(sourceId, covering) : 0;
   return { source_id: sourceId, store, store_persisted: persisted, expect, desired, changes: cls.changes, held: cls.held, matched_pages: matched,
-    ...(owner && covering.length ? { owner_reads_pending: { owner, pages: Number(ownerPages?.n ?? 0), prefixes: covering } } : {}),
+    ...(owner && covering.length ? { owner_reads_pending: { owner, pages: ownerPages, prefixes: covering } } : {}),
     unknown_readers: unknown, members_losing: losing, credentials_losing: credentials, held_facts_moving: moving,
     held_struck_rows_leaving: plan.groups.reduce((n, g) => n + (g.note === 'moved' ? g.struck.length : 0), 0),
     held_versions_editing: { rows: edits.reduce((n, p) => n + p.rows, 0), versions: edits.reduce((n, p) => n + p.versions, 0),

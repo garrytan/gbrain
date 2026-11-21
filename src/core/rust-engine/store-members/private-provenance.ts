@@ -18,8 +18,9 @@
  * A page family that opts in with `callerReaders` also serves a caller whose record holds only a reader identity
  * (its member id and groups) and a private-readable grant: the member renders the page policy for a fresh record of
  * just those two, and when the caller's text equals it, the store reads the identity and the granted sources from
- * the policy (`readers_allowed` and `orPrivateReadableSource` in privacy.rs). Folder rules, pending coverage,
- * audiences, lineage, owner reads (whose text has no owner-only test), labelled-only grants and relaxed reads still refuse.
+ * the policy (`readers_allowed` and `orPrivateReadableSource` in privacy.rs). For a page policy that record also holds
+ * the caller's satisfied folder rules and folder coverage, which the store judges against its own rules (row 32b-1).
+ * Audiences, lineage, owner reads (whose text has no owner-only test), labelled-only grants and relaxed reads still refuse.
  *
  * Every text the store serves ends with the owner-only test (access/owner-only.ts), in the `fn` or the `closed` form
  * by the schema version the context carries; `ownerOnly` sends the form the text holds (owner_only.rs).
@@ -73,6 +74,15 @@ export interface StorePrivacyPolicy {
    * (`access.restrictions_present`) decides the rest (`open` in privacy.rs).
    */
   open?: boolean;
+  /** The folder rules the caller satisfies (`CallerAccess.satisfiedRuleIds`, `source:rule_id`); a page under only these passes. */
+  satisfiedRuleIds?: string[];
+  /** The prefixes the caller's record reads as nobody (`CallerAccess.folderCoverage`): a page under one is hidden. */
+  folderCoverage?: { source_id: string; prefix: string }[];
+  /**
+   * The text is a caller record's rendering: `folderCoverage` is the whole pending test (`coverageSql` inside a record
+   * renders no live conjunct), so a prefix the store holds pending that the record does not name hides nothing.
+   */
+  callerRecord?: boolean;
 }
 
 /** `OwnerOnlyForm` (access/owner-only.ts), plus 'off' for a text with no owner-only test (`OwnerOnlyForm` in owner_only.rs). */
@@ -231,8 +241,19 @@ export function storePageTextPolicy(
     const access = currentCallerAccess();
     const readers = opts.noReaders ? { identity: [], privateReadableSources: [] }
       : { identity: [...access.identity], privateReadableSources: [...access.privateReadableSources] };
-    const canonical = renderForStoreCaller({ ...readers, hidePrivate: true, restricted: !open }, () => privatePagesFilterForCaller('p'));
-    if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...readers, ...openFlag };
+    // The caller's folder access (satisfied rules, pending prefixes) is part of its record; the store judges both.
+    const folders = opts.noReaders ? { satisfiedRuleIds: [], folderCoverage: [] } : {
+      satisfiedRuleIds: [...access.satisfiedRuleIds],
+      folderCoverage: access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })),
+    };
+    const canonical = renderForStoreCaller({ ...readers, ...folders, hidePrivate: true, restricted: !open }, () => privatePagesFilterForCaller('p'));
+    if (text === normalizeConceptInputs(canonical)) {
+      const stored = {
+        ...(folders.satisfiedRuleIds.length ? { satisfiedRuleIds: folders.satisfiedRuleIds } : {}),
+        ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
+      };
+      return { ...pagePolicyFlags(canonical), ...readers, ...stored, callerRecord: true, ...openFlag };
+    }
   }
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
 }

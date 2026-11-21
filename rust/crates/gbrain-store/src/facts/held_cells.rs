@@ -120,7 +120,9 @@ fn page_keeps_private(read: &dyn KvRead, source: &str, slug: &str, entity: bool)
     let row = read_page(read, source, slug)?;
     // Both alias forms are derivation-private (`derivationPrivateSql` ORs `privacyAliasSql`), so the alias setting
     // does not change the answer.
-    if row.as_ref().is_some_and(|p| derivation_private(p, true)) {
+    if let Some(p) = &row
+        && derivation_private(read, p, true)?
+    {
         return Ok(true);
     }
     if entity {

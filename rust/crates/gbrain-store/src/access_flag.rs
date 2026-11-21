@@ -23,8 +23,12 @@
 //! on every write of a page that has `readable_by`. The flag is sticky, so the two differ only
 //! after an operator unsets the flag by hand, and then the store sets it again sooner.
 //!
-//! The other trigger, `access_members_mark_restricted`, is the member insert of
-//! `access_members.rs`, which sets the flag in the same write. See `rust/docs/store/access-flag.md`.
+//! The trigger `access_members_mark_restricted` is the member insert of `access_members.rs`, which
+//! sets the flag in the same write. The folder triggers `access_rules_mark_restricted` and
+//! `access_pending_coverage_mark_restricted` are the write handle too: a put of a folder rule or a
+//! pending prefix (`access_rules.rs`) sets the flag, and a page record put under a new key takes the
+//! rule ids that cover it (`access_policy::stamp_page_put`, the trigger
+//! `pages_access_stamp_folder_rules`). See `rust/docs/store/access-flag.md`.
 
 use crate::error::{INVALID_STATE, Result, StoreError};
 use crate::keys;
@@ -159,8 +163,19 @@ impl KvRead for FlaggingWriter<'_> {
 
 impl KvWrite for FlaggingWriter<'_> {
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
+        let page = is_page_record(key);
+        let prior = if page {
+            self.0
+                .get(key)?
+                .and_then(|v| crate::access_policy::page_record_id(&v))
+        } else {
+            None
+        };
         self.0.put(key, value)?;
-        if is_page_record(key) && record_names_readers(value) {
+        if page {
+            crate::access_policy::stamp_page_put(self.0, prior, value)?;
+        }
+        if (page && record_names_readers(value)) || crate::access_rules::marks_restricted(key) {
             set_flag(self.0)?;
         }
         Ok(())

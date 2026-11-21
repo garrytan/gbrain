@@ -11,14 +11,14 @@
 //! `readWriteVisibilityProbe` is the one read a remote page write opens its visibility check with:
 //! whether any access member, of any status, is labelled-only (`access_members.rs`), whether
 //! a reader identity could open the page the empty-identity policy hides (none when no row is
-//! hidden; else whether the row names readers, since the store keeps no folder rules), and whether
+//! hidden; else whether the row names readers or a folder rule is stamped on it), and whether
 //! the page's source or any source is owner-only (`config ->> 'kind'` is `imessage`, or
 //! `config ->> 'owner_only'` is `true`).
 //!
 //! `listWhoCanReadPages` is the page read `gbrain access who-can-read` opens with
 //! (`engine-sql/access-setup.ts`): every row with the slug, soft-deleted ones too, in source id
-//! byte order, with `ownerOnlyPageSql` in the form asked for. The store keeps no folder rules, so
-//! `folder_rule_ids` is null.
+//! byte order, with `ownerOnlyPageSql` in the form asked for, and `folder_rule_ids` the stamped rules
+//! (`source:rule_id`), null when none.
 //!
 //! Every page policy PGLite renders for a caller that is not the owner ends with the owner-only test
 //! (`ownerOnlyAllowedSql`); `page_hidden` applies it in the form the policy names (owner_only.rs):
@@ -31,7 +31,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{PrivacyPolicy, page_hidden, stamped_rules};
 use crate::owner_only::{OwnerOnlyForm, OwnerOnlySources, any_owner_only, source_owner_only};
 use crate::owner_only_marks::any_marked;
 use crate::pages::read_page;
@@ -99,12 +99,18 @@ impl Store {
                 continue;
             };
             let hidden = owner_only.page_hidden(&*read, &page, form)?;
+            // `folder_rule_ids`: the stamped rules as `source:rule_id`, by rule id bytes; null when none.
+            let mut ruled: Vec<String> = stamped_rules(&*read, &page)?
+                .into_iter()
+                .map(|r| format!("{}:{}", r.source_id, r.rule_id))
+                .collect();
+            ruled.sort();
             rows.push(WhoCanReadPageRow {
                 slug: page.slug,
                 source_id: page.source_id,
                 page_type: page.page_type,
                 frontmatter: page.frontmatter,
-                folder_rule_ids: None,
+                folder_rule_ids: (!ruled.is_empty()).then_some(ruled),
                 owner_only: hidden,
             });
         }
@@ -124,7 +130,11 @@ impl Store {
         let owner_only_any = any_owner_only(&*read)? || any_marked(&*read)?;
         let identity_may_open = match read_page(&*read, source_id, slug)? {
             Some(page) if page_hidden(&*read, &page, policy)? => {
-                Some(page.frontmatter.contains_key("readable_by"))
+                // `page_readers IS NOT NULL OR folder_rule_ids IS NOT NULL`.
+                Some(
+                    page.frontmatter.contains_key("readable_by")
+                        || !stamped_rules(&*read, &page)?.is_empty(),
+                )
             }
             _ => None,
         };

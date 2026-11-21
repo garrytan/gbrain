@@ -30,6 +30,7 @@ use super::page_purges::source_purges;
 use super::{FactRecord, fact_fingerprint, ids_under, refs_prefix, source_rows};
 use crate::Store;
 use crate::error::Result;
+use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::{PageRecord, read_page};
 use crate::timeline_queries::jsonb_field_text;
@@ -359,8 +360,8 @@ impl Store {
     /// `listWorldFactsFromPrivateSources(sourceIds, ids)`: the active `world` facts held in (`h`),
     /// or extracted from (`o`, the page `factProvenanceSlugSql` names), a page that is private by
     /// its visibility, a privacy alias or a `readable_by` list. `readable` is whether the holding
-    /// page passes `privateSnapshotFilterFragment`. A folder rule is not read: the store holds no
-    /// access tables, so no page is folder-restricted. By id.
+    /// page passes `privateSnapshotFilterFragment`. A page under a folder rule or a pending prefix
+    /// is private too (`derivationPrivateSql`). By id.
     pub fn list_world_facts_from_private_sources(
         &self,
         args: &WorldFactArgs,
@@ -386,12 +387,17 @@ impl Store {
                         .filter(|page| page.deleted_at_us.is_none()),
                     None => None,
                 };
-                let held_private = held.as_ref().is_some_and(|page| {
-                    page.deleted_at_us.is_none() && derivation_private(page, args.honor_aliases)
-                });
-                let origin_private = origin
-                    .as_ref()
-                    .is_some_and(|page| derivation_private(page, args.honor_aliases));
+                let held_private = match &held {
+                    Some(page) => {
+                        page.deleted_at_us.is_none()
+                            && derivation_private(&*read, page, args.honor_aliases)?
+                    }
+                    None => false,
+                };
+                let origin_private = match &origin {
+                    Some(page) => derivation_private(&*read, page, args.honor_aliases)?,
+                    None => false,
+                };
                 if !(held_private || origin_private) {
                     continue;
                 }
@@ -671,12 +677,17 @@ fn snapshot_allows(page: &PageRecord, honor_aliases: bool) -> bool {
 }
 
 /// `derivationPrivateSql('h')`: the snapshot filter fails, a privacy alias is set (whether or not
-/// aliases are honoured), the page names readers (`readable_by`), or a folder rule covers it (never
-/// here: the store holds no folder rules).
-pub(crate) fn derivation_private(page: &PageRecord, honor_aliases: bool) -> bool {
-    !snapshot_allows(page, honor_aliases)
+/// aliases are honoured), the page names readers (`readable_by`), or a folder rule or a pending
+/// prefix covers it (`folderRestrictedSql`).
+pub(crate) fn derivation_private(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    honor_aliases: bool,
+) -> Result<bool> {
+    Ok(!snapshot_allows(page, honor_aliases)
         || alias_private(&page.frontmatter)
         || page.frontmatter.contains_key("readable_by")
+        || super::folder_restricted(read, page)?)
 }
 
 #[cfg(test)]

@@ -230,7 +230,7 @@ describe('engine parity: export reads', () => {
   });
 
   // The sources an export of every source writes a folder rulebook for: each source with an access policy, in id
-  // order. A brain with no folder rules lists none (the Rust store keeps none; seeding one stops on its typed refusal).
+  // order. A brain with no folder rules lists none.
   parityTest('listAccessPolicySourceIds lists no source on a brain without folder rules', { methods: ['listAccessPolicySourceIds'] }, async (engine) => {
     return engine.listAccessPolicySourceIds();
   });

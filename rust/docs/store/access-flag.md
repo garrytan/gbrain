@@ -5,8 +5,9 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 `src/core/search/private-visibility.ts` applies the member-access filter only on a brain whose config
 `access.restrictions_present` is `'1'`. PGLite and Postgres set that flag from two triggers that schema migration v282
 creates: `pages_access_mark_restricted` (after a page row is inserted, or its frontmatter is updated, and the new
-frontmatter has a top-level `readable_by` key) and `access_members_mark_restricted` (after an access member is added).
-Nothing clears the flag.
+frontmatter has a top-level `readable_by` key) and `access_members_mark_restricted` (after an access member is added),
+and from two that v283 creates: `access_rules_mark_restricted` and `access_pending_coverage_mark_restricted` (after a
+folder rule or a pending prefix is added). Nothing clears the flag.
 
 The store sets the flag in three places (`crates/gbrain-store/src/access_flag.rs`), so no page record with
 `readable_by` sits in the store while the flag is unset:
@@ -14,8 +15,10 @@ The store sets the flag in three places (`crates/gbrain-store/src/access_flag.rs
 - the page write hook: `pages::write_page` calls `access_flag::mark_restricted` in the same write as the page record;
 - every store write handle: `Store::write` hands its closure an `access_flag::FlaggingWriter`, which sets the flag
   on the put of a page record (key family `P`) whose frontmatter has a top-level `readable_by` key, whatever code
-  path made the put. A value that does not decode counts as naming readers, since the flag only makes reads
-  stricter. `pages::write_page` is the only such path today; the handle holds the rule for any later one;
+  path made the put, and on the put of a folder rule or a pending prefix (`z 0x02`, `z 0x03`;
+  [access_rules.md](access_rules.md)). The same handle stamps a page record put under a folder rule
+  (`access_policy::stamp_page_put`). A value that does not decode counts as naming readers, since the flag only makes
+  reads stricter. `pages::write_page` is the only such path today; the handle holds the rule for any later one;
 - the open-time scan: the first open of a brain with no scan record (meta `access_flag_scan`) reads every page
   record, soft-deleted ones too, and sets the flag if one names readers, then writes the record in the same write.
   v282 sets the flag the same way once when it runs. A brain created by this build writes the record when it is
@@ -40,6 +43,7 @@ It adds no JS method: the flag is read through `getConfig`. The key is the confi
 | `pages_access_mark_restricted` | sets the flag on every write of a page record whose frontmatter has a top-level `readable_by` key, when the flag is not already `'1'` |
 | v282 backfill (`INSERT ... WHERE EXISTS`) | the open-time scan, once per brain |
 | `access_members_mark_restricted` | a member insert sets the flag in the same write ([access-members.md](access-members.md)) |
+| `access_rules_mark_restricted`, `access_pending_coverage_mark_restricted` | sets the flag on every put of a folder rule or pending prefix record |
 
 The trigger fires only when an UPDATE names the frontmatter column; the store sets the flag on any write of such a
 page. The flag is sticky, so the two differ only after an operator unsets the flag by hand.

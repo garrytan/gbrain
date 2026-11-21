@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1196/1199
+# covered: 1215/1219
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -67,7 +67,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 51/54
+# write_misc: 70/74
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -96,7 +96,7 @@ getPage	pages	yes	131	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	604	yes	yes	yes	serves
+putPage	pages	yes	606	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
@@ -488,7 +488,7 @@ readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
 readLedgerSource	import_guards	yes	11	no	yes	yes	serves
 listCoveredSources	import_guards	yes	1	no	yes	yes	serves
-isFolderRestricted	import_guards	yes	4	no	yes	yes	serves
+isFolderRestricted	import_guards	yes	5	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	24	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -1008,7 +1008,7 @@ listEntityHintPages	facts_conversation	yes	1	no	yes	yes	refuses:facts
 lockPageById	facts_conversation	yes	1	no	yes	yes	refuses:facts
 listClearedRelinkedFacts	facts_conversation	yes	1	no	yes	yes	refuses:facts
 countEmbeddedFactsAmong	facts_conversation	yes	1	no	yes	yes	refuses:facts
-listCorePageRows	trust_tier_reads	yes	4	no	yes	yes	serves
+listCorePageRows	trust_tier_reads	yes	7	no	yes	yes	serves
 listTrustScanRows	trust_tier_reads	yes	2	no	yes	yes	serves
 countUnscannedTrustRows	trust_tier_reads	yes	2	no	yes	yes	serves
 readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	serves
@@ -1039,7 +1039,7 @@ listSegmentedPages	withdrawal_pages	yes	1	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	1	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	8	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	7	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
@@ -1075,7 +1075,7 @@ listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
 moveFactWithdrawalSubject	trust	yes	1	no	yes	yes	serves
 hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	3	no	yes	yes	serves
-readFactCacheWatermark	trust	yes	3	no	yes	yes	serves
+readFactCacheWatermark	trust	yes	4	no	yes	yes	serves
 readTrustGeneration	trust	yes	1	no	yes	yes	serves
 readSourcePurgeFlags	trust	yes	3	no	yes	yes	serves
 lockFactForWithdrawal	trust	yes	1	no	yes	yes	serves
@@ -1145,14 +1145,14 @@ readPendingProposalSummary	write_misc	yes	1	no	yes	yes	serves
 listMemoryProposalRows	write_misc	yes	1	no	yes	yes	serves
 listOwnerProposalRows	write_misc	yes	1	no	yes	yes	serves
 attachSourcePath	write_misc	yes	1	no	yes	yes	serves
-listAppliedPolicyRevisions	write_misc	yes	2	no	yes	yes	serves
+listAppliedPolicyRevisions	write_misc	yes	3	no	yes	yes	serves
 readMayActFor	write_misc	yes	4	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	3	no	yes	yes	serves
 readAccessMembers	write_misc	yes	7	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	7	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	3	no	yes	yes	serves
 readLiveMember	write_misc	yes	8	no	yes	yes	serves
-insertAccessMember	write_misc	yes	14	no	yes	yes	serves
+insertAccessMember	write_misc	yes	15	no	yes	yes	serves
 setAccessMemberDisabled	write_misc	yes	3	no	yes	yes	serves
 setAccessMemberEmail	write_misc	yes	3	no	yes	yes	serves
 setAccessMemberKind	write_misc	yes	2	no	yes	yes	serves
@@ -1167,12 +1167,32 @@ writeCredentialReadsUnscoped	write_misc	yes	2	no	yes	yes	serves
 readAccessGroups	write_misc	yes	2	no	yes	yes	serves
 listPagesNamingReader	write_misc	yes	2	no	yes	yes	serves
 readAccessStateUnreadable	write_misc	yes	2	no	yes	yes	serves
+readAccessStoreConfig	write_misc	yes	1	no	yes	yes	serves
+writeAccessStoreConfig	write_misc	no	0	no	-	-	-
+ensureAccessPolicyState	write_misc	yes	3	no	yes	yes	serves
+lockAccessPolicy	write_misc	yes	1	no	yes	yes	serves
+listAccessRules	write_misc	yes	1	no	yes	yes	serves
+readAccessPolicyRevisions	write_misc	yes	1	no	yes	yes	serves
+listAccessCoverage	write_misc	yes	1	no	yes	yes	serves
+applyAccessRuleChanges	write_misc	yes	3	no	yes	yes	serves
+restampAccessWindow	write_misc	yes	1	no	yes	yes	serves
+finishAccessRestamp	write_misc	yes	1	no	yes	yes	serves
+insertAccessPolicyRevision	write_misc	yes	2	no	yes	yes	serves
+markAccessRevisionsApplied	write_misc	yes	2	no	yes	yes	serves
+approveAccessPolicyRevision	write_misc	yes	1	no	yes	yes	serves
+hasAccessPolicyState	write_misc	yes	1	no	yes	yes	serves
+listAccessPrefixSlugs	write_misc	yes	1	no	yes	yes	serves
+readAccessPolicyMarks	write_misc	yes	1	no	yes	yes	serves
+replaceAccessInvalidCoverage	write_misc	yes	1	no	yes	yes	serves
+countRuleCoveredPages	write_misc	yes	1	no	yes	yes	serves
+listRuleCoveredSlugs	write_misc	yes	1	no	yes	yes	serves
+listRuleCoveredPages	write_misc	yes	1	no	yes	yes	serves
 countOpenPages	write_misc	yes	5	no	yes	yes	serves
 listWhoCanReadPages	write_misc	yes	1	no	yes	yes	serves
 readPageAdmitsCaller	write_misc	no	0	no	-	-	-
 readPageFolderRulesAdmit	write_misc	no	0	no	-	-	-
 countLineageClosingRules	write_misc	no	0	no	-	-	-
-readFolderAccess	write_misc	yes	4	no	yes	yes	serves
+readFolderAccess	write_misc	yes	5	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves
 readVersionAttributions	write_attribution	yes	2	no	yes	yes	serves

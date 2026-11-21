@@ -15,6 +15,7 @@ import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia, FolderAccessRows, PageNamingReaderRow } from './engine-sql/access-control.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
+import type * as AccessPolicySql from './engine-sql/access-policy.ts';
 import type { OpenPageCount, OpenPageExclusion, WhoCanReadPageRow } from './engine-sql/access-setup.ts';
 import type { OwnerOnlyForm } from './access/owner-only.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
@@ -4508,6 +4509,32 @@ export interface BrainEngine {
 
   /** Whether row-level security keeps this database role from reading the folder access tables (`gbrain_access_state_unreadable()`). */
   readAccessStateUnreadable(): Promise<boolean>;
+
+  /**
+   * The folder-rule policy members access/policy.ts runs (engine-sql/access-policy.ts says what each reads or writes).
+   * lockAccessPolicy, applyAccessRuleChanges, finishAccessRestamp and the revision writes belong inside one transaction.
+   */
+  readAccessStoreConfig(sourceId: string): Promise<{ store: string | null } | null>;
+  writeAccessStoreConfig(sourceId: string, store: string): Promise<void>;
+  ensureAccessPolicyState(sourceId: string): Promise<void>;
+  lockAccessPolicy(sourceId: string): Promise<void>;
+  listAccessRules(sourceId: string): Promise<AccessPolicySql.AccessRuleRow[]>;
+  readAccessPolicyRevisions(query: AccessPolicySql.AccessRevisionQuery): Promise<AccessPolicySql.AccessRevisionRow[]>;
+  listAccessCoverage(sourceId: string): Promise<AccessPolicySql.AccessCoverageRow[]>;
+  applyAccessRuleChanges(sourceId: string, changes: AccessPolicySql.AccessRuleChanges): Promise<void>;
+  restampAccessWindow(sourceId: string, after: number, batch: number): Promise<AccessPolicySql.AccessRestampWindow>;
+  finishAccessRestamp(sourceId: string): Promise<number>;
+  insertAccessPolicyRevision(row: AccessPolicySql.AccessRevisionInsert): Promise<void>;
+  markAccessRevisionsApplied(sourceId: string, upTo?: number): Promise<void>;
+  approveAccessPolicyRevision(sourceId: string, revision: number, actor: string): Promise<void>;
+  hasAccessPolicyState(sourceId: string): Promise<boolean>;
+  listAccessPrefixSlugs(sourceId: string, prefixes: string | readonly string[]): Promise<string[]>;
+  readAccessPolicyMarks(sourceId: string, operationId?: string): Promise<AccessPolicySql.AccessPolicyMarks>;
+  replaceAccessInvalidCoverage(sourceId: string, prefixes: readonly string[], detail: unknown): Promise<void>;
+  /** The `gbrain access rule add` preview reads: the live pages of a source rule prefixes cover (engine-sql/access-policy.ts). */
+  countRuleCoveredPages(sourceId: string, prefixes: string | readonly string[]): Promise<number>;
+  listRuleCoveredSlugs(sourceId: string, prefixes: readonly string[]): Promise<string[]>;
+  listRuleCoveredPages(sourceId: string, prefix: string): Promise<Array<{ source_id: string; slug: string }>>;
 
   /**
    * The open pages of `sources` (live, and the read path's floor with an empty identity admits them), less each

@@ -5,7 +5,7 @@
 //! What the store does not keep, and what each read answers for it (rust/docs/store/cli-reads-export.md):
 //! - no statement timeout: `setLocalStatementTimeout` runs only in TypeScript and does nothing;
 //! - no `fact_purges` rows: the withdrawal list holds withdrawals only, each with `purged` false;
-//! - no folder rules: the list of sources with an access policy is empty.
+//! - the sources with an access policy are those that hold folder access state (`access_rules.rs`).
 //!
 //! Keys: none of its own. It reads the page, page-id, page-body, raw-data and withdrawal records.
 
@@ -568,10 +568,10 @@ impl Store {
         crate::pages::segmented_version_body_bytes(&*read, page, generation)
     }
 
-    /// `listAccessPolicySourceIds()`: the sources with an access policy. The store keeps no folder
-    /// rules, so there are none.
+    /// `listAccessPolicySourceIds()`: the sources with an access policy (`access_policy_state`), in
+    /// byte order.
     pub fn list_access_policy_source_ids(&self) -> Result<Vec<String>> {
-        Ok(Vec::new())
+        crate::access_rules::state_sources(&*self.read()?)
     }
 }
 

@@ -2012,6 +2012,26 @@ export class PGLiteEngine implements BrainEngine {
   readAccessGroups(id: string | null): Promise<AccessGroupRow[]> { return accessControlImpl.readAccessGroups(this, id); }
   listPagesNamingReader(principal: string, opts?: { live?: boolean }): Promise<PageNamingReaderRow[]> { return accessControlImpl.listPagesNamingReader(this, principal, opts); }
   readAccessStateUnreadable() { return accessPolicyImpl.readAccessStateUnreadable(this); }
+  readAccessStoreConfig(sourceId: string) { return accessPolicyImpl.readAccessStoreConfig(this, sourceId); }
+  writeAccessStoreConfig(sourceId: string, store: string) { return accessPolicyImpl.writeAccessStoreConfig(this, sourceId, store); }
+  ensureAccessPolicyState(sourceId: string) { return accessPolicyImpl.ensureAccessPolicyState(this, sourceId); }
+  lockAccessPolicy(sourceId: string) { return accessPolicyImpl.lockAccessPolicy(this, sourceId); }
+  listAccessRules(sourceId: string) { return accessPolicyImpl.listAccessRules(this, sourceId); }
+  readAccessPolicyRevisions(query: accessPolicyImpl.AccessRevisionQuery) { return accessPolicyImpl.readAccessPolicyRevisions(this, query); }
+  listAccessCoverage(sourceId: string) { return accessPolicyImpl.listAccessCoverage(this, sourceId); }
+  applyAccessRuleChanges(sourceId: string, changes: accessPolicyImpl.AccessRuleChanges) { return accessPolicyImpl.applyAccessRuleChanges(this, sourceId, changes); }
+  restampAccessWindow(sourceId: string, after: number, batch: number) { return accessPolicyImpl.restampAccessWindow(this, sourceId, after, batch); }
+  finishAccessRestamp(sourceId: string) { return accessPolicyImpl.finishAccessRestamp(this, sourceId); }
+  insertAccessPolicyRevision(row: accessPolicyImpl.AccessRevisionInsert) { return accessPolicyImpl.insertAccessPolicyRevision(this, row); }
+  markAccessRevisionsApplied(sourceId: string, upTo?: number) { return accessPolicyImpl.markAccessRevisionsApplied(this, sourceId, upTo); }
+  approveAccessPolicyRevision(sourceId: string, revision: number, actor: string) { return accessPolicyImpl.approveAccessPolicyRevision(this, sourceId, revision, actor); }
+  hasAccessPolicyState(sourceId: string) { return accessPolicyImpl.hasAccessPolicyState(this, sourceId); }
+  listAccessPrefixSlugs(sourceId: string, prefixes: string | readonly string[]) { return accessPolicyImpl.listAccessPrefixSlugs(this, sourceId, prefixes); }
+  readAccessPolicyMarks(sourceId: string, operationId?: string) { return accessPolicyImpl.readAccessPolicyMarks(this, sourceId, operationId); }
+  replaceAccessInvalidCoverage(sourceId: string, prefixes: readonly string[], detail: unknown) { return accessPolicyImpl.replaceAccessInvalidCoverage(this, sourceId, prefixes, detail); }
+  countRuleCoveredPages(sourceId: string, prefixes: string | readonly string[]) { return accessPolicyImpl.countRuleCoveredPages(this, sourceId, prefixes); }
+  listRuleCoveredSlugs(sourceId: string, prefixes: readonly string[]) { return accessPolicyImpl.listRuleCoveredSlugs(this, sourceId, prefixes); }
+  listRuleCoveredPages(sourceId: string, prefix: string) { return accessPolicyImpl.listRuleCoveredPages(this, sourceId, prefix); }
   countOpenPages(sources: readonly string[], exclude: readonly accessSetupImpl.OpenPageExclusion[]) { return accessSetupImpl.countOpenPages(this, sources, exclude); }
   listWhoCanReadPages(slug: string, sourceId: string | undefined, form: OwnerOnlyForm) { return accessSetupImpl.listWhoCanReadPages(this, slug, sourceId, form); }
   readPageAdmitsCaller(sourceId: string, slug: string, identity: readonly string[]) { return accessSetupImpl.readPageAdmitsCaller(this, sourceId, slug, identity); }

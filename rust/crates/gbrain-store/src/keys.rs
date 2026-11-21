@@ -103,6 +103,8 @@ pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 pub const ENTITY_IDENTITY: u8 = b'i';
 /// Family `access_members`: members, groups and group members (`access_members.rs`).
 pub const ACCESS_MEMBERS: u8 = b'x';
+/// Family `access_rules`: folder rules, policy state, revisions, pending coverage and page stamps (`access_rules.rs`).
+pub const ACCESS_RULES: u8 = b'z';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

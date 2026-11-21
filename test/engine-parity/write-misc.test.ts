@@ -357,9 +357,8 @@ describe('engine parity: write misc', () => {
     return { ids, configured: (await readSynopsisTierConfig(engine)).configured };
   });
 
-  // The restricted half (true under a folder rule or a pending prefix) is import-path.test.ts's case: the SQL arms answer
-  // true there; on Rust its folder-rule fixture is raw SQL and stops on the typed refusal, because no Rust brain can hold
-  // a folder rule.
+  // The restricted half (true under a folder rule or a pending prefix) is the restrictFolder case below and
+  // import-path.test.ts's case.
   parityTest('isFolderRestricted answers false for every folder of a brain with no folder rules or pending covers', { methods: ['isFolderRestricted'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     const answers = {
@@ -372,37 +371,28 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  // isFolderRestricted is constant false on Rust only because no Rust brain can hold access state: the access-rule write
-  // (the restrictFolder fixture's raw SQL) must stop on the typed raw_sql refusal there and leave the folder open.
-  parityTest('restrictFolder, the access-rule write, refuses on Rust and restricts the folder on the SQL engines', { methods: ['isFolderRestricted'] }, async (engine, backend) => {
+  // The access-rule write runs through the typed policy members on every arm (rust/docs/store/access_rules.md on Rust).
+  parityTest('restrictFolder, the access-rule write, restricts the folder on every engine', {
+    methods: ['ensureAccessPolicyState', 'applyAccessRuleChanges', 'isFolderRestricted'],
+  }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
-    const write = await restrictFolder(engine, backend, 'work', 'private/', 'rule').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.isFolderRestricted('work', 'private/diary')).toBe(false);
-      throw write;
-    }
-    expect(write).toBeNull();
-    const underRule = await engine.isFolderRestricted('work', 'private/diary');
-    expect(underRule).toBe(true);
-    return { underRule };
+    await restrictFolder(engine, backend, 'work', 'private/', 'rule');
+    const answers = {
+      underRule: await engine.isFolderRestricted('work', 'private/diary'),
+      outside: await engine.isFolderRestricted('work', 'notes/a'),
+      otherSource: await engine.isFolderRestricted('default', 'private/diary'),
+    };
+    expect(answers).toEqual({ underRule: true, outside: false, otherSource: false });
+    return answers;
   });
 
-  // readFolderAccess answers no rules and no coverage on Rust (folder access opens) only because no Rust brain can hold a
-  // folder rule: the production rule write (`gbrain access rule add` runs proposeRevision) must stop on a typed refusal
-  // there, never record nothing and report success, and the caller's folder access must stay empty afterwards.
-  parityTest('the folder-rule write (proposeRevision) refuses typed on Rust and applies the rule on the SQL engines',
+  // The production rule write (`gbrain access rule add` runs proposeRevision) records the rule on every engine, and the
+  // caller's folder access names it.
+  parityTest('the folder-rule write (proposeRevision) applies the rule on every engine',
     { methods: ['readFolderAccess', 'isFolderRestricted'] }, async (engine, backend) => {
       await createSource(engine, backend, 'work');
-      const write = await proposeRevision(engine, 'work', [{ id: 'team', prefix: 'drafts/', readable_by: ['group:team-a'] }],
-        { origin: 'cli', store: 'database' }).then(() => null, (e: unknown) => e);
-      if (backend === 'rust') {
-        expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-        expect(await engine.readFolderAccess(['group:team-a'])).toEqual({ rules: [], coverage: [] });
-        expect(await engine.isFolderRestricted('work', 'drafts/plan')).toBe(false);
-        throw write;
-      }
-      expect(write).toBeNull();
+      await proposeRevision(engine, 'work', [{ id: 'team', prefix: 'drafts/', readable_by: ['group:team-a'] }],
+        { origin: 'cli', store: 'database' });
       const rules = (await engine.readFolderAccess(['group:team-a'])).rules.map(r => ({ source_id: r.source_id, rule_id: r.rule_id }));
       expect(rules).toEqual([{ source_id: 'work', rule_id: 'team' }]);
       const restricted = await engine.isFolderRestricted('work', 'drafts/plan');
@@ -417,26 +407,22 @@ describe('engine parity: write misc', () => {
     return { revisions };
   });
 
-  // listAppliedPolicyRevisions is constant empty on Rust only because no Rust brain can hold access state: the policy
-  // state write (raw SQL here, the access commands' statements in production) must stop on the typed raw_sql refusal.
-  parityTest('listAppliedPolicyRevisions gives each source with access state its newest applied revision, null when none is applied', { methods: ['listAppliedPolicyRevisions'] }, async (engine, backend) => {
+  parityTest('listAppliedPolicyRevisions gives each source with access state its newest applied revision, null when none is applied', {
+    methods: ['ensureAccessPolicyState', 'insertAccessPolicyRevision', 'markAccessRevisionsApplied', 'listAppliedPolicyRevisions'],
+  }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     await createSource(engine, backend, 'quiet');
-    const write = await restrictFolder(engine, backend, 'work', 'private/', 'rule').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(await engine.listAppliedPolicyRevisions()).toEqual([]);
-      throw write;
-    }
-    expect(write).toBeNull();
-    await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1)', ['quiet']);
-    const revision = (source: string, rev: number, applied: boolean) => engine.executeRaw(
-      `INSERT INTO access_policy_revisions (source_id, revision, rules, digest, change_kind, origin, applied_at)
-       VALUES ($1, $2, '[]'::jsonb, 'd', 'narrowing', 'parity', ${applied ? 'now()' : 'NULL'})`, [source, rev]);
-    await revision('work', 1, true);
-    await revision('work', 2, true);
-    await revision('work', 3, false);
-    await revision('quiet', 1, false);
+    await restrictFolder(engine, backend, 'work', 'private/', 'rule');
+    await engine.ensureAccessPolicyState('quiet');
+    const revision = (source_id: string, revision: number) => engine.insertAccessPolicyRevision({
+      source_id, revision, rules: [], digest: 'd', change_kind: 'narrowing', origin: 'parity',
+      operation_id: null, proposed_by: null, approved_by: null, approved: false,
+    });
+    await revision('work', 1);
+    await revision('work', 2);
+    await revision('work', 3);
+    await revision('quiet', 1);
+    await engine.markAccessRevisionsApplied('work', 2);
     const revisions = await engine.listAppliedPolicyRevisions();
     expect(revisions).toEqual([{ source_id: 'quiet', rev: null }, { source_id: 'work', rev: 2 }]);
     return { revisions };

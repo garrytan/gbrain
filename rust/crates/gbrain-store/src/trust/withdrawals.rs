@@ -56,9 +56,6 @@ pub struct WithdrawalKey {
     pub subject: String,
 }
 
-/// `md5('')`: the digest of an empty folder access table.
-const EMPTY_TABLE_DIGEST: &str = "d41d8cd98f00b204e9800998ecf8427e";
-
 /// `readFactCacheWatermark`: the hot-memory cache watermark of a source.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct FactCacheWatermark {
@@ -512,8 +509,8 @@ impl Store {
     }
 
     /// `readFactCacheWatermark`: the source's withdrawal count and newest withdrawal time, and the
-    /// folder access digest. The store keeps no folder access rules or pending coverage (only raw
-    /// SQL writes them, and `executeRaw` refuses), so the digest is that of two empty tables.
+    /// folder access digest of its rules and pending prefixes (`access_rules.rs`
+    /// `folder_access_digest`), so a rule change rebuilds the cache.
     pub fn read_fact_cache_watermark(&self, source_id: &str) -> Result<FactCacheWatermark> {
         no_nul("readFactCacheWatermark", &[("sourceId", source_id)])?;
         let read = self.read()?;
@@ -543,7 +540,7 @@ impl Store {
         Ok(FactCacheWatermark {
             withdrawals,
             latest_withdrawn_at: latest.map(iso),
-            access_rules: format!("{EMPTY_TABLE_DIGEST}:{EMPTY_TABLE_DIGEST}"),
+            access_rules: crate::access_rules::folder_access_digest(&*read)?,
         })
     }
 

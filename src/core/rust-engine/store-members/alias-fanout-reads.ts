@@ -2,8 +2,8 @@
  * Alias fan-out reads (BrainEngine findPagesByTitles, resolveCaseSensitiveAliases, readPageTitle, readPageAliasRows,
  * and the entity card's readEntityAliasRows;
  * SQL in engine-sql/alias-fanout-reads.ts). `findPagesByTitles` reads `excludePrivate` through the page policy
- * (private-provenance.ts `storePagePolicy`), the caller's reader identity and private-readable grant included; any other
- * caller whose policy differs (folder rules, lineage, an owner read) refuses.
+ * (private-provenance.ts `storePagePolicy`), the caller's reader identity, private-readable grant and folder access
+ * included; any other caller whose policy differs (an audience, lineage, an owner read) refuses.
  * The alias reads return the `case_sensitive` flag and `alias_text` the store keeps on a derived alias row
  * (`replaceDerivedAliases`); a `frontmatter` row is never case-sensitive and has a null `alias_text`
  * (rust/docs/store/alias_fanout_reads.md).

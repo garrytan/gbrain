@@ -84,6 +84,7 @@ import * as writeGuards from './write-guards.ts';
 import * as pageVisibility from './page-visibility.ts';
 import * as accessReports from './access-reports.ts';
 import * as accessMembers from './access-members.ts';
+import * as accessPolicy from './access-policy.ts';
 import * as largePage from './large-page.ts';
 import * as trustFence from './trust-fence.ts';
 import * as trustProposals from './trust-proposals.ts';
@@ -159,6 +160,7 @@ export const STORE_MEMBERS = {
   // The access report reads of gbrain access serves and who-can-read (rust/docs/store/write_misc.md).
   ...accessReports,
   ...accessMembers,
+  ...accessPolicy,
   // The large-page write guard's stored body size read (rust/docs/store/large-page.md).
   ...largePage,
   // The connect gate's persistence reads, answered from the unmanaged brain the store keeps (rust/docs/store/journal.md).

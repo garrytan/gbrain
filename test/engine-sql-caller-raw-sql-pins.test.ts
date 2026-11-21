@@ -18,6 +18,8 @@ import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
 import { accessAllowedSql, callerAccessAllowedSql, folderRulesAllowedSql, privacyPartSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 import { ownerOnlyPageSql } from '../src/core/access/owner-only.ts';
+import { ruleCoversSql } from '../src/core/access/folder-rules.ts';
+import { OPEN_TWINS_PAGES } from '../src/core/access/open-twins.ts';
 
 /** caller.ts MEMBER_SQL at 7470c703ed: MEMBERS_WHERE_SQL(`m.id = (${member})`), copied verbatim. */
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
@@ -453,6 +455,144 @@ const PINS: Pin[] = [
     `UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
         WHERE member_id = $1 AND state = 'open' RETURNING id`,
     'DELETE FROM wake_terms_acceptances WHERE principal_key = $1'],
+  },
+  // Equivalent, not verbatim, where marked: the old-line policy statements add COLLATE "C" to the ORDER BY of the rule
+  // list, the pending prefixes and the prefix slugs, so they come in byte order whatever the database collation.
+  {
+    from: "src/core/access/policy.ts:92 readAccessStore at 8d2e667543",
+    case: { method: 'readAccessStoreConfig', variant: 'default', run: e => e.readAccessStoreConfig('default') },
+    texts: [`SELECT config->>'access_store' AS store FROM sources WHERE id = $1`],
+  },
+  {
+    from: "src/core/access/policy.ts:99 writeAccessStore at 8d2e667543",
+    case: { method: 'writeAccessStoreConfig', variant: 'default', run: e => e.writeAccessStoreConfig('default', 'database') },
+    texts: [`UPDATE sources SET config = jsonb_set(COALESCE(config, '{}'::jsonb), '{access_store}', to_jsonb($2::text)) WHERE id = $1`],
+  },
+  {
+    from: "src/core/access/policy.ts:104 ensurePolicyState at 8d2e667543",
+    case: { method: 'ensureAccessPolicyState', variant: 'default', run: e => e.ensureAccessPolicyState('default') },
+    texts: ['INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING'],
+  },
+  {
+    from: "src/core/access/policy.ts:112-113 lockSource at 8d2e667543",
+    case: { method: 'lockAccessPolicy', variant: 'default', run: e => e.lockAccessPolicy('default') },
+    texts: ['SELECT 1 FROM sources WHERE id = $1 FOR NO KEY UPDATE', 'SELECT 1 FROM access_policy_state WHERE source_id = $1 FOR UPDATE'],
+  },
+  {
+    from: "src/core/access/policy.ts:118 appliedRules at 8d2e667543 (equivalent: COLLATE \"C\" on the ORDER BY)",
+    case: { method: 'listAccessRules', variant: 'default', run: e => e.listAccessRules('default') },
+    texts: ['SELECT rule_id, prefix, readable_by, covers_derived FROM access_rules WHERE source_id = $1 ORDER BY rule_id COLLATE "C"'],
+  },
+  {
+    from: "src/core/access/policy.ts:124 listRevisions at 8d2e667543",
+    case: { method: 'readAccessPolicyRevisions', variant: 'recent', run: e => e.readAccessPolicyRevisions({ by: 'recent', sourceId: 'default', limit: 50 }) },
+    texts: ['SELECT * FROM access_policy_revisions WHERE source_id = $1 ORDER BY revision DESC LIMIT $2'],
+  },
+  {
+    from: "src/core/access/policy.ts:130 getRevision at 8d2e667543 (the newest)",
+    case: { method: 'readAccessPolicyRevisions', variant: 'latest', run: e => e.readAccessPolicyRevisions({ by: 'latest', sourceId: 'default' }) },
+    texts: ['SELECT * FROM access_policy_revisions WHERE source_id = $1 ORDER BY revision DESC LIMIT 1'],
+  },
+  {
+    from: "src/core/access/policy.ts:131 getRevision at 8d2e667543 (one revision)",
+    case: { method: 'readAccessPolicyRevisions', variant: 'revision', run: e => e.readAccessPolicyRevisions({ by: 'revision', sourceId: 'default', revision: 2 }) },
+    texts: ['SELECT * FROM access_policy_revisions WHERE source_id = $1 AND revision = $2'],
+  },
+  {
+    from: "src/core/access/policy.ts:246 proposeRevision at 8d2e667543 (the operation id)",
+    case: { method: 'readAccessPolicyRevisions', variant: 'operation', run: e => e.readAccessPolicyRevisions({ by: 'operation', operationId: 'op-1' }) },
+    texts: ['SELECT * FROM access_policy_revisions WHERE operation_id = $1'],
+  },
+  {
+    from: "src/core/access/policy.ts:137 coverageRows at 8d2e667543 (equivalent: COLLATE \"C\" on the ORDER BY)",
+    case: { method: 'listAccessCoverage', variant: 'default', run: e => e.listAccessCoverage('default') },
+    texts: ['SELECT prefix, reason, revision, detail FROM access_pending_coverage WHERE source_id = $1 ORDER BY reason COLLATE "C", prefix COLLATE "C"'],
+  },
+  {
+    from: "src/core/access/policy.ts:168-180 installRulebook at 8d2e667543 (deletes, inserts, then pending prefixes)",
+    case: { method: 'applyAccessRuleChanges', variant: 'default', run: e => e.applyAccessRuleChanges('default', { remove: ['old'], insert: [{ rule_id: 'r1', prefix: 'notes/', readable_by: ['member:alice-example'], covers_derived: true }], pending: ['notes/'], revision: 2, actor: 'local' }) },
+    texts: ['DELETE FROM access_rules WHERE source_id = $1 AND rule_id = $2', 'INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision, created_by, covers_derived) VALUES ($1, $2, $3, $4::text[], $5, $6, $7)', `INSERT INTO access_pending_coverage (source_id, prefix, reason, revision) VALUES ($1, $2, 'pending', $3)
+      ON CONFLICT (source_id, prefix, reason) DO UPDATE SET revision = EXCLUDED.revision`],
+  },
+  {
+    from: "src/core/access/policy.ts:199 restampSource at 8d2e667543 (one window)",
+    case: { method: 'restampAccessWindow', variant: 'default', run: e => e.restampAccessWindow('default', 0, 2000) },
+    texts: [`WITH w AS (SELECT id FROM pages WHERE source_id = $1 AND id > $2 ORDER BY id LIMIT $3),
+        u AS (UPDATE pages p SET folder_rule_ids = gbrain_access_folder_rules(p.source_id, p.slug) FROM w
+              WHERE p.id = w.id AND p.folder_rule_ids IS DISTINCT FROM gbrain_access_folder_rules(p.source_id, p.slug) RETURNING p.id)
+      SELECT (SELECT max(id) FROM w) AS last, (SELECT count(*) FROM w)::int AS scanned, (SELECT count(*) FROM u)::int AS changed`],
+  },
+  {
+    from: "src/core/access/policy.ts:213-218 restampSource at 8d2e667543 (the final pass)",
+    case: { method: 'finishAccessRestamp', variant: 'default', run: e => e.finishAccessRestamp('default') },
+    texts: [`UPDATE pages SET folder_rule_ids = gbrain_access_folder_rules(source_id, slug)
+        WHERE source_id = $1 AND folder_rule_ids IS DISTINCT FROM gbrain_access_folder_rules(source_id, slug) RETURNING id`, `DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'pending'`, 'UPDATE access_policy_revisions SET applied_at = now() WHERE source_id = $1 AND applied_at IS NULL'],
+  },
+  {
+    from: "src/core/access/policy.ts:263 proposeRevision at 8d2e667543 (the revision)",
+    case: { method: 'insertAccessPolicyRevision', variant: 'default', run: e => e.insertAccessPolicyRevision({ source_id: 'default', revision: 1, rules: [], digest: 'd', change_kind: 'narrowing', origin: 'cli', operation_id: null, proposed_by: 'local', approved_by: 'auto:narrowing', approved: true }) },
+    texts: [`INSERT INTO access_policy_revisions (source_id, revision, rules, digest, change_kind, origin, operation_id, proposed_by, approved_by, approved_at)
+      VALUES ($1, $2, $3::text::jsonb, $4, $5, $6, $7, $8, $9, CASE WHEN $10::boolean THEN now() END)`],
+  },
+  {
+    from: "src/core/access/policy.ts:268 proposeRevision at 8d2e667543 (applied)",
+    case: { method: 'markAccessRevisionsApplied', variant: 'all', run: e => e.markAccessRevisionsApplied('default') },
+    texts: ['UPDATE access_policy_revisions SET applied_at = now() WHERE source_id = $1 AND applied_at IS NULL'],
+  },
+  {
+    from: "src/core/access/policy.ts:388 applyApproved at 8d2e667543 (applied up to)",
+    case: { method: 'markAccessRevisionsApplied', variant: 'up-to', run: e => e.markAccessRevisionsApplied('default', 2) },
+    texts: ['UPDATE access_policy_revisions SET applied_at = now() WHERE source_id = $1 AND applied_at IS NULL AND revision <= $2'],
+  },
+  {
+    from: "src/core/access/policy.ts:387 applyApproved at 8d2e667543 (approved)",
+    case: { method: 'approveAccessPolicyRevision', variant: 'default', run: e => e.approveAccessPolicyRevision('default', 2, 'local') },
+    texts: ['UPDATE access_policy_revisions SET approved_by = $3, approved_at = now() WHERE source_id = $1 AND revision = $2'],
+  },
+  {
+    from: "src/core/access/policy.ts:296 resumePolicy at 8d2e667543",
+    case: { method: 'hasAccessPolicyState', variant: 'default', run: e => e.hasAccessPolicyState('default') },
+    texts: ['SELECT count(*)::int AS n FROM access_policy_state WHERE source_id = $1'],
+  },
+  {
+    from: "src/core/access/policy.ts:349 previewApply at 8d2e667543 (one prefix) (equivalent: COLLATE \"C\" on the ORDER BY)",
+    case: { method: 'listAccessPrefixSlugs', variant: 'one', run: e => e.listAccessPrefixSlugs('default', 'notes/') },
+    texts: ['SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) ORDER BY slug COLLATE "C"'],
+  },
+  {
+    from: "src/core/access/policy.ts:355 previewApply at 8d2e667543 (several prefixes) (equivalent: COLLATE \"C\" on the ORDER BY)",
+    case: { method: 'listAccessPrefixSlugs', variant: 'several', run: e => e.listAccessPrefixSlugs('default', ['notes/', 'docs/']) },
+    texts: ['SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE starts_with(slug, pfx)) ORDER BY slug COLLATE "C"'],
+  },
+  {
+    from: "src/core/access/policy.ts:421, :432 policyStatus at 8d2e667543",
+    case: { method: 'readAccessPolicyMarks', variant: 'operation', run: e => e.readAccessPolicyMarks('default', 'op-1') },
+    texts: ['SELECT max(revision) FILTER (WHERE applied_at IS NOT NULL) AS applied, max(revision) FILTER (WHERE approved_at IS NOT NULL) AS approved FROM access_policy_revisions WHERE source_id = $1', 'SELECT revision, applied_at, approved_at FROM access_policy_revisions WHERE source_id = $1 AND operation_id = $2'],
+  },
+  {
+    from: "src/core/access/policy.ts:452 markPolicyInvalid at 8d2e667543",
+    case: { method: 'replaceAccessInvalidCoverage', variant: 'one', run: e => e.replaceAccessInvalidCoverage('default', ['notes/'], { error: 'x' }) },
+    texts: [`DELETE FROM access_pending_coverage WHERE source_id = $1 AND reason = 'invalid'`, `INSERT INTO access_pending_coverage (source_id, prefix, reason, detail) VALUES ($1, $2, 'invalid', $3::text::jsonb)`],
+  },
+  {
+    from: 'src/commands/access-rules.ts:150 previewRules at 8d2e667543 (pages one prefix covers)',
+    case: { method: 'countRuleCoveredPages', variant: 'one', run: e => e.countRuleCoveredPages('default', 'notes/') },
+    texts: () => [`SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')}`],
+  },
+  {
+    from: 'src/commands/access-rules.ts:204-205 previewRules at 8d2e667543 (pages the new prefixes cover)',
+    case: { method: 'countRuleCoveredPages', variant: 'several', run: e => e.countRuleCoveredPages('default', ['notes/', 'docs/']) },
+    texts: () => [`SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE ${ruleCoversSql('slug', 'pfx')})`],
+  },
+  {
+    from: 'src/commands/access-rules.ts:157-158 previewRules at 8d2e667543 (slugs the changed prefixes cover)',
+    case: { method: 'listRuleCoveredSlugs', variant: 'default', run: e => e.listRuleCoveredSlugs('default', ['notes/', 'docs/']) },
+    texts: () => [`SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE ${ruleCoversSql('slug', 'pfx')})`],
+  },
+  {
+    from: 'src/commands/access-rules.ts:197 previewRules at 8d2e667543 (pages a narrowing covers, for the open-twin check)',
+    case: { method: 'listRuleCoveredPages', variant: 'default', run: e => e.listRuleCoveredPages('default', 'notes/') },
+    texts: () => [`SELECT source_id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')} ORDER BY slug LIMIT ${OPEN_TWINS_PAGES}`],
   },
   // Equivalent, not verbatim (the next four): the old-line statements add COLLATE "C" to every ORDER BY, so groups,
   // group members and pages come in byte order on every engine whatever the database collation.

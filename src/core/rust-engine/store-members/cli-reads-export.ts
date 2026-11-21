@@ -65,7 +65,7 @@ export const readBodyManifestRows: StoreMember<[pageId: number, generation: numb
 export const readBodyManifestMeta: StoreMember<[pageId: number, occurrenceIds: readonly number[], generation: number], BodyManifestMeta[]> = (brain, pageId, occurrenceIds, generation) =>
   storeCall({ member: 'readBodyManifestMeta' }, () => brain.readBodyManifestMeta(pageId, [...occurrenceIds], generation));
 
-/** The sources with an access policy (`cli_reads::export::list_access_policy_source_ids`): none, as the store keeps no folder rules. */
+/** The sources with an access policy (`cli_reads::export::list_access_policy_source_ids`): those with access state, by id. */
 export const listAccessPolicySourceIds: StoreMember<[], string[]> = (brain) =>
   storeCall({ member: 'listAccessPolicySourceIds' }, () => brain.listAccessPolicySourceIds());
 

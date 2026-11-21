@@ -216,12 +216,12 @@ describe('engine parity: entity identities', () => {
   );
 
   parityTest(
-    'listEntityIdentityRows refuses on Rust for a caller whose folder rules widen the page policy',
+    'listEntityIdentityRows under excludePrivate judges a caller whose folder rules widen the page policy',
     { methods: ['putPage', 'linkEntityIdentityRow', 'listEntityIdentityRows'] },
     async (engine, backend) => {
       await people(engine, backend);
       await link(engine, 'g-alice', 'default', 'people/alice-example', true);
-      // The SQL engines read the folder rules; the Rust store has no copy of them, so the shell refuses typed.
+      // Every engine judges the caller's folder coverage (rust/docs/store/access_rules.md on Rust).
       const rows = await withCallerAccess({
         identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
       }, () => list(engine, { entityId: 'g-alice', excludePrivate: true }));
@@ -359,7 +359,8 @@ describe('entity identity union: a refused Rust read is not "no identity"', () =
     const viaStore: BrainEngine['listEntityIdentityRows'] = (filter) =>
       (STORE_MEMBERS.listEntityIdentityRows as (b: unknown, f: unknown) => Promise<never>)(brain, filter);
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
+      identity: ['member:alice-example'], audience: ['member:alice-example', 'member:bob-example'],
+      audienceIdentities: [['member:alice-example'], ['member:bob-example']], hidePrivate: true,
     }, fn);
     const run = (engine: BrainEngine) => widened(() => unionLinksAcrossIdentity(engine, 'people/alice-example', base, 'in',
       { sourceId: 'default', excludePrivate: true } as never));

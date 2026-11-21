@@ -10,12 +10,12 @@
 //! statement selects. A statement with no `ORDER BY` returns its rows in key order here (the TypeScript callers do
 //! not depend on an order). Each fact row keeps its stamped `trust_tier`, and the write gate keeps its receipts
 //! (`trust/write_gate.rs`), so `countWorldFacts` applies the read eligibility (`trust::TrustPolicy`). The facts store
-//! keeps no `needs_rederive` state (`takes.rs` reads it as empty), and no folder rule or `page_readers` column
-//! (`privacy.rs`): a page names readers here only through a `readable_by` key. rust/docs/store/facts.md, "Group 5", lists what each member answers.
+//! keeps no `needs_rederive` state (`takes.rs` reads it as empty), and no `page_readers` column: a page names readers
+//! through a `readable_by` key, and folder rules come from `access_rules.rs` (`privacy.rs` `folder_restricted`). rust/docs/store/facts.md, "Group 5", lists what each member answers.
 
 use super::{
-    FactRecord, PrivacyPolicy, ROW, bigint, count_arg, fact_by_number, hidden_by_deleted_page,
-    hidden_by_policy, hidden_by_quarantine, page_rows, real,
+    FactRecord, PrivacyPolicy, ROW, bigint, count_arg, fact_by_number, folder_restricted,
+    hidden_by_deleted_page, hidden_by_policy, hidden_by_quarantine, page_rows, real,
 };
 use crate::Store;
 use crate::env::iso;
@@ -384,10 +384,15 @@ impl Store {
             {
                 continue;
             }
-            // `readersSourcedFactSql`: the row's own page (deleted or not) names readers.
+            // `readersSourcedFactSql`: the row's own page (deleted or not) names readers or sits
+            // under a folder rule or a pending prefix.
             let readers = match &row.source_markdown_slug {
-                Some(slug) => read_page(&*read, &row.source_id, slug)?
-                    .is_some_and(|p| p.frontmatter.contains_key("readable_by")),
+                Some(slug) => match read_page(&*read, &row.source_id, slug)? {
+                    Some(p) => {
+                        p.frontmatter.contains_key("readable_by") || folder_restricted(&*read, &p)?
+                    }
+                    None => false,
+                },
                 None => false,
             };
             if !readers {

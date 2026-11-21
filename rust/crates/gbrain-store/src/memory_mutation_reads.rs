@@ -264,7 +264,7 @@ impl Store {
     /// `readRemoteForgetTier`: the stored tier of fact `fact_id` when it belongs to `source_id` and
     /// is a `world` fact, and with `remote_floor` the floor does not hide it ([`floor_hides`]: its
     /// provenance page passes the page policy for the empty identity and the fact is not owner-only;
-    /// the store keeps no folder rule, so that conjunct hides nothing). `None` otherwise.
+    /// a page under a folder rule fails that policy too, `privacy.rs`). `None` otherwise.
     pub fn read_remote_forget_tier(&self, q: &RemoteForgetTierQuery) -> Result<Option<String>> {
         no_nul("readRemoteForgetTier", &[("sourceId", &q.source_id)])?;
         let Ok(id) = u64::try_from(q.fact_id) else {

@@ -18,7 +18,8 @@
  *    cases cannot call (D18), so no case compared them across engines.
  *  - Seam: pages, facts, aliases, open loops, tombstones and sources are seeded through the typed members (`putPage`,
  *    `updateSlug`, `insertFacts`, `mergeOntologyFact`, `upsertOpenLoop`, `insertFactPurge`); the harness fixtures `createSource`,
- *    `archiveSource` and `restrictFolder` write the rest with SQL, and the Rust arm stops there on the typed raw_sql refusal.
+ *    `archiveSource` writes the rest with SQL, and the Rust arm stops there on the typed raw_sql refusal; `restrictFolder`
+ *    writes through the typed policy members.
  *    The write journal (persistence_requests, persistence_counters) is seeded through the typed journal members
  *    (`readSourceMembership`, `lockPersistenceCounters`, `insertWriteRequest`, `stampWriteClaim`, `completeWriteRow`), so its four
  *    reads are compared on queued, failed, committed and other-slug batch requests as well as on the empty journal; the one

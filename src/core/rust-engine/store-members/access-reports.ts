@@ -2,12 +2,15 @@
  * The access report reads (BrainEngine readAccessStateUnreadable, countOpenPages, listWhoCanReadPages,
  * readPageAdmitsCaller, readPageFolderRulesAdmit, countLineageClosingRules; SQL in engine-sql/access-setup.ts and
  * engine-sql/access-policy.ts): what gbrain access serves, doctor open_shared_pages and gbrain access who-can-read read.
- * The store keeps no access rules and no folder rule ids, and its access state always reads. What
+ * Folder rules come from gbrain-store `access_rules`, and the store's access state always reads. What
  * each member answers and why: rust/docs/store/write_misc.md (listWhoCanReadPages: page-visibility.md).
  */
 import type { OpenPageCount, OpenPageExclusion, WhoCanReadPageRow } from '../../engine-sql/access-setup.ts';
 import type { OwnerOnlyForm } from '../../access/owner-only.ts';
-import { accessAllowedSql, callerAccessAllowedSql, privacyPartSql } from '../../search/private-visibility.ts';
+import { accessAllowedSql, callerAccessAllowedSql, currentCallerAccess, privacyPartSql } from '../../search/private-visibility.ts';
+import type { AccessRuleRow } from '../../engine-sql/access-policy.ts';
+import { ruleCovers, validPrefix, validQualifiedRuleId } from '../../access/folder-rules.ts';
+import { isValidSourceId } from '../../source-id.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { ownerOnlyFormIn, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
@@ -63,8 +66,8 @@ async function readable(brain: StoreBrain, sourceId: string, slugs: string[], po
 
 /**
  * whoCanRead's page rows (engine-sql/access-setup.ts listWhoCanReadPages). The store reads the owner-only test in the
- * `fn` form for `mode` too: the store keeps no owner-only read mode, so the mode never widens the test. The store keeps
- * no folder rules, so `folder_rule_ids` is null.
+ * `fn` form for `mode` too: the store keeps no owner-only read mode, so the mode never widens the test.
+ * `folder_rule_ids` lists the rules that cover the page (`source:rule_id`), null when none does.
  */
 export const listWhoCanReadPages: StoreMember<[slug: string, sourceId: string | undefined, form: OwnerOnlyForm], WhoCanReadPageRow[]> =
   async (brain, slug, sourceId, form) => {
@@ -77,10 +80,24 @@ export const listWhoCanReadPages: StoreMember<[slug: string, sourceId: string | 
 export const readPageAdmitsCaller: StoreMember<[sourceId: string, slug: string, identity: readonly string[]], boolean> = async () =>
   refuseMember('readPageAdmitsCaller', 'one member\'s member-access floor');
 
-/** The store keeps no folder rules and does not judge one member's satisfied rules yet (row 32), so it refuses. */
-export const readPageFolderRulesAdmit: StoreMember<[sourceId: string, slug: string, satisfied: readonly string[]], boolean> = async () =>
-  refuseMember('readPageFolderRulesAdmit', 'one member\'s folder rules');
+/**
+ * `folderRulesAllowedSql('p', satisfied)` over the page row (live or soft-deleted): its stamped rules
+ * (`folder_rule_ids`, listWhoCanReadPages) are none or all in `satisfied`, and no prefix of the caller record's folder
+ * coverage covers it (`coverageSql`; an entry with an invalid source id or prefix covers every page). False when the
+ * source has no such page row.
+ */
+export const readPageFolderRulesAdmit: StoreMember<[sourceId: string, slug: string, satisfied: readonly string[]], boolean> = async (brain, sourceId, slug, satisfied) => {
+  const [row] = await storeCall({ member: 'readPageFolderRulesAdmit', sourceId, slug }, () => brain.listWhoCanReadPages(slug, sourceId, 'fn')) as WhoCanReadPageRow[];
+  if (!row) return false;
+  const ids = satisfied.length && satisfied.every(validQualifiedRuleId) ? satisfied : [];
+  if (!(row.folder_rule_ids ?? []).every(id => ids.includes(id))) return false;
+  return !currentCallerAccess().folderCoverage.some(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix))
+    || (c.source_id === sourceId && (c.prefix === '' || ruleCovers(slug, c.prefix))));
+};
 
-/** The store keeps no access rules, so no id names an applied raw-only rule and every id counts. */
-export const countLineageClosingRules: StoreMember<[ruleIds: readonly string[], sourceId: string], number> = async (_brain, ruleIds) =>
-  ruleIds.length;
+/** How many of `ruleIds` are not an applied raw-only rule (`covers_derived` false) of `sourceId` (gbrain-store `access_rules`). */
+export const countLineageClosingRules: StoreMember<[ruleIds: readonly string[], sourceId: string], number> = async (brain, ruleIds, sourceId) => {
+  const rules = await storeCall({ member: 'countLineageClosingRules', sourceId }, () => brain.listAccessRules(sourceId)) as AccessRuleRow[];
+  const rawOnly = new Set(rules.filter(r => r.covers_derived === false).map(r => `${sourceId}:${r.rule_id}`));
+  return ruleIds.filter(id => !rawOnly.has(id)).length;
+};
