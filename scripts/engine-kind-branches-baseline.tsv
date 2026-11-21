@@ -57,7 +57,7 @@ src/commands/enrich.ts	kind_compare	1
 src/commands/extract-attendance-repair.ts	kind_compare	3
 src/commands/extract-stale-delegate.ts	kind_compare	1
 src/commands/git.ts	kind_compare	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
-src/commands/import.ts	kind_compare	2
+src/commands/import.ts	kind_compare	1
 src/commands/init.ts	kind_compare	1
 src/commands/integrity.ts	kind_compare	1
 src/commands/jobs/run-child.ts	kind_compare	1
@@ -89,7 +89,7 @@ src/commands/sync-delegate.ts	kind_compare	2
 src/commands/sync-persistence-delegate.ts	kind_compare	1
 src/commands/sync.ts	kind_compare	1
 src/commands/sync/gitignore.ts	kind_compare	1
-src/commands/sync/imports.ts	kind_compare	2
+src/commands/sync/imports.ts	kind_compare	1
 src/commands/trust.ts	kind_compare	1
 src/commands/upgrade-restart.ts	kind_compare	1
 src/commands/wakeshift.ts	kind_compare	2
@@ -221,7 +221,7 @@ src/core/shared-skills/restore.ts	kind_compare	1
 src/core/skillpack/shared-brain-bridge.ts	kind_compare	1
 src/core/sql-engine-kind.ts	kind_compare	2	came from #9631 (the Rust engine shell): the one helper that narrows an engine kind to pglite or postgres and refuses rust; joined at the #9641 merge with 56a9547a
 src/core/statement-deadline.ts	kind_compare	1
-src/core/sync-concurrency.ts	kind_compare	2
+src/core/sync-concurrency.ts	kind_compare	3	+1: usesPostgresImportWorkers holds the one Postgres-worker check that import.ts and sync/imports.ts each made inline (they drop 1 each); a PGLite or Rust brain imports on its own engine
 src/core/sync-identity-downgrades.ts	kind_compare	1
 src/core/vector-index.ts	kind_compare	5
 src/core/vector-prewarm.ts	kind_compare	2
