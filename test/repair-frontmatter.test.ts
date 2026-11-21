@@ -536,19 +536,63 @@ test('LC-2: a nested source that records Git-root origins keeps a purged page ou
 test('LC-2: legacy brain: a file whose own slug names a soft-deleted page is needs_review, never a safe repair that restores it', async () => {
   const engine = legacyEngine;
   await withEnv(env, async () => {
-    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-    const id = 'legacy-fm-lc2', root = join(home, id);
-    mkdirSync(join(root, 'notes'), { recursive: true });
-    await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [id, root]);
     // The file names its page by a stored spelling (`notes/a--b`) whose path slug is `notes/a-b`: the import keeps the stored spelling.
-    writeFileSync(join(root, 'notes', 'a--b.md'), '---\ntitle: Stamped\nslug: notes/a--b\n---\nA synthetic note.\n');
-    expect((await importFromFile(engine, join(root, 'notes', 'a--b.md'), 'notes/a--b.md', { sourceId: id, noEmbed: true })).slug).toBe('notes/a--b');
-    expect(await engine.softDeletePage('notes/a--b', { sourceId: id })).toBeTruthy();
+    const id = 'legacy-fm-lc2', root = await legacyDeletedSpelling(engine, id);
     writeFileSync(join(root, 'notes', 'a--b.md'), QUOTABLE.replace('title: Payments roundup', 'title: Stamped\nslug: notes/a--b'));
     const s = fixture(engine, id, root, (path, content) => writeFileSync(join(root, path), content));
     const preview = await s.run({ includeAmbiguous: true });
     expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 1 });
     expect(reviewCodes(preview)).toEqual([['notes/a--b.md', 'page_deleted']]);
     expect((await engine.readPageSnapshot('notes/a--b', { sourceId: id, includeDeleted: true }))?.page.deleted_at).toBeTruthy();
+  });
+}, 120_000);
+
+test('LC-2: unheld spellings that differ only by case are needs_review, never a safe repair that picks one', () => each(async engine => {
+  // Before any sync has held them, two spellings of one page each carry a value that only quoting fixes.
+  const s = await managed(engine, { 'notes/Max.md': QUOTABLE.replace('Payments roundup', 'Max upper'), 'notes/max.md': QUOTABLE.replace('Payments roundup', 'Max lower') });
+  const preview = await s.run({ includeAmbiguous: true, only: ['notes/max.md'] });
+  expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 1 });
+  expect(reviewCodes(preview)).toEqual([['notes/max.md', 'page_identity_changed']]);
+  expect(details(preview).needs_review[0]!.resolution).toContain('Keep one spelling');
+  expect(await engine.readPageSnapshot('notes/max', { sourceId: s.id, includeDeleted: true })).toBeNull();
+}), 240_000);
+
+/** A legacy source with one soft-deleted page `notes/a--b` that records `notes/a--b.md` (the spelling an older import kept). */
+async function legacyDeletedSpelling(engine: BrainEngine, id: string): Promise<string> {
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+  const root = join(home, id);
+  mkdirSync(join(root, 'notes'), { recursive: true });
+  await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [id, root]);
+  writeFileSync(join(root, 'notes', 'a--b.md'), '---\ntitle: Stamped\nslug: notes/a--b\n---\nA synthetic note.\n');
+  expect((await importFromFile(engine, join(root, 'notes', 'a--b.md'), 'notes/a--b.md', { sourceId: id, noEmbed: true })).slug).toBe('notes/a--b');
+  expect(await engine.softDeletePage('notes/a--b', { sourceId: id })).toBeTruthy();
+  return root;
+}
+
+test('LC-2: legacy brain: an unstamped file whose deleted page kept another spelling is needs_review, never imported as a new page', async () => {
+  const engine = legacyEngine;
+  await withEnv(env, async () => {
+    const id = 'legacy-fm-lc2-origin', root = await legacyDeletedSpelling(engine, id);
+    // The file comes back without its slug stamp, so its path names notes/a-b; only the recorded origin finds the deleted page.
+    writeFileSync(join(root, 'notes', 'a--b.md'), QUOTABLE);
+    const preview = await fixture(engine, id, root, (path, content) => writeFileSync(join(root, path), content)).run({ includeAmbiguous: true });
+    expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 1 });
+    expect(reviewCodes(preview)).toEqual([['notes/a--b.md', 'page_deleted']]);
+    expect(await engine.readPageSnapshot('notes/a-b', { sourceId: id, includeDeleted: true })).toBeNull();
+  });
+}, 120_000);
+
+test('LC-2: legacy brain: a file bound to a live page but naming a deleted page by its own slug is needs_review', async () => {
+  const engine = legacyEngine;
+  await withEnv(env, async () => {
+    const id = 'legacy-fm-lc2-bound', root = await legacyDeletedSpelling(engine, id);
+    // A later unstamped import made live page notes/a-b at the same file.
+    writeFileSync(join(root, 'notes', 'a--b.md'), '---\ntitle: Plain\n---\nA later synthetic note.\n');
+    expect((await importFromFile(engine, join(root, 'notes', 'a--b.md'), 'notes/a--b.md', { sourceId: id, noEmbed: true })).slug).toBe('notes/a-b');
+    // The file stamps the deleted spelling again: importFromFile would write notes/a--b, not the live page.
+    writeFileSync(join(root, 'notes', 'a--b.md'), QUOTABLE.replace('title: Payments roundup', 'title: Stamped\nslug: notes/a--b'));
+    const preview = await fixture(engine, id, root, (path, content) => writeFileSync(join(root, path), content)).run({ includeAmbiguous: true });
+    expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 1 });
+    expect(reviewCodes(preview)).toEqual([['notes/a--b.md', 'page_deleted']]);
   });
 }, 120_000);

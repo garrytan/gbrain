@@ -252,13 +252,21 @@ function markdownFiles(root: string): string[] {
 
 interface PageRow { id: number; slug: string; source_path: string; revision: string; title: string; head: string }
 
-/** Each recorded origin's canonical live page (#6948: twins resolve to the page whose slug the file derives, else stay ambiguous). */
-async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<Map<string, PageRow | { ambiguous: string[] }>> {
-  const rows = await engine.executeRaw<PageRow>(`SELECT id, slug, source_path, knowledge_revision::text AS revision, title, left(compiled_truth, 400) AS head
-    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL ORDER BY slug`, [sourceId]);
+/**
+ * Each recorded origin's canonical live page (#6948: twins resolve to the page whose slug the file derives, else stay ambiguous),
+ * and each recorded origin's soft-deleted page slugs, from one read.
+ */
+async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<{ live: Map<string, PageRow | { ambiguous: string[] }>; deleted: Map<string, string[]> }> {
+  const rows = await engine.executeRaw<PageRow & { gone: boolean }>(`SELECT id, slug, source_path, knowledge_revision::text AS revision, title,
+      CASE WHEN deleted_at IS NULL THEN left(compiled_truth, 400) ELSE '' END AS head, deleted_at IS NOT NULL AS gone
+    FROM pages WHERE source_id=$1 AND source_path IS NOT NULL ORDER BY slug`, [sourceId]);
   const grouped = new Map<string, PageRow[]>();
-  for (const row of rows) grouped.set(row.source_path, [...grouped.get(row.source_path) ?? [], { ...row, id: Number(row.id) }]);
-  return new Map([...grouped].map(([path, pages]) => [path, pickCanonicalOrigin(pages, path)!]));
+  const deleted = new Map<string, string[]>();
+  for (const { gone, ...row } of rows) {
+    if (gone) deleted.set(row.source_path, [...deleted.get(row.source_path) ?? [], row.slug]);
+    else grouped.set(row.source_path, [...grouped.get(row.source_path) ?? [], { ...row, id: Number(row.id) }]);
+  }
+  return { live: new Map([...grouped].map(([path, pages]) => [path, pickCanonicalOrigin(pages, path)!])), deleted };
 }
 
 /**
@@ -320,7 +328,34 @@ interface Analysis {
   review?: NeedsReview;
 }
 
-interface FileContext { engine: BrainEngine; src: SourceRoot; includeAmbiguous: boolean; pages: Map<string, PageRow | { ambiguous: string[] }> }
+interface FileContext {
+  engine: BrainEngine; src: SourceRoot; includeAmbiguous: boolean; pages: Map<string, PageRow | { ambiguous: string[] }>;
+  /** Each recorded origin's soft-deleted page slugs. */
+  deleted: Map<string, string[]>;
+  /** Each file's other spellings that differ only by case and name the same page (sync holds them page_identity_changed). */
+  twins: Map<string, string[]>;
+}
+
+async function fileContext(engine: BrainEngine, src: SourceRoot, includeAmbiguous: boolean): Promise<FileContext> {
+  const { live: pages, deleted } = await pagesByOrigin(engine, src.sourceId);
+  return { engine, src, includeAmbiguous, pages, deleted, twins: spellingTwins(markdownFiles(src.root), pages) };
+}
+
+/** Files whose paths fold to one spelling and name one page: a live origin's page slug, else the slug the path names. */
+function spellingTwins(files: string[], pages: FileContext['pages']): Map<string, string[]> {
+  const byFold = new Map<string, string[]>();
+  for (const path of files) byFold.set(path.toLowerCase(), [...byFold.get(path.toLowerCase()) ?? [], path]);
+  const twins = new Map<string, string[]>();
+  for (const group of byFold.values()) {
+    if (group.length < 2) continue;
+    const slugOf = (path: string) => { const page = pages.get(path); return page && !('ambiguous' in page) ? page.slug : resolveSlugForPath(path); };
+    for (const path of group) {
+      const others = group.filter(other => other !== path && slugOf(other) === slugOf(path));
+      if (others.length) twins.set(path, others);
+    }
+  }
+  return twins;
+}
 
 /** One file's proposal, pending interpretation, or manual fix; null when it needs nothing. */
 async function analyzeFile(ctx: FileContext, path: string, hold: GitHoldRecord | undefined): Promise<Analysis | null> {
@@ -391,10 +426,15 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
   const { engine, src } = ctx;
   const sourcePath = hold?.source_path ?? path;
   const page = ctx.pages.get(sourcePath);
+  const twins = hold ? undefined : ctx.twins.get(path);
+  if (twins) {
+    return { source_id: src.sourceId, path, code: 'page_identity_changed', reason: 'spelling', resolution: `${path} and ${twins.join(', ')} differ only by case and name one page, so importing one would pick a spelling, `
+      + `which frontmatter repair never does. Keep one spelling, rename or remove the others and commit, then run gbrain sync --source ${src.sourceId} --no-pull.` };
+  }
   if (page && 'ambiguous' in page) return { source_id: src.sourceId, path, code: 'origin_conflict', resolution: originConflictMessage(src.sourceId, sourcePath, page.ambiguous) };
   const slug = page?.slug ?? (proposal.rename_from ? resolveSlugForPath(sourcePath) : hold?.slug ?? resolveSlugForPath(sourcePath));
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: src.sourceId, includeDeleted: true });
-  const revives = await revivesDeletedPage(engine, src, { path, sourcePath, slug, snapshot, content: proposal.content, bound: !!page });
+  const revives = await revivesDeletedPage(ctx, { path, sourcePath, slug, snapshot, content: proposal.content, bound: !!page });
   if (revives) return revives;
   // Wave B decision #1: the re-import compares the stored body whole, which a page stored in segments allows up to 24 MiB.
   if (proposal.reimport && snapshot && segmentedOverCeiling(snapshot.page)) {
@@ -423,15 +463,18 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
  * and on a managed source a deletion marker at the origin (its page was purged) would come back as a new page. Either is
  * the user's decision, made through the file-drift consent step (or `gbrain restore`), never by a frontmatter repair.
  */
-async function revivesDeletedPage(engine: BrainEngine, src: SourceRoot,
+async function revivesDeletedPage(ctx: FileContext,
   target: { path: string; sourcePath: string; slug: string; snapshot: PageSnapshot | null; content: string; bound: boolean }): Promise<NeedsReview | null> {
+  const { engine, src } = ctx;
   const { path, sourcePath, slug, snapshot } = target;
   const managed = src.mode === 'managed';
   // With no hold naming it, the origin sync records is the Git-root spelling when the source pins slug_root_mode git-root.
   const origins = [...new Set([sourcePath, managed && sourcePath === path
     ? scannerSourcePath(src.root, join(src.root, path), await scannerSlugRootMode(engine, src.sourceId, src.root)) : sourcePath])];
-  // With no live page at the origin, the import may write another slug: the file's own `slug:` (as importFromFile honors it) or the origin's.
-  const slugs = target.bound ? [slug] : [...new Set([slug, ...origins.map(origin => resolveSlugForPath(origin)), ...declaredImportSlug(target.content, path)])];
+  // With no live page at the origin, the import may write another slug: the origin's, or a deleted page that records the origin.
+  // Legacy apply runs importFromFile, which writes the file's own `slug:` when it is a spelling of the path's, bound page or not.
+  const slugs = [...new Set([slug, ...(target.bound ? [] : origins.flatMap(origin => [resolveSlugForPath(origin), ...ctx.deleted.get(origin) ?? []])),
+    ...(target.bound && managed ? [] : declaredImportSlug(target.content, path))])];
   const drift = (state: 'tombstone_edited' | 'purged_differs') => `gbrain sync --source ${src.sourceId} --no-pull holds the file file_drift when it differs from the deleted page, and `
     + `${shellQuote(['gbrain', 'repair', 'file-drift', '--source', src.sourceId, '--held', '--side', 'deleted', '--state', state, '--only', path, '--prefer', 'file'])} previews `
     + `${state === 'tombstone_edited' ? 'restoring the page' : 'importing it as a new page'} (--prefer database keeps the deletion and removes the file); decide with the user.`;
@@ -465,7 +508,7 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
   const seen = new Set<string>();
   for (const src of await sourceRoots(engine, scope, residuals, warnings)) {
     const holds = new Map(((await readGitSourceHolds(engine, { sourceIds: [src.sourceId] }))[0]?.holds ?? []).map(hold => [hold.path, hold]));
-    const ctx: FileContext = { engine, src, includeAmbiguous: selection.include_ambiguous, pages: await pagesByOrigin(engine, src.sourceId) };
+    const ctx = await fileContext(engine, src, selection.include_ambiguous);
     const screenConfig = await repairScreenConfig(engine, src.sourceId);
     const paths = [...new Set([...markdownFiles(src.root), ...holds.keys()])].sort()
       .filter(path => (!selection.only.length || selection.only.includes(path)) && !selection.skip.includes(path));
@@ -606,7 +649,7 @@ async function applyRepair(ctx: OperationContext, repair: ApprovedRepair, select
   const src: SourceRoot = { sourceId: repair.source_id, incarnation, mode: repair.mode, root };
   const holds = (await readGitSourceHolds(ctx.engine, { sourceIds: [repair.source_id] }))[0]?.holds ?? [];
   const hold = holds.find(entry => entry.path === repair.path);
-  const fileCtx: FileContext = { engine: ctx.engine, src, includeAmbiguous: selection.include_ambiguous, pages: await pagesByOrigin(ctx.engine, repair.source_id) };
+  const fileCtx = await fileContext(ctx.engine, src, selection.include_ambiguous);
   const analysis = await analyzeFile(fileCtx, repair.path, hold);
   if (!analysis?.proposal) return changed('the file no longer needs this change');
   const bound = await bindProposal(fileCtx, repair.path, hold, analysis.proposal, await repairScreenConfig(ctx.engine, repair.source_id));
