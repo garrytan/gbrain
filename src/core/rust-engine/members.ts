@@ -298,6 +298,10 @@ export const RUST_ENGINE_MEMBERS = {
   listVersionsByChangeReason: 'page_versions',
   replaceVersionChangeReasons: 'page_versions',
   listRetainedVersionBodies: 'page_versions',
+  listOverwriteCandidates: 'page_versions',
+  listVersionsAfter: 'page_versions',
+  listOverwriteLivePages: 'page_versions',
+  readVersionContent: 'page_versions',
   pruneHoldingPageVersions: 'page_versions',
   revertToVersion: 'page_versions',
   // page_body

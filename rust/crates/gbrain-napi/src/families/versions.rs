@@ -139,4 +139,60 @@ impl Brain {
             s.list_retained_version_bodies(&q)
         })
     }
+
+    /// `listOverwriteCandidates({ sourceId, slugs, limit })`: resolves the versions a managed sync import archived over a database edit, newest first.
+    #[napi]
+    pub fn list_overwrite_candidates<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::repair_versions::OverwriteCandidateQuery =
+                required(query, "listOverwriteCandidates query")?;
+            s.list_overwrite_candidates(&q)
+        })
+    }
+
+    /// `listVersionsAfter({ pageIds, afterId })`: resolves the later versions of the pages with their writing request and content, by id.
+    #[napi]
+    pub fn list_versions_after<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::repair_versions::VersionsAfterQuery =
+                required(query, "listVersionsAfter query")?;
+            s.list_versions_after(&q)
+        })
+    }
+
+    /// `listOverwriteLivePages({ pageIds })`: resolves the revision of each page, its writing request, content and tags.
+    #[napi]
+    pub fn list_overwrite_live_pages<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::repair_versions::VersionsAfterQuery =
+                required(query, "listOverwriteLivePages query")?;
+            s.list_overwrite_live_pages(&q)
+        })
+    }
+
+    /// `readVersionContent({ versionId, pageId })`: resolves the content columns of the version, or null.
+    #[napi]
+    pub fn read_version_content<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::repair_versions::VersionContentQuery =
+                required(query, "readVersionContent query")?;
+            s.read_version_content(&q)
+        })
+    }
 }

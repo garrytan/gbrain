@@ -1,7 +1,9 @@
 /**
  * Page version members (BrainEngine createVersion, getVersions, the change-reason pair readLatestVersionId and
  * stampVersionChangeReason, readLatestVersionIdAtTier, the purged-change-reasons pair listVersionsByChangeReason and
- * replaceVersionChangeReasons and the redacted-facts body read listRetainedVersionBodies, engine-sql/version-reasons.ts, and the holding-page cap pruneHoldingPageVersions,
+ * replaceVersionChangeReasons and the redacted-facts body read listRetainedVersionBodies, engine-sql/version-reasons.ts, the
+ * overwritten-edits reads listOverwriteCandidates, listVersionsAfter, listOverwriteLivePages and readVersionContent,
+ * engine-sql/overwrite-reads.ts, and the holding-page cap pruneHoldingPageVersions,
  * engine-sql/version-prune.ts). A segmented page's snapshot references its body
  * generation and keeps content_hash, as insertSegmentedVersion does. A version keeps the reason a write stamped on it:
  * getVersions reads it as `replaced_because` (the trusted read; `excludePrivate` is refused). `revertToVersion` is not
@@ -10,6 +12,7 @@
 import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-state/version-types.ts';
 import type { VersionHistory } from '../../page-state/versions.ts';
 import type { VersionReasonRow } from '../../engine-sql/version-reasons.ts';
+import type { OverwriteCandidateRow, OverwriteContentRow, OverwriteLiveRow, OverwriteVersionRow } from '../../engine-sql/overwrite-reads.ts';
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -97,4 +100,32 @@ export const listRetainedVersionBodies: StoreMember<[pageId: number, limit: numb
   requireInteger(member, 'limit', limit);
   const rows: Array<{ id: number; compiled_truth: string }> = await storeCall({ member }, () => brain.listRetainedVersionBodies({ pageId, limit }));
   return rows.map(row => ({ id: Number(row.id), compiled_truth: row.compiled_truth }));
+};
+
+/** The overwrite candidates of the source, newest first (repair_versions.rs). `imported_at` is the store's ISO text. */
+export const listOverwriteCandidates: StoreMember<[sourceId: string, slugs: readonly string[] | null, limit: number], OverwriteCandidateRow[]> =
+  async (brain, sourceId, slugs, limit) => {
+    const member = 'listOverwriteCandidates';
+    requireInteger(member, 'limit', limit);
+    return storeCall({ member, sourceId }, () => brain.listOverwriteCandidates({ sourceId, slugs: slugs === null ? null : [...slugs], limit }));
+  };
+
+export const listVersionsAfter: StoreMember<[pageIds: readonly number[], afterId: number], OverwriteVersionRow[]> = async (brain, pageIds, afterId) => {
+  const member = 'listVersionsAfter';
+  for (const id of pageIds) requireInteger(member, 'page id', id);
+  requireInteger(member, 'version id', afterId);
+  return storeCall({ member }, () => brain.listVersionsAfter({ pageIds: [...pageIds], afterId }));
+};
+
+export const listOverwriteLivePages: StoreMember<[pageIds: readonly number[]], OverwriteLiveRow[]> = async (brain, pageIds) => {
+  const member = 'listOverwriteLivePages';
+  for (const id of pageIds) requireInteger(member, 'page id', id);
+  return storeCall({ member }, () => brain.listOverwriteLivePages({ pageIds: [...pageIds] }));
+};
+
+export const readVersionContent: StoreMember<[versionId: number, pageId: number], OverwriteContentRow | null> = async (brain, versionId, pageId) => {
+  const member = 'readVersionContent';
+  requireInteger(member, 'version id', versionId);
+  requireInteger(member, 'page id', pageId);
+  return storeCall({ member }, () => brain.readVersionContent({ versionId, pageId }));
 };

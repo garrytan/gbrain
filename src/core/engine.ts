@@ -30,6 +30,7 @@ import type * as FactsPurgeSql from './engine-sql/facts-purge.ts';
 import type * as FactsRepairSql from './engine-sql/facts-repair.ts';
 import type * as LabelRepairSql from './engine-sql/label-repair-reads.ts';
 import type * as FactTextRepairSql from './engine-sql/fact-text-repair.ts';
+import type * as OverwriteSql from './engine-sql/overwrite-reads.ts';
 import type * as FilesOpsSql from './engine-sql/files-ops.ts';
 import type * as ContradictionsCycleSql from './engine-sql/contradictions-cycle.ts';
 import type * as OntologyRepairSql from './engine-sql/ontology-repair.ts';
@@ -3517,6 +3518,14 @@ export interface BrainEngine {
   listVersionsByChangeReason(sourceId: string, reasons: readonly string[]): Promise<import('./engine-sql/version-reasons.ts').VersionReasonRow[]>;
   /** The page's retained inline version bodies, newest first, at most `limit` (repair redacted-facts). */
   listRetainedVersionBodies(pageId: number, limit: number): Promise<Array<{ id: number; compiled_truth: string }>>;
+  /** overwritten-edits: versions a managed sync import archived over a database edit, newest first (engine-sql/overwrite-reads.ts). */
+  listOverwriteCandidates(sourceId: string, slugs: readonly string[] | null, limit: number): Promise<OverwriteSql.OverwriteCandidateRow[]>;
+  /** The later versions of the pages, by id, with their writing request and content. */
+  listVersionsAfter(pageIds: readonly number[], afterId: number): Promise<OverwriteSql.OverwriteVersionRow[]>;
+  /** Each named page's revision, its writing request, content and tags. */
+  listOverwriteLivePages(pageIds: readonly number[]): Promise<OverwriteSql.OverwriteLiveRow[]>;
+  /** One version's content columns, or null. */
+  readVersionContent(versionId: number, pageId: number): Promise<OverwriteSql.OverwriteContentRow | null>;
   /** Sets `replacement` on each named version still holding its named reason; answers the ids set, by id. */
   replaceVersionChangeReasons(sourceId: string, rows: ReadonlyArray<{ id: number; reason: string }>, replacement: string): Promise<number[]>;
   /**

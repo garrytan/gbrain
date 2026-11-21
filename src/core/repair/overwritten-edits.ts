@@ -15,6 +15,8 @@
  */
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 import { resolveSourceLocalFilePath, serializePageToMarkdown } from '../markdown.ts';
 import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -56,8 +58,7 @@ async function scanScope(engine: BrainEngine, scope: RepairScope, slugs: readonl
 
 /** The archived version's content rendered as `revert_version` renders it, or null when it is no longer the previewed edit. */
 async function versionMarkdown(engine: BrainEngine, edit: Pick<OverwrittenEdit, 'page_id' | 'version_id' | 'lost_digest'>, page: Parameters<typeof serializePageToMarkdown>[0]): Promise<string | null> {
-  const [row] = await engine.executeRaw<{ body_storage: string | null; title: string | null; type: string | null; compiled_truth: string | null; timeline: string | null; frontmatter: Record<string, unknown> | null; tags: unknown }>(
-    'SELECT body_storage, title, type, compiled_truth, timeline, frontmatter, tags FROM page_versions WHERE id=$1 AND page_id=$2', [edit.version_id, edit.page_id]);
+  const row = await engine.readVersionContent(edit.version_id, edit.page_id);
   const content = row ? overwriteContent(row) : null;
   if (!content || overwriteDigest(content) !== edit.lost_digest) return null;
   return serializePageToMarkdown({ ...page, title: content.title, type: content.type, compiled_truth: content.compiled_truth, timeline: content.timeline, frontmatter: content.frontmatter }, content.tags);
@@ -144,12 +145,14 @@ const changed = (reason: string, detail: Record<string, unknown> = {}): RepairIt
 async function restoreEdit(ctx: OperationContext, entry: RepairItem, edit: ApprovedEdit): Promise<RepairItemOutcome> {
   const engine = ctx.engine;
   const requestId = await repairRequestId(ctx, 'overwritten-edits', entry, edit.page_revision);
-  const replayed = (await engine.executeRaw("SELECT 1 FROM persistence_requests WHERE request_id=$1::uuid AND operation='revert_version' AND state='committed'", [requestId])).length > 0;
+  const replayed = (await engine.listWriteRequestsByRequestIds([requestId])).some(row => row.operation === 'revert_version' && row.state === 'committed');
   if (!replayed) {
     const snapshot = await engine.readPageSnapshot(edit.slug, { sourceId: edit.source_id });
     if (!snapshot || Number(snapshot.page.id) !== edit.page_id || snapshot.revision !== edit.page_revision) return changed('page_moved', { page_revision: snapshot?.revision ?? null });
     if (await versionMarkdown(engine, edit, snapshot.page) === null) return changed('version_changed');
   }
+  // The restore is a page write (revert_version, lane 7's writer): an engine without raw SQL stops here, before it.
+  if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', 'repair overwritten-edits page write');
   try {
     await submitPageMutation({ ...ctx, sourceId: edit.source_id }, { operation: 'revert_version', databaseOnly: 'overwrite_restore',
       params: { slug: edit.slug, source_id: edit.source_id, version_id: edit.version_id, expected_revision: edit.page_revision, request_id: requestId } });

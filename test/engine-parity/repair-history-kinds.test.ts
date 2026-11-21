@@ -9,6 +9,9 @@
  *    redacted-facts restores a database-only row whose original words a page holds on every arm; a fenced row is restored
  *    by a page write on the SQL arms, and the Rust engine refuses that page write by name ("repair redacted-facts page
  *    write", lane 7's writer) before it writes anything of the page.
+ *    overwritten-edits lists a database edit a managed sync import archived (seeded through the typed journal members
+ *    and coordinated writes, so the version receipts name both requests) the same way on every arm; the restore is a
+ *    page write on the SQL arms, and the Rust engine refuses it by name ("repair overwritten-edits page write").
  *  - Regression: these kinds read and rewrite `page_versions` through executeRaw, so a Rust brain failed on a generic
  *    executeRaw refusal that named no step.
  *  - Why existing coverage misses it: test/purged-change-reasons-repair-gst2886.test.ts,
@@ -30,6 +33,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { resolveRepairScope, type RepairKind, type RepairResult } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
 import { renderFactsTable } from '../../src/core/facts-fence.ts';
+import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -41,8 +45,11 @@ function shape(result: RepairResult, root?: string) {
     .replace(/\b[0-9a-f]{64}\b/g, '<sha256>').replace(/\b[0-9a-f]{40}\b/g, '<sha1>')
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, '<uuid>');
   if (root) text = text.split(root).join('<root>');
-  // Postgres sequences keep counting across cases (harness reset), so a fact id in an item name is not comparable.
-  text = text.replace(/#\d+/g, '#<id>');
+  // Postgres sequences keep counting across cases (harness reset), so a fact or version id is not comparable; nor is a
+  // request's completion time.
+  text = text.replace(/#\d+/g, '#<id>').replace(/"version_id":\d+/g, '"version_id":"<id>"').replace(/version \d+/g, 'version <id>')
+    .replace(/@v\d+/g, '@v<id>').replace(/restore_version:\d+/g, 'restore_version:<id>')
+    .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z/g, '<time>');
   return JSON.parse(text);
 }
 
@@ -132,6 +139,44 @@ async function factTexts(engine: BrainEngine, ids: Record<string, number>) {
     out[name] = row ? row.fact : 'restored-or-inactive';
   }
   return out;
+}
+
+
+// ---- overwritten-edits ----
+
+const JOURNAL_KEYS = ['principal:local_cli:history-writer', 'brain'];
+
+/** A committed request of `operation` with `intent` and `outcome`; answers its row id. */
+async function committedRequest(engine: BrainEngine, requestId: string, operation: string, intent: unknown, outcome: unknown): Promise<string> {
+  const source = await engine.readSourceMembership('default');
+  await engine.lockPersistenceCounters(JOURNAL_KEYS);
+  const { id } = await engine.insertWriteRequest({
+    principalKind: 'local_cli', principalId: 'history-writer', requestId, operation, sourceId: 'default',
+    sourceIncarnation: source!.incarnation, pageId: null, slug: 'notes/overwritten', worktreeId: null,
+    topologyGeneration: null, digest: 'd'.repeat(64), intent, authority: { scopes: ['write'] },
+    intentBytes: 100, terminalReservation: 8192, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity',
+    admitterHostId: null, counterKeys: JOURNAL_KEYS, clientRequestId: null, state: 'queued', deferredRefreshId: null,
+  });
+  await engine.completeWriteRow({ id, state: 'committed', outcome, errorCode: null, errorMessage: null, consumerVersion: 'parity', consumerHostId: null,
+    errorDetail: null, resultBytes: 400, counterKeys: JOURNAL_KEYS, intentBytes: 100, retainedBytes: 500, terminalReservation: 8192, probePurges: false });
+  return id;
+}
+
+/**
+ * notes/overwritten: a database-only edit (request W, outcome persistence.mode database) that a managed sync import
+ * (request S) archived and replaced with other content.
+ */
+async function seedOverwrite(engine: BrainEngine) {
+  const w = await committedRequest(engine, 'c0000000-0000-4000-8000-0000000000a1', 'put_page', { kind: 'put_page' }, { persistence: { mode: 'database' } });
+  const s = await committedRequest(engine, 'c0000000-0000-4000-8000-0000000000a2', 'submit_job', { kind: 'managed_sync_import' }, { imported_file: true });
+  const page = (body: string) => ({ type: 'note' as const, title: 'Overwritten', compiled_truth: body, timeline: '' });
+  const as = (requestId: string, fn: (tx: BrainEngine) => Promise<unknown>) => engine.transaction(tx =>
+    withCoordinatedWrite(tx, ['default'], () => fn(tx), { requestId, principal: { kind: 'local_cli', id: 'history-writer' } }));
+  await as(w, tx => tx.putPage('notes/overwritten', page('The database edit the user made.'), { sourceId: 'default' }));
+  await as(s, async (tx) => {
+    await tx.createVersion('notes/overwritten', { sourceId: 'default' });
+    await tx.putPage('notes/overwritten', page('The committed file the import published.'), { sourceId: 'default' });
+  });
 }
 
 describe('engine parity: the history repair kinds of batch 6a', () => {
@@ -237,4 +282,14 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
     const allBodies = (await engine.listRetainedVersionBodies(page.id, 50)).map(b => b.compiled_truth);
     return { candidates, restored, projected, noted, again, wrongSource, bySource, unexpired, maxRow, noRows, after, bodies, allBodies };
   });
+  parityTest('overwritten-edits previews the database edit an import overwrote, and the Rust engine refuses the restore by name', {
+    methods: ['insertWriteRequest', 'completeWriteRow', 'setWriteContext', 'putPage', 'createVersion', 'listOverwriteCandidates', 'listVersionsAfter',
+      'listOverwriteLivePages', 'readVersionContent'],
+    requires: 'raw_sql', timeout: 60_000,
+  }, async (engine, backend) => withDir(async () => {
+    await seedOverwrite(engine);
+    const scanned = await engine.listOverwriteCandidates('default', null, 10);
+    expect(scanned.map(row => row.slug)).toEqual(['notes/overwritten']);
+    return previewThenApply(engine, backend, 'overwritten-edits', 'repair overwritten-edits page write');
+  }));
 });

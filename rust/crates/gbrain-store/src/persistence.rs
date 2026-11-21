@@ -93,6 +93,7 @@ mod write_claim_terms;
 mod writer_versions;
 pub use connector_orphans::OrphanBounds;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
+pub(crate) use effects::all_effects;
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
