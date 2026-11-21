@@ -260,8 +260,10 @@ The dates are part of the page, so on a brain with a Git repository they live
 in the file and in every commit, and gbrain keeps them on each retained version.
 The interval is half-open: the text is in force from `valid_from` up to, but
 not including, `valid_until`, the same rule links use. Write the dates quoted.
-An unquoted YAML date also works; a partial date (`2026-07`), a time of day or
-another zone does not, and the write result warns `valid_from_unparsed`.
+An unquoted YAML date also works, and so does a timestamp that is midnight UTC
+in any YAML form (`2026-07-01T00:00:00Z`, `2026-07-01T02:00:00+02:00`); a
+partial date (`2026-07`) or a time that is not midnight UTC does not, and the
+write result warns `valid_from_unparsed`.
 
 **Say to your agent:** *"What did our refund policy say on March 1?"* The agent
 reads the page with `get_page {slug, as_of: '2026-03-01'}` (CLI:
