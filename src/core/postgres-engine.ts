@@ -299,6 +299,7 @@ import * as takesReads from './engine-sql/takes-reads.ts';
 import * as trustTierReads from './engine-sql/trust-tier-reads.ts';
 import * as versionReasons from './engine-sql/version-reasons.ts';
 import * as versionPrune from './engine-sql/version-prune.ts';
+import * as segmentedPurgeWrites from './engine-sql/segmented-purge-writes.ts';
 import * as memoryMutationReads from './engine-sql/memory-mutation-reads.ts';
 import * as withdrawalDiscoveryReads from './engine-sql/withdrawal-discovery.ts';
 import * as withdrawalPages from './engine-sql/withdrawal-pages.ts';
@@ -1479,6 +1480,7 @@ export class PostgresEngine implements BrainEngine {
   listPagesForPurgeRewrite(sourceId: string, pageIds: number[]) { return factsPurgeImpl.listPagesForPurgeRewrite(this.executeRaw.bind(this), sourceId, pageIds); }
   updatePageBodyForPurge(sourceId: string, pageId: number, compiled: string, timeline: string, hash: string) { return factsPurgeImpl.updatePageBodyForPurge(this.executeRaw.bind(this), sourceId, pageId, compiled, timeline, hash); }
   setPurgeVersionBody(versionId: number, compiled: string, timeline: string | null) { return factsPurgeImpl.setPurgeVersionBody(this.executeRaw.bind(this), versionId, compiled, timeline); }
+  async listPurgeVersionBodies(query: segmentedPurgeWrites.PurgeVersionBodyQuery) { return segmentedPurgeWrites.listPurgeVersionBodies(this, query); }
   redactVersionChangeReasons(sourceId: string, needle: string, reasonNeedle: string) { return factsPurgeImpl.redactVersionChangeReasons(this.executeRaw.bind(this), sourceId, needle, reasonNeedle); }
   listSegmentedVersionsForPurge(sourceId: string, needle: string, pageIds: number[], after: number) { return factsPurgeImpl.listSegmentedVersionsForPurge(this.executeRaw.bind(this), sourceId, needle, pageIds, after); }
   abortPurgedStagings(stagingIds: string[]) { return factsPurgeImpl.abortPurgedStagings(this.executeRaw.bind(this), stagingIds); }
@@ -3869,6 +3871,9 @@ export class PostgresEngine implements BrainEngine {
   async retireSegmentDerivations(pageId: number, liveOccurrenceIds: readonly number[], opts?: { kind?: SegmentDerivationKind }): Promise<number> {
     return pageBodyImpl.retireSegmentDerivations(this.engineSql, pageId, liveOccurrenceIds, opts);
   }
+  async lockBodyStagingState(stagingId: string) { return segmentedPurgeWrites.lockBodyStagingState(this, stagingId); }
+  async deleteUnstagedSegmentChunks(pageId: number, generation: number, keep: readonly number[]) { return segmentedPurgeWrites.deleteUnstagedSegmentChunks(this, pageId, generation, keep); }
+  async deleteRewrittenSegmentDerivations(spec: segmentedPurgeWrites.RewrittenDerivationsDelete) { return segmentedPurgeWrites.deleteRewrittenSegmentDerivations(this, spec); }
 
   // ============================================================
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis_evidence

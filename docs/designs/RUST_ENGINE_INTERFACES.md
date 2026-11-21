@@ -1947,6 +1947,10 @@ and write provenance on content rows, and the trust records.
     The store prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same marks, and it serves the
     fence fact append's holding-page prune (`pruneHoldingPageVersions`), its occupied-row read (`readFenceRowOccupant`)
     and its page tier restore (`restorePageTrust`, through the same trust stamp as the PGLite `UPDATE`).
+    The fact purge's segmented writes are typed members the store serves (`engine-sql/segmented-purge-writes.ts`): the
+    flip's staging lock (`lockBodyStagingState`) and stale chunk delete (`deleteUnstagedSegmentChunks`), the delete of the
+    derivation rows a rewritten segment may hold (`deleteRewrittenSegmentDerivations`), the version read
+    (`listPurgeVersionBodies`, `purge_version_bodies.rs`), and `createVersion` with the purge's `preimage`.
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
     title shadow (`alias-trust.test.ts`), a caller's reader identity and private-readable grant included; it still
     refuses `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy, and the search

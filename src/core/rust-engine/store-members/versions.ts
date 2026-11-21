@@ -16,23 +16,39 @@ import type { OverwriteCandidateRow, OverwriteContentRow, OverwriteLiveRow, Over
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
+import type { PageSnapshot } from '../../page-state/types.ts';
+import { isSegmentedPage } from '../../page-body/page-shape.ts';
+import type { PurgeVersionBodyQuery, PurgeVersionBodyRow } from '../../engine-sql/segmented-purge-writes.ts';
 
 function requireInteger(member: string, name: string, value: number): void {
   if (!Number.isSafeInteger(value)) refuseMember(member, `a ${name} that is not an integer`);
 }
 
 /**
- * `reason` is served (a null one is none), and so is `historyGap` (the page records `version_history_gap_at` first). A
- * Git-sourced reason (`reasonSource`) is served: the store drops a non-empty reason whose (commit, path) a purge
- * tombstoned for the source, in the same write, as stampableReason does. A `preimage` (the caller's own read of the page in
- * its transaction, before its page write) is ignored: pipelined() runs a Rust transaction's calls in order, so the store
- * snapshots that same page. The store prunes the page's history after the snapshot as
+ * The fields of the caller's page read (`createPageVersion`'s `preimage`) that the version takes: a fact purge reads the
+ * page, then versions it after its generation flip, so the store versions the read revision and metadata (and, on an
+ * inline page, the read body) rather than the page as it stands.
+ */
+function preimageFields(preimage: PageSnapshot) {
+  const { page } = preimage;
+  // A segmented page's body columns guard against a whole-body read; its version references the live generation instead.
+  const body = isSegmentedPage(page) ? { compiledTruth: null, timeline: null } : { compiledTruth: page.compiled_truth ?? null, timeline: page.timeline ?? null };
+  return { revision: preimage.revision, title: page.title, type: page.type, frontmatter: page.frontmatter ?? {}, tags: preimage.tags,
+    ...body, sourcePath: page.source_path ?? null, deleted: page.deleted_at != null };
+}
+
+/**
+ * `reason` is served (a null one is none), and so is `historyGap` (the page records `version_history_gap_at` first), and
+ * `preimage` (preimageFields: the caller's own read of the page, which the store versions instead of the page as it stands).
+ * A Git-sourced reason (`reasonSource`) is served: the store drops a non-empty reason whose (commit, path) a purge
+ * tombstoned for the source, in the same write, as stampableReason does. The store prunes the page's history after the snapshot as
  * `createPageVersion` does (rust/crates/gbrain-store/src/version_prune.rs). A segmented page is refused (the store
  * answers `invalid_state` before it writes): PGLite versions it as a reference to its live body generation, which the
  * Rust store does not keep.
  */
-export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string } & VersionHistory], PageVersion> = async (brain, slug, opts) => {
-  const scope = takeOptions('createVersion', opts && opts.reason === null ? { ...opts, reason: undefined } : opts, ['sourceId', 'reason', 'reasonSource', 'historyGap'], ['preimage']);
+export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string } & VersionHistory & { preimage?: PageSnapshot }], PageVersion> = async (brain, slug, opts) => {
+  const scope = takeOptions('createVersion', opts && opts.reason === null ? { ...opts, reason: undefined } : opts, ['sourceId', 'reason', 'reasonSource', 'historyGap', 'preimage']);
+  if (scope.preimage) scope.preimage = preimageFields(scope.preimage as PageSnapshot);
   return toCreatedVersion(await storeCall({ member: 'createVersion', slug, sourceId: scope.sourceId as string | undefined },
     () => brain.createVersion(slug, scope)));
 };
@@ -137,3 +153,8 @@ export const readArchivedVersionBody: StoreMember<[pageId: number, receiptId: st
     requireInteger(member, 'page id', pageId);
     return storeCall({ member }, () => brain.readArchivedVersionBody({ pageId, receiptId }));
   };
+
+/** The fact purge's read of saved inline version bodies (engine-sql/segmented-purge-writes.ts): one batch in id order. */
+export const listPurgeVersionBodies: StoreMember<[query: PurgeVersionBodyQuery], PurgeVersionBodyRow[]> = async (brain, query) =>
+  storeCall({ member: 'listPurgeVersionBodies' }, () => brain.listPurgeVersionBodies({ sourceId: query.sourceId, pageIds: [...query.pageIds],
+    after: query.after, needle: query.needle, escaped: query.escaped }));

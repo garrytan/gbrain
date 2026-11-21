@@ -31,6 +31,7 @@ const EXEMPT: Record<string, string> = {
   'src/core/extract/receipt-writer.ts': 'gbrain-generated extraction receipt page (counts, cost, model id); no external text',
   'src/core/facts/file-body-guard.ts': 'row-locked compare-and-swap body mirror: fence-write callers gate newly appended rows; forget, proposal-supersede, unfenced-facts and phantom-redirect only strike, adopt or relocate facts already stored; this helper adds no independently sourced text',
   'src/core/facts/forget.ts': 'withdrawal strike (lifecycle)',
+  'src/core/facts/purge.ts': 'fact purge (lifecycle): saves the version of each page it rewrites before removing the claim; adds no content',
   'src/core/facts/proposal-supersede.ts': 'checked supersede of existing rows (lifecycle)',
   'src/core/facts/relink-publish.ts': 'relinks existing facts to an entity (placement)',
   'src/core/page-state/materialize.ts': 'writes stored timeline rows back into the page body; no new text',

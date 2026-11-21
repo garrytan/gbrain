@@ -45,6 +45,10 @@ secondary indexes yet.
   the default. After a prune it sweeps the page's segments (`page_body.md`, "The sweep").
 - Each prune marks `successor_pruned` on the newest kept version before each pruned one and sets the page's
   `version_history_gap_at`. That page write leaves the knowledge revision as it was, so nothing is queued.
+- `createVersion(slug, { preimage })` versions the caller's page read instead of the stored page, as
+  `createPageVersion(..., preimage)` does: the read revision, title, type, frontmatter, tags, source path and deletion,
+  and on an inline page the read body. A segmented page keeps the stored body reference (live generation, bytes and
+  hash): a fact purge versions the page after its generation flip.
 - `pruneHoldingPageVersions(pageId)` is the holding-page cap a fence fact append runs after its snapshot: it keeps the
   page's newest `LARGE_PAGE_VERSIONS_KEPT` versions that are not segmented, deletes at most 100 of the older ones,
   oldest first, marks the history as every prune does and answers how many it deleted (0 for an unknown page).

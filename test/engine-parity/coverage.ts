@@ -147,7 +147,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'hasActiveFactText', 'readFactTrustTier', 'listFenceFactRowNums', 'readLiveFactRowTier'],
   segmented_body: ['allocateBodyOccurrenceIds', 'stageSegmentTexts', 'readSegmentTexts', 'stageManifestRows', 'readManifest', 'readSegmentedEmbedPage',
     'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
-    'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations'],
+    'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations',
+    'lockBodyStagingState', 'deleteUnstagedSegmentChunks', 'deleteRewrittenSegmentDerivations'],
   versions: ['createVersion', 'getVersions', 'revertToVersion', 'readLatestVersionId', 'readLatestVersionIdAtTier', 'stampVersionChangeReason', 'pruneHoldingPageVersions',
     // the batch 6a history repair reads (engine-sql/version-reasons.ts, overwrite-reads.ts)
     'listVersionsByChangeReason', 'replaceVersionChangeReasons', 'listRetainedVersionBodies', 'readArchivedVersionBody',
@@ -275,7 +276,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'countPagePurgeTombstones', 'readDeletePageRequest', 'listPurgeEffects', 'countPurgeFingerprintResidue',
     'listStagingPartEdges', 'listStagingsHoldingClaim', 'purgeSubjectPageLive', 'listPurgePagesById', 'countPurgeVersionsCarryingClaim',
     'countPurgeReviewRows', 'listPurgeStreamSlugs', 'findPurgeBlockedPublication', 'listPagesForPurgeRewrite', 'updatePageBodyForPurge',
-    'setPurgeVersionBody', 'redactVersionChangeReasons', 'listSegmentedVersionsForPurge', 'abortPurgedStagings', 'deletePurgedStagingParts',
+    'setPurgeVersionBody', 'listPurgeVersionBodies', 'redactVersionChangeReasons', 'listSegmentedVersionsForPurge', 'abortPurgedStagings', 'deletePurgedStagingParts',
     'deletePageViewDigests', 'deleteUnreferencedPurgedTexts', 'listPurgeMatchCandidates', 'lockPurgeSource', 'insertHoldingPagePurges',
     'insertTakePurge', 'deletePurgedTakes', 'deletePurgeReviewQueue', 'deletePurgeReviewProposals', 'deletePurgeDecideProposals',
     'deletePurgeTrustProposals', 'deletePurgeOpenLoops', 'deletePurgeWriteGateHolds', 'deletePurgeWriteGateReceipts', 'deletePurgeTakeProposals',

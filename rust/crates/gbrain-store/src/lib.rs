@@ -78,6 +78,7 @@ pub mod page_embedding_budget;
 pub mod page_ops;
 pub mod page_visibility;
 pub mod persistence;
+pub mod purge_version_bodies;
 pub mod raw_files;
 pub mod reason_tombstones;
 pub mod relations;

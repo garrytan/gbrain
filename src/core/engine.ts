@@ -9,6 +9,7 @@ import type * as ChronicleEventsSql from './engine-sql/chronicle-events.ts';
 import type * as LoopMutesSql from './engine-sql/loop-mutes.ts';
 import type * as SourceArchiveSql from './engine-sql/source-archive.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
+import type * as SegmentedPurgeWritesSql from './engine-sql/segmented-purge-writes.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
 import type { RecentWriterVersionRow, SegmentedGateEvidenceRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type { SyncImportPageQuery, SyncImportPageRow, SyncImportPageWindow } from './engine-sql/sync-pass-pages.ts';
@@ -3585,6 +3586,13 @@ export interface BrainEngine {
   upsertSegmentDerivations(rows: readonly SegmentDerivationInput[]): Promise<void>;
   /** Delete a page's rows (every kind, or `kind`) whose occurrence is not in `liveOccurrenceIds`; returns the count. */
   retireSegmentDerivations(pageId: number, liveOccurrenceIds: readonly number[], opts?: { kind?: SegmentDerivationKind }): Promise<number>;
+  // The fact purge's segmented writes (engine-sql/segmented-purge-writes.ts).
+  /** The state of a body staging, read under its row lock, or null when no staging has that id (the flip of a create checks it). */
+  lockBodyStagingState(stagingId: string): Promise<string | null>;
+  /** Deletes the page's chunk rows at `generation` whose chunk_index is not in `keepChunkIndexes` (rows a dead preparation staged). */
+  deleteUnstagedSegmentChunks(pageId: number, generation: number, keepChunkIndexes: readonly number[]): Promise<void>;
+  /** Deletes the derivation rows a rewritten segment may hold (segment-derive.ts deleteRewrittenDerivations); answers how many. */
+  deleteRewrittenSegmentDerivations(spec: SegmentedPurgeWritesSql.RewrittenDerivationsDelete): Promise<number>;
 
   // Versions
   /**
@@ -4327,6 +4335,12 @@ export interface BrainEngine {
   updatePageBodyForPurge(sourceId: string, pageId: number, compiled: string, timeline: string, hash: string): Promise<void>;
   /** Stores a saved version's two body parts after the purge edit (a null timeline stays null). Writes page_versions; run it in the purge transaction. */
   setPurgeVersionBody(versionId: number, compiled: string, timeline: string | null): Promise<void>;
+  /**
+   * One batch (5000 rows) of the source's saved inline versions the purge redacts: every version of `pageIds` and every
+   * version whose body, timeline, title or frontmatter carries the claim, in id order after `after`; `metadata` says the
+   * title or frontmatter carries it (engine-sql/segmented-purge-writes.ts).
+   */
+  listPurgeVersionBodies(query: SegmentedPurgeWritesSql.PurgeVersionBodyQuery): Promise<SegmentedPurgeWritesSql.PurgeVersionBodyRow[]>;
   /** Overwrites the change reason of every saved version of the source's pages that quotes the claim (lowered plain form or folded reason form) with `[purged]`; the ids redacted. Writes page_versions. */
   redactVersionChangeReasons(sourceId: string, needle: string, reasonNeedle: string): Promise<number[]>;
   /** The next 5000 segmented saved versions of the source after id `after` that belong to one of the pages or whose generation holds the lowered claim, in id order. Reads page_versions, pages, page_body_manifest and page_segment_texts. */

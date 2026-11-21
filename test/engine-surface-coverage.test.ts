@@ -212,7 +212,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'countPagePurgeTombstones', 'readDeletePageRequest', 'listPurgeEffects', 'countPurgeFingerprintResidue',
   'listStagingPartEdges', 'listStagingsHoldingClaim', 'purgeSubjectPageLive', 'listPurgePagesById', 'countPurgeVersionsCarryingClaim',
   'countPurgeReviewRows', 'listPurgeStreamSlugs', 'findPurgeBlockedPublication', 'listPagesForPurgeRewrite', 'updatePageBodyForPurge',
-  'setPurgeVersionBody', 'redactVersionChangeReasons', 'listSegmentedVersionsForPurge', 'abortPurgedStagings', 'deletePurgedStagingParts',
+  'setPurgeVersionBody', 'listPurgeVersionBodies', 'redactVersionChangeReasons', 'listSegmentedVersionsForPurge', 'abortPurgedStagings', 'deletePurgedStagingParts',
   'deletePageViewDigests', 'deleteUnreferencedPurgedTexts', 'listPurgeMatchCandidates', 'lockPurgeSource', 'insertHoldingPagePurges',
   'insertTakePurge', 'deletePurgedTakes', 'deletePurgeReviewQueue', 'deletePurgeReviewProposals', 'deletePurgeDecideProposals',
   'deletePurgeTrustProposals', 'deletePurgeOpenLoops', 'deletePurgeWriteGateHolds', 'deletePurgeWriteGateReceipts', 'deletePurgeTakeProposals',
@@ -441,6 +441,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
   // Wave B PR 4 per-segment derivation rows (same SQL module; covered by test/engine-sql-segment-derivations.test.ts and its Postgres arm)
   'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations',
+    'lockBodyStagingState', 'deleteUnstagedSegmentChunks', 'deleteRewrittenSegmentDerivations',
   // Belief ledger writes (engine-sql/belief-ledger.ts)
   'readLatestBeliefCoverage', 'hasBeliefBaseline', 'listBeliefBaselinePending', 'countBeliefBaselineSlugs',
   'readBeliefTombstones', 'readBeliefRedactions', 'insertBeliefRedaction', 'releaseBeliefRedactions', 'insertBeliefEvents',

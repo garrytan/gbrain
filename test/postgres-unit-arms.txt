@@ -320,6 +320,7 @@ test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segment-regions.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/segmented-purge-writes.test.ts
 test/engine-parity/source-admin-writes.test.ts
 test/engine-parity/source-archive.test.ts
 test/engine-parity/source-delete.test.ts

@@ -290,4 +290,51 @@ impl Brain {
             s.refresh_page_body(&slug, &source_id, &compiled_truth, &timeline, &content_hash)
         })
     }
+
+    /// `lockBodyStagingState(stagingId)`: the staging's state, or `null`.
+    #[napi]
+    pub fn lock_body_staging_state<'env>(
+        &self,
+        env: &'env Env,
+        staging_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.lock_body_staging_state(&staging_id))
+    }
+
+    /// `deleteUnstagedSegmentChunks(pageId, generation, keepChunkIndexes)`: resolves `null`.
+    #[napi]
+    pub fn delete_unstaged_segment_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+        generation: Value,
+        keep_chunk_indexes: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let keep: Vec<i64> = required(
+                keep_chunk_indexes,
+                "deleteUnstagedSegmentChunks keepChunkIndexes",
+            )?;
+            s.delete_unstaged_segment_chunks(
+                required(page_id, "deleteUnstagedSegmentChunks pageId")?,
+                required(generation, "deleteUnstagedSegmentChunks generation")?,
+                &keep,
+            )
+        })
+    }
+
+    /// `deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds, linkReachOccurrenceIds,
+    /// pipelines, liveOccurrenceIds })`: rows deleted.
+    #[napi]
+    pub fn delete_rewritten_segment_derivations<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let spec: gbrain_store::page_body::RewrittenDerivationsDelete =
+                required(spec, "deleteRewrittenSegmentDerivations spec")?;
+            s.delete_rewritten_segment_derivations(&spec)
+        })
+    }
 }
