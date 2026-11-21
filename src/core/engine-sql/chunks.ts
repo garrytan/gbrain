@@ -440,7 +440,9 @@ export async function getChunks(
         JOIN pages p ON p.id = cc.page_id
         ${trustedSql(chunkManifestJoin('p', 'cc', 'm', opts?.chunkManifest ?? true))}
         WHERE ${chunkReadWhere(slug, scope, opts)}`;
-      const order = trustedSql(chunkDocumentOrder('cc', 'm'));
+      // A read over several sources finds one page per source, and their chunks tie on document order (chunk 0 of each
+      // page), so the source id, in byte order, breaks the tie and every engine returns the same order.
+      const order = trustedSql(`${chunkDocumentOrder('cc', 'm')}, p.source_id COLLATE "C"`);
       const range = opts?.indexRange;
       if (range?.ordinal) {
         const { rows } = await exec.run(sqlFragment`

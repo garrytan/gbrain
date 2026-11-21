@@ -72,14 +72,6 @@ const PINS: Pin[] = [
     params: [['src-a']],
   },
   {
-    from: 'src/core/facts/purge-reasons.ts:63 recordReasonTombstones',
-    member: 'insertReasonPurgeTombstones',
-    run: e => e.insertReasonPurgeTombstones('src-a', ['c1', 'c2'], ['p1', 'p2']),
-    texts: [`INSERT INTO reason_purge_tombstones(source_id, commit_sha, path)
-    SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1`],
-    params: [['src-a', ['c1', 'c2'], ['p1', 'p2']]],
-  },
-  {
     from: 'src/core/facts/purge-reasons.ts:82 redactGitEffectReasons',
     member: 'listGitEffectsCarryingReason',
     run: e => e.listGitEffectsCarryingReason('src-a', 'needle', 'escaped', 'folded'),

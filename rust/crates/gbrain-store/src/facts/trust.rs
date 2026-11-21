@@ -270,7 +270,8 @@ impl Store {
     /// row's cosine to the query vector when it is comparable. The keyword arm keeps the rows
     /// whose `to_tsvector('english', fact || ' ' || entity name)` matches the OR of the terms'
     /// lexemes, best `ts_rank_cd` first, then `valid_from` and `id` descending; the entity arm
-    /// reads the named entity's rows, `valid_from` and `id` descending.
+    /// reads the named entity's rows newest first (a future-dated row as of its `created_at`),
+    /// then `id` descending.
     pub fn list_facts_for_relevance(&self, q: &RelevanceQuery) -> Result<Vec<Value>> {
         const OP: &str = "listFactsForRelevance";
         let keyword = match q.arm.as_str() {
@@ -338,9 +339,19 @@ impl Store {
             ranked.push((rank, row));
         }
         // Postgres sorts `real` with NaN above every number, as `total_cmp` does for a positive NaN.
+        // The keyword arm breaks ties on `valid_from`; the entity arm ranks a future-dated fact by
+        // when it was written.
+        let now = self.env.now_micros();
+        let time = |r: &FactRecord| {
+            if keyword {
+                r.valid_from_us
+            } else {
+                super::ranked_time(r, now)
+            }
+        };
         ranked.sort_by(|(sa, a), (sb, b)| {
             sb.total_cmp(sa)
-                .then(b.valid_from_us.cmp(&a.valid_from_us))
+                .then(time(b).cmp(&time(a)))
                 .then(b.id.cmp(&a.id))
         });
         Ok(ranked

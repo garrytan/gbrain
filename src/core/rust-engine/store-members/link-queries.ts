@@ -14,9 +14,9 @@
  *
  * The store models the source filter, the page privacy policy (storePagePolicy), the trust floor and flag suppression
  * (`minTrust`, `suppressFlagged`: the page's stamped tier and its write-gate receipts) and the live test of the read
- * policy (src/core/search/read-policy-sql.ts). relationalFanout and relationalChainHop also model `requireSafeChunks`
- * (the canonical chunk's safe fence and the chain's evidence text gate, `takesHoldersAllowList` included) and serve the
- * temporal edge policy (relationshipFilterSql, src/core/link-validity.ts) over the store's relationship rows. A privacy
+ * policy (src/core/search/read-policy-sql.ts). relationalFanout and relationalChainHop serve the temporal edge policy
+ * (relationshipFilterSql, src/core/link-validity.ts) over the store's relationship rows, and also model `requireSafeChunks`
+ * (the canonical chunk's safe fence and the chain's evidence text gate, `takesHoldersAllowList` included). A privacy
  * policy the store does not model or a temporal policy on another member refuses with `engine_capability_missing`. A derived-link
  * replacement serves every option PGLite takes: the origin snapshot and the line-grammar generation are checked before
  * the store call, and the wanted pages and the origin's temporal evidence (link-temporal-apply.ts) are written after it,
@@ -366,8 +366,8 @@ export const relationalFanout: StoreMember<[seeds: string[], opts?: RelationalFa
       depth,
       includeMentions: !!opts?.includeMentions,
       limit,
-      requireSafeChunks: requiresSafeChunks(opts),
       temporal: walkTemporal(opts),
+      requireSafeChunks: requiresSafeChunks(opts),
     };
     return storeCall({ member: 'relationalFanout' }, () => brain.relationalFanout(seeds, wire));
   };

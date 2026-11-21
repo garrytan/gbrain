@@ -622,6 +622,8 @@ the purged page's facts. A write refused because it carries purged content,
 or accepted as a no-op after its purged rows were dropped, keeps no copy of
 that content in its stored write request.
 
+The automatic purge of expired deleted pages does the same for the write journal on a brain without a write owner, in the transaction that deletes the page: the page's timeline entry text, edit diffs and stored write intents are removed from its journal entries, including entries written while the brain had a write owner. A write still pending keeps its intent and then fails on the missing page. Other pages' journal entries that quote the purged text are not swept. An explicit `gbrain delete --purge` now also removes the diff kept in the page's compacted edit receipts.
+
 An owner purge held to keep a derived page private (`derived_origin_parked`)
 stays owed until its page is removed or restored: whichever purge later removes
 the page, the automatic one included, writes the purge tombstones.

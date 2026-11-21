@@ -151,6 +151,39 @@ pub(crate) fn source_withdrawals(read: &dyn KvRead, source_id: &str) -> Result<V
     }
 }
 
+/// Every withdrawal of `source_id` at `visibility` whose fingerprint is `claim`'s fingerprint or
+/// its v1 fingerprint, as its subject and the time it was made: the rows
+/// `gbrain_preserve_fact_withdrawal` reads.
+pub(crate) fn withdrawals_of(
+    read: &dyn KvRead,
+    source_id: &str,
+    visibility: &str,
+    claim: &str,
+) -> Result<Vec<(String, i64)>> {
+    let hashes = [fact_fingerprint(claim), fact_fingerprint_v1(claim)];
+    let mut prefix = key(&[source_id, visibility]);
+    prefix.push(0);
+    let mut found = Vec::new();
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        if let Some(rest) = k
+            .get(prefix.len()..)
+            .and_then(|b| std::str::from_utf8(b).ok())
+            && let Some((subject, hash)) = rest.rsplit_once('\0')
+            && hashes.iter().any(|h| h == hash)
+        {
+            found.push((subject.to_string(), hash.to_string()));
+        }
+        true
+    })?;
+    let mut out = Vec::with_capacity(found.len());
+    for (subject, hash) in found {
+        if let Some(at) = at(read, &[source_id, visibility, &subject, &hash])? {
+            out.push((subject, at));
+        }
+    }
+    Ok(out)
+}
+
 /// `EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = $source AND w.visibility =
 /// $visibility AND w.fact_hash IN (gbrain_fact_fingerprint(claim), gbrain_fact_fingerprint_v1(claim))
 /// AND (w.subject = '*' OR w.subject = entity))`: a NULL entity matches only `*`.
@@ -473,26 +506,7 @@ impl Store {
         if old_slug == new_slug {
             return Ok(());
         }
-        self.write(|tx| {
-            let prefix = source_prefix(source_id);
-            let mut moved = Vec::new();
-            scan_prefix(tx, &prefix, false, &mut |k, v| {
-                if let Some((visibility, subject, hash)) = split(k, prefix.len())
-                    && subject == old_slug
-                {
-                    moved.push((k.to_vec(), visibility, hash, v.to_vec()));
-                }
-                true
-            })?;
-            for (old_key, visibility, hash, value) in moved {
-                tx.delete(&old_key)?;
-                let new_key = key(&[source_id, &visibility, new_slug, &hash]);
-                if tx.get(&new_key)?.is_none() {
-                    tx.put(&new_key, &value)?;
-                }
-            }
-            Ok(())
-        })
+        self.write(|tx| move_subject_in(tx, source_id, old_slug, new_slug))
     }
 
     /// `hasFactWithdrawalForSubject`: whether any withdrawal of the source has this subject.
@@ -609,6 +623,38 @@ impl Store {
         rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
         Ok(rows)
     }
+}
+
+/// Moves `source_id`'s withdrawals of subject `old_slug` to `new_slug` inside `tx`: a withdrawal `new_slug` already has
+/// keeps its time (`MOVE_WITHDRAWAL_SUBJECT_SQL`). A page rename runs it with the fact rows (`facts::rename_slug_rows`),
+/// so a claim withdrawn about the old slug stays withdrawn about the new one.
+pub(crate) fn move_subject_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    old_slug: &str,
+    new_slug: &str,
+) -> Result<()> {
+    if old_slug == new_slug {
+        return Ok(());
+    }
+    let prefix = source_prefix(source_id);
+    let mut moved = Vec::new();
+    scan_prefix(tx, &prefix, false, &mut |k, v| {
+        if let Some((visibility, subject, hash)) = split(k, prefix.len())
+            && subject == old_slug
+        {
+            moved.push((k.to_vec(), visibility, hash, v.to_vec()));
+        }
+        true
+    })?;
+    for (old_key, visibility, hash, value) in moved {
+        tx.delete(&old_key)?;
+        let new_key = key(&[source_id, &visibility, new_slug, &hash]);
+        if tx.get(&new_key)?.is_none() {
+            tx.put(&new_key, &value)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

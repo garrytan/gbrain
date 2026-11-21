@@ -740,7 +740,6 @@ src/core/persistence/protocol.ts	module_collection	1	W6: per-engine state, or ma
 src/core/persistence/publication-deadline.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/persistence/publication-deadline.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/publication-timing.ts	process_env	1	W6: settings plane out of the core
-src/core/persistence/concept-rebuild.ts	load_config	1	#9653: the rebuild's retention purge goes through the coordinator with the same config as purge-deleted.ts
 src/core/persistence/purge-deleted.ts	load_config	1	W6: settings plane out of the core
 src/core/persistence/put-page-screen.ts	load_config	1	W6: settings plane out of the core
 src/core/persistence/reconcile-audit.ts	fs_import	1	W5: repo-less persistence for hosts

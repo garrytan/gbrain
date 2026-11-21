@@ -14,7 +14,8 @@
 //! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo;
 //! site_reads: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
-//! listPagesTitledIn, wordLexemes.
+//! listPagesTitledIn, wordLexemes; listAttendedOriginSlugs (the attendance origins a sync's link
+//! extraction reconciles).
 //!
 //! Reads and writes go through the core links helpers (`put_link`, `delete_link`, `out_links`,
 //! `in_links`) and the page and source readers.
@@ -205,10 +206,10 @@ pub struct FanoutOptions {
     pub depth: u32,
     pub include_mentions: bool,
     pub limit: usize,
-    /// `requiresSafeChunks(opts)`: a node's canonical chunk is read only from a page sealed at the safe fence.
-    pub require_safe_chunks: bool,
     /// `temporal` with the walk's `excludePrivate`: the relationship filter on every step edge.
     pub temporal: Option<EdgeTemporalPolicy>,
+    /// `requiresSafeChunks(opts)`: a node's canonical chunk is read only from a page sealed at the safe fence.
+    pub require_safe_chunks: bool,
 }
 
 /// `ChainHopOpts`, the part the store reads. `neighborCap` arrives clamped to 1..=1000.
@@ -228,15 +229,15 @@ pub struct ChainHopOptions {
     pub object_types: Vec<String>,
     pub degree_link_types: Vec<String>,
     pub neighbor_cap: usize,
+    /// `temporal` with the hop's `excludePrivate`: the relationship filter on every step and
+    /// degree edge.
+    pub temporal: Option<EdgeTemporalPolicy>,
     /// `requiresSafeChunks(opts)`: the next page's canonical chunk is read only from a page sealed at the safe fence.
     pub require_safe_chunks: bool,
     /// `textGate` of readChainHop, decided by the TypeScript member (it knows the caller): `body` returns an edge's
     /// context only when the evidence page is sealed and holds no facts / takes fence, `takes` only when it is sealed
     /// and holds no takes fence, and absent returns it whenever the evidence page is readable.
     pub text_gate: Option<String>,
-    /// `temporal` with the hop's `excludePrivate`: the relationship filter on every step and
-    /// degree edge.
-    pub temporal: Option<EdgeTemporalPolicy>,
 }
 
 /// `DerivedLinkOrigin` without the refused `snapshot`.
@@ -882,6 +883,47 @@ struct FanoutNode {
 }
 
 impl Store {
+    /// `listAttendedOriginSlugs(sourceId, slugs?)`: the slugs of `source_id`'s pages (soft-deleted
+    /// ones too, as the SQL reads them; only those in `slugs` when given) that authored an
+    /// `attended` link to themselves from the `markdown`, `wikilink-resolved` or `frontmatter`
+    /// producer, in slug order. The SQL engines return them in no set order.
+    pub fn list_attended_origin_slugs(
+        &self,
+        source_id: &str,
+        slugs: Option<&[String]>,
+    ) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let pages: Vec<PageRecord> = match slugs {
+            Some(slugs) => {
+                let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
+                let mut pages = Vec::new();
+                for slug in wanted {
+                    pages.extend(read_page(&*read, source_id, slug)?);
+                }
+                pages
+            }
+            None => all_pages(&*read)?
+                .into_iter()
+                .filter(|p| p.source_id == source_id)
+                .collect(),
+        };
+        let mut out = BTreeSet::new();
+        for page in pages {
+            let attended = origin_links(&*read, page.id)?.iter().any(|l| {
+                l.link_type == "attended"
+                    && l.to_page_id == page.id
+                    && matches!(
+                        l.link_source.as_deref(),
+                        Some("markdown" | "wikilink-resolved" | "frontmatter")
+                    )
+            });
+            if attended {
+                out.insert(page.slug);
+            }
+        }
+        Ok(out.into_iter().collect())
+    }
+
     /// `replaceDerivedLinks` and `replaceDerivedLinksBatch`: every origin in order, in one write
     /// transaction; any failure rolls every origin back. Returns `[{ created, removed }]`.
     pub fn replace_derived_links(&self, items: &[DerivedItem]) -> Result<Vec<Value>> {

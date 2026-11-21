@@ -140,10 +140,12 @@ fn extractor_facts_carry_their_page_withdrawal_duplicate_fence_and_receipt_evide
     // Withdrawn under `*`, with an active duplicate and a fence row on the page.
     let withdrawn = fact(&store, "Cy sings", json!({}));
     expire(&store, withdrawn, None);
+    // The duplicate is saved before the withdrawal: a claim written after it is saved expired
+    // (`gbrain_preserve_fact_withdrawal`), so it would no longer be an active duplicate.
+    fact(&store, "  CY sings. ", json!({}));
     store
         .insert_fact_withdrawal("default", "private", "Cy sings", "*", None)
         .unwrap();
-    fact(&store, "  CY sings. ", json!({}));
     fact(
         &store,
         "a fence row",

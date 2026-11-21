@@ -50,10 +50,11 @@ const digest = (text: string): string => createHash('sha256').update(text).diges
 
 /** The digest of what the store implements. Moving it is a statement that privacy.rs was read against the new text. */
 const PINNED = {
-  pages: '1d8a04bd4f8c6692e75a261b6619984d9ac4235805d33a0c5739593237daf90d',
-  facts: '1de0e560461e91ef6198c4e5af85e5fe4d0bec627f87162f611216aba38146bc',
+  pages: '357b40ced0cb33966ec6078d77942ae7e814738d52fbff657820419d90508230',
+  facts: '8b153de1cbd5e3a59ca2ce73a22985e2d1f1c123fb9353c8d2d01bec2f38557b',
   ownerOnlyLineage: digest(`((SELECT gbrain_owner_only_lineage()) AND gbrain_owner_only_lineage('pages', p.id))`),
   ownerOnlyFactLineage: digest(`((SELECT gbrain_owner_only_lineage()) AND gbrain_owner_only_lineage('facts', facts.id))`),
+  ownerOnlyModeLineage: digest(`((SELECT gbrain_owner_only_lineage()) AND gbrain_owner_only_lineage('pages', p.id, (SELECT gbrain_owner_only_read_mode())))`),
 } as const;
 
 /** The inputs the rendering reads, and whether privacy.rs models each (true) or documents it as empty or absent (false). */
@@ -64,6 +65,7 @@ const TABLES: Record<string, boolean> = {
   slug_aliases: true, // read_slug_alias (aliases.rs)
   slug_rename_history: true, // renamed_to (aliases.rs)
   jsonb_array_elements_text: true, // declared_slugs
+  pg_catalog: true, // the held flag (a comment on owner_only_marks): a mark (any_marked, owner_only_marks.rs)
 };
 const FUNCTIONS: Record<string, boolean> = {
   gbrain_access_origin_restricted: true, // origin_restricted
@@ -83,6 +85,7 @@ describe('the no-caller page policy PGLite renders, against privacy.rs', () => {
       facts: digest(factsBaseline()),
       ownerOnlyLineage: digest(ownerOnlyPageSql('p', 'fn')),
       ownerOnlyFactLineage: digest(ownerOnlyFactSql('facts', 'fn')),
+      ownerOnlyModeLineage: digest(ownerOnlyPageSql('p', 'mode')),
     };
     if (JSON.stringify(now) !== JSON.stringify(PINNED)) {
       throw new Error(`${HOW}\nrendered digests: ${JSON.stringify(now, null, 2)}\npinned digests:   ${JSON.stringify(PINNED, null, 2)}`);
@@ -136,12 +139,14 @@ describe('the no-caller page policy PGLite renders, against privacy.rs', () => {
 
   test('a fact read is hidden by the owner-only rule the way privacy.rs applies it', () => {
     // The fact rule ends the rendering with `AND NOT <owner-only fact form>`: outside an engine scope the closed form (any
-    // owner-only source hides every fact); in a served brain the lineage form (the fact's own row). privacy.rs has the
+    // owner-only source, or the held flag, hides every fact; the store reads a mark as the flag); in a served brain the
+    // lineage form (the fact's own row). owner_only.rs holds the closed form; privacy.rs has the
     // fact's own source (`fact_hidden`) and the provenance page's owner-only test (`owner_only_hidden`) for the first
     // two parts, and models no `derivation_inputs` or `owner_only_marks` row.
     const closed = factsBaseline();
-    expect(closed, `the fact policy lost its owner-only term. ${HOW}`).toContain(`AND NOT ${normalizeConceptInputs(ANY_OWNER_ONLY_SQL)}`);
-    expect(ownerOnlyFactSql('facts', 'closed')).toBe(ANY_OWNER_ONLY_SQL);
+    expect(closed, `the fact policy lost its owner-only term. ${HOW}`).toContain(`AND NOT ${normalizeConceptInputs(ownerOnlyFactSql('facts', 'closed'))}`);
+    expect(ownerOnlyFactSql('facts', 'closed')).toStartWith(`(${ANY_OWNER_ONLY_SQL} OR EXISTS (SELECT 1 FROM pg_catalog.pg_description held`);
+    expect(OWNER_ONLY_RUST, 'the closed form in owner_only.rs does not read the marks that stand for the held flag').toContain('OwnerOnlyForm::Closed => self.guarded()');
     expect(ownerOnlyFactSql('facts', 'fn')).toContain(`gbrain_owner_only_lineage('facts', facts.id)`);
     const body = RUST.slice(RUST.indexOf('pub(crate) fn hidden_by_private_provenance'));
     expect(body, 'hidden_by_private_provenance does not apply the owner-only fact rule').toContain('owner_only.fact_hidden(policy.owner_only, &row.source_id)');

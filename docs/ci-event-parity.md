@@ -252,7 +252,10 @@ inventory:
   gstack refuses that tree's own runs (`inventory_failed`) and the gate runs,
   as remote-gate reuse already does. The gate leaves out the keyed-only
   Tier 2 file (`test/e2e/skills.test.ts`): a VM has neither the keys nor
-  openclaw, so every test in it would skip.
+  openclaw, so every test in it would skip. It also leaves out
+  `test/e2e/openclaw-skill-resolver-real.test.ts`, which needs the OpenClaw
+  CLI and runs only in the full-corpus `openclaw-skill-resolver` job, so a
+  labelled head's E2E run never lists it.
 - gstack accepts only `push` and `workflow_dispatch` runs whose newest attempt
   succeeded. After "Re-run failed jobs", the failed jobs and the jobs that need
   them (the ledger job that writes the manifest included) run again; the

@@ -518,7 +518,7 @@ export async function runPhaseSynthesizeConcepts(
     await stopIfAborted();
     if (!opts.dryRun) {
       // #9653: managed, the tombstone's retention purge commits before the fresh page is queued; otherwise nothing more is written.
-      const purged = rebuild && maintenance ? await submitHeldConceptPurge(engine, src, conceptSlug, rebuild) : true;
+      const purged = rebuild && maintenance ? await submitHeldConceptPurge(engine, maintenance, src, conceptSlug, rebuild) : true;
       if (purged !== true) { rebuildDeferred.push({ concept: conceptSlug, reason: purged }); continue; }
       // #5525: tighten-only — a concept already private stays private.
       const prior = rebuild ? null : await engine.getPage(conceptSlug, { sourceId: src });
@@ -543,7 +543,7 @@ export async function runPhaseSynthesizeConcepts(
       // world, so a strict source never commits an intermediate private page.
       const covered = !rebuild && visibility === 'world' && await conceptProvenanceCovers(engine, src, conceptSlug, group.atomSlugs);
       const write: ConceptWrite = { concept: group.conceptSlug, conceptSlug, atomSlugs: group.atomSlugs, visibility, covered, synthesisMode, synthesized, narrative,
-        revision: rebuild ? null : existingSnapshot?.revision ?? null, baseline: existing?.compiled_truth ?? '', ...(rebuild ? { rebuild: maintenance ? 'purged' as const : rebuild } : {}) };
+        revision: rebuild ? null : existingSnapshot?.revision ?? null, baseline: existing?.compiled_truth ?? '', ...(rebuild ? { rebuild: maintenance ? { purgedMembers: rebuild.members } : rebuild } : {}) };
       if (rebuild) rebuilds.push(write);
       // GBRA-60: a managed run's concepts publish in batches (concept-writes.ts), each one publication group on Postgres.
       await stopIfAborted();

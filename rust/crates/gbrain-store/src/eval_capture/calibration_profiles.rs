@@ -208,7 +208,13 @@ fn to_real(x: Option<f64>, column: &str) -> Result<Option<f32>> {
         None => Ok(None),
         Some(x) => {
             let r = x as f32;
-            if x.is_finite() && r.is_infinite() {
+            // A NaN or infinity (a native caller only) would be stored as null and no longer decode.
+            if !x.is_finite() {
+                return Err(StoreError::invalid(format!(
+                    "insertCalibrationProfile: {column} is not a finite number"
+                )));
+            }
+            if r.is_infinite() {
                 return Err(StoreError::invalid(format!(
                     "insertCalibrationProfile: {column} is out of range for type real"
                 )));

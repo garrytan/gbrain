@@ -49,7 +49,7 @@ interface Details { brain_total: number; by_source: Record<string, number>; samp
 
 /** The source's checkout, found the way the purge's trailer scan finds it; null for a repo-less source. */
 async function checkoutRoot(engine: BrainEngine, sourceId: string): Promise<string | null> {
-  const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]);
+  const source = await engine.getSource(sourceId);
   const root = source?.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
   return root && isAbsolute(root) ? root : null;
 }
@@ -62,8 +62,7 @@ async function readCommit(gitRoot: string, sha: string): Promise<TrailerCommit |
 
 /** Every stored change reason of the source that is the trailer text of one of its tombstoned (commit, path) pairs. Read-only. */
 export async function findLeakedChangeReasons(engine: BrainEngine, sourceId: string): Promise<LeakedReasonScan> {
-  const tombstones = await engine.executeRaw<{ commit_sha: string; path: string }>(
-    'SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1 ORDER BY commit_sha, path', [sourceId]);
+  const tombstones = await engine.readReasonPurgeTombstones(sourceId);
   const root = await checkoutRoot(engine, sourceId);
   if (!root) return { rows: [], unreadable_commit: tombstones.length, without_checkout: true };
   const repo = tombstones.length ? gitTopLevel(root) : null;

@@ -6,8 +6,9 @@ The decide store holds four tables of `gbrain decide` that used to run as raw SQ
 `decide_state`, `decide_spend`, `decision_receipts` and `decide_calibrations`. It lives inside the eval_capture
 family (tag `Z`, sub-tags `0x10..=0x1F`, see [eval_capture.md](eval_capture.md)). Rust: `gbrain-store/src/eval_capture/decide_store.rs`
 plus `decide_store/receipts.rs` and `decide_store/calibrations.rs`; binding: `gbrain-napi/src/families/decide_store.rs`;
-TypeScript: `src/core/rust-engine/store-members/decide-store.ts`; the SQL of PGLite and Postgres:
-`src/core/engine-sql/decide-store.ts`. `store.ts` now holds no SQL.
+This landing carries the native store and binding only. The TypeScript member, the shared SQL module
+(`src/core/engine-sql/decide-store.ts`) and the parity test arrive in a later landing; until then `src/core/ai/decide/store.ts`
+still holds its own SQL and nothing in TypeScript calls these members.
 
 Timestamps cross the binding as ISO strings; the TypeScript members turn them into `Date`s. All 20 members are capability `eval_capture`.
 
@@ -65,6 +66,6 @@ call loudly. `review-lane.ts` and `proposals-store.ts` read `decision_receipts` 
 
 ## Tests
 
-`test/engine-parity/decide-store.test.ts` (35 cases on PGLite, Postgres and the Rust arm), `gbrain-store/tests/decide_store.rs`
-(28 cases). The cargo tests and the parity file were checked against planted bugs in the Rust code; the ones only one layer catches
-are the clock-window edges (cargo only) and the insertion-order sum (parity only).
+`gbrain-store/tests/decide_store.rs` (28 cases) covers the native store. The cross-engine parity file
+(`test/engine-parity/decide-store.test.ts`) arrives with the TypeScript member, so the clock-window edges and the
+insertion-order sum have cargo coverage only in this landing.

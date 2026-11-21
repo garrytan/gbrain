@@ -9,6 +9,7 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 mod access_flag;
+pub mod access_migrations;
 pub mod access_policy;
 pub mod access_rules;
 mod cascade;
@@ -51,6 +52,7 @@ pub mod contradictions;
 pub mod dream;
 pub mod dream_config;
 pub mod embedding_catalog;
+pub mod embedding_holds;
 pub mod embedding_install;
 pub mod embeddings;
 pub mod entity_identities;
@@ -58,6 +60,7 @@ pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
 pub mod field_usage;
+pub mod identity_reviews;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;
@@ -71,9 +74,13 @@ pub mod page_ops;
 pub mod page_visibility;
 pub mod persistence;
 pub mod raw_files;
+pub mod reason_tombstones;
 pub mod relations;
+pub mod remote_links;
 pub mod salience;
+pub mod source_cr_mode;
 pub mod stats;
+pub mod synopsis_tier;
 pub mod takes;
 pub mod telemetry;
 pub mod timeline_queries;

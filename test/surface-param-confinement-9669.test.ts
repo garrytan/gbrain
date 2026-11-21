@@ -189,6 +189,22 @@ for (const kind of testBackends()) {
       expect(filterOpsForSurface(operations.filter(op => op.name === 'remember'), 'starter')[0]!.params).not.toHaveProperty('valid_from');
     });
 
+    test('GST-3170: a starter client cannot pass a typed-claim key its schema hides inside remember items either', async () => {
+      const hidden = Object.keys(operations.find(op => op.name === 'remember')!.params).filter(key => key.startsWith('claim_')
+        && !(key in filterOpsForSurface(operations.filter(op => op.name === 'remember'), 'starter')[0]!.params) && !(CALLABLE.remember?.[key]));
+      expect(hidden.length).toBeGreaterThan(0);
+      const fact = 'acme-example closed a round canaryitemclaim';
+      for (const key of hidden) {
+        const res = await dispatchToolCall(engine, 'remember',
+          { items: [{ fact, entity: 'acme-example', provenance: 'meeting notes', [key]: key === 'claim_value' ? 5 : 'fundraise' }] }, stdio('starter'));
+        expect({ key, code: envelope(res).code, text: all(res).includes(key) }).toEqual({ key, code: CODE, text: true });
+      }
+      expect((await engine.executeRaw('SELECT 1 FROM facts WHERE fact = $1', [fact])).length).toBe(0);
+      const full = await dispatchToolCall(engine, 'remember',
+        { items: [{ fact, entity: 'acme-example', provenance: 'meeting notes', claim_metric: 'fundraise', claim_value: 5 }] }, stdio('full'));
+      expect(full.isError).toBeFalsy();
+    });
+
     test('param_not_on_surface is one registered code, and a call to a hidden tool still gets unknown_tool', async () => {
       expect(CODE in CODES).toBe(true);
       expect(operations.some(op => op.name === 'get_versions') && !allowedOpNames(operations, 'starter').has('get_versions')).toBe(true);

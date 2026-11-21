@@ -306,7 +306,7 @@ federated caller's source grant.
 
 `gbrain dedupe` proposes such groups from shared ids and names and links
 one only when you confirm it (`gbrain dedupe confirm <group-id>`; `gbrain
-dedupe reject <group-id>` records "different people"). Those rows carry
+dedupe reject <group-id>` records "different people or companies"). Those rows carry
 `established_by: dedupe:confirm`; the decision behind them lives in
 `.gbrain/identity/<decision-id>.md` in the default source's repository (or
 in the `entity_identity_reviews` table when it has none), so a

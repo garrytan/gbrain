@@ -116,13 +116,14 @@ await sleep(500);
 const out = [];
 for (const [kind, a] of JSON.parse(stepsJson)) {
   const sessionKey = a.session || 'agent:main:s1';
-  const ctx = { ...real.first_turn.ctx, sessionKey, inputProvenance: { kind: a.provenance || 'external_user' }, ...(a.sender ? { senderId: a.sender } : {}),
+  const ctx = { ...real.first_turn.ctx, runId: a.run || 'drive-' + out.length, sessionKey, inputProvenance: { kind: a.provenance || 'external_user' }, ...(a.sender ? { senderId: a.sender } : {}),
     hookInvocation: { assertActive: () => { assertActiveCalls += 1; if (a.inactive) throw new Error('run is no longer active'); } } };
   if (kind === 'turn') {
     const messages = history.get(sessionKey) || [];
-    out.push(await h.before_prompt_build({ prompt: a.text, messages: [...messages] }, ctx) ?? null);
+    const got = await h.before_prompt_build({ prompt: a.text, messages: [...messages] }, ctx) ?? null;
+    out.push(got);
     const [user, runtime, assistant] = real.second_turn.event.messages;
-    history.set(sessionKey, [...messages, { ...user, content: a.text }, runtime, assistant]);
+    history.set(sessionKey, [...messages, { ...user, content: a.carry && got && got.appendContext ? a.text + '\n\n' + got.appendContext : a.text }, runtime, assistant]);
   }
   else if (kind === 'read') { h.after_tool_call({ ...real.after_tool_call.event, params: { name: a.name } }, { ...real.after_tool_call.ctx, sessionKey }); out.push('read'); }
   else if (kind === 'asserts') out.push(assertActiveCalls);
@@ -148,6 +149,34 @@ function logLines(b: Box): any[] {
 }
 
 describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
+  test('a --skill-loading re-run that changes nothing runs none of the per-turn rule plugin\'s openclaw commands', async () => {
+    const b = box();
+    const turnCalls = () => (existsSync(b.calls) ? readFileSync(b.calls, 'utf8').trim().split('\n').filter((l) => l.includes('gbrain-turn-rule')) : []);
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const first = turnCalls();
+    expect(first.slice(0, 3).map((l) => l.split(' ').slice(0, 2).join(' '))).toEqual(['plugins install', 'plugins enable', 'config set']);
+    const all = readFileSync(b.calls, 'utf8');
+    const again = await setup(b, ['--skill-loading', 'resolve']);
+    expectExit(again, 0);
+    expect(turnCalls()).toEqual(first);
+    expect(again.doc.turn_hook).toMatchObject({ action: 'keep', unchanged: true });
+    expect(again.doc.turn_hook_check).toBeUndefined();
+    expect(readFileSync(b.calls, 'utf8').slice(all.length).split('\n').filter((l) => l && !l.startsWith('skills list'))).toEqual([]);
+  });
+
+  test('loading the entry file alone, as openclaw plugins inspect --runtime does from a copy without worker.js, logs no worker crash', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const copy = join(b.root, 'capture');
+    mkdirSync(copy);
+    writeFileSync(join(copy, 'index.js'), readFileSync(join(pluginDir(b), 'index.js'), 'utf8'));
+    const script = "import(process.argv[1]).then((m) => { m.default.register({ on() {} }); setTimeout(() => process.exit(0), 1500) });";
+    const r = Bun.spawnSync([NODE!, '--input-type', 'module', '-e', script, join(copy, 'index.js')], { env: { PATH: b.env.PATH!, HOME: b.home }, stdout: 'pipe', stderr: 'pipe', timeout: 30_000 });
+    expect(r.exitCode, r.stderr.toString()).toBe(0);
+    const dir = join(gbrainHome(b), 'skill-index', 'logs');
+    expect(existsSync(dir) ? logLines(b).filter((l) => l.code === 'skill_resolver_worker_crash') : []).toEqual([]);
+  });
+
   test('shadow installs once; a flip to live runs no OpenClaw command and keeps the plugin files', async () => {
     const b = box();
     const first = await setup(b, ['--skill-loading', 'shadow']);
@@ -368,13 +397,43 @@ test('catalog names: distinct agent ids never share a catalog, and plain ids kee
 });
 
 describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
+  test('a retried attempt of the same run resolves nothing new: its own text gets the first block back, other text (OpenClaw\'s continuation) gets none', async () => {
+    const b = box({ skills: 250 });
+    await setup(b, ['--skill-loading', 'resolve']);
+    const cont = 'Continue the current task from the existing transcript, preserving completed work and the user constraints.';
+    const out = drive(b, [
+      ['turn', { text: 'triage the email inbox', run: 'r1' }],
+      ['turn', { text: cont, run: 'r1' }],
+      ['turn', { text: 'filler task number 7 with nothing to match', run: 'r2', session: 'agent:main:s2' }],
+      ['turn', { text: 'triage the email inbox', run: 'r2', session: 'agent:main:s2' }],
+      ['turn', { text: 'triage the email inbox', run: 'r3', session: 'agent:main:s3' }],
+    ], undefined, { DRIVE_LOG_LINES: '5' });
+    expect(out[0].appendContext).toContain('email-triage');
+    expect(out[1]?.appendContext ?? '').toBe('');
+    expect(out[3]?.appendContext ?? '').toBe('');
+    expect(out[4].appendContext).toContain('email-triage');
+    expect(logLines(b).map((l) => l.outcome)).toEqual(['suggested', 'retry', out[2]?.appendContext ? 'suggested' : 'no_match', 'retry', 'suggested']);
+  });
+
+  test('a retried attempt whose transcript already carries the first attempt\'s block gets no second copy', async () => {
+    const b = box({ skills: 250 });
+    await setup(b, ['--skill-loading', 'resolve']);
+    const out = drive(b, [
+      ['turn', { text: 'triage the email inbox', run: 'r1', carry: true }],
+      ['turn', { text: 'triage the email inbox', run: 'r1', carry: true }],
+    ], undefined, { DRIVE_LOG_LINES: '2' });
+    expect(out[0].appendContext).toContain('email-triage');
+    expect(out[1]?.appendContext ?? '').toBe('');
+    expect(logLines(b).map((l) => l.outcome)).toEqual(['suggested', 'retry']);
+  });
+
   test('live: pins every turn, up to 3 suggestions, pinned never suggested, retry commits once; skips internal turns; shadow and off inject nothing', async () => {
     const b = box({ skills: 250 });
     await setup(b, ['--skill-loading', 'resolve']);
     await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', 'openclaw-main'], { env: b.env });
     const out = drive(b, [
-      ['turn', { text: 'deploy the service to production and triage the email inbox' }],
-      ['turn', { text: 'deploy the service to production and triage the email inbox' }],
+      ['turn', { text: 'deploy the service to production and triage the email inbox', run: 'r1' }],
+      ['turn', { text: 'deploy the service to production and triage the email inbox', run: 'r1' }],
       ['turn', { text: 'sync the calendar', provenance: 'inter_session' }],
       ['turn', { text: 'filler task number 249', session: 'agent:main:s9' }],
       ['read', { name: 'email-triage' }],
@@ -548,6 +607,37 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
 });
 
 describe.skipIf(!NODE)('doctor skill_resolver: the OpenClaw plugin', () => {
+  test('re-checks OpenClaw\'s skill list: a skill it no longer lists or now hides warns, its fix stops suggesting it without installing anything, and no OpenClaw config changes', async () => {
+    const b = box();
+    const list = (skills: object[]) => { const f = join(b.root, 'skills-list-' + Math.random().toString(36).slice(2) + '.json'); writeFileSync(f, JSON.stringify({ workspaceDir: join(b.state, 'workspace'), skills })); return { SKILLS_LIST_JSON: f }; };
+    const all = ['deploy-service', 'email-triage', 'calendar-sync'].map((name) => ({ name, modelVisible: true }));
+    expectExit(await setup(b, ['--skill-loading', 'resolve'], list(all)), 0);
+    expect(readState(b).agents.main.exclude_ids).toEqual([]);
+    const config = readFileSync(join(b.state, 'openclaw.json'), 'utf8');
+    const before = readFileSync(b.calls, 'utf8');
+    const doctor = async (env: Record<string, string>) => JSON.parse((await runCli(['doctor', '--only', 'skill_resolver', '--json'], { env: { ...b.env, ...env } })).stdout).checks.find((c: any) => c.name === 'skill_resolver');
+    expect((await doctor(list(all))).status).toBe('ok');
+    const cut = await doctor(list(all.filter((s) => s.name !== 'email-triage')));
+    expect(cut).toMatchObject({ status: 'warn', details: { code: 'skill_resolver_host_load_cut' } });
+    expect(cut.message).toContain('skills.limits.maxCandidatesPerRoot');
+    expect(cut.message).toContain('skills.limits.maxSkillsLoadedPerSource');
+    expect(cut.message).toContain('email-triage');
+    expect(cut.fix.argv).toEqual(['gbrain', 'setup', 'openclaw', '--skills-index-only']);
+    const hidden = await doctor(list(all.map((s) => (s.name === 'calendar-sync' ? { ...s, modelVisible: false } : s))));
+    expect(hidden).toMatchObject({ status: 'warn', details: { code: 'skill_resolver_host_hidden' } });
+    expect(hidden.message).toContain('calendar-sync');
+    expect(hidden.fix.argv).toEqual(cut.fix.argv);
+    const hiddenList = list(all.map((s) => (s.name === 'calendar-sync' ? { ...s, modelVisible: false } : s)));
+    const turnRule = readFileSync(join(b.state, 'gbrain', 'gbrain-turn-rule', 'index.js'), 'utf8');
+    const fixed = await runCli([...hidden.fix.argv.slice(1), '--gbrain-bin', b.bin], { env: { ...b.env, ...hiddenList } });
+    expect(fixed.exitCode, fixed.stderr).toBe(0);
+    expect(readState(b).agents.main.exclude_ids).toEqual(['calendar-sync']);
+    expect((await doctor(hiddenList)).status).toBe('ok');
+    expect(readFileSync(join(b.state, 'gbrain', 'gbrain-turn-rule', 'index.js'), 'utf8')).toBe(turnRule);
+    expect(readFileSync(join(b.state, 'openclaw.json'), 'utf8')).toBe(config);
+    expect(readFileSync(b.calls, 'utf8').slice(before.length).split('\n').filter((l) => l && !l.startsWith('skills list'))).toEqual([]);
+  });
+
   test('reports the deadline-miss rate from the daily logs and warns above 5% once there are 20 turns', async () => {
     const b = box();
     expectExit(await setup(b, ['--skill-loading', 'shadow']), 0);

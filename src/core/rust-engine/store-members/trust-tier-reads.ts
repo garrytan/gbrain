@@ -2,8 +2,8 @@
  * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
  * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers`, `listVersionReasonWriters` and
- * `listPageRefsByIds`; the belief history reads `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`
- * (trust/belief_history.rs); and the valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
+ * `listPageRefsByIds`, `listPageTrustTiersByKey` and `lockLivePagesByKey`; the belief history reads `readBeliefHistoryRows`
+ * and `listVisibleBeliefLifetimes` (trust/belief_history.rs); and the valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
  * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
  * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` answers false: the store keeps no `needs_rederive`
  * queue (only a raw-SQL purge writes one, and `executeRaw` refuses here). `beginSnapshotRead` sets no isolation level: a store transaction is one
@@ -105,6 +105,19 @@ export const listPageRefsByIds: Member<'listPageRefsByIds'> = async (brain, ids)
   const rows: Array<{ id: number; source_id: string; slug: string; type: string | null }> =
     await storeCall({ member }, () => brain.listPageRefsByIds({ ids: [...ids] }));
   return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
+};
+
+export const listPageTrustTiersByKey: Member<'listPageTrustTiersByKey'> = async (brain, refs) => {
+  if (refs.length === 0) return [];
+  const rows: Array<{ id: number; source_id: string; slug: string; trust_tier: string | null }> = await storeCall(
+    { member: 'listPageTrustTiersByKey' }, () => brain.listPageTrustTiersByKey(refs.map(r => ({ source_id: r.source_id, slug: r.slug }))));
+  return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, trust_tier: r.trust_tier ?? null }));
+};
+
+/** A store transaction is serialized, so the live check needs no row lock: no other write runs until it commits. */
+export const lockLivePagesByKey: Member<'lockLivePagesByKey'> = async (brain, refs) => {
+  if (refs.length === 0) return [];
+  return storeCall({ member: 'lockLivePagesByKey' }, () => brain.lockLivePagesByKey(refs.map(r => ({ source_id: r.source_id, slug: r.slug }))));
 };
 
 /** The remote read floor over `p` that `stream_visible` and the visible lifetimes are judged by. */

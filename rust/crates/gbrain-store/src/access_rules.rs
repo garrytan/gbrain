@@ -28,6 +28,7 @@
 //! - `0x03 <source> 0 <prefix> 0 <reason>`: a pending or invalid prefix.
 //! - `0x04 <source> 0 <revision as 8 big-endian bytes>`: a policy revision.
 //! - `0x05 <source> 0 <page id as 8 big-endian bytes>`: the rule ids the last restamp gave a page.
+//! - `0x06 <source> 0 <id>`: a policy-store migration (`access_migrations.rs`).
 //!
 //! See rust/docs/store/access_rules.md.
 
@@ -47,6 +48,8 @@ pub(crate) const COVERAGE: u8 = 0x03;
 pub(crate) const REVISION: u8 = 0x04;
 /// Sub-tag: a page's restamped rule ids (`pages.folder_rule_ids`), which only the restamp writes.
 pub(crate) const STAMP: u8 = 0x05;
+/// Sub-tag: a policy-store migration (`access_policy_migrations`, `access_migrations.rs`).
+pub(crate) const MIGRATION: u8 = 0x06;
 
 pub(crate) fn key(sub: u8, parts: &[&[u8]]) -> Vec<u8> {
     let mut key = vec![keys::ACCESS_RULES, sub];

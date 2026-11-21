@@ -1,7 +1,8 @@
 //! Jobs: the `access_tokens` table, the columns the legacy-token mint and the read-floor command touch, as the members
 //! of `src/core/engine-sql/access-tokens.ts` run them (rust/docs/store/access-tokens.md).
 //!
-//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust.
+//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust, and the name read of
+//! readWriteAttributionNames (`read_access_token_names`).
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2B (this file only):
 //! - `m 0x2B id -> TokenRecord`: one token row, keyed by its generated UUID.
@@ -193,6 +194,22 @@ impl Store {
                 .map(|t| json!({ "id": t.id, "name": t.name, "min_trust": t.min_trust }))
                 .collect(),
         ))
+    }
+
+    /// `readAccessTokenNames(ids)`: `[{ id, name }]` of the tokens whose id is one of `ids`, revoked ones included, by id;
+    /// an id no token has is left out. The names `get_write_attribution` shows for a legacy token.
+    pub fn read_access_token_names(&self, ids: &[String]) -> Result<Value> {
+        let read = self.read()?;
+        let mut wanted: Vec<&String> = ids.iter().collect();
+        wanted.sort();
+        wanted.dedup();
+        let mut rows = Vec::new();
+        for id in wanted {
+            if let Some(t) = get_json::<TokenRecord>(&*read, &token_key(id))? {
+                rows.push(json!({ "id": t.id, "name": t.name }));
+            }
+        }
+        Ok(Value::Array(rows))
     }
 
     /// `setAccessTokenMinTrust(id, tier)`: sets (or clears, with None) one token's floor; whether a token had the id.

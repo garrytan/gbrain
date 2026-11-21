@@ -1,8 +1,8 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (BrainEngine readSourceState through
  * purgeMemoryProposals, attachSourcePath, getWorktreeBinding and listAccessTokens; SQL in engine-sql/write-misc.ts; isSourceClaimed, SQL in engine-sql/sources.ts), and the folder access read beside the
- * access members (isFolderRestricted, listAppliedPolicyRevisions, readLiveMember, readFolderAccess, readMayActFor, readAudiencePrincipals, readJobPrincipal, readAccessMembers, readAccessCredentials and listAudienceAccessMembers; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
- * gbrain-store `write_misc`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
+ * access members (isFolderRestricted, listAppliedPolicyRevisions, readFolderAccess, readMayActFor, readAudiencePrincipals, readJobPrincipal, readAccessMembers, readAccessCredentials, listAudienceAccessMembers and readLiveMember; SQL in engine-sql/access-control.ts). The source read and the path attach are served by
+ * gbrain-store `write_misc`, the binding reads by gbrain-store `persistence::worktrees`, the folder reads by gbrain-store `access_rules`; the rest answer for state the store does not keep. What each member answers and why:
  * rust/docs/store/write_misc.md.
  */
 import type {
@@ -49,17 +49,19 @@ export const attachSourcePath: StoreMember<[sourceId: string, localPath: string,
  */
 export const sharedSkillPackTablePresent: StoreMember<[], boolean> = async () => true;
 
-/** The store keeps no shared skillpacks (see sharedSkillPackTablePresent), so no pack has roots. */
+/** The store keeps no shared skillpacks (see sharedSkillPackTablePresent), so no pack has roots, bound worktree or not. */
 export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkillPackRoot[]> = async () => [];
 
 /**
- * The store keeps no writer bindings: a brain on this engine is never managed (readManagedModeRows), and the binding
- * writers (claimWorktree's raw SQL) refuse on it, so no source is bound on any host.
+ * The source's binding as host `hostId` sees it, from the binding records an unmanaged claim keeps
+ * (claimWorktreeBinding, gbrain-store `persistence::worktrees`), with the columns and text forms WORKTREE_BINDING_SQL reads.
  */
-export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string | null], WorktreeBinding | null> = async () => null;
+export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string | null], WorktreeBinding | null> = (brain, sourceId, hostId) =>
+  storeCall({ member: 'getWorktreeBinding', sourceId }, () => brain.getWorktreeBinding(sourceId, hostId));
 
-/** No binding claims a source on this engine (see getWorktreeBinding), so classic sync never meets a claim. */
-export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = async () => false;
+/** A binding names the source at its current incarnation (SOURCE_CLAIMED_SQL). */
+export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
+  storeCall({ member: 'isSourceClaimed', sourceId }, () => brain.isSourceClaimed(sourceId));
 
 /** The store keeps no chronicle extraction state, so no page has events. */
 export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = async () => false;
@@ -78,12 +80,6 @@ export const listActiveAccessMembers: StoreMember<[], string[]> = async () => []
 export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false;
 
 /**
- * The store keeps no notifier state (a resident notifier refuses to start on this engine, notifier/store.ts), so no
- * source has recorded coverage and search carries the freshness notice only when `sync.on_commit` is on.
- */
-export const notifierCoverageRecorded: StoreMember<[], boolean> = async () => false;
-
-/**
  * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
  * among them, so a memoized health answer is reused only while nothing was written since it was read.
  */
@@ -91,10 +87,13 @@ export const readHealthMemoClock: StoreMember<[], string> = async (brain) =>
   storeCall({ member: 'readHealthMemoClock' }, () => brain.readProjectionReadinessGeneration());
 
 /**
- * The store keeps no source contextual-retrieval mode (only `sources` admin raw SQL writes it, refused on this engine),
- * so no source selects the synopsis tier.
+ * The sources that are not archived and whose own contextual-retrieval mode (`sources set-cr-mode`, source_cr_mode.rs)
+ * is per_chunk_synopsis, by id in byte order: the source half of the synopsis tier read, with its page check skipped.
  */
-export const listSynopsisSourceIds: StoreMember<[], string[]> = async () => [];
+export const listSynopsisSourceIds: StoreMember<[], string[]> = async (brain) => {
+  const tier = await storeCall({ member: 'listSynopsisSourceIds' }, () => brain.readSynopsisTierSources({ skipFrontmatter: true }));
+  return (tier as { sourceIds: string[] }).sourceIds;
+};
 
 /**
  * Folder rules and pending prefixes are gbrain-store `access_rules` records (rust/docs/store/access_rules.md). A slug
@@ -121,9 +120,6 @@ export const readFolderAccess: StoreMember<[readers: readonly string[]], FolderA
  */
 export const readMayActFor: StoreMember<[via: MayActForVia, key: string], string[] | string | null> = async (brain, via, key) =>
   via === 'stdio_config' ? storeCall({ member: 'readMayActFor' }, () => brain.getConfig(key)) : null;
-
-/** The store keeps no access tokens and no OAuth clients, so a remote job's principal has no row: the job is denied as revoked. */
-export const readJobPrincipal: StoreMember<[principal: { kind: JobPrincipalKind; id: string }], Record<string, unknown> | null> = async () => null;
 
 /** The store keeps no memory proposals, so upkeep expires nothing. */
 export const expireMemoryProposals: StoreMember<[reason: string], number> = async () => 0;
@@ -166,3 +162,6 @@ export const listMemoryProposalRows: StoreMember<[query: ProposalListQuery], Arr
 
 /** No memory proposals exist on this engine, so no request id names one: show, approve and deny answer not_found. */
 export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Record<string, unknown>>> = async () => [];
+
+/** The store keeps no access tokens and no OAuth clients, so a remote job's principal has no row: the job is denied as revoked. */
+export const readJobPrincipal: StoreMember<[principal: { kind: JobPrincipalKind; id: string }], Record<string, unknown> | null> = async () => null;

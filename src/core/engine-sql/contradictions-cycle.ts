@@ -4,6 +4,7 @@
  * small eval reads (last prompt version, captured queries). The text and binds are the ones the callers built
  * inline; the engines run them through typed members.
  */
+import { ownerOnlyTakeAllowedSql } from '../search/private-visibility.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { renderFragment, sqlFragment } from './fragment.ts';
 import { NON_EMPLOYER_PREFIXES, NON_EMPLOYER_TYPES } from '../link-target-roles.ts';
@@ -219,7 +220,7 @@ export async function listLiveTakesByIds(raw: EngineRawRead, ids: number[], poli
     params.push(policy.takesHoldersAllowList);
     holderSql = takeHolderSql(params.length);
   }
-  return raw<LiveTakeRow>(`${LIVE_TAKES_HEAD}${pageSql}${holderSql}
+  return raw<LiveTakeRow>(`${LIVE_TAKES_HEAD}${pageSql}${holderSql}${policy.excludePrivate ? ownerOnlyTakeAllowedSql('t') : ''}
         AND ${projectionEligibleSql('takes', 't', floor ? { floor } : undefined)}`, params);
 }
 

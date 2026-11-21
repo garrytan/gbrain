@@ -8,10 +8,12 @@
 //!
 //! - `off`: the rendered text holds no owner-only test (a policy rendered for the owner, such as
 //!   the evidence-origin policy of a write run by the owner).
-//! - `closed` (`ANY_OWNER_ONLY_SQL`, a read with no schema version): while any source is
-//!   owner-only, every row counts as owner-only.
-//! - `fn` (`gbrain_owner_only_lineage`, schema migration v320, and its `_strict` read of the
-//!   `owner_only_marks` of migration v322): the guard (any owner-only source or any mark) and the
+//! - `closed` (the closed test of a read with no schema version: `ANY_OWNER_ONLY_SQL` or the held
+//!   flag, GST-3032): while any source is owner-only, or the brain has held owner-only data (a mark,
+//!   here), every row counts as owner-only.
+//! - `fn` (`gbrain_owner_only_lineage`, schema migration v320, its `_strict` read of the
+//!   `owner_only_marks` of migration v322, and its v328 form with the login's read mode, which is
+//!   always the exact lineage here: the store has no logins whose reads row security narrows): the guard (any owner-only source or any mark) and the
 //!   row test. A page is owner-only when its source is, when `owner_only_marks` names it (a hard
 //!   delete of its owner-only input marked it, `owner_only_marks.rs`), or when it is a concept or a
 //!   question with a `concept-provenance` / `synthesized_from` link to a page in an owner-only
@@ -45,8 +47,7 @@ pub enum OwnerOnlyForm {
     Off,
     /// `gbrain_owner_only_lineage(table, id)` behind its guard (the strict read of the marks).
     Fn,
-    /// `ANY_OWNER_ONLY_SQL`: any owner-only source hides every row. It reads sources only: no mark
-    /// is read in a brain below v320.
+    /// The closed test: any owner-only source, or the held flag (a mark, here), hides every row.
     #[default]
     Closed,
 }
@@ -81,7 +82,7 @@ pub(crate) fn fact_owner_only(
 ) -> Result<bool> {
     match form {
         OwnerOnlyForm::Off => Ok(false),
-        OwnerOnlyForm::Closed => any_owner_only(read),
+        OwnerOnlyForm::Closed => Ok(any_owner_only(read)? || any_marked(read)?),
         OwnerOnlyForm::Fn => source_owner_only(read, source_id),
     }
 }
@@ -145,18 +146,18 @@ impl OwnerOnlySources {
     ) -> Result<bool> {
         match form {
             OwnerOnlyForm::Off => Ok(false),
-            OwnerOnlyForm::Closed => Ok(!self.ids.is_empty()),
+            OwnerOnlyForm::Closed => Ok(self.guarded()),
             OwnerOnlyForm::Fn => Ok(self.guarded() && self.lineage_strict(read, page)?),
         }
     }
 
     /// `ownerOnlyFactSql(facts, form)` for a caller that is not the owner: a fact held in an
-    /// owner-only source is hidden, or every fact is while the brain holds an owner-only source
-    /// (the closed form). The store marks no fact rows and keeps no `derivation_inputs`.
+    /// owner-only source is hidden, or every fact is while the brain holds an owner-only source or a
+    /// mark (the closed form). The store marks no fact rows and keeps no `derivation_inputs`.
     pub(crate) fn fact_hidden(&self, form: OwnerOnlyForm, source_id: &str) -> bool {
         match form {
             OwnerOnlyForm::Off => false,
-            OwnerOnlyForm::Closed => !self.ids.is_empty(),
+            OwnerOnlyForm::Closed => self.guarded(),
             OwnerOnlyForm::Fn => self.holds(source_id),
         }
     }

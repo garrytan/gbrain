@@ -362,6 +362,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // handler dispatch.
   // selfHelp: whoknows honours --help first (runWhoknows HELP block, whoknows.ts).
   { name: 'whoknows', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/whoknows.ts') },
+  // selfHelp: GST-3216 identity prints its own HELP (commands/identity.ts); refuse on a thin client, whose identifiers live on the brain host.
+  { name: 'identity', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/identity.ts') },
   { name: 'brainstorm', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/brainstorm.ts') },
   { name: 'lsd', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/lsd.ts') },
   // selfHelp: v0.41.20.0 skillopt's detailed HELP constant lives in src/core/skillopt/help.ts;

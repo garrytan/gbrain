@@ -2,7 +2,7 @@
  * GST-3107: one `gbrain sources refresh` run's phase times, how long it held the worktree's refresh lock, and the
  * stale-link backlog shares its member syncs left. Inside a run, a member sync's tail derives links only for the pages it
  * imported (`runSyncTail` with `deferBacklog`), so the refresh lock is not held while the backlog drains; the run spends
- * each share after every refresh lock is released, one refresh's drain per source at a time.
+ * each share after every refresh lock is released, one refresh's drain per source of a brain at a time.
  */
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -60,7 +60,8 @@ export async function withRefreshRun<T extends object>(engine: BrainEngine, opts
 
 /**
  * Spends the run's backlog shares (after every refresh lock is released) and returns the result fields the run reports.
- * A source whose drain lock another process holds is skipped and named; a failure is reported on the share's entry and
+ * A source whose drain lock another process of the same brain holds is skipped and named (the lock is keyed by brain id
+ * and source id, since every brain has a `default` source and brains can share one GBRAIN_HOME); a failure is reported on the share's entry and
  * never fails the refresh, whose imports already completed. The drains share the latest member tail's deadline, so they
  * end when the in-lock tails would have. `beforeDrain` is the test seam `hooks.backlog`.
  */
@@ -69,9 +70,10 @@ async function finishRefreshRun(engine: BrainEngine, run: RefreshRun, opts: Fini
   if (run.backlog.length) {
     const { drainSyncTailBacklog } = await import('./sync-tail.ts');
     const started = performance.now(), deadlineAtMs = Math.max(...run.backlog.map(item => item.share.deadlineAtMs));
+    let brain: Promise<string | null> | undefined;
     for (const { sourceId, share } of run.backlog) {
       try {
-        const lock = await tryAcquireNativeLock(join(persistenceHome(), 'locks', `link-backlog-${createHash('sha256').update(sourceId).digest('hex').slice(0, 32)}.lock`));
+        const lock = await tryAcquireNativeLock(join(persistenceHome(), 'locks', `link-backlog-${createHash('sha256').update(`${await (brain ??= engine.readPersistenceBrainId())}\0${sourceId}`).digest('hex').slice(0, 32)}.lock`));
         if (!lock) { drained.push({ source_id: sourceId, outcome: 'skipped', pages: 0 }); continue; }
         try {
           await opts.beforeDrain?.(sourceId);

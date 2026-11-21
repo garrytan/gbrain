@@ -25,7 +25,7 @@ import { ownerMemberId } from './owner.ts';
 import { identityFor, MEMBER_PAGE_PREFIX, normalizeReaders, readersAllow } from './principals.ts';
 import { folderRulesAllow, ruleCovers, sortRules, type FolderRule } from './folder-rules.ts';
 import { appliedRules, previewApply, resumePolicy, coverageRows } from './policy.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet, type PreviewApprovalCommand } from '../persistence/preview-approval.ts';
 import { digest } from '../persistence/digest.ts';
 import { READERS_KEY } from '../persistence/label-edit.ts';
 import { readersGitCounts, READERS_PHASE, READERS_MAX_PAGES, type ReadersItem } from '../repair/readers.ts';
@@ -195,7 +195,7 @@ export async function previewHandover(engine: BrainEngine, rawMember: string, ch
   const [creds] = await engine.executeRaw<{ n: number }>("SELECT (SELECT count(*) FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL) + (SELECT count(*) FROM oauth_clients WHERE member_id = $1) AS n", [leaver.id]).catch(() => [{ n: 0 }]);
   const [undone] = await engine.executeRaw<{ id: string }>("SELECT id FROM access_handovers WHERE member_id = $1 AND state = 'undone' ORDER BY undone_at DESC LIMIT 1", [leaver.id]);
   const hash = previewHash({ kind: 'member-handover-v1', member: leaver.id, owner: ctx.owner, choices, items: changed, ...(undone ? { after_undo: String(undone.id) } : {}) });
-  if (changed.length) await saveApprovedSet<HandoverItem>(engine, { command: 'member-handover', hash }, changed);
+  if (changed.length) await saveApprovedSet<HandoverItem>(engine, { command: approvalCommand(leaver.id), hash }, changed);
   return { member: leaver.id, member_status: leaver.status, owner: ctx.owner, choices, groups, items: changed, ...impact,
     bound_credentials: Number(creds?.n ?? 0), leaver_groups: [...ctx.leaverPrincipals].filter(p => p.startsWith('group:')).map(plain), plan_hash: hash, warnings };
 }
@@ -258,11 +258,15 @@ async function currentReaders(engine: BrainEngine, item: HandoverItem): Promise<
   }
   if (item.kind === 'rule') {
     const rule = (await currentFolderRules(engine, item.source_id)).find(r => r.id === item.rule_id);
+    if (rule && rule.prefix !== item.prefix) return undefined;
     return rule ? rule.readable_by : [];
   }
   const bound = await engine.executeRaw<{ member_id: string }>('SELECT member_id FROM access_member_sources WHERE source_id = $1', [item.source_id]);
   return bound.map(b => b.member_id).sort();
 }
+
+/** The approved set is keyed by the member it was previewed for, so an apply naming another member finds none. */
+const approvalCommand = (member: string, undoOf?: string | null): PreviewApprovalCommand => undoOf ? `member-handover:${member}:undo:${undoOf}` : `member-handover:${member}`;
 
 const holdsTo = (item: HandoverItem, now: string[] | null | undefined) => item.kind === 'binding' ? !!now?.includes(item.to) && !now.includes(item.from) : now !== undefined && same(now, item.kind === 'page' ? norm(item.to) : item.to ?? []);
 const holdsFrom = (item: HandoverItem, now: string[] | null | undefined) => item.kind === 'binding' ? !!now?.includes(item.from) : now !== undefined && same(now, item.from);
@@ -281,7 +285,9 @@ export async function applyHandover(engine: BrainEngine, member: string, opts: A
   if (opts.undo && leaver.status !== 'enabled') throw undoRefusal(leaver);
   const id = handoverId(opts.expect);
   let record = await readRecord(engine, 'plan_hash', opts.expect);
-  const approved = record ? null : await loadApprovedSet<HandoverItem>(engine, { command: 'member-handover', hash: opts.expect, previewCommand: opts.previewCommand });
+  if (opts.undo && opts.undo.member_id !== leaver.id) throw previewChangedError(opts.expect, opts.previewCommand);
+  if (record && (record.member_id !== leaver.id || (record.undo_of ?? null) !== (opts.undo?.id ?? null))) throw previewChangedError(opts.expect, opts.previewCommand);
+  const approved = record ? null : await loadApprovedSet<HandoverItem>(engine, { command: approvalCommand(leaver.id, opts.undo?.id), hash: opts.expect, previewCommand: opts.previewCommand });
   if (!record) {
     const items = approved!.items;
     for (const item of items) {
@@ -296,11 +302,12 @@ export async function applyHandover(engine: BrainEngine, member: string, opts: A
   if (record.state === 'undone' || record.state === 'applied') return record;
   const pending = (i: RecordedItem) => i.outcome !== 'done';
   for (const source of [...new Set(record.items.filter(i => i.kind === 'rule' && pending(i)).map(i => i.source_id))]) {
-    const rules = record.items.filter((i): i is RecordedItem & RuleItem => i.kind === 'rule' && i.source_id === source);
+    const rules = record.items.filter((i): i is RecordedItem & RuleItem => i.kind === 'rule' && i.source_id === source && pending(i));
     await refuseHeldRules(engine, source);
     const base = await currentFolderRules(engine, source);
+    if (rules.some(i => base.some(r => r.id === i.rule_id && r.prefix !== i.prefix))) throw previewChangedError(opts.expect, opts.previewCommand);
     const desired = sortRules(base.flatMap(r => {
-      const item = rules.find(i => i.rule_id === r.id);
+      const item = rules.find(i => i.rule_id === r.id && i.prefix === r.prefix);
       if (!item) return [r];
       if (!holdsFrom(item, r.readable_by)) return [r];
       return item.to ? [{ ...r, readable_by: item.to }] : [];
@@ -309,7 +316,7 @@ export async function applyHandover(engine: BrainEngine, member: string, opts: A
     record.commits.push(...written.commits);
     const after = await currentFolderRules(engine, source);
     for (const item of rules) {
-      const r = after.find(x => x.id === item.rule_id);
+      const r = after.find(x => x.id === item.rule_id && x.prefix === item.prefix);
       item.outcome = holdsTo(item, r ? r.readable_by : []) ? 'done' : 'failed';
       if (item.outcome === 'failed') item.reason = 'the rule did not take the new readers';
     }
@@ -352,7 +359,7 @@ export async function applyHandover(engine: BrainEngine, member: string, opts: A
         skipped: left.slice(0, 20).map(i => ({ item: i.kind === 'page' ? pageRef(i) : i.kind === 'rule' ? i.source_id + ':' + i.prefix : i.source_id, reason: i.reason ?? i.outcome })) }),
         fix: { argv: [...opts.previewCommand.split(' '), '--yes', '--expect', opts.expect], consent: [], actor: 'agent', requires_exclusive: false, why: 'Resumes the same approved handover; items already written count as done.' } });
   }
-  await clearApprovedSet(engine, { command: 'member-handover', hash: opts.expect });
+  await clearApprovedSet(engine, { command: approvalCommand(record.member_id, record.undo_of), hash: opts.expect });
   if (opts.undo) await engine.executeRaw('UPDATE access_handovers SET state = \'undone\', undone_at = now(), updated_at = now() WHERE id = $1', [opts.undo.id]);
   return record;
 }
@@ -409,7 +416,7 @@ export async function previewUndo(engine: BrainEngine, id: string): Promise<{ ha
     if (holdsFrom(reversed, await currentReaders(engine, reversed))) items.push(reversed); else changedSince++;
   }
   const plan_hash = previewHash({ kind: 'member-handover-undo-v1', undo_of: id, items });
-  if (items.length) await saveApprovedSet<HandoverItem>(engine, { command: 'member-handover', hash: plan_hash }, items);
+  if (items.length) await saveApprovedSet<HandoverItem>(engine, { command: approvalCommand(handover.member_id, id), hash: plan_hash }, items);
   return { handover, items, changed_since: changedSince, plan_hash };
 }
 

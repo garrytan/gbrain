@@ -279,8 +279,9 @@ describe('assembleDeltaContext read failures', () => {
     const partialEngine = {
       listPages: async () => { throw new Error('private storage detail'); },
       listFactsKeyset: (...args: Parameters<BrainEngine['listFactsKeyset']>) => engine.listFactsKeyset(...args),
-      // The facts arm reads each fact's source page to decide quoting (#8042).
-      executeRaw: (...args: Parameters<BrainEngine['executeRaw']>) => engine.executeRaw(...args),
+      // The facts arm reads each fact's source page to decide quoting (#8042), and an untrusted read its stored tier.
+      listFactsFromQuotedPages: (...args: Parameters<BrainEngine['listFactsFromQuotedPages']>) => engine.listFactsFromQuotedPages(...args),
+      listOwnerTierFacts: (...args: Parameters<BrainEngine['listOwnerTierFacts']>) => engine.listOwnerTierFacts(...args),
     } as unknown as BrainEngine;
 
     const result = await assembleDeltaContext(partialEngine, {

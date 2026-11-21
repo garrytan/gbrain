@@ -28,7 +28,7 @@ const PLAIN: Record<string, string> = {
   'src/core/engine-sql/facts-purge.ts readHeldRowVisibility privatePagesFilterFragment': 'write-side: whether the target page is world (the held-fact move plan read)',
   'src/core/persistence/change-reason.ts pageWorldVisible privatePagesFilterFragment': 'write-side: whether a change reason may be published',
   'src/core/persistence/concept-rebuild.ts ACCESS_SQL privatePagesFilterFragment': 'maintenance: compares a hidden concept\'s access with its rebuild\'s, to refuse a wider one',
-  'src/core/persistence/concept-rebuild.ts readHeldConcepts privatePagesFilterFragment': 'maintenance: classifies a held concept\'s members as private for the purge preview; callers get a count or the local CLI',
+  'src/core/persistence/concept-rebuild.ts readHeldConceptRows privatePagesFilterFragment': 'maintenance: classifies a held concept\'s members as private for the purge preview; callers get a count or the local CLI',
   'src/core/persistence/origin-twins.ts readOriginClaimants privatePagesFilterFragment': 'maintenance: classifies twin pages as private',
   'src/core/persistence/rows-behind.ts scanRowsBehind privatePagesFilterFragment': 'maintenance: lineage privacy of rows behind the projection',
   'src/core/rust-engine/store-members/trust-tier-reads.ts listValidTimeIdentities privatePagesFilterFragment': 'the Rust store derives the world flag of the page under the same policy; the read itself is gated by privatePagesFilterForCaller',

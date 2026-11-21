@@ -18,13 +18,13 @@ import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, stripTakesFence } 
 import { countOutsideCode, locateOutsideCode } from '../fence-scan.ts';
 import { isDbOnly, loadStorageConfig } from '../storage-config.ts';
 import { publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
-import { withCoordinatedWrite } from '../persistence/context.ts';
+import { withCoordinatedWrite, withWriteAttribution } from '../persistence/context.ts';
 import { keepsCanonicalFile } from '../persistence/git-declared.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { acquirePageLock } from '../page-lock.ts';
 import { derivedFileTarget, writeDerivedPageThrough } from './derived-write-through.ts';
 import { fileDatabaseDriftToken, replaceableFile } from '../facts/file-body-guard.ts';
-import { declareDerivation, deriveTrust, lowerDerivedPage } from '../trust/taint.ts';
+import { declareDerivation, deriveTrust, lowerDerivedPage, lowerDerivedPageIn } from '../trust/taint.ts';
 import { rebuildHeldConcept, type ConceptRebuild } from '../persistence/concept-rebuild.ts';
 
 /** #5575 I2: the narrative carries the tier of the member atoms its prompt was built from (capped at agent_written). */
@@ -43,7 +43,9 @@ export const CONCEPT_HOLD_CODES = new Set(['source_changed', CONCEPT_PRESERVATIO
 function conceptHoldError(message: string): Error { return Object.assign(new Error(message), { code: CONCEPT_PRESERVATION_CODE }); }
 
 /** One concept page a managed run publishes: its synthesized frontmatter and narrative over the revision it was synthesized from. */
-export interface ManagedConcept { slug: string; synthesized: Record<string, unknown>; narrative: string; expectedRevision: string | null; members?: readonly string[] }
+export interface ManagedConcept { slug: string; synthesized: Record<string, unknown>; narrative: string; expectedRevision: string | null; members?: readonly string[];
+  /** GST-3179: a rebuild's members at the revisions its narrative read; the publication refuses if one moved. */
+  rebuildMembers?: ReadonlyArray<{ slug: string; revision: string }> }
 
 /**
  * Publish a run's concept pages through the maintenance coordinator as one batch (GBRA-60: one publication group on
@@ -67,7 +69,7 @@ export async function publishManagedConcepts(engine: BrainEngine, authority: Mai
 }
 
 async function prepareManagedConcept(engine: BrainEngine, authority: MaintenanceAuthority,
-  { slug, synthesized, narrative, expectedRevision, members }: ManagedConcept, brainDir?: string) {
+  { slug, synthesized, narrative, expectedRevision, members, rebuildMembers }: ManagedConcept, brainDir?: string) {
   const derivation = members ? await conceptDerivation(engine, authority.writer.sourceId, members) : null;
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: authority.writer.sourceId, includeDeleted: true });
   // The narrative was synthesized from the revision read before the model call
@@ -89,7 +91,7 @@ async function prepareManagedConcept(engine: BrainEngine, authority: Maintenance
     ? composeConceptRepublication(snapshot.page, snapshot.tags, synthesized, narrative)
     : serializeMarkdown(synthesized, narrative, '', { type: 'concept', title, tags: [] });
   return { slug, content: markdown, expectedRevision: snapshot?.revision ?? null, file: !dbOnly,
-    ...(derivation ? { derivation: declareDerivation(derivation.trust, derivation.inputs) } : {}) };
+    ...(derivation ? { derivation: declareDerivation(derivation.trust, derivation.inputs) } : {}), ...(rebuildMembers ? { rebuildMembers } : {}) };
 }
 
 /**
@@ -284,11 +286,19 @@ export async function publishClassicConcept(engine: BrainEngine, slug: string, s
     const markdown = page
       ? composeConceptRepublication(page, snapshot!.tags, synthesized, narrative)
       : serializeMarkdown(synthesized, narrative, '', { type: 'concept', title, tags: [] });
+    // The import stamps the page by its own channel; the derivation lowers it to the members' taint and records the edges,
+    // for a rebuild in its transaction, so a member purged after it commits finds the fresh page (GST-3179).
+    const derivation = opts.members ? await conceptDerivation(engine, sourceId, opts.members) : null;
     if (rebuild) {
-      await rebuildHeldConcept(engine, sourceId, slug, rebuild, tx => opts.importPage(markdown, tx));
-    } else await opts.importPage(markdown);
-    // The import stamps the page by its own channel; the derivation lowers it to the members' taint and records the edges.
-    if (opts.members) await lowerDerivedPage(engine, await conceptDerivation(engine, sourceId, opts.members), sourceId, slug);
+      const attribution = derivation ? { ...await maintenanceAttribution(engine), trust: derivation.trust } : null;
+      await rebuildHeldConcept(engine, sourceId, slug, rebuild, async tx => {
+        await opts.importPage(markdown, tx);
+        if (derivation && attribution) await withWriteAttribution(tx, attribution, () => lowerDerivedPageIn(tx, derivation, sourceId, slug));
+      });
+    } else {
+      await opts.importPage(markdown);
+      if (derivation) await lowerDerivedPage(engine, derivation, sourceId, slug);
+    }
     if (file && (file.expectedFileBytes !== null || opts.writeThrough)) {
       const written = await writeDerivedPageThrough(engine, slug, sourceId, { expectedFileBytes: file.expectedFileBytes });
       if (written.skipped === 'file_changed') {

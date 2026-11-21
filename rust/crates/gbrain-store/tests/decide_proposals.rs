@@ -742,3 +742,39 @@ fn relinked_facts_are_queued_once_and_the_due_ones_come_back_by_due_time_then_fa
         INVALID_ARGUMENT
     );
 }
+
+#[test]
+fn a_non_finite_native_number_is_refused_before_a_proposal_takes_an_id() {
+    let b = brain("dp-nonfinite");
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let mut p = proposal("s1", 0, 1, 2);
+        p.p_supersede = Some(bad);
+        assert_eq!(
+            b.insert_decide_proposal(&p).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+        let mut p = proposal("s1", 0, 1, 2);
+        p.proposal_floor = Some(bad);
+        assert_eq!(
+            b.insert_decide_proposal(&p).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+        let mut p = proposal("s1", 0, 1, 2);
+        p.threshold = Some(bad);
+        assert_eq!(
+            b.insert_decide_proposal(&p).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+        let mut r = review("pair", "a", "b", "s");
+        r.p_action = Some(bad);
+        assert_eq!(
+            b.insert_decide_review_proposal(&r).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+    }
+    // nothing was stored and no id was spent: the first good insert is id 1
+    assert_eq!(
+        b.insert_decide_proposal(&proposal("s1", 0, 1, 2)).unwrap(),
+        Some(1)
+    );
+}

@@ -1065,6 +1065,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "identity": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "import": {
         "hasSwitchCase": true,
         "phase": "post-connect",

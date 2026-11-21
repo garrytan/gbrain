@@ -2,11 +2,11 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
-Four tables the decide loop keeps: `decide_proposals` (supersede proposals the conflict sweep leaves for the owner), `decide_review_proposals` (the review lane's proposals), `decide_review_queue` (the review lane's work queue) and `decide_sweep_deferred` (the conflict sweep's retry table). SQL twin: `src/core/engine-sql/decide-proposals.ts`. Store: `gbrain-store/src/eval_capture/decide_proposals.rs`. Binding: `gbrain-napi/src/families/decide_proposals.rs`. TypeScript: `store-members/decide-proposals.ts`. Parity: `test/engine-parity/decide-proposals.test.ts`.
+Four tables the decide loop keeps: `decide_proposals` (supersede proposals the conflict sweep leaves for the owner), `decide_review_proposals` (the review lane's proposals), `decide_review_queue` (the review lane's work queue) and `decide_sweep_deferred` (the conflict sweep's retry table). Store: `gbrain-store/src/eval_capture/decide_proposals.rs`. Binding: `gbrain-napi/src/families/decide_proposals.rs`. This landing carries the native store and binding with cargo tests; the SQL twin (`engine-sql/decide-proposals.ts`), the TypeScript member and the parity test arrive in a later landing, and nothing in TypeScript calls these members yet.
 
 ## Capability
 
-All 16 members belong to the `eval_capture` capability, the one the five eval-capture members use. The tables share that family's key tag (`Z`) and no other capability describes them; a new capability name would need a new row in the engine capability list for no gain. `servedCapabilities()` reports `eval_capture` only when every one of its members is served, so these 16 and the five eval members now go together.
+All 16 members belong to the `eval_capture` capability, the one the five eval-capture members use. The tables share that family's key tag (`Z`) and no other capability describes them; a new capability name would need a new row in the engine capability list for no gain. `servedCapabilities()` reports `eval_capture` only when every one of its members is served; in this landing only the five eval-capture members are registered, so these 16 join them when their TypeScript members land.
 
 ## Members
 
@@ -54,7 +54,7 @@ Proposals are owner-reviewed rows, a few hundred at most, so lists scan a table 
 
 ## Transactions and `lock`
 
-`engine.transaction` is served on Rust (`store-members/transactions.ts`): a bound `Store`'s `write` runs inside the transaction, and these members write through it, so a transaction caller that inserts or moves a proposal commits or rolls back with the rest. `lock` on `getDecideProposal` and `getDecideReviewProposal` is ignored. There is one writer, so a read inside a transaction already holds the row; PGLite and Postgres take `FOR UPDATE`.
+`engine.transaction` is not served on a Rust brain in this landing (it stays a typed refusal; the transactions family arrives later). The store's contract, for when it is: a bound `Store`'s `write` runs inside the transaction, and these members write through it, so a transaction caller that inserts or moves a proposal commits or rolls back with the rest. `lock` on `getDecideProposal` and `getDecideReviewProposal` is ignored. There is one writer, so a read inside a transaction already holds the row; PGLite and Postgres take `FOR UPDATE`.
 
 ## Differences from PGLite and Postgres
 

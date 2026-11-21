@@ -63,6 +63,14 @@ export const readDatabaseClock: StoreMember<[], string> = (brain) =>
 export const listLinkPageMetadata: StoreMember<[sourceId?: string], LinkPageMetadataRow[]> = (brain, sourceId) =>
   storeCall({ member: 'listLinkPageMetadata', sourceId }, () => brain.listLinkPageMetadata(sourceId));
 
+export const listLinkPageMetadataForSlugs: StoreMember<[sourceId: string, slugs: readonly string[]], LinkPageMetadataRow[]> =
+  (brain, sourceId, slugs) => storeCall({ member: 'listLinkPageMetadataForSlugs', sourceId },
+    () => brain.readLinkPageMetadataForSlugs(sourceId, [...slugs]));
+
+export const listAttendedOriginSlugs: StoreMember<[sourceId: string, slugs?: readonly string[]], string[]> =
+  (brain, sourceId, slugs) => storeCall({ member: 'listAttendedOriginSlugs', sourceId },
+    () => brain.listAttendedOriginSlugs(sourceId, slugs ? [...slugs] : null));
+
 export const listStoredTimelineRows: StoreMember<[sourceId: string, slug: string], StoredTimelineRow[]> = (brain, sourceId, slug) =>
   storeCall({ member: 'listStoredTimelineRows', sourceId, slug }, () => brain.listStoredTimelineRows(sourceId, slug));
 

@@ -162,7 +162,8 @@ function customPlan<T>(transaction: EngineRawTransaction, fragment: SqlFragment)
 
 /**
  * The pool's candidate rows of one arm: the keyword arm (full-text over the fact and its entity name, best rank
- * first, under a custom plan), the named entity's active facts, or that entity's ended facts (history), newest first.
+ * first, under a custom plan), the named entity's active facts, or that entity's ended facts (history), newest first
+ * (a future-dated fact as of when it was written).
  * Every arm reads under the caller's read policy and filters, and `similarity` is the row's cosine to `vector` when
  * the row's embedding is comparable with it.
  */
@@ -175,11 +176,15 @@ export async function listFactsForRelevance(raw: EngineRawRead, transaction: Eng
        ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT ${q.limit}`);
   }
   const named = q.entity!;
+  // GST-3170: a future-dated fact ranks as of when it was written; each active branch keeps an index-ordered scan.
+  const ranked = trustedSql('(CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC');
+  const branch = (order: ReturnType<typeof trustedSql>, from: ReturnType<typeof trustedSql>) => sqlFragment`(SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, q.filters)}
+       AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug} AND ${from} ORDER BY ${order} DESC, f.id DESC LIMIT ${q.limit})`;
   const { text, params } = renderFragment(q.arm === 'entity'
-    ? sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, q.filters)} AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug}
-       ORDER BY f.valid_from DESC, f.id DESC LIMIT ${q.limit}`
+    ? sqlFragment`SELECT * FROM (${branch(trustedSql('f.valid_from'), trustedSql('f.valid_from <= now()'))} UNION ALL ${branch(trustedSql('f.created_at'), trustedSql('f.valid_from > now()'))}) f
+       ORDER BY ${ranked} LIMIT ${q.limit}`
     : sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, { ...q.filters, includeExpired: true })} AND ${endedFactSql()} AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug}
-       ORDER BY f.valid_from DESC, f.id DESC LIMIT ${q.limit}`);
+       ORDER BY ${ranked} LIMIT ${q.limit}`);
   return raw<FactRelevanceRow>(text, params);
 }
 
@@ -488,7 +493,7 @@ export async function countClaimConflictPairs(raw: EngineRawRead, sourceId: stri
 }
 
 /** The ids of every source that is not archived, in id order (the claim-conflict sweep's default scope). */
-export async function listUnarchivedSourceIds(raw: EngineRawRead): Promise<Array<{ id: string }>> {
+export async function listUnarchivedSourceRows(raw: EngineRawRead): Promise<Array<{ id: string }>> {
   return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id');
 }
 

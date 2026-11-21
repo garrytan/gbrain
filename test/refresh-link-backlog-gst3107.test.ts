@@ -5,7 +5,8 @@
  * Protects: a few-file refresh holds the lock for its own work only, so other refreshers of the worktree do not collide on
  * `refresh_in_progress` while a stale-link backlog drains; an uncontended run still drains as much backlog as before; two
  * backlog drains of one source never overlap (the second refresh skips its share and says so); a drain that fails leaves
- * the completed refresh completed; the result carries `phase_ms` and `lock_held_ms`.
+ * the completed refresh completed; the result carries `phase_ms` and `lock_held_ms`. GST-3202: the drain lock is per brain
+ * and source, so another brain under the same GBRAIN_HOME with a source of the same id drains its own backlog.
  * Regression it catches: the sync tail deriving up to 1,000 backlog pages while the refresh lock is held (GST-3107: minutes
  * per tick on a large brain), or a split that drops the backlog drain on deployments where nothing else runs it.
  * Seams: `hooks.boundary('synced')` reads the backlog while the lock is held, `hooks.backlog` runs the second refresh during
@@ -20,6 +21,7 @@ import { effectiveLinkExtractorWatermark } from '../src/core/link-extraction-wat
 import { LINK_EXTRACTION_GENERATION_KEY } from '../src/core/line-grammar.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
+import { withRefreshRun, type RefreshRunReport } from '../src/core/persistence/refresh-run.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
@@ -27,9 +29,14 @@ import { git, page, withRefreshFixture, type RefreshFixture } from './helpers/wo
 const backends = testBackends();
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
+let other: PGLiteEngine;
 const BACKLOG_PAGES = 40;
 
 beforeAll(async () => {
+  other = new PGLiteEngine();
+  await other.connect({}); await other.initSchema();
+  // A schema snapshot (GBRAIN_PGLITE_SNAPSHOT) copies one brain id into every engine; a second brain has its own.
+  await other.executeRaw('UPDATE persistence_brain SET brain_id=gen_random_uuid()');
   if (backends.includes('pglite')) {
     const engine = new PGLiteEngine();
     await engine.connect({}); await engine.initSchema(); engines.push(engine);
@@ -42,6 +49,7 @@ beforeAll(async () => {
 afterAll(async () => {
   for (const engine of engines) { await disposePersistenceConsumer(engine); if (engine.kind === 'pglite') await engine.disconnect(); }
   await closePostgres?.();
+  await other.disconnect();
 });
 
 const each = async (fn: (f: RefreshFixture) => Promise<void>) => { for (const engine of engines) await withRefreshFixture(engine, fn); };
@@ -107,4 +115,35 @@ test('a backlog drain that fails leaves the completed refresh completed and name
   expect(await f.lastCommit(f.alpha)).toBe(f.head());
   expect(result.link_backlog?.find(entry => entry.source_id === f.alpha)).toMatchObject({ outcome: 'failed', pages: 0, message: 'backlog drain failed for the test' });
   expect(await stale(f)).toBe(BACKLOG_PAGES + 1 - 3);
+}), 240_000);
+
+test('GST-3202: another brain under the same GBRAIN_HOME drains its own source of the same id during this brain\'s drain', () => each(async f => {
+  await withBacklog(f);
+  pushThree(f, 1);
+  let otherBrain: RefreshRunReport | null = null, sameBrain: RefreshRunReport | null = null;
+  const share = () => ({ maxPages: 10, deadlineAtMs: Date.now() + 60_000 });
+  await refreshWorktree(f.engine, f.alpha, { hooks: { backlog: async sourceId => {
+    if (sourceId !== f.alpha || otherBrain) return;
+    otherBrain = await withRefreshRun(other, { redact: text => text }, async run => { run.backlog.push({ sourceId: f.alpha, share: share() }); return {}; });
+    sameBrain = await withRefreshRun(f.engine, { redact: text => text }, async run => { run.backlog.push({ sourceId: f.alpha, share: share() }); return {}; });
+  } } });
+  // Master: both brains' drains of `alpha-…` took one lock file, so the other brain's drain was skipped.
+  expect(otherBrain!.link_backlog?.[0]).toMatchObject({ source_id: f.alpha, outcome: 'drained' });
+  // Two drains of the same brain's source still never overlap.
+  expect(sameBrain!.link_backlog?.[0]).toMatchObject({ source_id: f.alpha, outcome: 'skipped', pages: 0 });
+}), 240_000);
+
+test('GST-3202: the backlog drain still has time when a step after the first member\'s tail outlasts that member\'s share', () => each(async f => {
+  await withBacklog(f);
+  pushThree(f, 1);
+  const budgetMs = 20_000;
+  const result = await refreshWorktree(f.engine, f.alpha, { syncBudgetMs: budgetMs, hooks: { boundary: async point => {
+    // Past every share the first member's tail left (each ends within half the budget of the sync start), inside the budget.
+    if (point === 'synced') await new Promise(resolve => setTimeout(resolve, budgetMs / 2 + 250));
+  } } });
+  expect(result.status).toBe('completed');
+  // The first member's share deadline has passed here, but the drains share the latest one, which the last member's tail
+  // took from the run's whole sync budget, so the backlog still drains in this run.
+  expect(result.link_backlog?.find(entry => entry.source_id === f.alpha)).toMatchObject({ outcome: 'drained', pages: BACKLOG_PAGES + 1 - 3, remaining: 0 });
+  expect(await stale(f)).toBe(0);
 }), 240_000);

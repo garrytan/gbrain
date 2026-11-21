@@ -18,7 +18,7 @@ Keys, under the family tag `keys::JOBS` (`m`):
 
 | Key | Holds |
 | --- | --- |
-| `m 0x00 <name>` | the id sequences `job` (`minion_jobs.id`), `inbox` (`minion_inbox.id`) and `attachment` (`minion_attachments.id`); a refused write takes no id |
+| `m 0x00 <name>` | the last id a kept write took from each id sequence: `job` (`minion_jobs.id`), `inbox` (`minion_inbox.id`), `attachment` (`minion_attachments.id`) and the other job-family tables. The ids come from the allocator `M next_jobs_seq_<name>`, which starts after this record and never rolls back: an id taken inside a transaction or savepoint that rolls back is not handed out again, as with Postgres `nextval`. A refused write outside a transaction takes no id (with concurrent writes on it may, as `nextval`) |
 | `m 0x01 <id>` | one job row, every `minion_jobs` column |
 | `m 0x02 <queue> 0x00 <priority> <created_at> <id>` | the claim index: `waiting` rows only, in claim order |
 | `m 0x03 <parent> <id>` | the children of a parent |
@@ -117,6 +117,15 @@ access_tokens WHERE id = $1` for a legacy token), so its retry refuses at that r
 the store. A policy that got past the
 lock would still refuse before the write: the lock, the capacity count and the write are separate store calls, so
 they are not one admission. `lockOAuthClient` called directly is not served and refuses the same way.
+
+Facts extraction reads (`jobs/facts_extraction.rs`, TypeScript `engine-sql/facts-backstop.ts`): the facts backstop
+effect (`persistence/effect-facts.ts`) asks whether a page still has an extraction waiting and whether one finished.
+Both match `data->>'page_id'` as PostgreSQL's `->>` reads it (a JSON number is its text).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.hasPendingFactsExtraction(pageId, jobStates)` | `true` when a `facts-backstop` effect of the page is `queued` or `running`, or a `facts-absorb` job of the page has a status in `jobStates` | `hasPendingFactsExtraction` |
+| `brain.hasCompletedFactsExtraction(pageId)` | `true` when a `completed` `facts-absorb` job of the page has no `result.skipped` (no result, no key, or JSON null) | `hasCompletedFactsExtraction` |
 
 Differences from PGLite:
 

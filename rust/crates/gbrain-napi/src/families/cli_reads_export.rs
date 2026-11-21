@@ -169,7 +169,7 @@ impl Brain {
         })
     }
 
-    /// `listAccessPolicySourceIds()`: the sources with access state, by source id.
+    /// `listAccessPolicySourceIds()`: the sources, archived ones too, that hold access state, by id.
     #[napi]
     pub fn list_access_policy_source_ids<'env>(
         &self,

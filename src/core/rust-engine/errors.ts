@@ -69,6 +69,14 @@ export function managesWorktrees(engine: object): boolean {
   return reports(engine, 'managed_persistence');
 }
 
+/**
+ * Whether `engine` serves raw SQL. Callers with one raw statement ask it first, so an engine without `raw_sql` (the
+ * Rust engine) answers from typed members or refuses plainly. PGLite, Postgres and transaction handles answer true.
+ */
+export function servesRawSql(engine: object): boolean {
+  return reports(engine, 'raw_sql');
+}
+
 /** True unless `engine` carries a capability set without `capability`; an object with no set (a handle, a fake) passes. */
 function reports(engine: object, capability: Capability): boolean {
   const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;

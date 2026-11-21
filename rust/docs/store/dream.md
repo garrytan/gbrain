@@ -20,22 +20,32 @@ so a lone surrogate becomes U+FFFD as it does on Postgres.
 
 The dream cycle, the retriage command and the consolidate phase used to send 37 raw statements through
 `executeRaw`. They are now 34 typed `BrainEngine` members (three config-map statements were shared by the
-breaker and the write deferral, so 37 sites make 34 members). The Rust engine refuses every member
-by name through `src/core/rust-engine/members.ts`; the capability it names is the data the store would
-need before it can answer.
+breaker and the write deferral, so 37 sites make 34 members). The Rust engine refuses the members in the
+table below by name through `src/core/rust-engine/members.ts`; the capability it names is the data the store
+would need before it can answer.
 
 | Members | Needs from the store |
 | --- | --- |
 | `listDreamQueueCandidates`, `listLiveDreamCycleLocks`, `readDreamJobStatus`, `listDreamJobCreatedAt`, `listCompletedSynthJobs`, `countCoalescibleSynthJobs`, `listWaitingChildJobIds`, `listDreamChildJobTimings`, `countRecentDreamSynthSubmissions` | the minion job queue and the cycle lock table (`minion_jobs`, `gbrain_cycle_locks`), including the database clock and the jsonb `data` of a job |
 | `stampDreamPageProvenance`, `listDreamPageIds`, `countDreamProvenancePages`, `listRetainedDreamOutputSources`, `listDreamAtomPages`, `listSynthesisPageBodies`, `readDreamVerifyEpoch` | pages: frontmatter merge that keeps the first cycle date, live page ids, counts by cycle date, atom and synthesis page reads (segmented pages are excluded in SQL), and the database clock |
-| `readDreamDeferralReceipt`, `listLaterPersistenceRequests`, `listCommittedOutputRequests` | the persistence journal (`persistence_requests`): rows by request id, source and incarnation, ordered by sequence |
 | `listConsolidationClaimValues`, `setConsolidatedFactValidUntil`, `listReadersSourcedFactIds`, `listConsolidationClaimShapes` | facts: typed claim columns, `valid_until` writes and the readers-sourced predicate |
 | `findConsolidationPageIds`, `readConsolidationTakesMaxRowNum`, `findConsolidatedTakes`, `refreshConsolidatedTakeSource`, `findConsolidatedTakeIds` | takes: row numbers, the earliest take of a claim and the source-aggregation write |
 | `readDreamPreRunRevision` | the first page version snapshot at or after a time |
 
 Served by the Rust engine: `ensureDreamMapConfigRow`, `lockDreamMapConfigRow`, `writeDreamMapConfigRow` and `recordDreamBreakerReset`
-(`gbrain-store` `dream_config`, see [config.md](config.md)) and `readDreamSourceIncarnation` (the source record's
-incarnation). The lock takes no row lock: the store admits one write transaction at a time.
+(`gbrain-store` `dream_config`, see [config.md](config.md)), `readDreamSourceIncarnation` (the source record's
+incarnation) and the three journal reads below. The lock takes no row lock: the store admits one write transaction at a time.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listIncarnationRequests({ sourceId, incarnation, slug?, afterSequence?, states?, operation?, requestIds?, newestFirst })` | the `WriteRequest` rows of the source incarnation through each filter that is set, by sequence (newest first when `newestFirst`). `afterSequence` is a sequence as decimal text and keeps only higher sequences; text that is not a `u64` is `invalid_argument`. Each of `requestIds` is a UUID, compared lower-cased; any other text is `invalid_argument`, as the `::uuid[]` cast refuses it. An empty `requestIds` matches no row | `listLaterPersistenceRequests`, `listCommittedOutputRequests` |
+
+`readDreamDeferralReceipt` reads `brain.readWriteRequestById` and keeps `state`, `error_code` and `error_message`.
+`listLaterPersistenceRequests` keeps the states `queued`, `running`, `recovering` and `committed`, oldest first.
+`listCommittedOutputRequests` keeps committed `put_page` rows, newest first, and returns each row as `row_to_json`
+prints it in a UTC session: timestamps as text with a `+00:00` offset and no trailing zero digits in the fraction
+(`requestJsonRow`, `src/core/rust-engine/store-codec.ts`). The code is in
+`crates/gbrain-store/src/persistence/receipt_list.rs`.
 
 Return shapes are the raw row shapes the callers read; timestamps come back as the driver returns them
 (a `Date` or text), and the callers normalise them. The SQL text and bound parameters are byte-identical to

@@ -948,10 +948,7 @@ export async function ownsGlobalSyncAnchor(
   // falls through to bootstrap, preserving pre-#2114 behavior on exotic
   // engines rather than refusing writes.
   try {
-    const rows = await engine.executeRaw<{ local_path: string | null }>(
-      `SELECT local_path FROM sources WHERE id = 'default'`,
-    );
-    const defaultLocal = rows[0]?.local_path ?? null;
+    const defaultLocal = (await engine.readSourceRow('default'))?.local_path ?? null;
     if (defaultLocal) {
       return { owns: sameRepoDir(defaultLocal, dir), configured: defaultLocal };
     }

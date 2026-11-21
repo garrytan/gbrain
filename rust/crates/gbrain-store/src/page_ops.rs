@@ -960,7 +960,7 @@ impl Store {
     /// keeps (`PurgeHolds`), ordered by `deleted_at`, then slug. Each purged page goes through
     /// `remove_page` and `scrub_purged_slugs`, as `deletePages` does. A dry run returns
     /// `{ slugs, count, pages: [{ slug, source_id, deleted_at }] }`; a real run removes them in one
-    /// transaction and returns `{ slugs, count }`.
+    /// transaction and returns the same three fields.
     pub fn purge_deleted_pages(
         &self,
         older_than_hours: f64,
@@ -989,15 +989,18 @@ impl Store {
             });
             Ok(pages)
         };
-        if options.dry_run {
-            let read = self.read()?;
-            let pages = select(&*read, self.env.now_micros())?;
+        // Both paths name the pages (slug, source, deleted_at): the destructive caller scrubs their journal text.
+        let answer = |pages: &[PageRecord]| {
             let rows: Vec<Value> = pages
                 .iter()
                 .map(|p| json!({ "slug": p.slug, "source_id": p.source_id, "deleted_at": p.deleted_at_us.map(iso) }))
                 .collect();
             let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
-            return Ok(json!({ "slugs": slugs, "count": slugs.len(), "pages": rows }));
+            json!({ "slugs": slugs, "count": slugs.len(), "pages": rows })
+        };
+        if options.dry_run {
+            let read = self.read()?;
+            return Ok(answer(&select(&*read, self.env.now_micros())?));
         }
         self.write(|tx| {
             let pages = select(&*tx, self.env.now_micros())?;
@@ -1012,8 +1015,7 @@ impl Store {
             for (source, slugs) in &by_source {
                 scrub_purged_slugs(tx, source, slugs)?;
             }
-            let slugs: Vec<&str> = pages.iter().map(|p| p.slug.as_str()).collect();
-            Ok(json!({ "slugs": slugs, "count": slugs.len() }))
+            Ok(answer(&pages))
         })
     }
 

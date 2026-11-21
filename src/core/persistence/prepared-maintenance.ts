@@ -257,18 +257,21 @@ export interface MaintenanceEventProjection { depth_slug: string; date: string; 
 type MaintenancePageOptions = { requestId?: string; expectedRevision: string | null; file?: boolean;
   eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration; keepTrust?: true; labelEdit?: LabelEdit;
   /** #8194: with keepTrust, the fence rows `gbrain repair open-facts` opens in place (repair/open-facts.ts openFactsPublication). */
-  openFacts?: Array<{ id: number; row_num: number | null; fact_md5: string }> };
+  openFacts?: Array<{ id: number; row_num: number | null; fact_md5: string }>;
+  /** GST-3179: a concept rebuild's members at the revisions its narrative read, re-checked under the publication lock. */
+  rebuildMembers?: ReadonlyArray<{ slug: string; revision: string }> };
 
 /** A maintenance page publication's intent and request id; `batch` (G6) is the run's batch id, part of both. */
 function maintenancePageRequest(authority: MaintenanceAuthority, slug: string, content: string, options: MaintenancePageOptions, batch?: string) {
   const projection = options.eventProjection ? { event_projection: options.eventProjection } : {};
   const derivation = options.derivation ? { derivation: options.derivation } : {};
   const grouped = batch ? { maintenance_batch: batch } : {};
+  const members = options.rebuildMembers ? { rebuild_members: options.rebuildMembers } : {};
   const keep = { ...(options.keepTrust ? { keep_trust: true } : {}), ...(options.labelEdit ? { label_edit: options.labelEdit } : {}),
     ...(options.keepTrust && options.openFacts ? { open_facts: options.openFacts } : {}) };
-  return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped, ...keep },
+  return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped, ...members, ...keep },
     requestId: options.requestId ?? maintenanceRequestId({ authority: authority.writer, slug, content, revision: options.expectedRevision, file: options.file ?? true,
-      ...projection, ...derivation, ...grouped, ...keep }) };
+      ...projection, ...derivation, ...grouped, ...members, ...keep }) };
 }
 
 /** `derivation` (#5575 I2): the deriver's taint declaration; the page and its edges are stamped from it at publication. */
@@ -739,6 +742,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   }
   if (row.intent?.kind === 'managed_maintenance_adopt_fact_fence' || row.intent?.kind === 'managed_maintenance_move_held_fact') return prepareFactFenceAdoption(engine, row, config, clock);
   if (row.intent?.kind === 'managed_maintenance_phantom_merge') return (await import('../cycle/phantom-redirect-managed.ts')).preparePhantomMerge(engine, row, config);
+  if (row.intent?.kind === 'managed_maintenance_concept_purge') return (await import('./concept-rebuild.ts')).prepareConceptPurge(engine, row, config, clock);
   if (row.intent?.kind === 'managed_maintenance_phantom_delete') return (await import('../cycle/phantom-redirect-managed.ts')).preparePhantomDelete(engine, row, config);
   if (row.intent?.kind === 'managed_maintenance_chronicle_event' || row.intent?.kind === 'managed_maintenance_chronicle_retire') {
     return (await import('../chronicle/publish.ts')).prepareChronicleMutation(engine, row, config);

@@ -8,6 +8,7 @@
  * no addon.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,6 +28,8 @@ import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { readSourceFreshness } from '../src/core/notifier/status.ts';
 import { startResidentNotifier } from '../src/core/notifier/resident.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { segmentRegions } from '../src/core/search/dedup.ts';
+import { OWNER_IPC_ROUTES } from '../src/core/rust-engine/owner-ipc/routes.ts';
 import { audienceMemberIds, boundCredentials, getMember, legacyTokenByName, listMembers, memberByEmail } from '../src/core/access/members.ts';
 import { memberIdentityFor, stdioMemberIdentity } from '../src/core/access/caller.ts';
 
@@ -144,6 +147,37 @@ describe('Rust engine on the store', () => {
     expect(await code(() => engine.getChunks('notes/a', { notAStoreOption: true } as never))).toBe('engine_capability_missing');
   });
 
+  withAddon('a write naming a worktree with no persistence_worktrees row refuses as the foreign key does and writes nothing', async () => {
+    const { engine } = await open();
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    const row = {
+      principalKind: 'local_cli', principalId: 'store-writer', requestId: 'b0000000-0000-4000-8000-0000000000b1', operation: 'put_page',
+      sourceId: 'default', sourceIncarnation: incarnation, pageId: null, slug: 'notes/a', worktreeId: 'f0000000-0000-4000-8000-0000000000a1',
+      topologyGeneration: null, digest: 'd'.repeat(64), intent: { kind: 'put_page' }, authority: {}, intentBytes: 10, terminalReservation: 4096,
+      targetKind: 'page', protocolVersion: 1, admitterVersion: 'store-test', admitterHostId: null, counterKeys: [], clientRequestId: null,
+      state: 'queued' as const, deferredRefreshId: null,
+    };
+    // The store reads the worktree row the binding wrote; with none, the insert refuses like Postgres's foreign key.
+    const refusal = await engine.insertWriteRequest(row as never).then(() => null, (error: unknown) => error);
+    expect(refusal).toBeInstanceOf(Error);
+    expect((refusal as OperationError).code).toBe('constraint_violation');
+    expect((refusal as Error).message).toContain('worktree_id f0000000-0000-4000-8000-0000000000a1 names no persistence_worktrees row');
+    expect(await engine.readWriteRequest('local_cli', 'store-writer', 'b0000000-0000-4000-8000-0000000000b1')).toBeNull();
+  });
+
+  withAddon('a transaction setting the engine does not keep refuses before any work', async () => {
+    const { engine } = await open();
+    // gbrain.topology_change is read by a PGLite guard trigger the store does not run: setting it would be a guard
+    // nobody enforces, so both setting members refuse it (transaction-settings parity covers the kept names).
+    for (const run of [
+      (tx: RustEngine): Promise<unknown> => tx.readTransactionSettings(['gbrain.topology_change']),
+      (tx: RustEngine): Promise<unknown> => tx.applyTransactionSettings(['gbrain.topology_change'], ['true']),
+    ]) {
+      const refusal = await engine.transaction((tx) => run(tx as RustEngine)).then(() => null, (error: unknown) => error);
+      expect(refusal).toMatchObject({ code: 'engine_capability_missing', reason: 'transactions' });
+    }
+  });
+
   withAddon('excludePrivate on the salience and anomaly reads hides a private page the plain read returns', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
@@ -166,20 +200,24 @@ describe('Rust engine on the store', () => {
     expect(await tag(true)).toBeUndefined();
   });
 
-  withAddon('excludePrivate refuses for a caller whose folder-rule grants change the page policy PGLite renders', async () => {
+  withAddon('excludePrivate serves a caller whose record holds a reader identity and the folder rules it satisfies, and refuses lineage', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
-    // A reader identity alone is served (the callerReaders opt-in); a satisfied folder rule still refuses.
+    // A reader identity and a satisfied folder rule are served (the callerReaders opt-in); lineage still refuses.
     const asReader = <T>(fn: () => Promise<T>) => withCallerAccess({ identity: ['member:alice-example'] }, fn);
     expect(await code(() => asReader(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBeUndefined();
-    const asMember = <T>(fn: () => Promise<T>) =>
-      withCallerAccess({ identity: ['member:alice-example'], satisfiedRuleIds: ['default:team-notes'] }, fn);
+    const member = { identity: ['member:alice-example'], satisfiedRuleIds: ['default:team-notes'] };
+    const asMember = <T>(fn: () => Promise<T>) => withCallerAccess(member, fn);
     const refs = [{ slug: 'notes/a', source_id: 'default' }];
-    expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBe('engine_capability_missing');
-    expect(await code(() => asMember(() => engine.getSalienceScores(refs, { excludePrivate: true })))).toBe('engine_capability_missing');
-    expect(await code(() => asMember(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBe('engine_capability_missing');
+    expect((await asMember(() => engine.getRecentSalience({ days: 7, excludePrivate: true }))).map(r => r.slug)).toEqual(['notes/a']);
+    expect([...(await asMember(() => engine.getSalienceScores(refs, { excludePrivate: true }))).keys()]).toEqual(['default::notes/a']);
+    expect(await code(() => asMember(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBeUndefined();
+    const asLineage = <T>(fn: () => Promise<T>) => withCallerAccess({ ...member, lineage: true }, fn);
+    expect(await code(() => asLineage(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBe('engine_capability_missing');
+    expect(await code(() => asLineage(() => engine.getSalienceScores(refs, { excludePrivate: true })))).toBe('engine_capability_missing');
+    expect(await code(() => asLineage(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBe('engine_capability_missing');
     // Without excludePrivate the caller's record does not matter: the read applies no page policy.
-    expect(await code(() => asMember(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
+    expect(await code(() => asLineage(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
   });
 
   withAddon('excludePrivate on the fact reads serves a reader identity and grant but refuses folder rules, audiences, lineage and labelled-only', async () => {
@@ -311,26 +349,45 @@ describe('Rust engine on the store', () => {
     expect([...engine.capabilities].sort()).toEqual([...servedCapabilities()].sort());
   });
 
-  withAddon('search on a Rust brain carries no freshness notice, as a brain without the notifier tables does', async () => {
+  withAddon('search on a Rust brain carries the freshness notice once the brain opts in, and none before', async () => {
     const { engine } = await open();
-    await engine.setConfig('sync.on_commit', 'true');
     const errors: string[] = [];
     const original = console.error;
     console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    const unwatched = { source_id: 'default', state: 'not_monitored' as const, observed_head: null, observed_at: null, mode: null, held_count: 0 };
     try {
       expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([]);
-      expect(await readSourceFreshness(engine, {})).toEqual([]);
+      await engine.setConfig('sync.on_commit', 'true');
+      expect(await readSourceFreshness(engine, { sourceIds: ['default'] })).toEqual([unwatched]);
+      expect(await readSourceFreshness(engine, {})).toEqual([unwatched]);
     } finally { console.error = original; }
     expect(errors.filter(line => line.includes('[notifier]'))).toEqual([]);
   });
 
-  withAddon('a resident on a Rust brain starts no commit notifier and says so', async () => {
+  withAddon('a resident on a Rust brain starts the commit notifier, owns the host lease and lists its sources', async () => {
     const { engine } = await open();
-    const lines: string[] = [];
-    const notifier = startResidentNotifier(engine, { resident: 'serve', log: line => lines.push(line), env: {} });
-    if (notifier) await notifier.stop();
-    expect(notifier).toBeNull();
-    expect(lines).toEqual(['[notifier:serve] off (Rust brain: the store has no notifier tables); commits on this host are not synced by this process']);
+    const repo = mkdtempSync(join(tmpdir(), 'rust-notifier-'));
+    try {
+      execFileSync('git', ['init', '-q', repo]);
+      await engine.openStore('test').brain.upsertSource({ id: 'watched', name: 'watched', config: {}, local_path: repo });
+      const host = '00000000-0000-4000-8000-00000000b001';
+      const lines: string[] = [];
+      const notifier = startResidentNotifier(engine, {
+        resident: 'serve', log: line => lines.push(line), hostId: host, env: { GBRAIN_NOTIFIER_CLASSIC_SOURCES: 'watched' },
+        // The test drives the pass itself; no background tick, poll or watcher.
+        setTimeout: () => 'timer', clearTimeout: () => {}, setInterval: () => 'interval', clearInterval: () => {}, watch: () => null,
+      });
+      expect(notifier).not.toBeNull();
+      try {
+        await notifier!.tick();
+        expect(notifier!.owner).toBe(true);
+        expect(notifier!.snapshot().sources.map(s => s.source_id)).toEqual(['watched']);
+        // A second resident on the host sees this one's live lease.
+        const other = await engine.claimNotifierLease({ hostId: host, ownerId: 'another-resident', kind: 'jobs-worker', pid: 2, leaseMs: 60_000 });
+        expect(other).toMatchObject({ owner: false, holder: { fence: 1, resident_kind: 'serve', pid: process.pid, live: true } });
+      } finally { await notifier!.stop(); }
+      expect(lines.filter(line => line.includes(' off ('))).toEqual([]);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
   });
 
   withAddon('a withdrawal on a Rust brain moves the hot-memory withdrawal watermark of its source only', async () => {
@@ -585,5 +642,51 @@ describe('Rust store page codec', () => {
     expect(page.compiled_truth).toBe('body');
     expect(page.timeline).toBe('');
     expect(page.content_hash).toBe('abc');
+  });
+});
+
+// Raw SQL by design (D18): the session and migration seams refuse raw_sql before they run anything, and no
+// agent-facing path silently falls back on the refusal. test/rust-raw-sql-inventory.test.ts pins the call sites.
+describe('raw SQL by design on a Rust brain', () => {
+  withAddon('each raw seam refuses raw_sql before its callback or statement runs', async () => {
+    const { engine } = await open();
+    let ran = 0;
+    const calls: Array<[string, () => Promise<unknown>]> = [
+      ['executeRaw', () => engine.executeRaw('SELECT 1')],
+      ['executeRawDirect', () => engine.executeRawDirect('SELECT 1')],
+      ['runMigration', () => engine.runMigration(0, 'SELECT 1')],
+      ['withReservedConnection', () => engine.withReservedConnection(async () => { ran++; })],
+      ['keywordBoundedRead', () => engine.keywordBoundedRead(async () => { ran++; })],
+    ];
+    for (const [member, call] of calls) {
+      const refusal = await call().then(() => null, (error: unknown) => error);
+      expect({ member, refusal }).toMatchObject({ member, refusal: { code: 'engine_capability_missing', reason: 'raw_sql' } });
+    }
+    expect(ran).toBe(0);
+    // A client engine never forwards the reserved-session seams to the owner: it refuses them locally.
+    expect({ withReservedConnection: OWNER_IPC_ROUTES.withReservedConnection, keywordBoundedRead: OWNER_IPC_ROUTES.keywordBoundedRead })
+      .toEqual({ withReservedConnection: 'refuse', keywordBoundedRead: 'refuse' });
+  });
+
+  withAddon('search dedup reads segment regions through the typed member, never the keyword-bounded read', async () => {
+    const { engine } = await open();
+    await engine.putPage('notes/a', page);
+    const pageId = Number((await engine.getPage('notes/a') as { id: number }).id);
+    const seen: string[] = [];
+    const spy = new Proxy(engine, {
+      get(target, key, receiver) {
+        const value = Reflect.get(target, key, receiver);
+        if ((key === 'readSegmentRegions' || key === 'keywordBoundedRead' || key === 'executeRaw') && typeof value === 'function') {
+          return (...args: unknown[]) => { seen.push(String(key)); return (value as (...a: unknown[]) => unknown).apply(target, args); };
+        }
+        return value;
+      },
+    });
+    // Three hits on one page pass MAX_PER_PAGE, so dedup asks for regions. An inline page and a page id the brain
+    // does not hold have none: the answer is an empty map, not a refusal swallowed into one.
+    const hit = (page_id: number, chunk_id: number) => ({ slug: 'notes/a', source_id: 'default', page_id, chunk_id }) as never;
+    const chunkId = 1;
+    expect(await segmentRegions(spy, [hit(pageId, chunkId), hit(pageId, chunkId + 1), hit(pageId + 99, chunkId + 2)])).toEqual(new Map());
+    expect(seen).toEqual(['readSegmentRegions']);
   });
 });
