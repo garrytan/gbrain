@@ -24,7 +24,8 @@
  * (`gbrain.write_open_facts`, trust/fence-guard.ts) to the fence guard's two fact reads; same statements, same order.
  * The typed engine methods of the import path rewrite three statement texts one-for-one: the config read
  * (getConfigValues, `key = ANY($1::text[])`), the write-settings set_config (applyTransactionSettings, one unnest)
- * and the managed-rows coverage read (parameters renumbered); same statements, same order.
+ * and the managed-rows coverage read (parameters renumbered); same statements, same order. N5 moves the embedding-column
+ * read of the publication's two guards onto the same keyed config member, so its text is `key = ANY($1::text[]) ORDER BY key`.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';

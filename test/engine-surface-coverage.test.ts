@@ -90,6 +90,11 @@ const INTERFACE_METHODS: readonly string[] = [
   // N4 reads (engine-sql/cli-reads-import.ts, cli-reads-ops.ts, entity-reads.ts, jobs-insight.ts; master text pinned by test/n4-sql-move-parity.test.ts)
   'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows',
   'filterPagesAtRevision', 'nextLivePageAfter', 'readMentionLastPass', 'findExactBasenameCandidates', 'readJobInsight',
+  // N5 reads: the embedding catalog, held fence results and job status reads (engine-sql/embedding-catalog.ts, fence-holds.ts, jobs-status.ts).
+  'readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage', 'listFenceHoldRows',
+  'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+  'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
+  'readEmbedBackfillBySource',
   // Search
   'searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
   // Chunks
