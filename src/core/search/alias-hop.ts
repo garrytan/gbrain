@@ -63,7 +63,7 @@ export interface IdentityTierOpts {
 }
 
 /** Identity opts plus the caller's type filters: a page of another type is never injected (same gate as exact-lookup). */
-export type AliasGateOpts = IdentityTierOpts & { type?: string; types?: string[] };
+type AliasGateOpts = IdentityTierOpts & { type?: string; types?: string[] };
 
 /** True when an identity injection must skip `slug` under the caller's excludes. */
 export function isExcludedIdentity(slug: string, opts: Pick<IdentityTierOpts, 'excludeSlugs' | 'excludeSlugPrefixes'>): boolean {
@@ -145,7 +145,7 @@ export async function applyAliasHop(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   query: string,
-  opts: AliasGateOpts & { tokenHop?: boolean; qualified?: boolean },
+  opts: IdentityTierOpts & { tokenHop?: boolean; qualified?: boolean },
 ): Promise<SearchResult[]> {
   return applyAliasHopLookup(engine, results, await lookupAliasHop(engine, query, opts), opts);
 }
