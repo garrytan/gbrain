@@ -550,10 +550,10 @@ describe('backfill floor freeze on failure', () => {
 
         let state = readGoogleState(dir);
         expect(state.gmail_backfill_done).toBe(false);
-        // The floor froze at batch 1's oldest thread (day 64) — it did NOT
-        // advance past the failed thread's batch. A floor below day 65 would
-        // orphan the failed thread outside every future resume window.
-        expect(state.gmail_backfill_floor_ms).toBe(daysAgoMs(64));
+        // The failed thread's listing window remains open, even though its
+        // healthy siblings landed. No thread date can certify an unseen page.
+        expect(state.gmail_backfill_floor_ms).toBeGreaterThan(daysAgoMs(65));
+        expect(state.gmail_backfill_floor_ms).toBeLessThan(daysAgoMs(55));
         expect(state.gmail_history_id).toBe('1000'); // delta anchor intact
 
         // Failure clears → the resume window (before:floor) retries the

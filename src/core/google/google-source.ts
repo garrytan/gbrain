@@ -339,61 +339,60 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null,
 }
 
 /**
- * Drain `[lowerMs, state[floorKey])` newest→oldest, committing the floor per
- * fully-successful batch so a killed walk resumes where it stopped (F7a).
+ * Drain fixed date windows, checkpointing each fully published listing page.
+ * Gmail does not promise internalDate ordering: only listing exhaustion can
+ * advance the date floor. Fourteen-day windows keep recent-mail progress visible.
  * Shared by the historical backfill and the history-expired gap.
  */
 async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms' | 'gmail_gap_floor_ms', lowerMs: number): Promise<WalkOutcome> {
   const { deps, gmail, state } = g;
+  const pageKey = floorKey === 'gmail_backfill_floor_ms' ? 'gmail_backfill_page' : 'gmail_gap_page';
   let floorMs = state[floorKey] ?? Date.now() + 60_000;
+  state[floorKey] = floorMs;
   while (floorMs > lowerMs) {
     if (deps.opts.signal?.aborted) return 'aborted';
-    const q = `after:${Math.floor(lowerMs / 1000)} before:${Math.ceil(floorMs / 1000)}`;
-    // Page-BOUNDED listing (partialOk): a busy inbox can hold far more ids
-    // than the client's 500-page safety cap; the floor cursor makes partial
-    // listings safe — each iteration takes the newest ~2,000 messages in the
-    // window, processes them, drops the floor, and re-queries.
-    const ids = await gmail.listMessageIds(q, { maxPages: 20, partialOk: true, ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
-    if (ids.length === 0) break;
-    // Newest-first listing → unique threads in newest-first order; a thread's
-    // newest listed message id is its upstream version for the holds.
+    const saved = state[pageKey];
+    const afterMs = saved?.beforeMs === floorMs ? saved.afterMs : Math.max(lowerMs, floorMs - GMAIL_RECENT_HORIZON_MS);
+    const token = saved?.beforeMs === floorMs ? saved.token : null;
+    // Overlap one second so strict after/before predicates cannot drop a
+    // message exactly on a window boundary. Thread publication is idempotent.
+    const q = `after:${Math.floor(afterMs / 1000) - 1} before:${Math.ceil(floorMs / 1000)}`;
+    let page: Awaited<ReturnType<GmailClient['listMessageIdsPage']>>;
+    try { page = await gmail.listMessageIdsPage(q, token, deps.opts.signal ? { signal: deps.opts.signal } : {}); }
+    catch (error) {
+      if (!token || !(error instanceof GoogleCursorExpiredError) || ![400, 410].includes(error.status)) throw error;
+      // A stale provider token is not coverage proof. Re-list this same window
+      // next run; published threads are idempotent, and the floor stays put.
+      state[pageKey] = null;
+      await saveGoogleState(deps, state);
+      deps.log('[google] Gmail listing page token expired; the unfinished date window will be re-listed');
+      g.summary.status = 'partial';
+      return 'more';
+    }
+    // Keep the first listed version for each thread, without assuming date order.
     const versions = new Map<string, string>();
-    for (const m of ids) if (!versions.has(m.threadId)) versions.set(m.threadId, m.id);
+    for (const m of page.messages) if (!versions.has(m.threadId)) versions.set(m.threadId, m.id);
     const threadIds = [...versions.keys()];
-    let processedAny = false;
     let batchFailed = false;
-    let batchOldest = floorMs;
     for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
       if (deps.opts.signal?.aborted) break;
       for (const tid of threadIds.slice(i, i + BACKFILL_BATCH_THREADS)) {
         if (deps.opts.signal?.aborted) break;
         const outcome = await attemptThread(g, tid, versions.get(tid) ?? null);
-        if (outcome.kind === 'landed') {
-          processedAny = true;
-          if (outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
-        } else if (outcome.kind === 'failed' || outcome.kind === 'rate_limited') {
-          // A failed thread NEWER than a committed floor would fall outside
-          // the resume window (`before:floor`) forever, so the batch holds the
-          // floor. A rate limit is per-user: defer the rest of the batch.
+        if (outcome.kind === 'failed' || outcome.kind === 'rate_limited') {
+          // The listing page is not complete until every item landed or is held.
+          // A rate limit is per-user: defer the rest of the batch.
           batchFailed = true;
           if (outcome.kind === 'rate_limited') break;
         }
       }
       if (batchFailed || deps.managed && deps.opts.signal?.aborted) break;
-      if (processedAny && batchOldest < floorMs) {
-        state[floorKey] = batchOldest;
-        await saveGoogleState(deps, state);
-      }
     }
     if (deps.opts.signal?.aborted) return 'aborted';
     if (batchFailed) return 'failed';
-    if (!processedAny || batchOldest >= floorMs) {
-      // Nothing moved the floor (all held/vanished or all same-timestamp):
-      // step below the oldest listed page to guarantee termination. Only
-      // reachable with zero failures.
-      state[floorKey] = Math.max(lowerMs - 1, floorMs - 86_400_000);
-      await saveGoogleState(deps, state);
-    }
+    if (page.nextPageToken) state[pageKey] = { afterMs, beforeMs: floorMs, token: page.nextPageToken };
+    else { state[pageKey] = null; state[floorKey] = afterMs; }
+    await saveGoogleState(deps, state);
     floorMs = state[floorKey] ?? lowerMs;
   }
   return 'done';
@@ -419,6 +418,7 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
     deps.log(`[google] history window widened; resuming backfill below ${new Date(covered).toISOString()}`);
     state.gmail_backfill_done = false;
     state.gmail_backfill_floor_ms = covered;
+    state.gmail_backfill_page = null;
     await saveGoogleState(deps, state);
   }
 
@@ -443,7 +443,8 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
     if (gap === 'done') {
       state.gmail_gap_after_ms = null;
       state.gmail_gap_floor_ms = null;
-          await saveGoogleState(deps, state);
+      state.gmail_gap_page = null;
+      await saveGoogleState(deps, state);
     }
   }
   // Held threads no listing of this run reached: re-attempt those retry-held
@@ -472,6 +473,7 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
       state.gmail_backfill_done = true;
       state.gmail_backfill_cutoff_ms = Math.min(cutoffMs, state.gmail_backfill_floor_ms ?? cutoffMs);
       state.gmail_backfill_floor_ms = null;
+      state.gmail_backfill_page = null;
       await saveGoogleState(deps, state);
     }
   }
@@ -542,6 +544,7 @@ async function drainGmailDelta(g: GmailSweep, cutoffMs: number): Promise<WalkOut
       const profile = await gmail.getProfile({ ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
       state.gmail_gap_floor_ms = null;
       openGmailGap(state, cutoffMs);
+      state.gmail_gap_page = null;
       state.gmail_history_id = profile.historyId;
       await saveGoogleState(deps, state);
     }

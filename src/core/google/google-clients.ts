@@ -177,6 +177,11 @@ export class GoogleApiClient {
         const pageTokenRejected = /page[ _]?token/i.test(`${body.error?.message ?? ''} ${JSON.stringify(body.error?.details ?? [])}`);
         if (u.pathname.endsWith('/people/me/connections') && u.searchParams.get('pageToken') && pageTokenRejected) throw new GoogleCursorExpiredError(res.status, url);
       }
+      if (res.status === 400 && apiHint === 'gmail') {
+        const u = new URL(url);
+        if (u.pathname.endsWith('/users/me/messages') && u.searchParams.get('pageToken')
+          && /page[ _]?token/i.test(body.error?.message ?? '')) throw new GoogleCursorExpiredError(res.status, url);
+      }
       throw new CredentialError('upstream', `: HTTP ${res.status} on ${apiHint} (${body.error?.message ?? 'no detail'})`);
     }
     throw new CredentialError('upstream', `: unreachable ${apiHint}`);
@@ -186,9 +191,8 @@ export class GoogleApiClient {
    * Drain a pageToken-paginated endpoint. `build(pageToken)` returns the URL.
    * At the page cap: throws by default (callers that RECONCILE must never
    * treat a truncated list as complete), or returns the partial batch when
-   * `partialOk` is set (callers with their own resume cursor — the Gmail
-   * backfill — make forward progress from whatever landed instead of
-   * wedging forever on a >cap window).
+   * `partialOk` is set (only callers that independently retain every unseen
+   * item may treat that partial batch as progress).
    */
   async drainPages<T>(
     build: (pageToken: string | null) => string,
@@ -414,6 +418,15 @@ export function extractCalendarMethod(part: RawGmailPart | undefined): string | 
 }
 
 export class GmailClient extends GoogleApiClient {
+  /** One bounded historical listing page; its token, not message dates, proves continuation. */
+  async listMessageIdsPage(q: string, pageToken: string | null, opts: { signal?: AbortSignal } = {}): Promise<{
+    messages: Array<{ id: string; threadId: string }>; nextPageToken: string | null;
+  }> {
+    const body = await this.fetchJSON<{ messages?: Array<{ id: string; threadId: string }>; nextPageToken?: string }>(
+      `${GMAIL_BASE}/users/me/messages?maxResults=100&q=${encodeURIComponent(q)}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`, 'gmail', opts);
+    return { messages: body.messages ?? [], nextPageToken: body.nextPageToken ?? null };
+  }
+
   async getProfile(opts: { signal?: AbortSignal } = {}): Promise<{ emailAddress: string; historyId: string }> {
     return this.fetchJSON(`${GMAIL_BASE}/users/me/profile`, 'gmail', opts);
   }
