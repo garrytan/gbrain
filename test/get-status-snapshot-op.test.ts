@@ -70,6 +70,7 @@ describe('get_status_snapshot handler shape (schema_version 2)', () => {
       kind: 'pglite',
       executeRaw: async () => [],
       getConfig: async () => null,
+      listSourceRecords: async () => [],
     });
     const result = (await op.handler(makeCtx(stubEngine), {})) as Record<string, unknown>;
     expect(result.schema_version).toBe(2);
@@ -112,6 +113,7 @@ describe('get_status_snapshot handler shape (schema_version 2)', () => {
         return [];
       },
       getConfig: async () => null,
+      listSourceRecords: async () => [],
     });
     const result = (await op.handler(makeCtx(stubEngine), {})) as Record<string, unknown>;
     expect(result.schema_version).toBe(2);
