@@ -874,20 +874,26 @@ trigger's exception does. Deleting a source removes its tombstones.
 
 Thirty members, the statements `facts/conversation-publication.ts`, `relink-publish.ts`, `conversation-memo.ts`,
 `conversation-relink.ts`, `conversation-entity-hints.ts`, `conversation-incremental.ts`,
-`conversation-relink-carry.ts` and `relink.ts` ran as raw SQL. None is served on Rust yet: each is named in
-`rust-engine/members.ts` with capability `facts` and stops on the typed `engine_capability_missing` refusal. The data
-the store would need:
+`conversation-relink-carry.ts` and `relink.ts` ran as raw SQL. The Rust engine serves all thirty
+(`test/engine-parity/facts-conversation-sites.test.ts` is the parity arm): writes and page counts in
+`facts/conversation.rs`, reads in `facts/conversation_reads.rs`, the TypeScript side in
+`rust-engine/store-members/facts-conversation.ts`. A conversation row is a fact whose `source` starts with
+`cli:extract-conversation-facts`; an audit (outcome-marker) row is set aside wherever the SQL sets it aside.
 
-| Members | What they read or write | What the store needs |
-| --- | --- | --- |
-| `readNewestConversationFactId`, `countActiveConversationFacts`, `readConversationSlotValueHash`, `maxConversationRowNum`, `listHeldFactSlots`, `countPageConversationFacts`, `countConversationWindowFacts`, `countConversationFactsOutsideWindows` | Counts and keys of a page's conversation facts (`source LIKE 'cli:extract-conversation-facts%'`, `source_markdown_slug`, `row_num`, `source_window`, slot `dimension` and `value_hash`). | The facts rows by (source, page slug), with `source_window` as stored JSON and the `valid_from` of slotted rows. |
-| `deleteConversationOutcomeRows`, `clearConversationPageFacts`, `moveConversationSourceWindows`, `stampConversationSourceWindows` | Writes: deletes outcome-marker rows; the five-step clear (delete spent relinked rows, unslot expired rows, expire relinked rows, expire referenced rows, delete the rest); moves and stamps `source_window`. | The write transaction of the page, `open_loops.fact_id` and `facts.superseded_by` references, and the relinked-row test (`RELINKED_DERIVED_ROW`). |
-| `listPurgeTombstoneMatches` | The ordinals of a batch whose fingerprint a purge tombstone names, with the unbacked-entity rule. | The fact purge ledger and the pages table (see the fact purge ledger section). |
-| `findSpentConversationRequest`, `listConversationBatchRequests`, `readStoredConversationEntry`, `readPrincipalCounters` | Reads of the write journal (`persistence_requests`, `persistence_counters`). | The write journal tables, which the store does not hold; on Rust they would answer empty. |
-| `countConversationPagesToExtract`, `listMergedEntityAliases`, `listEntityHintPages`, `lockPageById` | Page reads for the extraction run: pages with no facts yet, slug aliases whose alias page is gone, hint pages (retired and folder-restricted tests), one `FOR UPDATE` page lock. | Pages with `deleted_at`, frontmatter and type, plus the slug alias table. |
-| `findSameClaimFenceRow`, `findOntologyTwin`, `readRelinkSource` | Relink publication: a live fence row with the same claim, an ontology twin of a fact (same source, dimension and `value_hash`), and a source's incarnation, archived flag, local path and kind. | Fence rows (`row_num`) and the source row. |
-| `factRelinkAttemptsTableExists`, `readReextractOutcomeRow` | The memo: whether the relink attempts table exists, and the outcome row of a page with its content hash. | The relink attempts table, which the store does not hold. |
-| `listUnbackedConversationRows`, `listUnlinkedConversationRows`, `listClearedRelinkedFacts`, `countEmbeddedFactsAmong` | Relink reads: active facts naming no page, active facts with no link, expired relinked facts whose entity page is live, and how many named facts hold an embedding. | Facts with visibility, attribution and embedding presence, and live pages by slug. |
+| Members | How the store answers |
+| --- | --- |
+| `readNewestConversationFactId`, `maxConversationRowNum`, `countActiveConversationFacts`, `countPageConversationFacts`, `countConversationWindowFacts`, `countConversationFactsOutsideWindows`, `listHeldFactSlots`, `readConversationSlotValueHash` | The page's fact rows by (source, `source_markdown_slug`). A window key is `source_window->>'start'`, `'end'` and `'hash'` joined by `:`; a missing part or a window that is not an object gives no key, so the SQL's three-valued `IN` holds (an unanchored row is outside no list of keys and inside none). `valid_from` crosses as ISO text; the TypeScript side makes it a `Date`. |
+| `stampConversationSourceWindows`, `moveConversationSourceWindows` | `source_window` is a fact record field, stored as JSON in key order (`jsonb_order`); a record with no window omits the field, so earlier records stay byte-identical. A move reads every row's key before it writes any row, as one `UPDATE ... FROM (VALUES ...)` does, so a chain of moves applies at once. |
+| `deleteConversationOutcomeRows`, `clearConversationPageFacts` | One store write. The clear runs the SQL's five steps in order with one `now`: delete spent relinked rows, unslot expired rows, expire relinked rows, expire rows an open loop or another fact's `superseded_by` references, delete the rest. Each step picks its rows before it writes; rows a repair retired stay expired. It returns the sum of the expired and deleted counts. |
+| `listPurgeTombstoneMatches` | The fact purge ledger (`purge_hash_under`), with the unbacked-entity rule: an entity with no `/` that names no live page matches a tombstone under any subject. An outcome marker from no source or an audit source is excluded, as the SQL's `NOT (NULL AND true)` is. |
+| `findSpentConversationRequest`, `listConversationBatchRequests`, `readStoredConversationEntry`, `readPrincipalCounters` | The write journal records the store keeps under `keys::REQUEST` and the principal counters (`persistence::read_counter`). Batch requests sort by sequence, and a compacted request is left out. |
+| `countConversationPagesToExtract`, `listMergedEntityAliases`, `listEntityHintPages` | The source's live pages by type, the slug alias records, and hint pages with `retired` and `folder_restricted`. |
+| `findSameClaimFenceRow`, `findOntologyTwin`, `readRelinkSource`, `readReextractOutcomeRow` | Fence rows (`row_num`), the twin with the same (dimension, `value_hash`) preferring an active row, the source record, and the newest active terminal outcome row with the live page's content hash. |
+| `listUnbackedConversationRows`, `listUnlinkedConversationRows`, `listClearedRelinkedFacts`, `countEmbeddedFactsAmong` | Derived rows by page slug in byte order then id; cleared relinked rows newest first; distinct ids that carry an embedding. |
+| `lockPageById`, `factRelinkAttemptsTableExists` | No store call. A store write runs alone, so there is no row lock to take; the store always keeps the relink attempts records, so the table exists. |
+
+Two parity cases stop on Rust because their fixtures write through `executeRaw` (a compacted request; a restricted
+folder), not because a member refuses.
 
 ## Facts cycle, phantom redirect and fence-guard statements (`engine-sql/facts-cycle.ts`, item 4.2)
 

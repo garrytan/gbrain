@@ -54,6 +54,7 @@ mod extract_rollup;
 mod extraction;
 mod facts;
 mod facts_captured;
+mod facts_conversation;
 mod facts_cycle;
 mod facts_cycle_fence;
 mod facts_doctor;

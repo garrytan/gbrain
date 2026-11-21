@@ -62,6 +62,7 @@ import * as factsCycleFence from './facts-cycle-fence.ts';
 import * as factsPhantom from './facts-phantom.ts';
 import * as factsPurge from './facts-purge.ts';
 import * as factsPurgeJournal from './facts-purge-journal.ts';
+import * as factsConversation from './facts-conversation.ts';
 import * as factsPurgeProbe from './facts-purge-probe.ts';
 import * as factsPurgeReceipt from './facts-purge-receipt.ts';
 import * as factsRepair from './facts-repair.ts';
@@ -134,7 +135,7 @@ export const STORE_MEMBERS = {
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
   ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsCycleFence, ...factsPhantom, ...factsPurge, ...factsPurgeReceipt, ...factsPurgeJournal, ...factsPurgeProbe, ...factsRepair, ...ontologyRepair, ...factsTrust, ...derivationTrust, ...factsForget, ...factsRemember, ...factsRecall, ...factsQuoted, ...factsWritePath, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
-  ...factRelinkWrites,
+  ...factRelinkWrites, ...factsConversation,
   // The `gbrain schema detect` page-shape reads (rust/docs/store/schema_detect.md).
   ...schemaDetect,
   // The edge-contradictions dream phase and its proposal ledger (rust/docs/store/edge_proposals.md).

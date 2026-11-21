@@ -5,7 +5,8 @@
 //! countUnconsolidatedFacts, findCandidateDuplicates, consolidateFact, findTrajectory,
 //! getFactsHealth, migrateFactsToCanonical, the `listUnattributedFacts` review-list read and
 //! the `pageCollapseFacts` search read (`facts/collapse.rs`) and the `moveKeptFactRows` fence
-//! row move (`facts/kept_rows.rs`). Other families read the rows
+//! row move (`facts/kept_rows.rs`), and the conversation publication and relink members
+//! (`facts/conversation.rs`, `facts/conversation_reads.rs`). Other families read the rows
 //! through `fact_exists`
 //! (eval capture) and write them through `write_fact` / `delete_fact` (ontology).
 //!
@@ -44,6 +45,8 @@
 
 pub mod captured;
 mod collapse;
+pub mod conversation;
+pub mod conversation_reads;
 pub mod cycle;
 pub mod cycle_fence;
 pub mod doctor;
@@ -205,6 +208,10 @@ pub(crate) struct FactRecord {
     pub trust_tier: String,
     /// `write_origin`: the provenance JSON of the write that stamped the row (NULL: none).
     pub write_origin: Option<Value>,
+    /// `source_window`: the conversation window a derived row came from (NULL: none). Absent from
+    /// a record that never had one, so older records read and write byte for byte as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_window: Option<Value>,
 }
 
 impl FactRecord {
