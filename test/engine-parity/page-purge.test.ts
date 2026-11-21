@@ -14,7 +14,8 @@
  *    first of them before anything is written, so on Rust the case pins that exact list (member and owner, nothing
  *    else), proves nothing was written and ends on the refusal: the harness counts it stopped (never equal). The pin
  *    fails as soon as an entry is served, so RUST_KNOWN_STOP must shrink with the lane that serves it:
- *      readRequestIndexStates and isOriginTwinPage  lane 10, rust-engine/repair-rust cb7c502c0b (readPageDatabaseOnlyReason)
+ *      readRequestIndexStates                       lane 10, rust-engine/repair-rust aa2f70ffe8
+ *      isOriginTwinPage                             lane 10, rust-engine/repair-rust b5945d814f (readPageDatabaseOnlyReason)
  *      the exclusive source lock in the publication  lane 13 (this port, not yet served)
  *      scrubGenerationLedger                         lane 4, 61b18fbbc (scrubGenerationPageRows, scrubGenerationTextRows)
  *      the receipt reads, probes and sweep state     lane 13 step 3 (its commit lifts them)
@@ -46,8 +47,8 @@ type R = Record<string, unknown>;
 
 /** What the Rust arm still cannot serve on the purge path, in the order the check names them: member or site, and owner. */
 const RUST_KNOWN_STOP = [
-  { name: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: 'lane 10 (cb7c502c0b)' },
-  { name: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: 'lane 10 (cb7c502c0b)' },
+  { name: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: 'lane 10 (repair-rust aa2f70ffe8)' },
+  { name: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: 'lane 10 (repair-rust b5945d814f)' },
   { name: '<anonymous> (persistence/coordinator.ts)', owner: 'lane 13' },
   { name: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: 'lane 4 (61b18fbbc)' },
   { name: 'relationExists (persistence/rebuildable-cache.ts)', owner: 'lane 13 step 3' },
