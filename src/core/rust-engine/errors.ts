@@ -70,8 +70,8 @@ export function managesWorktrees(engine: object): boolean {
 }
 
 /**
- * Whether `engine` serves raw SQL. The owner's idle probe asks it before its one raw statement, so an engine without
- * `raw_sql` (the Rust engine) answers from typed members. PGLite, Postgres and transaction handles answer true.
+ * Whether `engine` serves raw SQL. Callers with one raw statement ask it first, so an engine without `raw_sql` (the
+ * Rust engine) answers from typed members or refuses plainly. PGLite, Postgres and transaction handles answer true.
  */
 export function servesRawSql(engine: object): boolean {
   return reports(engine, 'raw_sql');

@@ -465,8 +465,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       onlyPglite: ['default_source_local_path', 'frontmatter_repairable', 'image_assets', 'pglite_scale'],
       // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
       // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
+      // shared_skills_sources is gone from this list: the source view reads readSourceState, which Rust serves, so
+      // with no opted-out or parked source the check returns nothing, as it does on PGLite.
       onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
-        'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
+        'quarantined_changes', 'sync_failures', 'tracked_ownership_marker',
         'transcript_secret_exposure'],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
@@ -474,7 +476,11 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
       // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
       // does, so the check reads the same model and passes with PGLite's message.
-      untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
+      // backup_coverage is gone from this list: a Rust brain counts its live pages and reads its maturity
+      // (countBrainLivePages, readBrainMaturity), so the check answers as it does on PGLite.
+      // entity_duplicates warns with the refusal of listEntityKeyRows, whose rows carry a page generation the store
+      // does not keep ("the store keeps no page generation"), so the check reports health unknown.
+      untypedWarnings: ['canonical_content_writes', 'child_table_orphans', 'entity_duplicates',
         'extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
         'text_projection_readiness', 'trust_scan'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack

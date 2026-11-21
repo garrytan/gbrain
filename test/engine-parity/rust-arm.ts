@@ -89,6 +89,11 @@ export async function archiveRustSource(engine: unknown, id: string): Promise<vo
   await (engine as RustEngine).openStore('archiveSource').brain.setSourceArchived(id, true);
 }
 
+/** Fixture: the Rust brain's access-rule store (the policy writes have no typed BrainEngine member). */
+export function rustAccessBrain(engine: unknown) {
+  return (engine as RustEngine).openStore('accessRules').brain;
+}
+
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }
 
 /**
@@ -107,17 +112,6 @@ export const DIVERGENCE_NORMALIZERS: Record<string, (value: unknown) => unknown>
     }
     if (value !== null && typeof value === 'object') {
       return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'score').map(([key, item]) => [key, DIVERGENCE_NORMALIZERS['ranking-order-and-score']!(item)]));
-    }
-    return value;
-  },
-  // Known gap until rust-engine/segment-embed (commit 2573915b55) reaches main: Rust getPage has no withdrawal overlay,
-  // so a withdrawal's strike of its fence row keeps its own reason. The one cell that differs is a fence row's stored
-  // context: PGLite "forgotten: memory withdrawn", Rust "forgotten: forgotten". Only that exact Rust text is mapped.
-  'withdrawal-overlay-context': (value) => {
-    if (Array.isArray(value)) return value.map((item) => DIVERGENCE_NORMALIZERS['withdrawal-overlay-context']!(item));
-    if (value !== null && typeof value === 'object') {
-      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
-        key === 'context' && item === 'forgotten: forgotten' ? 'forgotten: memory withdrawn' : DIVERGENCE_NORMALIZERS['withdrawal-overlay-context']!(item)]));
     }
     return value;
   },

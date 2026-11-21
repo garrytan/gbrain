@@ -23,12 +23,13 @@
 //!   NULLs distinct).
 //! - `F 0x08` and `F 0x09`: the `open_loops` table (`facts/loops.rs` lists them).
 //! - `F 0x0A` and `F 0x0B`: the `fact_relink_attempts` table (`facts/relink.rs` lists them).
-//! - `F 0x0C`: the `page_purges` ledger (`facts/page_purges.rs`), read only.
+//! - `F 0x0C`: the `page_purges` ledger (`facts/page_purges.rs`).
 //! - `F 0x0D page_id`: the `page_facts_reconcile` watermark (`facts/reconcile.rs`), read only.
 //! - `F 0x0E generation_id`: the `derived_generations` ledger with its items
 //!   (`facts/generations.rs`), read only.
 //! - `F 0x0F source visibility subject fact_hash`: the `fact_purges` ledger
 //!   (`facts/purge_ledger.rs`).
+//! - `F 0x10 source subject claim_hash`: the `take_purges` ledger (`facts/take_purges.rs`).
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -53,16 +54,20 @@ pub mod generations;
 mod held_cells;
 pub mod holding_purges;
 pub mod loops;
-mod page_purges;
+pub(crate) mod page_purges;
+pub use page_purges::PagePurgeUpsert;
 mod privacy;
 pub mod purge;
 pub mod purge_ledger;
+pub mod purge_plan;
+pub(crate) mod purge_probe;
 pub mod quote;
 pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;
 pub mod repair;
 pub mod saved_match;
+pub mod take_purges;
 pub mod trust;
 pub mod trust_owner;
 pub mod trust_reads;
@@ -77,11 +82,12 @@ pub(crate) use fence::jsonb_time;
 pub use fence::{FenceContext, FenceTarget};
 pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
+pub(crate) use page_purges::has_page_purges;
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{
     OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs,
-    hidden_by_provenance_page, page_hidden, page_hidden_with, version_hidden,
+    hidden_by_provenance_page, page_hidden, page_hidden_with, privacy_allows, version_hidden,
 };
 pub use widen::VisibilityWidening;
 use widen::{visibility_admits, world_admits};
@@ -209,9 +215,6 @@ impl FactRecord {
         TrustTier::stored(Some(&self.trust_tier))
     }
 
-    /// Whether a [`TrustTable::Facts`] content column differs between `self` and `new` (the
-    /// trigger's `IS DISTINCT FROM` chain): fact, entity_slug, kind, the four claim columns,
-    /// value, event_type, dimension and context.
     /// The content tuple the attribution trigger compares
     /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`). The withdrawal-stamp exemption
     /// (`gbrain.fact_withdrawal_stamp`) never applies: the store keeps no withdrawal ledger.
@@ -285,6 +288,9 @@ impl FactRecord {
             || float_distinct(a.claim_value, b.claim_value)
     }
 
+    /// Whether a [`TrustTable::Facts`] content column differs between `self` and `new` (the
+    /// trigger's `IS DISTINCT FROM` chain): fact, entity_slug, kind, the four claim columns,
+    /// value, event_type, dimension and context.
     fn trust_content_changed(&self, new: &FactRecord) -> bool {
         let float = |a: Option<f64>, b: Option<f64>| match (a, b) {
             (Some(a), Some(b)) => !(a == b || (a.is_nan() && b.is_nan())),
@@ -724,6 +730,20 @@ fn rows_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<FactRecord>> {
     Ok(out)
 }
 
+/// Facts in every source with no `expired_at` (`expired_at IS NULL`).
+pub(crate) fn count_unexpired(read: &dyn KvRead) -> Result<u64> {
+    let mut count = 0u64;
+    let mut failure = None;
+    scan_prefix(read, &[keys::FACT, ROW], false, &mut |_, v| {
+        match serde_json::from_slice::<FactRecord>(v) {
+            Ok(row) => count += u64::from(row.expired_at_us.is_none()),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(count), Err)
+}
+
 pub(crate) fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_SOURCE, &[source_id]))
 }
@@ -736,7 +756,7 @@ pub(crate) fn entity_rows(
     rows_under(read, &text_key(BY_ENTITY, &[source_id, entity]))
 }
 
-fn page_rows(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Vec<FactRecord>> {
+pub(crate) fn page_rows(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_PAGE, &[source_id, slug]))
 }
 
@@ -774,7 +794,9 @@ pub(crate) fn fact_exists(read: &dyn KvRead, id: u64, source_ids: &[String]) -> 
 
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`):
 /// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does, and its fact
-/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]). A row of
+/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]), page
+/// purge tombstones (`page_purges_source_id_fkey`, [`page_purges::remove_source_rows`]) and take
+/// purge tombstones (`take_purges_source_id_fkey`, [`take_purges::remove_source_rows`]). A row of
 /// another source that named one of them as its successor keeps its row with `superseded_by`
 /// cleared (`ON DELETE SET NULL`).
 ///
@@ -785,7 +807,9 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for row in source_rows(tx, source_id)? {
         delete_fact(tx, trust, &row)?;
     }
-    purge_ledger::remove_source_rows(tx, source_id)
+    purge_ledger::remove_source_rows(tx, source_id)?;
+    page_purges::remove_source_rows(tx, source_id)?;
+    take_purges::remove_source_rows(tx, source_id)
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -497,3 +497,32 @@ fn cosines_refuse_a_query_pgvector_cannot_parse_before_reading_any_row() {
         assert_eq!(err.message, message);
     }
 }
+
+#[test]
+fn require_safe_chunks_reads_a_page_chunked_below_the_safe_fence_as_no_chunks() {
+    let b = brain("emb-safe-fence");
+    let (_, rev) = page(&b, "notes/a", json!({}));
+    seal(
+        &b,
+        "notes/a",
+        &rev,
+        json!([{"chunk_index": 0, "chunk_text": "alpha", "model": "m1", "embedding": basis(0, 1536)}]),
+    );
+    let safe = |b: &Store| {
+        b.get_chunks_with(
+            "notes/a",
+            &GetChunksOptions {
+                include_embedding: true,
+                require_safe_chunks: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .len()
+    };
+    assert_eq!(safe(&b), 1);
+    b.set_chunker_version("notes/a", "3", None).unwrap();
+    assert_eq!(safe(&b), 0);
+    // Without the option the short page still reads its chunks.
+    assert_eq!(chunks_of(&b, "notes/a").len(), 1);
+}

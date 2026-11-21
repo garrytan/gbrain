@@ -1,14 +1,18 @@
 /**
  * The writes of a resumable op's checkpoint (op-checkpoint.ts): replace the parent's completed keys, append child
- * paths, delete the parent (its paths go with it by the `ON DELETE CASCADE` foreign key) and delete the paths. The read
+ * paths, delete the parent (its paths go with it by the `ON DELETE CASCADE` foreign key), delete the paths, and the
+ * seven-day purge of stale checkpoints (`purgeStaleCheckpoints`, on `executeRaw` as op-checkpoint.ts ran it; its text is
+ * the constant in ../op-checkpoint-purge-sql.ts, built from the op-name constants it exempts). The read
  * is `readOpCheckpointKeys` (write-misc.ts). Each statement keeps the text op-checkpoint.ts ran and runs on
  * `executeRawDirect`, the direct session pool on Postgres (#1794), so PGLite and Postgres answer exactly as before; a
  * Rust brain answers from its store (rust/crates/gbrain-store/src/persistence/op_checkpoint.rs,
  * rust/docs/store/persistence.md "Op checkpoints").
  */
 import type { BrainEngine } from '../engine.ts';
+import { PURGE_STALE_CHECKPOINTS_SQL } from '../op-checkpoint-purge-sql.ts';
 
 type Direct = Pick<BrainEngine, 'executeRawDirect'>;
+type Raw = Pick<BrainEngine, 'executeRaw'>;
 
 /**
  * Single writable-CTE statement (one round-trip): ensure the parent
@@ -64,4 +68,14 @@ export async function deleteOpCheckpointPaths(direct: Direct, op: string, finger
     `DELETE FROM op_checkpoint_paths WHERE op = $1 AND fingerprint = $2`,
     [op, fingerprint],
   );
+}
+
+/**
+ * Deletes the checkpoints whose stamp is older than `ttlDays` days and that no exemption holds, and returns how many
+ * it deleted; the `op_checkpoint_paths` foreign key (`ON DELETE CASCADE`) drops their paths. The exemptions are listed
+ * at op-checkpoint.ts `purgeStaleCheckpoints`, the caller, which turns a failure into 0.
+ */
+export async function purgeStaleCheckpoints(raw: Raw, ttlDays: number): Promise<number> {
+  const rows = await raw.executeRaw<{ count: string | number }>(PURGE_STALE_CHECKPOINTS_SQL, [String(ttlDays)]);
+  return Number(rows[0]?.count ?? 0);
 }

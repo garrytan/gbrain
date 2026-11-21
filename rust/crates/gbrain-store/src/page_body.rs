@@ -47,6 +47,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+pub(crate) mod purge_scan;
+
 const TEXT: u8 = 0x01;
 const MANIFEST: u8 = 0x02;
 const STAGING: u8 = 0x03;
@@ -427,6 +429,18 @@ pub struct SegmentSweepOptions {
 }
 
 /// `SegmentSweepResult`.
+/// What `sealSegmentedPage` reads before it seals ([`Store::read_segmented_seal_lead`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealLead {
+    /// The stored timeline lead, `""` when none was published.
+    pub lead: String,
+    /// The page's `knowledge_revision`.
+    pub revision: String,
+    pub slug: String,
+    pub source_id: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SegmentSweepResult {
@@ -1690,10 +1704,11 @@ impl Store {
     }
 
     /// The stored timeline lead of page `page_id` (`""` when none was published) with the page's
-    /// `knowledge_revision`, or `None` for a missing page. Not a member: `sealSegmentedPage`'s
-    /// TypeScript side reads it, sanitizes the lead, and passes the revision back to
+    /// `knowledge_revision`, slug and source, or `None` for a missing page. Not a member:
+    /// `sealSegmentedPage`'s TypeScript side reads it, overlays the lead with the page's ledger rows
+    /// (read by slug and source), sanitizes it, and passes the revision back to
     /// [`Store::seal_segmented_page`].
-    pub fn read_segmented_seal_lead(&self, page_id: i64) -> Result<Option<(String, String)>> {
+    pub fn read_segmented_seal_lead(&self, page_id: i64) -> Result<Option<SealLead>> {
         let read = self.read()?;
         let Some(page) = page_u64(page_id)
             .map(|id| read_page_by_id(&*read, id))
@@ -1703,7 +1718,12 @@ impl Store {
             return Ok(None);
         };
         let lead = timeline_lead(&*read, page.id)?.unwrap_or_default();
-        Ok(Some((lead, page.knowledge_revision)))
+        Ok(Some(SealLead {
+            lead,
+            revision: page.knowledge_revision,
+            slug: page.slug,
+            source_id: page.source_id,
+        }))
     }
 
     /// `sealSegmentedPage(pageId, opts)`: seals the page's text projection at its current revision
@@ -2834,6 +2854,38 @@ mod segment_chunk_tests {
         id
     }
 
+    /// A published segmented page renames: its version references the live generation and keeps no
+    /// body copy, and the moved page reads the same body under its new slug.
+    #[test]
+    fn update_slug_moves_a_segmented_page_and_versions_it_by_reference() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        assert_eq!(store.update_slug("notes/a", "notes/b", None).unwrap(), 1);
+        let read = store.read().unwrap();
+        let page = read_page_by_id(&*read, id as u64).unwrap().unwrap();
+        assert_eq!(page.slug, "notes/b");
+        assert!(page.compiled_truth.is_null());
+        assert_eq!(
+            segmented_reference(&*read, id as u64).unwrap(),
+            Some((1, Some(8)))
+        );
+        drop(read);
+        let versions = store
+            .get_versions("notes/b", &crate::pages::VersionsOptions::default())
+            .unwrap();
+        assert_eq!(versions.len(), 1);
+        let v = &versions[0];
+        assert_eq!(
+            (
+                &v["body_storage"],
+                &v["body_generation"],
+                &v["body_bytes"],
+                &v["compiled_truth"]
+            ),
+            (&json!("segmented"), &json!(1), &json!(8), &Value::Null)
+        );
+    }
+
     #[test]
     fn a_retention_purge_deletes_the_texts_only_the_purged_page_needed() {
         // PGLite's purgeDeletedPages deletes the purged pages' segment texts in the same
@@ -3275,8 +3327,14 @@ mod segment_chunk_tests {
             .unwrap();
         assert!(sealed_texts(&store).is_empty());
         // The fixture flip publishes an empty lead.
-        let (lead, revision) = store.read_segmented_seal_lead(id).unwrap().unwrap();
+        let SealLead {
+            lead,
+            revision,
+            slug,
+            source_id,
+        } = store.read_segmented_seal_lead(id).unwrap().unwrap();
         assert_eq!(lead, "");
+        assert_eq!((slug.as_str(), source_id.as_str()), ("notes/a", "default"));
         store
             .seal_segmented_page(id, "lead\0 text", Some(&revision))
             .unwrap();

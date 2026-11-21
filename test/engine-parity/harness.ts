@@ -39,7 +39,7 @@ import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
 import {
-  archiveRustSource, createRustSource, newRustBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
+  archiveRustSource, createRustSource, newRustBrain, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
@@ -265,7 +265,7 @@ export async function archiveSource(engine: BrainEngine, backend: ParityBackend,
  */
 export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityBackend, sourceId: string): Promise<void> {
   switch (backend) {
-    // The Rust arm runs the same production path; it stops on the engine's typed refusal until the ledger is served.
+    // The Rust arm runs the same production path, a page's baseline included.
     case 'rust':
     case 'pglite':
     case 'postgres':
@@ -278,17 +278,29 @@ export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityB
 
 /**
  * Fixture: put a folder access rule (`kind: 'rule'`) or a pending coverage prefix (`kind: 'pending'`) on `prefix` of a
- * source, so the folder-restriction read has something to find. Harness-only SQL behind the backend switch.
+ * source, so the folder-access reads have something to find. The policy writes have no typed member (they stay raw SQL
+ * in policy.ts), so this is harness-only SQL behind the backend switch, and the Rust arm writes its store directly.
  */
-export async function restrictFolder(engine: BrainEngine, backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending'): Promise<void> {
+export async function restrictFolder(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending',
+  opts: { ruleId?: string; readers?: string[] } = {},
+): Promise<void> {
+  const ruleId = opts.ruleId ?? 'parity-rule';
+  const readers = opts.readers ?? ['member:parity'];
   switch (backend) {
-    // The Rust arm has no access-rule store yet; the same SQL stops on the engine's typed raw_sql refusal.
     case 'rust':
+      await seedAccessPolicy(engine, backend, sourceId);
+      if (kind === 'rule') {
+        await rustAccessBrain(engine).putAccessRule({ source_id: sourceId, rule_id: ruleId, prefix, readable_by: readers, revision: 1 });
+      } else {
+        await rustAccessBrain(engine).putAccessPendingCoverage({ source_id: sourceId, prefix, reason: 'pending' });
+      }
+      return;
     case 'pglite':
     case 'postgres':
-      await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [sourceId]);
+      await seedAccessPolicy(engine, backend, sourceId);
       if (kind === 'rule') {
-        await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES ($1, 'parity-rule', $2, ARRAY['member:parity'], 1)`, [sourceId, prefix]);
+        await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES ($1, $2, $3, $4::text[], 1)`, [sourceId, ruleId, prefix, readers]);
       } else {
         await engine.executeRaw(`INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ($1, $2, 'pending')`, [sourceId, prefix]);
       }
@@ -299,18 +311,27 @@ export async function restrictFolder(engine: BrainEngine, backend: ParityBackend
 }
 
 /**
- * Fixture: a `page_purges` tombstone, as the page purge sweep (`persistence/page-purge.ts`) and the restore replay
- * (`belief/purge-mirror.ts`) write it inside the write journal's transaction. Neither has a typed writer, so this is
- * harness-only SQL behind the backend switch; `purgedAt` (ISO) replaces the default `now()`.
+ * Fixture: give a source access state, and record each `revisions` entry as a policy revision (applied or not), so the
+ * applied-revision read has something to find. Harness-only SQL behind the backend switch, as in `restrictFolder`.
  */
-export async function recordPagePurge(engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, contentHash: string, purgedAt?: string): Promise<void> {
+export async function seedAccessPolicy(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, revisions: ReadonlyArray<{ revision: number; applied: boolean }> = [],
+): Promise<void> {
   switch (backend) {
-    // The Rust store reads the ledger but has no writer for it: the same SQL stops on the engine's typed raw_sql refusal.
-    case 'rust':
+    case 'rust': {
+      const brain = rustAccessBrain(engine);
+      await brain.putAccessPolicyState(sourceId);
+      for (const r of revisions) await brain.putAccessPolicyRevision({ source_id: sourceId, revision: r.revision, applied: r.applied });
+      return;
+    }
     case 'pglite':
     case 'postgres':
-      await engine.executeRaw('INSERT INTO page_purges (source_id, content_hash, slug, purged_at) VALUES ($1, $2, $3, COALESCE($4::timestamptz, now()))',
-        [sourceId, contentHash, slug, purgedAt ?? null]);
+      await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [sourceId]);
+      for (const r of revisions) {
+        await engine.executeRaw(
+          `INSERT INTO access_policy_revisions (source_id, revision, rules, digest, change_kind, origin, applied_at)
+           VALUES ($1, $2, '[]'::jsonb, 'd', 'narrowing', 'parity', ${r.applied ? 'now()' : 'NULL'})`, [sourceId, r.revision]);
+      }
       return;
     default:
       return assertNever(backend);
@@ -318,29 +339,11 @@ export async function recordPagePurge(engine: BrainEngine, backend: ParityBacken
 }
 
 /**
- * Fixture: a `page_facts_reconcile` watermark row in any state, including ones the typed `settleFactsReconcile` cannot
- * reach (a reconciled revision older than the page, an attempt older than the reconcile). Harness-only SQL behind the
- * backend switch. `reconciled` and `attempted` name the revision each column holds: the page's `current`
- * `knowledge_revision`, an `older` one, or null.
+ * Fixture: a `page_purges` tombstone of one content hash, written through the typed `upsertPagePurges` the page purge
+ * sweep (`persistence/page-purge.ts`) uses, so every arm stores it at its own clock.
  */
-export async function recordFactsReconcile(
-  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string,
-  outcome: 'complete' | 'deferred' | 'invalid' | 'cancelled', reconciled: 'current' | 'older' | null, attempted: 'current' | 'older' | null,
-): Promise<void> {
-  switch (backend) {
-    // The Rust store writes the watermark only through settle and drain: the same SQL stops on the engine's typed raw_sql refusal.
-    case 'rust':
-    case 'pglite':
-    case 'postgres':
-      await engine.executeRaw(`INSERT INTO page_facts_reconcile (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
-        SELECT p.id, CASE $3 WHEN 'current' THEN p.knowledge_revision WHEN 'older' THEN $6::uuid END, now(), $5,
-               CASE $4 WHEN 'current' THEN p.knowledge_revision WHEN 'older' THEN $6::uuid END, now()
-          FROM pages p WHERE p.source_id = $1 AND p.slug = $2`,
-        [sourceId, slug, reconciled, attempted, outcome, '00000000-0000-4000-8000-000000000000']);
-      return;
-    default:
-      return assertNever(backend);
-  }
+export async function recordPagePurge(engine: BrainEngine, _backend: ParityBackend, sourceId: string, slug: string, contentHash: string): Promise<void> {
+  await engine.upsertPagePurges({ sourceId, contentHashes: [contentHash], slug, requestId: null });
 }
 
 /**

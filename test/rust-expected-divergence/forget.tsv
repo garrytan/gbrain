@@ -1,3 +1,0 @@
-# Parity cases of the forget family where the Rust engine is expected to answer differently from PGLite. Edited by hand.
-# Columns (tab separated): parity file, case name, normaliser, why the answer differs (test/rust-expected-divergence/search.tsv).
-test/engine-parity/forget-whole.test.ts	forgetFactInFence withdraws a fenced claim on a source without a checkout	withdrawal-overlay-context	Known gap, flip when rust-engine/segment-embed (commit 2573915b55, the withdrawal overlay on Rust page reads) reaches main: the withdrawn fence row's stored context is "forgotten: memory withdrawn" on PGLite and Postgres and "forgotten: forgotten" on Rust; every other cell is equal. The run fails once Rust matches.

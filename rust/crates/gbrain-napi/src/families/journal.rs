@@ -9,7 +9,7 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
-use gbrain_store::persistence::{Settle, TrueUpReservation};
+use gbrain_store::persistence::{Settle, TrueUpReservation, WriteRequestInsert};
 
 use crate::store_binding::{Brain, required};
 
@@ -212,6 +212,19 @@ impl Brain {
         })
     }
 
+    /// `listIncarnationRequests(filter)`: the request rows of one source incarnation through the
+    /// filter's fences, by sequence (the dream cycle's two journal reads).
+    #[napi]
+    pub fn list_incarnation_requests<'env>(
+        &self,
+        env: &'env Env,
+        filter: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_incarnation_requests(&required(filter, "listIncarnationRequests filter")?)
+        })
+    }
+
     /// `readWriteRequestById(id)` and `lockWriteRequest(id)`: the row or `null`.
     #[napi]
     pub fn read_write_request_by_id<'env>(
@@ -231,6 +244,22 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.insert_write_request(&required(row, "insertWriteRequest row")?)
+        })
+    }
+
+    /// `insertWriteRequestGroup(rows)`: the stored rows in order, inserted in one store write
+    /// (`WriteRequestInsert[]`); a refusal at any row keeps none.
+    #[napi]
+    pub fn insert_write_request_group<'env>(
+        &self,
+        env: &'env Env,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_write_request_group(&required::<Vec<WriteRequestInsert>>(
+                rows,
+                "insertWriteRequestGroup rows",
+            )?)
         })
     }
 
@@ -329,7 +358,7 @@ impl Brain {
         })
     }
 
-    /// `hasClaimableWrite({ excludeRoots, priority })`.
+    /// `hasClaimableWrite({ hostId, excludeRoots, priority })`.
     #[napi]
     pub fn has_claimable_write<'env>(
         &self,
@@ -341,8 +370,8 @@ impl Brain {
         })
     }
 
-    /// `selectClaimableWrite({ excludeRoots, fifoRoots, laneRoots, priority })`: the request row
-    /// `claimNextWrite` claims next, or `null`.
+    /// `selectClaimableWrite({ hostId, excludeRoots, fifoRoots, laneRoots, nonce, syncSeen, priority,
+    /// leaseHolder })`: the request row `claimNextWrite` claims next, or `null`.
     #[napi]
     pub fn select_claimable_write<'env>(
         &self,
@@ -391,6 +420,88 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.count_outstanding_by_source(&principal_kind, &principal_id)
+        })
+    }
+
+    /// `readWorktreeAdmission(worktreeId, sourceId, sourceIncarnation, topologyGeneration)`:
+    /// `{ worktree, refresh, bound }`. The generation arrives as text (null for none).
+    #[napi]
+    pub fn read_worktree_admission<'env>(
+        &self,
+        env: &'env Env,
+        worktree_id: String,
+        source_id: String,
+        source_incarnation: String,
+        topology_generation: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_worktree_admission(&gbrain_store::persistence::WorktreeAdmissionKey {
+                worktree_id,
+                source_id,
+                source_incarnation,
+                topology_generation,
+            })
+        })
+    }
+
+    /// `completeSyncedRefresh(refreshId)`: true when a `syncing` refresh was completed.
+    #[napi]
+    pub fn complete_synced_refresh<'env>(
+        &self,
+        env: &'env Env,
+        refresh_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.complete_synced_refresh(&refresh_id))
+    }
+
+    /// `hasDeferralRoom(worktreeId, liveMs)`: whether no live consumer on the owner host lacks the capability.
+    #[napi]
+    pub fn has_deferral_room<'env>(
+        &self,
+        env: &'env Env,
+        worktree_id: String,
+        live_ms: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.has_deferral_room(&worktree_id, live_ms as i64)
+        })
+    }
+
+    /// `readRefreshTiming(refreshId)`: `{ elapsed_ms, typical_ms }` or null.
+    #[napi]
+    pub fn read_refresh_timing<'env>(
+        &self,
+        env: &'env Env,
+        refresh_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_refresh_timing(&refresh_id))
+    }
+
+    /// `countHeldBehindImport(sourceId, principalKind, principalId)`: `{ count, bytes }`; a null principal counts every one.
+    #[napi]
+    pub fn count_held_behind_import<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        principal_kind: Option<String>,
+        principal_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let principal = principal_kind.as_deref().zip(principal_id.as_deref());
+            s.count_held_behind_import(&source_id, principal)
+        })
+    }
+
+    /// `readWriteWatermarkRow`'s journal half for one source incarnation (null for an absent source).
+    #[napi]
+    pub fn read_request_watermark<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_request_watermark(&source_id, incarnation.as_deref())
         })
     }
 
@@ -473,14 +584,18 @@ impl Brain {
         })
     }
 
-    /// `listGatedMirrorRequests(hostId)`: the requests to requeue; `[]` (no worktree here).
+    /// `listGatedMirrorRequests(hostId, gateCode, allowedCodes)`: the requests to requeue.
     #[napi]
     pub fn list_gated_mirror_requests<'env>(
         &self,
         env: &'env Env,
         host_id: String,
+        gate_code: String,
+        allowed_codes: Vec<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_gated_mirror_requests(&host_id))
+        self.run(env, move |s| {
+            s.list_gated_mirror_requests(&host_id, &gate_code, &allowed_codes)
+        })
     }
 
     /// `listEffectRecoveries(hostId, after, limit)`: the effects with a recovery due; `[]` (no
@@ -643,39 +758,50 @@ impl Brain {
         })
     }
 
-    /// `listOverdueHeldWrites(hostId, maxWaitMs, hold)`: the deferred writes past their hold; `[]`
-    /// (no worktree here). The wait limit only narrows the rows, so it is not sent.
+    /// `listOverdueHeldWrites(hostId, maxWaitMs, hold)`: the deferred writes on owned worktrees
+    /// past their hold.
     #[napi]
     pub fn list_overdue_held_writes<'env>(
         &self,
         env: &'env Env,
         host_id: String,
+        max_wait_ms: f64,
         hold: String,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_overdue_held_writes(&host_id, &hold))
+        self.run(env, move |s| {
+            s.list_overdue_held_writes(&host_id, max_wait_ms, &hold)
+        })
     }
 
-    /// `lockOverdueHold(hold)`: whether the hold still stands; `false` (no refresh row or
-    /// worktree import hold here).
+    /// `lockOverdueHold(hold)`: whether the hold still stands (a refresh unreleased, or an
+    /// import still pending and overdue).
     #[napi]
     pub fn lock_overdue_hold<'env>(
         &self,
         env: &'env Env,
         hold: String,
         id: Option<String>,
+        import_from: Option<String>,
+        max_wait_ms: Option<f64>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.lock_overdue_hold(&hold, id.as_deref()))
+        self.run(env, move |s| {
+            let wait = max_wait_ms.unwrap_or(0.0);
+            s.lock_overdue_hold(&hold, id.as_deref(), import_from.as_deref(), wait)
+        })
     }
 
-    /// `listOwnerRecoveryHeads(hostId, excluded)`: the recovering write heads; `[]` (no worktree
-    /// here). The excluded worktree ids only narrow the rows, so they are not sent.
+    /// `listOwnerRecoveryHeads(hostId, excluded)`: the oldest recovering write of each owned
+    /// worktree not in `excluded`.
     #[napi]
     pub fn list_owner_recovery_heads<'env>(
         &self,
         env: &'env Env,
         host_id: String,
+        excluded: Vec<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_owner_recovery_heads(&host_id))
+        self.run(env, move |s| {
+            s.list_owner_recovery_heads(&host_id, &excluded)
+        })
     }
 
     /// `listResumableRefreshes(hostId, budgetMs)`: the interrupted refreshes; `[]` (no refresh row
@@ -722,6 +848,17 @@ impl Brain {
         days: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.recent_writer_versions(days))
+    }
+
+    /// `readSegmentedGateEvidence(days)`: every writer the segmented-storage gate saw in the
+    /// last `days`, newest first.
+    #[napi]
+    pub fn read_segmented_gate_evidence<'env>(
+        &self,
+        env: &'env Env,
+        days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_segmented_gate_evidence(days))
     }
 
     #[napi]
@@ -809,6 +946,31 @@ impl Brain {
         })
     }
 
+    /// `listQueuedPageProjections(filter)`: `{ source_id, source_incarnation, slug, revision,
+    /// page_kind, updated_at }` rows in walk order.
+    #[napi]
+    pub fn list_queued_page_projections<'env>(
+        &self,
+        env: &'env Env,
+        filter: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_queued_page_projections(&required(filter, "listQueuedPageProjections filter")?)
+        })
+    }
+
+    /// `readProjectionJobReason(key)`: the job's reason, or `null`.
+    #[napi]
+    pub fn read_projection_job_reason<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_projection_job_reason(&required(key, "readProjectionJobReason key")?)
+        })
+    }
+
     /// `deleteProjectionJob({ sourceIncarnation, slug, revision })`.
     #[napi]
     pub fn delete_projection_job<'env>(
@@ -830,6 +992,237 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.mark_projection_rebuild_failed(&required(job, "markProjectionRebuildFailed job")?)
+        })
+    }
+
+    /// `readChunkKeepState(pageId, provenanceModel, column)`: the `embedding` column's width is
+    /// `dims`. `{ id, embedding_input_hash, movable }` rows.
+    #[napi]
+    pub fn read_chunk_keep_state<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        model: Option<String>,
+        dims: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_chunk_keep_state(page_id, model.as_deref(), dims)
+        })
+    }
+
+    /// `clearUnkeptChunkVectors(pageId, provenanceModel, column, currentIds)`: resolves null.
+    #[napi]
+    pub fn clear_unkept_chunk_vectors<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        model: Option<String>,
+        dims: u32,
+        current_ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.clear_unkept_chunk_vectors(page_id, model.as_deref(), dims, &current_ids)
+        })
+    }
+
+    /// `hasDrainableProjectionJob()`: whether a drainable job is queued.
+    #[napi]
+    pub fn has_drainable_projection_job<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_drainable_projection_job())
+    }
+
+    /// `readChunkRowsFingerprint(pageId)`: the store's opaque value of the page's chunk rows.
+    #[napi]
+    pub fn read_chunk_rows_fingerprint<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_chunk_rows_fingerprint(page_id))
+    }
+
+    /// `deleteUnkeptChunks(pageId, keptIds)`: resolves null.
+    #[napi]
+    pub fn delete_unkept_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        kept_ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_unkept_chunks(page_id, &kept_ids))
+    }
+
+    /// `listStaleChunkVectors(pageId, provenanceModel, column, currentIds)`: the `embedding`
+    /// column's width is `dims`. Chunk ids in chunk order.
+    #[napi]
+    pub fn list_stale_chunk_vectors<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        model: Option<String>,
+        dims: u32,
+        current_ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_stale_chunk_vectors(page_id, model.as_deref(), dims, &current_ids)
+        })
+    }
+
+    /// `clearChunkVectors(pageId, column, ids)`: resolves null.
+    #[napi]
+    pub fn clear_chunk_vectors<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.clear_chunk_vectors(page_id, &ids))
+    }
+
+    /// `countPendingTextChunks(pageId, column)`: `{ chunks, chars }` of the `embedding` column.
+    #[napi]
+    pub fn count_pending_text_chunks<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_pending_text_chunks(page_id))
+    }
+
+    /// `probeProjectionWindowCandidates(candidates)`: `{ i, source_id, archived, page_kind,
+    /// body_storage }` per candidate, in candidate order.
+    #[napi]
+    pub fn probe_projection_window_candidates<'env>(
+        &self,
+        env: &'env Env,
+        candidates: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.probe_projection_window_candidates(&required::<
+                Vec<gbrain_store::persistence::ProjectionWindowCandidate>,
+            >(
+                candidates,
+                "probeProjectionWindowCandidates candidates",
+            )?)
+        })
+    }
+
+    /// `readProjectionHead(sourceId, slug)`: `{ id, revision, sealed }` or null.
+    #[napi]
+    pub fn read_projection_head<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_projection_head(&source_id, &slug))
+    }
+
+    /// `isDeferredReplacementHeld(sourceId, slug, revision, claim)`.
+    #[napi]
+    pub fn is_deferred_replacement_held<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        revision: String,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.is_deferred_replacement_held(&source_id, &slug, &revision, &claim)
+        })
+    }
+
+    /// `renewDeferredReplacementClaim({ sourceIncarnation, slug, revision }, claim)`.
+    #[napi]
+    pub fn renew_deferred_replacement_claim<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.renew_deferred_replacement_claim(
+                &required(job, "renewDeferredReplacementClaim job")?,
+                &claim,
+            )
+        })
+    }
+
+    /// `releaseDeferredReplacementClaim(slug, claim)`.
+    #[napi]
+    pub fn release_deferred_replacement_claim<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        claim: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.release_deferred_replacement_claim(&slug, &claim)
+        })
+    }
+
+    /// `hasSegmentedPage(sourceId, slug)`.
+    #[napi]
+    pub fn has_segmented_page<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_segmented_page(&source_id, &slug))
+    }
+
+    /// `rekeyProjectionJob({ sourceIncarnation, slug, revision }, revision)`.
+    #[napi]
+    pub fn rekey_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+        revision: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.rekey_projection_job(&required(job, "rekeyProjectionJob job")?, &revision)
+        })
+    }
+
+    /// `stampDeferredProjectionJob({ sourceIncarnation, slug, revision }, requeue)`.
+    #[napi]
+    pub fn stamp_deferred_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+        requeue: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.stamp_deferred_projection_job(
+                &required(job, "stampDeferredProjectionJob job")?,
+                requeue,
+            )
+        })
+    }
+
+    /// `touchUnclaimedProjectionJob({ sourceIncarnation, slug, revision })`.
+    #[napi]
+    pub fn touch_unclaimed_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.touch_unclaimed_projection_job(&required(job, "touchUnclaimedProjectionJob job")?)
+        })
+    }
+
+    /// `deferProjectionJob({ sourceIncarnation, slug, revision })`: whether a job was queued.
+    #[napi]
+    pub fn defer_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        job: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.defer_projection_job(&required(job, "deferProjectionJob job")?)
         })
     }
 
@@ -855,6 +1248,31 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.read_topology_change(&principal_id, &request_id)
+        })
+    }
+
+    /// `readOwnerHostBinding(worktreeId)`: the owner host's binding `local_path`, or null.
+    #[napi]
+    pub fn read_owner_host_binding<'env>(
+        &self,
+        env: &'env Env,
+        worktree_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_owner_host_binding(&worktree_id))
+    }
+
+    /// `listTopologyRecoveries(hostId, after, limit)`: this host's topology changes in recovery,
+    /// in id order after `after`.
+    #[napi]
+    pub fn list_topology_recoveries<'env>(
+        &self,
+        env: &'env Env,
+        host_id: String,
+        after: Option<String>,
+        limit: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_topology_recoveries(&host_id, after.as_deref(), limit)
         })
     }
 

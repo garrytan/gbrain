@@ -5,7 +5,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member's recorded statements (text and params, in order) equal what its caller sent through
- *    `executeRaw` at 2eb69f4613. Static texts below are copied from the callers at that commit. A text a caller built from
+ *    `executeRaw` at 2eb69f4613 (softDeleteDerivedPages and markNeedsRederive: at cb17d047b7, #9653). Static texts below are copied from the callers at that commit. A text a caller built from
  *    shared builders (the read-policy fragments, the trust floor, the withdrawal predicates, the pool WHERE) is the text that
  *    caller rendered at that commit, captured by running the unchanged callers against a recording engine; one over
  *    3000 characters is pinned by its length and SHA-256 instead of being copied. One member differs on purpose:
@@ -26,6 +26,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
+import { KEEP_HIDDEN_AT } from '../src/core/facts/derivation-inputs.ts';
 
 type Responder = Parameters<typeof makeFakeSql>[0];
 
@@ -283,12 +284,11 @@ const PINS: Pin[] = [
   {
     from: "src/core/facts/derivation-inputs.ts:95 hideDerivedRows",
     member: 'markNeedsRederive',
-    run: e => e.markNeedsRederive('facts', ['1', '2'], 's1', null, 'why', ['2']),
+    run: e => e.markNeedsRederive('pages', ['1', '2'], 's1', null, 'why', ['2']),
     statements: [{ text: `INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason,marked_at)
       SELECT $1,d.id,$3,$4::uuid,$5,COALESCE((SELECT p.deleted_at FROM pages p WHERE d.id=ANY($6::text[]) AND p.id::text=d.id),now()) FROM unnest($2::text[]) AS d(id)
       ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,
-        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE CASE WHEN needs_rederive.derived_table='pages' AND EXISTS (SELECT 1 FROM pages hp
-  WHERE hp.id::text=needs_rederive.derived_id AND hp.deleted_at=needs_rederive.marked_at) THEN needs_rederive.marked_at ELSE now() END END`, params: ['facts', ['1', '2'], 's1', null, 'why', ['2']] }],
+        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE ${KEEP_HIDDEN_AT} END`, params: ['pages', ['1', '2'], 's1', null, 'why', ['2']] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:97 memberPageWithdrawal",

@@ -60,11 +60,14 @@ import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.
 import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys.ts';
 
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
-export { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP };
-export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
+import * as holdStore from '../engine-sql/sync-hold-store.ts';
+import { GIT_HOLD_SUMMARY_COUNTERS as SUMMARY_COUNTERS, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint, type GitHoldSummaryWeights as SummaryWeights } from '../engine-sql/sync-hold-store.ts';
+export { gitHoldFingerprint, summaryFingerprint } from '../engine-sql/sync-hold-store.ts';
+import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, readGitHoldReportInputs as readGitHoldReportInputsOver, type GitHoldRecordsQuery, type GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
+export { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP };
 export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
-export const SYNC_CONVERSION_OP = 'sync-conversions';
+export { SYNC_CONVERSION_OP };
 /** How many conversions the log keeps per source. */
 export const SYNC_CONVERSION_KEEP = 20;
 /** Default for `GBRAIN_SYNC_HOLD_CAP`: how many holds a result lists in detail. Storage is never capped. */
@@ -75,6 +78,19 @@ export const GIT_HOLD_ESCALATE_PCT = 5;
 export const GIT_HOLD_ESCALATE_MIN_SCREENED = 40;
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
+/** The hold store's typed members (engine-sql/sync-hold-store.ts); an executeRaw-only view runs the same statements. */
+type HoldStoreMember = 'lockGitHoldSummary' | 'adjustGitHoldSummary' | 'readGitHoldRow' | 'writeGitHoldRow' | 'replaceGitHoldRow' | 'deleteGitHoldRow' | 'countGitHolds'
+  | 'readGitHoldListingRows' | 'readGitHoldCodeCountRows' | 'readGitImageHoldCountRows' | 'readSyncConversionRows';
+type HoldStore = Exec & Partial<Pick<BrainEngine, HoldStoreMember>>;
+/** An engine (its typed readGitHoldRecords) or an executeRaw-only view of one. */
+type HoldsReader = Pick<BrainEngine, 'readGitHoldRecords'> | Exec;
+/** An engine (its typed readGitHoldRetryRequest) or an executeRaw-only view of one. */
+type RetryReader = Pick<BrainEngine, 'readGitHoldRetryRequest'> | Exec;
+/** An engine (its typed readGitHoldReportInputs and readGitHoldRecords) or an executeRaw-only view of one; the fence auto-repair read still needs executeRaw. */
+type ReportReader = Pick<BrainEngine, 'readGitHoldReportInputs' | 'readGitHoldRecords' | 'executeRaw'> | Exec;
+
+const readGitHoldReportInputsFor = (engine: ReportReader, sourceId: string, fingerprint: string): Promise<GitHoldReportInputs> =>
+  'readGitHoldReportInputs' in engine ? engine.readGitHoldReportInputs(sourceId, fingerprint) : readGitHoldReportInputsOver(engine, sourceId, fingerprint);
 
 export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regression' | 'managed_image_sync_unsupported' | 'concurrent_write' | 'preparation_stalled' | 'worktree_dirty' | 'file_drift'
   | 'legacy_slug_conflict' | 'write_interrupted' | 'origin_conflict'
@@ -314,20 +330,9 @@ export interface GitHoldItem {
   docs: string;
 }
 
-export function gitHoldFingerprint(sourceId: string, incarnation: string, path: string): string {
-  return `${sourceId}:${incarnation}:${path}`;
-}
-
-export const summaryFingerprint = (sourceId: string, incarnation: string) => `${sourceId}:${incarnation}`;
-
 /** Locks the source's summary row (creating it), so hold writes of one source serialize. */
-async function lockSummary(tx: Exec, sourceId: string, incarnation: string): Promise<number> {
-  const [row] = await tx.executeRaw<{ count: number | string }>(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'count',0,'stale',0)))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET updated_at=now()
-    RETURNING COALESCE((completed_keys->0->>'count')::int,0) AS count`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), sourceId, incarnation]);
-  return Number(row?.count ?? 0);
+function lockSummary(tx: HoldStore, sourceId: string, incarnation: string): Promise<number> {
+  return tx.lockGitHoldSummary ? tx.lockGitHoldSummary(sourceId, incarnation) : holdStore.lockGitHoldSummary(tx, sourceId, incarnation);
 }
 
 /**
@@ -336,13 +341,8 @@ async function lockSummary(tx: Exec, sourceId: string, incarnation: string): Pro
  * `concurrent` the #6194 `concurrent_write` holds; `stalled` the #6278 `preparation_stalled` holds; `dirty` the #6340 `worktree_dirty` holds;
  * `drift` the #6712 `file_drift` holds, which never escalate (each is a database edit a person decides on, not a generator fault).
  */
-const SUMMARY_COUNTERS = ['stale', 'images', 'fences', 'concurrent', 'stalled', 'dirty', 'drift'] as const;
-type SummaryWeights = Record<typeof SUMMARY_COUNTERS[number], number>;
-async function adjustSummary(tx: Exec, sourceId: string, incarnation: string, delta: number, weights: SummaryWeights): Promise<void> {
-  const pairs = SUMMARY_COUNTERS.map((name, i) => `'${name}',GREATEST(0,COALESCE((completed_keys->0->>'${name}')::int,0)+$${i + 4}::int)`).join(',');
-  await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_build_array((completed_keys->0)||jsonb_build_object(
-      'count',GREATEST(0,COALESCE((completed_keys->0->>'count')::int,0)+$3::int),${pairs})),updated_at=now() WHERE op=$1 AND fingerprint=$2`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), delta, ...SUMMARY_COUNTERS.map(name => weights[name])]);
+function adjustSummary(tx: HoldStore, sourceId: string, incarnation: string, delta: number, weights: SummaryWeights): Promise<void> {
+  return tx.adjustGitHoldSummary ? tx.adjustGitHoldSummary(sourceId, incarnation, delta, weights) : holdStore.adjustGitHoldSummary(tx, sourceId, incarnation, delta, weights);
 }
 
 const staleWeight = (record: Pick<GitHoldRecord, 'page_id'> | null) => record && record.page_id !== null ? 1 : 0;
@@ -355,10 +355,22 @@ const driftWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code
 const weightsOf = (record: Pick<GitHoldRecord, 'code' | 'page_id'>, sign = 1): SummaryWeights => ({ stale: sign * staleWeight(record), images: sign * imageWeight(record),
   fences: sign * fenceWeight(record), concurrent: sign * concurrentWeight(record), stalled: sign * stalledWeight(record), dirty: sign * dirtyWeight(record), drift: sign * driftWeight(record) });
 
-async function readRow(tx: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
-  const [row] = await tx.executeRaw<{ record: GitHoldRecord }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [GIT_HOLD_OP, gitHoldFingerprint(sourceId, incarnation, path)]);
-  return row?.record ?? null;
+function readRow(tx: HoldStore, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
+  return tx.readGitHoldRow ? tx.readGitHoldRow<GitHoldRecord>(sourceId, incarnation, path) : holdStore.readGitHoldRow<GitHoldRecord>(tx, sourceId, incarnation, path);
+}
+
+function writeRow(tx: HoldStore, record: GitHoldRecord): Promise<void> {
+  return tx.writeGitHoldRow ? tx.writeGitHoldRow(record.source_id, record.incarnation, record.path, record)
+    : holdStore.writeGitHoldRow(tx, record.source_id, record.incarnation, record.path, record);
+}
+
+function replaceRow(tx: HoldStore, input: { sourceId: string; incarnation: string; path: string }, expected: GitHoldRecord, next: GitHoldRecord): Promise<boolean> {
+  return tx.replaceGitHoldRow ? tx.replaceGitHoldRow(input.sourceId, input.incarnation, input.path, expected, next)
+    : holdStore.replaceGitHoldRow(tx, input.sourceId, input.incarnation, input.path, expected, next);
+}
+
+function deleteRow(tx: HoldStore, input: { sourceId: string; incarnation: string; path: string }): Promise<void> {
+  return tx.deleteGitHoldRow ? tx.deleteGitHoldRow(input.sourceId, input.incarnation, input.path) : holdStore.deleteGitHoldRow(tx, input.sourceId, input.incarnation, input.path);
 }
 
 /** GBRA-542: the hold record as readers return it, marked when its source is a read-only mirror (`s`: the sources row). */
@@ -383,9 +395,7 @@ export async function writeGitHold(tx: Exec, input: Omit<GitHoldRecord, 'version
     ...(existing.meta.content_repair && !input.meta.content_repair ? { content_repair: existing.meta.content_repair } : {}) } : {};
   const record: GitHoldRecord = { version: 1, ...input, meta: { ...kept, ...(keepDeleted ? { keep_deleted: keepDeleted } : {}), ...input.meta, attempts, ...escalationStamps(existing, input, now) },
     held_at: existing && existing.upstream_version === input.upstream_version && existing.code === input.code ? existing.held_at : now, updated_at: now };
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [GIT_HOLD_OP, gitHoldFingerprint(input.source_id, input.incarnation, input.path), JSON.stringify([record])]);
+  await writeRow(tx, record);
   if (existing) {
     const next = weightsOf(input), prior = weightsOf(existing);
     if (SUMMARY_COUNTERS.some(name => next[name] !== prior[name])) {
@@ -444,10 +454,7 @@ async function rewriteHoldMeta(tx: Exec, input: { sourceId: string; incarnation:
   if (!meta) return null;
   const now = new Date().toISOString();
   const record: GitHoldRecord = { ...existing, meta: { ...existing.meta, ...escalationStamps(existing, existing, now), ...meta }, updated_at: now };
-  const rows = await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=$3::text::jsonb, updated_at=now()
-      WHERE op=$1 AND fingerprint=$2 AND completed_keys=$4::text::jsonb RETURNING 1`,
-  [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path), JSON.stringify([record]), JSON.stringify([existing])]);
-  return rows.length ? record : null;
+  return await replaceRow(tx, input, existing, record) ? record : null;
 }
 
 /**
@@ -465,12 +472,12 @@ export function recordKeepDeleted(tx: Exec, input: { sourceId: string; incarnati
  * run doing it, so an older run never clears a newer hold.
  */
 export async function clearGitHold(tx: Exec, input: { sourceId: string; incarnation: string; path: string; observedAt: string }): Promise<boolean> {
-  const [any] = await tx.executeRaw('SELECT 1 FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path)]);
-  if (!any) return false;
+  // An unlocked look first, so a path with no hold takes no summary lock.
+  if (!await readRow(tx, input.sourceId, input.incarnation, input.path)) return false;
   await lockSummary(tx, input.sourceId, input.incarnation);
   const existing = await readRow(tx, input.sourceId, input.incarnation, input.path);
   if (!existing || existing.observed_at > input.observedAt) return false;
-  await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path)]);
+  await deleteRow(tx, input);
   await adjustSummary(tx, input.sourceId, input.incarnation, -1, weightsOf(existing, -1));
   return true;
 }
@@ -551,31 +558,26 @@ export async function readGitHold(engine: Exec, sourceId: string, incarnation: s
 }
 
 /** #5493: unsupported-image holds per source's current incarnation (sources with none are absent); they never escalate. */
-export async function readGitImageHoldCounts(engine: Exec, sourceIds: string[]): Promise<Map<string, number>> {
+export async function readGitImageHoldCounts(engine: HoldStore, sourceIds: string[]): Promise<Map<string, number>> {
   if (!sourceIds.length) return new Map();
-  const rows = await engine.executeRaw<{ source_id: string; images: number | string }>(`SELECT s.id AS source_id, COALESCE((h.completed_keys->0->>'images')::int,0) AS images
-    FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
-    WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
-  return new Map(rows.map(row => [row.source_id, Number(row.images)]));
+  const rows = engine.readGitImageHoldCountRows ? await engine.readGitImageHoldCountRows(sourceIds) : await holdStore.readGitImageHoldCountRows(engine, sourceIds);
+  return new Map(rows.map(row => [row.source_id, row.images]));
 }
 
 /** Outstanding holds of the source's current incarnation (one indexed read). */
-export async function countGitHolds(engine: Exec, sourceId: string, incarnation: string): Promise<number> {
-  const [row] = await engine.executeRaw<{ count: number | string }>("SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count FROM op_checkpoints WHERE op=$1 AND fingerprint=$2",
-    [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation)]);
-  return Number(row?.count ?? 0);
+export function countGitHolds(engine: HoldStore, sourceId: string, incarnation: string): Promise<number> {
+  return engine.countGitHolds ? engine.countGitHolds(sourceId, incarnation) : holdStore.countGitHolds(engine, sourceId, incarnation);
 }
 
 /**
  * Git-source holds of each source's current incarnation (sources with none are
  * omitted). Connector holds are read by `readAllSourceHolds`; only `sources
- * status` and `sources retry-held` merge the two.
+ * status` and `sources retry-held` merge the two. Reads through the typed
+ * readGitHoldRecords member when the engine has it (a Rust brain), else the same
+ * statement over an executeRaw-only view.
  */
-export async function readGitSourceHolds(engine: Exec, opts: { sourceIds?: string[]; runId?: string } = {}): Promise<GitSourceHolds[]> {
-  const rows = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
-    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
-    ORDER BY s.id,h.fingerprint`, [GIT_HOLD_OP, opts.sourceIds ?? null, opts.runId ?? null]);
+export async function readGitSourceHolds(engine: HoldsReader, opts: GitHoldRecordsQuery = {}): Promise<GitSourceHolds[]> {
+  const rows = 'readGitHoldRecords' in engine ? await engine.readGitHoldRecords<GitHoldRecord>(opts) : await readGitHoldRecordsOver<GitHoldRecord>(engine, opts);
   const out = new Map<string, GitSourceHolds>();
   for (const { record } of rows) {
     const entry = out.get(record.source_id) ?? { sourceId: record.source_id, incarnation: record.incarnation, count: 0, holds: [] };
@@ -590,17 +592,10 @@ export async function readGitSourceHolds(engine: Exec, opts: { sourceIds?: strin
  * (its summary row) and its first `limit` holds in path order, limited in SQL
  * so a source with 20k holds never loads them all.
  */
-export async function readGitHoldListing(engine: Exec, sourceIds: string[], limit: number): Promise<GitSourceHolds[]> {
+export async function readGitHoldListing(engine: HoldStore, sourceIds: string[], limit: number): Promise<GitSourceHolds[]> {
   if (!sourceIds.length) return [];
-  const rows = await engine.executeRaw<{ source_id: string; incarnation: string; count: number | string; record: GitHoldRecord | null }>(`SELECT s.id AS source_id,
-      s.incarnation::text AS incarnation, COALESCE((sm.completed_keys->0->>'count')::int,0) AS count, h.record
-    FROM sources s
-    JOIN op_checkpoints sm ON sm.op=$1 AND sm.fingerprint=s.id||':'||s.incarnation::text
-    LEFT JOIN LATERAL (SELECT x.fingerprint, CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(x.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE x.completed_keys->0 END AS record FROM op_checkpoints x
-      WHERE x.op=$2 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
-      ORDER BY x.fingerprint LIMIT $4) h ON true
-    WHERE s.id=ANY($3::text[]) AND COALESCE((sm.completed_keys->0->>'count')::int,0)>0
-    ORDER BY s.id, h.fingerprint`, [GIT_HOLD_SUMMARY_OP, GIT_HOLD_OP, sourceIds, Math.max(0, Math.floor(limit))]);
+  const rows = engine.readGitHoldListingRows ? await engine.readGitHoldListingRows<GitHoldRecord>(sourceIds, limit)
+    : await holdStore.readGitHoldListingRows<GitHoldRecord>(engine, sourceIds, limit);
   const out = new Map<string, GitSourceHolds>();
   for (const row of rows) {
     const entry = out.get(row.source_id) ?? { sourceId: row.source_id, incarnation: row.incarnation, count: Number(row.count), holds: [] };
@@ -611,13 +606,11 @@ export async function readGitHoldListing(engine: Exec, sourceIds: string[], limi
 }
 
 /** GST-2843: each listed source's holds counted per code, over every hold of its current incarnation (not a listing's first rows). */
-export async function readGitHoldCodeCounts(engine: Exec, sourceIds: string[]): Promise<Map<string, Record<string, number>>> {
+export async function readGitHoldCodeCounts(engine: HoldStore, sourceIds: string[]): Promise<Map<string, Record<string, number>>> {
   const out = new Map<string, Record<string, number>>();
   if (!sourceIds.length) return out;
-  const rows = await engine.executeRaw<{ source_id: string; code: string; n: number | string }>(`SELECT s.id AS source_id, x.completed_keys->0->>'code' AS code, count(*) AS n
-    FROM sources s JOIN op_checkpoints x ON x.op=$1 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
-    WHERE s.id=ANY($2::text[]) GROUP BY 1,2`, [GIT_HOLD_OP, sourceIds]);
-  for (const row of rows) out.set(row.source_id, { ...out.get(row.source_id), [row.code]: Number(row.n) });
+  const rows = engine.readGitHoldCodeCountRows ? await engine.readGitHoldCodeCountRows(sourceIds) : await holdStore.readGitHoldCodeCountRows(engine, sourceIds);
+  for (const row of rows) out.set(row.source_id, { ...out.get(row.source_id), [String(row.code)]: row.n });
   return out;
 }
 
@@ -1159,11 +1152,11 @@ export async function recordSyncConversion(tx: Exec, sourceId: string, incarnati
 }
 
 /** The conversion log of each listed source's current incarnation, newest first (sources with none are absent). */
-export async function readSyncConversions(engine: Exec, sourceIds: string[], limit: number): Promise<Map<string, SyncConversion[]>> {
+export async function readSyncConversions(engine: HoldStore, sourceIds: string[], limit: number): Promise<Map<string, SyncConversion[]>> {
   const out = new Map<string, SyncConversion[]>();
   if (!sourceIds.length || limit <= 0) return out;
-  const rows = await engine.executeRaw<{ source_id: string; conversions: SyncConversion[] | null }>(`SELECT s.id AS source_id, c.completed_keys->0->'conversions' AS conversions
-    FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text WHERE s.id=ANY($2::text[])`, [SYNC_CONVERSION_OP, sourceIds]);
+  const rows = engine.readSyncConversionRows ? await engine.readSyncConversionRows<SyncConversion>(sourceIds)
+    : await holdStore.readSyncConversionRows<SyncConversion>(engine, sourceIds);
   for (const row of rows) if (Array.isArray(row.conversions) && row.conversions.length) out.set(row.source_id, row.conversions.slice(0, limit));
   return out;
 }
@@ -1180,10 +1173,10 @@ export async function requestGitHoldRetry(engine: Exec, sourceId: string, incarn
   [GIT_HOLD_RETRY_OP, summaryFingerprint(sourceId, incarnation), sourceId, JSON.stringify(paths), incarnation]);
 }
 
-export async function readGitHoldRetryPaths(engine: Exec, sourceId: string, incarnation: string): Promise<string[]> {
-  const [row] = await engine.executeRaw<{ completed_keys: Array<{ paths?: unknown }> }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [GIT_HOLD_RETRY_OP, summaryFingerprint(sourceId, incarnation)]);
-  const paths = row?.completed_keys?.[0]?.paths;
+export async function readGitHoldRetryPaths(engine: RetryReader, sourceId: string, incarnation: string): Promise<string[]> {
+  const fingerprint = summaryFingerprint(sourceId, incarnation);
+  const keys = 'readGitHoldRetryRequest' in engine ? await engine.readGitHoldRetryRequest(fingerprint) : await readGitHoldRetryRequestOver(engine, fingerprint);
+  const paths = keys?.[0]?.paths;
   return Array.isArray(paths) ? paths.filter((p): p is string => typeof p === 'string') : [];
 }
 
@@ -1442,17 +1435,12 @@ export function fencesNormalizedReport(sourceId: string, tally: FencesTally | un
  * source's outstanding total, escalation, and the exact inspect and repair
  * commands. Remote callers get the counts and a relay instruction only.
  */
-export async function buildHoldReport(engine: Exec, input: { sourceId: string; incarnation: string; runId: string; remote: boolean;
+export async function buildHoldReport(engine: ReportReader, input: { sourceId: string; incarnation: string; runId: string; remote: boolean;
   policy: SyncHoldPolicy | Promise<SyncHoldPolicy>; screened: number; pendingScreen?: boolean; needsHuman?: (record: GitHoldRecord, auto: FenceAutoRepair | undefined) => boolean }): Promise<Pick<import('../../commands/sync.ts').SyncResult,
   'held' | 'held_count' | 'held_needs_human' | 'holds_outstanding' | 'holds_escalated' | 'holds_truncated' | 'holds_pending_screen' | 'holds_fix'>> {
   // #6712 PR 4b: the summary, this run's holds and the policy (a caller may pass its read in flight) in one round trip.
-  const [[summary], sourceHolds, policy, [source]] = await Promise.all([engine.executeRaw<{ count: number | string; images: number | string; fences: number | string; stalled: number | string; concurrent: number | string; dirty: number | string; drift: number | string }>(`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
-      COALESCE((completed_keys->0->>'drift')::int,0) AS drift,
-      COALESCE((completed_keys->0->>'images')::int,0) AS images, COALESCE((completed_keys->0->>'fences')::int,0) AS fences, COALESCE((completed_keys->0->>'stalled')::int,0) AS stalled,
-      COALESCE((completed_keys->0->>'concurrent')::int,0) AS concurrent, COALESCE((completed_keys->0->>'dirty')::int,0) AS dirty
-    FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(input.sourceId, input.incarnation)]), readGitSourceHolds(engine, { sourceIds: [input.sourceId], runId: input.runId }), input.policy,
-    engine.executeRaw<{ mirror: string | null }>("SELECT config->>'mirror_read_only' AS mirror FROM sources WHERE id=$1", [input.sourceId])]);
+  const [{ summary, mirror }, sourceHolds, policy] = await Promise.all([readGitHoldReportInputsFor(engine, input.sourceId, summaryFingerprint(input.sourceId, input.incarnation)),
+    readGitSourceHolds(engine, { sourceIds: [input.sourceId], runId: input.runId }), input.policy]);
   const outstanding = Number(summary?.count ?? 0);
   const runHolds = sourceHolds[0]?.holds ?? [];
   if (!outstanding && !runHolds.length) return {};
@@ -1469,7 +1457,7 @@ export async function buildHoldReport(engine: Exec, input: { sourceId: string; i
   // #7199: this run's holds whose verdict waits on a person (sync-status.ts holdVerdict).
   const needsHuman = input.needsHuman ? runHolds.filter(hold => input.needsHuman!(hold, auto)).length : 0;
   const steps = holdRepairSteps(input.sourceId, { fences, others: Math.max(0, outstanding - fences - stalled - concurrent - dirty - drift - slugConflicts), ...(stalled ? { stalled } : {}),
-    ...(concurrent ? { concurrent } : {}), ...(dirty ? { dirty } : {}), ...(drift ? { drift } : {}), ...(slugConflicts ? { slug_conflicts: slugConflicts } : {}), ...(source?.mirror === 'true' ? { mirror: true } : {}) }, auto);
+    ...(concurrent ? { concurrent } : {}), ...(dirty ? { dirty } : {}), ...(drift ? { drift } : {}), ...(slugConflicts ? { slug_conflicts: slugConflicts } : {}), ...(mirror === 'true' ? { mirror: true } : {}) }, auto);
   // #6278: the escalation text is routed by code: stalled holds point at the writer, not at a generator.
   const runStalled = runHolds.filter(hold => stalledWeight(hold)).length;
   const escalation = runStalled * 2 > runHolds.length

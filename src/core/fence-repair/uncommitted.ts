@@ -19,10 +19,11 @@ import { commitPushCommand } from '../git/commit-push.ts';
 import type { FenceRepairReceipt } from './receipt.ts';
 import { fenceRepairCommitSubject } from './receipt.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { FENCE_UNCOMMITTED_OP } from './uncommitted-op.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
-export const FENCE_UNCOMMITTED_OP = 'fence-repair-uncommitted';
+export { FENCE_UNCOMMITTED_OP };
 
 export interface UncommittedFenceRepair {
   source_id: string;

@@ -74,4 +74,67 @@ impl Brain {
             s.delete_op_checkpoint_paths(&op, &fingerprint)
         })
     }
+
+    /// `purgeStaleCheckpoints(ttlDays)`: how many stale checkpoints it deleted.
+    #[napi]
+    pub fn purge_stale_checkpoints<'env>(
+        &self,
+        env: &'env Env,
+        ttl_days: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.purge_stale_checkpoints(ttl_days))
+    }
+
+    /// `readOpCheckpointRow(op, fingerprint)`: `{ fingerprint, completed_keys, updated_at }` or null.
+    #[napi]
+    pub fn read_op_checkpoint_row<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_op_checkpoint_row(&op, &fingerprint))
+    }
+
+    /// `putOpCheckpointRow(op, fingerprint, completedKeys)`: the row created or replaced.
+    #[napi]
+    pub fn put_op_checkpoint_row<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        completed_keys: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.put_op_checkpoint_row(&op, &fingerprint, completed_keys)
+        })
+    }
+
+    /// `replaceOpCheckpointRow(op, fingerprint, expected, completedKeys)`: whether it landed.
+    #[napi]
+    pub fn replace_op_checkpoint_row<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        expected: Value,
+        completed_keys: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.replace_op_checkpoint_row(&op, &fingerprint, &expected, completed_keys)
+        })
+    }
+
+    /// `listOpCheckpointRows(op, fingerprintPrefix)`: the rows in fingerprint byte order.
+    #[napi]
+    pub fn list_op_checkpoint_rows<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint_prefix: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_op_checkpoint_rows(&op, &fingerprint_prefix)
+        })
+    }
 }

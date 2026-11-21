@@ -597,6 +597,22 @@ impl Store {
         Ok(load_client(&*read, client_id)?.map(|c| c.to_row()))
     }
 
+    /// `[{ id, name }]` (`client_id`, `client_name`) of the clients whose id is one of `ids`, by id; an id no client has is
+    /// left out. The names `get_write_attribution` shows for an OAuth client.
+    pub fn read_oauth_client_names(&self, ids: &[String]) -> Result<Value> {
+        let read = self.read()?;
+        let mut wanted: Vec<&String> = ids.iter().collect();
+        wanted.sort();
+        wanted.dedup();
+        let mut rows = Vec::new();
+        for id in wanted {
+            if let Some(c) = load_client(&*read, id)? {
+                rows.push(json!({ "id": c.client_id, "name": c.client_name }));
+            }
+        }
+        Ok(Value::Array(rows))
+    }
+
     /// `listOauthClients()`: every client's whole row (as `read_oauth_client` returns it), by name then id in byte
     /// order, as `ORDER BY client_name COLLATE "C", client_id COLLATE "C"` sorts.
     pub fn list_oauth_clients(&self) -> Result<Value> {

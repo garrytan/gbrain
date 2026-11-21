@@ -3,7 +3,7 @@
  * `executeRaw` (engine-sql/facts-repair.ts, facts-doctor.ts, facts-trust.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: listActiveSourceIds, listUnarchivedSourceIds, readRepairBrainId, listAgentSessionTakeCandidates,
+ *  - Contract: listActiveSourceIds, listUnarchivedSourceRows, readRepairBrainId, listAgentSessionTakeCandidates,
  *    listSettledSessionFacts, reattributeSessionFacts, retireSessionTakes, listInactiveTakeIds, listFenceRewriteRows,
  *    listOtherAttributedFactIds, expireCapturedFacts, listExpiredFactIds, listPagelessEntityFacts, listSourceIncarnations,
  *    readEntityRehomeState, rehomeEntityFacts, countSegmentedCensusPages, listFactsPageBodies, readFactTableCatalog,
@@ -66,15 +66,15 @@ const namer = (names: Record<string, number>) => {
 };
 
 describe('engine parity: facts repair, doctor and trust statements that left executeRaw', () => {
-  parityTest('listActiveSourceIds and listUnarchivedSourceIds list the sources that are not archived, by id', {
-    methods: ['listActiveSourceIds', 'listUnarchivedSourceIds'],
+  parityTest('listActiveSourceIds and listUnarchivedSourceRows list the sources that are not archived, by id', {
+    methods: ['listActiveSourceIds', 'listUnarchivedSourceRows'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'zeta');
     await createSource(engine, backend, 'alpha');
     await createSource(engine, backend, 'retired');
     await archiveSource(engine, backend, 'retired');
     const active = await engine.listActiveSourceIds();
-    const unarchived = await engine.listUnarchivedSourceIds();
+    const unarchived = await engine.listUnarchivedSourceRows();
     expect(active.map(r => r.id)).toEqual(['alpha', 'default', 'zeta']);
     expect(unarchived.map(r => r.id)).toEqual(['alpha', 'default', 'zeta']);
     return { active, unarchived };

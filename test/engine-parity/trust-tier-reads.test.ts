@@ -9,10 +9,12 @@
  *    listVersionTrustTiers and listVersionReasonWriters read the snapshot tier of a version and the writer that replaced
  *    it; listValidTimeIdentities lists the live pages with a slug in the source scope by source; pickValidTimeEdition
  *    picks the edition in force on a date with its competing ordinals and counts; readBeliefHistoryRows and
- *    listVisibleBeliefLifetimes answer the same on PGLite and Postgres; pageAwaitsRederive says whether a purge hid the
+ *    listVisibleBeliefLifetimes answer the same on every arm (belief-ledger.test.ts writes their events); pageAwaitsRederive says whether a purge hid the
  *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end; listPageRefsByIds names
- *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
- *    the page, fact, version and valid-time reads, refuses the belief reads, and stops typed where the pick would need a
+ *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads;
+ *    listPageTrustTiersByKey reads each named page's stored tier (deleted pages included) and lockLivePagesByKey names
+ *    the live ones, so a page's own timeline lands through addProjectedPageTimeline and a missing page refuses. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
+ *    the page, fact, version, valid-time and belief reads, and stops typed where the pick would need a
  *    change reason or a history gap the store does not keep.
  *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
  *    members; an engine that drops an option shows a page the reader may not see or a row the scan should skip.
@@ -31,11 +33,13 @@ import { setPackRelationSemantics } from '../../src/core/link-validity.ts';
 import { EXAMPLE_PACK, useExamplePack } from '../helpers/amends-ranking-scenarios.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { operations } from '../../src/core/operations.ts';
+import { pageTypesById } from '../../src/core/search/transcript-quote.ts';
+import { quoteTimelineRows } from '../../src/core/ops/timeline-quote.ts';
+import { addProjectedPageTimeline } from '../../src/core/trust/timeline-projection.ts';
+import { PageMissingError } from '../../src/core/engine-errors.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
-import { pageTypesById } from '../../src/core/search/transcript-quote.ts';
-import { quoteTimelineRows } from '../../src/core/ops/timeline-quote.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -286,19 +290,10 @@ describe('engine parity: typed trust tier reads', () => {
   );
 
   parityTest(
-    'readBeliefHistoryRows and listVisibleBeliefLifetimes answer an empty ledger and an unknown lifetime, and Rust refuses both for its missing ledger',
+    'readBeliefHistoryRows and listVisibleBeliefLifetimes answer an empty ledger and an unknown lifetime',
     { methods: ['readBeliefHistoryRows', 'listVisibleBeliefLifetimes'] },
-    async (engine, backend) => {
+    async (engine) => {
       const base = { sourceId: 'default', slug: null, subjectKey: null, afterId: 0, limit: 10, recordedAfter: null, recordedUntil: null, subjectKeys: null, beforeId: null };
-      if (backend === 'rust') {
-        // The store keeps no belief ledger, so no input, an empty lifetime list included, may answer an empty list.
-        const refusals = [await engine.readBeliefHistoryRows({ ...base, descending: false }).then(() => null, (e: unknown) => e),
-          await engine.listVisibleBeliefLifetimes([]).then(() => null, (e: unknown) => e),
-          await engine.listVisibleBeliefLifetimes(['00000000-0000-4000-8000-000000000001']).then(() => null, (e: unknown) => e)];
-        expect(refusals.map(e => (e instanceof Error ? /the belief ledger, which the store does not keep/.test(e.message) : e)))
-          .toEqual([true, true, true]);
-        throw refusals[0];
-      }
       const asc = await engine.readBeliefHistoryRows({ ...base, descending: false });
       const desc = await engine.readBeliefHistoryRows({ ...base, slug: 'x', subjectKeys: ['k'], beforeId: 5, recordedAfter: '2026-01-01T00:00:00Z', descending: true });
       const lifetimes = await engine.listVisibleBeliefLifetimes(['00000000-0000-4000-8000-000000000001']);
@@ -337,6 +332,41 @@ describe('engine parity: typed trust tier reads', () => {
       expect(pinned).toMatchObject({ ord: 'current' });
       expect(gone).toBeNull();
       return { march, july, before, pinned, gone };
+    },
+  );
+
+  parityTest(
+    'pickValidTimeEdition reads each edition\'s change reason, the reason that introduced it and the page\'s history gap',
+    { methods: ['putPage', 'createVersion', 'getPage', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const write = (validFrom: string, frontmatter: Record<string, unknown> = {}) =>
+        engine.putPage('vt/why', { type: 'note', title: 'VT', compiled_truth: `body ${validFrom}`, timeline: '', frontmatter: { valid_from: validFrom, ...frontmatter } });
+      await write('2026-01-01');
+      await engine.createVersion('vt/why', { sourceId: 'default', reason: 'Open the note' });
+      await write('2026-04-01', { visibility: 'private' });
+      await engine.createVersion('vt/why', { sourceId: 'default', reason: 'Record a private term', historyGap: true });
+      await write('2026-08-01');
+      await engine.putPage('vt/no-gap', { type: 'note', title: 'VT', compiled_truth: 'body', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
+      const pageId = (await engine.getPage('vt/why', { sourceId: 'default' }))!.id;
+      const plainId = (await engine.getPage('vt/no-gap', { sourceId: 'default' }))!.id;
+      const pick = async (asOf: string, excludePrivate = false, id = pageId) => {
+        const r = await engine.pickValidTimeEdition({ pageId: id, asOf, excludePrivate, pinOrd: null, inlineMaxBytes: 1_000_000 });
+        return r && { valid_from: r.valid_from, reason: r.reason ?? null, introduced_because: r.introduced_because ?? null, gap: r.gap_at instanceof Date };
+      };
+      const picks = {
+        first: await pick('2026-02-01'), second: await pick('2026-05-01'), current: await pick('2026-09-01'),
+        firstHidden: await pick('2026-02-01', true), currentHidden: await pick('2026-09-01', true), plain: await pick('2026-02-01', false, plainId),
+      };
+      expect(picks).toEqual({
+        first: { valid_from: '2026-01-01', reason: 'Open the note', introduced_because: null, gap: true },
+        second: { valid_from: '2026-04-01', reason: 'Record a private term', introduced_because: 'Open the note', gap: true },
+        current: { valid_from: '2026-08-01', reason: null, introduced_because: 'Record a private term', gap: true },
+        // A private successor hides the reason under excludePrivate, and a hidden edition introduces nothing.
+        firstHidden: { valid_from: '2026-01-01', reason: null, introduced_because: null, gap: true },
+        currentHidden: { valid_from: '2026-08-01', reason: null, introduced_because: null, gap: true },
+        plain: { valid_from: '2026-01-01', reason: null, introduced_because: null, gap: false },
+      });
+      return picks;
     },
   );
 
@@ -727,5 +757,41 @@ describe('engine parity: typed trust tier reads', () => {
     const quoted = await quoteTimelineRows({ engine, remote: true }, 'quote/chat', rows);
     expect(quoted.map(r => ('quoted' in r ? r.quoted : null))).toEqual(['transcript', null]);
     return { byName, refs, quoted: quoted.map(r => ({ quoted: 'quoted' in r ? r.quoted : null, summary: r.summary })) };
+  });
+
+  parityTest('listPageTrustTiersByKey and lockLivePagesByKey read pages by source and slug; a page timeline projects through them', {
+    methods: ['putPage', 'softDeletePage', 'transaction', 'listPageTrustTiersByKey', 'lockLivePagesByKey', 'addTimelineEntriesBatch', 'getTimeline'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await declared(engine, 'operator_curated', tx => tx.putPage('tier/curated', { type: 'note', title: 'Curated', compiled_truth: 'curated body', timeline: '' }));
+    await engine.putPage('tier/plain', { type: 'note', title: 'Plain', compiled_truth: 'plain body', timeline: '' });
+    await engine.putPage('tier/gone', { type: 'note', title: 'Gone', compiled_truth: 'gone body', timeline: '' });
+    await engine.putPage('tier/curated', { type: 'note', title: 'Elsewhere', compiled_truth: 'other body', timeline: '' }, { sourceId: 'other' });
+    await engine.softDeletePage('tier/gone', { sourceId: 'default' });
+    const keys = [
+      { source_id: 'default', slug: 'tier/curated' }, { source_id: 'default', slug: 'tier/plain' }, { source_id: 'default', slug: 'tier/gone' },
+      { source_id: 'other', slug: 'tier/curated' }, { source_id: 'default', slug: 'tier/missing' }, { source_id: 'default', slug: 'tier/plain' },
+    ];
+    const byKey = <R extends { source_id: string; slug: string }>(rows: R[]): R[] => [...rows].sort((a, b) => `${a.source_id}/${a.slug}`.localeCompare(`${b.source_id}/${b.slug}`));
+    const tiers = byKey(await engine.listPageTrustTiersByKey(keys));
+    for (const row of tiers) expect(Number.isInteger(row.id)).toBe(true);
+    const tierView = tiers.map(r => ({ key: `${r.source_id}/${r.slug}`, tier: r.trust_tier ?? 'unknown' }));
+    // A key named twice answers twice: the read joins the keys as given (the callers pass each page once).
+    expect(tierView.map(r => r.key)).toEqual(['default/tier/curated', 'default/tier/gone', 'default/tier/plain', 'default/tier/plain', 'other/tier/curated']);
+    expect(tierView[0]!.tier).toBe('operator_curated');
+    expect(await engine.listPageTrustTiersByKey([])).toEqual([]);
+    const live = await engine.transaction(async tx => byKey(await tx.lockLivePagesByKey(keys)));
+    expect(live.map(r => `${r.source_id}/${r.slug}`)).toEqual(['default/tier/curated', 'default/tier/plain', 'default/tier/plain', 'other/tier/curated']);
+    const projected = await addProjectedPageTimeline(engine, 'default', [
+      { slug: 'tier/curated', date: '2026-01-02', summary: 'second' },
+      { slug: 'tier/curated', date: '2026-01-01', summary: 'first' },
+    ]);
+    expect(projected).toEqual({ created: 2 });
+    const timeline = (await engine.getTimeline('tier/curated', { sourceId: 'default' })).map(t => String(t.summary)).sort();
+    expect(timeline).toEqual(['first', 'second']);
+    let refused: unknown = null;
+    try { await addProjectedPageTimeline(engine, 'default', [{ slug: 'tier/gone', date: '2026-01-01', summary: 'late' }]); } catch (e) { refused = e; }
+    expect(refused).toBeInstanceOf(PageMissingError);
+    return { tierView, live, projected, timeline };
   });
 });

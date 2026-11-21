@@ -7,12 +7,20 @@
  * caller's reader identity and private-readable grant included; any other caller whose policy differs (folder rules,
  * lineage, an owner read) refuses. The store does not read owner-only sources yet, so a policy read refuses while
  * the brain has one, rather than show its pages.
+ *
+ * Identity decisions (listEntityKeyRows, listIdentityDecisions, listRestrictedIdentityMembers, applyIdentityDecisions;
+ * SQL in engine-sql/entity-keys.ts and engine-sql/identity-decisions.ts) live in gbrain-store `identity_reviews`.
  */
 import { identityPageNotFound, type CanonicalTwinRow, type EntityIdentityFilter, type EntityIdentityLinkInput, type EntityIdentityPageRow, type EntityIdentityRow, type EntityIdentityUnlinkInput } from '../../engine-sql/entity-identities.ts';
 import type { SourceRoutingRow } from '../../engine-sql/sources.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { storePagePolicy } from './private-provenance.ts';
+import type { EntityKeyRow, EntityKeyRowsOpts } from '../../engine-sql/entity-keys.ts';
+import type {
+  ApplyIdentityDecisionsInput, ApplyIdentityDecisionsResult, IdentityDecisionsRead, IdentityMemberRef,
+} from '../../engine-sql/identity-decisions.ts';
+import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
+import { pagePolicyFlags, storePagePolicy } from './private-provenance.ts';
 
 /** Links the live page into the group; the identity page-not-found error with no live page. */
 export const linkEntityIdentityRow: StoreMember<[input: EntityIdentityLinkInput], void> = async (brain, input) => {
@@ -58,3 +66,42 @@ export const readEntityIdentityIdsForPages: StoreMember<[pages: ReadonlyArray<{ 
 /** The live canonical members of the page's group in another source, at most two. */
 export const readCanonicalTwin: StoreMember<[sourceId: string, slug: string], CanonicalTwinRow[]> = (brain, sourceId, slug) =>
   storeCall({ member: 'readCanonicalTwin', slug, sourceId }, () => brain.readCanonicalTwin(sourceId, slug)) as Promise<CanonicalTwinRow[]>;
+
+/**
+ * Duplicate finder read. Refused: each row carries the page's `generation`, which the company sweep's automatic links
+ * check before they write, and the store keeps no page generation; the store read also has no `members` or `tokens`
+ * filter. The store method stays for the serve that adds them.
+ */
+export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKeyRow[]> = async () =>
+  refuseMember('listEntityKeyRows', 'the store keeps no page generation');
+
+/** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. */
+export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = (brain) =>
+  storeCall({ member: 'listIdentityDecisions' }, () => brain.listIdentityDecisions());
+
+/** The members whose page the no-caller page policy (`privatePagesFilterFragment`) hides. */
+export const listRestrictedIdentityMembers: StoreMember<[members: ReadonlyArray<IdentityMemberRef>], IdentityMemberRef[]> = async (brain, members) => {
+  if (!members.length) return [];
+  return storeCall({ member: 'listRestrictedIdentityMembers' }, () => brain.listRestrictedIdentityMembers(
+    members.map(m => ({ source_id: m.source_id, slug: m.slug })), pagePolicyFlags(privatePagesFilterFragment('p'))));
+};
+
+/**
+ * Writes and removes decisions and reconciles the 'dedupe:confirm' identity rows in one store write. The company
+ * sweep's automatic links (`auto`) refuse: they are checked against page generations, which the store does not keep.
+ * With them refused no 'dedupe:auto' row exists on this engine, so the SQL engines' automatic-row cleanup has nothing
+ * to remove here.
+ */
+export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsInput], ApplyIdentityDecisionsResult> = async (brain, input) => {
+  if (input.auto) refuseMember('applyIdentityDecisions', 'option auto');
+  return storeCall({ member: 'applyIdentityDecisions' }, () => brain.applyIdentityDecisions({
+    upsert: (input.upsert ?? []).map(d => ({
+      decision_id: d.decision_id, verdict: d.verdict, members: d.members, group_id: d.group_id ?? null, entity_id: d.entity_id ?? null,
+      canonical: d.canonical ? { source_id: d.canonical.source_id, slug: d.canonical.slug } : null, decided_by: d.decided_by,
+      decided_at: d.decided_at ?? null, origin: d.origin, home_source_id: d.home_source_id ?? null, git_blob: d.git_blob ?? null,
+      evidence: d.evidence?.length ? [...d.evidence] : null,
+    })),
+    remove: [...(input.remove ?? [])],
+    expect_revision: input.expectRevision ?? null,
+  }));
+};

@@ -9,8 +9,8 @@ use gbrain_store::journal::Principal;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::persistence::{
     ClaimRelease, ClaimStamp, ClaimableSpec, ExpireClaims, HousekeepingClaim, HousekeepingTurn,
-    ProjectionWindowCursor, SegmentedProjectionFilter, TopologyChangeInsert, WriteCancellation,
-    WriteCompletion, WriteRequestInsert,
+    IncarnationRequestFilter, ProjectionWindowCursor, SegmentedProjectionFilter,
+    TopologyChangeInsert, WriteCancellation, WriteCompletion, WriteRequestInsert,
 };
 use serde_json::{Value, json};
 
@@ -197,6 +197,54 @@ fn an_inserted_request_has_every_column_and_charges_only_existing_counters() {
             .code,
         INVALID_ARGUMENT
     );
+}
+
+#[test]
+fn a_group_insert_is_one_write_and_a_later_refusal_keeps_no_row_or_charge() {
+    let dir = TempDir::new("persist-insert-group");
+    let store = open(&dir);
+    store.lock_persistence_counters(&["brain".into()]).unwrap();
+    let rows = store
+        .insert_write_request_group(&[
+            insert_input(&store, REQ_1, "notes/a", json!({"kind": "put_page"})),
+            insert_input(&store, REQ_2, "notes/b", json!({"kind": "put_page"})),
+        ])
+        .unwrap();
+    let sequences: Vec<_> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["sequence"].clone())
+        .collect();
+    assert_eq!(
+        sequences,
+        vec![json!(1), json!(2)],
+        "one row per item, in item order"
+    );
+    let charged = counter(&store, "brain");
+    assert_eq!(charged["outstanding_count"], 2);
+    // The second item repeats an admitted request id: the store refuses it, and the new first item is not kept.
+    const REQ_3: &str = "b0000000-0000-4000-8000-0000000000b3";
+    let refused = store
+        .insert_write_request_group(&[
+            insert_input(&store, REQ_3, "notes/c", json!({"kind": "put_page"})),
+            insert_input(&store, REQ_1, "notes/a", json!({"kind": "put_page"})),
+        ])
+        .unwrap_err();
+    assert_eq!(refused.code, CONSTRAINT_VIOLATION, "{refused:?}");
+    assert!(
+        store
+            .read_write_request(&principal(), REQ_3)
+            .unwrap()
+            .is_none(),
+        "the first item is dropped with the write"
+    );
+    assert_eq!(
+        counter(&store, "brain"),
+        charged,
+        "no counter charge is kept"
+    );
+    assert_eq!(store.insert_write_request_group(&[]).unwrap(), json!([]));
 }
 
 #[test]
@@ -1324,4 +1372,89 @@ fn release_requeues_only_under_the_claim_token() {
     let charged = store.read_write_request_by_id(id).unwrap().unwrap();
     assert_eq!(charged["preparation_attempts"], 1);
     assert_eq!(charged["claim_phase"], json!({"phase": "preparing"}));
+}
+
+#[test]
+fn incarnation_requests_filter_by_slug_sequence_state_operation_and_request_id() {
+    let dir = TempDir::new("persist-incarnation");
+    let store = open(&dir);
+    store.lock_persistence_counters(&keys()).unwrap();
+    let first = store
+        .insert_write_request(&insert_input(&store, REQ_1, "notes/a", json!({})))
+        .unwrap();
+    let second = store
+        .insert_write_request(&insert_input(&store, REQ_2, "notes/a", json!({})))
+        .unwrap();
+    let id2 = second["id"].as_str().unwrap();
+    store.stamp_write_claim(&stamp(id2, 1000.0, None)).unwrap();
+    store
+        .complete_write_row(&completion(id2, "committed", 512))
+        .unwrap()
+        .unwrap();
+    let filter = |extra: Value| -> IncarnationRequestFilter {
+        let mut base = json!({"sourceId": "default", "incarnation": incarnation(&store)});
+        base.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        serde_json::from_value(base).unwrap()
+    };
+    let seqs = |rows: Vec<Value>| -> Vec<String> {
+        rows.iter()
+            .map(|r| r["request_id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let after_first = first["sequence"].to_string();
+    // Later rows on the slug, oldest first; the first row is not after itself.
+    assert_eq!(
+        seqs(
+            store
+                .list_incarnation_requests(&filter(
+                    json!({"slug": "notes/a", "afterSequence": after_first})
+                ))
+                .unwrap()
+        ),
+        vec![REQ_2]
+    );
+    assert_eq!(
+        seqs(
+            store
+                .list_incarnation_requests(&filter(json!({"slug": "notes/b"})))
+                .unwrap()
+        ),
+        Vec::<String>::new()
+    );
+    // Committed put_page rows by request id, newest first; an upper-case id matches as a uuid does.
+    let committed = json!({"requestIds": [REQ_1, REQ_2.to_uppercase()], "states": ["committed"], "operation": "put_page", "newestFirst": true});
+    assert_eq!(
+        seqs(store.list_incarnation_requests(&filter(committed)).unwrap()),
+        vec![REQ_2]
+    );
+    let both = json!({"requestIds": [REQ_1, REQ_2], "newestFirst": true});
+    assert_eq!(
+        seqs(store.list_incarnation_requests(&filter(both)).unwrap()),
+        vec![REQ_2, REQ_1]
+    );
+    assert_eq!(
+        seqs(
+            store
+                .list_incarnation_requests(&filter(json!({"requestIds": []})))
+                .unwrap()
+        ),
+        Vec::<String>::new()
+    );
+    // Another incarnation gives no row.
+    let other: IncarnationRequestFilter =
+        serde_json::from_value(json!({"sourceId": "default", "incarnation": "other"})).unwrap();
+    assert!(store.list_incarnation_requests(&other).unwrap().is_empty());
+    // A request id that is not a uuid and a sequence that is not a u64 refuse, as the casts do.
+    let bad_id = filter(json!({"requestIds": ["not-a-uuid"]}));
+    assert_eq!(
+        store.list_incarnation_requests(&bad_id).unwrap_err().code,
+        INVALID_ARGUMENT
+    );
+    let bad_seq = filter(json!({"afterSequence": "x"}));
+    assert_eq!(
+        store.list_incarnation_requests(&bad_seq).unwrap_err().code,
+        INVALID_ARGUMENT
+    );
 }

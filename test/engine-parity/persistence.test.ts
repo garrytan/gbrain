@@ -1,6 +1,6 @@
 /**
  * BrainEngine parity — the write-journal members (engine-sql/persistence-journal.ts and persistence-claims.ts): the
- * limit read, the hold reads, one request's admission, claim and completion (in a transaction and member by member),
+ * limit read, the hold reads (held pages, held coverage, git sync holds, held fence results), one request's admission, claim and completion (in a transaction and member by member),
  * the publication's effects insert and the receipt's read of them, the claim upkeep (renewal, expiry, the claimable probe, the FIFO head read) and the admission reads (source membership, topology changes,
  * the ledger's source view).
  *
@@ -20,6 +20,7 @@
 import { describe, expect } from 'bun:test';
 import { basisEmbedding, createSource, parityArms } from './harness.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
+import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
@@ -146,6 +147,93 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('readGitHoldRecords finds no git sync holds on a brain with no held files, for every source, one source or one run', { methods: ['readGitHoldRecords'] }, async (engine) => {
+    const everySource = await engine.readGitHoldRecords();
+    const oneSource = await engine.readGitHoldRecords({ sourceIds: ['default'] });
+    const oneRun = await engine.readGitHoldRecords({ sourceIds: ['default', 'other'], runId: 'run-1' });
+    const answers = { everySource, oneSource, oneRun };
+    expect(answers).toEqual({ everySource: [], oneSource: [], oneRun: [] });
+    return answers;
+  });
+
+  parityTest('readGitHoldRetryRequest finds no pending retry-held request on a brain that never asked for one', { methods: ['readGitHoldRetryRequest'] }, async (engine) => {
+    const request = await engine.readGitHoldRetryRequest('default:1');
+    expect(request).toBeNull();
+    return { request };
+  });
+
+  parityTest('readGitHoldReportInputs finds no hold summary and reads the source mirror flag as text', { methods: ['readGitHoldReportInputs'] }, async (engine, backend) => {
+    const before = await engine.readGitHoldReportInputs('default', 'default:1');
+    expect(before).toEqual({ summary: null, mirror: null });
+    const absent = await engine.readGitHoldReportInputs('no-such-source', 'no-such-source:1');
+    expect(absent).toEqual({ summary: null, mirror: null });
+    await createSource(engine, backend, 'mirror-flag', { mirror_read_only: true });
+    const mirrored = await engine.readGitHoldReportInputs('mirror-flag', 'mirror-flag:1');
+    expect(mirrored).toEqual({ summary: null, mirror: 'true' });
+    return { before, absent, mirrored };
+  });
+
+  parityTest('readWriteWatermarkRow reads the sync point and the outstanding requests of the source incarnation', {
+    methods: ['readWriteWatermarkRow', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
+  }, async (engine) => {
+    const read = async (id: string) => {
+      const row = await engine.readWriteWatermarkRow(id);
+      return { ...row, pending_min: row.pending_min == null ? null : Number(row.pending_min), pending_count: Number(row.pending_count),
+        pending_since: row.pending_since != null, newest_sequence: row.newest_sequence == null ? null : Number(row.newest_sequence) };
+    };
+    const empty = { last_commit: null, last_sync_at: null, pending_min: null, pending_count: 0, pending_since: false, newest_sequence: null };
+    const before = await read('default');
+    const absent = await read('no-such-source');
+    expect(before).toEqual(empty);
+    expect(absent).toEqual(empty);
+    await admitDirect(engine);
+    const queued = await read('default');
+    const absentAfter = await read('no-such-source');
+    expect(queued).toMatchObject({ pending_count: 1, pending_since: true, newest_sequence: null });
+    expect(queued.pending_min).not.toBeNull();
+    expect(absentAfter).toEqual({ ...empty, newest_sequence: queued.pending_min });
+    return { before, absent, queued, absentAfter };
+  });
+
+  parityTest('readSourceCheckoutRoot reads the source incarnation and its own path when this host binds no checkout', {
+    methods: ['readSourceCheckoutRoot', 'readSourceMembership'],
+  }, async (engine, backend) => {
+    const membership = await engine.readSourceMembership('default');
+    const own = await engine.readSourceCheckoutRoot('default', null);
+    expect(own).toEqual({ incarnation: membership!.incarnation, root: null });
+    await createSource(engine, backend, 'rooted', {}, '/var/tmp/parity-rooted');
+    const rooted = await engine.readSourceCheckoutRoot('rooted', '00000000-0000-4000-8000-000000000001');
+    expect(rooted?.root).toBe('/var/tmp/parity-rooted');
+    const absent = await engine.readSourceCheckoutRoot('no-such-source', null);
+    expect(absent).toBeNull();
+    return { own: own && { root: own.root }, rooted: rooted && { root: rooted.root }, absent };
+  });
+
+  parityTest('readUnembeddedPageSummary counts the live pages of one source with a chunk that has no vector, skipping embed_skip', {
+    methods: ['readUnembeddedPageSummary', 'putPage', 'sealChunks'],
+  }, async (engine, backend) => {
+    const read = async (id: string) => {
+      const row = await engine.readUnembeddedPageSummary(id, 'embedding');
+      return { pages: Number(row.pages), oldest: row.oldest instanceof Date, held: Number(row.held) };
+    };
+    const before = await read('default');
+    expect(before).toEqual({ pages: 0, oldest: false, held: 0 });
+    const note = (slug: string, frontmatter: Record<string, unknown> = {}, sourceId?: string) =>
+      engine.putPage(slug, { type: 'note', title: slug, compiled_truth: slug, timeline: '', frontmatter }, sourceId ? { sourceId } : undefined);
+    await createSource(engine, backend, 'elsewhere');
+    await note('notes/waiting');
+    await engine.sealChunks('notes/waiting', [{ chunk_index: 0, chunk_text: 'waiting', chunk_source: 'compiled_truth' }]);
+    await note('notes/skipped', { embed_skip: { reason: 'manual' } });
+    await engine.sealChunks('notes/skipped', [{ chunk_index: 0, chunk_text: 'skipped', chunk_source: 'compiled_truth' }]);
+    await note('notes/other', {}, 'elsewhere');
+    await engine.sealChunks('notes/other', [{ chunk_index: 0, chunk_text: 'other', chunk_source: 'compiled_truth' }], { sourceId: 'elsewhere' });
+    const after = await read('default');
+    expect(after).toEqual({ pages: 1, oldest: true, held: 0 });
+    const absent = await read('no-such-source');
+    expect(absent).toEqual({ pages: 0, oldest: false, held: 0 });
+    return { before, after, absent };
+  });
+
   parityTest('the held fence read is empty on a brain with no held fence result', { methods: ['listFenceHoldRows'] }, async (engine) => {
     const kinds = ['fact_fence', 'take_fence'];
     const everyOwner = await engine.listFenceHoldRows(['default'], kinds);
@@ -154,6 +242,44 @@ describe('engine parity: write journal', () => {
     const answers = { everyOwner, oneOwner, noSources };
     expect(answers).toEqual({ everyOwner: [], oneOwner: [], noSources: [] });
     return answers;
+  });
+
+  parityTest('readSourcePurgeEpoch reads a fresh source as 0 and an unknown source as null; readReasonPurgeTombstones finds none', {
+    methods: ['readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
+  }, async (engine) => {
+    const seen = {
+      epoch: String(await engine.readSourcePurgeEpoch('default')),
+      absent: await engine.readSourcePurgeEpoch('no-such-source'),
+      tombstones: await engine.readReasonPurgeTombstones('default'),
+      absentTombstones: await engine.readReasonPurgeTombstones('no-such-source'),
+    };
+    expect(seen).toEqual({ epoch: '0', absent: null, tombstones: [], absentTombstones: [] });
+    return seen;
+  });
+
+  // Leak case: one source's tombstones never answer for another, and a bumped epoch is read as stored. The Rust store
+  // purges nothing (0 and none above), so the tombstone write stops on the raw_sql refusal.
+  parityTest('readReasonPurgeTombstones reads only the named source; readSourcePurgeEpoch reads a bumped epoch', {
+    methods: ['readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'purged');
+    const write = await engine.executeRaw("UPDATE sources SET purge_epoch = 3 WHERE id = 'purged'").then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(String(await engine.readSourcePurgeEpoch('purged'))).toBe('0');
+      throw write;
+    }
+    await engine.executeRaw(`INSERT INTO reason_purge_tombstones (source_id, commit_sha, path) VALUES
+      ('purged', 'c1', 'notes/a.md'), ('purged', 'c2', 'notes/b.md'), ('default', 'c3', 'notes/c.md')`);
+    const order = (rows: Array<{ commit_sha: string; path: string }>) => rows.map(r => ({ commit_sha: r.commit_sha, path: r.path })).sort((a, b) => a.commit_sha.localeCompare(b.commit_sha));
+    const seen = {
+      epoch: String(await engine.readSourcePurgeEpoch('purged')),
+      defaultEpoch: String(await engine.readSourcePurgeEpoch('default')),
+      purged: order(await engine.readReasonPurgeTombstones('purged')),
+      other: order(await engine.readReasonPurgeTombstones('default')),
+    };
+    expect(seen).toEqual({ epoch: '3', defaultEpoch: '0', purged: [{ commit_sha: 'c1', path: 'notes/a.md' }, { commit_sha: 'c2', path: 'notes/b.md' }], other: [{ commit_sha: 'c3', path: 'notes/c.md' }] });
+    return seen;
   });
 
   parityTest('one request is admitted, read, claimed, locked and completed, and its counters are charged then released', {
@@ -307,6 +433,29 @@ describe('engine parity: write journal', () => {
     expect(result.writer).toEqual([{ source_id: 'default', n: 2 }, { source_id: 'a-c', n: 1 }, { source_id: 'ab', n: 1 }]);
     expect(result.other).toEqual([{ source_id: 'ab', n: 1 }]);
     expect(result.otherKind).toEqual([]);
+    return result;
+  });
+
+  parityTest('the managed-worktree admission reads answer no worktree, no refresh and no held write on a brain with none', {
+    methods: ['readWorktreeAdmission', 'completeSyncedRefresh', 'hasDeferralRoom', 'readRefreshTiming', 'countHeldBehindImport'],
+  }, async (engine) => {
+    const worktreeId = 'f0000000-0000-4000-8000-0000000000a1';
+    const refreshId = 'f0000000-0000-4000-8000-0000000000a2';
+    const source = await engine.readSourceMembership('default');
+    const key = { worktreeId, sourceId: 'default', sourceIncarnation: source!.incarnation, topologyGeneration: 0 };
+    const result = {
+      admission: await engine.readWorktreeAdmission(key),
+      barrier: await engine.readWorktreeAdmission(key, { lockRefresh: true }),
+      completed: await engine.completeSyncedRefresh(refreshId),
+      room: await engine.hasDeferralRoom(worktreeId, 'import_deferral', 30_000),
+      timing: await engine.readRefreshTiming(refreshId),
+      held: await engine.countHeldBehindImport('default', null),
+      heldByWriter: await engine.countHeldBehindImport('default', PRINCIPAL),
+    };
+    expect(result).toEqual({
+      admission: { worktree: null, refresh: null, bound: false }, barrier: { worktree: null, refresh: null, bound: false },
+      completed: false, room: true, timing: null, held: { count: 0, bytes: 0 }, heldByWriter: { count: 0, bytes: 0 },
+    });
     return result;
   });
 
