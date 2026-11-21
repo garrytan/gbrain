@@ -256,6 +256,7 @@ test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/page-embedding-budget.test.ts
 test/engine-parity/page-purge-journal.test.ts
 test/engine-parity/page-purge-reads.test.ts
+test/engine-parity/page-purge-holds.test.ts
 test/engine-parity/page-purge-scrubs.test.ts
 test/engine-parity/page-purge-stores.test.ts
 test/engine-parity/page-purge-sweep.test.ts
