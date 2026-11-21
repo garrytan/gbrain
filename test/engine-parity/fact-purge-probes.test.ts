@@ -204,7 +204,7 @@ describe('engine parity: the store probes of a fact purge receipt', () => {
     return { empty, afterPages, withChunks, afterSoftDelete, afterVersions, afterIntent, afterOutcome, reasonRequest, otherSource, noClaim, afterSegmented, bound };
   });
 
-  parityTest('the content_chunks claim-text probe counts the live, staged and retired chunks of a segmented page alike, and a page of another source not at all', {
+  parityTest('the content_chunks claim-text probe counts the live, staged and retained older-generation chunks of a segmented page alike, and a page of another source not at all', {
     methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'stageSegmentChunks', 'setBodyStagingState',
       'flipBodyGeneration', 'transaction', 'countPurgeProbe', 'setPurgeProbeTimeout'],
     timeout: 120_000,
@@ -221,17 +221,19 @@ describe('engine parity: the store probes of a fact purge receipt', () => {
     const next = segmentText(`Second generation: ${CLAIM}\n`);
     const two = await stageGeneration(engine, { pageId: one.pageId, slug: 'notes/gens', genFrom: 2, texts: [next], chunkTexts: true });
     const staged = await chunks();
-    // Published, with generation 1's occurrence closed and its chunk retired: the probe reads what the engine still holds.
-    await engine.transaction(async tx => {
-      await tx.flipBodyGeneration(flipInput(one.pageId, 1, two.stagingId, [next], { closeOccurrences: [one.occurrences[0]!], retireChunkOccurrences: [one.occurrences[0]!] }));
+    // Published, with generation 1's occurrence closed and its chunk's retire deferred (retireMaxRows 0): the older
+    // generation's chunk row stays stored, and the probe still counts it beside generation 2's.
+    const flip = await engine.transaction(async tx => {
+      const result = await tx.flipBodyGeneration(flipInput(one.pageId, 1, two.stagingId, [next],
+        { closeOccurrences: [one.occurrences[0]!], retireChunkOccurrences: [one.occurrences[0]!], retireMaxRows: 0 }));
       await tx.setBodyStagingState(two.stagingId, 'committed');
+      return result;
     });
     const retired = await chunks();
     // Another source's page with the claim in a chunk is no chunk of this source.
     await publishSegmentedPage(engine, 'notes/away', [segmentText(`Elsewhere: ${CLAIM}\n`)], { sourceId: OTHER, chunkTexts: true });
-    const out = { empty, live, staged, retired, otherSource: await chunks(OTHER), source: await chunks() };
-    expect(out).toMatchObject({ empty: 0, live: 1, staged: 2 });
-    expect(out.retired).toBeGreaterThan(0);
+    const out = { empty, live, staged, retireDeferred: flip.retireDeferred, retired, otherSource: await chunks(OTHER), source: await chunks() };
+    expect(out).toMatchObject({ empty: 0, live: 1, staged: 2, retireDeferred: true, retired: 2 });
     expect(out.otherSource).toBe(1);
     return out;
   });
