@@ -1,0 +1,146 @@
+{
+  "golden": {
+    "advanceEffectRow": [
+      [
+        "UPDATE persistence_effects SET state='queued',data=jsonb_set(\n    CASE WHEN kind='embedding' THEN jsonb_set(data,'{embedding_attempt_base}',to_jsonb(attempts)) ELSE data-'target_failures'-'failing_target' END,'{after_slug}',to_jsonb($3::text)),\n    execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,next_attempt_at=now(),error_code=NULL,\n    updated_at=now()\n    WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2'",
+        [
+          "7",
+          "f0000000-0000-4000-8000-0000000000e1",
+          "notes/a"
+        ]
+      ]
+    ],
+    "completeEffectRow": [
+      [
+        "UPDATE persistence_effects SET\n    state=CASE WHEN jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 THEN 'failed' ELSE 'committed' END,\n    error_code=CASE WHEN jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 THEN 'targets_parked' END,\n    data=data-'retry_slugs'-'target_failures'-'failing_target'-'busy_retries'-'busy_since'-'busy_at',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,\n    outcome=$3::text::jsonb,updated_at=now() WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2'",
+        [
+          "7",
+          "f0000000-0000-4000-8000-0000000000e1",
+          "{}"
+        ]
+      ]
+    ],
+    "failEffectRow": [
+      [
+        "UPDATE persistence_effects SET state='failed',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$3,updated_at=now()\n    WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2'",
+        [
+          "7",
+          "f0000000-0000-4000-8000-0000000000e1",
+          "r"
+        ]
+      ]
+    ],
+    "hasRearmableTargets": [
+      [
+        "SELECT 1 FROM persistence_effects e WHERE e.request_id=ANY($1::uuid[])\n    AND e.kind IN ('git','embedding') AND e.state IN ('queued','failed') AND e.execution_token IS NULL AND e.recovery IS NULL AND NOT (e.data ? 'settled')\n    AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) AS p(target) WHERE p.target->>'error_code'=$2)\n    AND EXISTS (SELECT 1 FROM persistence_effects m WHERE m.request_id=e.request_id AND m.kind='withdrawal-mirror' AND m.state='committed') LIMIT 1",
+        [
+          [
+            "b0000000-0000-4000-8000-0000000000b1"
+          ],
+          "withdrawal_mirror_failed"
+        ]
+      ]
+    ],
+    "lockEffectGuard#brain": [
+      [
+        "SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE",
+        []
+      ]
+    ],
+    "lockEffectGuard#worktree": [
+      [
+        "SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE",
+        []
+      ],
+      [
+        "SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE",
+        [
+          "b0000000-0000-4000-8000-0000000000b1"
+        ]
+      ]
+    ],
+    "parkEffectRow": [
+      [
+        "UPDATE persistence_effects SET state='failed',data=$3::text::jsonb,execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,\n    error_code='targets_parked',updated_at=now() WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2'",
+        [
+          "7",
+          "f0000000-0000-4000-8000-0000000000e1",
+          "{}"
+        ]
+      ]
+    ],
+    "readMirrorGateRows": [
+      [
+        "SELECT request_id::text AS request_id,state,data FROM persistence_effects WHERE kind='withdrawal-mirror' AND (state<>'committed' OR data ? 'published')\n      AND request_id=ANY($1::uuid[])",
+        [
+          [
+            "b0000000-0000-4000-8000-0000000000b1"
+          ]
+        ]
+      ]
+    ],
+    "renewEffectClaim": [
+      [
+        "UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()\n    WHERE id=$1 AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING id",
+        [
+          "7",
+          "f0000000-0000-4000-8000-0000000000e1"
+        ]
+      ]
+    ],
+    "renewEffectClaim#direct": [
+      [
+        "UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()\n    WHERE id=$1 AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING id",
+        [
+          "7",
+          "f0000000-0000-4000-8000-0000000000e1"
+        ]
+      ]
+    ],
+    "requeueEffectRow": [
+      [
+        "UPDATE persistence_effects SET state='queued',data=$3::text::jsonb,execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$4,\n    next_attempt_at=now()+($5::double precision*interval '1 millisecond'),updated_at=now()\n    WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2'",
+        [
+          "7",
+          "f0000000-0000-4000-8000-0000000000e1",
+          "{}",
+          null,
+          1000
+        ]
+      ]
+    ],
+    "retryBusyEffectRow": [
+      [
+        "UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code='writer_busy',\n    data=data||$3::text::jsonb,next_attempt_at=now()+($4::double precision*interval '1 millisecond'),updated_at=now()\n    WHERE id=$1 AND execution_token=$2::uuid AND set_config('gbrain.persistence_protocol','2',true)='2'",
+        [
+          "7",
+          "f0000000-0000-4000-8000-0000000000e1",
+          "{}",
+          1000
+        ]
+      ]
+    ],
+    "retryEffectRow": [
+      [
+        "UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$3,\n    next_attempt_at=now()+($4::double precision*interval '1 millisecond'),updated_at=now()\n    WHERE id=$1 AND execution_token=$2::uuid AND set_config('gbrain.persistence_protocol','2',true)='2'",
+        [
+          "7",
+          "f0000000-0000-4000-8000-0000000000e1",
+          "r",
+          1000
+        ]
+      ]
+    ],
+    "stampEffectClaim": [
+      [
+        "UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,\n      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 RETURNING *",
+        [
+          "7",
+          "f0000000-0000-4000-8000-0000000000e1",
+          "{}"
+        ]
+      ]
+    ]
+  },
+  "normalizer": "effect-worker-statements-v1"
+}

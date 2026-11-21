@@ -8,10 +8,10 @@ src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	2
 src/commands/access-rules.ts	execute_raw	4
 src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
-src/commands/access.ts	execute_raw	6
+src/commands/access.ts	execute_raw	5
 src/commands/agent-logs.ts	execute_raw	1
-src/commands/agent-register.ts	execute_raw	4
-src/commands/agent-register.ts	sql_template	8
+src/commands/agent-register.ts	execute_raw	2
+src/commands/agent-register.ts	sql_template	7
 src/commands/agent.ts	execute_raw	1
 src/commands/auth-client-rows.ts	execute_raw	6
 src/commands/auth-read-shared.ts	execute_raw	2	reads sources (ids that exist and are not archived) and oauth_clients.member_id for the auth CLI read-set lines (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
@@ -42,7 +42,7 @@ src/commands/doctor/checks/attest-read-access.ts	execute_raw	1
 src/commands/doctor/checks/calibration.ts	execute_raw	10
 src/commands/doctor/checks/connectors.ts	execute_raw	1
 src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	2
-src/commands/doctor/checks/content-quality.ts	execute_raw	9
+src/commands/doctor/checks/content-quality.ts	execute_raw	8
 src/commands/doctor/checks/conversation-outcomes.ts	execute_raw	3
 src/commands/doctor/checks/coordination-lock.ts	execute_raw	1
 src/commands/doctor/checks/core-health.ts	execute_raw	9
@@ -258,7 +258,7 @@ src/core/access/owner-only.ts	execute_raw	2	#9634, pre-ratchet: reads sources.co
 src/core/access/owner.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
 src/core/access/policy.ts	execute_raw	31
-src/core/access/requester-scope.ts	execute_raw	4
+src/core/access/requester-scope.ts	execute_raw	3
 src/core/access/room.ts	execute_raw	2
 src/core/access/serves.ts	execute_raw	2
 src/core/access/token-member-status.ts	sql_template	1
@@ -322,7 +322,7 @@ src/core/chunkers/symbol-resolver.ts	execute_raw	8
 src/core/claw-test/seed-pglite.ts	driver_call	1
 src/core/code-chunks.ts	execute_raw	3
 src/core/code-graph-readiness.ts	execute_raw	2
-src/core/code-intel/recursive-walk.ts	execute_raw	4
+src/core/code-intel/recursive-walk.ts	execute_raw	2
 src/core/code-intel/traversal-cache.ts	execute_raw	4
 src/core/company-brain/admission.ts	execute_raw	12
 src/core/company-brain/demo.ts	execute_raw	2
@@ -537,7 +537,6 @@ src/core/guests/owner-credentials.ts	execute_raw	1
 src/core/guests/promote.ts	execute_raw	4
 src/core/guests/sources.ts	execute_raw	9	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/guests/stamp-readable.ts	execute_raw	1
-src/core/harness/client-setup.ts	execute_raw	1
 src/core/harness/client-setup.ts	sql_template	1
 src/core/heal-audit.ts	execute_raw	3
 src/core/health-memo.ts	execute_raw	1
@@ -651,7 +650,6 @@ src/core/ops/storage-manifest.ts	execute_raw	2
 src/core/ops/tags.ts	execute_raw	1
 src/core/ops/takes.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
-src/core/ops/usage.ts	execute_raw	2
 src/core/ops/valid-time-read.ts	execute_raw	6
 src/core/ops/wakeshift.ts	execute_raw	5
 src/core/ops/whois.ts	execute_raw	2
@@ -671,7 +669,7 @@ src/core/page-body/segment-derive.ts	execute_raw	33
 src/core/page-body/segment-facts.ts	execute_raw	1
 src/core/page-body/segment-ledger.ts	execute_raw	1
 src/core/page-body/segment-rewrite.ts	execute_raw	9
-src/core/page-body/segmented-embedding.ts	execute_raw	8
+src/core/page-body/segmented-embedding.ts	execute_raw	7
 src/core/page-body/splice.ts	execute_raw	2
 src/core/page-body/streamed-import.ts	execute_raw	1
 src/core/page-body/tail-digest.ts	execute_raw	1
@@ -752,7 +750,7 @@ src/core/persistence/facts-maintenance.ts	execute_raw	4
 src/core/persistence/facts-prepare.ts	execute_raw	5
 src/core/persistence/file-claims.ts	execute_raw	2
 src/core/persistence/file-repair.ts	execute_raw	4
-src/core/persistence/filesystem-guard.ts	execute_raw	3
+src/core/persistence/filesystem-guard.ts	execute_raw	1
 src/core/persistence/forget-prepare.ts	execute_raw	7	GBRA-574 F #9674 (opened before this ratchet): +1 forget reads whether the claim sits on an unbacked name tag
 src/core/persistence/git-conversion.ts	execute_raw	16
 src/core/persistence/git-declared.ts	execute_raw	7
@@ -813,7 +811,7 @@ src/core/persistence/overwritten-edits.ts	execute_raw	3
 src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/ownership.ts	execute_raw	25
 src/core/persistence/page-advisories.ts	execute_raw	1
-src/core/persistence/page-append.ts	execute_raw	3
+src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-batch.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	6
 src/core/persistence/page-prepare.ts	execute_raw	11
@@ -925,7 +923,7 @@ src/core/persistence/unimported-file.ts	execute_raw	1
 src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1
 src/core/persistence/valid-time-advisory.ts	execute_raw	1
-src/core/persistence/worktree-refresh.ts	execute_raw	32
+src/core/persistence/worktree-refresh.ts	execute_raw	30
 src/core/persistence/write-applied.ts	execute_raw	1
 src/core/persistence/writer-versions.ts	execute_raw	3
 src/core/pglite-statements.ts	driver_call	1

@@ -6,31 +6,31 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 351/428
+# covered: 396/487
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
 # search_reads: 9/9
-# chunks: 22/22
+# chunks: 36/36
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 19/19
+# timeline: 20/20
 # ontology: 4/4
 # raw_files: 5/6
 # takes: 17/17
 # dream: 3/3
 # contradictions: 5/5
 # facts: 14/14
-# segmented_body: 15/15
-# versions: 3/3
+# segmented_body: 16/16
+# versions: 6/6
 # stats_ingest: 5/5
 # sync_aliases: 10/10
 # config: 6/6
 # withdrawal_pages: 0/2
 # withdrawal_fence: 0/1
 # import_guards: 9/9
-# cli_reads_import: 0/7
+# cli_reads_import: 1/7
 # cli_reads_ops: 0/1
 # entity_reads: 0/2
 # jobs_insight: 1/1
@@ -61,27 +61,32 @@
 # facts_doctor: 0/14
 # writer_versions: 0/3
 # memory_mutation_reads: 7/12
+# persistence_journal: 8/21
+# trust: 10/10
+# connect_gate: 4/4
+# minion_queue: 3/3
+# telemetry: 0/2
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	22	no	yes	yes	refuses:transactions
+transaction	lifecycle	yes	29	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	44	yes	yes	yes	serves
+getPage	pages	yes	51	yes	yes	yes	serves
 readPageSnapshot	pages	yes	7	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	177	yes	yes	yes	serves
+putPage	pages	yes	193	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	17	yes	yes	yes	serves
+deletePage	pages	yes	18	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	52	yes	yes	yes	serves
+softDeletePage	pages	yes	62	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -119,11 +124,25 @@ slugsEndingIn	search_reads	yes	2	no	yes	yes	serves
 generatedPagesIn	search_reads	yes	2	no	yes	yes	serves
 livePageIdsAt	search_reads	yes	2	no	yes	yes	serves
 pagesLinkingTo	search_reads	yes	2	no	yes	yes	serves
-upsertChunks	chunks	yes	24	yes	yes	yes	serves
-sealChunks	chunks	yes	15	no	yes	yes	serves
-getChunks	chunks	yes	25	yes	yes	yes	serves
-getChunkPage	chunks	yes	9	no	yes	yes	serves
-getChunkWindows	chunks	yes	9	no	yes	yes	serves
+findCodeDefinitions	chunks	yes	3	no	yes	yes	refuses:raw_sql
+listSymbolTypesForName	chunks	yes	3	no	yes	yes	refuses:raw_sql
+findCodeRefChunks	chunks	yes	3	no	yes	yes	refuses:raw_sql
+countOversizedEmbedSkips	chunks	yes	1	no	yes	yes	refuses:raw_sql
+countOrphanChunks	chunks	yes	1	no	yes	yes	refuses:raw_sql
+countCodeChunkPages	chunks	yes	1	no	yes	yes	refuses:raw_sql
+codeChunksExist	chunks	yes	3	no	yes	yes	refuses:raw_sql
+hasUnsealedPages	chunks	yes	1	no	yes	yes	refuses:raw_sql
+currentCodeChunksExist	chunks	yes	2	no	yes	yes	refuses:raw_sql
+listQualifiedSymbolNames	chunks	yes	1	no	yes	yes	refuses:raw_sql
+listWithdrawalChunks	chunks	yes	1	no	yes	yes	refuses:raw_sql
+deleteChunksForPages	chunks	yes	1	no	yes	yes	refuses:raw_sql
+listContextualModeCandidates	chunks	yes	1	no	yes	yes	refuses:raw_sql
+resolveFrozenHits	chunks	yes	3	no	yes	yes	refuses:raw_sql
+upsertChunks	chunks	yes	29	yes	yes	yes	serves
+sealChunks	chunks	yes	27	no	yes	yes	serves
+getChunks	chunks	yes	28	yes	yes	yes	serves
+getChunkPage	chunks	yes	10	no	yes	yes	serves
+getChunkWindows	chunks	yes	10	no	yes	yes	serves
 countStaleChunks	chunks	yes	7	no	yes	yes	serves
 sumStaleChunkChars	chunks	yes	3	no	yes	yes	serves
 setPageEmbeddingSignature	chunks	yes	2	no	yes	yes	serves
@@ -135,7 +154,7 @@ listChunklessPagesWithContent	chunks	yes	3	yes	yes	yes	serves
 readEmbeddingStateCounts	chunks	yes	2	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	2	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
-deleteChunksExcept	chunks	yes	1	no	yes	yes	refuses:chunks
+deleteChunksExcept	chunks	yes	2	no	yes	yes	refuses:chunks
 setChunkerVersion	chunks	yes	1	no	yes	yes	refuses:chunks
 writeTextProjectionSeal	chunks	yes	1	no	yes	yes	refuses:chunks
 moveChunkIndexes	chunks	yes	1	no	yes	yes	refuses:chunks
@@ -148,7 +167,7 @@ markPagesAttendanceBlocked	extraction	yes	1	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	34	yes	yes	yes	serves
+addLink	links	yes	35	yes	yes	yes	serves
 addLinksBatch	links	yes	1	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	1	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -179,15 +198,15 @@ getTags	tags	yes	2	yes	yes	yes	serves
 sampleEffectiveDates	timeline	yes	1	no	yes	yes	refuses:raw_sql
 sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	refuses:raw_sql
 readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	refuses:raw_sql
-listStoredTimelineRowsOrdered	timeline	yes	2	no	yes	yes	refuses:raw_sql
+listStoredTimelineRowsOrdered	timeline	yes	3	no	yes	yes	refuses:raw_sql
 deleteTimelineRows	timeline	yes	2	no	yes	yes	refuses:raw_sql
 storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	refuses:raw_sql
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	refuses:raw_sql
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	refuses:raw_sql
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	refuses:raw_sql
-addTimelineEntry	timeline	yes	15	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	16	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	1	no	yes	yes	serves
-getTimeline	timeline	yes	6	yes	yes	yes	serves
+getTimeline	timeline	yes	7	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	2	no	yes	yes	serves
 getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
@@ -195,6 +214,7 @@ getLastSeen	timeline	yes	1	no	yes	yes	serves
 upsertEventProjection	timeline	yes	8	no	yes	yes	serves
 removeTimelineRows	timeline	yes	2	no	yes	yes	refuses:timeline
 updateTimelineDetails	timeline	yes	1	no	yes	yes	refuses:timeline
+insertCanonicalTimelineRows	timeline	yes	1	no	yes	yes	refuses:raw_sql
 mergeOntologyFact	ontology	yes	5	no	yes	yes	serves
 getOntology	ontology	yes	3	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
@@ -245,22 +265,26 @@ consolidateFact	facts	yes	3	no	yes	yes	serves
 findTrajectory	facts	yes	3	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	11	no	yes	yes	serves
-stageSegmentTexts	segmented_body	yes	10	no	yes	yes	serves
-readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
-stageManifestRows	segmented_body	yes	12	no	yes	yes	serves
-readManifest	segmented_body	yes	7	no	yes	yes	serves
-stageSegmentChunks	segmented_body	yes	8	no	yes	yes	serves
+stageSegmentTexts	segmented_body	yes	11	no	yes	yes	serves
+readSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
+stageManifestRows	segmented_body	yes	13	no	yes	yes	serves
+readManifest	segmented_body	yes	9	no	yes	yes	serves
+readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	refuses:raw_sql
+stageSegmentChunks	segmented_body	yes	9	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	17	no	yes	yes	serves
-flipBodyGeneration	segmented_body	yes	22	no	yes	yes	serves
-sealSegmentedPage	segmented_body	yes	5	no	yes	yes	serves
-openBodyStaging	segmented_body	yes	13	no	yes	yes	serves
-setBodyStagingState	segmented_body	yes	12	no	yes	yes	serves
-sweepSegments	segmented_body	yes	1	no	yes	yes	refuses:page_body
+flipBodyGeneration	segmented_body	yes	23	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	6	no	yes	yes	serves
+openBodyStaging	segmented_body	yes	14	no	yes	yes	serves
+setBodyStagingState	segmented_body	yes	13	no	yes	yes	serves
+sweepSegments	segmented_body	yes	3	no	yes	yes	refuses:page_body
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	6	no	yes	yes	serves
-getVersions	versions	yes	5	no	yes	yes	serves
+createVersion	versions	yes	9	no	yes	yes	serves
+getVersions	versions	yes	7	no	yes	yes	serves
+readLatestVersionId	versions	yes	1	no	yes	yes	refuses:raw_sql
+readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	refuses:raw_sql
+stampVersionChangeReason	versions	yes	1	no	yes	yes	refuses:raw_sql
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	1	no	yes	yes	refuses:health
 getStats	stats_ingest	yes	4	yes	yes	yes	serves
@@ -277,7 +301,7 @@ replaceDerivedAliases	sync_aliases	yes	6	no	yes	yes	refuses:pages
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	4	no	yes	yes	serves
+getConfig	config	yes	5	no	yes	yes	serves
 setConfig	config	yes	10	no	yes	yes	serves
 unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
@@ -292,11 +316,11 @@ readPersistenceBrainId	import_guards	yes	1	no	yes	yes	refuses:persistence_journa
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
-applyTransactionSettings	import_guards	yes	5	no	yes	yes	refuses:transactions
+applyTransactionSettings	import_guards	yes	6	no	yes	yes	refuses:transactions
 readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
 listSourceRecords	cli_reads_import	no	0	no	-	-	-
-readSourceIncarnation	cli_reads_import	no	0	no	-	-	-
+readSourceIncarnation	cli_reads_import	yes	9	no	yes	yes	refuses:raw_sql
 hasCompanyBrainReceipt	cli_reads_import	no	0	no	-	-	-
 readDatabaseClock	cli_reads_import	no	0	no	-	-	-
 listLinkPageMetadata	cli_reads_import	no	0	no	-	-	-
@@ -490,3 +514,43 @@ readLinkedFactCopies	memory_mutation_reads	no	0	no	-	-	-
 hasHiddenFactCopy	memory_mutation_reads	no	0	no	-	-	-
 ownerReachesFact	memory_mutation_reads	no	0	no	-	-	-
 readFactWithdrawalClaim	memory_mutation_reads	no	0	no	-	-	-
+listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+selectClaimableEffect	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+readRequestEffects	persistence_journal	no	0	no	-	-	-
+listOverdueHeldWrites	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+lockOverdueHold	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+listOwnerRecoveryHeads	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+listResumableRefreshes	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+listSourceLastCommits	persistence_journal	yes	1	no	yes	yes	refuses:persistence_journal
+stampEffectClaim	persistence_journal	no	0	no	-	-	-
+renewEffectClaim	persistence_journal	no	0	no	-	-	-
+advanceEffectRow	persistence_journal	no	0	no	-	-	-
+completeEffectRow	persistence_journal	no	0	no	-	-	-
+retryEffectRow	persistence_journal	no	0	no	-	-	-
+retryBusyEffectRow	persistence_journal	no	0	no	-	-	-
+requeueEffectRow	persistence_journal	no	0	no	-	-	-
+parkEffectRow	persistence_journal	no	0	no	-	-	-
+failEffectRow	persistence_journal	no	0	no	-	-	-
+readMirrorGateRows	persistence_journal	no	0	no	-	-	-
+lockEffectGuard	persistence_journal	no	0	no	-	-	-
+hasRearmableTargets	persistence_journal	no	0	no	-	-	-
+upsertWriteGateReceipt	trust	yes	2	no	yes	yes	refuses:raw_sql
+upsertPageWriteGateReceipt	trust	yes	1	no	yes	yes	refuses:raw_sql
+deleteStalePageWriteGateReceipts	trust	yes	1	no	yes	yes	refuses:raw_sql
+listWriteGateReceiptsFor	trust	yes	3	no	yes	yes	refuses:raw_sql
+deleteStaleWriteGateReceipts	trust	yes	1	no	yes	yes	refuses:raw_sql
+upsertWriteGateHold	trust	yes	2	no	yes	yes	refuses:raw_sql
+listWriteGateHoldRows	trust	yes	1	no	yes	yes	refuses:raw_sql
+listTrustAllowRuleRows	trust	yes	1	no	yes	yes	refuses:raw_sql
+getWriteGateHoldRow	trust	yes	1	no	yes	yes	refuses:raw_sql
+decideWriteGateHold	trust	yes	2	no	yes	yes	refuses:raw_sql
+hasPersistenceTable	connect_gate	yes	1	no	yes	yes	refuses:persistence_journal
+listManagedRootBindings	connect_gate	yes	1	no	yes	yes	refuses:persistence_journal
+readGraduationGateRow	connect_gate	yes	1	no	yes	yes	refuses:persistence_journal
+listRetiredDeactivations	connect_gate	yes	1	no	yes	yes	refuses:persistence_journal
+readOauthClient	minion_queue	yes	5	no	yes	yes	refuses:raw_sql
+listOauthClients	minion_queue	yes	1	no	yes	yes	refuses:raw_sql
+patchOauthClient	minion_queue	yes	2	no	yes	yes	refuses:raw_sql
+logChatUsage	telemetry	no	0	no	-	-	-
+readChatUsage	telemetry	no	0	no	-	-	-
