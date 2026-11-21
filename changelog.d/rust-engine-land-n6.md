@@ -1,0 +1,7 @@
+**The facts doctor, link and graph, writer-version and source-list reads now sit behind engine members.**
+
+### Changed
+- Thirty read queries now live in `src/core/engine-sql/` (`facts-doctor.ts`, `link-reads.ts`, `writer-versions.ts`) and are called through new `BrainEngine` members on PGLite and Postgres: the doctor's conversation, redaction, outside-content, atom, trust-release, unlinked-fact, embedding-coverage, segmented-census and facts-page reads; the link, hub, entity-page, foreign-edge, inbound-link, endpoint, title-match, lexeme and link-context reads; and the writer-version cutoff and lists. The callers call the members instead of running the SQL themselves. Most statements are byte-for-byte the same text; the rest only wrap interpolated pieces, and each change is named with the case that proves the same rows.
+- The `sources` reads of the doctor, status, loops and file-mode checks go through typed source members, and the source ids are put in byte order in code instead of by `ORDER BY id`. On a brain whose collation is not C the order of those lists can differ from before. Four ordered reads (outside-content fences, facts pages, unlinked conversation slugs and the pages titled in a query) also sort by byte order (`COLLATE "C"`), so on such a brain their order follows the same rule.
+- On the Rust engine these members refuse as raw SQL until its store wiring lands, instead of guessing.
+- No write, schema or privacy filter moved.
