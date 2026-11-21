@@ -364,15 +364,17 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
     try {
       result = await work(session, options);
     } catch (error) {
-      if (deadline?.aborted && !held.aborted && !(error instanceof LockStolenError)) {
+      // Only the abort the deadline caused ends the run partial; a real failure thrown after the deadline is still recorded.
+      const name = (error as { name?: unknown } | null)?.name;
+      if (deadline?.aborted && !held.aborted && (error === deadline.reason || name === 'AbortError' || name === 'TimeoutError')) {
         session.stoppedAtDeadline = true;
-        await session.finish();
+        await session.finish().catch(() => {});
         if (onPending) return onPending(null, session);
         throw error;
       }
       if (!(error instanceof ConnectorWaitBudgetStop)) {
-        // #6831: a run cut short by its caller's deadline or cancel is not a failure of the source.
-        const failure = combined.aborted ? undefined : error;
+        // #6831: a run cut short by its caller's cancel is not a failure of the source.
+        const failure = held.aborted ? undefined : error;
         if (error instanceof OperationError || (failure && !(error instanceof LockStolenError))) await session.finish(failure).catch(() => {});
         throw error;
       }

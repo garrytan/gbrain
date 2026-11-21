@@ -53,12 +53,16 @@ export interface ConnectorLastError extends ConnectorRunFailure, SyncFaultVerdic
   fix: Action;
 }
 
-/** #9968: read beside each connector source: whether any request of the source still holds a recovery record. */
-const RETAINED_SQL = 'EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=sources.id AND r.recovery IS NOT NULL) AS retained';
+/**
+ * #9968: read beside each connector source: whether a request on the source's bound worktree still holds a recovery
+ * record, the scope the connector sync's own check uses (several sources can share one worktree).
+ */
+const RETAINED_SQL = `EXISTS (SELECT 1 FROM persistence_source_bindings b JOIN persistence_requests r ON r.worktree_id=b.worktree_id
+  WHERE b.source_id=sources.id AND r.recovery IS NOT NULL) AS retained`;
 
 /**
- * #9968: a recorded recovery_required failure with no retained publication behind it (no request of the source still
- * holds a recovery record) is history, not a stop: the next sync that ends without an error clears it.
+ * #9968: a recorded recovery_required failure with no retained publication behind it (no request on the source's worktree
+ * still holds a recovery record) is history, not a stop: the next sync that ends without an error clears it.
  */
 const recoverySettled = (failure: ConnectorRunFailure | null | undefined, retained: boolean) => failure?.code === 'recovery_required' && !retained;
 

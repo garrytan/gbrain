@@ -7,7 +7,7 @@ import { parseGitHubSourceConfig, runGitHubSync } from '../src/core/github-sourc
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { readManagedConnectorState, writeManagedConnectorState, type ConnectorRunFailure } from '../src/core/persistence/connector-state.ts';
-import { readConnectorLastError, readConnectorSourceStatuses } from '../src/core/persistence/connector-status.ts';
+import { connectorStatusLines, readConnectorLastError, readConnectorSourceStatuses } from '../src/core/persistence/connector-status.ts';
 import { readWriterDiagnostics } from '../src/core/persistence/diagnostics.ts';
 import { initializeLocalPersistence } from '../src/core/persistence/page-mutations.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
@@ -22,7 +22,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
  * backfill was killed at the job timeout every time, recorded nothing, and the connector kept showing a
  * `recovery_required` stop recorded before the upgrade although no retained publication was left. Fake Gmail and GitHub.
  */
-const { engines, env, boundSource, standaloneConnector, setup, teardown } = createConnectorFixture();
+const { engines, env, source: plainSource, boundSource, standaloneConnector, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
 afterAll(teardown);
 
@@ -154,6 +154,20 @@ test('#9968: sources status and sync status do not report a recovery_required st
     expect(status.stopped).toBe(false);
     expect(status.recovery_settled).toBe(true);
     expect(await readConnectorLastError(engine, f.id)).toMatchObject({ code: 'recovery_required', stopped: false, recovery_settled: true });
+    expect(connectorStatusLines(f.id, status).join('\n')).toContain('so this is not a stop');
+    // A retained publication of another source on the same worktree still blocks this connector's sync, so it is still a stop.
+    await disposePersistenceConsumer(engine);
+    const other = await plainSource(engine, githubConfig);
+    const [row] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY sequence LIMIT 1', [f.id]);
+    await engine.executeRaw(`UPDATE persistence_requests SET source_id=$2,recovery='{"version":1}'::jsonb WHERE id=$1::uuid`, [row.id, other.id]);
+    try {
+      const shared = (await readConnectorSourceStatuses(engine, [f.id])).get(f.id)!;
+      expect(shared.stopped).toBe(true);
+      expect(shared.recovery_settled).toBeUndefined();
+      expect((await readConnectorLastError(engine, f.id))?.stopped).toBe(true);
+    } finally {
+      await engine.executeRaw('UPDATE persistence_requests SET source_id=$2,recovery=NULL WHERE id=$1::uuid', [row.id, f.id]);
+    }
   }
 }), 120_000);
 
