@@ -6,6 +6,9 @@
  *    no fact extraction: a page with no affected value keeps its revision, and a page with one stores the values as
  *    written with its chunks and embeddings untouched.
  * 2. Fails when: the parser change re-embeds or re-extracts an unchanged page, or the re-read leaves the old typing.
+ *    The paid page phases keyed on the page's content hash (extract_atoms' scan state, chronicle's ledger) keep their
+ *    records across that re-read when the page's meaning is unchanged, so neither scans or judges it again; a page whose
+ *    file did change is scanned again.
  * 3. Runs on PGLite (the managed-brain fixture). The embedding provider is a spy; no network, no model calls.
  */
 import { describe, expect, test } from 'bun:test';
@@ -21,6 +24,9 @@ import { localHostId } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { legacyTypedFrontmatter } from '../src/core/frontmatter-legacy.ts';
+import { contentHash } from '../src/core/utils.ts';
+import { discoverExtractablePages } from '../src/core/cycle/extract-atoms.ts';
+import { CHRONICLE_EXTRACTOR_VERSION } from '../src/core/chronicle/contract.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
@@ -101,4 +107,75 @@ describe('pages-03: the one-time re-read after the upgrade', () => {
       } finally { __setEmbedTransportForTests(null); resetGateway(); }
     });
   }, { setup }), 240_000);
+
+  const MEETINGS = ['meetings/kept', 'meetings/edited'];
+  const meeting = (slug: string, room = '0101') => `---\ntype: meeting\ntitle: ${slug}\ndate: 2024-03-01\nroom: ${room}\n---\n\n${`The committed notes of ${slug}, about acme-example and widget-co. `.repeat(12)}\n`;
+  const meetingSetup = ({ root }: { root: string }) => {
+    mkdirSync(join(root, 'meetings'), { recursive: true }); git(root, 'init', '-q');
+    for (const slug of MEETINGS) writeFileSync(join(root, `${slug}.md`), meeting(slug));
+    git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'meetings');
+  };
+  type Row = { id: number; title: string; type: string; compiled_truth: string; timeline: string | null; frontmatter: Record<string, unknown>; content_hash: string };
+  const pageRow = async (engine: BrainEngine, slug: string) => (await engine.executeRaw<Row>(
+    'SELECT id, title, type, compiled_truth, timeline, frontmatter, content_hash FROM pages WHERE slug=$1', [slug]))[0]!;
+  const hashOf = (row: Row, frontmatter: Record<string, unknown>) => contentHash({ title: row.title, type: row.type as never, compiled_truth: row.compiled_truth, timeline: row.timeline ?? '', frontmatter, tags: [] });
+
+  test('a re-read that changes only how values are kept does not scan or judge the page again', () => managedBrain(async ({ engine, root }) => {
+    await withEnv({ GBRAIN_EMBEDDING_MODEL: MODEL, GBRAIN_EMBEDDING_DIMENSIONS: String(DIMS), OPENAI_API_KEY: 'sk-test-upgrade-reread' }, async () => {
+      configureGateway({ embedding_model: MODEL, embedding_dimensions: DIMS, env: { OPENAI_API_KEY: 'sk-test-upgrade-reread' } });
+      __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(v => Array.from(vector(v))) })) as never);
+      try {
+        const opts = { sourceId: 'default', noPull: true };
+        expect((await performManagedSync(engine, opts)).status).toBe('first_sync');
+        await drainEffects(engine);
+        // What an older gbrain left: the old typing stored, and the hash it computed over that typing.
+        const oldHash = new Map<string, string>();
+        await withManagedFixtureWrite(engine, ['default'], async tx => {
+          for (const slug of MEETINGS) {
+            const row = await pageRow(tx, slug);
+            expect(hashOf(row, row.frontmatter)).toBe(row.content_hash); // the stored hash is the formula over the stored values
+            const legacy = { ...row.frontmatter, ...legacyTypedFrontmatter(meeting(slug)) };
+            expect(legacy).toMatchObject({ date: '2024-03-01T00:00:00.000Z', room: 101 });
+            oldHash.set(slug, hashOf(row, legacy));
+            await tx.executeRaw('UPDATE pages SET frontmatter=$1::text::jsonb, content_hash=$2 WHERE slug=$3', [JSON.stringify(legacy), oldHash.get(slug), slug]);
+          }
+        });
+        for (const slug of MEETINGS) await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,revision}',to_jsonb($2::text)) WHERE op=$1 AND fingerprint LIKE '%:' || $3`,
+          [SYNC_IMPORT_PROVENANCE_OP, await revisionOf(engine, slug), String((await pageRow(engine, slug)).id)]);
+        await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
+        await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged,parser_fp}','\"an-older-parser\"'::jsonb) WHERE op='managed-sync-pass'");
+        // The older gbrain scanned both pages for atoms and judged both for events, at the hash it stored, and kept
+        // no record at a hash it never computed (this fixture's own first sync left one there).
+        for (const slug of MEETINGS) {
+          const { id } = await pageRow(engine, slug);
+          await engine.executeRaw('DELETE FROM chronicle_page_state WHERE page_id=$1', [id]);
+          await engine.executeRaw('DELETE FROM extract_atoms_page_state WHERE page_id=$1', [id]);
+          await engine.executeRaw(`INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned)
+            SELECT incarnation, $1, $2, 0, true FROM sources WHERE id='default'`, [id, oldHash.get(slug)]);
+          await engine.executeRaw(`INSERT INTO chronicle_page_state (source_id, page_id, content_hash, extractor_version, slug, state, trigger, event_hashes)
+            VALUES ('default', $1, $2, $3, $4, 'extracted', 'auto', ARRAY['event-hash-1'])`, [id, oldHash.get(slug), CHRONICLE_EXTRACTOR_VERSION, slug]);
+        }
+        expect(await discoverExtractablePages(engine, 'default', MEETINGS)).toEqual([]);
+
+        // One file changed what it says before the new binary's first sync, which walks the whole tree.
+        writeFileSync(join(root, 'meetings/edited.md'), meeting('meetings/edited', '0102'));
+        git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'edit');
+        rewriteHistory(root);
+        expect(await performManagedSync(engine, opts)).toMatchObject({ status: 'synced', modified: MEETINGS.length });
+
+        const kept = await pageRow(engine, 'meetings/kept'), edited = await pageRow(engine, 'meetings/edited');
+        expect(kept.frontmatter).toMatchObject({ date: '2024-03-01', room: '0101' });
+        expect(kept.content_hash).not.toBe(oldHash.get('meetings/kept'));
+        expect(edited.frontmatter).toMatchObject({ room: '0102' });
+        // extract_atoms discovery: only the page whose meaning changed is scanned again.
+        expect((await discoverExtractablePages(engine, 'default', MEETINGS)).map(page => page.slug)).toEqual(['meetings/edited']);
+        // chronicle: the kept page keeps its judged record at its live hash, so nothing judges it again; the edited
+        // page gets a fresh decision for what it now says, not the old record.
+        const ledger = await engine.executeRaw<{ slug: string; state: string; event_hashes: string[] }>(`SELECT c.slug, c.state, c.event_hashes FROM chronicle_page_state c
+          JOIN pages p ON p.id=c.page_id AND p.content_hash=c.content_hash WHERE c.extractor_version=$1 ORDER BY c.slug`, [CHRONICLE_EXTRACTOR_VERSION]);
+        expect(ledger).toEqual([{ slug: 'meetings/edited', state: 'skipped', event_hashes: [] },
+          { slug: 'meetings/kept', state: 'extracted', event_hashes: ['event-hash-1'] }]);
+      } finally { __setEmbedTransportForTests(null); resetGateway(); }
+    });
+  }, { setup: meetingSetup }), 240_000);
 });

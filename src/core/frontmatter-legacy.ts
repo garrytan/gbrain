@@ -13,6 +13,7 @@
  */
 import { dataFrontmatter, LEGACY_TYPED_SCHEMA } from './data-frontmatter.ts';
 import { comparableFrontmatter, parseMarkdownHead } from './markdown.ts';
+import type { BrainEngine } from './engine.ts';
 
 /** parseMarkdown keeps the text it read here, so alignWithStored can read the same file the old way. */
 export const PARSED_FILE_TEXT = Symbol.for('gbrain.parsed-file-text');
@@ -76,4 +77,43 @@ export function alignLegacyTyped(parsed: { frontmatter: Record<string, unknown> 
 export function restoreWrittenValues(incoming: Record<string, unknown>, stored: Record<string, unknown> | null | undefined, written: Map<string, unknown>): void {
   if (!stored) return;
   for (const [key, value] of written) if (Object.hasOwn(incoming, key) && same(incoming[key], stored[key])) incoming[key] = value;
+}
+
+/**
+ * The frontmatter a page stored under the old typing held for this parse: each value whose file text the old parser
+ * typed is read as stored. Null when no value differs only by that typing. The import's content hash over it equals the
+ * stored hash exactly when the one-time re-read changes how values are kept and nothing the page means.
+ */
+export function legacyStoredFrontmatter(current: Record<string, unknown>, fileText: string, stored: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  const written = legacyWrittenValues(current, fileText, stored);
+  if (!stored || written.size === 0) return null;
+  const out = { ...current };
+  for (const key of written.keys()) out[key] = stored[key];
+  return out;
+}
+
+/**
+ * Carries the content_hash-keyed records of the paid page phases (extract_atoms' scan state, chronicle's ledger) from
+ * a page's old hash to its new one, so a re-read that changes only how values are kept does not scan or judge the page
+ * again. A page whose atoms carry the old hash (scanned before the scan-state table) gets a finished scan at the new
+ * hash. Inserts only where the new hash has no record. Runs inside the import's page write.
+ */
+export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string, pageId: number, fromHash: string, toHash: string): Promise<void> {
+  await tx.executeRaw(
+    `INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned, partial_input_chars)
+     SELECT s.incarnation, $1, $3, COALESCE(e.fail_count, 0), COALESCE(e.tombstoned, true), e.partial_input_chars
+       FROM sources s LEFT JOIN extract_atoms_page_state e ON e.source_incarnation=s.incarnation AND e.page_id=$1 AND e.content_hash=$2
+      WHERE s.id=$4 AND (e.page_id IS NOT NULL OR EXISTS (SELECT 1 FROM pages atom WHERE atom.type='atom' AND atom.source_id=$4
+        AND atom.frontmatter->>'source_hash'=substring($2 from 1 for 16) AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
+        AND atom.deleted_at IS NULL))
+     ON CONFLICT DO NOTHING`,
+    [pageId, fromHash, toHash, sourceId]);
+  const columns = `extractor_version, slug, state, reason, trigger, principal_kind, principal_id, request_id, no_extract, attempts,
+    next_attempt_at, cost_usd, unpriced, event_slugs, event_hashes, decided_at, updated_at, campaign_id, attempt_cap_usd, max_attempts,
+    pricing_policy, campaign_max_usd, cost_attempts, judge_input_hash, judge_window_chars, judge_window_hash, judge_input_failures`;
+  await tx.executeRaw(
+    `INSERT INTO chronicle_page_state (source_id, page_id, content_hash, ${columns})
+     SELECT source_id, page_id, $3, ${columns} FROM chronicle_page_state WHERE source_id=$4 AND page_id=$1 AND content_hash=$2
+     ON CONFLICT DO NOTHING`,
+    [pageId, fromHash, toHash, sourceId]);
 }
