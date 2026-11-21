@@ -100,7 +100,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	212	no	yes	yes	serves
+transaction	lifecycle	yes	213	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -108,7 +108,7 @@ getPage	pages	yes	172	yes	yes	yes	serves
 readPageSnapshot	pages	yes	51	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	13	no	yes	yes	serves
-putPage	pages	yes	775	yes	yes	yes	serves
+putPage	pages	yes	776	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	27	yes	yes	yes	serves
@@ -324,12 +324,12 @@ listMaterializedMarkerPages	timeline	yes	3	no	yes	yes	serves
 rewriteTimelineRow	timeline	yes	2	no	yes	yes	serves
 listDateBulletPages	timeline	yes	2	no	yes	yes	serves
 listConnectorFencePages	timeline	yes	2	no	yes	yes	serves
-addTimelineEntry	timeline	yes	52	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	53	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	4	no	yes	yes	serves
 getTimeline	timeline	yes	19	yes	yes	yes	serves
-getTimelineForDate	timeline	yes	6	no	yes	yes	serves
-getSince	timeline	yes	9	no	yes	yes	serves
-getOnThisDay	timeline	yes	5	no	yes	yes	serves
+getTimelineForDate	timeline	yes	7	no	yes	yes	serves
+getSince	timeline	yes	10	no	yes	yes	serves
+getOnThisDay	timeline	yes	6	no	yes	yes	serves
 getLastSeen	timeline	yes	5	no	yes	yes	serves
 upsertEventProjection	timeline	yes	21	no	yes	yes	serves
 removeTimelineRows	timeline	yes	3	no	yes	yes	serves
@@ -561,7 +561,7 @@ readPersistenceBrainId	import_guards	yes	20	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	8	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	75	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	76	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	4	no	yes	yes	serves
