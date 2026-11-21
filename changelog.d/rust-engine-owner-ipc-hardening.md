@@ -8,6 +8,9 @@
 - When the owner exits, the next call from a client takes the brain over, or reaches the process that did. A call that was cancelled, or past its deadline, while that happens ends as cancelled or as a timeout that never ran, and no longer runs in this process. If the takeover cannot open the store, the call that started it fails with the store's own error.
 - A call made while `disconnect` runs no longer starts a takeover that holds the brain lock after `disconnect` returned.
 - The owner keeps the brain lock until a store open that is still pending settles.
+- A page stored in segments no longer breaks a second process that reads it through the owner: its metadata crosses the socket and its body fields refuse with `page_body_segmented`, as they do in the owner, and one such page no longer fails the whole list.
+- Errors from the owner keep their type across the socket, so link and revision recovery that checks the error type also works from a second process.
+- A call that was already sent to the owner and then is cancelled, passes its deadline or loses its owner ends `owner_unavailable` with reason `outcome_unknown`, since the owner may still commit it. A deadline after the send used to end `timeout`. Its advice names the read that shows whether that write committed, and it is retryable only for a call that only reads.
 
 ### Added
 - Three error codes, `owner_busy`, `owner_ipc_peer_refused` and `owner_ipc_protocol`, in the error guide and the public surface.
