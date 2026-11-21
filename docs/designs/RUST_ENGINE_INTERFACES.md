@@ -170,7 +170,7 @@ Reserved tags:
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
-| persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows) | `x` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
+| persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger

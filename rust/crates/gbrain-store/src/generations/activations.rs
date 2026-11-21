@@ -6,7 +6,7 @@
 //! statements of `engine-sql/generation-activations.ts`). The generation key lock of an
 //! activation is `lockGenerationKey`, which the single-writer store answers without a lock.
 //!
-//! Keys, under `keys::DERIVED_GENERATION` (`x`) with the parent module's rows:
+//! Keys, under `keys::DERIVED_GENERATION` (`h`) with the parent module's rows:
 //! - `h 0x08 id -> ActivationRecord`, one row of `derived_generation_activations` (its primary
 //!   key, `TEXT`).
 //! - `h 0x09 generation_id(8) id -> []` for each row that names a generation: the reverse of the
