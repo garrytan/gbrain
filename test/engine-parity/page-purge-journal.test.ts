@@ -305,3 +305,51 @@ describe('engine parity: the journal sweep and the intent redaction of a page pu
     return { chunks, lists, ceilings, locks, effectBytes, before, afterRedact, afterSmall, afterClamp };
   });
 });
+
+describe('engine parity: the slug listing pages by numeric request sequence', () => {
+  // Contract: paging findRequestsForSlugs with a cursor (the last row's sequence) returns every matching request once, in
+  // numeric sequence order, when the sequences cross a digit width (9 -> 10). Regression: the listing once ordered by
+  // `sequence::text`, so `10` sorted before `9` while the cursor compares numbers; a page that ended on `9` then skipped
+  // every two-digit request below it, and those intents were never redacted (expiry pages by 1,000, the purge sweep by 10,000).
+  parityTest('findRequestsForSlugs pages every request once, in numeric order, across a digit width', {
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequestById', 'listRequestsForSlugs'],
+  }, async (engine) => {
+    const PAGED = 'notes/paged';
+    const wanted: string[] = [];
+    const sequences = new Map<string, string>();
+    // The arms start the journal sequence at different points (a Postgres test database keeps counting across cases), so
+    // requests of another page fill the journal up to six below the next power of ten, and twelve requests of the paged
+    // page then sit on both sides of it (9 -> 10, 99 -> 100, ...).
+    let fillers = 0;
+    for (let n = 100; wanted.length < 12; n++) {
+      const filler = `filler-${n}`;
+      const id = await journal(engine, filler, n, 'put_page', 'notes/keeper');
+      const seq = String((await engine.readWriteRequestById(id))!.sequence);
+      const nextPower = 10n ** BigInt(seq.length);
+      if (!wanted.length && nextPower - BigInt(seq) > 6n) {
+        fillers++;
+        expect(fillers).toBeLessThan(5000);
+        continue;
+      }
+      // Inside the window: this request belongs to the paged page instead.
+      const label = `paged-${String(wanted.length + 1).padStart(2, '0')}`;
+      const pagedId = await journal(engine, label, 10_000 + n, 'put_page', PAGED);
+      wanted.push(label);
+      sequences.set(label, String((await engine.readWriteRequestById(pagedId))!.sequence));
+    }
+    const widths = new Set([...sequences.values()].map(s => s.length));
+    // The case is only meaningful when the sequences cross a digit width.
+    expect(widths.size).toBeGreaterThan(1);
+    const pages: string[][] = [];
+    let after = '0';
+    for (let guard = 0; guard < 10; guard++) {
+      const rows = await findRequestsForSlugs(engine, SRC, [PAGED], 5, after);
+      if (!rows.length) break;
+      pages.push(rows.map(r => name(engine, r.id)));
+      after = String(rows[rows.length - 1]!.sequence);
+    }
+    const listed = pages.flat();
+    expect(listed).toEqual(wanted);
+    return { crossesDigitWidth: widths.size > 1, pageSizes: pages.map(p => p.length), listed };
+  });
+});
