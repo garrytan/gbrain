@@ -1587,11 +1587,9 @@ export function formatResult(
       const { results, meta } = redactRetrievalOutput(room.rows as any[], lastRetrievalMeta);
       const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
       if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
-      const capLine = pageCapLine(meta, '--limit');
+      const capLine = pageCapLine(meta, '--limit'), savedFacts: string = require('../mcp/saved-facts-notice.ts').cliSavedFacts(meta, params.json === true);
       if (capLine) process.stderr.write(capLine + '\n');
-      const savedFacts = Array.isArray(meta?.saved_facts) && meta.saved_facts.length ? require('../mcp/dispatch.ts').savedFactsNoticeBlock(meta.saved_facts) + '\n' : '';
       if (params.json === true) {
-        if (savedFacts) process.stderr.write(savedFacts);
         const incompleteNotice = retrievalIncompleteLine(meta);
         if (incompleteNotice) process.stderr.write(incompleteNotice);
         // --explain --json: the same per-row score_details object MCP `explain: true` returns.
