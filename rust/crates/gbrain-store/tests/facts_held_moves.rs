@@ -372,3 +372,81 @@ fn the_facts_home_scans_report_page_flags_age_and_missing_pages() {
     assert_eq!(texts(&missing, "slug"), ["people/closed", "people/never"]);
     assert!(missing[0]["id"].as_u64().unwrap() < missing[1]["id"].as_u64().unwrap());
 }
+
+/// One folder rule of `default` readable by alice (row 32b-2: the rule reads judge the store's rules).
+fn rule(b: &Brain, id: &str, prefix: &str) {
+    b.put_access_policy_state("default").unwrap();
+    b.put_access_rule(gbrain_store::access_rules::AccessRuleRecord {
+        source_id: "default".into(),
+        rule_id: id.into(),
+        prefix: prefix.into(),
+        readable_by: vec!["member:alice-example".into()],
+        revision: 1,
+        covers_derived: true,
+        created_by: None,
+    })
+    .unwrap();
+}
+
+#[test]
+fn the_rule_reads_judge_the_folder_rules_and_the_pending_prefixes() {
+    let b = brain("held-folder-rules");
+    page(&b, HOLDING, json!({}));
+    fact(
+        &b,
+        "held",
+        Some("partners/alice/profile"),
+        HOLDING,
+        1,
+        json!({}),
+    );
+    rule(&b, "alice", "partners/alice/");
+    let state = |slug: &str| b.read_held_access_state(&at(slug)).unwrap();
+    assert_eq!(
+        state("partners/alice/profile"),
+        [json!({ "unreadable": false, "page_rule": false, "restricted": true })]
+    );
+    assert_eq!(
+        state("partners/alice/"),
+        [json!({ "unreadable": false, "page_rule": true, "restricted": true })]
+    );
+    assert_eq!(
+        state("notes/open"),
+        [json!({ "unreadable": false, "page_rule": false, "restricted": false })]
+    );
+    // The held row's entity is under the rule and its holding page is not: a move is due.
+    assert!(b.held_move_due("default").unwrap());
+    // A pending prefix over notes/ restricts that entity too.
+    b.put_access_pending_coverage(gbrain_store::access_rules::PendingCoverageRecord {
+        source_id: "default".into(),
+        prefix: "notes/".into(),
+        reason: "pending".into(),
+        revision: None,
+        detail: None,
+    })
+    .unwrap();
+    assert_eq!(
+        state("notes/open"),
+        [json!({ "unreadable": false, "page_rule": false, "restricted": true })]
+    );
+}
+
+#[test]
+fn open_twins_are_the_other_sources_pages_an_outside_reader_still_reads() {
+    use gbrain_store::access_rules::{OpenTwinPage, OpenTwinReader};
+    let b = brain("open-twins");
+    page(&b, "partners/alice/deal", json!({}));
+    let window = [OpenTwinPage {
+        source_id: "default".into(),
+        slug: "partners/alice/deal".into(),
+    }];
+    // No other source holds the slug: no twin.
+    let rows = b.list_open_twin_rows(&window, &[], true, 50).unwrap();
+    assert_eq!(rows, json!([]));
+    let outside = [OpenTwinReader {
+        identity: vec!["member:bob-example".into()],
+        satisfied: vec![],
+    }];
+    let rows = b.list_open_twin_rows(&window, &outside, true, 50).unwrap();
+    assert_eq!(rows, json!([]));
+}

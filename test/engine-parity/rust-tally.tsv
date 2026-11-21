@@ -1,8 +1,10 @@
 file	equal	stopped
 test/engine-parity/access-flag.test.ts	1	0
-test/engine-parity/access-members.test.ts	16	1
+test/engine-parity/access-members.test.ts	17	1
 test/engine-parity/access-reports.test.ts	7	0
+test/engine-parity/access-rule-add.test.ts	4	0
 test/engine-parity/access-rules.test.ts	5	0
+test/engine-parity/access-serves.test.ts	4	0
 test/engine-parity/access-tokens.test.ts	2	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
@@ -46,10 +48,10 @@ test/engine-parity/fact-relink-writes.test.ts	4	0
 test/engine-parity/fact-trajectory-widening.test.ts	3	0
 test/engine-parity/fact-visibility-widening.test.ts	4	0
 test/engine-parity/facts-conversation-sites.test.ts	0	22
-test/engine-parity/facts-cycle-sites.test.ts	0	15
+test/engine-parity/facts-cycle-sites.test.ts	2	14
 test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	14	0
-test/engine-parity/facts-purge-sites.test.ts	0	27
+test/engine-parity/facts-purge-sites.test.ts	10	19
 test/engine-parity/facts-purge.test.ts	25	2
 test/engine-parity/facts-repair-sites.test.ts	0	14
 test/engine-parity/facts-repair.test.ts	14	2
@@ -152,7 +154,7 @@ test/engine-parity/withdrawal-fence.test.ts	2	0
 test/engine-parity/withdrawal-forget.test.ts	2	0
 test/engine-parity/write-attribution.test.ts	5	2
 test/engine-parity/write-guards.test.ts	10	0
-test/engine-parity/write-misc.test.ts	36	14
+test/engine-parity/write-misc.test.ts	37	13
 test/engine-parity/write-outcome-order.test.ts	1	0
 test/engine-parity/write-request-cancel.test.ts	2	0
 test/engine-parity/write-request-reads.test.ts	3	0

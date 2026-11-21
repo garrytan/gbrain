@@ -4,8 +4,8 @@
  * Each member sends the arguments of its BrainEngine member and turns the ISO times the store returns into `Date`s, as
  * PGLite returns them.
  *
- * The store keeps no access rules or pending coverage, so `readHeldAccessState` answers the readable, uncovered state
- * and `heldMoveDue` answers false (held_moves.rs). `readHeldRowVisibility` serves the no-caller page policy of
+ * `readHeldAccessState` and `heldMoveDue` judge the store's folder rules and pending prefixes (held_moves.rs,
+ * access_rules.rs); the access state is always readable. `readHeldRowVisibility` serves the no-caller page policy of
  * `privatePagesFilterFragment('p')` and refuses a caller that widens it. `listHeldFactRows` serves a `days` text that is
  * a plain number and refuses any other interval text.
  */

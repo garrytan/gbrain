@@ -25,19 +25,19 @@
  *    must leave the table. Member writes are served (test/engine-parity/access-members.test.ts).
  */
 import { describe, expect, test } from 'bun:test';
-import { archiveSource, createSource, parityArms, resetArm, restrictFolder, type ParityBackend } from './harness.ts';
+import { archiveSource, createSource, parityArms, restrictFolder, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OpenPageCount } from '../../src/core/engine-sql/access-setup.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { openPages, readOpenPages } from '../../src/core/access/open-pages.ts';
 import { whoCanRead } from '../../src/commands/access.ts';
-import { labelSeveral, servesStatus } from '../../src/commands/access-serves.ts';
+import { servesStatus } from '../../src/commands/access-serves.ts';
 import { openSharedPagesEntry } from '../../src/commands/doctor/checks/open-shared-pages.ts';
 import type { DoctorContext } from '../../src/commands/doctor/context.ts';
 import { schemaVersionNow, withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
-const { parityTest, arms } = parityArms(testBackends());
+const { parityTest } = parityArms(testBackends());
 
 const put = (engine: BrainEngine, slug: string, sourceId: string, type = 'note', frontmatter: Record<string, unknown> = {}) =>
   engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `body of ${slug}`, timeline: '', frontmatter }, { sourceId });
@@ -216,30 +216,5 @@ describe('the reports built on the count, on a brain with no member', () => {
     expect(missing).toEqual({ code: 'not_found', message: 'No page "nowhere/page".' });
     expect(missingInSource).toEqual({ code: 'not_found', message: 'No page "notes/world-a" in source team.' });
     return { open, labelled, labelledTeam, priv, ownerOnly, deleted, missing, missingInSource };
-  });
-});
-
-describe('the Rust arm still refuses gbrain access serves several', () => {
-  // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine and pin the exact refusal:
-  // each pin fails when Rust stops refusing, and its loss row must then leave docs/designs/RUST_ENGINE.md.
-  // The first read of the label pass that Rust does not serve yet; row 32b-2 serves the pass.
-  const LABEL_REFUSAL = "This brain's engine does not support listUnarchivedSourceIds yet (it needs the facts capability), so nothing ran.";
-  const refusal = async (run: () => Promise<unknown>) => {
-    try {
-      await run();
-      return { refused: false };
-    } catch (error) {
-      return { code: (error as { code?: string }).code, message: (error as Error).message };
-    }
-  };
-
-  test('loss: gbrain access serves several stops on a typed refusal, in its preview and with --yes', async () => {
-    const rust = arms().find((arm) => arm.backend === 'rust');
-    if (!rust) return;
-    await resetArm(rust);
-    await rust.engine.setConfig('access.serves', 'several');
-    expect(await refusal(() => labelSeveral(rust.engine, ['alice-example'], 'default', false, true))).toEqual({ code: 'engine_capability_missing', message: LABEL_REFUSAL });
-    expect(await refusal(() => labelSeveral(rust.engine, ['alice-example'], 'default', true, true))).toEqual({ code: 'engine_capability_missing', message: LABEL_REFUSAL });
-    expect(await rust.engine.listActiveAccessMembers()).toEqual([]);
   });
 });

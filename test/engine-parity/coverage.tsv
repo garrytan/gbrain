@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1215/1219
+# covered: 1224/1228
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -67,7 +67,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 70/74
+# write_misc: 79/83
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -96,13 +96,13 @@ getPage	pages	yes	131	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	606	yes	yes	yes	serves
+putPage	pages	yes	610	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	174	yes	yes	yes	serves
+softDeletePage	pages	yes	176	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -416,9 +416,9 @@ listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	95	yes	yes	yes	serves
-insertFacts	facts	yes	133	no	yes	yes	serves
+insertFacts	facts	yes	136	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	60	no	yes	yes	serves
+expireFact	facts	yes	61	no	yes	yes	serves
 listFactsByEntity	facts	yes	36	yes	yes	yes	serves
 listFactsSince	facts	yes	27	yes	yes	yes	serves
 listFactsKeyset	facts	yes	10	no	yes	yes	serves
@@ -488,7 +488,7 @@ readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
 readLedgerSource	import_guards	yes	11	no	yes	yes	serves
 listCoveredSources	import_guards	yes	1	no	yes	yes	serves
-isFolderRestricted	import_guards	yes	5	no	yes	yes	serves
+isFolderRestricted	import_guards	yes	6	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	24	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
@@ -680,7 +680,7 @@ readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	8	no	yes	yes	serves
 listOauthClients	minion_queue	yes	2	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
-insertAccessToken	minion_queue	yes	8	no	yes	yes	serves
+insertAccessToken	minion_queue	yes	10	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	2	no	yes	yes	serves
 setAccessTokenMinTrust	minion_queue	yes	2	no	yes	yes	serves
 insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
@@ -803,9 +803,9 @@ readDeletedPageBody	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 expireFactsByIds	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listOntologyObservationSlugs	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listDeletedPageSlugsWithActiveFacts	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-scanUnfencedFactRows	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-listHeldFactRows	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
-listFencedFactsOfMissingPages	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
+scanUnfencedFactRows	facts_cycle_sites	yes	2	no	yes	yes	serves
+listHeldFactRows	facts_cycle_sites	yes	2	no	yes	yes	serves
+listFencedFactsOfMissingPages	facts_cycle_sites	yes	2	no	yes	yes	serves
 readFenceRowNumHint	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 readSourceCheckoutPath	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 readLiveStoredBody	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
@@ -837,16 +837,16 @@ listPageGitEffectsForStrip	facts_purge	yes	1	no	yes	yes	refuses:facts
 setPurgeEffectData	facts_purge	yes	1	no	yes	yes	refuses:facts
 listPageChangeReasons	facts_purge	yes	2	no	yes	yes	refuses:facts
 listRequestsRecordingReasons	facts_purge	yes	1	no	yes	yes	refuses:facts
-heldEntityPageDeleted	facts_purge	yes	1	no	yes	yes	refuses:facts
-readHeldAccessState	facts_purge	yes	1	no	yes	yes	refuses:facts
-heldTargetPageLive	facts_purge	yes	1	no	yes	yes	refuses:facts
-listHeldMoveRows	facts_purge	yes	1	no	yes	yes	refuses:facts
-listStruckHeldRows	facts_purge	yes	1	no	yes	yes	refuses:facts
-readHeldRowVisibility	facts_purge	yes	1	no	yes	yes	refuses:facts
-heldMoveDue	facts_purge	yes	1	no	yes	yes	refuses:facts
-readHeldConfigValue	facts_purge	yes	1	no	yes	yes	refuses:facts
-readHeldPageLocation	facts_purge	yes	1	no	yes	yes	refuses:facts
-readHeldVersionsEdited	facts_purge	yes	1	no	yes	yes	refuses:facts
+heldEntityPageDeleted	facts_purge	yes	1	no	yes	yes	serves
+readHeldAccessState	facts_purge	yes	2	no	yes	yes	serves
+heldTargetPageLive	facts_purge	yes	1	no	yes	yes	serves
+listHeldMoveRows	facts_purge	yes	4	no	yes	yes	serves
+listStruckHeldRows	facts_purge	yes	4	no	yes	yes	serves
+readHeldRowVisibility	facts_purge	yes	2	no	yes	yes	serves
+heldMoveDue	facts_purge	yes	2	no	yes	yes	serves
+readHeldConfigValue	facts_purge	yes	1	no	yes	yes	serves
+readHeldPageLocation	facts_purge	yes	1	no	yes	yes	serves
+readHeldVersionsEdited	facts_purge	yes	1	no	yes	yes	serves
 listSegmentedPageBodies	facts_purge	yes	1	no	yes	yes	refuses:facts
 listSegmentedVersionBodies	facts_purge	yes	1	no	yes	yes	refuses:facts
 setPurgeProbeTimeout	facts_purge	yes	2	no	yes	yes	refuses:facts
@@ -942,7 +942,7 @@ listCaptureDuplicateCandidates	facts_trust	yes	1	no	yes	yes	refuses:facts
 computeFactFingerprints	facts_trust	yes	1	no	yes	yes	refuses:facts
 listClaimConflictPairs	facts_trust	yes	1	no	yes	yes	refuses:facts
 countClaimConflictPairs	facts_trust	yes	1	no	yes	yes	refuses:facts
-listUnarchivedSourceIds	facts_trust	yes	1	no	yes	yes	refuses:facts
+listUnarchivedSourceIds	facts_trust	yes	1	no	yes	yes	serves
 readPendingWriteReceipt	facts_trust	yes	1	no	yes	yes	refuses:facts
 lockSourceShared	facts_trust	yes	1	no	yes	yes	refuses:facts
 listOversizedStaleFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
@@ -1008,7 +1008,7 @@ listEntityHintPages	facts_conversation	yes	1	no	yes	yes	refuses:facts
 lockPageById	facts_conversation	yes	1	no	yes	yes	refuses:facts
 listClearedRelinkedFacts	facts_conversation	yes	1	no	yes	yes	refuses:facts
 countEmbeddedFactsAmong	facts_conversation	yes	1	no	yes	yes	refuses:facts
-listCorePageRows	trust_tier_reads	yes	7	no	yes	yes	serves
+listCorePageRows	trust_tier_reads	yes	8	no	yes	yes	serves
 listTrustScanRows	trust_tier_reads	yes	2	no	yes	yes	serves
 countUnscannedTrustRows	trust_tier_reads	yes	2	no	yes	yes	serves
 readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	serves
@@ -1128,7 +1128,7 @@ getWorktreeBinding	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	4	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	2	no	yes	yes	serves
-listAccessTokens	write_misc	yes	4	no	yes	yes	serves
+listAccessTokens	write_misc	yes	8	no	yes	yes	serves
 notifierCoverageRecorded	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
 writeOpCheckpointKeys	write_misc	yes	2	no	yes	yes	serves
@@ -1184,14 +1184,23 @@ hasAccessPolicyState	write_misc	yes	1	no	yes	yes	serves
 listAccessPrefixSlugs	write_misc	yes	1	no	yes	yes	serves
 readAccessPolicyMarks	write_misc	yes	1	no	yes	yes	serves
 replaceAccessInvalidCoverage	write_misc	yes	1	no	yes	yes	serves
-countRuleCoveredPages	write_misc	yes	1	no	yes	yes	serves
-listRuleCoveredSlugs	write_misc	yes	1	no	yes	yes	serves
+countRuleCoveredPages	write_misc	yes	2	no	yes	yes	serves
+listRuleCoveredSlugs	write_misc	yes	2	no	yes	yes	serves
 listRuleCoveredPages	write_misc	yes	1	no	yes	yes	serves
+listOpenTwinRows	write_misc	yes	1	no	yes	yes	serves
 countOpenPages	write_misc	yes	5	no	yes	yes	serves
 listWhoCanReadPages	write_misc	yes	1	no	yes	yes	serves
 readPageAdmitsCaller	write_misc	no	0	no	-	-	-
 readPageFolderRulesAdmit	write_misc	no	0	no	-	-	-
 countLineageClosingRules	write_misc	no	0	no	-	-	-
+listUnboundTokenNames	write_misc	yes	1	no	yes	yes	serves
+listUnboundClientIds	write_misc	yes	1	no	yes	yes	serves
+readLiveAccessToken	write_misc	yes	1	no	yes	yes	serves
+recordTokenSetupReads	write_misc	yes	1	no	yes	yes	serves
+listKeysReadingSource	write_misc	yes	1	no	yes	yes	serves
+countCompanyPages	write_misc	yes	1	no	yes	yes	serves
+revokeAccessTokenById	write_misc	yes	1	no	yes	yes	serves
+countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 readFolderAccess	write_misc	yes	5	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves

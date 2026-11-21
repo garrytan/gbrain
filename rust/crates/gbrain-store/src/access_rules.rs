@@ -295,6 +295,45 @@ pub(crate) fn pending_covers(read: &dyn KvRead, source_id: &str, slug: &str) -> 
     Ok(found)
 }
 
+/// Whether a rule or a pending or invalid prefix of `source_id` is exactly `prefix` (the
+/// `r.prefix = $2` and `c.prefix = $2` tests of `readHeldAccessState`).
+pub(crate) fn exact_prefix(read: &dyn KvRead, source_id: &str, prefix: &str) -> Result<bool> {
+    let mut found = false;
+    each(
+        read,
+        &source_prefix(RULE, source_id),
+        |r: AccessRuleRecord| {
+            found = r.prefix == prefix;
+            !found
+        },
+    )?;
+    if !found {
+        each(
+            read,
+            &source_prefix(COVERAGE, source_id),
+            |c: PendingCoverageRecord| {
+                found = c.prefix == prefix;
+                !found
+            },
+        )?;
+    }
+    Ok(found)
+}
+
+/// The ids of the rules of `source_id` that cover `slug` (`gbrain_access_folder_rules`), sorted.
+pub(crate) fn covering_rule_ids(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<Vec<String>> {
+    let mut ids: Vec<String> = folder_rules(read, source_id, slug)?
+        .into_iter()
+        .map(|r| r.rule_id)
+        .collect();
+    ids.sort();
+    Ok(ids)
+}
+
 /// Whether a page at `slug` carries folder rules (`pages.folder_rule_ids IS NOT NULL`): its
 /// source holds access state and a rule covers the slug.
 pub(crate) fn stamped(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<bool> {
@@ -339,6 +378,87 @@ pub(crate) fn state_sources(read: &dyn KvRead) -> Result<Vec<String>> {
         true
     })?;
     Ok(out)
+}
+
+/// One outside caller of `listOpenTwinRows`: its identity and the folder rules it satisfies (`source:rule_id`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct OpenTwinReader {
+    pub identity: Vec<String>,
+    pub satisfied: Vec<String>,
+}
+
+/// One page of the window `listOpenTwinRows` checks.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct OpenTwinPage {
+    pub source_id: String,
+    pub slug: String,
+}
+
+impl Store {
+    /// `listOpenTwinRows(pages, outside, listed)`: each live page of any source (archived ones too) that shares a slug
+    /// with a page of `pages` in another source, is not itself one of `pages`, passes its own labels
+    /// (`honor_aliases` as rendered) and is read by the empty identity or a caller of `outside`;
+    /// `{ source_id, slug, twin_of, n }` by source then slug in byte order, at most `listed`. `twin_of` is the smallest
+    /// source of `pages` holding the slug; `n` counts every such page.
+    pub fn list_open_twin_rows(
+        &self,
+        pages: &[OpenTwinPage],
+        outside: &[OpenTwinReader],
+        honor_aliases: bool,
+        listed: usize,
+    ) -> Result<serde_json::Value> {
+        let read = self.read()?;
+        let window: std::collections::BTreeSet<(&str, &str)> = pages
+            .iter()
+            .map(|p| (p.source_id.as_str(), p.slug.as_str()))
+            .collect();
+        let mut slugs: std::collections::BTreeMap<&str, &str> = std::collections::BTreeMap::new();
+        for (source, slug) in &window {
+            slugs
+                .entry(slug)
+                .and_modify(|m| *m = (*m).min(source))
+                .or_insert(source);
+        }
+        let sources = crate::sources::all_sources(&*read)?;
+        let mut rows = Vec::new();
+        for (slug, twin_of) in &slugs {
+            for source in &sources {
+                if window.contains(&(source.id.as_str(), slug)) {
+                    continue;
+                }
+                let Some(page) = crate::pages::read_page(&*read, &source.id, slug)? else {
+                    continue;
+                };
+                if page.deleted_at_us.is_some()
+                    || !crate::facts::twin_snapshot_allows(&page, honor_aliases)
+                {
+                    continue;
+                }
+                let mut open = crate::facts::twin_open_to(&*read, &page, &[], &[])?;
+                for o in outside {
+                    if open {
+                        break;
+                    }
+                    open = crate::facts::twin_open_to(&*read, &page, &o.identity, &o.satisfied)?;
+                }
+                if open {
+                    rows.push((source.id.clone(), slug.to_string(), twin_of.to_string()));
+                }
+            }
+        }
+        rows.sort();
+        let n = rows.len();
+        Ok(serde_json::Value::Array(
+            rows.into_iter()
+                .take(listed)
+                .map(|(source_id, slug, twin_of)| {
+                    serde_json::json!({ "source_id": source_id, "slug": slug, "twin_of": twin_of, "n": n })
+                })
+                .collect(),
+        ))
+    }
 }
 
 impl Store {

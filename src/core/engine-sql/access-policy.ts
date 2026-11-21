@@ -5,6 +5,8 @@
  * revision writes run inside the caller's transaction; every member runs on the executor it is given, so a member of a
  * transaction-bound engine runs on that transaction.
  */
+import { folderRulesAllowedSql, privateSnapshotFilterFragment, readersAllowedSql } from '../search/private-visibility.ts';
+import { joinFragments, renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** The engine's own executeRaw (a transaction-bound engine inside a transaction). */
 export interface AccessPolicyExec {
@@ -250,4 +252,37 @@ export async function listRuleCoveredSlugs(exec: AccessPolicyExec, sourceId: str
 /** The live pages of a source one prefix covers, by slug, at most RULE_COVERED_PAGES_LIMIT. */
 export async function listRuleCoveredPages(exec: AccessPolicyExec, sourceId: string, prefix: string): Promise<Array<{ source_id: string; slug: string }>> {
   return (await exec.executeRaw<{ source_id: string; slug: string }>(RULE_COVERED_PAGES_SQL, [sourceId, prefix])).map(r => ({ source_id: r.source_id, slug: r.slug }));
+}
+
+/** One outside caller an open-twin check judges: its identity and the folder rules it satisfies. */
+export interface OpenTwinReader { identity: string[]; satisfied: string[] }
+
+/** One live page in another source that shares a slug with a page a preview changes; `n` is the count of all such pages. */
+export interface OpenTwinRow { source_id: string; slug: string; twin_of: string; n: number }
+
+/**
+ * The open-twin statement of access/open-twins.ts openTwins, rendered in the current context. The window's source and
+ * slug arrays bind twice ($1, $2 for the join, $3, $4 for the exclusion), where openTwins reused $1 and $2.
+ */
+export function openTwinsStatement(pages: ReadonlyArray<{ source_id: string; slug: string }>, outside: readonly OpenTwinReader[], listed: number): { text: string; params: unknown[] } {
+  if (!Number.isFinite(listed)) throw new RangeError(`listOpenTwinRows: listed must be a finite number, not ${listed}`);
+  const sources = pages.map(p => p.source_id);
+  const slugs = pages.map(p => p.slug);
+  const readable = outside.map(o => sqlFragment`(${trustedSql(readersAllowedSql('t', o.identity))} AND ${trustedSql(folderRulesAllowedSql('t', o.satisfied))})`);
+  return renderFragment(sqlFragment`SELECT t.source_id, t.slug, min(c.source_id) AS twin_of,
+      count(*) OVER ()::int AS n FROM unnest(${sources}::text[], ${slugs}::text[]) AS c(source_id, slug)
+    JOIN pages t ON t.slug = c.slug AND t.source_id <> c.source_id AND t.deleted_at IS NULL
+    WHERE NOT EXISTS (SELECT 1 FROM unnest(${sources}::text[], ${slugs}::text[]) AS w(source_id, slug) WHERE w.source_id = t.source_id AND w.slug = t.slug)
+      AND ${trustedSql(privateSnapshotFilterFragment('t'))} AND (${joinFragments(readable, ' OR ')})
+    GROUP BY t.source_id, t.slug ORDER BY t.source_id, t.slug LIMIT ${trustedSql(`${listed}`)}`);
+}
+
+/**
+ * The live pages in other sources that share a slug with one of `pages`, are not private by their own labels, and that
+ * the empty identity or one of `outside` reads by its readers and folder rules; by source then slug, at most `listed`.
+ */
+export async function listOpenTwinRows(exec: AccessPolicyExec, pages: ReadonlyArray<{ source_id: string; slug: string }>,
+  outside: readonly OpenTwinReader[], listed: number): Promise<OpenTwinRow[]> {
+  const { text, params } = openTwinsStatement(pages, outside, listed);
+  return exec.executeRaw<OpenTwinRow>(text, params);
 }

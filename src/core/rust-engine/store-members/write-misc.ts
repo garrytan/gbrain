@@ -6,10 +6,10 @@
  * rust/docs/store/write_misc.md.
  */
 import type {
-  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from '../../engine-sql/write-misc.ts';
 import type { AppliedPolicyRevision, FolderAccessRows } from '../../engine-sql/access-control.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 
 /**
  * The source's incarnation, archived flag, local path and config, or null. `lock: 'share'` asks the SQL engines to hold
@@ -63,16 +63,6 @@ export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = async (
 
 /** The store keeps no chronicle extraction state, so no page has events. */
 export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number], boolean> = async () => false;
-
-/**
- * `gbrain auth list` and the open-page count's member keys read every token row (`SELECT *`). The store keeps tokens
- * (insertAccessToken) but only some of those columns, so a brain that holds a token refuses rather than answer an
- * empty list (docs/designs/RUST_ENGINE.md row 32g); with no token the empty list is the answer.
- */
-export const listAccessTokens: StoreMember<[], AccessTokenRow[]> = async (brain) => {
-  if (await storeCall({ member: 'listAccessTokens' }, () => brain.accessTokensPresent())) refuseMember('listAccessTokens', 'the token rows');
-  return [];
-};
 
 /**
  * The store keeps no notifier state (a resident notifier refuses to start on this engine, notifier/store.ts), so no

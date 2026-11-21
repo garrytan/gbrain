@@ -16,7 +16,7 @@ import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRo
 import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia, FolderAccessRows, PageNamingReaderRow } from './engine-sql/access-control.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as AccessPolicySql from './engine-sql/access-policy.ts';
-import type { OpenPageCount, OpenPageExclusion, WhoCanReadPageRow } from './engine-sql/access-setup.ts';
+import type { LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount, WhoCanReadPageRow } from './engine-sql/access-setup.ts';
 import type { OwnerOnlyForm } from './access/owner-only.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
@@ -4535,6 +4535,8 @@ export interface BrainEngine {
   countRuleCoveredPages(sourceId: string, prefixes: string | readonly string[]): Promise<number>;
   listRuleCoveredSlugs(sourceId: string, prefixes: readonly string[]): Promise<string[]>;
   listRuleCoveredPages(sourceId: string, prefix: string): Promise<Array<{ source_id: string; slug: string }>>;
+  /** The open twins of a rule preview (access/open-twins.ts): live pages in other sources sharing a slug with `pages` that `outside` still reads. */
+  listOpenTwinRows(pages: ReadonlyArray<{ source_id: string; slug: string }>, outside: readonly AccessPolicySql.OpenTwinReader[], listed: number): Promise<AccessPolicySql.OpenTwinRow[]>;
 
   /**
    * The open pages of `sources` (live, and the read path's floor with an empty identity admits them), less each
@@ -4554,6 +4556,22 @@ export interface BrainEngine {
 
   /** How many of a page's qualified rule ids name no applied raw-only (`covers_derived` false) rule of `sourceId` (whoCanRead). */
   countLineageClosingRules(ruleIds: readonly string[], sourceId: string): Promise<number>;
+  /** Live tokens bound to no member, by name (gbrain access serves several --owner). */
+  listUnboundTokenNames(): Promise<string[]>;
+  /** Live OAuth clients bound to no member, by client id. */
+  listUnboundClientIds(): Promise<string[]>;
+  /** The live token named `name` as the member-key setup reads it, or null. */
+  readLiveAccessToken(name: string): Promise<LiveAccessTokenRow | null>;
+  /** Keeps `reads` as the source list setup gave the live token `name` (its permissions `setup_reads`). */
+  recordTokenSetupReads(name: string, reads: readonly string[]): Promise<void>;
+  /** Live member-bound keys whose fixed read list holds `sourceId` though it is not their write source, by name. */
+  listKeysReadingSource(sourceId: string): Promise<MemberKeyReadingRow[]>;
+  /** The live pages of `sourceId`, and how many are under company/calls/. */
+  countCompanyPages(sourceId: string): Promise<{ pages: number; calls: number }>;
+  /** Revokes the live token with id `id`; a revoked or missing one changes nothing. */
+  revokeAccessTokenById(id: string): Promise<void>;
+  /** The live pages under each top-level people/<folder>/ folder, by source then folder. */
+  countPeopleFolderPages(): Promise<PeopleFolderCount[]>;
 
   /**
    * The applied folder rules any of `readers` meets (none read when `readers` is empty) and every folder prefix that

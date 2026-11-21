@@ -1,7 +1,8 @@
 /**
  * Access setup and policy-store reads outside access/policy.ts: one SQL implementation for both engines. The open-page
- * count of access/open-pages.ts (gbrain access serves, access serves several, doctor open_shared_pages) and the page
- * reads of commands/access.ts whoCanRead (gbrain access who-can-read). Each statement is the text its caller ran
+ * count of access/open-pages.ts (gbrain access serves, access serves several, doctor open_shared_pages), the page
+ * reads of commands/access.ts whoCanRead (gbrain access who-can-read), the member keys and owner setup of
+ * commands/access-serves.ts and the people folders of access/serves.ts. Each statement is the text its caller ran
  * through `executeRaw`, byte for byte (test/engine-sql-caller-raw-sql-pins.test.ts). Every member runs on the
  * executor it is given, so a member of a transaction-bound engine runs on that transaction, and a statement built from
  * the caller record renders in the record the caller set (whoCanRead's member checks run inside one).
@@ -13,6 +14,77 @@ import { joinFragments, renderFragment, sqlFragment, trustedSql } from './fragme
 /** The engine's own executeRaw (a transaction-bound engine inside a transaction). */
 export interface AccessSetupExec {
   executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+}
+
+// The member keys and owner setup of commands/access-serves.ts and the people folders of access/serves.ts (row 32b-2).
+
+/** A live access token as the member-key setup reads it; `federated_read` is a text[] value, `permissions` JSON. */
+export interface LiveAccessTokenRow {
+  member_id: string | null;
+  token_hash: string;
+  source_grant: string | null;
+  source_id: string | null;
+  federated_read: unknown;
+  permissions: unknown;
+}
+
+/** A live member-bound key whose fixed read list holds a source that is not its write source. */
+export interface MemberKeyReadingRow { name: string; member_id: string; federated_read: unknown }
+
+/** The live pages of top-level people/<folder>/ folders, per source. */
+export interface PeopleFolderCount { source_id: string; folder: string; pages: number }
+
+export const UNBOUND_TOKEN_NAMES_SQL = 'SELECT DISTINCT name COLLATE "C" AS name FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NULL ORDER BY name';
+export const UNBOUND_CLIENT_IDS_SQL = 'SELECT client_id FROM oauth_clients WHERE deleted_at IS NULL AND member_id IS NULL ORDER BY client_id COLLATE "C"';
+export const LIVE_TOKEN_SQL = 'SELECT member_id, token_hash, source_grant, source_id, federated_read, permissions FROM access_tokens WHERE name = $1 AND revoked_at IS NULL';
+export const RECORD_SETUP_READS_SQL = "UPDATE access_tokens SET permissions = COALESCE(permissions, '{}'::jsonb) || jsonb_build_object('setup_reads', $2::text[]) WHERE name = $1 AND revoked_at IS NULL AND (permissions IS NULL OR jsonb_typeof(permissions) = 'object')";
+export const KEYS_READING_SOURCE_SQL = "SELECT name, member_id, federated_read FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NOT NULL AND source_grant = 'federated' AND source_id <> $1 AND $1 = ANY(federated_read) ORDER BY name COLLATE \"C\"";
+export const COMPANY_PAGE_COUNTS_SQL = "SELECT count(*)::int AS pages, count(*) FILTER (WHERE slug LIKE 'company/calls/%')::int AS calls FROM pages WHERE source_id = $1 AND deleted_at IS NULL";
+export const REVOKE_TOKEN_SQL = 'UPDATE access_tokens SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL';
+export const PEOPLE_FOLDER_PAGES_SQL = `SELECT source_id, split_part(slug, '/', 2) AS folder, count(*)::int AS pages FROM pages
+      WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY source_id COLLATE "C", split_part(slug, '/', 2) COLLATE "C"`;
+
+/** Live tokens bound to no member, by name. */
+export async function listUnboundTokenNames(exec: AccessSetupExec): Promise<string[]> {
+  return (await exec.executeRaw<{ name: string }>(UNBOUND_TOKEN_NAMES_SQL)).map(r => r.name);
+}
+
+/** Live OAuth clients bound to no member, by client id. */
+export async function listUnboundClientIds(exec: AccessSetupExec): Promise<string[]> {
+  return (await exec.executeRaw<{ client_id: string }>(UNBOUND_CLIENT_IDS_SQL)).map(r => r.client_id);
+}
+
+/** The live token named `name`, or null. */
+export async function readLiveAccessToken(exec: AccessSetupExec, name: string): Promise<LiveAccessTokenRow | null> {
+  const [row] = await exec.executeRaw<LiveAccessTokenRow>(LIVE_TOKEN_SQL, [name]);
+  return row ?? null;
+}
+
+/** Keeps `reads` as the source list setup gave the live token `name`, beside its other permission fields. */
+export async function recordTokenSetupReads(exec: AccessSetupExec, name: string, reads: readonly string[]): Promise<void> {
+  await exec.executeRaw(RECORD_SETUP_READS_SQL, [name, reads]);
+}
+
+/** Live member-bound keys whose fixed read list holds `sourceId` though it is not their write source, by name. */
+export async function listKeysReadingSource(exec: AccessSetupExec, sourceId: string): Promise<MemberKeyReadingRow[]> {
+  return exec.executeRaw<MemberKeyReadingRow>(KEYS_READING_SOURCE_SQL, [sourceId]);
+}
+
+/** The live pages of `sourceId`, and how many of them are under company/calls/. */
+export async function countCompanyPages(exec: AccessSetupExec, sourceId: string): Promise<{ pages: number; calls: number }> {
+  const [row] = await exec.executeRaw<{ pages: number | string; calls: number | string }>(COMPANY_PAGE_COUNTS_SQL, [sourceId]);
+  return { pages: Number(row?.pages ?? 0), calls: Number(row?.calls ?? 0) };
+}
+
+/** Revokes the live token with id `id` (a revoked or missing one changes nothing). */
+export async function revokeAccessTokenById(exec: AccessSetupExec, id: string): Promise<void> {
+  await exec.executeRaw(REVOKE_TOKEN_SQL, [id]);
+}
+
+/** The live pages under each top-level people/<folder>/ folder, by source then folder. */
+export async function countPeopleFolderPages(exec: AccessSetupExec): Promise<PeopleFolderCount[]> {
+  return (await exec.executeRaw<{ source_id: string; folder: string; pages: number | string }>(PEOPLE_FOLDER_PAGES_SQL))
+    .map(r => ({ source_id: r.source_id, folder: r.folder, pages: Number(r.pages) }));
 }
 
 /** The open pages of one (source, top-level folder, type, privacy part) group (access/open-pages.ts). */

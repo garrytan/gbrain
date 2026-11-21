@@ -16,7 +16,7 @@ import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postg
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
-import { accessAllowedSql, callerAccessAllowedSql, folderRulesAllowedSql, privacyPartSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
+import { accessAllowedSql, callerAccessAllowedSql, folderRulesAllowedSql, privacyPartSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, privateSnapshotFilterFragment, readersAllowedSql, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 import { ownerOnlyPageSql } from '../src/core/access/owner-only.ts';
 import { ruleCoversSql } from '../src/core/access/folder-rules.ts';
 import { OPEN_TWINS_PAGES } from '../src/core/access/open-twins.ts';
@@ -593,6 +593,58 @@ const PINS: Pin[] = [
     from: 'src/commands/access-rules.ts:197 previewRules at 8d2e667543 (pages a narrowing covers, for the open-twin check)',
     case: { method: 'listRuleCoveredPages', variant: 'default', run: e => e.listRuleCoveredPages('default', 'notes/') },
     texts: () => [`SELECT source_id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')} ORDER BY slug LIMIT ${OPEN_TWINS_PAGES}`],
+  },
+  // Row 32b-2: the member keys and owner setup of gbrain access serves several, the people folders and the open twins.
+  {
+    from: 'src/commands/access-serves.ts:136 unboundCredentials at 8d2e667543 (tokens) (equivalent: COLLATE "C" on the ORDER BY)',
+    case: { method: 'listUnboundTokenNames', variant: 'default', run: e => e.listUnboundTokenNames() },
+    texts: ['SELECT DISTINCT name COLLATE "C" AS name FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NULL ORDER BY name'],
+  },
+  {
+    from: 'src/commands/access-serves.ts:137 unboundCredentials at 8d2e667543 (OAuth clients) (equivalent: COLLATE "C" on the ORDER BY)',
+    case: { method: 'listUnboundClientIds', variant: 'default', run: e => e.listUnboundClientIds() },
+    texts: ['SELECT client_id FROM oauth_clients WHERE deleted_at IS NULL AND member_id IS NULL ORDER BY client_id COLLATE "C"'],
+  },
+  {
+    from: 'src/commands/access-serves.ts:187 plan at 8d2e667543 (the live member key)',
+    case: { method: 'readLiveAccessToken', variant: 'default', run: e => e.readLiveAccessToken('member-alice-example') },
+    texts: ['SELECT member_id, token_hash, source_grant, source_id, federated_read, permissions FROM access_tokens WHERE name = $1 AND revoked_at IS NULL'],
+  },
+  {
+    from: 'src/commands/access-serves.ts:242-244 recordSetupReads at 8d2e667543',
+    case: { method: 'recordTokenSetupReads', variant: 'default', run: e => e.recordTokenSetupReads('member-alice-example', ['default']) },
+    texts: ["UPDATE access_tokens SET permissions = COALESCE(permissions, '{}'::jsonb) || jsonb_build_object('setup_reads', $2::text[]) WHERE name = $1 AND revoked_at IS NULL AND (permissions IS NULL OR jsonb_typeof(permissions) = 'object')"],
+  },
+  {
+    from: 'src/commands/access-serves.ts:252-253 keysStillReading at 8d2e667543 (equivalent: COLLATE "C" on the ORDER BY)',
+    case: { method: 'listKeysReadingSource', variant: 'default', run: e => e.listKeysReadingSource('company') },
+    texts: ["SELECT name, member_id, federated_read FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NOT NULL AND source_grant = 'federated' AND source_id <> $1 AND $1 = ANY(federated_read) ORDER BY name COLLATE \"C\""],
+  },
+  {
+    from: 'src/commands/access-serves.ts:266-267 companyCounts at 8d2e667543',
+    case: { method: 'countCompanyPages', variant: 'default', run: e => e.countCompanyPages('company') },
+    texts: ["SELECT count(*)::int AS pages, count(*) FILTER (WHERE slug LIKE 'company/calls/%')::int AS calls FROM pages WHERE source_id = $1 AND deleted_at IS NULL"],
+  },
+  {
+    from: 'src/commands/access-serves.ts:340 labelSeveral at 8d2e667543 (revoke a key whose file failed)',
+    case: { method: 'revokeAccessTokenById', variant: 'default', run: e => e.revokeAccessTokenById('00000000-0000-0000-0000-000000000000') },
+    texts: ['UPDATE access_tokens SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL'],
+  },
+  {
+    from: 'src/core/access/serves.ts:39-41 unlabeledPeopleFolders at 8d2e667543 (equivalent: COLLATE "C" on the ORDER BY)',
+    case: { method: 'countPeopleFolderPages', variant: 'default', run: e => e.countPeopleFolderPages() },
+    texts: [`SELECT source_id, split_part(slug, '/', 2) AS folder, count(*)::int AS pages FROM pages
+      WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY source_id COLLATE "C", split_part(slug, '/', 2) COLLATE "C"`],
+  },
+  {
+    from: 'src/core/access/open-twins.ts:30-35 openTwins at 8d2e667543 (the outside readers are the empty identity and one member; equivalent: the window arrays bind again as $3, $4 for the exclusion instead of reusing $1, $2)',
+    case: { method: 'listOpenTwinRows', variant: 'default', run: e => e.listOpenTwinRows([{ source_id: 'default', slug: 'partners/alice/deal' }], [{ identity: [], satisfied: [] }, { identity: ['member:bob-example'], satisfied: ['default:team'] }], 50) },
+    texts: () => [`SELECT t.source_id, t.slug, min(c.source_id) AS twin_of,
+      count(*) OVER ()::int AS n FROM unnest($1::text[], $2::text[]) AS c(source_id, slug)
+    JOIN pages t ON t.slug = c.slug AND t.source_id <> c.source_id AND t.deleted_at IS NULL
+    WHERE NOT EXISTS (SELECT 1 FROM unnest($3::text[], $4::text[]) AS w(source_id, slug) WHERE w.source_id = t.source_id AND w.slug = t.slug)
+      AND ${privateSnapshotFilterFragment('t')} AND (${[[[], []], [['member:bob-example'], ['default:team']]].map(([identity, satisfied]) => `(${readersAllowedSql('t', identity)} AND ${folderRulesAllowedSql('t', satisfied)})`).join(' OR ')})
+    GROUP BY t.source_id, t.slug ORDER BY t.source_id, t.slug LIMIT 50`],
   },
   // Equivalent, not verbatim (the next four): the old-line statements add COLLATE "C" to every ORDER BY, so groups,
   // group members and pages come in byte order on every engine whatever the database collation.

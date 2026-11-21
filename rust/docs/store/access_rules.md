@@ -120,6 +120,15 @@ by slug, for the open-twin check). On PGLite and Postgres they run `RULE_COVERED
 (`src/core/engine-sql/access-policy.ts`); here they read `listAccessPrefixSlugs` and keep the slugs a prefix covers
 (`ruleCovers`: a folder prefix covers every slug under it, a page prefix only its own slug, `''` every slug).
 
+The preview also lists the open twins (`src/core/access/open-twins.ts`): live pages in other sources that share a slug
+with a page the change covers and that a caller outside the change still reads. On PGLite and Postgres
+`listOpenTwinRows` runs `openTwinsStatement` (`src/core/engine-sql/access-policy.ts`); here
+`brain.listOpenTwinRows(pages, outside, honorAliases, listed)` judges each candidate page by its own labels
+(`twin_snapshot_allows`), its readers and its stamped rules and pending prefixes (`twin_open_to` in
+`crates/gbrain-store/src/facts/privacy.rs`), for the empty identity and each outside caller, by source then slug in byte
+order. The member refuses inside a caller record, where the SQL reads the record's coverage. It also runs the held-fact
+move plan ([facts.md](facts.md), `held_moves.rs`).
+
 The SQL sorts the rule list, the pending prefixes and the prefix slugs with `COLLATE "C"`, so a Postgres server whose
 collation is not `C` gives the byte order PGLite and the store give. `listRuleCoveredPages` sorts by `slug` with the
 database collation, as the command did before; on such a server its order can differ from the store's byte order.
@@ -129,10 +138,6 @@ database collation, as the command did before; on such a server its order can di
 - Moving a source's rules between the database and git (`src/core/access/policy-migrate.ts`, `gbrain access rule migrate`)
   runs `executeRaw`, so it stops on the `raw_sql` refusal before any work (row 32h). `previewMigrate` reads no
   migration row on this engine, because none can exist.
-- `gbrain access rule add` (its preview and its write), `rule rm`, `rule revert` and `rule import`: the preview also
-  runs the held-fact move plan (`planHeldMoves`), whose reads this engine did not serve at ac7c6fdf42, so each refuses
-  before any write (row 32b-1; row 32b-2 serves them).
-- `gbrain access serves several` (row 32b-2).
 
 ## Tests
 
@@ -153,4 +158,6 @@ database collation, as the command did before; on such a server its order can di
 - `test/engine-parity/write-misc.test.ts`: `readFolderAccess`, `isFolderRestricted` and `listAppliedPolicyRevisions`
   on every arm, through `restrictFolder` (`test/engine-parity/harness.ts`, the typed policy members) and
   `proposeRevision`.
+- `test/engine-parity/access-rule-add.test.ts`: on every arm, `gbrain access rule add` through the command, its preview
+  and its `--yes` write printing the same JSON, the open twins, a brain with held facts, and the held-move rule reads.
 - `test/engine-sql-caller-raw-sql-pins.test.ts` pins each Postgres statement to the text its caller ran.

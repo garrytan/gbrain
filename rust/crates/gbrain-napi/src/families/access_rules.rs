@@ -270,4 +270,23 @@ impl Brain {
             s.replace_access_invalid_coverage(&source_id, &prefixes, &detail)
         })
     }
+
+    /// `listOpenTwinRows(pages, outside, honorAliases, listed)`: the open twins of a rule preview.
+    #[napi]
+    pub fn list_open_twin_rows<'env>(
+        &self,
+        env: &'env Env,
+        pages: Value,
+        outside: Value,
+        honor_aliases: bool,
+        listed: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let pages: Vec<gbrain_store::access_rules::OpenTwinPage> =
+                required(pages, "listOpenTwinRows pages")?;
+            let outside: Vec<gbrain_store::access_rules::OpenTwinReader> =
+                required(outside, "listOpenTwinRows outside")?;
+            s.list_open_twin_rows(&pages, &outside, honor_aliases, listed as usize)
+        })
+    }
 }

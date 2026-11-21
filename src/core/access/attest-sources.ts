@@ -61,8 +61,9 @@ const sqlOf = (db: Db): SqlQuery => typeof db === 'function' ? db : sqlQueryForE
  */
 export async function markedScopeSources(db: Db, ids: readonly string[], lock?: 'share' | 'update'): Promise<Set<string>> {
   if (!ids.length) return new Set();
-  if (!lock && typeof db !== 'function') {
-    // An unlocked check on an engine reads each source through the typed source read, so every engine answers it.
+  if (typeof db !== 'function' && (!lock || db.kind === 'rust')) {
+    // An unlocked check on an engine reads each source through the typed source read, so every engine answers it. On
+    // the Rust engine a locked check does too: its store write transaction holds the writer gate, so it is the lock.
     const unique = [...new Set(ids)];
     const rows = await Promise.all(unique.map(id => db.getSource(id)));
     return new Set(rows.filter(r => r && isScopeSourceConfig(r.config)).map(r => String(r!.id)));
@@ -133,7 +134,7 @@ export async function assertScopeSourceGrant(db: Db, self: CredentialRef | null,
   }
   const candidates = reads.filter(s => s !== 'default');
   if (!candidates.length) return;
-  const marked = await markedScopeSources(sql, candidates, 'share');
+  const marked = await markedScopeSources(typeof db !== 'function' && db.kind === 'rust' ? db : sql, candidates, 'share');
   if (!marked.size) return;
   const own = self ? (await credentialSources(sql)).find(c => same(c.ref, self))?.attest ?? [] : [];
   const reserved = [...marked].filter(s => !own.includes(s)).sort();

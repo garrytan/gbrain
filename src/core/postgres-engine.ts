@@ -1717,11 +1717,20 @@ export class PostgresEngine implements BrainEngine {
   countRuleCoveredPages(sourceId: string, prefixes: string | readonly string[]) { return accessPolicyImpl.countRuleCoveredPages(this, sourceId, prefixes); }
   listRuleCoveredSlugs(sourceId: string, prefixes: readonly string[]) { return accessPolicyImpl.listRuleCoveredSlugs(this, sourceId, prefixes); }
   listRuleCoveredPages(sourceId: string, prefix: string) { return accessPolicyImpl.listRuleCoveredPages(this, sourceId, prefix); }
+  listOpenTwinRows(pages: ReadonlyArray<{ source_id: string; slug: string }>, outside: readonly accessPolicyImpl.OpenTwinReader[], listed: number) { return accessPolicyImpl.listOpenTwinRows(this, pages, outside, listed); }
   countOpenPages(sources: readonly string[], exclude: readonly accessSetupImpl.OpenPageExclusion[]) { return accessSetupImpl.countOpenPages(this, sources, exclude); }
   listWhoCanReadPages(slug: string, sourceId: string | undefined, form: OwnerOnlyForm) { return accessSetupImpl.listWhoCanReadPages(this, slug, sourceId, form); }
   readPageAdmitsCaller(sourceId: string, slug: string, identity: readonly string[]) { return accessSetupImpl.readPageAdmitsCaller(this, sourceId, slug, identity); }
   readPageFolderRulesAdmit(sourceId: string, slug: string, satisfied: readonly string[]) { return accessSetupImpl.readPageFolderRulesAdmit(this, sourceId, slug, satisfied); }
   countLineageClosingRules(ruleIds: readonly string[], sourceId: string) { return accessSetupImpl.countLineageClosingRules(this, ruleIds, sourceId); }
+  listUnboundTokenNames() { return accessSetupImpl.listUnboundTokenNames(this); }
+  listUnboundClientIds() { return accessSetupImpl.listUnboundClientIds(this); }
+  readLiveAccessToken(name: string) { return accessSetupImpl.readLiveAccessToken(this, name); }
+  recordTokenSetupReads(name: string, reads: readonly string[]) { return accessSetupImpl.recordTokenSetupReads(this, name, reads); }
+  listKeysReadingSource(sourceId: string) { return accessSetupImpl.listKeysReadingSource(this, sourceId); }
+  countCompanyPages(sourceId: string) { return accessSetupImpl.countCompanyPages(this, sourceId); }
+  revokeAccessTokenById(id: string) { return accessSetupImpl.revokeAccessTokenById(this, id); }
+  countPeopleFolderPages() { return accessSetupImpl.countPeopleFolderPages(this); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return this.preparationRead(exec => entityReadsImpl.readMentionLastPass(unscopedExecutor(exec, 'entities: mention pass time ran unscoped through executeRaw'), sourceId)); }
   countPagesDueForMentions(q: entityReadsImpl.MentionDueQuery) { return this.preparationRead(exec => entityReadsImpl.countPagesDueForMentions(unscopedExecutor(exec, 'entities: mention-due count ran unscoped through executeRaw'), q)); }

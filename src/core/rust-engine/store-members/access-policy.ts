@@ -5,12 +5,14 @@
  * write transaction RustEngine.transaction holds. What each member answers: rust/docs/store/access_rules.md.
  */
 import type {
-  AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow,
+  AccessCoverageRow, OpenTwinReader, OpenTwinRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow,
 } from '../../engine-sql/access-policy.ts';
 import { RULE_COVERED_PAGES_LIMIT } from '../../engine-sql/access-policy.ts';
-import { ruleCovers } from '../../access/folder-rules.ts';
+import { ruleCovers, validQualifiedRuleId } from '../../access/folder-rules.ts';
+import { validIdentity } from '../../access/principals.ts';
+import { callerAccessRecord, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
 import type { StoreBrain } from '../store.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 export const readAccessStoreConfig: StoreMember<[sourceId: string], { store: string | null } | null> = (brain, sourceId) =>
   storeCall({ member: 'readAccessStoreConfig', sourceId }, () => brain.readAccessStoreConfig(sourceId));
@@ -93,3 +95,23 @@ export const listRuleCoveredSlugs: StoreMember<[sourceId: string, prefixes: read
 
 export const listRuleCoveredPages: StoreMember<[sourceId: string, prefix: string], Array<{ source_id: string; slug: string }>> = async (brain, sourceId, prefix) =>
   (await covered(brain, 'listRuleCoveredPages', sourceId, [prefix])).slice(0, RULE_COVERED_PAGES_LIMIT).map(slug => ({ source_id: sourceId, slug }));
+
+/**
+ * The open twins of a rule preview (engine-sql/access-policy.ts listOpenTwinRows). The SQL engines render the readers
+ * and folder-rule tests outside any caller record, so the pending prefixes are read live; inside a record the member
+ * refuses. The store judges each candidate page with the same tests (facts/privacy.rs twin_open_to), and the label test
+ * honours the privacy aliases exactly when the rendering does. An identity or a satisfied list the rendering drops as
+ * invalid is sent empty, as the SQL reads it.
+ */
+export const listOpenTwinRows: StoreMember<[pages: ReadonlyArray<{ source_id: string; slug: string }>, outside: readonly OpenTwinReader[], listed: number], OpenTwinRow[]> =
+  async (brain, pages, outside, listed) => {
+    if (callerAccessRecord()) refuseMember('listOpenTwinRows', 'an open-twin check inside a caller record');
+    const honorAliases = /->>'visibility' IS NULL AND/.test(privateSnapshotFilterFragment('t'));
+    const readers = outside.map(o => ({
+      identity: o.identity.length && validIdentity(o.identity) ? [...o.identity] : [],
+      satisfied: o.satisfied.length && o.satisfied.every(validQualifiedRuleId) ? [...o.satisfied] : [],
+    }));
+    return storeCall({ member: 'listOpenTwinRows' }, () =>
+      brain.listOpenTwinRows(pages.map(p => ({ source_id: p.source_id, slug: p.slug })), readers, honorAliases, listed)) as Promise<OpenTwinRow[]>;
+  };
+

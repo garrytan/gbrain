@@ -6,7 +6,6 @@
 src/cli/enforced-commit-push.ts	execute_raw	1
 src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	1
-src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/commands/access.ts	execute_raw	1
 src/commands/agent-logs.ts	execute_raw	1
 src/commands/agent-register.ts	execute_raw	2
@@ -223,11 +222,9 @@ src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before t
 src/core/access/member-sources.ts	execute_raw	8
 src/core/access/members.ts	sql_template	1
 src/core/access/open-pages.ts	execute_raw	1	the statement timeout bounded() sets on a Postgres transaction (SET LOCAL statement_timeout); PGLite and the Rust engine never run it
-src/core/access/open-twins.ts	execute_raw	1
 src/core/access/policy-migrate.ts	execute_raw	4
 src/core/access/requester-scope.ts	execute_raw	3
 src/core/access/room.ts	execute_raw	2
-src/core/access/serves.ts	execute_raw	1
 src/core/access/token-member-status.ts	sql_template	1
 src/core/advisor/collect-chronicle.ts	execute_raw	1
 src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
@@ -957,7 +954,7 @@ src/core/timeline-extract.ts	execute_raw	9
 src/core/timeline-write-through.ts	execute_raw	1
 src/core/token-mint.ts	execute_raw	2
 src/core/token-mint.ts	sql_template	1
-src/core/transcripts/archive.ts	execute_raw	12
+src/core/transcripts/archive.ts	execute_raw	10
 src/core/transcripts/discover.ts	execute_raw	2
 src/core/transcripts/hermes.ts	driver_call	1
 src/core/transcripts/ingest.ts	execute_raw	3

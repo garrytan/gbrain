@@ -7,9 +7,8 @@
 //! - `onHolding` is a row of the source with a fence position and no ontology dimension, about an entity that is no
 //!   holding page, whose `source_markdown_slug` names a holding page that has a row in the source (a soft-deleted
 //!   page counts: the SQL tests only for the page row).
-//! - The store keeps no access rules or pending coverage (rust/docs/store/access-flag.md), so the rule reads take the
-//!   empty-table value: no entity is restricted, no exact page rule covers it, the access state is readable, and
-//!   `heldMoveDue` is false, since a move is due only when a rule narrows the entity below its holding page.
+//! - The rule reads judge the store's folder rules and pending prefixes (`access_rules.rs`,
+//!   rust/docs/store/access_rules.md). The access state is always readable: the store has no row-level security.
 //! - A text comparison is a byte comparison, and a NUL byte in a text argument is refused whether or not a row would
 //!   match, as Postgres refuses the bound parameter.
 
@@ -17,6 +16,7 @@ use super::privacy::holding_slug;
 use super::purge::fence_columns;
 use super::{FactRecord, PrivacyPolicy, page_hidden, source_rows};
 use crate::Store;
+use crate::access_rules::{covering_rule_ids, exact_prefix, folder_rules, pending_covers};
 use crate::env::{is_uuid, iso};
 use crate::error::{Result, StoreError};
 use crate::keys;
@@ -156,16 +156,20 @@ impl Store {
         Ok(read_page(&*read, &q.source_id, &q.slug)?.is_some_and(|p| p.deleted_at_us.is_none()))
     }
 
-    /// `readHeldAccessState(sourceId, entity)`: the one row of the access state. The store keeps no access rules or
-    /// pending coverage, so it is readable, no exact page rule covers the entity and no folder rule restricts it.
-    /// The entity is the page args' `slug`.
+    /// `readHeldAccessState(sourceId, entity)`: the one row of the access state. `unreadable` is false (no
+    /// row-level security); `page_rule` is whether a rule or a pending prefix of the source is exactly the entity;
+    /// `restricted` is whether a rule or a pending prefix covers it. The entity is the page args' `slug`.
     pub fn read_held_access_state(&self, q: &HeldPageArgs) -> Result<Vec<Value>> {
         no_nul(
             "readHeldAccessState",
             &[("sourceId", &q.source_id), ("entity", &q.slug)],
         )?;
+        let read = self.read()?;
+        let page_rule = exact_prefix(&*read, &q.source_id, &q.slug)?;
+        let restricted = !folder_rules(&*read, &q.source_id, &q.slug)?.is_empty()
+            || pending_covers(&*read, &q.source_id, &q.slug)?;
         Ok(vec![
-            json!({ "unreadable": false, "page_rule": false, "restricted": false }),
+            json!({ "unreadable": false, "page_rule": page_rule, "restricted": restricted }),
         ])
     }
 
@@ -249,10 +253,31 @@ impl Store {
         ))
     }
 
-    /// `heldMoveDue(sourceId)`: whether a rule narrows a held row's entity below its holding page. The store keeps no
-    /// rules, so none does.
+    /// `heldMoveDue(sourceId)`: whether a held row (expired ones too, as the SQL has no `expired_at` test) has an
+    /// entity that a rule covers and its holding page's rules do not, or that a pending prefix covers and its holding
+    /// page's does not.
     pub fn held_move_due(&self, source_id: &str) -> Result<bool> {
         no_nul("heldMoveDue", &[("sourceId", source_id)])?;
+        let read = self.read()?;
+        for r in source_rows(&*read, source_id)? {
+            if !on_holding(&*read, &r)? {
+                continue;
+            }
+            let (Some(entity), Some(from)) =
+                (r.entity_slug.as_deref(), r.source_markdown_slug.as_deref())
+            else {
+                continue;
+            };
+            let holding = covering_rule_ids(&*read, source_id, from)?;
+            if covering_rule_ids(&*read, source_id, entity)?
+                .iter()
+                .any(|id| !holding.contains(id))
+                || (pending_covers(&*read, source_id, entity)?
+                    && !pending_covers(&*read, source_id, from)?)
+            {
+                return Ok(true);
+            }
+        }
         Ok(false)
     }
 

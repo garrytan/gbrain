@@ -455,6 +455,21 @@ describe('engine parity: access members', () => {
   });
 });
 
+describe('engine parity: the open-page count reads the member keys (row 32g)', () => {
+  parityTest('gbrain auth list lists a bound token and the open-page count reads its member key', {
+    methods: ['insertAccessToken', 'listAccessTokens'],
+  }, async (engine) => {
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+    await engine.insertAccessToken(tokenRow('laptop'));
+    await addMember(engine, 'alice-example', { bindToken: 'laptop' });
+    await addMember(engine, 'bob-example');
+    const names = (await engine.listAccessTokens()).map(r => [r.name, r.member_id]);
+    const open = await openPages(engine);
+    expect(names).toEqual([['laptop', 'alice-example']]);
+    return { names, open };
+  });
+});
+
 describe('the Rust arm refuses what it does not serve yet (rows 32c, 32d, 32e and 32g), and writes nothing', () => {
   // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine and pin each refusal: a pin
   // fails when Rust stops refusing, and its row must then leave docs/designs/RUST_ENGINE.md.
@@ -486,18 +501,6 @@ describe('the Rust arm refuses what it does not serve yet (rows 32c, 32d, 32e an
     expect(access.labelledOnly).toBe(true);
     const read = await refusal(() => withCallerAccess(access, () => corePages(engine)));
     expect(read).toMatchObject({ code: 'engine_capability_missing' });
-  });
-
-  test('loss (32g): gbrain auth list and the open-page count refuse once a token exists, never an empty list', async () => {
-    const engine = await rustArm();
-    if (!engine) return;
-    expect(await engine.listAccessTokens()).toEqual([]);
-    await engine.insertAccessToken(tokenRow('laptop'));
-    await addMember(engine, 'alice-example', { bindToken: 'laptop' });
-    await addMember(engine, 'bob-example');
-    const missing = "This brain's engine does not support listAccessTokens (the token rows) yet (it needs the access_control capability), so nothing ran.";
-    expect(await refusal(() => engine.listAccessTokens())).toEqual(stop(missing));
-    expect(await refusal(() => openPages(engine))).toEqual(stop(missing));
   });
 
   test('loss: applyAttestSources and verifiedMember stop on the raw_sql refusal', async () => {

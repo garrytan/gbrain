@@ -860,9 +860,12 @@ Served on Rust: `heldEntityPageDeleted`, `heldTargetPageLive`, `readHeldAccessSt
 `readHeldVersionsEdited`. A holding page is `memory/unattributed` at any depth, and a held row is an unexpired fenced
 fact on one that names another entity.
 
-- The store keeps no access rules, so `readHeldAccessState` answers the state of a brain with none (readable, no page
-  rule, not restricted) and `heldMoveDue` is always false. A brain that has rules is a PGLite or Postgres brain; the
-  parity cases that insert a rule stop on the `raw_sql` refusal of the rule writer.
+- `readHeldAccessState` and `heldMoveDue` judge the store's folder rules and pending prefixes
+  ([access_rules.md](access_rules.md)): `page_rule` is a rule or pending prefix exactly at the entity, `restricted` one
+  that covers it, and a move is due when a held row's entity is covered by a rule its holding page is not (or by a
+  pending prefix its holding page is not). The access state is always readable: there is no row-level security. A held
+  row moves only on a strict git-canonical source (`holdingHome` reads the worktree binding), which no Rust brain is, so
+  on this engine the move plan reads every holding page and plans no move.
 - `readHeldRowVisibility` is `page_hidden` over the live page of the source (private, `readable_by` or an access alias
   hides it); no live page is none.
 - `listStruckHeldRows` is the newest expired id per holding page and row number that no active row reuses. The store

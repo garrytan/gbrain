@@ -619,7 +619,7 @@ export const RUST_ENGINE_MEMBERS = {
   computeFactFingerprints: 'facts',
   listClaimConflictPairs: 'facts',
   countClaimConflictPairs: 'facts',
-  listUnarchivedSourceIds: 'facts',
+  listUnarchivedSourceIds: 'facts', // served (store-members/access-serves.ts)
 
   // facts: conversation fact publication and relink (engine-sql/facts-conversation.ts)
   readNewestConversationFactId: 'facts',
@@ -1028,6 +1028,14 @@ export const RUST_ENGINE_MEMBERS = {
   readPageAdmitsCaller: 'access_control',
   readPageFolderRulesAdmit: 'access_control',
   countLineageClosingRules: 'access_control',
+  listUnboundTokenNames: 'access_control',
+  listUnboundClientIds: 'access_control',
+  readLiveAccessToken: 'access_control',
+  recordTokenSetupReads: 'access_control',
+  listKeysReadingSource: 'access_control',
+  countCompanyPages: 'access_control',
+  revokeAccessTokenById: 'access_control',
+  countPeopleFolderPages: 'access_control',
   insertAccessMember: 'access_control',
   setAccessMemberDisabled: 'access_control',
   setAccessMemberEmail: 'access_control',
@@ -1059,6 +1067,7 @@ export const RUST_ENGINE_MEMBERS = {
   countRuleCoveredPages: 'access_control',
   listRuleCoveredSlugs: 'access_control',
   listRuleCoveredPages: 'access_control',
+  listOpenTwinRows: 'access_control',
   readCredentialBindingForUpdate: 'access_control',
   writeCredentialBinding: 'access_control',
   writeCredentialReadsUnscoped: 'access_control',

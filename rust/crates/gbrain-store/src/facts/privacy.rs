@@ -546,6 +546,36 @@ pub(crate) fn stamped_rules(read: &dyn KvRead, page: &PageRecord) -> Result<Vec<
     folder_rules(read, &page.source_id, &page.slug)
 }
 
+/// `openTwins` (access/open-twins.ts), outside any caller record: whether `identity` reads `page` by its own readers
+/// (`readersAllowedSql`) and folder rules (`folderRulesAllowedSql` with the satisfied rule ids `satisfied`, and the live
+/// pending prefixes), and whether its own labels leave it readable (`privateSnapshotFilterFragment`).
+pub(crate) fn twin_open_to(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    identity: &[String],
+    satisfied: &[String],
+) -> Result<bool> {
+    if names_readers(page)
+        && !access_readers(&page.frontmatter)
+            .is_some_and(|r| r.iter().any(|p| identity.contains(p)))
+    {
+        return Ok(false);
+    }
+    let rules = stamped_rules(read, page)?;
+    if !rules
+        .iter()
+        .all(|r| satisfied.contains(&format!("{}:{}", r.source_id, r.rule_id)))
+    {
+        return Ok(false);
+    }
+    Ok(!pending_covers(read, &page.source_id, &page.slug)?)
+}
+
+/// `privateSnapshotFilterFragment` over a page's own type and frontmatter.
+pub(crate) fn twin_snapshot_allows(page: &PageRecord, honor_aliases: bool) -> bool {
+    snapshot_allows(page, honor_aliases)
+}
+
 /// `folderRestrictedSql`: the page sits under a stamped folder rule or a pending or invalid
 /// prefix (the row-level-security part is always false here).
 pub(crate) fn folder_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {

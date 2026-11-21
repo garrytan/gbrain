@@ -450,6 +450,19 @@ pub struct ClientPatchGuard {
 }
 
 impl Store {
+    /// `listUnboundClientIds()`: the ids of the clients not deleted and bound to no member, in byte order
+    /// (`ORDER BY client_id COLLATE "C"`).
+    pub fn list_unbound_client_ids(&self) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut ids: Vec<String> = all_clients(&*read)?
+            .into_iter()
+            .filter(|c| c.deleted_at.is_none() && c.member_id.is_none())
+            .map(|c| c.client_id)
+            .collect();
+        ids.sort();
+        Ok(ids)
+    }
+
     /// `patchOauthClient(clientId, patch, guard)`: sets the named columns of one client in one write and returns
     /// `{ row, before }` (the row after, with its constraints checked, and the five patchable columns before), or None
     /// when the client does not exist or the guard excludes it. `constraint_violation` for a value a CHECK refuses.

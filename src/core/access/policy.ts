@@ -113,7 +113,7 @@ export async function lockSource(tx: Exec, sourceId: string): Promise<void> {
   await tx.lockAccessPolicy(sourceId);
 }
 
-export async function appliedRules(engine: Pick<BrainEngine, 'listAccessRules'>, sourceId: string): Promise<FolderRule[]> {
+export async function appliedRules(engine: BrainEngine, sourceId: string): Promise<FolderRule[]> {
   const rows = await engine.listAccessRules(sourceId);
   return sortRules(rows.map(r => ({ id: r.rule_id, prefix: r.prefix, readable_by: [...(r.readable_by ?? [])], ...(r.covers_derived === false ? { covers_derived: false as const } : {}) })));
 }
