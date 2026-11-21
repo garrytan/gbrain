@@ -14,10 +14,17 @@ import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
+/**
+ * `confidence` is DOUBLE PRECISION on the SQL engines, which keep NaN and ±Infinity and read them back as numbers.
+ * JSON has no number for those three, so they cross the store boundary as the text Postgres prints for them.
+ */
+const toStoreFloat = (value: number): number | string => Number.isFinite(value) ? value : String(value);
+const fromStoreFloat = (value: number | string): number => typeof value === 'string' ? Number(value) : value;
+
 /** Links the live page into the group; the identity page-not-found error with no live page. */
 export const linkEntityIdentityRow: StoreMember<[input: EntityIdentityLinkInput], void> = async (brain, input) => {
   const linked = await storeCall({ member: 'linkEntityIdentityRow', slug: input.slug, sourceId: input.sourceId }, () => brain.linkEntityIdentity({
-    entity_id: input.entityId, slug: input.slug, source_id: input.sourceId, confidence: input.confidence,
+    entity_id: input.entityId, slug: input.slug, source_id: input.sourceId, confidence: toStoreFloat(input.confidence),
     established_by: input.establishedBy, canonical: input.canonical,
   }));
   if (linked !== true) throw identityPageNotFound(input.slug, input.sourceId);
@@ -42,8 +49,8 @@ export const listEntityIdentityRows: StoreMember<[filter: EntityIdentityFilter],
     slug_source_id: (filter.slug && filter.slugSourceId) || null,
     allowed_sources: filter.allowedSources?.length ? [...filter.allowedSources] : null,
     exclude_private: policy ?? null,
-  }))) as Array<Omit<EntityIdentityRow, 'established_at'> & { established_at: string }>;
-  return found.map((r) => ({ ...r, established_at: new Date(r.established_at) }));
+  }))) as Array<Omit<EntityIdentityRow, 'established_at' | 'confidence'> & { established_at: string; confidence: number | string }>;
+  return found.map((r) => ({ ...r, confidence: fromStoreFloat(r.confidence), established_at: new Date(r.established_at) }));
 };
 
 /** The group of each live member of the cross product of the pages' sources and slugs, by source then slug. */
