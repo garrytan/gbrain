@@ -4026,6 +4026,8 @@ export interface BrainEngine {
   markNeedsRederive(table: string, ids: string[], sourceId: string, requestId: string | null, reason: string): Promise<void>;
   /** The withdrawal a remote save onto a member page meets, or null (GST-2346). */
   readMemberPageWithdrawal(q: FactsTrustSql.MemberPageWithdrawalQuery): Promise<FactsTrustSql.WithdrawalRow | null>;
+  /** The withdrawal a save of a forgotten claim meets, or `hidden` when the caller sees none of its withdrawn rows (facts/single-prepare.ts factWithdrawnRefusal). */
+  readClaimWithdrawal(q: FactsTrustSql.ClaimWithdrawalQuery): Promise<FactsTrustSql.ClaimWithdrawal>;
   /** The visibility of one fact of the source, or null. */
   readFactVisibility(id: number, sourceId: string): Promise<{ visibility: string } | null>;
   /** The fact a `remember.replaces` names, with whether the withdrawal ledger covers it, or null. */

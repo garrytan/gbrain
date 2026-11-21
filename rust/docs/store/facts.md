@@ -447,21 +447,21 @@ The six ontology re-key and repair members (`listRekeyLosers` and its four write
 
 ## Group 5: the rest of the facts write and recall sites (not yet in Rust)
 
-Thirty-six members that were raw `executeRaw` statements in seventeen callers (`src/core/facts/absorb-log.ts`, `backstop.ts`,
+Thirty-seven members that were raw `executeRaw` statements in seventeen callers (`src/core/facts/absorb-log.ts`, `backstop.ts`,
 `embedding-identity.ts`, `slot-tagging.ts`, `subject-infer.ts`, `writeback-settings.ts`, `retire.ts`, `contested-claims.ts`,
 `derivation-inputs.ts`, `single-prepare.ts`, `proposal-supersede.ts`, `forget.ts`, `proposal-review.ts`, `fts-index.ts`,
 `question-recall.ts`, `src/core/ops/facts.ts` and `src/core/search/fact-relevance.ts`). Seven are in
 `src/core/engine-sql/facts-recall.ts` (`readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`, `listPoolUnbackedKeys`,
-`listCallOffCueFacts`, `listPoolEntityPairs`, `listFactRowsByIds`) and twenty-nine are in `facts-trust.ts`. Each runs the
+`listCallOffCueFacts`, `listPoolEntityPairs`, `listFactRowsByIds`) and thirty are in `facts-trust.ts`. Each runs the
 statement its caller ran, except `listNearestFacts`, which binds the embedding model, dimensions and vector literal twice
 (dimensions once when the column type is declared), so its `$n` numbers differ from the old text. Except `readFactForForget`, `expireFactSuperseded`, `expireFactAtDate` and `readWithdrawalAnchor`
-(served by `facts/forget.rs`, below) the fourteen of `facts/remember_reads.rs` and the six of `facts/recall.rs` (both below), none is implemented on Rust
+(served by `facts/forget.rs`, below) the fifteen of `facts/remember_reads.rs` and the six of `facts/recall.rs` (both below), none is implemented on Rust
 yet: each is named `facts` in `rust-engine/members.ts` and refuses by name with `engine_capability_missing` until the store
-serves it. Two `factWithdrawnRefusal` reads in `single-prepare.ts` are still raw (the withdrawal lane owns them).
+serves it.
 
 | Group | Members | What the store would need |
 | --- | --- | --- |
-| Write gate | `readPendingWriteReceipt`, `lockSourceShared`, `lockAgentWritebackSetting`, `readMemberPageWithdrawal`, `readFactVisibility`, `readReplacementTarget`, `readPairFactRow`, `readFactActivity`, `readReviewAcceptedMark` | The write-gate receipt, the shared source lock and advisory lock for the writeback setting, member-page withdrawal, fact visibility and the replacement and pair rows. |
+| Write gate | `readPendingWriteReceipt`, `lockSourceShared`, `lockAgentWritebackSetting`, `readMemberPageWithdrawal`, `readClaimWithdrawal`, `readFactVisibility`, `readReplacementTarget`, `readPairFactRow`, `readFactActivity`, `readReviewAcceptedMark` | The write-gate receipt, the shared source lock and advisory lock for the writeback setting, member-page withdrawal, the withdrawal a forgotten claim meets, fact visibility and the replacement and pair rows. |
 | Expiry and supersession | `expireSupersededFact`, `restoreSupersededFact`, `expireFactSuperseded`, `expireFactAtDate`, `expireDerivedFacts`, `deactivateDerivedTakes`, `softDeleteDerivedPages`, `markNeedsRederive` | `expired_at`, `superseded_by` and the derived-row columns; each update runs in the caller's transaction. |
 | Provenance and listing | `listOversizedStaleFacts`, `listLivePersonTitles`, `readLiveFactEntityPage`, `listFactsToRetireFromPage`, `listContestedProposalPairs`, `listFactProvenance`, `recordDerivationEdges`, `listDerivedRows`, `readFactForForget`, `readWithdrawalAnchor` | Live-page lookups, the oversized-fact scan cap, derivation edges and the proposal tables. |
 | FTS index | `readFactsFtsIndexState`, `swapFactsFtsIndex` | The `facts` full-text index language and its swap. |
@@ -524,6 +524,7 @@ apply as they do for `expireFact`, and a `superseded_by` that names no fact refu
 | `restoreSupersededFact({ oldId, sourceId, expiredAt, validUntil, supersededBy, expectedSupersededBy })` | Puts the three columns back for a fact of the source whose `superseded_by` is `expectedSupersededBy` (`IS NOT DISTINCT FROM`, so null matches null). Answers the row count. |
 | `readReplacementTarget({ targetId, sourceId, excludePrivate, ownPage, lock })` | The whole row of the fact in the source with `withdrawn`: a ledger row of the source and visibility under the fact's current or v1 fingerprint that `covers_fact` reaches (a member page's own subject, else `*`, the entity, an unbacked name key or the owned memory page). With `excludePrivate` the remote provenance floor applies (`hidden_by_private_provenance` with `provenanceOnly`), except to a row on `ownPage`; the TypeScript member serves only the floor `storeFloorPolicy` reads and refuses any other caller. |
 | `readMemberPageWithdrawal({ sourceId, visibility, fact, entitySlug, page, ... })` | The withdrawal a remote save onto member page `page` meets (GST-2346). Candidates are the ledger rows of the source and visibility under the claim's current or v1 fingerprint with subject `page` (counted as they are), or `*` or the claim's entity, which count only when they withdrew a row the page's member reads: an expired row of the same visibility and current fingerprint that `withdrawal_covers` reaches, on `page` itself or, for a world row, on pages the page's member's policy does not hide (the provenance and entity pages, `page_hidden`). For the brain owner (`owner`) a row of either visibility counts. The most specific subject first, then the newest; `withdrawn_at` as `timestamptz::text`. |
+| `readClaimWithdrawal({ sourceId, visibility, fact, entitySlug, ownPage, excludePrivate })` | The withdrawal a save of claim `fact` meets (`factWithdrawnRefusal`). Candidates are the ledger rows of the source and visibility under the claim's current or v1 fingerprint with subject `*`, the claim's entity or `ownPage`. With `excludePrivate` the remote provenance floor applies (`hidden_by_private_provenance` with `provenanceOnly`), except to a row on `ownPage`: a candidate counts only when it reached a row the caller sees or reached no row, and when the claim's reached rows are all hidden the answer is `{ hidden: true, row: null }`. A non-`*` subject first, then the newest; `withdrawn_at` as `timestamptz::text`. |
 
 The TypeScript members refuse (`engine_capability_missing`) an id that is not a whole number and a time that is not an ISO
 instant. `readMemberPageWithdrawal` is served for any member that meets no folder rule. For a member that is not the brain

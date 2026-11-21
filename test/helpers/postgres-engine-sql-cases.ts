@@ -954,6 +954,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'softDeleteDerivedPages': OOS.factsRestSites,
   'markNeedsRederive': OOS.factsRestSites,
   'readMemberPageWithdrawal': OOS.factsRestSites,
+  'readClaimWithdrawal': OOS.factsRestSites,
   'readFactVisibility': OOS.factsRestSites,
   'readReplacementTarget': OOS.factsRestSites,
   'readPairFactRow': OOS.factsRestSites,

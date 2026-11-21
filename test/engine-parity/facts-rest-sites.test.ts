@@ -6,7 +6,7 @@
  *  - Contract: readPendingWriteReceipt, lockSourceShared, lockAgentWritebackSetting, listOversizedStaleFacts, listLivePersonTitles,
  *    readLiveFactEntityPage, listFactsToRetireFromPage, listContestedProposalPairs, listFactProvenance, recordDerivationEdges,
  *    listDerivedRows, expireDerivedFacts, deactivateDerivedTakes, softDeleteDerivedPages, markNeedsRederive,
- *    readMemberPageWithdrawal, readFactVisibility, readReplacementTarget, readPairFactRow, expireSupersededFact,
+ *    readMemberPageWithdrawal, readClaimWithdrawal, readFactVisibility, readReplacementTarget, readPairFactRow, expireSupersededFact,
  *    restoreSupersededFact, readFactForForget, expireFactSuperseded, expireFactAtDate, readWithdrawalAnchor, readFactActivity,
  *    readReviewAcceptedMark, readFactsFtsIndexState, swapFactsFtsIndex, readFactsEmbeddingColumn, listNearestFacts,
  *    listSlotRows, listPoolUnbackedKeys, listCallOffCueFacts, listPoolEntityPairs and listFactRowsByIds return the same observable
@@ -434,6 +434,70 @@ describe('engine parity: facts write-path and recall statements that left execut
       return read;
     });
     expect(out).toEqual({ 'open row': { fact: 'open row', visibility: 'world' }, 'hidden row': null });
+    return out;
+  });
+
+  // The refusal a save of a forgotten claim meets: the most specific subject, then the newest withdrawal, among the
+  // withdrawals whose withdrawn rows the caller sees (or that no row backs); under the remote floor, `hidden` when every
+  // withdrawn row of the claim is one the caller cannot see. Each withdrawal has its own time, so no order ties.
+  parityTest('readClaimWithdrawal names the withdrawal a save of a forgotten claim meets, under the remote floor and the own page', {
+    methods: ['readClaimWithdrawal', 'insertFacts', 'putPage', 'insertFactWithdrawal', 'expireFactsByWithdrawal'],
+  }, async (engine) => {
+    const own = 'memory/members/alice-example';
+    await engine.putPage(own, note('Alice', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    await fenced(engine, [
+      { fact: 'open claim', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'hidden claim', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
+      { fact: 'own claim', source_markdown_slug: own, visibility: 'private' },
+      { fact: 'mixed claim', entity_slug: 'people/m', source_markdown_slug: 'notes/open' },
+      { fact: 'mixed claim', entity_slug: 'people/n', source_markdown_slug: 'notes/hidden' },
+    ]);
+    const withdrawals: Array<[string, string, string, string]> = [
+      ['world', 'open claim', '*', '2026-06-01T00:00:00Z'],
+      ['world', 'open claim', 'people/a', '2026-06-02T00:00:00Z'],
+      ['private', 'hidden claim', '*', '2026-06-03T00:00:00Z'],
+      ['private', 'own claim', own, '2026-06-04T00:00:00Z'],
+      ['private', 'own claim', '*', '2026-06-05T00:00:00Z'],
+      ['world', 'unbacked claim', 'people/z', '2026-06-06T00:00:00Z'],
+      ['world', 'mixed claim', 'people/n', '2026-06-07T00:00:00Z'],
+      ['world', 'mixed claim', '*', '2026-06-08T00:00:00Z'],
+    ];
+    for (const [visibility, fact, subject, when] of withdrawals) {
+      expect(await engine.insertFactWithdrawal(SRC, visibility, fact, subject, when)).toBe(true);
+      await engine.expireFactsByWithdrawal(SRC, visibility, fact, subject);
+    }
+    const read = async (visibility: string, fact: string, entitySlug: string | null, ownPage: string | null, excludePrivate?: boolean) => {
+      const got = await engine.readClaimWithdrawal({ sourceId: SRC, visibility, fact, entitySlug, ownPage, excludePrivate });
+      if (got.row) expect(got.row.withdrawn_at).toMatch(PG_TEXT);
+      return { hidden: got.hidden, row: got.row && { subject: got.row.subject, visibility: got.row.visibility, at: iso(got.row.withdrawn_at) } };
+    };
+    const claims: Array<[string, string, string | null]> = [
+      ['world', 'open claim', 'people/a'], ['private', 'hidden claim', 'people/a'], ['private', 'own claim', null],
+      ['world', 'unbacked claim', 'people/z'], ['world', 'unbacked claim', null], ['world', 'mixed claim', 'people/n'],
+      ['world', 'never forgotten', 'people/a'],
+    ];
+    const out: Record<string, unknown> = {};
+    for (const [visibility, fact, entity] of claims) {
+      out[`${fact} / ${entity ?? 'no entity'}`] = {
+        local: await read(visibility, fact, entity, null),
+        localOwn: await read(visibility, fact, entity, own),
+        remote: await read(visibility, fact, entity, null, true),
+        remoteOwn: await read(visibility, fact, entity, own, true),
+        otherSource: await engine.readClaimWithdrawal({ sourceId: 'other', visibility, fact, entitySlug: entity, ownPage: null }),
+      };
+    }
+    const row = (subject: string, visibility: string, day: string) => ({ hidden: false, row: { subject, visibility, at: `2026-06-${day}T00:00:00.000Z` } });
+    expect(out['open claim / people/a']).toMatchObject({ local: row('people/a', 'world', '02'), remote: row('people/a', 'world', '02') });
+    expect(out['hidden claim / people/a']).toMatchObject({ local: row('*', 'private', '03'), remote: { hidden: true, row: null } });
+    expect(out['own claim / no entity']).toMatchObject({
+      local: row('*', 'private', '05'), localOwn: row(own, 'private', '04'), remote: { hidden: true, row: null }, remoteOwn: row(own, 'private', '04'),
+    });
+    expect(out['unbacked claim / people/z']).toMatchObject({ local: row('people/z', 'world', '06'), remote: row('people/z', 'world', '06') });
+    expect(out['unbacked claim / no entity']).toMatchObject({ local: { hidden: false, row: null }, remote: { hidden: false, row: null } });
+    expect(out['mixed claim / people/n']).toMatchObject({ local: row('people/n', 'world', '07'), remote: row('*', 'world', '08') });
+    expect(out['never forgotten / people/a']).toMatchObject({ local: { hidden: false, row: null }, remote: { hidden: false, row: null } });
+    for (const name of Object.keys(out)) expect((out[name] as { otherSource: unknown }).otherSource).toEqual({ hidden: false, row: null });
     return out;
   });
 

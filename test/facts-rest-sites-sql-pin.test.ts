@@ -17,6 +17,7 @@
  *    has used since lane 4's first batch.
  *    The four quote-read members (listFactsFromQuotedPages, listFactIdsAtTrustFloor, readPageTypesByIds,
  *    listReadablePageSlugs) are pinned to their callers at c33606182c (search/transcript-quote.ts, search/slot-history.ts),
+ *    captured the same way. readClaimWithdrawal is pinned to factWithdrawnRefusal (facts/single-prepare.ts) at 8a5229aa8c,
  *    captured the same way.
  *  - Regression: a member that reorders a clause, renumbers a placeholder, binds a value differently, drops a cast or
  *    sends the iterative-scan settings in another order changes what Postgres answers while the parity cases may still
@@ -291,6 +292,23 @@ const PINS: Pin[] = [
     member: 'readMemberPageWithdrawal',
     run: e => e.readMemberPageWithdrawal({ sourceId: 's1', visibility: 'world', fact: 'F', entitySlug: 'people/x', page: 'memory/members/m1', owner: false, identity: [], satisfied: [] }),
     statements: [{ digest: { length: 15378, sha256: 'e36ebea84c4bfc18088fe886a1d49ac46121f12619fdc03d371b6a5903265531' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] }],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:106,117 factWithdrawnRefusal (at 8a5229aa8c)",
+    member: 'readClaimWithdrawal',
+    label: 'remote',
+    run: e => e.readClaimWithdrawal({ sourceId: 's1', visibility: 'world', fact: 'F', entitySlug: 'people/x', ownPage: 'memory/members/m1', excludePrivate: true }),
+    statements: [
+      { digest: { length: 15928, sha256: 'f32b032c9b9b4b9ca1d43e1e26fab0aabfb45e7a605a729254bd68f4fbcf8323' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] },
+      { digest: { length: 8690, sha256: '68b298427a9578bb6bd4eaa3ffb6a8224782d2c9472249b763c929a6e3090c03' }, params: ['s1', 'world', 'F', 'people/x', true, 'memory/members/m1'] },
+    ],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:117 factWithdrawnRefusal (at 8a5229aa8c)",
+    member: 'readClaimWithdrawal',
+    label: 'local',
+    run: e => e.readClaimWithdrawal({ sourceId: 's1', visibility: 'world', fact: 'F', entitySlug: 'people/x', ownPage: 'memory/members/m1', excludePrivate: false }),
+    statements: [{ digest: { length: 8690, sha256: '68b298427a9578bb6bd4eaa3ffb6a8224782d2c9472249b763c929a6e3090c03' }, params: ['s1', 'world', 'F', 'people/x', false, 'memory/members/m1'] }],
   },
   {
     from: "src/core/facts/single-prepare.ts:215 replacementVisibility",

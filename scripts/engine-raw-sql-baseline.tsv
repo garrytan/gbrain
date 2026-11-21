@@ -375,7 +375,6 @@ src/core/facts/held-fact-move.ts	execute_raw	1
 src/core/facts/purge-overlay.ts	execute_raw	2
 src/core/facts/purge-verify.ts	execute_raw	3
 src/core/facts/purge.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
-src/core/facts/single-prepare.ts	execute_raw	2
 src/core/feedback/store.ts	execute_raw	19
 src/core/fence-repair/attempts.ts	execute_raw	3
 src/core/fence-repair/census-store.ts	execute_raw	9

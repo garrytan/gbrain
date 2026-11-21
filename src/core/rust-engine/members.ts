@@ -628,6 +628,7 @@ export const RUST_ENGINE_MEMBERS = {
   softDeleteDerivedPages: 'facts',
   markNeedsRederive: 'facts',
   readMemberPageWithdrawal: 'facts',
+  readClaimWithdrawal: 'facts',
   readFactVisibility: 'facts',
   readReplacementTarget: 'facts',
   readPairFactRow: 'facts',

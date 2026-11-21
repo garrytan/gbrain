@@ -6785,6 +6785,7 @@
         "readChildCompletions": "none",
         "readChronicleDepthRow": "none",
         "readChunkVectorColumn": "none",
+        "readClaimWithdrawal": "none",
         "readClientBudgetUsd": "none",
         "readClientOpUsage": "none",
         "readConsolidationTakesMaxRowNum": "none",

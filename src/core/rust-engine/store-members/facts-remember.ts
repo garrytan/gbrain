@@ -3,13 +3,14 @@
  * (rust/crates/gbrain-store/src/facts/remember_reads.rs): `readFactEntitySlugById`, `readSupersessionReplacement`,
  * `linkSupersededFact`, `listFactsToRetireFromPage`, `listFactProvenance`, `listFactRowsByIds`, `readFactVisibility`,
  * `readFactActivity`, `readReviewAcceptedMark`, `readPairFactRow`, `expireSupersededFact`, `restoreSupersededFact`,
- * `readReplacementTarget` and `readMemberPageWithdrawal` (src/core/engine-sql/facts-trust.ts, facts-recall.ts).
+ * `readReplacementTarget`, `readMemberPageWithdrawal` and `readClaimWithdrawal` (src/core/engine-sql/facts-trust.ts,
+ * facts-recall.ts).
  *
  * An id that is not a whole number refuses rather than guess at PGLite's `bigint` error, and so does a time that is not
  * an ISO instant: the callers pass ids from rows and `toISOString()` text, so the refusal is a guard, never a path they
- * take. `readReplacementTarget` under `excludePrivate` serves the remote provenance floor (`storeFloorPolicy`), and
- * `readMemberPageWithdrawal` the page policy of a page's member, or the owner read rule for the brain owner
- * (`storeMemberReadPolicy`); any other caller refuses.
+ * take. `readReplacementTarget` and `readClaimWithdrawal` under `excludePrivate` serve the remote provenance floor
+ * (`storeFloorPolicy`), and `readMemberPageWithdrawal` the page policy of a page's member, or the owner read rule for the
+ * brain owner (`storeMemberReadPolicy`); any other caller refuses.
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { ReplacementTargetRow, SupersessionReplacementRow } from '../../engine-sql/facts-trust.ts';
@@ -114,4 +115,10 @@ export const readMemberPageWithdrawal: Member<'readMemberPageWithdrawal'> = asyn
   const policy = storeMemberReadPolicy('readMemberPageWithdrawal', q);
   return storeCall({ member: 'readMemberPageWithdrawal', sourceId: q.sourceId }, () =>
     brain.readMemberPageWithdrawal({ sourceId: q.sourceId, visibility: q.visibility, fact: q.fact, entitySlug: q.entitySlug ?? null, page: q.page, owner: q.owner, policy }));
+};
+
+export const readClaimWithdrawal: Member<'readClaimWithdrawal'> = async (brain, q) => {
+  const excludePrivate = q.excludePrivate ? storeFloorPolicy('readClaimWithdrawal') : undefined;
+  return storeCall({ member: 'readClaimWithdrawal', sourceId: q.sourceId }, () =>
+    brain.readClaimWithdrawal({ sourceId: q.sourceId, visibility: q.visibility, fact: q.fact, entitySlug: q.entitySlug ?? null, ownPage: q.ownPage ?? null, excludePrivate }));
 };
