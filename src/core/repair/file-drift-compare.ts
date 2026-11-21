@@ -20,7 +20,8 @@ import { classifyDrift } from '../persistence/reconcile-additive.ts';
 import { sha256 } from '../persistence/digest.ts';
 import { reconcileCanonical } from '../persistence/reconcile-merge.ts';
 import { readReconcileState } from '../persistence/reconcile-state.ts';
-import { fileDriftActionVerb, fileDriftSide, holdRescreenDue, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { DRIFT_HISTORY_DEPTH, DRIFT_HISTORY_VERSIONS, fileDriftActionVerb, fileDriftSide, holdRescreenDue, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { fileMatchesSnapshot } from '../persistence/page-prepare.ts';
 import { recordsNoFileOrigin } from '../persistence/unbound-pages.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { RepairListing } from './core.ts';
@@ -98,6 +99,31 @@ export async function readDriftEvidence(engine: BrainEngine, sourceId: string, s
   const file = commit?.(path) ?? fileCommitEvidence(state.root, path);
   const updated = state.snapshot.page.updated_at ? new Date(state.snapshot.page.updated_at).toISOString() : null;
   return { path, differs, keys, file_committed_at: file.committed_at, file_uncommitted: file.uncommitted, page_updated_at: updated, newer: newerSide(file, updated) };
+}
+
+/**
+ * GST-3328: the commit of the earlier version of its file a side-`unknown` page still holds, read as sync's screen reads it
+ * (the DRIFT_HISTORY_VERSIONS versions before the file at HEAD, within DRIFT_HISTORY_DEPTH commits): only Git moved since, so a
+ * re-screen of its hold imports the file. Null when none matches or Git cannot tell.
+ */
+async function earlierVersionHeld(engine: BrainEngine, sourceId: string, slug: string): Promise<string | null> {
+  try {
+    const state = await readReconcileState(engine, sourceId, slug);
+    const path = `./${relative(state.root, state.path).split(sep).join('/')}`;
+    const git = (args: string[]) => execFileSync('git', ['-C', state.root, ...args], { env: gitChildEnv(GIT_READ_ENV), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
+    const blobAt = (commit: string) => { try { return git(['rev-parse', '--verify', '--quiet', `${commit}:${path}`]).trim() || null; } catch { return null; } };
+    const head = blobAt('HEAD');
+    const seen = new Set(head ? [head] : []);
+    let compared = 0;
+    for (const commit of git(['log', '--format=%H', `-n${DRIFT_HISTORY_DEPTH}`, 'HEAD', '--', path]).split('\n').filter(Boolean)) {
+      const oid = blobAt(commit);
+      if (!oid || seen.has(oid)) continue;
+      seen.add(oid);
+      if (await fileMatchesSnapshot(engine, slug, git(['cat-file', 'blob', oid]), state.snapshot, state.importPath).catch(() => false)) return commit;
+      if (++compared >= DRIFT_HISTORY_VERSIONS) return null;
+    }
+    return null;
+  } catch { return null; }
 }
 
 /** Why a page newer than its file is not resolved file-wins: the paragraph a held page carries in every preview. */
@@ -180,6 +206,10 @@ export async function comparePage(engine: BrainEngine, sourceId: string, target:
     const { path, ...evidence } = await readDriftEvidence(engine, sourceId, slug, assessmentAt);
     const base = { item, slug, ...held, path, evidence };
     if (evidence.differs === 'none') return { ...base, would: hold ? 'release_hold' : 'no_drift', why: 'nothing differs once gbrain\'s own normalisation is read' };
+    const earlier = side === 'unknown' ? await earlierVersionHeld(engine, sourceId, slug) : null;
+    if (earlier) return { ...base, would: 'prefer_file', why: `page ${slug} equals ${path} as committed in ${earlier.slice(0, 12)}, an earlier version, so only the file moved since (Git is the parent): `
+      + `gbrain sources retry-held ${sourceId} re-screens it and the next gbrain sync --source ${sourceId} --no-pull imports the file, with no repair`
+      + (evidence.file_uncommitted ? `; ${path} also has uncommitted bytes, which a working-tree sync imports and a committed sync leaves in the checkout` : '') };
     if (evidence.newer === 'file') return { ...base, would: 'prefer_file', why: mirrorHeld ? `${path} was committed after the page last changed, so the file wins (Git is the parent); ${mirrorDriftRoute(sourceId, side)}`
       : `${path} was committed after the page last changed, so the file wins (Git is the parent): gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file` };
     if (evidence.newer === 'database') return { ...base, would: 'needs_human', why: mirrorHeld ? `page ${slug} changed after ${path} was last committed (page updated ${evidence.page_updated_at}, file committed ${evidence.file_committed_at}), so a person decides which side to keep; ${mirrorDriftRoute(sourceId, side)}`
