@@ -54,8 +54,8 @@
 use crate::cli_reads::pg_jsonb;
 use crate::cli_reads::pg_text::{jsonb_text as jsonb_text_of, pg_lower};
 use crate::dream::{int4, jsonb_check};
-use crate::jsonb::ordered;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
+use crate::jsonb::ordered;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
@@ -1355,7 +1355,7 @@ mod tests {
                 tx.put(&pointer_key(&key(), "held"), &id.to_be_bytes())?;
                 tx.delete(&pointer_key(&key(), "held"))?;
                 let page = keys::page("default", "notes/closed");
-                let record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                let record = json!({"id": 1, "slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
                 tx.put(&page, &serde_json::to_vec(&record)?)
             })
             .unwrap();
@@ -1557,7 +1557,7 @@ mod tests {
                 put_json(tx, &attempt_key("a1"), &record)?;
                 tx.put(&attempt_index_key(&record, "a1"), &[])?;
                 let page = keys::page("default", "notes/closed");
-                let page_record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                let page_record = json!({"id": 1, "slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
                 tx.put(&page, &serde_json::to_vec(&page_record)?)
             })
             .unwrap();
