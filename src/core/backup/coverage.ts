@@ -14,7 +14,7 @@
  *
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 
 import { VERSION } from '../../version.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -23,7 +23,7 @@ import { connectorAuthorities, type ConnectorAuthority } from '../persistence/co
 import { discoverGitRoot } from '../sync-git.ts';
 import { realpathOrResolve } from '../path-confine.ts';
 import { resolveBrainId } from '../brain-resolver.ts';
-import { readReceiptState } from '../bootstrap/format.ts';
+import { readReceiptState, receiptPath } from '../bootstrap/format.ts';
 import { resolveGbrainHome } from '../gbrain-home.ts';
 import { loadBridgeState } from '../skillpack/bridge-state.ts';
 import { loadStorageConfig } from '../storage-config.ts';
@@ -106,6 +106,27 @@ function receiptUnreadableAsset(): BackupAssetVerdict {
   return { kind: 'bootstrap_workspace', id: 'install receipt', state: 'unknown', detail: 'receipt_unreadable' };
 }
 
+/**
+ * `readReceiptState` answers `absent` through existsSync, which is also false when a parent directory cannot be
+ * searched (EACCES). Only ENOENT / ENOTDIR mean nothing was ever bootstrapped; any other stat error means the
+ * receipt may exist but cannot be read.
+ */
+function receiptTrulyAbsent(home: string): boolean {
+  try {
+    statSync(receiptPath(home));
+    return false; // it exists after all (raced into place): not an all-clear
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR';
+  }
+}
+
+/** The cached verdict for a failed refresh: degraded, and without a count the failed read can no longer vouch for. */
+function degradedFromCache(cached: BackupStatus, nowMs: number): BackupStatus {
+  const { maturity: _stale, ...unaged } = cached;
+  return currentBackupEvidence({ ...unaged, degraded: true }, nowMs);
+}
+
 function yieldLoop(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
 }
@@ -176,7 +197,7 @@ export async function computeBackupCoverage(
     // that exists but cannot be read (corrupt, or written by a newer gbrain) is an
     // unknown workspace: reading it as "no receipt" would turn a healthy-looking
     // source sweep into an ok verdict while the bootstrap repo goes unchecked.
-    if (state.state === 'invalid' || state.state === 'newer') {
+    if (state.state === 'invalid' || state.state === 'newer' || (state.state === 'absent' && !receiptTrulyAbsent(home))) {
       pushAsset(assets, receiptUnreadableAsset());
     }
     const receipt = state.state === 'ok' ? state.receipt : null;
@@ -498,12 +519,11 @@ export async function getBackupStatus(
     const maturity = await brainMaturity(engine);
     if (maturity) return { ...current, maturity };
     // Unreadable recount: drop the stale "young" count (coaching is due again) and say so.
-    const { maturity: _stale, ...unaged } = current;
-    return currentBackupEvidence({ ...unaged, degraded: true }, nowMs);
+    return degradedFromCache(current, nowMs);
   }
   try {
     const fresh = await computeBackupCoverage(engine, { ...opts, previousStatus: cached ?? undefined });
-    if (fresh.degraded && cached) return currentBackupEvidence({ ...cached, degraded: true }, nowMs);
+    if (fresh.degraded && cached) return degradedFromCache(cached, nowMs);
     if (opts.localGitProbes && !fresh.degraded && hostBrain) {
       // The save gets its own guard: a failed WRITE (disk full) must not
       // discard the fresh verdict the caller just probed for.
@@ -518,7 +538,7 @@ export async function getBackupStatus(
     }
     return fresh;
   } catch (err) {
-    if (cached) return currentBackupEvidence({ ...cached, degraded: true }, nowMs);
+    if (cached) return degradedFromCache(cached, nowMs);
     throw err;
   }
 }
