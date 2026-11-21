@@ -17,8 +17,12 @@ gbrain engine swap --to rust --plan          # the plan, read only
 gbrain engine swap --to rust --plan --json   # one JSON document on stdout
 ```
 
-`--dry-run` is an alias of `--plan`. The plan writes nothing: it opens the brain without migrating it, reads the
-worktree refresh journal and the shadow status, and lists:
+`--dry-run` is an alias of `--plan`. The plan writes nothing and creates nothing. Before it opens anything it
+resolves which brain was selected (`--brain`, `GBRAIN_BRAIN_ID` and a `.gbrain-mount` file are all honored). A mounted
+brain is refused with `engine_swap_refused` (reason `team_brain`); only your own brain can be previewed. It then needs
+a store that already exists: a PGLite store with no `PG_VERSION` file is refused with `no_brain` before any connection,
+because connecting would otherwise initialize a new, empty brain. With a store in place, it opens the brain without
+migrating it, reads the worktree refresh journal and the shadow status, and lists:
 
 - the verdict, `READY` or `NOT READY`, and the refusal a run would give;
 - one row per readiness criterion (below), each `pass`, `fail`, `missing` or, for criterion 8, `reported`;
@@ -45,7 +49,9 @@ The plan reads the shadow status (`gbrain engine shadow status --json`). A missi
 never a pass. With no shadow running, every criterion is `missing`.
 
 1. At least 14 days of shadowing in the epoch, follower lag p99 under 60 s, three consecutive clean reconcile passes,
-   no unseeded gap rows, and a follower that is caught up.
+   no unseeded gap rows, and a follower that is caught up. "Caught up" needs the follower's current lag, queue depth
+   and coverage watermark in the status; a status that leaves any of them out is `missing`, never a pass, and a
+   follower with lag, a queue or an invalid watermark fails.
 2. Every operation class used meets its minimum of successful read comparisons, at least 10,000 reads in total, with
    no `capability_missing` in the last 7 days.
 3. Zero unresolved `rust_error` and zero unexplained `diverged` results in the last 7 days.
@@ -60,8 +66,9 @@ never a pass. With no shadow running, every criterion is `missing`.
    speed bar gate only turning Rust on by default, not this opt-in swap. The plan shows the numbers and any loss.
 9. Zero panics and zero child faults in the shadow.
 10. A passed backup and restore drill on the shadow store, and eval gates E1 to E3 in the release.
-11. Eligibility: one writer host in the last 7 days with no unknown write path, a personal brain (not a mounted team
-    brain), and a shadow host on a preview target.
+11. Eligibility: exactly one observed writer host in the last 7 days with no unknown write path (zero observed hosts
+    is no evidence, `writer_coverage_unknown`, never "one host"), a personal brain (not a mounted team brain), and a
+    shadow host on a preview target.
 
 <a id="refusals"></a>
 ## Refusals: `engine_swap_refused`
@@ -85,19 +92,22 @@ again when the report changes. Never retried on a timer, and there is no overrid
 <a id="multiple_writer_hosts"></a>
 ### `multiple_writer_hosts`
 
-Writers on more than one machine in the last 7 days. Such a brain stays on Postgres until the Rust server phase
+Writers on more than one machine in the last 7 days (the plan needs exactly one observed writer host). Such a brain stays on Postgres until the Rust server phase
 passes the D17 bar (D19). Needs the user's topology decision.
 
 <a id="writer_coverage_unknown"></a>
 ### `writer_coverage_unknown`
 
-A write path has no writer observation, or no 7-day observation window exists yet. Needs every writer on a build that
-records observations, then 7 days.
+A write path has no writer observation, no writer host was observed at all, or no 7-day observation window exists yet.
+Needs every writer on a build that records observations, then 7 days.
 
 <a id="team_brain"></a>
 ### `team_brain`
 
-A mounted team brain. The preview swaps personal brains only. Not retried.
+A mounted team brain, whether it was selected with `--brain`, `GBRAIN_BRAIN_ID` or a `.gbrain-mount` file, or the
+shadow status reports one. The plan checks the selection before it opens anything, and never opens the mount in place
+of your own brain. The preview swaps personal brains only. Not retried; ask whether you meant your own brain
+(`gbrain --brain host engine swap --to rust --plan`).
 
 <a id="follower_behind"></a>
 ### `follower_behind`
