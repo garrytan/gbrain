@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 301562,
-    "stdoutSha256": "a64c392b8c1aa49d823429c8a5e2598b01ee694c449d0d25b889b4b7e7b4856e",
+    "stdoutBytes": 301654,
+    "stdoutSha256": "4e11c04295c4342ee025b97b9f4a90c8292ffc931ab024a3b4a88e71c74fd0c9",
     "toolNames": [
       "remember",
       "entity",
@@ -1923,7 +1923,7 @@
               "type": "boolean"
             },
             "autocut": {
-              "description": "Default on (never empty); false: full top-K for breadth.",
+              "description": "Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.",
               "type": "boolean"
             },
             "cross_modal": {

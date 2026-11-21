@@ -1286,9 +1286,11 @@ export interface SearchOpts extends PageReadPolicy {
    */
   adaptiveReturn?: import('./search/return-policy.ts').AdaptiveReturnInput;
   /**
-   * v0.42.3.0 — autocut (score-discontinuity result-sizing). Default-ON in
-   * reranked modes (the floor). Pass `false` to force the full top-K for breadth
-   * / exploration (the ceiling override). Cuts the ranked set at the largest
+   * v0.42.3.0 — autocut (score-discontinuity result-sizing). OFF by default in
+   * every mode bundle; pass `true` (or set config `search.autocut true`) to turn
+   * it on, which trims at the steepest score drop and can drop relevant hits on
+   * multi-part questions. Pass `false` to force the full top-K when config
+   * turned it on. Cuts the ranked set at the largest
    * cross-encoder rerank-score cliff; no-op without a reranker. Only fires when
    * offset===0. See src/core/search/autocut.ts.
    */

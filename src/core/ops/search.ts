@@ -942,7 +942,7 @@ const query: Operation = {
     cross_modal: { type: 'string', enum: ['text', 'image', 'both', 'auto'], description: 'Default auto.' },
     embedding_column: { type: 'string', description: 'Registered embedding column.', fullSurfaceOnly: true },
     adaptive_return: { type: 'boolean', description: 'true for one answer (fewer rows, never empty); omit for breadth.', fullSurfaceOnly: true },
-    autocut: { type: 'boolean', description: 'Default on (never empty); false: full top-K for breadth.', fullSurfaceOnly: true },
+    autocut: { type: 'boolean', description: 'Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.', fullSurfaceOnly: true },
     relational: { type: 'boolean', description: 'Relationship-graph arm (default on).', fullSurfaceOnly: true },
     min_trust: MIN_TRUST_PARAM,
     ...EXPLAIN_PARAMS,
@@ -1110,8 +1110,10 @@ const query: Operation = {
       // (config default applies). The wrapper still applies adaptive sizing
       // while semantic cache reuse is suspended.
       adaptiveReturn: typeof p.adaptive_return === 'boolean' ? (p.adaptive_return as boolean) : undefined,
-      // v0.42.3.0 — autocut ceiling override. Omitted = smart default (ON in
-      // reranked modes). `false` forces the full top-K.
+      // v0.42.3.0 — autocut override. Omitted = the resolved default, OFF in
+      // every mode bundle (`search.autocut true` turns it on). `true` trims at
+      // the steepest score drop and can drop relevant hits on multi-part
+      // questions; `false` forces the full top-K.
       autocut: typeof p.autocut === 'boolean' ? (p.autocut as boolean) : pagePlanHits(plan).autocut,
       // v0.43 — relational recall override. Omitted = smart default (mode bundle).
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
