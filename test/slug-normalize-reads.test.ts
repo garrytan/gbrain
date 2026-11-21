@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { normalizeSlug } from '../src/core/utils.ts';
+import { intentDigest } from '../src/core/persistence/journal.ts';
 import { normalizeSlugParams, SLUG_PARAMS, SLUG_PARAM_EXEMPT } from '../src/core/ops/slug-params.ts';
 import { operations } from '../src/core/operations.ts';
 import type { ParamDef } from '../src/core/ops/contract.ts';
@@ -146,6 +147,49 @@ describe('one page per Unicode spelling (pages-05)', () => {
     await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', ['notes/legacy-café', 'notes/legacy-nfd']);
     expect((await call('get_page', { slug: 'notes/legacy-café' })).slug).toBe('notes/legacy-café');
   });
+
+  test('a list_pages continuation cursor is compared as the listing returned it, so no row between the two spellings is skipped', async () => {
+    const stored = 'cursor/cafe\u0301';
+    await call('put_page', { slug: 'cursor/cafz', content: page('Cafz', 'note', 'z one') });
+    await call('put_page', { slug: 'cursor/cafe-x', content: page('Cafe x', 'note', 'x one') });
+    await call('put_page', { slug: 'cursor/zzz', content: page('Zzz', 'note', 'z two') });
+    await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, 'cursor/cafe-x']);
+    await engine.executeRaw("UPDATE pages SET updated_at = TIMESTAMPTZ '2026-02-03 04:05:06+00' WHERE slug LIKE 'cursor/%'");
+    const rows = await call<Array<{ slug: string }>>('list_pages', { slug_prefix: 'cursor/', sort: 'updated_asc', updated_after: '2026-02-03T04:05:06.000000Z', updated_after_slug: stored });
+    const expected = (await call<Array<{ slug: string }>>('list_pages', { slug_prefix: 'cursor/', sort: 'updated_asc' })).map(r => r.slug).filter(s => s > stored);
+    expect(rows.map(r => r.slug)).toEqual(expected);
+  });
+
+  test('a decomposed page keeps its tags and timeline on reads that answer an empty list, not page_not_found', async () => {
+    const stored = 'notes/legacy-tags-cafe\u0301';
+    await call('put_page', { slug: 'notes/legacy-tags', content: page('Legacy tags', 'note', 'old') });
+    await call('add_tag', { slug: 'notes/legacy-tags', tag: 'kept' });
+    await call('add_timeline_entry', { slug: 'notes/legacy-tags', date: '2026-01-02', summary: 'kept entry' });
+    await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, 'notes/legacy-tags']);
+    expect(await call<string[]>('get_tags', { slug: stored })).toEqual(['kept']);
+    expect((await call<Array<{ summary: string }>>('get_timeline', { slug: stored })).map(e => e.summary)).toEqual(['kept entry']);
+  });
+});
+
+describe('a request journaled before this change still replays', () => {
+  test('put_page keeps the caller-sent slug in the request digest: an identical mixed-case retry replays, a changed body conflicts', async () => {
+    const request_id = crypto.randomUUID();
+    const first = await call('put_page', { slug: 'People/Replay-Example', content: page('Replay', 'person', 'one'), request_id });
+    const again = await call('put_page', { slug: 'People/Replay-Example', content: page('Replay', 'person', 'one'), request_id });
+    expect(again.revision).toBe(first.revision);
+    const changed = await errorOf('put_page', { slug: 'People/Replay-Example', content: page('Replay', 'person', 'two'), request_id });
+    expect(changed?.code).toBe('idempotency_conflict');
+  });
+
+  test('the stored request digest covers the slug as the caller spelled it, so rows journaled before this change keep matching', async () => {
+    const request_id = crypto.randomUUID();
+    const body = page('Digest', 'person', 'same body');
+    await call('put_page', { slug: 'People/Digest-Example', content: body, request_id });
+    const [row] = (await engine.executeRaw<{ digest: string }>('SELECT digest FROM persistence_requests WHERE request_id = $1::uuid', [request_id])) as unknown as Array<{ digest: string }>;
+    const digestFor = (callerSlug: string) => intentDigest({ operation: 'put_page', sourceId: 'default', slug: 'people/digest-example', callerIntent: { slug: callerSlug, content: body } });
+    expect(row?.digest).toBe(digestFor('People/Digest-Example'));
+    expect(row?.digest).not.toBe(digestFor('people/digest-example'));
+  });
 });
 
 describe('decomposed body links resolve (graph-10)', () => {
@@ -173,5 +217,15 @@ describe('accented entities keep their slug in facts (memory-07)', () => {
     const saved = await call('remember', { fact: 'Soren Example likes chess', provenance: 'chat 2026-11-20', entity: 'people/s\u00f8ren-example' });
     const savedNfd = await call('remember', { fact: 'Soren Example likes go', provenance: 'chat 2026-11-20', entity: 'people/jose\u0301-example' });
     expect({ folded: saved.entity_slug, accented: savedNfd.entity_slug }).toEqual({ folded: 'people/soren-example', accented: 'people/jos\u00e9-example' });
+  });
+
+  test('a fact saved under the accent-folded subject before this change is still recalled for the accented reference', async () => {
+    const before = await call('remember', { fact: 'Mehmet Example likes tea', provenance: 'chat 2026-11-19', entity: 'people/mehmet-example' });
+    expect(before.entity_slug).toBe('people/mehmet-example');
+    const accented = 'people/mehm\u00e9t-example';
+    const after = await call('remember', { fact: 'Mehmet Example likes jazz', provenance: 'chat 2026-11-20', entity: accented });
+    expect(after.entity_slug).toBe(accented);
+    const recalled = await call<{ facts?: Array<{ fact: string }> }>('recall', { entity: accented });
+    expect((recalled.facts ?? []).map(f => f.fact).sort()).toEqual(['Mehmet Example likes jazz', 'Mehmet Example likes tea']);
   });
 });

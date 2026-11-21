@@ -7,7 +7,9 @@
  * and `notes/café`. `finalizeOperation` (operation-load.ts) wraps every
  * operation with `withNormalizedSlugParams`, so CLI, MCP and every in-process
  * caller of `op.handler` get the same normalization before the handler, its
- * scope checks and its receipts see the value. The one normal form is
+ * scope checks and its receipts see the value. A mutating operation is not wrapped: its handler
+ * normalizes the slug through `validateSlug`, and its request digest must keep covering the slug the
+ * caller sent (a retry of a request journaled before this change still replays). The one normal form is
  * `normalizeSlug` (utils.ts); this file only says which params carry a slug.
  *
  * `SLUG_PARAMS` is the single reviewable list of params that name a page by
@@ -26,13 +28,13 @@ export const SLUG_PARAMS: Readonly<Record<string, readonly string[]>> = {
   get_page: ['slug'], get_chunks: ['slug'], get_raw_data: ['slug'], get_versions: ['slug'],
   get_tags: ['slug'], get_timeline: ['slug'], get_write_attribution: ['slug'],
   get_links: ['slug'], get_backlinks: ['slug'], traverse_graph: ['slug'],
-  list_pages: ['slug_prefix', 'updated_after_slug'], search_exact: ['slug_prefix'],
+  list_pages: ['slug_prefix'], search_exact: ['slug_prefix'],
   file_list: ['slug'], file_verify: ['slug'], entity_identity_list: ['slug'],
   find_trajectory: ['entity_slug'], find_contradictions: ['slug'], takes_list: ['page_slug'],
   takes_scorecard: ['domain_prefix'], get_recent_salience: ['slugPrefix'],
   chronicle_last_seen: ['entity'], ontology_get: ['entity'],
-  context_pack: ['entity_refs[].slug'], assemble_evidence: ['hits[].slug'], delta: ['since_slug'],
-  // page writes (validateSlug normalizes the stored slug; the op layer must see the same form)
+  context_pack: ['entity_refs[].slug'], assemble_evidence: ['hits[].slug'],
+  // page writes (listed for the registry check; the write path normalizes through validateSlug, see withNormalizedSlugParams)
   put_page: ['slug'], put_pages: ['pages[].slug'], append_page: ['slug'], edit_page: ['slug'],
   delete_page: ['slug'], restore_page: ['slug'], unpurge_page: ['slug'], revert_version: ['slug'],
   begin_page_upload: ['slug'], capture: ['slug'], put_raw_data: ['slug'],
@@ -55,6 +57,8 @@ export const SLUG_PARAM_EXEMPT: Readonly<Record<string, Readonly<Record<string, 
   remember: { entity: 'name or slug (entity resolution)' },
   recall: { entity: 'name or slug (entity resolution)' },
   context_pack: { entities: 'names or slugs (entity resolution)', counterparty: 'name or slug (entity resolution)' },
+  list_pages: { updated_after_slug: 'continuation cursor: the last row\'s stored slug, compared byte for byte in the keyset order' },
+  delta: { since_slug: 'continuation cursor: a stored slug, compared byte for byte in the keyset order' },
   open_loops: { counterparty: 'slug or email address' },
   submit_agent: { allowed_slug_prefixes: 'write prefixes, compared with normalizeSlugPrefix' },
   capture: { who: 'names or slugs (entity resolution)' },
@@ -109,12 +113,43 @@ function legacySpellingParams(opName: string, raw: Params, normalized: Params): 
   return JSON.stringify(lowered) === JSON.stringify(normalized) ? null : lowered;
 }
 
-/** Wraps an operation handler so it receives normalized slug params (see the file comment). */
+/** The string at a top-level param `path` (`name`), or undefined for a nested path or a non-string. */
+function scalarAt(params: Params, path: string): string | undefined {
+  const v = /[.[]/.test(path) ? undefined : params[path];
+  return typeof v === 'string' ? v : undefined;
+}
+
+/**
+ * Params for a read of a page that exists only under its legacy (decomposed) spelling. The normalized form
+ * is tried first; when no page has it but one has the caller's spelling lowercased, that spelling is used,
+ * so reads that answer an empty list instead of page_not_found (get_tags, get_timeline) still find it.
+ */
+async function legacyIfOnlyLegacyExists(ctx: Parameters<Operation['handler']>[0], opName: string, raw: Params, normalized: Params): Promise<Params | null> {
+  const legacy = legacySpellingParams(opName, raw, normalized);
+  const path = (SLUG_PARAMS[opName] ?? [])[0];
+  const wanted = path === undefined ? undefined : scalarAt(normalized, path);
+  const old = legacy === null || path === undefined ? undefined : scalarAt(legacy, path);
+  if (legacy === null || wanted === undefined || old === undefined || old === wanted) return null;
+  try {
+    if (await ctx.engine.getPage(wanted, { includeDeleted: true }) !== null) return null;
+    return await ctx.engine.getPage(old, { includeDeleted: true }) !== null ? legacy : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wraps an operation handler so a read receives normalized slug params (see the file comment). A mutating
+ * operation is passed through as sent: its handler normalizes the slug itself (validateSlug), and its request
+ * digest covers what the caller sent, so a retry of a request journaled before this change still replays.
+ */
 export function withNormalizedSlugParams(op: Operation, handler: Operation['handler']): Operation['handler'] {
-  if (!SLUG_PARAMS[op.name]) return handler;
+  if (!SLUG_PARAMS[op.name] || op.mutating === true) return handler;
   return async (ctx, params) => {
     const normalized = normalizeSlugParams(op.name, params);
-    if (op.mutating === true || normalized === params) return handler(ctx, normalized);
+    if (normalized === params) return handler(ctx, normalized);
+    const legacyFirst = await legacyIfOnlyLegacyExists(ctx, op.name, params, normalized);
+    if (legacyFirst !== null) return handler(ctx, legacyFirst);
     try {
       return await handler(ctx, normalized);
     } catch (err) {
