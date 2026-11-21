@@ -7,7 +7,7 @@
  * PGLite always; Postgres too when DATABASE_URL is set.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -17,6 +17,10 @@ import { performSync } from '../src/commands/sync.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
 import { resolveManagedSyncContext } from '../src/core/persistence/sync-discovery.ts';
 import { managedBrain, type ManagedBrain } from './helpers/managed-brain.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { randomUUID } from 'node:crypto';
+import { runImport } from '../src/commands/import.ts';
+import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
 
 const backends: Array<string | undefined> = [undefined, ...(process.env.DATABASE_URL ? [process.env.DATABASE_URL] : [])];
 const engineName = (url: string | undefined) => url ? 'postgres' : 'pglite';
@@ -34,6 +38,51 @@ async function withPlainSource(url: string | undefined, run: (brain: ManagedBrai
 }
 
 describe.each(backends.map(url => [engineName(url), url] as const))('plain-directory sync (%s)', (_name, url) => {
+  test('an unchanged file never overwrites a database-only edit (#8079)', () => withPlainSource(url, async ({ engine, ctx }, dir) => {
+    const sync = () => performSync(engine, { sourceId: 'source-a', noPull: true, noEmbed: true });
+    expect((await sync()).status).toBe('synced');
+    await engine.setConfig('sync.write_through', 'false');
+    const snapshot = await engine.readPageSnapshot('people/alice-example', { sourceId: 'source-a' });
+    const edit = await submitPageMutation(ctx, { operation: 'put_page', params: { source_id: 'source-a', slug: 'people/alice-example', request_id: randomUUID(), expected_revision: snapshot!.revision,
+      content: person('Alice Example', 'Database-only correction: works at widget-co.') }, waitMs: 30_000 });
+    expect(edit.state).toBe('committed');
+    await engine.setConfig('sync.write_through', 'true');
+    const file = join(dir, 'people/alice-example.md');
+    const disk = readFileSync(file, 'utf8');
+    expect(await sync()).toMatchObject({ status: 'blocked_by_failures', failedFiles: 1 });
+    expect((await engine.getPage('people/alice-example', { sourceId: 'source-a' }))?.compiled_truth).toContain('Database-only correction');
+    expect(readFileSync(file, 'utf8')).toBe(disk);
+    // Divergence stays refused on retries and when both sides have moved; healthy siblings still publish.
+    writeFileSync(file, person('Alice Example', 'A conflicting file edit.'));
+    writeFileSync(join(dir, 'people/charlie-example.md'), person('Charlie Example', 'A healthy sibling.'));
+    expect(await sync()).toMatchObject({ status: 'blocked_by_failures', added: 1, failedFiles: 1 });
+    expect((await engine.getPage('people/alice-example', { sourceId: 'source-a' }))?.compiled_truth).toContain('Database-only correction');
+    expect((await engine.getPage('people/charlie-example', { sourceId: 'source-a' }))?.compiled_truth).toContain('healthy sibling');
+    // Explicit import chooses the reviewed file, establishes a new baseline and lets later file edits sync.
+    expect((await runImport(engine, [file, '--no-embed'], { sourceId: 'source-a' })).errors).toBe(0);
+    writeFileSync(file, person('Alice Example', 'A later file edit.'));
+    expect(await sync()).toMatchObject({ status: 'synced', added: 1 });
+    expect((await engine.getPage('people/alice-example', { sourceId: 'source-a' }))?.compiled_truth).toContain('later file edit');
+    expect(await sync()).toMatchObject({ status: 'synced', added: 0 });
+  }), 180_000);
+
+  test('old baselines survive checkpoint GC; missing or replaced identities never authorize an overwrite', () => withPlainSource(url, async ({ engine }, dir) => {
+    const sync = () => performSync(engine, { sourceId: 'source-a', noEmbed: true, noPull: true });
+    await sync();
+    await engine.executeRaw("UPDATE op_checkpoints SET updated_at=now()-interval '30 days' WHERE op='plain-directory-import'");
+    await purgeStaleCheckpoints(engine);
+    expect((await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='plain-directory-import'")).length).toBe(1);
+    const file = join(dir, 'people/alice-example.md');
+    writeFileSync(file, person('Alice Example', 'A file-only edit after GC.'));
+    expect(await sync()).toMatchObject({ status: 'synced', added: 1 });
+    await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,page_id}','-1') WHERE op='plain-directory-import'");
+    writeFileSync(file, person('Alice Example', 'Must not trust a different page identity.'));
+    expect(await sync()).toMatchObject({ status: 'blocked_by_failures', failedFiles: 1 });
+    await engine.executeRaw("DELETE FROM op_checkpoints WHERE op='plain-directory-import'");
+    expect(await sync()).toMatchObject({ status: 'blocked_by_failures', failedFiles: 1 });
+    expect((await engine.getPage('people/alice-example', { sourceId: 'source-a' }))?.compiled_truth).toContain('after GC');
+  }), 180_000);
+
   test('a forced plain directory syncs its files into the source without Git', () => withPlainSource(url, async ({ engine }, dir) => {
     const first = await performSync(engine, { sourceId: 'source-a', noPull: true, noEmbed: true });
     expect(first).toMatchObject({ status: 'synced', added: 1, deleted: 0 });

@@ -3,6 +3,7 @@
 # Rows: path<TAB>metric<TAB>count[<TAB>note]. Raw-SQL call sites per file under src/, outside the engines.
 # Generated from the tree at its own commit (`bun scripts/check-engine-raw-sql-ratchet.ts --print`).
 # Counts fall; a raise edits the row in the same PR with a note saying why. --prune lowers stale rows. docs/ci-guards.md#engine-raw-sql-ratchet
+src/core/persistence/plain-import-baseline.ts	execute_raw	2	#8079: incarnation-scoped import checkpoint read and publication-transaction upsert; persistence protocol state, not a canonical page write. Retained until the checkpoint storage area has typed methods.
 src/cli/enforced-commit-push.ts	execute_raw	1
 src/cli/enforced-member.ts	execute_raw	6
 src/commands/access-read-by-nobody.ts	execute_raw	2
