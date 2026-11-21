@@ -1,0 +1,104 @@
+/**
+ * pages-03: the one-time sync re-read after the upgrade (SYNC_IMPORT_PARSER_VERSION moved) costs nothing paid.
+ *
+ * 1. Protects: when a brain written by an older gbrain (records naming the older parser, dates and numbers stored under
+ *    the old typing) syncs once with this parser, a page whose file did not change makes no embedding call and queues
+ *    no fact extraction: a page with no affected value keeps its revision, and a page with one stores the values as
+ *    written with its chunks and embeddings untouched.
+ * 2. Fails when: the parser change re-embeds or re-extracts an unchanged page, or the re-read leaves the old typing.
+ * 3. Runs on PGLite (the managed-brain fixture). The embedding provider is a spy; no network, no model calls.
+ */
+import { describe, expect, test } from 'bun:test';
+import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
+import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
+import { localHostId } from '../src/core/persistence/identity.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { legacyTypedFrontmatter } from '../src/core/frontmatter-legacy.ts';
+import { managedBrain } from './helpers/managed-brain.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
+
+const DIMS = 1536, MODEL = 'openai:text-embedding-3-small';
+const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const PLAIN = ['notes/a', 'notes/b', 'notes/c'];
+const TYPED = ['people/d', 'people/e'];
+const plain = (slug: string) => `---\ntype: concept\ntitle: ${slug}\ntags: [alpha, beta]\n---\n\nThe committed body of ${slug}, about acme-example.\n`;
+const typed = (slug: string) => `---\ntype: person\ntitle: ${slug}\nborn: 1990-05-01\nzip: 02134\nversion: 1.10\n---\n\nThe committed body of ${slug}.\n`;
+const setup = ({ root }: { root: string }) => {
+  mkdirSync(join(root, 'notes'), { recursive: true }); mkdirSync(join(root, 'people'), { recursive: true }); git(root, 'init', '-q');
+  for (const slug of PLAIN) writeFileSync(join(root, `${slug}.md`), plain(slug));
+  for (const slug of TYPED) writeFileSync(join(root, `${slug}.md`), typed(slug));
+  git(root, 'add', '-A'); git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'notes');
+};
+/** HEAD's tree as a new root commit, so the next sync walks the whole tree (as the first sync of a new binary does). */
+function rewriteHistory(root: string): void {
+  const rewritten = git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit-tree', 'HEAD^{tree}', '-m', `rewritten ${randomUUID().slice(0, 8)}`);
+  git(root, 'reset', '-q', '--soft', rewritten); git(root, 'reflog', 'expire', '--expire=now', '--all'); git(root, 'gc', '-q', '--prune=now');
+}
+const vector = (text: string) => { const d = createHash('sha256').update(text).digest(); return Float32Array.from({ length: DIMS }, (_, i) => (d[i % 32]! - 128) / 128); };
+
+/** Runs every queued effect to the end (the embedding provider is the gateway's spy transport). */
+async function drainEffects(engine: BrainEngine): Promise<void> {
+  await disposePersistenceConsumer(engine);
+  for (let i = 0; i < 20; i++) if (!await runPersistenceEffects(engine, { engine: engine.kind }, { hostId: localHostId(), limit: 50 })) break;
+}
+const effectCounts = async (engine: BrainEngine) => Object.fromEntries((await engine.executeRaw<{ kind: string; n: number }>(
+  'SELECT kind, count(*)::int AS n FROM persistence_effects GROUP BY kind')).map(row => [row.kind, row.n]));
+const chunkRows = (engine: BrainEngine) => engine.executeRaw<Record<string, unknown>>(`SELECT p.slug, c.id, c.chunk_index, c.chunk_text,
+  c.embedding::text AS embedding, c.embedded_text_hash FROM content_chunks c JOIN pages p ON p.id=c.page_id ORDER BY p.slug, c.chunk_index`);
+const revisionOf = async (engine: BrainEngine, slug: string) => (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision;
+
+describe('pages-03: the one-time re-read after the upgrade', () => {
+  test('pages whose files did not change make no embedding call and queue no fact extraction', () => managedBrain(async ({ engine, root }) => {
+    await withEnv({ GBRAIN_EMBEDDING_MODEL: MODEL, GBRAIN_EMBEDDING_DIMENSIONS: String(DIMS), OPENAI_API_KEY: 'sk-test-upgrade-reread' }, async () => {
+      const embedded: string[] = [];
+      configureGateway({ embedding_model: MODEL, embedding_dimensions: DIMS, env: { OPENAI_API_KEY: 'sk-test-upgrade-reread' } });
+      __setEmbedTransportForTests((async ({ values }: { values: string[] }) => { embedded.push(...values); return { embeddings: values.map(v => Array.from(vector(v))) }; }) as never);
+      try {
+        const opts = { sourceId: 'default', noPull: true };
+        expect((await performManagedSync(engine, opts)).status).toBe('first_sync');
+        await drainEffects(engine);
+        expect(embedded.length).toBeGreaterThan(0); // the first sync embedded every page: the spy sees real calls
+        const chunksBefore = await chunkRows(engine);
+        expect(chunksBefore.every(row => row.embedding !== null)).toBe(true);
+
+        // What an older gbrain left: its parser named in every record and on the pass row, the old typing stored.
+        await withManagedFixtureWrite(engine, ['default'], async tx => {
+          for (const slug of TYPED) {
+            const [row] = await tx.executeRaw<{ frontmatter: Record<string, unknown> }>('SELECT frontmatter FROM pages WHERE slug=$1', [slug]);
+            await tx.executeRaw('UPDATE pages SET frontmatter=$1::text::jsonb WHERE slug=$2', [JSON.stringify({ ...row!.frontmatter, ...legacyTypedFrontmatter(typed(slug)) }), slug]);
+          }
+        });
+        // The fixture write moved the revision; the older binary's record named the revision it imported, so name this one.
+        for (const slug of TYPED) await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,revision}',to_jsonb($2::text)) WHERE op=$1 AND fingerprint LIKE '%:' || $3`,
+          [SYNC_IMPORT_PROVENANCE_OP, await revisionOf(engine, slug), String((await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.page.id)]);
+        expect((await engine.getPage('people/d'))!.frontmatter).toMatchObject({ born: '1990-05-01T00:00:00.000Z', zip: 2134, version: 1.1 });
+        await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
+        await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged,parser_fp}','\"an-older-parser\"'::jsonb) WHERE op='managed-sync-pass'");
+        const revisions = new Map(await Promise.all([...PLAIN, ...TYPED].map(async slug => [slug, await revisionOf(engine, slug)] as const)));
+        const effectsBefore = await effectCounts(engine);
+        embedded.length = 0;
+        // The first sync of the new binary walks the whole tree.
+        rewriteHistory(root);
+        const reread = await performManagedSync(engine, opts);
+        expect(reread).toMatchObject({ status: 'synced', pass: { kind: 'full', candidates: PLAIN.length + TYPED.length },
+          waived: { imports: PLAIN.length }, modified: TYPED.length, embedded: 0 });
+        await drainEffects(engine);
+
+        expect(embedded).toEqual([]);
+        const effectsAfter = await effectCounts(engine);
+        expect(effectsAfter['facts-backstop'] ?? 0).toBe(effectsBefore['facts-backstop'] ?? 0);
+        expect(await chunkRows(engine)).toEqual(chunksBefore);
+        for (const slug of PLAIN) expect(await revisionOf(engine, slug)).toBe(revisions.get(slug)!);
+        for (const slug of TYPED) expect((await engine.getPage(slug))!.frontmatter).toMatchObject({ born: '1990-05-01', zip: '02134', version: '1.10' });
+      } finally { __setEmbedTransportForTests(null); resetGateway(); }
+    });
+  }, { setup }), 240_000);
+});

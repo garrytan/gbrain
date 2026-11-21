@@ -5,7 +5,7 @@
  *    leading zero (`02134`) and a version (`1.10`) are stored, read back by get/export and written back to the user's
  *    file as written, also after an agent edits one word of the body. A page stored before this fix (the old typing in
  *    the database, the user's text in the file) is not reported as a local edit, and its first write puts the user's
- *    values back. Readers of those values (effective date, valid time, core priority, pack subtypes, chronicle dates)
+ *    values back: a value the caller changed in that write keeps the caller's value. Readers of those values (effective date, valid time, core priority, pack subtypes, chronicle dates)
  *    read the kept text as they read the old typed value.
  * 2. Fails when: the YAML parser types timestamps or numbers whose text does not print back the same, the dump changes
  *    a kept value, or a reader treats the kept text differently from the old value.
@@ -128,7 +128,7 @@ describe('pages-03: frontmatter values as written', () => {
     const legacy = { ...legacyTypedFrontmatter(FILE)!, trust_tier: undefined };
     const stored = (await engine.getPage('people/hal-example'))!.frontmatter;
     const old = { ...stored, ...Object.fromEntries(Object.entries(legacy).filter(([k]) => k in AS_WRITTEN)) };
-    await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw("UPDATE pages SET frontmatter=$1::jsonb WHERE slug='people/hal-example'", [JSON.stringify(old)]));
+    await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw("UPDATE pages SET frontmatter=$1::text::jsonb WHERE slug='people/hal-example'", [JSON.stringify(old)]));
     const rev = (await engine.readPageSnapshot('people/hal-example', { sourceId: 'default' }))!.revision;
     await call(ctx, 'edit_page', { slug: 'people/hal-example', expected_revision: rev, edits: [{ old_text: 'likes tea', new_text: 'likes coffee' }] });
     await settleManagedGitEffects(engine);
@@ -137,5 +137,29 @@ describe('pages-03: frontmatter values as written', () => {
     expect(valueLines(file)).toEqual(BLOCK);
     expect((await engine.getPage('people/hal-example'))!.frontmatter).toMatchObject(AS_WRITTEN);
     expect(parseMarkdown(file).frontmatter).toMatchObject(AS_WRITTEN);
+  }, { setup }), 120_000);
+
+  test('on an older page\'s first write, a value the caller changed keeps the new value and the others get their written text back', () => managedBrain(async ({ engine, ctx, root }) => {
+    await call(ctx, 'put_page', { slug: 'people/hal-example', content: FILE });
+    await settleManagedGitEffects(engine);
+    const legacy = legacyTypedFrontmatter(FILE)!;
+    const stored = (await engine.getPage('people/hal-example'))!.frontmatter;
+    const old = { ...stored, ...Object.fromEntries(Object.entries(legacy).filter(([k]) => k in AS_WRITTEN)) };
+    await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw("UPDATE pages SET frontmatter=$1::text::jsonb WHERE slug='people/hal-example'", [JSON.stringify(old)]));
+    // The caller reads the page as an older gbrain renders it (the old typing) and changes two of those values.
+    const read = serializePageToMarkdown((await engine.getPage('people/hal-example'))!, []);
+    expect(read).toContain('zip: 2134');
+    expect(read).toContain('born: 1990-05-01T00:00:00.000Z');
+    const sent = read.replace('zip: 2134', "zip: '02139'").replace('born: 1990-05-01T00:00:00.000Z', 'born: 1991-06-02');
+    const rev = (await engine.readPageSnapshot('people/hal-example', { sourceId: 'default' }))!.revision;
+    await call(ctx, 'put_page', { slug: 'people/hal-example', expected_revision: rev, content: sent });
+    await settleManagedGitEffects(engine);
+    const expected = { ...AS_WRITTEN, zip: '02139', born: '1991-06-02' };
+    expect((await engine.getPage('people/hal-example'))!.frontmatter).toMatchObject(expected);
+    const file = readFileSync(join(root, 'people/hal-example.md'), 'utf8');
+    expect(parseMarkdown(file).frontmatter).toMatchObject(expected);
+    expect(file).toContain('zip: 02139');
+    expect(file).toContain('born: 1991-06-02');
+    for (const line of BLOCK.filter(line => !/^(zip|born):/.test(line))) expect(file.split('\n')).toContain(line);
   }, { setup }), 120_000);
 });
