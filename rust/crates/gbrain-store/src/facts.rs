@@ -68,7 +68,9 @@ use crate::config::read_config;
 use crate::dream::int4;
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
-use crate::keyword::{or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd};
+use crate::keyword::{
+    or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd, with_query_stack,
+};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
@@ -1225,6 +1227,76 @@ fn delete_for_page(
 
 /// `deletedPageProjectionHiddenSql('facts')`: a soft-deleted page in the row's source whose slug
 /// is the row's page or its entity hides the row.
+/// `facts.source` values written by page-extraction paths, whose context head is the source page
+/// slug (`PAGE_EXTRACTION_SOURCE_LIST`, `src/core/facts/gone-page-facts.ts`).
+const PAGE_EXTRACTION_SOURCES: [&str; 4] =
+    ["mcp:put_page", "sync:import", "file_upload", "code_import"];
+
+/// `split_part(context, ' — ', 1)`: the text before the first context-note separator.
+fn context_head(context: &str) -> &str {
+    context.split(" \u{2014} ").next().unwrap_or(context)
+}
+
+/// `expireGonePageFacts` (`src/core/facts/gone-page-facts.ts`): the facts the purged pages of
+/// `source_id` take with them. Run it in the purge transaction, after the page rows are removed.
+/// Rows are expired (kept, never deleted), in the four cases of the SQL updates, in their order:
+/// filed on the page (not an ontology observation); a conversation slot filed on the page (it
+/// also gives up its slot); extracted from the page and filed on none; about the page and held by
+/// no page row that remains (a live or soft-deleted holder keeps it).
+pub(crate) fn expire_gone_page_facts(
+    tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
+    source_id: &str,
+    slugs: &[String],
+    now: i64,
+) -> Result<()> {
+    if slugs.is_empty() {
+        return Ok(());
+    }
+    let gone: HashSet<&str> = slugs.iter().map(String::as_str).collect();
+    for old in source_rows(&*tx, source_id)? {
+        if old.expired_at_us.is_some() {
+            continue;
+        }
+        let filed = old
+            .source_markdown_slug
+            .as_deref()
+            .is_some_and(|s| gone.contains(s));
+        let mut new = old.clone();
+        if filed && old.dimension.is_none() {
+            // EXPIRE_FILED_SQL
+        } else if filed && old.row_num.is_some() && old.conversation_slot() {
+            // EXPIRE_FILED_SLOT_SQL
+            new.dimension = None;
+            new.value = None;
+            new.value_hash = None;
+            new.dim_status = None;
+        } else if old.source_markdown_slug.is_none()
+            && PAGE_EXTRACTION_SOURCES.contains(&old.source.as_str())
+            && old
+                .context
+                .as_deref()
+                .is_some_and(|c| gone.contains(context_head(c)))
+        {
+            // EXPIRE_EXTRACTED_SQL
+        } else if old.entity_slug.as_deref().is_some_and(|e| gone.contains(e))
+            && match old.source_markdown_slug.as_deref() {
+                None => true,
+                Some(holder) => read_page(&*tx, source_id, holder)?.is_none(),
+            }
+        {
+            // EXPIRE_ABOUT_SQL: the purged pages are already removed, so a holder that remains is
+            // another page.
+        } else {
+            continue;
+        }
+        new.expired_at_us = Some(now);
+        new.row_num = None;
+        write_fact(tx, trust, Some(&old), &new)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn hidden_by_deleted_page(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     for slug in [&row.source_markdown_slug, &row.entity_slug]
         .into_iter()
@@ -1237,7 +1309,8 @@ pub(crate) fn hidden_by_deleted_page(read: &dyn KvRead, row: &FactRecord) -> Res
     Ok(false)
 }
 
-/// `privateProvenanceFilterUnderPolicy('facts')`, when the read passes `excludePrivate`.
+/// `privateProvenanceFilterUnderPolicy('facts')`, when the read passes `excludePrivate`. The owner-only sources are
+/// read from the same snapshot for each row (a short scan of the source records).
 pub(crate) fn hidden_by_policy(
     read: &dyn KvRead,
     row: &FactRecord,
@@ -1679,13 +1752,17 @@ impl Store {
                 .map(|r| r.to_json(false, false))
                 .collect());
         };
-        let mut ranked = Vec::new();
-        for row in rows {
-            let vector = to_tsvector(&row.fact)?;
-            if ts_matches(&vector, &query) {
-                ranked.push((ts_rank_cd(&vector, &query), row));
+        // One deep-stack thread for the whole walk when the query is deep, not one per fact.
+        let mut ranked = with_query_stack(query.items.len(), || -> Result<Vec<_>> {
+            let mut ranked = Vec::new();
+            for row in rows {
+                let vector = to_tsvector(&row.fact)?;
+                if ts_matches(&vector, &query) {
+                    ranked.push((ts_rank_cd(&vector, &query), row));
+                }
             }
-        }
+            Ok(ranked)
+        })?;
         // Postgres sorts `real` with NaN above every number, as `total_cmp` does for a positive NaN.
         ranked.sort_by(|(sa, a), (sb, b)| {
             sb.total_cmp(sa)
@@ -1768,7 +1845,7 @@ impl Store {
                     "period": r.claim_period,
                     "event_type": r.event_type,
                     "text": r.fact,
-                    "source_session": r.source_session,
+                    "source_session": r.source_session.clone(),
                     "source_markdown_slug": r.source_markdown_slug,
                     "embedding": vector_json(r.embedding.as_deref().filter(|_| {
                         brain_model.as_deref().is_some_and(|m| r.embedding_model.as_deref() == Some(m))
@@ -2500,6 +2577,220 @@ mod tests {
                 .unwrap()
                 .len(),
             4
+        );
+    }
+
+    #[test]
+    fn update_slug_moves_the_facts_of_the_renamed_page() {
+        // A rename through the public `updateSlug` moves the page's facts, as PGLite
+        // `moveSlugBindings` does: the entity lists them at the new slug, and deleting the
+        // new page's facts removes them.
+        let store = crate::test_support::store();
+        let input = crate::pages::PageInput {
+            page_type: "person".into(),
+            title: "Old".into(),
+            compiled_truth: "body".into(),
+            ..crate::pages::PageInput::default()
+        };
+        store
+            .put_page(
+                "people/old",
+                &input,
+                &crate::pages::PutPageOptions::default(),
+            )
+            .unwrap();
+        let out = store
+            .insert_facts(&InsertFactsArgs {
+                rows: vec![NewFactInput {
+                    fact: Some("works at acme".into()),
+                    source: Some("test".into()),
+                    valid_from: Some("2026-01-01T00:00:00.000Z".into()),
+                    entity_slug: Some("people/old".into()),
+                    row_num: Some(1.0),
+                    source_markdown_slug: Some("people/old".into()),
+                    ..NewFactInput::default()
+                }],
+                source_id: "default".into(),
+                delete_for_page_first: None,
+            })
+            .unwrap();
+        let ids: Vec<u64> = serde_json::from_value(out["ids"].clone()).unwrap();
+        assert_eq!(
+            store.update_slug("people/old", "people/new", None).unwrap(),
+            1
+        );
+        let read = store.read().unwrap();
+        let row = read_fact(&*read, ids[0]).unwrap().unwrap();
+        assert_eq!(row.entity_slug.as_deref(), Some("people/new"));
+        assert_eq!(row.source_markdown_slug.as_deref(), Some("people/new"));
+        assert!(
+            entity_rows(&*read, "default", "people/old")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            page_rows(&*read, "default", "people/old")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(page_rows(&*read, "default", "people/new").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_retention_purge_expires_the_facts_of_the_purged_page() {
+        // `expireGonePageFacts`: once the tombstone that hid them is gone, the purged page's
+        // facts stay expired, and a new page at the slug does not pick them up.
+        let store = crate::test_support::store();
+        let input = crate::pages::PageInput {
+            page_type: "person".into(),
+            title: "Alice".into(),
+            compiled_truth: "body".into(),
+            ..crate::pages::PageInput::default()
+        };
+        let put = |slug: &str| {
+            store
+                .put_page(slug, &input, &crate::pages::PutPageOptions::default())
+                .unwrap()
+        };
+        put("people/alice-example");
+        put("notes/holder");
+        let row = |fact: &str,
+                   source: &str,
+                   entity: Option<&str>,
+                   filed: Option<&str>,
+                   context: Option<&str>,
+                   dim: Option<&str>,
+                   row_num: Option<f64>| NewFactInput {
+            fact: Some(fact.into()),
+            source: Some(source.into()),
+            valid_from: Some("2026-01-01T00:00:00.000Z".into()),
+            entity_slug: entity.map(String::from),
+            source_markdown_slug: filed.map(String::from),
+            context: context.map(String::from),
+            dimension: dim.map(String::from),
+            value: dim.map(|_| "v".to_string()),
+            row_num,
+            ..NewFactInput::default()
+        };
+        let a = Some("people/alice-example");
+        let rows = vec![
+            row("filed", "test", a, a, None, None, Some(1.0)),
+            row(
+                "held elsewhere",
+                "test",
+                a,
+                Some("notes/holder"),
+                None,
+                None,
+                Some(1.0),
+            ),
+            row(
+                "extracted",
+                "sync:import",
+                None,
+                None,
+                Some("people/alice-example \u{2014} note"),
+                None,
+                None,
+            ),
+            row("about, unfiled", "test", a, None, None, None, None),
+            row(
+                "slot",
+                "cli:extract-conversation-facts:x",
+                a,
+                a,
+                None,
+                Some("role"),
+                Some(2.0),
+            ),
+            row(
+                "observation",
+                "test",
+                Some("people/bob-example"),
+                a,
+                None,
+                Some("role"),
+                None,
+            ),
+            row(
+                "other page",
+                "sync:import",
+                None,
+                None,
+                Some("people/bob-example"),
+                None,
+                None,
+            ),
+        ];
+        let out = store
+            .insert_facts(&InsertFactsArgs {
+                rows,
+                source_id: "default".into(),
+                delete_for_page_first: None,
+            })
+            .unwrap();
+        let ids: Vec<u64> = serde_json::from_value(out["ids"].clone()).unwrap();
+        assert_eq!(ids.len(), 7);
+        let past = store.env.now_micros() - 2 * DAY_US;
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "people/alice-example")?.unwrap();
+                page.deleted_at_us = Some(past);
+                crate::pages::write_page(tx, &page)
+            })
+            .unwrap();
+        let purged = store
+            .purge_deleted_pages(0.0, &crate::page_ops::PurgeOptions::default())
+            .unwrap();
+        assert_eq!(purged["slugs"], json!(["people/alice-example"]));
+        put("people/alice-example");
+        let read = store.read().unwrap();
+        let state: Vec<(bool, Option<i32>, Option<String>)> = ids
+            .iter()
+            .map(|id| {
+                let r = read_fact(&*read, *id).unwrap().unwrap();
+                (r.expired_at_us.is_some(), r.row_num, r.dimension)
+            })
+            .collect();
+        assert_eq!(
+            state,
+            vec![
+                (true, None, None),
+                (false, Some(1), None),
+                (true, None, None),
+                (true, None, None),
+                (true, None, None),
+                (false, None, Some("role".into())),
+                (false, None, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_deep_keyword_duplicate_query_walks_every_fact_on_one_deep_thread() {
+        // Minder row 3: one deep-query thread for the walk, not one per fact.
+        let store = crate::test_support::store();
+        let words: Vec<String> = (0..1100).map(|i| format!("alpha{i}")).collect();
+        let text = words.join(" ");
+        for _ in 0..12 {
+            let input = json!({ "fact": text, "source": "s", "entity_slug": "people/eve" });
+            store
+                .insert_fact(
+                    &serde_json::from_value(json!({ "input": input, "sourceId": "default" }))
+                        .unwrap(),
+                )
+                .unwrap();
+        }
+        let q: DuplicateQuery = serde_json::from_value(json!({ "sourceId": "default",
+            "entitySlug": "people/eve", "k": 50, "keyword": true, "factText": text }))
+        .unwrap();
+        crate::keyword::reset_deep_spawns();
+        assert_eq!(store.find_candidate_duplicates(&q).unwrap().len(), 12);
+        let spawned = crate::keyword::deep_spawns();
+        // Building the query takes a fixed few; the walk over the 12 facts adds one.
+        assert!(
+            spawned <= 4,
+            "the duplicate search started {spawned} deep-query threads"
         );
     }
 }

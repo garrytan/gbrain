@@ -29,15 +29,16 @@ A segmented page is one whose body columns are NULL, the shell `createSegmentedP
 through the page's live generation, as the SQL engines' `chunkVisibleFilter` and `chunkGenerationFilter` do: a chunk
 staged for a later generation, and one of a retired occurrence, are not read, so staged draft text shows nowhere and
 moves no total or max index before the flip. An inline chunk left on a segmented page is not part of its live body.
-A page's chunks are served when its `text_projection_revision` equals its `knowledge_revision`, the test the SQL
-engines' served-projection filter makes.
+A page's chunks are served (`getChunkPage`, `getChunkWindows`) when its `text_projection_revision` equals its
+`knowledge_revision` or is the v153 activation marker, the test the SQL engines' `servedTextProjectionFilter` makes.
+The chunkless reads count a page as sealed only when the two revisions are equal, as `chunklessPagesWhere` does.
 `sealChunks` sets that revision, and a body write moves the knowledge revision, so the old chunks stop reading.
 
 ## getChunkPage
 
 The page is found as `getChunks` finds it: the slug as written (no case fold), in the one source the member resolves
 (`sourceIds` when not empty, else `sourceId`, default `default`), and a soft-deleted page is read like a live one. An
-unsealed or absent page answers `{ chunks: [], total_chunks: 0, max_chunk_index: null }`. Otherwise `total_chunks`
+page that is not served, or is absent, answers `{ chunks: [], total_chunks: 0, max_chunk_index: null }`. Otherwise `total_chunks`
 counts every visible chunk of the page, and `chunks` holds the visible chunks, decoded with the shared `toChunk`.
 An inline page is paged by `chunk_index`: `max_chunk_index` is the highest index and `chunks` holds those with
 `fromIndex <= chunk_index < fromIndex + limit` in index order. A page with a segmented chunk is paged by position in
@@ -51,7 +52,7 @@ engines sum the counts of every matching page and order the chunks by a key that
 ## getChunkWindows
 
 An empty request list answers `[]` before any option is read. Otherwise a requested page is authorized when it
-exists, is in scope (a non-empty `sourceIds`, else a non-empty `sourceId`, else every source), is live, is sealed,
+exists, is in scope (a non-empty `sourceIds`, else a non-empty `sourceId`, else every source), is live, is served,
 its source is not archived and its frontmatter has no `quarantine` key. Unauthorized pages are absent.
 
 Each authorized page yields one page row: `prio` is the lowest priority any request gave it, `max_chunk_index` is the

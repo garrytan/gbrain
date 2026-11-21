@@ -10,6 +10,7 @@ use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::error::*;
+use gbrain_store::facts::{OwnerOnly, PrivacyPolicy};
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::salience::EmotionalWeightRow;
@@ -239,6 +240,7 @@ fn anomalies_bucket_baseline_days_and_today() {
         baseline_start_us: (since - 3 * day) as f64,
         since_us: since as f64,
         since_end_us: (since + day) as f64,
+        ..Default::default()
     };
     let found = store.find_anomalies(&input).unwrap();
     assert_eq!(found["baseline"], json!({"tag": {}, "type": {}}));
@@ -260,10 +262,93 @@ fn anomalies_bucket_baseline_days_and_today() {
         baseline_start_us: since as f64,
         since_us: (since + day) as f64,
         since_end_us: (since + 2 * day) as f64,
+        ..Default::default()
     };
     let found = store.find_anomalies(&earlier).unwrap();
     assert!(found["today"].as_array().unwrap().is_empty());
     let tag = found["baseline"]["tag"]["t"].as_object().unwrap();
+    assert_eq!(tag.values().next().unwrap(), 1);
+}
+
+#[test]
+fn anomalies_under_exclude_private_skip_hidden_pages_in_today_and_the_baseline() {
+    let dir = TempDir::new("stats-anomaly-private");
+    let store = open(&dir);
+    let put = |slug: &str, frontmatter: Value| {
+        let input: PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": "x", "frontmatter": frontmatter,
+        }))
+        .unwrap();
+        store
+            .put_page(slug, &input, &PutPageOptions::default())
+            .unwrap();
+        store.add_tag(slug, "t", None).unwrap();
+    };
+    put("open", json!({}));
+    put("secret", json!({"visibility": "private"}));
+    put("readers", json!({"readable_by": ["alice-example"]}));
+    put("alias", json!({"access": "restricted"}));
+    let day: i64 = 86_400_000_000;
+    let since = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as i64)
+        .div_euclid(day)
+        * day;
+    let read = |since: i64, policy: Option<PrivacyPolicy>| {
+        store
+            .find_anomalies(&AnomalyInput {
+                scope: None,
+                baseline_start_us: (since - day) as f64,
+                since_us: since as f64,
+                since_end_us: (since + day) as f64,
+                exclude_private: policy,
+            })
+            .unwrap()
+    };
+    let slugs = |found: &Value| {
+        let mut slugs: Vec<String> = found["today"][0]["page_slugs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_string())
+            .collect();
+        slugs.sort();
+        slugs
+    };
+    let strict = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        owner_only: OwnerOnly::Lineage,
+        ..Default::default()
+    };
+    assert_eq!(
+        slugs(&read(since, None)),
+        ["alias", "open", "readers", "secret"]
+    );
+    assert_eq!(slugs(&read(since, Some(strict.clone()))), ["open"]);
+    // With aliases off, `access: restricted` is no longer private.
+    let no_alias = PrivacyPolicy {
+        honor_aliases: false,
+        entity_privacy: true,
+        owner_only: OwnerOnly::Lineage,
+        ..Default::default()
+    };
+    assert_eq!(slugs(&read(since, Some(no_alias))), ["alias", "open"]);
+    // With the privacy part off (privacy relaxed), only the reader list still hides a page.
+    let relaxed = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: false,
+        owner_only: OwnerOnly::Lineage,
+        ..Default::default()
+    };
+    assert_eq!(
+        slugs(&read(since, Some(relaxed))),
+        ["alias", "open", "secret"]
+    );
+    // The baseline window counts only what the policy keeps.
+    let later = read(since + day, Some(strict));
+    let tag = later["baseline"]["tag"]["t"].as_object().unwrap();
     assert_eq!(tag.values().next().unwrap(), 1);
 }
 

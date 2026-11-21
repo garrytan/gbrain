@@ -1,6 +1,6 @@
-//! The Life Chronicle reads (timeline_queries). Event projections are written here as raw timeline
-//! records, standing in for upsertEventProjection until the core timeline write helpers land; the
-//! expected rows follow the PGLite SQL in src/core/engine-sql/timeline.ts.
+//! The Life Chronicle reads and the event projection write (timeline_queries). Most read cases write
+//! event projections as raw timeline records so they can set any shape; the upsert cases go through
+//! upsertEventProjection. Expected rows follow the PGLite SQL in src/core/engine-sql/timeline.ts.
 
 mod common;
 
@@ -9,7 +9,9 @@ use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::sources::SourceInput;
 use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
-use gbrain_store::timeline_queries::{ChronicleOptions, LastSeenOptions, OnThisDayOptions};
+use gbrain_store::timeline_queries::{
+    ChronicleOptions, EventProjectionInput, LastSeenOptions, OnThisDayOptions,
+};
 use gbrain_store::{Kv, OpenOptions, Store, SystemEnv, keys};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -353,4 +355,187 @@ fn last_seen_matches_the_own_page_or_an_exact_who() {
         json!({"last_date": null, "last_event_slug": null})
     );
     assert_eq!(seen("7", "2026-06-25")["last_date"], json!("2026-06-22"));
+}
+
+fn upsert(brain: &Brain, opts: Value) -> gbrain_store::Result<Value> {
+    let input: EventProjectionInput = serde_json::from_value(opts).unwrap();
+    brain.store.upsert_event_projection(&input)
+}
+
+fn entries(brain: &Brain, slug: &str) -> Vec<Value> {
+    brain
+        .store
+        .get_timeline(slug, &serde_json::from_value(json!({})).unwrap())
+        .unwrap()
+}
+
+#[test]
+fn upsert_event_projection_inserts_then_updates_in_place() {
+    let brain = Brain::new("tq-upsert");
+    brain.source("alt");
+    brain.page("life/diary/a", "default", json!({}));
+    brain.page("life/diary/b", "default", json!({}));
+    brain.event(
+        "life/events/e",
+        "default",
+        "2026-06-01T09:00:00Z",
+        json!({"kind": "standup"}),
+    );
+    let base =
+        json!({"depthSlug": "life/diary/a", "eventSlug": "life/events/e", "date": "2026-06-01"});
+    let with = |extra: Value| {
+        let mut v = base.clone();
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        v
+    };
+
+    let first = upsert(&brain, with(json!({"summary": "Standup", "detail": "v1"}))).unwrap();
+    assert_eq!(first, json!({"projected": true}));
+    let inserted = entries(&brain, "life/diary/a");
+    assert_eq!(inserted.len(), 1);
+    assert_eq!(inserted[0]["source"], "life-chronicle:event:life/events/e");
+    let id = inserted[0]["id"].clone();
+
+    // Same (event, date): the entry keeps its id and moves to the new depth page.
+    upsert(
+        &brain,
+        with(json!({"summary": "Revised", "depthSlug": "life/diary/b"})),
+    )
+    .unwrap();
+    assert!(entries(&brain, "life/diary/a").is_empty());
+    let moved = entries(&brain, "life/diary/b");
+    assert_eq!(moved.len(), 1);
+    assert_eq!(moved[0]["id"], id);
+    assert_eq!(moved[0]["summary"], "Revised");
+    assert_eq!(moved[0]["detail"], "");
+
+    // Another date is another entry; the conflict above consumed one serial value.
+    upsert(
+        &brain,
+        with(json!({"summary": "Next", "date": "2026/06/02", "depthSlug": "life/diary/b"})),
+    )
+    .unwrap();
+    let both = entries(&brain, "life/diary/b");
+    assert_eq!(both.len(), 2);
+    let ids: Vec<u64> = both.iter().map(|e| e["id"].as_u64().unwrap()).collect();
+    assert!(ids.contains(&(id.as_u64().unwrap() + 2)), "{ids:?}");
+
+    for missing in [
+        json!({"summary": "x", "depthSlug": "life/diary/nope"}),
+        json!({"summary": "x", "eventSlug": "life/events/nope"}),
+        json!({"summary": "x", "sourceId": "alt"}),
+    ] {
+        assert_eq!(
+            upsert(&brain, with(missing)).unwrap(),
+            json!({"projected": false})
+        );
+    }
+    // The date is checked before the pages are looked up.
+    let bad = upsert(
+        &brain,
+        with(json!({"summary": "x", "date": "2026-02-30", "depthSlug": "nope"})),
+    );
+    assert_eq!(bad.unwrap_err().code, "invalid_argument");
+    let nul = upsert(&brain, with(json!({"summary": "a\u{0}b"})));
+    assert_eq!(nul.unwrap_err().code, "invalid_argument");
+
+    // Soft-deleted pages still project (the SQL has no deleted_at test).
+    brain
+        .store
+        .soft_delete_page("life/diary/a", Some("default"))
+        .unwrap();
+    assert_eq!(
+        upsert(
+            &brain,
+            with(json!({"summary": "Ghost", "date": "2026-06-03"}))
+        )
+        .unwrap(),
+        json!({"projected": true})
+    );
+}
+
+#[test]
+fn upsert_event_projection_refuses_a_duplicate_entry_and_keeps_nothing() {
+    let brain = Brain::new("tq-upsert-dup");
+    brain.page("life/diary/a", "default", json!({}));
+    brain.event(
+        "life/events/e",
+        "default",
+        "2026-06-01T09:00:00Z",
+        json!({}),
+    );
+    let plain = TimelineInput {
+        date: Some("2026-06-01".into()),
+        source: Some("life-chronicle:event:life/events/e".into()),
+        summary: Some("Standup".into()),
+        detail: None,
+    };
+    brain
+        .store
+        .add_timeline_entry("life/diary/a", &plain, &AddTimelineOptions::default())
+        .unwrap();
+    let error = upsert(
+        &brain,
+        json!({"depthSlug": "life/diary/a", "eventSlug": "life/events/e", "date": "2026-06-01", "summary": "Standup"}),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "constraint_violation");
+    let kept = entries(&brain, "life/diary/a");
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0]["summary"], "Standup");
+}
+
+#[test]
+fn deleting_the_event_page_removes_its_projections_and_a_deleted_depth_page_frees_the_slot() {
+    let brain = Brain::new("tq-upsert-cascade");
+    brain.page("life/diary/a", "default", json!({}));
+    brain.page("life/diary/b", "default", json!({}));
+    brain.event(
+        "life/events/e",
+        "default",
+        "2026-06-01T09:00:00Z",
+        json!({}),
+    );
+    brain.event(
+        "life/events/f",
+        "default",
+        "2026-06-01T10:00:00Z",
+        json!({}),
+    );
+    for (event, date) in [
+        ("life/events/e", "2026-06-01"),
+        ("life/events/e", "2026-06-02"),
+        ("life/events/f", "2026-06-01"),
+    ] {
+        upsert(
+            &brain,
+            json!({"depthSlug": "life/diary/a", "eventSlug": event, "date": date, "summary": format!("{event} {date}")}),
+        )
+        .unwrap();
+    }
+    assert_eq!(entries(&brain, "life/diary/a").len(), 3);
+    brain
+        .store
+        .delete_page("life/events/e", Some("default"))
+        .unwrap();
+    let left = entries(&brain, "life/diary/a");
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0]["summary"], "life/events/f 2026-06-01");
+
+    // The depth page goes with its entries; the index row it leaves names nothing, so the next
+    // upsert for the same (event, date) inserts a fresh entry.
+    brain
+        .store
+        .delete_page("life/diary/a", Some("default"))
+        .unwrap();
+    upsert(
+        &brain,
+        json!({"depthSlug": "life/diary/b", "eventSlug": "life/events/f", "date": "2026-06-01", "summary": "again"}),
+    )
+    .unwrap();
+    let fresh = entries(&brain, "life/diary/b");
+    assert_eq!(fresh.len(), 1);
+    assert_eq!(fresh[0]["summary"], "again");
 }

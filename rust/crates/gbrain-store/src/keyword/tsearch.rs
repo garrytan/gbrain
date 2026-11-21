@@ -49,22 +49,59 @@ const DEEP_QUERY_ITEMS: usize = 1024;
 /// Stack of the thread that walks a deep query. The address space is reserved, not committed.
 const DEEP_STACK_BYTES: usize = 256 << 20;
 
+thread_local! {
+    /// True on a thread `with_query_stack` started: its stack already fits the deepest query.
+    static ON_DEEP_STACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Run `f`, which recurses once per item of a query of `items` items, on a thread with a stack
-/// deep enough for `MAX_QUERY_ITEMS` frames when the query is large. Small queries run in place.
-pub(super) fn with_query_stack<R: Send>(items: usize, f: impl FnOnce() -> R + Send) -> R {
-    if items <= DEEP_QUERY_ITEMS {
+/// deep enough for `MAX_QUERY_ITEMS` frames when the query is large. Small queries, and calls
+/// already on such a thread, run in place, so a search that wraps its whole walk starts one
+/// thread, not one per page or chunk it matches.
+pub(crate) fn with_query_stack<R: Send>(items: usize, f: impl FnOnce() -> R + Send) -> R {
+    if items <= DEEP_QUERY_ITEMS || ON_DEEP_STACK.with(std::cell::Cell::get) {
         return f();
     }
+    #[cfg(test)]
+    let spawns = DEEP_SPAWNS.with(|c| c.borrow().clone());
+    #[cfg(test)]
+    spawns.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     std::thread::scope(|scope| {
         let handle = std::thread::Builder::new()
             .stack_size(DEEP_STACK_BYTES)
-            .spawn_scoped(scope, f)
+            .spawn_scoped(scope, move || {
+                ON_DEEP_STACK.with(|on| on.set(true));
+                // A spawn inside counts toward the caller's tally.
+                #[cfg(test)]
+                DEEP_SPAWNS.with(|c| *c.borrow_mut() = spawns);
+                f()
+            })
             .expect("spawn the deep-query thread");
         match handle.join() {
             Ok(value) => value,
             Err(panic) => std::panic::resume_unwind(panic),
         }
     })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many deep-query threads this thread and the deep threads it started have started.
+    static DEEP_SPAWNS: std::cell::RefCell<std::sync::Arc<std::sync::atomic::AtomicUsize>> =
+        std::cell::RefCell::new(std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+}
+
+/// Resets this thread's deep-thread tally (tests).
+#[cfg(test)]
+pub(crate) fn reset_deep_spawns() {
+    DEEP_SPAWNS
+        .with(|c| *c.borrow_mut() = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+}
+
+/// The deep-query threads started since `reset_deep_spawns`, nested ones included (tests).
+#[cfg(test)]
+pub(crate) fn deep_spawns() -> usize {
+    DEEP_SPAWNS.with(|c| c.borrow().load(std::sync::atomic::Ordering::Relaxed))
 }
 
 fn too_deep() -> StoreError {

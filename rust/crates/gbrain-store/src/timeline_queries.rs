@@ -1,9 +1,8 @@
 //! Timeline reads by date (the Life Chronicle reads) and event projections.
 //!
-//! Members: getTimelineForDate, getSince, getOnThisDay, getLastSeen, upsertEventProjection.
-//! The four reads are served. upsertEventProjection still refuses with `engine_capability_missing`
-//! in the TypeScript engine: it writes the core `E`/`D`/`G` timeline records, which only
-//! `timeline.rs` may write, and waits on the core helpers coming on `rust-engine-core-hooks`.
+//! Members: getTimelineForDate, getSince, getOnThisDay, getLastSeen, upsertEventProjection. All
+//! five are served. upsertEventProjection writes timeline entries only through the core helpers
+//! `timeline::{next_entry_id, read_entry, put_entry}`.
 //!
 //! What the reads mirror (src/core/engine-sql/timeline.ts): every timeline entry joined to its
 //! page `p` (which must not be soft-deleted) and, when the entry is an event projection, LEFT
@@ -13,9 +12,16 @@
 //! null), and the row stays. A soft-deleted event page in scope hides the row. An entry whose
 //! event page no longer exists is skipped, as `ON DELETE CASCADE` would have removed it.
 //!
-//! Keys: this family writes nothing yet. Every record it will write starts with
-//! `keys::TIMELINE_QUERIES` (`u`); the event index `u 0x01 <event_page_id be8> <date>` -> entry
-//! id arrives with upsertEventProjection.
+//! Keys: one record kind, the event index that stands in for the Postgres unique index
+//! `idx_timeline_event_dedup` on `(event_page_id, date)`:
+//!
+//! `u 0x01 <event_page_id be8> <date YYYY-MM-DD>` -> `<page_id be8> <entry id be8>`
+//!
+//! The value names the entry's `E` key. A lookup reads that entry back and treats the index row
+//! as absent when the entry is gone or no longer names the event page (a core write removed it,
+//! for example the hard delete of its depth page). `remove_event_projections` deletes the entries
+//! an event page's index rows name, with their `E` and `D` keys, when the event page is hard
+//! deleted (`ON DELETE CASCADE`).
 //!
 //! The reads scan every timeline entry (`E`). A date index would need a write hook in the core
 //! `addTimelineEntry` path, so it waits until speed needs it.
@@ -27,12 +33,92 @@ use crate::env::{iso, parse_iso};
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
-use crate::pages::{PageRecord, read_page_by_id};
-use crate::timeline::{TimelineRecord, parse_date};
+use crate::links::no_nul;
+use crate::pages::{PageRecord, read_page, read_page_by_id};
+use crate::sources::DEFAULT_SOURCE;
+use crate::timeline::{TimelineRecord, next_entry_id, parse_date, put_entry, read_entry};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 const MICROS_PER_DAY: i64 = 86_400_000_000;
+/// Second byte of an event index key.
+const EVENT_INDEX: u8 = 0x01;
+/// `timeline_entries.source` of an event projection: this prefix and the event slug.
+const EVENT_SOURCE_PREFIX: &str = "life-chronicle:event:";
+
+/// `upsertEventProjection(opts)`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventProjectionInput {
+    pub depth_slug: String,
+    pub event_slug: String,
+    pub date: String,
+    pub summary: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub source_id: Option<String>,
+}
+
+fn event_index_prefix(event_page_id: u64) -> Vec<u8> {
+    let mut key = vec![keys::TIMELINE_QUERIES, EVENT_INDEX];
+    key.extend_from_slice(&event_page_id.to_be_bytes());
+    key
+}
+
+fn event_index_key(event_page_id: u64, date: &str) -> Vec<u8> {
+    let mut key = event_index_prefix(event_page_id);
+    key.extend_from_slice(date.as_bytes());
+    key
+}
+
+fn event_index_value(entry: &TimelineRecord) -> Vec<u8> {
+    let mut value = entry.page_id.to_be_bytes().to_vec();
+    value.extend_from_slice(&entry.id.to_be_bytes());
+    value
+}
+
+/// The projection of `event_page_id` on `date` that an index value names, when that entry still
+/// exists and still names the event page.
+fn indexed_entry(
+    read: &dyn KvRead,
+    value: &[u8],
+    event_page_id: u64,
+    date: &str,
+) -> Result<Option<TimelineRecord>> {
+    if value.len() != 16 {
+        return Ok(None);
+    }
+    let (Some(page_id), Some(id)) = (keys::be8(&value[..8]), keys::be8(&value[8..])) else {
+        return Ok(None);
+    };
+    Ok(read_entry(read, page_id, date, id)?.filter(|e| e.event_page_id == Some(event_page_id)))
+}
+
+/// `ON DELETE CASCADE` of `timeline_entries.event_page_id`: deletes every timeline entry, on any
+/// page, whose `event_page_id` is the page being hard deleted, with its `D` key (when it still
+/// points at the entry) and its index row. `pages::remove_page` calls it in the same write
+/// transaction. `G` is not lowered, as no core delete lowers it.
+pub(crate) fn remove_event_projections(tx: &mut dyn KvWrite, event_page_id: u64) -> Result<()> {
+    let prefix = event_index_prefix(event_page_id);
+    let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    scan_prefix(&*tx, &prefix, false, &mut |k, v| {
+        rows.push((k.to_vec(), v.to_vec()));
+        true
+    })?;
+    for (key, value) in rows {
+        let date = String::from_utf8_lossy(&key[prefix.len()..]).into_owned();
+        if let Some(entry) = indexed_entry(&*tx, &value, event_page_id, &date)? {
+            tx.delete(&keys::timeline(entry.page_id, &entry.date, entry.id))?;
+            let dedup = entry.dedup_key();
+            if tx.get(&dedup)?.and_then(|b| keys::be8(&b)) == Some(entry.id) {
+                tx.delete(&dedup)?;
+            }
+        }
+        tx.delete(&key)?;
+    }
+    Ok(())
+}
 
 /// `ChronicleTimelineOpts` of `getTimelineForDate` and `getSince`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -402,13 +488,66 @@ impl Store {
             None => json!({ "last_date": null, "last_event_slug": null }),
         })
     }
-}
 
-/// `ON DELETE CASCADE` of `timeline_entries.event_page_id`: deletes every timeline entry, on any
-/// page, whose `event_page_id` is the page being hard deleted. `pages::remove_page` calls it.
-/// Empty until this family stores event projections.
-pub(crate) fn remove_event_projections(_tx: &mut dyn KvWrite, _event_page_id: u64) -> Result<()> {
-    Ok(())
+    /// `upsertEventProjection({ depthSlug, eventSlug, date, summary, detail?, sourceId? })`:
+    /// `INSERT ... SELECT` from the depth and event pages of one source (default `default`;
+    /// soft-deleted pages count) `ON CONFLICT (event_page_id, date) DO UPDATE` of summary,
+    /// detail, page and source. `{ projected: false }` when either page is missing; a bad date
+    /// fails first. The serial is taken whenever both pages exist, the conflict path included,
+    /// and the update keeps the entry's id and `created_at`. A new or updated entry whose
+    /// `(page, date, summary, source)` matches another entry is `constraint_violation`.
+    pub fn upsert_event_projection(&self, input: &EventProjectionInput) -> Result<Value> {
+        let source_id = input.source_id.as_deref().unwrap_or(DEFAULT_SOURCE);
+        let detail = input.detail.as_deref().unwrap_or("");
+        no_nul(
+            "upsertEventProjection",
+            &[
+                ("depthSlug", &input.depth_slug),
+                ("eventSlug", &input.event_slug),
+                ("summary", &input.summary),
+                ("detail", detail),
+                ("sourceId", source_id),
+            ],
+        )?;
+        let date = parse_date(&input.date)?;
+        let source = format!("{EVENT_SOURCE_PREFIX}{}", input.event_slug);
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let depth = read_page(&*tx, source_id, &input.depth_slug)?;
+            let event = read_page(&*tx, source_id, &input.event_slug)?;
+            let (Some(depth), Some(event)) = (depth, event) else {
+                return Ok(json!({ "projected": false }));
+            };
+            let id = next_entry_id(tx)?;
+            let index = event_index_key(event.id, &date);
+            let old = match tx.get(&index)? {
+                Some(value) => indexed_entry(&*tx, &value, event.id, &date)?,
+                None => None,
+            };
+            let new = match &old {
+                Some(old) => TimelineRecord {
+                    page_id: depth.id,
+                    source: source.clone(),
+                    summary: input.summary.clone(),
+                    detail: detail.to_string(),
+                    ..old.clone()
+                },
+                None => TimelineRecord {
+                    id,
+                    page_id: depth.id,
+                    date: date.clone(),
+                    source: source.clone(),
+                    summary: input.summary.clone(),
+                    detail: detail.to_string(),
+                    event_page_id: Some(event.id),
+                    created_at_us: now,
+                },
+            };
+            put_entry(tx, old.as_ref(), &new)?;
+            tx.put(&index, &event_index_value(&new))?;
+            Ok(json!({ "projected": true }))
+        })
+    }
 }
 
 #[cfg(test)]

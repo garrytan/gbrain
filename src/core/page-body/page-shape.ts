@@ -113,6 +113,16 @@ export function pageBodyBytes(page: BodyShape & { compiled_truth?: string | null
   return Buffer.byteLength(page.compiled_truth ?? '', 'utf8') + Buffer.byteLength(page.timeline ?? '', 'utf8');
 }
 
+// Each throwing body getter carries the `site` it was made for under this key, so a codec can send a guard as data instead of calling it.
+const GUARD_SITE = Symbol('gbrain.pageBodyGuardSite');
+
+/** The `site` a body getter was made with by guardSegmentedBody, or undefined when `getter` is not one of its guards. */
+export function guardedBodySite(getter: unknown): string | undefined {
+  if (typeof getter !== 'function') return undefined;
+  const site = (getter as { [GUARD_SITE]?: unknown })[GUARD_SITE];
+  return typeof site === 'string' ? site : undefined;
+}
+
 /**
  * Replace the body fields of a segmented page object with enumerable getters
  * and setters that throw `page_body_segmented`. Enumerable on purpose: spread,
@@ -124,6 +134,7 @@ export function guardSegmentedBody<T extends object>(page: T, site: string,
   const ref = page as { slug?: string; source_id?: string };
   for (const field of fields) {
     const refuse = (): never => { throw pageBodySegmentedError(ref, `${site}.${field}`); };
+    Object.defineProperty(refuse, GUARD_SITE, { value: site });
     Object.defineProperty(page, field, { enumerable: true, configurable: false, get: refuse, set: refuse });
   }
   return page;

@@ -438,4 +438,55 @@ describe('engine parity: ontology', () => {
       return { all, defaultOnly, federated, missing };
     },
   );
+
+  parityTest(
+    'getOntology and findOntologyConflicts drop rows whose provenance or entity page excludePrivate hides',
+    { methods: ['putPage', 'mergeOntologyFact', 'getOntology', 'findOntologyConflicts'] },
+    async (engine) => {
+      const pages: Array<[string, string, Record<string, unknown>]> = [
+        ['notes/open', 'note', {}],
+        ['notes/private', 'note', { visibility: 'private' }],
+        ['notes/readers', 'note', { readable_by: ['alice-example'] }],
+        ['notes/alias', 'note', { confidentiality: ' Secret\t' }],
+        ['atoms/origin-private', 'atom', { visibility: 'world', source_slug: 'notes/private' }],
+        ['notes/lineage', 'note', { derived_from: 'notes/open.md' }],
+        ['people/hidden-entity', 'person', { visibility: 'private' }],
+      ];
+      for (const [slug, type, frontmatter] of pages) {
+        await engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `About ${slug}.`, timeline: '', frontmatter });
+      }
+      const merge = (entitySlug: string, dimension: string, value: string, source: string, validFrom: string) =>
+        engine.mergeOntologyFact({ entitySlug, dimension, value, source, validFrom, visibility: 'world' });
+      // The newest role is on a private page; the read under excludePrivate falls back to the older visible one.
+      await merge(SARAH, 'role', 'founder', 'notes/private', '2024-06-01');
+      await merge(SARAH, 'role', 'advisor', 'notes/open', '2024-01-01');
+      await merge(SARAH, 'employer', 'Acme', 'notes/readers', '2025-01-01');
+      await merge(SARAH, 'location', 'SF', 'notes/alias', '2025-01-01');
+      await merge(SARAH, 'expertise', 'fintech', 'atoms/origin-private', '2025-01-01');
+      await merge(SARAH, 'relation', 'friend', 'notes/open', '2025-01-01');
+      await merge('people/hidden-entity', 'role', 'cto', 'notes/open', '2025-01-01');
+      const bob = 'people/bob-jones';
+      await merge(bob, 'role', 'advisor', 'notes/open', '2026-05-01');
+      await merge(bob, 'role', 'founder', 'notes/private', '2026-01-01');
+      await merge(bob, 'employer', 'Acme', 'notes/open', '2026-05-01');
+      await merge(bob, 'employer', 'Widget', 'notes/readers', '2026-01-01');
+      await merge(bob, 'expertise', 'search', 'notes/open', '2026-05-01');
+      await merge(bob, 'expertise', 'ranking', 'atoms/origin-private', '2026-01-01');
+      await merge(bob, 'location', 'NYC', 'notes/open', '2026-05-01');
+      await merge(bob, 'location', 'LA', 'notes/alias', '2026-01-01');
+      await merge(bob, 'relation', 'peer', 'notes/open', '2026-05-01');
+      await merge(bob, 'relation', 'mentor', 'notes/lineage', '2026-01-01');
+      const all = values(await engine.getOntology(SARAH));
+      const kept = values(await engine.getOntology(SARAH, { excludePrivate: true }));
+      const hiddenEntity = values(await engine.getOntology('people/hidden-entity', { excludePrivate: true }));
+      const conflicts = conflictView(await engine.findOntologyConflicts());
+      const conflictsKept = conflictView(await engine.findOntologyConflicts({ excludePrivate: true }));
+      expect(all.map((r) => `${r.dimension}=${r.value}`)).toEqual(['employer=Acme', 'expertise=fintech', 'location=SF', 'relation=friend', 'role=founder']);
+      expect(kept.map((r) => `${r.dimension}=${r.value}`)).toEqual(['relation=friend', 'role=advisor']);
+      expect(hiddenEntity).toEqual([]);
+      expect(conflicts.map((c) => c.dimension)).toEqual(['employer', 'expertise', 'location', 'relation', 'role', 'role']);
+      expect(conflictsKept.map((c) => c.dimension)).toEqual(['relation']);
+      return { all, kept, hiddenEntity, conflicts, conflictsKept };
+    },
+  );
 });
