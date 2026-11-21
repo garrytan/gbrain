@@ -2076,6 +2076,11 @@ impl VersionPreimage {
         out.frontmatter = self.frontmatter.clone();
         out.tags = self.tags.clone();
         out.source_path = self.source_path.clone();
+        // The snapshot's writer is the stored revision's only when the read is that revision, as the
+        // attribution trigger copies `write_*` only then: a stale read keeps them NULL.
+        if self.revision != page.knowledge_revision {
+            out.revision_receipt = RevisionReceipt::default();
+        }
         out.knowledge_revision = self.revision.clone();
         out.deleted_at_us = match (self.deleted, page.deleted_at_us) {
             (false, _) => None,

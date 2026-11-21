@@ -20,11 +20,11 @@
 
 use crate::cli_reads::pg_text::{jsonb_text, pg_lower};
 use crate::kv::scan_prefix;
-use crate::pages::{PageRecord, versions_of};
+use crate::pages::VersionRecord;
 use crate::{Result, Store, StoreError, keys};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{BinaryHeap, HashSet};
 
 /// `VERSION_BODY_BATCH`: the rows one read returns.
 const VERSION_BODY_BATCH: usize = 5000;
@@ -47,10 +47,18 @@ fn holds(text: &str, needle: &str) -> bool {
     pg_lower(text).contains(needle)
 }
 
+/// The two page columns the read needs; the rest of a page record (its body) is never kept.
+#[derive(Deserialize)]
+struct PageRef {
+    id: u64,
+    slug: String,
+}
+
 impl Store {
     /// `listPurgeVersionBodies({ sourceId, pageIds, after, needle, escaped })`: one batch of the source's
     /// inline versions of `pageIds` or carrying the claim, in id order after `after`, as
-    /// `{ id, slug, compiled_truth, timeline, metadata }`.
+    /// `{ id, slug, compiled_truth, timeline, metadata }`. Pages and versions are read one record at a
+    /// time, and only the batch's lowest version ids are kept (a heap of at most 5000 rows).
     pub fn list_purge_version_bodies(&self, query: &PurgeVersionBodyQuery) -> Result<Vec<Value>> {
         if query.source_id.contains('\0') {
             return Ok(Vec::new());
@@ -58,10 +66,10 @@ impl Store {
         let pages_wanted: HashSet<i64> = query.page_ids.iter().copied().collect();
         let read = self.read()?;
         let prefix = keys::text(keys::PAGE, &[query.source_id.as_str(), ""]);
-        let mut pages: Vec<PageRecord> = Vec::new();
+        let mut pages: Vec<PageRef> = Vec::new();
         let mut failure = None;
         scan_prefix(&*read, &prefix, false, &mut |_, v| {
-            match serde_json::from_slice::<PageRecord>(v) {
+            match serde_json::from_slice::<PageRef>(v) {
                 Ok(page) => pages.push(page),
                 Err(e) => failure = Some(StoreError::from(e)),
             }
@@ -70,42 +78,86 @@ impl Store {
         if let Some(e) = failure {
             return Err(e);
         }
-        let mut rows: Vec<(u64, Value)> = Vec::new();
+        // A max-heap on the version id: the batch keeps the VERSION_BODY_BATCH lowest ids.
+        let mut batch: BinaryHeap<(u64, Row)> = BinaryHeap::new();
         for page in &pages {
-            for v in versions_of(&*read, page.id)? {
-                if v.body_storage.as_deref().is_some_and(|s| s != "inline")
-                    || i64::try_from(v.id).is_ok_and(|id| id <= query.after)
-                {
-                    continue;
-                }
-                let title = holds(&v.title, &query.needle);
-                let frontmatter = holds(
-                    &jsonb_text(&Value::Object(v.frontmatter.clone())),
-                    &query.escaped,
-                );
-                let body = v
-                    .compiled_truth
-                    .as_deref()
-                    .is_some_and(|t| holds(t, &query.needle));
-                let timeline = holds(&v.timeline, &query.needle);
-                let named = i64::try_from(v.page_id).is_ok_and(|id| pages_wanted.contains(&id));
-                if !(named || body || timeline || title || frontmatter) {
-                    continue;
-                }
-                rows.push((
-                    v.id,
-                    json!({
-                        "id": v.id,
-                        "slug": page.slug,
-                        "compiled_truth": v.compiled_truth.as_deref(),
-                        "timeline": v.timeline.as_deref(),
-                        "metadata": title || frontmatter,
-                    }),
-                ));
+            let mut failure = None;
+            scan_prefix(
+                &*read,
+                &keys::version_prefix(page.id),
+                false,
+                &mut |_, bytes| {
+                    let v = match serde_json::from_slice::<VersionRecord>(bytes) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            failure = Some(StoreError::from(e));
+                            return false;
+                        }
+                    };
+                    if v.body_storage.as_deref().is_some_and(|s| s != "inline")
+                        || i64::try_from(v.id).is_ok_and(|id| id <= query.after)
+                        || (batch.len() >= VERSION_BODY_BATCH
+                            && batch.peek().is_some_and(|(top, _)| v.id > *top))
+                    {
+                        return true;
+                    }
+                    let title = holds(&v.title, &query.needle);
+                    let frontmatter = holds(
+                        &jsonb_text(&Value::Object(v.frontmatter.clone())),
+                        &query.escaped,
+                    );
+                    let body = v
+                        .compiled_truth
+                        .as_deref()
+                        .is_some_and(|t| holds(t, &query.needle));
+                    let timeline = holds(&v.timeline, &query.needle);
+                    let named = i64::try_from(v.page_id).is_ok_and(|id| pages_wanted.contains(&id));
+                    if named || body || timeline || title || frontmatter {
+                        batch.push((
+                            v.id,
+                            Row(json!({
+                                "id": v.id,
+                                "slug": page.slug,
+                                "compiled_truth": v.compiled_truth.as_deref(),
+                                "timeline": v.timeline.as_deref(),
+                                "metadata": title || frontmatter,
+                            })),
+                        ));
+                        if batch.len() > VERSION_BODY_BATCH {
+                            batch.pop();
+                        }
+                    }
+                    true
+                },
+            )?;
+            if let Some(e) = failure {
+                return Err(e);
             }
         }
-        rows.sort_by_key(|(id, _)| *id);
-        rows.truncate(VERSION_BODY_BATCH);
-        Ok(rows.into_iter().map(|(_, row)| row).collect())
+        Ok(batch
+            .into_sorted_vec()
+            .into_iter()
+            .map(|(_, row)| row.0)
+            .collect())
+    }
+}
+
+/// A row in the batch heap, ordered by its version id alone (the tuple's first field).
+struct Row(Value);
+
+impl PartialEq for Row {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+impl Eq for Row {}
+impl PartialOrd for Row {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Row {
+    fn cmp(&self, _: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
     }
 }
