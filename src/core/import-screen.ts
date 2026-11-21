@@ -39,7 +39,7 @@ import { effectiveVisibility } from './search/private-visibility.ts';
 import { CODE_FILE_MAX_BYTES, PAGE_MAX_BYTES } from './page-size-policy.ts';
 import { sliceMemo } from './persistence/slice-memo.ts';
 import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
-import { noncanonicalReadersHold } from './persistence/readers-request.ts';
+import { noncanonicalReadersHold, READERS_FIX_EFFECT } from './persistence/readers-request.ts';
 
 /** Largest Markdown page import admits: the Wave A ceiling (page-size-policy.ts). */
 export const MAX_FILE_SIZE = PAGE_MAX_BYTES;
@@ -523,7 +523,7 @@ export function contentRefusalFromReceipt(code: string | null | undefined, messa
     : typed === 'write_gate_rejected' ? 'The write gate refuses this external instruction-like content under the operator\'s write_gate.external_mode=reject setting, so it refuses on every retry. Tell the user; changing that setting is their decision.'
     : typed === 'tag_too_long' ? TAG_TOO_LONG_SUGGESTION
     : typed === 'visibility_noncanonical' ? 'The content asks for visibility: private in a spelling page privacy does not read, so it refuses on every retry. Write visibility: private on its own frontmatter line (lowercase key and value), then submit with a new request_id.'
-    : typed === 'readers_noncanonical' ? 'The content names its readers with a key page access does not read, so it refuses on every retry. Write the key as readable_by (lowercase, with an underscore) on its own frontmatter line, then submit with a new request_id.'
+    : typed === 'readers_noncanonical' ? 'The content names its readers with a key page access does not read, so it refuses on every retry. Write the key as readable_by (lowercase, with an underscore) on its own frontmatter line, then submit with a new request_id. ' + READERS_FIX_EFFECT
     : PAGE_OVER_LIMIT_SUGGESTION;
   return { code: typed, ...(reason ? { reason } : {}), ...(key ? { key } : {}), ...(line !== undefined ? { line } : {}), suggestion };
 }

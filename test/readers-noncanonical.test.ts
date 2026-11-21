@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { persistSavedIdea } from '../src/commands/brainstorm.ts';
@@ -24,8 +24,10 @@ import type { OperationContext } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { misspelledReaderKeys, noncanonicalReadersHold } from '../src/core/persistence/readers-request.ts';
+import { gitHeldFilesCheck } from '../src/commands/doctor/checks/git-holds.ts';
+import { fileHeldField, recordRoute } from '../src/core/persistence/held-reads.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
+import { gitHoldFix, readGitSourceHolds, type GitHoldRecord } from '../src/core/persistence/sync-holds.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isWriteErrorCode } from '../src/core/persistence/types.ts';
 import { normalizeReaders } from '../src/core/access/principals.ts';
@@ -415,4 +417,116 @@ describe('managed brains', () => {
       await expectStored(engine, 'default');
     }, databaseUrl ? { databaseUrl } : {}), 180_000);
   }
+});
+
+// ---- fix round: the doctor count, the fix text and the remote route ----
+
+/** The three sentences every fix names: the rename restricts the page, the owner's member joins the list, and the verify step. */
+const FIX_TEXT = ['restricts the page to the members it lists', "list the owner's member too", 'gbrain access check --token <name> --as <member>'];
+
+for (const backend of backends) describe(`[${backend}] doctor git_held_files counts stored pages with a misspelled readers key`, () => {
+  const engine = () => engines[backends.indexOf(backend)]!;
+  const put = (sourceId: string, slug: string, frontmatter: Record<string, unknown>) =>
+    engine().putPage(slug, { type: 'note', title: slug, compiled_truth: 'A note about acme-example.', frontmatter }, { sourceId });
+
+  test('a stored page with a misspelled top-level key is counted, never rewritten, and named with the fix', () => withEnv(env, async () => {
+    const sourceId = await newSource(engine(), mkdtempSync(join(home, 'doctor-stored-')));
+    await put(sourceId, 'notes/legacy-upper', { Readable_By: ['alice-example'] });
+    await put(sourceId, 'notes/legacy-hyphen', { 'readable-by': ['alice-example'] });
+    await put(sourceId, 'notes/legacy-both', { readable_by: ['alice-example'], readableBy: ['bob-example'] });
+    await put(sourceId, 'notes/exact', { readable_by: ['alice-example'] });
+    await put(sourceId, 'notes/plain', { title: 'Plain' });
+    await put(sourceId, 'notes/nested', { meta: { Readable_By: ['alice-example'] } });
+    const before = await engine().executeRaw<{ slug: string; frontmatter: unknown }>('SELECT slug, frontmatter FROM pages WHERE source_id=$1 ORDER BY slug', [sourceId]);
+    const doctor = await gitHeldFilesCheck(engine(), [sourceId]);
+    expect(doctor.details?.readers_noncanonical).toEqual({ held: 0, stored: 3 });
+    expect(doctor.status).toBe('warn');
+    expect(doctor.message).toContain('3 stored page(s)');
+    expect(doctor.message).toContain('readable_by');
+    for (const text of FIX_TEXT) expect(`${doctor.message} ${JSON.stringify(doctor.fix)}`).toContain(text);
+    expect(await engine().executeRaw('SELECT slug, frontmatter FROM pages WHERE source_id=$1 ORDER BY slug', [sourceId])).toEqual(before);
+  }), 180_000);
+
+  test('a brain with no misspelled readers key reports no readers_noncanonical detail', () => withEnv(env, async () => {
+    const sourceId = await newSource(engine(), mkdtempSync(join(home, 'doctor-clean-')));
+    await put(sourceId, 'notes/exact', { readable_by: ['alice-example'] });
+    const doctor = await gitHeldFilesCheck(engine(), [sourceId]);
+    expect(doctor.details?.readers_noncanonical).toBeUndefined();
+    expect(doctor.status).toBe('ok');
+  }), 180_000);
+
+  test('files held readers_noncanonical are counted beside the stored pages', () => withEnv(env, async () => {
+    await engine().executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    const root = mkdtempSync(join(home, 'doctor-held-'));
+    git(root, 'init', '-q');
+    writeTree(root, KEPT);
+    commit(root, 'seed');
+    const sourceId = await newSource(engine(), root);
+    const sync = () => performSync(engine(), { repoPath: root, sourceId, noPull: true, noEmbed: true, noExtract: true, concurrency: 1 });
+    await sync();
+    writeTree(root, HELD);
+    commit(root, 'misspell the key');
+    await sync();
+    await put(sourceId, 'notes/legacy-upper', { Readable_By: ['alice-example'] });
+    const doctor = await gitHeldFilesCheck(engine(), [sourceId]);
+    expect(doctor.details?.readers_noncanonical).toEqual({ held: paths(HELD).length, stored: 1 });
+  }), 180_000);
+});
+
+describe('the readers_noncanonical fix text says what the rename does and how to check it', () => {
+  const record = { source_id: 'source-a', path: 'notes/upper-key.md', slug: 'notes/upper-key', code: 'readers_noncanonical', meta: {} } as Parameters<typeof gitHoldFix>[0];
+
+  test('the local message and suggestion of a refused write', async () => {
+    await brain(false, async (ctx) => {
+      const refused = await (putPage.handler(ctx, { slug: 'notes/keycase', content: page('Readable_By: [alice-example]\n'), request_id: randomUUID(), wait_ms: 25_000 }) as Promise<Outcome>).catch((e: any) => e);
+      const text = `${refused.message} ${refused.suggestion ?? ''} ${JSON.stringify(refused.details ?? {})}`;
+      for (const part of FIX_TEXT) expect(text).toContain(part);
+    });
+  }, 120_000);
+
+  test('the file ingestion message of a held file', () => {
+    const hold = noncanonicalReadersHold(note('Upper key', 'Readable_By: [alice-example]\n'), { Readable_By: ['alice-example'] })!;
+    for (const part of FIX_TEXT) expect(hold.message).toContain(part);
+  });
+
+  test('the sync hold fix user_message', () => {
+    const fix = gitHoldFix(record);
+    for (const part of FIX_TEXT) expect(fix.user_message).toContain(part);
+    expect(fix.user_message).toContain('gbrain sync --source source-a --no-pull');
+  });
+
+  test('the docs anchor', () => {
+    const row = readFileSync(join(import.meta.dir, '..', 'docs/guides/write-refusals.md'), 'utf8').split('\n').find(line => line.includes('<a id="readers_noncanonical">'))!;
+    for (const part of FIX_TEXT) expect(row).toContain(part);
+  });
+});
+
+describe('the remote get_page.file_held fix for a readers_noncanonical hold', () => {
+  const hold = (code: string): GitHoldRecord => ({ version: 1, source_id: 'source-a', incarnation: 'i1', path: 'notes/Readable_By-secret.md', source_path: 'notes/Readable_By-secret.md', slug: 'notes/secret', page_id: 1,
+    code, meta: {}, held_at: '2026-11-20T00:00:00.000Z' } as unknown as GitHoldRecord);
+
+  test('routes to the file edit, never to repair frontmatter, and leaves out the path and the key spelling', () => {
+    expect(recordRoute({ code: 'readers_noncanonical' })).toMatchObject({ fences: 0, others: 0, readers: 1 });
+    const field = fileHeldField({ record: hold('readers_noncanonical'), revision: 'r1' }, true);
+    const fix = field.fix as { argv?: string[]; user_message?: string };
+    const text = JSON.stringify(field);
+    expect(field).not.toHaveProperty('path');
+    expect(text).not.toContain('repair frontmatter');
+    expect(text).not.toContain('Readable_By');
+    expect(text).not.toContain('notes/secret.md');
+    expect(fix.argv).not.toContain('repair');
+    expect(`${fix.user_message}`).toContain('readable_by');
+    for (const part of FIX_TEXT) expect(`${fix.user_message}`).toContain(part);
+  });
+
+  test('a local caller still gets the hold fix with the path', () => {
+    const field = fileHeldField({ record: hold('readers_noncanonical'), revision: 'r1' }, false);
+    expect(field).toMatchObject({ code: 'readers_noncanonical', path: 'notes/Readable_By-secret.md' });
+    expect(field.fix.user_message).toContain('notes/Readable_By-secret.md');
+  });
+
+  test('the visibility_noncanonical route is unchanged (a follow-up owns it)', () => {
+    expect(recordRoute({ code: 'visibility_noncanonical' })).toEqual({ fences: 0, others: 1 });
+    expect(JSON.stringify(fileHeldField({ record: hold('visibility_noncanonical'), revision: 'r1' }, true))).toContain('repair frontmatter');
+  });
 });

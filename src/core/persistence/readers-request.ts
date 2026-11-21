@@ -105,6 +105,20 @@ function named(keys: readonly string[], showKeys: boolean): string {
   return keys.length > SPELLINGS_NAMED ? `${list} and ${keys.length - SPELLINGS_NAMED} more` : list;
 }
 
+/**
+ * What fixing the key does, for every fix text: the renamed key restricts the page to the readers it lists, so the owner's member must be in the
+ * list for the owner's member-bound keys to keep reading it, and `gbrain access check` shows who can read it.
+ */
+export const READERS_FIX_EFFECT = "Renaming the key restricts the page to the members it lists, so list the owner's member too if the owner's member-bound keys must still read it, "
+  + 'then check who can read it with gbrain access check --token <name> --as <member>.';
+
+/** The next step for a source whose holds are all `readers_noncanonical`: no repair rewrites who may read a page, so read the status, edit each file and sync. */
+export function readersHoldSteps(sourceId: string): { argv: string[]; commands: string[]; text: string } {
+  const status = ['gbrain', 'sources', 'status', sourceId, '--json'], sync = `gbrain sync --source ${sourceId} --no-pull`;
+  return { argv: status, commands: [status.join(' '), sync],
+    text: `the readers_noncanonical hold(s) are files whose readers key page access does not read, which no repair rewrites: ${status.join(' ')} names each file; edit it so the key is readable_by, commit, then run ${sync}. ${READERS_FIX_EFFECT}` };
+}
+
 const FIX = 'Write the key as readable_by (lowercase, with an underscore) on its own frontmatter line and remove any other spelling of it';
 
 /**
@@ -115,7 +129,7 @@ export function noncanonicalReadersHold(content: string, frontmatter: Record<str
   const keys = misspelledReaderKeys(content, frontmatter);
   if (!keys.length) return null;
   return { code: 'readers_noncanonical', message: `The frontmatter names its readers with ${named(keys, showKeys)}, which page access does not read, so the page would be readable by every member; it was not imported. `
-    + `${FIX}, then sync or import the file again.` };
+    + `${FIX}, then sync or import the file again. ${READERS_FIX_EFFECT}` };
 }
 
 /** Refuses a write whose content or `published` frontmatter spells the readers key in a way page access does not read; `showKeys` false leaves the spelling out. */
@@ -126,7 +140,7 @@ export function assertReadersKeyCanonical(row: Pick<WriteRequest, 'slug' | 'sour
 
 /** The write refusal a `readers_noncanonical` content hold becomes on a writer that has no file to hold (an ingested capture, a brainstorm save, a reconcile). */
 export function readersNoncanonicalRefusal(row: Pick<WriteRequest, 'slug' | 'source_id'>, keys: readonly string[], showKeys = true): OperationError {
-  return opError('readers_noncanonical', `The write names its readers with ${named(keys, showKeys)}, which page access does not read, so page ${row.slug} would be readable by every member and nothing was written. ${FIX}, and submit again.`,
-    `Nothing was written to page ${row.slug} in source ${row.source_id}. ${FIX}, then submit again with a new request_id. A page that restricts its readers lists them as readable_by: [alice-example].`,
+  return opError('readers_noncanonical', `The write names its readers with ${named(keys, showKeys)}, which page access does not read, so page ${row.slug} would be readable by every member and nothing was written. ${FIX}, and submit again. ${READERS_FIX_EFFECT}`,
+    `Nothing was written to page ${row.slug} in source ${row.source_id}. ${FIX}, then submit again with a new request_id. A page that restricts its readers lists them as readable_by: [alice-example]. ${READERS_FIX_EFFECT}`,
     { docs: 'docs/guides/write-refusals.md#readers_noncanonical' });
 }
