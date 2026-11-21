@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+Ordinary commands (remember, recall, config get, stats and every command except serve, apply-migrations, post-upgrade, upgrade, doctor, init and setup) no longer print a migrations_pending notice on every call for an upgrade migration that is stopped on a source conflict a person has to settle (today only v0.53.0, the shared-skills content migration), even when no newer migration has run past it. That work waits on a person's decision, not on another run, so repeating it on every call changed nothing. gbrain doctor still warns about it with the read-only step that lists each source's conflict, gbrain apply-migrations and post-upgrade still report it, and gbrain serve still names it once at startup. A migration that has not run or only partly ran, and any other stopped migration, still gets the notice on every command, now also when the stopped v0.53.0 is there too: before, its message replaced theirs.
