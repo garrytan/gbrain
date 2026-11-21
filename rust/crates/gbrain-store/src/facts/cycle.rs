@@ -9,8 +9,8 @@
 //! Each member reads the rows its statement reads, through the indexes `facts.rs` keeps, and returns the columns the
 //! statement selects. A statement with no `ORDER BY` returns its rows in key order here (the TypeScript callers do
 //! not depend on an order). Each fact row keeps its stamped `trust_tier`, and the write gate keeps its receipts
-//! (`trust/write_gate.rs`), so `countWorldFacts` applies the read eligibility (`trust::TrustPolicy`). The facts store
-//! keeps no `needs_rederive` state (`takes.rs` reads it as empty), and no folder rule or `page_readers` column
+//! (`trust/write_gate.rs`), so `countWorldFacts` applies the read eligibility (`trust::TrustPolicy`) and hides a row a
+//! purge marked in `needs_rederive` (`generations/needs_rederive.rs`). The facts store keeps no folder rule or `page_readers` column
 //! (`privacy.rs`): a page names readers here only through a `readable_by` key. rust/docs/store/facts.md, "Group 5", lists what each member answers.
 
 use super::{
@@ -575,6 +575,7 @@ impl Store {
                     && !hidden_by_policy(&*read, &row, &q.exclude_private)?
                     && !hidden_by_deleted_page(&*read, &row)?
                     && !hidden_by_quarantine(&*read, &row)?
+                    && !super::hidden_by_rederive(&*read, &row)?
                     && trust.admits(&*read, "facts", row.id, row.tier())?
                 {
                     count += 1;

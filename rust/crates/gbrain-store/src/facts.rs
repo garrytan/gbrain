@@ -1130,8 +1130,8 @@ pub struct FactQuery {
     pub exclude_private: Option<PrivacyPolicy>,
     /// The caller passed a read eligibility (`eligibilityClause`, engine-sql/facts.ts):
     /// `projectionEligibleSql('facts')` replaces the deleted-page clause, so a row whose live
-    /// provenance page is quarantined is hidden too. The store keeps no `needs_rederive` queue,
-    /// so that clause hides nothing.
+    /// provenance page is quarantined is hidden too, and so is a row a purge marked in
+    /// `needs_rederive` (`generations/needs_rederive.rs`).
     pub eligible: bool,
     /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
     pub min_trust: Option<String>,
@@ -1151,7 +1151,8 @@ pub struct SupersessionQuery {
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
     /// The caller passed a read eligibility: `projectionEligibleSql('facts')` replaces the
-    /// deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
+    /// deleted-page clause, so a row whose live provenance page is quarantined, or a row marked in
+    /// `needs_rederive`, is hidden too.
     pub eligible: bool,
     /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
     pub min_trust: Option<String>,
@@ -1487,6 +1488,11 @@ pub(crate) fn hidden_by_policy(
     }
 }
 
+/// `rederiveHiddenSql('facts')`: a purge marked the row in `needs_rederive`.
+pub(crate) fn hidden_by_rederive(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+    crate::generations::needs_rederive::is_marked(read, "facts", row.id)
+}
+
 /// `quarantinedProjectionHiddenSql('facts')`: the row's live page carries a `quarantine` key.
 pub(crate) fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     let Some(slug) = &row.source_markdown_slug else {
@@ -1541,7 +1547,8 @@ impl FactQuery {
         }
         Ok(!hidden_by_deleted_page(read, row)?
             && !hidden_by_policy(read, row, &self.exclude_private)?
-            && !(self.eligible && hidden_by_quarantine(read, row)?)
+            && !(self.eligible
+                && (hidden_by_quarantine(read, row)? || hidden_by_rederive(read, row)?))
             && trust.admits(read, "facts", row.id, row.tier())?)
     }
 
@@ -1800,8 +1807,8 @@ impl Store {
 
     /// `listSupersessions`: rows with a successor, by `COALESCE(expired_at, valid_until)` (NULL
     /// first) then id, both descending. With a read eligibility it also hides a row whose live
-    /// provenance page is quarantined and applies the trust floor and flag suppression; the store
-    /// keeps no `needs_rederive` queue, so that clause hides nothing.
+    /// provenance page is quarantined or that a purge marked in `needs_rederive`, and applies the
+    /// trust floor and flag suppression.
     pub fn list_supersessions(&self, q: &SupersessionQuery) -> Result<Vec<Value>> {
         const OP: &str = "listSupersessions";
         no_nul(OP, &[("sourceId", &q.source_id)])?;
@@ -1817,7 +1824,8 @@ impl Store {
                 || !visibility_admits(&*read, &q.visibility, &q.widen, &row)?
                 || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 || hidden_by_deleted_page(&*read, &row)?
-                || (q.eligible && hidden_by_quarantine(&*read, &row)?)
+                || (q.eligible
+                    && (hidden_by_quarantine(&*read, &row)? || hidden_by_rederive(&*read, &row)?))
                 || !trust.admits(&*read, "facts", row.id, row.tier())?
             {
                 continue;
@@ -2017,6 +2025,7 @@ impl Store {
                     || until.is_some_and(|u| row.valid_from_us > u)
                     || hidden_by_deleted_page(&*read, &row)?
                     || hidden_by_quarantine(&*read, &row)?
+                    || hidden_by_rederive(&*read, &row)?
                     || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 {
                     continue;

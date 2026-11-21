@@ -733,8 +733,8 @@ fn private_page(
 
 /// The part of `projectionEligibleSql('takes', ..)` a policy without `floor` or
 /// `suppressFlagged` applies: a take of a soft-deleted page, or of a page whose frontmatter has a
-/// `quarantine` key (any value, deleted or not), is hidden. Its third clause hides rows listed in
-/// `needs_rederive`, which only a raw-SQL purge writes; this engine has no such rows.
+/// `quarantine` key (any value, deleted or not), is hidden. Its third clause, a take a purge marked
+/// in `needs_rederive` (`generations/needs_rederive.rs`), is checked by the callers per take.
 fn eligible_page(page: &PageRecord) -> bool {
     page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine")
 }
@@ -1062,7 +1062,11 @@ impl Store {
             };
             if options.page_slug.as_ref().is_some_and(|s| *s != page.slug)
                 || !in_scope(&options.source_ids, &page.source_id)
-                || (options.eligible_only && !eligible_page(page))
+                || (options.eligible_only
+                    && (!eligible_page(page)
+                        || crate::generations::needs_rederive::is_marked(
+                            &*read, "takes", take.id,
+                        )?))
                 || private_page(&*read, page, &options.exclude_private)?
                 || options.holder.as_ref().is_some_and(|h| *h != take.holder)
                 || options.kind.as_ref().is_some_and(|k| *k != take.kind)
@@ -1183,7 +1187,11 @@ impl Store {
                 continue;
             };
             if !in_scope(&options.source_ids, &page.source_id)
-                || (options.eligible_only && !eligible_page(page))
+                || (options.eligible_only
+                    && (!eligible_page(page)
+                        || crate::generations::needs_rederive::is_marked(
+                            &*read, "takes", take.id,
+                        )?))
                 || private_page(&*read, page, &options.exclude_private)?
             {
                 continue;

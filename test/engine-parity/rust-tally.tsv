@@ -40,8 +40,8 @@ test/engine-parity/fact-future-order.test.ts	1	0
 test/engine-parity/fact-insert-guard.test.ts	2	0
 test/engine-parity/fact-pool-widening.test.ts	2	0
 test/engine-parity/fact-purge-ledger.test.ts	3	0
-test/engine-parity/fact-purge-members.test.ts	10	1
-test/engine-parity/fact-purge-sites.test.ts	2	12
+test/engine-parity/fact-purge-members.test.ts	13	1
+test/engine-parity/fact-purge-sites.test.ts	3	11
 test/engine-parity/fact-recall-pool-widening.test.ts	2	0
 test/engine-parity/fact-relink-attempts.test.ts	3	0
 test/engine-parity/fact-relink-writes.test.ts	4	0
@@ -57,7 +57,7 @@ test/engine-parity/facts-purge.test.ts	26	2
 test/engine-parity/facts-quoted.test.ts	5	0
 test/engine-parity/facts-repair-sites.test.ts	21	0
 test/engine-parity/facts-repair.test.ts	16	1
-test/engine-parity/facts-rest-sites.test.ts	23	5
+test/engine-parity/facts-rest-sites.test.ts	24	4
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	13	0
 test/engine-parity/facts-unique-violation.test.ts	3	0

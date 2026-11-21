@@ -10,8 +10,8 @@
 //! `chunkVisibleFilter` (a served page, a chunk not ahead of the page's body generation) and,
 //! when the policy requires safe chunks, the chunker-version fence. The take re-read adds `active`,
 //! the holder allow-list and `projectionEligibleSql('takes', ..)`: its deleted-page and quarantine
-//! clauses are the live test, its `needs_rederive` clause hides nothing here (this engine writes no
-//! such rows, see `takes::eligible_page`), and its floor compares the take's own stored tier.
+//! clauses are the live test, its `needs_rederive` clause hides a take a purge marked
+//! (`generations/needs_rederive.rs`), and its floor compares the take's own stored tier.
 //!
 //! None of these statements names an order; rows come in id order. Ids match once each, as
 //! `= ANY` does. This module keeps no records: every read goes through the owning family's
@@ -154,6 +154,7 @@ impl Store {
             };
             if !policy.passes(page, &input.scope)?
                 || !floor.admits(read, "takes", take.id, take.trust.tier())?
+                || crate::generations::needs_rederive::is_marked(read, "takes", take.id)?
             {
                 continue;
             }

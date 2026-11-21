@@ -25,8 +25,8 @@ is `invalid_argument`, even when no id is asked.
 For the chunk re-read the TypeScript member puts the `floor` argument in `scope.minTrust`, as the SQL does
 (`{ ...policy, minTrust: floor }`), and sets `requireSafeChunks` from `requiresSafeChunks(policy)`. For the take re-read
 the page keeps the policy's own `minTrust`, and `floor` compares the take's stored tier
-(`projectionEligibleSql('takes', ..)`). The `needs_rederive` clause of that projection test hides nothing here: this
-engine writes no such rows (`takes::eligible_page`).
+(`projectionEligibleSql('takes', ..)`). The `needs_rederive` clause of that projection test hides a take a purge marked
+(`generations/needs_rederive.rs`).
 
 The TypeScript members (`src/core/rust-engine/store-members/tail-reads.ts`) check the integer binds first: the SQL
 engines bind chunk ids as `int[]` and take and page ids as `bigint[]`, so an id that is not an integer of that width

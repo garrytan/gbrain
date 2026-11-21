@@ -14,6 +14,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { withDates } from '../store-codec.ts';
+import { escapeFenceCell } from '../../fence-shared.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -136,3 +137,27 @@ export const deletePurgeTakeProposals: Member<'deletePurgeTakeProposals'> = asyn
 
 /** core_edit_notices: written only by persistence/core-guard.ts prepareCoreGuard (an executeRaw insert). */
 export const blankPurgeCoreEditNotices: Member<'blankPurgeCoreEditNotices'> = async () => 0;
+
+/** The re-derive queue (generations/needs_rederive.rs); an empty id list writes nothing, as the SQL inserts no row. */
+export const markNeedsRederive: Member<'markNeedsRederive'> = async (brain, table, ids, sourceId, requestId, reason, hiddenNow) => {
+  if (!ids.length) return;
+  await storeCall({ member: 'markNeedsRederive', sourceId }, () =>
+    brain.markNeedsRederive({ table, ids: [...ids], sourceId, requestId, reason, hiddenNow: [...hiddenNow] }));
+};
+
+/** The segment-storage statements of a purge, served from page_body.rs. */
+export const listSegmentedVersionsForPurge: Member<'listSegmentedVersionsForPurge'> = async (brain, sourceId, needle, pageIds, after) => {
+  const ids = wholeIds('listSegmentedVersionsForPurge', pageIds);
+  const [cursor] = wholeIds('listSegmentedVersionsForPurge', [after]);
+  return storeCall({ member: 'listSegmentedVersionsForPurge', sourceId }, () =>
+    brain.listSegmentedVersionsForPurge({ sourceId, needle, pageIds: ids, after: cursor }));
+};
+
+export const abortPurgedStagings: Member<'abortPurgedStagings'> = async (brain, stagingIds) => {
+  if (!stagingIds.length) return [];
+  return ((await storeCall({ member: 'abortPurgedStagings' }, () => brain.abortPurgedStagings([...stagingIds]))) as number[]).map(Number);
+};
+
+export const deleteUnreferencedPurgedTexts: Member<'deleteUnreferencedPurgedTexts'> = (brain, sourceId, replaced, claim) =>
+  storeCall({ member: 'deleteUnreferencedPurgedTexts', sourceId }, () => brain.deleteUnreferencedPurgedTexts({ sourceId,
+    replaced: replaced.map(sha => Buffer.from(sha).toString('hex')), claim: claim.toLowerCase(), fenced: escapeFenceCell(claim).toLowerCase() }));

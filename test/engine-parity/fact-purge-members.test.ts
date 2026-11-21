@@ -8,7 +8,8 @@
  *    deletePurgedTakes, deletePurgeTrustProposals, deletePurgeOpenLoops, deletePurgeWriteGateHolds,
  *    deletePurgeWriteGateReceipts, updatePageBodyForPurge, setPurgeVersionBody, redactVersionChangeReasons,
  *    deletePurgedChunks, expireDerivedFacts, deactivateDerivedTakes, softDeleteDerivedPages, findPurgeBlockedPublication, insertPurgeEffects, deletePurgedStagingParts,
- *    deletePageViewDigests, deletePurgeTakeProposals and blankPurgeCoreEditNotices return the same observable result on every engine arm (PGLite always; Postgres with DATABASE_URL;
+ *    deletePageViewDigests, deletePurgeTakeProposals, blankPurgeCoreEditNotices, markNeedsRederive, pageAwaitsRederive,
+ *    listSegmentedVersionsForPurge, abortPurgedStagings and deleteUnreferencedPurgedTexts return the same observable result on every engine arm (PGLite always; Postgres with DATABASE_URL;
  *    the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that answers one of these differently changes which belief streams a purge rebuilds, which
  *    facts, takes and page bodies it deletes or rewrites, and what its receipt counts. On the Rust engine these members
@@ -27,7 +28,9 @@ import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { hexOf, pageMeta, publishSegmentedPage, segmentText, stageGeneration, stagingInput } from '../helpers/page-body-fixtures.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
+import { derivedRowsFrom, hideDerivedRows, recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -436,5 +439,163 @@ describe('engine parity: the fact purge transaction members', () => {
     }
     expect(counts).toEqual({ page_body_staging_parts: 0, page_view_digests: 0, take_proposals: 0, core_edit_notices: 0 });
     return counts;
+  });
+  parityTest('hideDerivedRows marks each derived row of a purged input in needs_rederive, and the reads that apply rederiveHiddenSql hide a marked row', {
+    methods: ['insertFact', 'putPage', 'createVersion', 'getVersions', 'addTakesBatch', 'listTakes', 'listFactsByEntity', 'transaction',
+      'recordDerivationEdges', 'listDerivedRows', 'expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive',
+      'pageAwaitsRederive'],
+  }, async (engine) => {
+    // The derived rows of one purged input: a fact, a take on a live page, and a page with a saved version.
+    const input = await fact(engine, 'purged input', { entity_slug: 'people/a' });
+    const derivedFact = await fact(engine, 'derived fact', { entity_slug: 'people/a' });
+    const keptFact = await fact(engine, 'kept fact', { entity_slug: 'people/a' });
+    const holder = Number((await engine.putPage('notes/holder', note('Holder', 'holds takes'))).id);
+    await engine.addTakesBatch([{ page_id: holder, row_num: 1, claim: 'derived take', kind: 'fact', holder: 'self' } as never,
+      { page_id: holder, row_num: 2, claim: 'kept take', kind: 'fact', holder: 'self' } as never]);
+    const takeId = Number((await engine.listTakes({ page_id: holder } as never)).find(t => t.claim === 'derived take')!.id);
+    const derivedPage = Number((await engine.putPage('notes/derived', note('Derived', 'derived body'))).id);
+    await engine.createVersion('notes/derived', { sourceId: SRC, reason: 'a saved version' });
+    const keptPage = Number((await engine.putPage('notes/kept', note('Kept', 'kept body'))).id);
+    const from = { table: 'facts', id: String(input) };
+    await engine.transaction(async tx => {
+      for (const derived of [{ table: 'facts', id: derivedFact }, { table: 'takes', id: takeId }, { table: 'pages', id: derivedPage }]) {
+        await recordDerivationInputs(tx, { ...derived, sourceId: SRC }, [from]);
+      }
+    });
+    const reads = async () => ({
+      facts: (await engine.listFactsByEntity(SRC, 'people/a', { activeOnly: false, eligibility: {} } as never)).map(f => f.fact).sort(),
+      factsNoPolicy: (await engine.listFactsByEntity(SRC, 'people/a', { activeOnly: false } as never)).map(f => f.fact).sort(),
+      inactiveTakes: (await engine.listTakes({ page_id: holder, active: false, eligibility: {} } as never)).map(t => t.claim).sort(),
+      inactiveTakesNoPolicy: (await engine.listTakes({ page_id: holder, active: false } as never)).map(t => t.claim).sort(),
+      versions: (await engine.getVersions('notes/derived', { sourceId: SRC })).length,
+      awaits: { derived: await engine.pageAwaitsRederive(derivedPage), kept: await engine.pageAwaitsRederive(keptPage), missing: await engine.pageAwaitsRederive(987_654) },
+    });
+    const before = await reads();
+    const walk = await derivedRowsFrom(engine, [from]);
+    const hide = await engine.transaction(tx => hideDerivedRows(tx, walk.rows, { sourceId: SRC, requestId: 'c0000000-0000-4000-8000-0000000000c1', reason: 'purged' }));
+    const again = await engine.transaction(tx => hideDerivedRows(tx, walk.rows, { sourceId: SRC, requestId: null, reason: 'purged again' }));
+    const none = await engine.transaction(async tx => { await tx.markNeedsRederive('facts', [], SRC, null, 'nothing', []); return 'no-op'; });
+    const after = await reads();
+    const answers = { walked: walk.rows.length, before, hide, again, none, after };
+    expect(before.awaits).toEqual({ derived: false, kept: false, missing: false });
+    expect(before.versions).toBe(1);
+    expect(after.facts).toEqual(['kept fact', 'purged input']);
+    expect(after.factsNoPolicy).toEqual(['derived fact', 'kept fact', 'purged input']);
+    expect(after.inactiveTakes).toEqual([]);
+    expect(after.inactiveTakesNoPolicy).toEqual(['derived take']);
+    expect(after.versions).toBe(0);
+    expect(after.awaits).toEqual({ derived: true, kept: false, missing: false });
+    void keptFact;
+    return answers;
+  });
+  parityTest('listSegmentedVersionsForPurge finds the saved versions of segmented pages that are named or hold a claim, in id order after a cursor', {
+    methods: ['putPage', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration',
+      'setBodyStagingState', 'transaction', 'createVersion', 'listSegmentedVersionsForPurge'],
+  }, async (engine) => {
+    const claim = segmentText('Today Alice likes tea at noon\n');
+    const clean = segmentText('Nothing about her here\n');
+    const holds = await publishSegmentedPage(engine, 'notes/holds', [claim]);
+    const named = await publishSegmentedPage(engine, 'notes/named', [clean]);
+    const innocent = await publishSegmentedPage(engine, 'notes/innocent', [clean]);
+    await engine.putPage('notes/inline', note('Inline', 'Alice likes tea, inline'));
+    const v1 = (await engine.createVersion('notes/holds')).id;
+    const v2 = (await engine.createVersion('notes/named')).id;
+    const v3 = (await engine.createVersion('notes/innocent')).id;
+    const v4 = (await engine.createVersion('notes/inline')).id;
+    const v5 = (await engine.createVersion('notes/holds')).id;
+    const labels = new Map<number, string>([[Number(v1), 'holds-1'], [Number(v2), 'named'], [Number(v3), 'innocent'], [Number(v4), 'inline'], [Number(v5), 'holds-2']]);
+    const pages = new Map<number, string>([[holds.pageId, 'holds'], [named.pageId, 'named'], [innocent.pageId, 'innocent']]);
+    const found = async (needle: string, pageIds: number[], after = 0) => (await engine.listSegmentedVersionsForPurge(SRC, needle, pageIds, after)).map(v => ({
+      id: labels.get(Number(v.id)) ?? `unknown:${v.id}`, page: pages.get(Number(v.page_id)) ?? `unknown:${v.page_id}`, generation: Number(v.generation), slug: v.slug,
+      title: v.title, type: v.type, frontmatter: v.frontmatter, tags: v.tags,
+    }));
+    const out = {
+      byClaim: await found('alice likes tea', []),
+      byName: await found('a claim nobody stored', [named.pageId]),
+      both: await found('alice likes tea', [named.pageId]),
+      afterFirst: await found('alice likes tea', [named.pageId], Number(v1)),
+      afterAll: await found('alice likes tea', [named.pageId], Number(v5)),
+      nothing: await found('a claim nobody stored', []),
+      otherSource: (await engine.listSegmentedVersionsForPurge('other', 'alice likes tea', [named.pageId], 0)).length,
+    };
+    const seen = (id: string, page: string) => ({ id, page, generation: 1, slug: `notes/${page}`, title: 'Segmented probe', type: 'note', frontmatter: { status: 'probe', nested: { a: 1 } }, tags: [] });
+    const holds1 = seen('holds-1', 'holds'), holds2 = seen('holds-2', 'holds'), namedSeen = seen('named', 'named');
+    expect(out).toEqual({
+      // The inline page's version and the innocent page's version are never listed; a page holds the claim by its live generation, even when not named.
+      byClaim: [holds1, holds2], byName: [namedSeen], both: [holds1, namedSeen, holds2], afterFirst: [namedSeen, holds2], afterAll: [], nothing: [], otherSource: 0,
+    });
+    return out;
+  });
+
+  parityTest('abortPurgedStagings aborts the named stagings that are not committed, and deleteUnreferencedPurgedTexts deletes the unreferenced texts that were replaced or hold the claim', {
+    methods: [
+      'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'setBodyStagingState',
+      'flipBodyGeneration', 'readSegmentTexts', 'readManifest', 'transaction', 'abortPurgedStagings', 'deleteUnreferencedPurgedTexts',
+    ],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const claim = segmentText('Today Alice likes tea at noon\n');
+    const shouting = segmentText('ALICE LIKES TEA, shouted\n');
+    const fenced = segmentText('| a row | Alice \\| tea |\n');
+    const orphanFence = segmentText('An orphan row: Alice \\| tea\n');
+    const clean = segmentText('Nothing about her here\n');
+    const orphanClaim = segmentText('An orphan that says alice likes tea\n');
+    const orphanClean = segmentText('An orphan that says nothing\n');
+    const orphanReplaced = segmentText('An orphan that was replaced\n');
+    const stagedClaim = segmentText('A staged text with Alice likes tea in it\n');
+    const published = await publishSegmentedPage(engine, 'notes/published', [claim, clean]);
+    const shellOf = async (slug: string, sourceId = SRC) => (await engine.createSegmentedPageShell(slug, pageMeta(slug), { sourceId })).id;
+    const holdsClaim = await shellOf('notes/holds-claim');
+    const holdsShout = await shellOf('notes/holds-shout');
+    const holdsNothing = await shellOf('notes/holds-nothing');
+    const elsewhere = await shellOf('notes/elsewhere', 'other');
+    const s1 = await stageGeneration(engine, { pageId: holdsClaim, slug: 'notes/holds-claim', genFrom: 1, texts: [claim, clean] });
+    const s2 = await stageGeneration(engine, { pageId: holdsShout, slug: 'notes/holds-shout', genFrom: 1, texts: [shouting] });
+    const s3 = await stageGeneration(engine, { pageId: holdsNothing, slug: 'notes/holds-nothing', genFrom: 1, texts: [clean] });
+    await stageGeneration(engine, { pageId: elsewhere, slug: 'notes/elsewhere', genFrom: 1, texts: [claim], sourceId: 'other' });
+    const recorded = async (id: string, state: 'open' | 'committed', text = stagedClaim) => {
+      await engine.transaction(async tx => {
+        await tx.openBodyStaging(stagingInput({ id, slug: 'notes/recorded' }));
+        await tx.stageSegmentTexts(SRC, [text], { stagingId: id });
+        if (state === 'committed') await tx.setBodyStagingState(id, 'committed');
+      });
+      return id;
+    };
+    const s5 = await recorded('c0000000-0000-4000-8000-0000000000c5', 'open');
+    const s6 = await recorded('c0000000-0000-4000-8000-0000000000c6', 'committed');
+    const s7 = await recorded('c0000000-0000-4000-8000-0000000000c7', 'open', fenced);
+    await engine.setBodyStagingState(s3.stagingId, 'sealed');
+    await engine.stageSegmentTexts(SRC, [orphanClaim, orphanClean, orphanReplaced, orphanFence]);
+    await engine.stageSegmentTexts('other', [orphanClaim]);
+    const pages = new Map<number, string>([[published.pageId, 'published'], [holdsClaim, 'holdsClaim'], [holdsShout, 'holdsShout'], [holdsNothing, 'holdsNothing'], [elsewhere, 'elsewhere']]);
+    const texts = new Map<string, string>(([[claim, 'claim'], [shouting, 'shouting'], [clean, 'clean'], [orphanClaim, 'orphanClaim'], [orphanClean, 'orphanClean'],
+      [orphanReplaced, 'orphanReplaced'], [stagedClaim, 'stagedClaim'], [fenced, 'fenced'], [orphanFence, 'orphanFence']] as const).map(([t, n]) => [hexOf(t.sha256), n]));
+    const stored = async (sourceId: string) => {
+      const found = await engine.readSegmentTexts(sourceId, [...texts.keys()].map(h => Uint8Array.from(Buffer.from(h, 'hex'))));
+      return [...found.keys()].map(h => texts.get(h) ?? `unknown:${h}`).sort();
+    };
+    const out = {
+      textsBefore: await stored(SRC),
+      ...(await engine.transaction(async tx => ({
+        aborted: (await tx.abortPurgedStagings([s1.stagingId, s2.stagingId, s3.stagingId, s7, s5, s6, published.stagingId, 'a0000000-0000-4000-8000-0000000000a1']))
+          .map(id => pages.get(id) ?? `unknown:${id}`).sort(),
+        abortedAgain: (await tx.abortPurgedStagings([s1.stagingId])).map(id => pages.get(id) ?? `unknown:${id}`),
+        abortedNothing: await tx.abortPurgedStagings([]),
+        deletedTexts: await tx.deleteUnreferencedPurgedTexts(SRC, [orphanReplaced.sha256], 'Alice likes tea'),
+        deletedAgain: await tx.deleteUnreferencedPurgedTexts(SRC, [orphanReplaced.sha256], 'Alice likes tea'),
+        deletedNothing: await tx.deleteUnreferencedPurgedTexts(SRC, [], 'a claim nobody staged'),
+        deletedFence: await tx.deleteUnreferencedPurgedTexts(SRC, [], 'Alice | tea'),
+      }))),
+      textsAfter: await stored(SRC),
+      textsAfterOther: await stored('other'),
+      manifestKept: (await engine.readManifest(holdsClaim, { stagingId: s1.stagingId })).length,
+    };
+    expect(out).toEqual({
+      textsBefore: ['claim', 'clean', 'fenced', 'orphanClaim', 'orphanClean', 'orphanFence', 'orphanReplaced', 'shouting', 'stagedClaim'],
+      aborted: ['holdsClaim', 'holdsNothing', 'holdsShout'], abortedAgain: ['holdsClaim'], abortedNothing: [],
+      deletedTexts: 3, deletedAgain: 0, deletedNothing: 0, deletedFence: 2,
+      textsAfter: ['claim', 'clean', 'orphanClean', 'shouting'], textsAfterOther: ['claim', 'orphanClaim'], manifestKept: 2,
+    });
+    return out;
   });
 });

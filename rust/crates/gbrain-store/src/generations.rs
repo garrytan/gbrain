@@ -69,6 +69,7 @@ mod chronicle_events;
 mod derivation_inputs;
 mod fence_evidence;
 mod fence_restore;
+pub mod needs_rederive;
 mod page_rows;
 mod repair;
 pub use activations::ActivationRecordInput;
@@ -1364,6 +1365,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     }
     activations::remove_source_activations(tx, source_id)?;
     derivation_inputs::remove_source_edges(tx, source_id)?;
+    needs_rederive::remove_source_rows(tx, source_id)?;
     delete_attempts_under(tx, &attempt_index_prefix(&[source_id]))?;
     for (k, _) in collect_prefix(&*tx, &valve_prefix(&[source_id]), false, usize::MAX)? {
         tx.delete(&k)?;

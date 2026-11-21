@@ -1929,6 +1929,11 @@ impl Store {
                 {
                     continue;
                 }
+                // `rederiveHiddenSql('pages', 'p')`: a page a purge marked in `needs_rederive`
+                // shows no saved version until it is derived again.
+                if crate::generations::needs_rederive::is_marked(&*read, "pages", page.id)? {
+                    continue;
+                }
                 scan_prefix(
                     &*read,
                     &keys::version_prefix(page.id),

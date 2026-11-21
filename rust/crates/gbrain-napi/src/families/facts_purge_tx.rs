@@ -14,6 +14,8 @@ use gbrain_store::facts::purge_tx::{
     PurgeHoldsArgs, PurgeIdsArgs, PurgePageBodyArgs, PurgeProposalsArgs, PurgeReceiptsArgs,
     PurgeSourceIdsArgs, PurgeVersionBodyArgs, RedactReasonsArgs,
 };
+use gbrain_store::generations::needs_rederive::MarkRederiveArgs;
+use gbrain_store::page_body::{SegmentedVersionsQuery, UnreferencedTextsArgs};
 
 #[napi]
 impl Brain {
@@ -235,6 +237,65 @@ impl Brain {
         self.run(env, move |s| {
             let a: BlockedPublicationQuery = required(args, "findPurgeBlockedPublication args")?;
             s.find_purge_blocked_publication(&a)
+        })
+    }
+
+    /// `markNeedsRederive({ table, ids, sourceId, requestId, reason, hiddenNow })`: resolves null.
+    #[napi]
+    pub fn mark_needs_rederive<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: MarkRederiveArgs = required(args, "markNeedsRederive args")?;
+            s.mark_needs_rederive(&a)
+        })
+    }
+
+    /// `pageAwaitsRederive(pageId)`: resolves whether a purge marked the page in `needs_rederive`.
+    #[napi]
+    pub fn page_awaits_rederive<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.page_awaits_rederive(page_id))
+    }
+
+    /// `listSegmentedVersionsForPurge({ sourceId, needle, pageIds, after })`: resolves the version rows, in id order.
+    #[napi]
+    pub fn list_segmented_versions_for_purge<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: SegmentedVersionsQuery = required(args, "listSegmentedVersionsForPurge args")?;
+            s.list_segmented_versions_for_purge(&a)
+        })
+    }
+
+    /// `abortPurgedStagings(stagingIds)`: resolves the page ids of the stagings it aborted.
+    #[napi]
+    pub fn abort_purged_stagings<'env>(
+        &self,
+        env: &'env Env,
+        staging_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.abort_purged_stagings(&staging_ids))
+    }
+
+    /// `deleteUnreferencedPurgedTexts({ sourceId, replaced, claim, fenced })`: resolves how many texts it deleted.
+    #[napi]
+    pub fn delete_unreferenced_purged_texts<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: UnreferencedTextsArgs = required(args, "deleteUnreferencedPurgedTexts args")?;
+            s.delete_unreferenced_purged_texts(&a)
         })
     }
 }
