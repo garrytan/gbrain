@@ -44,13 +44,13 @@ let emptyContextTaken: Promise<<R>(fn: () => R) => R> | undefined;
 
 /** The empty async context's runner (see above), taken once. */
 export function emptyAsyncContext(): Promise<<R>(fn: () => R) => R> {
-  emptyContextTaken ??= contextProbe.run(true, () => new Promise((resolve, reject) => {
+  if (emptyContextTaken) return emptyContextTaken;
+  const taking = contextProbe.run(true, () => new Promise<<R>(fn: () => R) => R>((resolve, reject) => {
     const channel = new MessageChannel();
     channel.port1.onmessage = () => {
       channel.port1.close();
       channel.port2.close();
       if (contextProbe.getStore() !== undefined) {
-        emptyContextTaken = undefined;
         reject(new Error('The Rust engine could not take an empty async context: this runtime carries the caller\'s context into a MessagePort listener.'));
         return;
       }
@@ -58,7 +58,11 @@ export function emptyAsyncContext(): Promise<<R>(fn: () => R) => R> {
     };
     channel.port2.postMessage(null);
   }));
-  return emptyContextTaken;
+  // A refusal is not kept: the next take tries again. The memo is cleared after the take settles, never inside the
+  // listener, which a runtime may call before this function has stored the take.
+  emptyContextTaken = taking;
+  taking.catch(() => { if (emptyContextTaken === taking) emptyContextTaken = undefined; });
+  return taking;
 }
 
 /** The loaded, verified addon exports. Opaque to the shell: the typed methods later PRs add call into it. */

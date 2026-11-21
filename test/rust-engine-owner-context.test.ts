@@ -5,6 +5,8 @@
  * 1. Protects: (a) an engine whose module was first loaded inside a remote job's call, a remote caller's mark and a
  *    request signal still serves its owner socket with none of them; (b) the runtime fact the empty context rests on:
  *    a MessagePort listener runs with no caller store.
+ *    (c) on a runtime that carried the caller's context into a MessagePort listener, the engine refuses to elect
+ *    before it opens the store, and a later election on a runtime that does not succeeds.
  * 2. Fails on: the election running in a context taken at module load (a lazy load inside a request makes that
  *    request the owner's context), or in the caller's context; a runtime that carries the caller's context into a
  *    MessagePort listener.
@@ -83,4 +85,33 @@ describe('the Rust engine owner context', () => {
     });
     expect(seen).toEqual({ inside: 'caller', listener: undefined, empty: undefined, after: 'caller' });
   });
+
+  // Value: protects=the refusal branch of emptyAsyncContext: a runtime that runs a MessagePort listener in the posting context makes connect refuse before the store opens, and the refusal is not cached; fails_when=the probe check is removed (the election then runs in the caller's context) or a refusal stays memoized; why_new=on Bun the listener never sees the caller, so the branch never ran; seam=a stand-in MessageChannel that calls its listener synchronously inside postMessage, the module required fresh so its memo is empty; no_claim=which real runtimes do this
+  test('a runtime that carries the caller\'s context into a MessagePort listener makes connect refuse before the store opens; the next election succeeds', async () => {
+    const db = join(dir, 'brain-refusal.rust');
+    const fresh = require('../src/core/rust-engine.ts?owner-context-refusal') as typeof import('../src/core/rust-engine.ts');
+    const native = globalThis.MessageChannel;
+    let opened = 0;
+    class CountingBrain extends SeeingBrain { override async open() { opened++; await super.open(); } }
+    const counting = { ...(addon as object), Brain: CountingBrain } as never;
+    const closed: string[] = [];
+    class CarryingChannel {
+      port1 = { onmessage: null as null | ((event: unknown) => void), close: () => { closed.push('port1'); } };
+      port2 = { postMessage: (data: unknown) => { this.port1.onmessage?.({ data }); }, close: () => { closed.push('port2'); } };
+    }
+    const engine = fresh.openRustEngine({ addon: counting, databasePath: db, ownerWaitMs: 5_000 });
+    globalThis.MessageChannel = CarryingChannel as unknown as typeof MessageChannel;
+    let refusal: unknown;
+    try {
+      refusal = await engine.connect({}).then(() => null, (error: unknown) => error);
+    } finally { globalThis.MessageChannel = native; }
+    expect(String((refusal as Error | null)?.message)).toContain('could not take an empty async context');
+    expect(opened).toBe(0);
+    expect(closed.sort()).toEqual(['port1', 'port2']);
+    await engine.connect({});
+    try {
+      expect(engine.ownerRole).toBe('owner');
+      expect(opened).toBe(1);
+    } finally { await engine.disconnect(); }
+  }, 60_000);
 });

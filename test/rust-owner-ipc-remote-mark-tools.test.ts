@@ -13,7 +13,10 @@
  *    rollout tool and a write-capture tool reach the owner with remote reads only, and the eval-capture write they start
  *    is refused locally; (d) a local caller's handler (`remote: false`) is not marked, and a nested `remote: false`
  *    handler call under a remote one stays remote.
- * 2. Fails on: a handler that runs outside the mark its context names; a mark that a nested local context clears.
+ * 2. Fails on: a handler that runs outside the mark its context names; a mark that a nested local context clears; a
+ *    local path whose context or code reads as remote, so its own writes are refused on a Rust brain.
+ *    (e) a local caller's own writes still reach the owner: the CLI's operation context, the cycle a local job runs
+ *    and `gbrain dream`'s cycle all write through the owner as local callers.
  * 3. Existing coverage: rust-owner-ipc-remote-scope.test.ts covers dispatch and jobs a remote call queued; nothing ran
  *    a model-chosen tool call outside dispatch.
  * 4. Seam: the owner is the real PGLite engine behind a recording proxy on a real socket; the client is a stand-in
@@ -42,6 +45,9 @@ import { serveOwnerEngine, type OwnerEngineServer } from '../src/core/rust-engin
 import { callerIsRemote, connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
 import { OWNER_IPC_ROUTES, ownerMemberOnlyReads } from '../src/core/rust-engine/owner-ipc/routes.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { makeContext } from '../src/cli/main.ts';
+import { runCycle } from '../src/core/cycle.ts';
+import { makeAutopilotCycleHandler } from '../src/core/minions/handlers/autopilot-cycle.ts';
 
 const sandbox = mkdtempSync(join(tmpdir(), 'gbrain-owner-remote-mark-'));
 const brainHome = join(sandbox, 'home');
@@ -227,4 +233,57 @@ describe('the mark each handler runs under', () => {
       expect({ remote, called: marks.length > 0, marks: [...new Set(marks)] }).toEqual({ remote, called: true, marks: [remote] });
     }
   });
+});
+
+describe('a local caller\'s own writes on a Rust brain still reach the owner', () => {
+  /** Every write member the client was asked for went out as a local call, was sent, and reached the owner. */
+  async function expectLocalWritesSent(): Promise<string[]> {
+    const writes = await writesAsked();
+    expect(writes.length).toBeGreaterThan(0);
+    expect(writes.filter(call => call.remote || call.outcome !== 'sent')).toEqual([]);
+    expect(writesReachedOwner().length).toBe(writes.length);
+    return writes.map(call => call.member);
+  }
+
+  // Value: protects=a CLI command's operation call on a Rust brain writes through the owner, because the CLI's context says remote: false, while the same handler with no remote field is refused (an unset remote reads as remote); fails_when=makeContext stops naming remote: false, or the mark treats an unset remote as local; why_new=the mark used to come only from dispatch, so the CLI's handlers never ran under it; seam=the real makeContext and log_ingest handler on an owner-client stand-in; no_claim=commands that need a transaction, which no second process can run
+  test('the CLI: an operation called with the CLI\'s context writes through the owner; the same call with remote unset is refused', () => isolated(async () => {
+    const ctx = await makeContext(client, {});
+    expect(ctx.remote).toBe(false);
+    const logIngest = operations.find(o => o.name === 'log_ingest')!;
+    await logIngest.handler(ctx, { source_type: 'cli', source_ref: 'remote-mark', pages_updated: [], summary: 'a local CLI write' });
+    expect(await expectLocalWritesSent()).toContain('logIngest');
+
+    asked.length = 0; reached.length = 0;
+    const { remote: _dropped, ...unset } = ctx;
+    const refused = await logIngest.handler(unset as OperationContext, { source_type: 'cli', source_ref: 'remote-mark', pages_updated: [], summary: 'no remote field' })
+      .then(() => 'sent', outcomeOf);
+    expect(refused).toBe('engine_capability_missing');
+    expect((await writesAsked()).filter(call => call.member === 'logIngest')).toEqual([{ member: 'logIngest', remote: true, outcome: 'engine_capability_missing' }]);
+    expect(writesReachedOwner()).toEqual([]);
+  }), 60_000);
+
+  // Value: protects=a locally queued autopilot-cycle job (the real handler on the real worker) runs its cycle on a Rust brain with every write going through the owner; fails_when=the worker, the handler or the cycle runs its own engine calls under a remote mark or a remote job authority; why_new=no test ran a real minion handler on an owner client; seam=the real queue, worker and makeAutopilotCycleHandler on an owner-client stand-in, real PGLite owner; no_claim=phases that need a checkout or a transaction
+  test('a minion handler: a locally queued autopilot-cycle job writes through the owner as a local caller', () => isolated(async () => {
+    await engine.executeRaw('DELETE FROM minion_jobs');
+    const queue = new MinionQueue(engine);
+    const job = await queue.add('autopilot-cycle', { phases: ['orphans'] });
+    expect((await queue.getJob(job.id))?.submission_authority?.kind).toBe('application');
+    const worker = new MinionWorker(engine, { pollInterval: 10, healthCheckInterval: 0, stalledInterval: 60_000 });
+    const cycle = makeAutopilotCycleHandler(client);
+    let result: unknown;
+    worker.register('autopilot-cycle', async running => { result = await cycle(running); return result; });
+    const run = worker.start();
+    try {
+      for (let i = 0; i < 500 && result === undefined; i++) await Bun.sleep(20);
+    } finally { await worker.stop(); await run; }
+    expect(result).toMatchObject({ status: 'clean' });
+    await expectLocalWritesSent();
+  }), 60_000);
+
+  // Value: protects=the cycle `gbrain dream` runs on a Rust brain writes through the owner; fails_when=runCycle runs its engine calls under a remote mark; why_new=no test ran the cycle on an owner client; seam=the real runCycle on an owner-client stand-in, real PGLite owner; no_claim=phases that need a checkout or a transaction
+  test('the cycle: runCycle writes through the owner as a local caller', () => isolated(async () => {
+    const report = await runCycle(client, { brainDir: null, phases: ['orphans'] });
+    expect(report.status).toBe('clean');
+    await expectLocalWritesSent();
+  }), 60_000);
 });
