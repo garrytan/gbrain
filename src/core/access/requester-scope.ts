@@ -29,6 +29,7 @@ import { createAuditWriter } from '../audit/audit-writer.ts';
 import { credentialScopeFields } from './token-binding.ts';
 import { stdioBindRoute } from './stdio-bind-route.ts';
 import { classifyPgAccessError } from '../pg-access-classify.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 
 /**
  * Read operations that read no page: the caller's own identity, the brain's identity and health, search mode names,
@@ -197,7 +198,7 @@ function requesterScopeRequired(op: string, c: Connection, serves: ServesPolicy,
  * readsUnscoped and createdAt for `auth`: the verifier's values when it set them (no query), else a live lookup from
  * the stored principal (an agent job's delegated credential). Unreadable or unknown: not opted out, creation unknown.
  */
-export async function credentialScopeFor<T extends ScopeAuth>(engine: Pick<BrainEngine, 'executeRaw'>, auth: T): Promise<T> {
+export async function credentialScopeFor<T extends ScopeAuth>(engine: Pick<BrainEngine, 'executeRaw' | 'readOauthClient'>, auth: T): Promise<T> {
   if (auth.readsUnscoped !== undefined) return auth;
   const principal = auth.principal;
   try {
@@ -206,7 +207,8 @@ export async function credentialScopeFor<T extends ScopeAuth>(engine: Pick<Brain
       return { ...auth, ...credentialScopeFields(row?.reads_unscoped, row?.created_at) };
     }
     if (principal?.kind === 'oauth_client') {
-      const [row] = await engine.executeRaw<{ reads_unscoped: unknown; client_id_issued_at: unknown }>('SELECT reads_unscoped, client_id_issued_at FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', [principal.id]);
+      const found = await engine.readOauthClient(principal.id);
+      const row = found && found.deleted_at == null ? requireOauthClientColumns(found, ['reads_unscoped', 'client_id_issued_at']) : undefined;
       return { ...auth, ...credentialScopeFields(row?.reads_unscoped, row?.client_id_issued_at) };
     }
   } catch { /* unreadable: not opted out, creation unknown */ }
@@ -237,7 +239,7 @@ export async function assertCredentialScoped(engine: Pick<BrainEngine, 'executeR
  * when whom the brain serves could not be read (even after one re-read), or the
  * state a read would get, with the command that binds the connection.
  */
-export async function requesterScopeView(engine: Pick<BrainEngine, 'executeRaw'>, access: Partial<CallerAccess>, auth: ScopeAuth | undefined, transport: string | undefined): Promise<{ state: string; refuses_at?: string | null; reason?: string; argv?: string[] }> {
+export async function requesterScopeView(engine: Pick<BrainEngine, 'executeRaw' | 'readOauthClient'>, access: Partial<CallerAccess>, auth: ScopeAuth | undefined, transport: string | undefined): Promise<{ state: string; refuses_at?: string | null; reason?: string; argv?: string[] }> {
   const policy = access.remotePolicy;
   if (!policy?.serves?.several && !policy?.servesUnknown) return { state: 'not_required' };
   if (boundToSomeone(access)) return { state: 'scoped' };

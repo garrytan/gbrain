@@ -1,8 +1,7 @@
 import { OperationError } from '../ops/contract.ts';
 import { lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep, win32 } from 'node:path';
-import { assertLegacyFilesystemWriter, assertManagedFilesystemWrite } from '../persistence/filesystem-guard.ts';
-import type { SqlEngine } from '../persistence/model.ts';
+import { assertLegacyFilesystemWriter, assertManagedFilesystemWrite, type RootsEngine } from '../persistence/filesystem-guard.ts';
 
 function refuse(error: unknown): never {
   if (error instanceof OperationError && error.code === 'writer_coordinator_required') {
@@ -66,7 +65,7 @@ export function confinedSkillChildWrite(root: string, child: string, opts: { dry
   return target;
 }
 
-export async function assertLegacySkillWriter(engine: SqlEngine, path: string): Promise<void> {
+export async function assertLegacySkillWriter(engine: RootsEngine, path: string): Promise<void> {
   try { await assertLegacyFilesystemWriter(engine, path); } catch (error) { refuse(error); }
   assertLegacySkillFilesystemWrite(path);
 }

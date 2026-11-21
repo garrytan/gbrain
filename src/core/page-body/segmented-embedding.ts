@@ -11,7 +11,7 @@
  * in the page's live body generation. It never reads a segment.
  */
 import type { BrainEngine } from '../engine.ts';
-import type { ChunkInput, CRMode } from '../types.ts';
+import type { ChunkInput } from '../types.ts';
 import { jsonRowBatches } from '../batch-rows.ts';
 import { wrapChunkTextsForStoredMode } from '../embedding-context.ts';
 import { embeddingInputHash, plainEmbeddingTier } from '../embedding-input-hash.ts';
@@ -22,21 +22,12 @@ import { quoteIdentifier, vectorCastSuffix } from '../search/embedding-column.ts
 import { chunkGenerationFilter, currentTextProjectionFilter } from '../search/safe-chunks.ts';
 import { buildSegmentedProjection } from './projection.ts';
 import { isSegmentedPage } from './page-shape.ts';
-import type { BodyStorage } from './types.ts';
+import type { BodyStorage, SegmentedEmbedPage, SegmentedEmbedRef } from './types.ts';
 
 /** Stale rows read and embedded per provider round trip. */
 export const SEGMENTED_EMBED_BATCH_ROWS = 500;
 
-/** The page fields a segmented embed reads: metadata only, never the body. */
-export interface SegmentedEmbedPage {
-  id: number;
-  slug: string;
-  source_id: string;
-  title: string;
-  contextual_retrieval_mode: CRMode | null;
-  body_storage: 'segmented';
-  body_bytes: number;
-}
+export type { SegmentedEmbedPage } from './types.ts';
 
 export interface SegmentedStaleRow { chunk_index: number; chunk_text: string; chunk_source: string }
 
@@ -53,15 +44,9 @@ export interface SegmentedEmbedOpts {
   whileWaiting?: () => Promise<void>;
 }
 
-/** A segmented page that is live, sealed and in a live source, by id or by source and slug; null otherwise (inline pages included). */
-export async function readSegmentedEmbedPage(engine: Pick<BrainEngine, 'executeRaw'>,
-  ref: { id: number } | { sourceId: string; slug: string }): Promise<SegmentedEmbedPage | null> {
-  const [where, params] = 'id' in ref ? ['p.id = $1', [ref.id]] : ['p.source_id = $1 AND p.slug = $2', [ref.sourceId, ref.slug]];
-  const [row] = await engine.executeRaw<{ id: number; slug: string; source_id: string; title: string; contextual_retrieval_mode: CRMode | null; body_bytes: number | string }>(
-    `SELECT p.id, p.slug, p.source_id, p.title, p.contextual_retrieval_mode, p.body_bytes
-       FROM pages p JOIN sources s ON s.id = p.source_id
-      WHERE ${where} AND p.body_storage = 'segmented' AND p.deleted_at IS NULL AND NOT s.archived AND ${currentTextProjectionFilter('p')}`, params);
-  return row ? { ...row, id: Number(row.id), body_storage: 'segmented', body_bytes: Number(row.body_bytes) } : null;
+/** A segmented page that is live, sealed and in a live source, by id or by source and slug; null otherwise (inline pages included). The read is the engine's (engine-sql/page-body.ts). */
+export function readSegmentedEmbedPage(engine: Pick<BrainEngine, 'readSegmentedEmbedPage'>, ref: SegmentedEmbedRef): Promise<SegmentedEmbedPage | null> {
+  return engine.readSegmentedEmbedPage(ref);
 }
 
 /**

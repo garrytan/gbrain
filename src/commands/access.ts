@@ -277,7 +277,7 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
   } else {
     const client = await readClientGrant(engine, target.client!);
     if (client.revoked) throw opError('client_not_found', `OAuth client "${target.client}" is revoked.`, 'List the clients with gbrain auth clients --json.');
-    [row] = await engine.executeRaw<Record<string, unknown>>('SELECT member_id, may_act_for, reads_unscoped FROM oauth_clients WHERE client_id = $1', [client.clientId]) as [Record<string, unknown>];
+    row = await engine.readOauthClient(client.clientId) as unknown as Record<string, unknown>;
     grant = grantFromClient(client);
     credential = { kind: 'client', id: client.clientId, name: client.clientName };
   }

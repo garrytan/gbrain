@@ -73,13 +73,9 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
     // #7145: a full list means more pages exceed the block; the count is then a floor.
     const capped = rows.length > OVERSIZED_LIST_LIMIT;
     // Pages an older gbrain stored chunkless for size that now fit under the block: the free backfill re-indexes them.
-    // chunk-visibility-ok: counts pages with no chunk row at all (any generation), the chunk safety net's own test
-    const [skipped] = await engine.executeRaw<{ n: number; chunkless: number }>(`SELECT COUNT(*)::int AS n,
-         COUNT(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id))::int AS chunkless FROM pages p
-       WHERE p.deleted_at IS NULL AND p.frontmatter->'embed_skip'->>'reason' = 'oversized'
-         AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) <= $1`, [bytesBlock]);
-    const backfillable = Number(skipped?.n ?? 0);
-    const chunklessMarked = Number(skipped?.chunkless ?? 0);
+    const skipped = await engine.countOversizedEmbedSkips(bytesBlock);
+    const backfillable = skipped.marked;
+    const chunklessMarked = skipped.chunkless;
     // Decision #10: a segmented page's body columns are NULL, so both size scans above pass it by.
     const [segmented] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL AND p.body_storage = 'segmented'`).catch(() => []);
     const oversizedCheck = (check: Check) => checks.push(withSkippedSegmented(check, Number(segmented?.n ?? 0)));

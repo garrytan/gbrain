@@ -12,20 +12,10 @@
  */
 
 import type { Operation } from './contract.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import type { ChatUsageAggregateRow } from '../engine-sql/chat-usage.ts';
 
-interface UsageRow {
-  model: string;
-  phase: string | null;
-  calls: number | string;
-  input_tokens: number | string | null;
-  output_tokens: number | string | null;
-  cache_read_tokens: number | string | null;
-  cache_write_tokens: number | string | null;
-  cost_usd: number | string | null;
-  unpriced_calls: number | string | null;
-}
-
-const n = (v: number | string | null | undefined): number => Number(v ?? 0);
+const n = (v: number | null | undefined): number => Number(v ?? 0);
 
 const get_usage: Operation = {
   name: 'get_usage',
@@ -47,32 +37,16 @@ const get_usage: Operation = {
     const daysRaw = Number(p.days ?? 30);
     const days = Number.isFinite(daysRaw) ? Math.min(365, Math.max(1, Math.round(daysRaw))) : 30;
 
-    let rows: UsageRow[] = [];
+    let rows: ChatUsageAggregateRow[] = [];
     let loggedSince: string | null = null;
     let tableMissing = false;
     try {
-      rows = await ctx.engine.executeRaw<UsageRow>(
-        `SELECT model,
-                phase,
-                count(*)::int                                        AS calls,
-                sum(input_tokens)::float8                            AS input_tokens,
-                sum(output_tokens)::float8                           AS output_tokens,
-                sum(cache_read_tokens)::float8                       AS cache_read_tokens,
-                sum(cache_write_tokens)::float8                      AS cache_write_tokens,
-                sum(cost_usd)::float8                                AS cost_usd,
-                count(*) FILTER (WHERE cost_usd IS NULL)::int        AS unpriced_calls
-         FROM chat_usage_log
-         WHERE created_at >= now() - make_interval(days => $1)
-         GROUP BY model, phase
-         ORDER BY sum(cost_usd) DESC NULLS LAST`,
-        [days],
-      );
-      const since = await ctx.engine.executeRaw<{ since: string | null }>(
-        `SELECT min(created_at)::text AS since FROM chat_usage_log`,
-        [],
-      );
-      loggedSince = since[0]?.since ?? null;
-    } catch {
+      const usage = await ctx.engine.readChatUsage(days);
+      rows = usage.rows;
+      loggedSince = usage.logged_since;
+    } catch (err) {
+      // An engine that cannot read the ledger refuses; table_present:false would read as a pre-v136 brain.
+      rethrowCapabilityRefusal(err);
       // Pre-v136 brain (table absent). Report empty with coverage saying so
       // rather than erroring — the op is a read surface, not a migration gate.
       tableMissing = true;
