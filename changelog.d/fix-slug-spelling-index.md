@@ -1,0 +1,4 @@
+**Looking up a page stored under an older spelling of its name no longer reads every page with a non-Latin name.**
+
+### Fixed
+- A read of a missing page name made only of non-Latin letters (all Chinese, say) in a source that holds many such pages no longer reads all of them to look for a page stored with capitals or in decomposed Unicode. The lookup now uses an index (`idx_pages_spelling_key`, built by upgrade migration v332, online on Postgres) and reads only the matching rows. The pages it finds are the same as before, including pages stored with Greek or Cyrillic capitals, Turkish dotted capital I, the Kelvin and Angstrom signs and decomposed capitals. A name with more than 256 capital spellings is still found by the slower scan.

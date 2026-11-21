@@ -6,7 +6,7 @@
  *  1. Contract: a read of a missing all-CJK slug in a source that holds hundreds of all-CJK pages reads a handful of
  *     rows and its statement is answered by the `idx_pages_spelling_key` index (PGLite and Postgres); a page stored
  *     with capital Greek, Cyrillic, Turkish dotted I, Kelvin sign, Angstrom sign or decomposed capitals is still found
- *     by its normal slug; a slug with more capital variants than the cap (32) is still answered, by the older scan.
+ *     by its normal slug; a slug with more capital variants than the cap (256) is still answered, by the older scan.
  *  2. Regression: N1 in the review of PR 9944 (the fallback scan of every page whose ASCII-only key is empty, 200 rows a
  *     page on an unindexed expression).
  *  3. Existing coverage: test/slug-legacy-rows.test.ts, test/slug-normalize-reads.test.ts and
@@ -19,6 +19,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { normalizeSlug } from '../src/core/utils.ts';
+import { MAX_SPELLING_VARIANTS, spellingKeys } from '../src/core/slug-spelling-key.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -36,9 +37,6 @@ beforeAll(async () => {
   }
 }, 180_000);
 afterAll(async () => { for (const { close } of engines) await close(); }, 60_000);
-
-/** The most capital spellings of one slug the lookup probes by index; a slug with more is answered by the scan. */
-const VARIANT_CAP = 32;
 
 interface Recorded { sql: string; args: unknown[]; rows: number }
 
@@ -132,7 +130,7 @@ for (const kind of backends) {
       ['Greek capitals', 'ΑΘΗΝΑ', 'αθηνα'],
       ['Greek capitals with a final sigma', 'ΟΔΟΣ', 'οδος'],
       ['Cyrillic capitals', 'МОСКВА', 'москва'],
-      ['a capitalised first letter', 'Москва-центр', 'москва-центр'],
+      ['a capitalised first letter', 'Мир-юг', 'мир-юг'],
       ['accented capitals mixed with ASCII', 'Place/ÉCOLE-Nord', 'place/école-nord'],
       ['a decomposed capital', 'E\u0301cole-nfd', 'école-nfd'],
       ['the Turkish dotted capital I (U+0130)', 'İstanbul', 'i\u0307stanbul'],
@@ -153,20 +151,22 @@ for (const kind of backends) {
 
     test('a slug with the most capital variants the cap allows is probed by the index, one with more by the scan; both find their pages', async () => {
       const engine = brain();
-      const five = 'αβγδε';  // two spellings for each of five letters: 2^5 variants
-      const six = 'αβγδεζ';  // 2^6 variants: past the cap
-      expect(2 ** 5).toBe(VARIANT_CAP);
-      expect(2 ** 6).toBeGreaterThan(VARIANT_CAP);
-      await store(engine, A, 'ΑβΓδΕ'); await store(engine, A, 'ΑΒΓΔΕΖ');
-      const atCap = await read(engine, A, five);
-      expect(atCap.page?.slug).toBe('ΑβΓδΕ');
-      expect(usesScan(lookupOf(atCap.sent)!)).toBe(false);
-      const pastCap = await read(engine, A, six);
-      expect(pastCap.page?.slug).toBe('ΑΒΓΔΕΖ');
-      expect(usesScan(lookupOf(pastCap.sent)!)).toBe(true);
+      // Each of these letters is stored in either of two cases, so a slug of n of them has 2^n spellings.
+      const atCap = 'αβγδεζλμ';    // 2^8 = 256 spellings: the cap
+      const pastCap = 'αβγδεζλμν'; // 2^9 = 512 spellings
+      expect(MAX_SPELLING_VARIANTS).toBe(256);
+      expect(spellingKeys(atCap)).toHaveLength(256);
+      expect(spellingKeys(pastCap)).toBeNull();
+      await store(engine, A, 'ΑβΓδΕζΛμ'); await store(engine, A, 'ΑΒΓΔΕΖΛΜΝ');
+      const probed = await read(engine, A, atCap);
+      expect(probed.page?.slug).toBe('ΑβΓδΕζΛμ');
+      expect(usesScan(lookupOf(probed.sent)!)).toBe(false);
+      const scanned = await read(engine, A, pastCap);
+      expect(scanned.page?.slug).toBe('ΑΒΓΔΕΖΛΜΝ');
+      expect(usesScan(lookupOf(scanned.sent)!)).toBe(true);
     });
 
-    test('every capital letter of Unicode that lowercases to something else finds its page by the normal slug', async () => {
+    test('every capital letter of Unicode that lowercases to something else, composed or decomposed, finds its page by the normal slug', async () => {
       const engine = brain();
       const stored: string[] = [];
       for (let cp = 0x80; cp < 0x20000; cp++) {
@@ -174,6 +174,8 @@ for (const kind of backends) {
         const ch = String.fromCodePoint(cp);
         if (ch.toLowerCase() === ch) continue;
         stored.push(`sweep${cp.toString(16)}${ch}z`);
+        // The same capital written as base letter and combining marks (the form an older writer may have kept).
+        if (ch.normalize('NFD') !== ch) stored.push(`sweepd${cp.toString(16)}${ch.normalize('NFD')}z`);
       }
       expect(stored.length).toBeGreaterThan(1000);
       await engine.executeRaw(`INSERT INTO pages(source_id, slug, type, title) SELECT $1, s, 'note', 'p' FROM unnest($2::text[]) AS s`, [A, stored]);
