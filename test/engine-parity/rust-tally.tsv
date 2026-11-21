@@ -36,6 +36,7 @@ test/engine-parity/embedding-catalog.test.ts	7	0
 test/engine-parity/embedding-install.test.ts	3	0
 test/engine-parity/entity-anchor-reads.test.ts	2	0
 test/engine-parity/entity-basename.test.ts	3	0
+test/engine-parity/entity-card-references.test.ts	1	0
 test/engine-parity/entity-fuzzy.test.ts	3	0
 test/engine-parity/entity-identities.test.ts	7	5
 test/engine-parity/entity-reads.test.ts	12	1

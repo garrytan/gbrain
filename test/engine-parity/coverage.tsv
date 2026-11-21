@@ -94,7 +94,7 @@ getPage	pages	yes	127	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	584	yes	yes	yes	serves
+putPage	pages	yes	585	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -180,8 +180,8 @@ listRelationshipNoteRows	link_temporal	yes	9	no	yes	yes	serves
 edgeValidityCounts	link_temporal	yes	1	no	yes	yes	serves
 listPageStatusByRef	link_temporal	yes	3	no	yes	yes	serves
 listRecordMetadataRows	link_temporal	yes	3	no	yes	yes	serves
-readReferrerGroupRows	link_temporal	yes	2	no	yes	yes	serves
-readReferrerPageDetails	link_temporal	yes	1	no	yes	yes	serves
+readReferrerGroupRows	link_temporal	yes	3	no	yes	yes	serves
+readReferrerPageDetails	link_temporal	yes	2	no	yes	yes	serves
 readReferrerTargetCounts	link_temporal	yes	3	no	yes	yes	serves
 listReferrerTargetSources	link_temporal	yes	4	no	yes	yes	serves
 countReferrerRows	link_temporal	yes	6	no	yes	yes	serves
@@ -252,7 +252,7 @@ markPagesAttendanceBlocked	extraction	yes	2	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	117	yes	yes	yes	serves
+addLink	links	yes	118	yes	yes	yes	serves
 addLinksBatch	links	yes	30	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	12	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -504,8 +504,8 @@ readWriterVersionCutoff	persistence_journal	yes	1	no	yes	yes	serves
 listWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 recentWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
-readMentionIndexStatus	entity_reads	yes	2	no	yes	yes	serves
-countLivePagesInSource	entity_reads	yes	2	no	yes	yes	serves
+readMentionIndexStatus	entity_reads	yes	3	no	yes	yes	serves
+countLivePagesInSource	entity_reads	yes	3	no	yes	yes	serves
 countMentionDueSince	entity_reads	yes	2	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	4	no	yes	yes	serves
@@ -513,7 +513,7 @@ findExactSlug	entity_reads	yes	1	no	yes	yes	serves
 findFuzzyEntityCandidates	entity_reads	yes	3	no	yes	yes	serves
 findExactBasenameCandidates	entity_reads	yes	2	no	yes	yes	serves
 readRetirementHop	entity_reads	yes	5	no	yes	yes	serves
-readEntityCardRows	entity_reads	yes	1	no	yes	yes	serves
+readEntityCardRows	entity_reads	yes	2	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 acquireCycleLock	cycle_locks	yes	12	no	yes	yes	serves

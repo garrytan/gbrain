@@ -180,6 +180,7 @@ test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/embedding-install.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
 test/engine-parity/entity-basename.test.ts
+test/engine-parity/entity-card-references.test.ts
 test/engine-parity/entity-fuzzy.test.ts
 test/engine-parity/entity-identities.test.ts
 test/engine-parity/entity-reads.test.ts
