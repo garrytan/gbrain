@@ -38,12 +38,12 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
     return;
   }
 
-  // A configured PGLite brain that is not there (unmounted drive, moved folder) is refused before any
-  // connect: connecting would create a new empty brain and report it healthy. Same probe as serve's
-  // status-only missing_brain. Runs that never connect (--fast, filesystem-only --only) keep running.
-  if ((dbMarkerBrainId() ?? 'host') === 'host' && await doctorWillConnect(args)) {
+  // A configured PGLite brain (the host's, or the mounted one --brain / GBRAIN_BRAIN_ID selects) that is not
+  // there (unmounted drive, moved folder) or is an empty mount point is refused before any connect:
+  // connecting would create a new empty brain and report it healthy. Host probe is serve's status-only missing_brain. Runs that never connect (--fast, filesystem-only --only) keep running.
+  if (await doctorWillConnect(args)) {
     const { missingBrainRefusal, refuseMissingBrain } = await import('../../commands/doctor/missing-brain.ts');
-    const refusal = missingBrainRefusal();
+    const refusal = missingBrainRefusal(dbMarkerBrainId() ?? 'host');
     if (refusal) { await refuseMissingBrain(args, refusal); return; }
   }
 

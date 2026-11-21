@@ -57,7 +57,7 @@ export function statusModeOf(engine: unknown): StatusModeState | null {
   return s && typeof s === 'object' ? (s as StatusModeState) : null;
 }
 
-function brainPathFor(cfg: GBrainConfig | null): string | undefined {
+export function brainPathFor(cfg: GBrainConfig | null): string | undefined {
   if (!cfg || cfg.engine !== 'pglite' || cfg.database_url) return undefined;
   return cfg.database_path ?? gbrainPath('brain.pglite');
 }

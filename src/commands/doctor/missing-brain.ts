@@ -6,13 +6,39 @@
  * status-only probe (`probeStatus`, src/mcp/status-mode.ts), file reads only,
  * so doctor and serve agree on what "missing" means.
  */
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { getMountsPath, loadMounts } from '../../core/brain-registry.ts';
+import { configPath, loadConfig } from '../../core/config.ts';
 import { opError, type OperationError } from '../../core/ops/contract.ts';
-import { probeStatus, statusFix } from '../../mcp/status-mode.ts';
+import { brainPathFor, probeStatus, statusFix, type StatusModeState } from '../../mcp/status-mode.ts';
 
-/** The refusal to render, or null when the brain is not configured-but-missing. */
-export function missingBrainRefusal(): OperationError | null {
+/** A folder with nothing in it: where an unmounted drive's mount point leaves the brain's path. */
+function isEmptyDir(path: string): boolean {
+  try { return statSync(path).isDirectory() && readdirSync(path).length === 0; } catch { return false; }
+}
+
+/** The selected brain's PGLite folder when it is not there (or is an empty mount point); null for everything else. */
+function missingState(brainId: string): Pick<StatusModeState, 'config_path' | 'brain_path'> | null {
+  if (brainId !== 'host') {
+    // A mounted PGLite brain: connecting to a missing database_path would create a new empty datastore there.
+    let mount;
+    try { mount = loadMounts().find((m) => m.id === brainId || m.alias === brainId); } catch { return null; }
+    if (!mount || mount.database_url || !mount.database_path) return null; // only a local-folder (PGLite) mount has a path to create
+    return !existsSync(mount.database_path) || isEmptyDir(mount.database_path)
+      ? { config_path: getMountsPath(), brain_path: mount.database_path } : null;
+  }
   const state = probeStatus();
-  if (state?.reason !== 'missing_brain') return null;
+  if (state?.reason === 'missing_brain') return { config_path: state.config_path, brain_path: state.brain_path };
+  if (state !== null) return null; // another blocking reason (lock held, graduated, repair failed): doctor's own diagnostics own it
+  const dir = brainPathFor(loadConfig());
+  return dir && isEmptyDir(dir) ? { config_path: configPath(), brain_path: dir } : null;
+}
+
+/** The refusal to render, or null when the selected brain is not configured-but-missing. */
+export function missingBrainRefusal(brainId = 'host'): OperationError | null {
+  const found = missingState(brainId);
+  if (!found) return null;
+  const state = { reason: 'missing_brain' as const, config_path: found.config_path, brain_path: found.brain_path, checked_at: Date.now() };
   const where = state.brain_path ?? 'its configured path';
   const { fix } = statusFix({ ...state, recovered: false }, 'http');
   return opError('brain_missing',
@@ -22,6 +48,8 @@ export function missingBrainRefusal(): OperationError | null {
       reason: 'missing_brain',
       fix: {
         ...fix,
+        // Only the user can bring the brain back; an agent must stop and ask, not rerun doctor.
+        ask_user: true,
         why: `Mount or reconnect the drive that holds ${where}, or point \`database_path\` in ${state.config_path} at where the brain lives now; then run the verify command. Doctor created nothing, and a new empty brain is \`gbrain init\`, only on the user's say-so.`,
       },
     });
