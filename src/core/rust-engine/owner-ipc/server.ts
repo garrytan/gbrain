@@ -387,7 +387,8 @@ export async function serveOwnerEngine(
     const busy = (reason: 'queue_full' | 'inflight_bytes', limit: number) =>
       send({ t: 'result', id, ok: false, error: encodeError(ownerBusy(reason, member, limit)) }, member);
     if (inflightBytes + bytes > maxInflightBytes) { busy('inflight_bytes', maxInflightBytes); return; }
-    if (active >= permits && queue.length >= maxQueued) { busy('queue_full', maxQueued); return; }
+    // A call held behind an orphan waits with permits free, so a non-empty queue counts against the cap too.
+    if ((active >= permits || queue.length > 0) && queue.length >= maxQueued) { busy('queue_full', maxQueued); return; }
     const controller = new AbortController();
     const call: PendingCall = {
       id, member, controller, done: false, queued: false, bytes, released: true, run: () => Promise.resolve(),

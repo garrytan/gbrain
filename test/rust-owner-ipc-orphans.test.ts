@@ -36,7 +36,7 @@ type Fact = { fact: string; entity_slug: string };
 type FactsClient = { insertFact(input: Fact): Promise<unknown>; listFactsByEntity(entity: string): Promise<Fact[]>; getHealth(): Promise<unknown> };
 
 /** An owner whose insertFact ignores its abort and commits only after `open()`; reads answer at once. */
-async function gatedFactsOwner() {
+async function gatedFactsOwner(maxQueued?: number) {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-orphans-'));
   const facts: Fact[] = [];
   let open!: () => void;
@@ -48,7 +48,7 @@ async function gatedFactsOwner() {
     listFactsByEntity: async (entity: string) => facts.filter(f => f.entity_slug === entity),
     getHealth: async () => ({ ok: true }),
   } as unknown as BrainEngine;
-  const server = await serveOwnerEngine(owner, join(dir, 'owner.sock'), { permits: 4 });
+  const server = await serveOwnerEngine(owner, join(dir, 'owner.sock'), { permits: 4, ...(maxQueued === undefined ? {} : { maxQueued }) });
   if (!server) throw new Error('no socket');
   cleanups.push(async () => { open(); await server.close(); rmSync(dir, { recursive: true, force: true }); });
   return { server, facts, open: () => { opened = true; open(); }, get opened() { return opened; } };
@@ -132,6 +132,23 @@ describe('a write whose caller stopped waiting while the owner still runs it', (
     await withReadDeadline(Date.now() + 80, () => engine.insertFact(fact)).catch(() => undefined);
     expect(await withReadDeadline(Date.now() + 500, () => engine.getHealth())).toEqual({ ok: true });
     owner.open();
+  });
+
+  // Value: protects=reads held behind an orphan count against maxQueued even with permits free, so a stalled write
+  // cannot make the owner hold any number of calls; fails_when=the queue cap is checked only when every permit is
+  // taken; why_new=the hold queues calls while permits are free; seam=none; no_claim=the inflight byte bound
+  test('reads held behind an orphan fill maxQueued with permits free: the next one is refused queue_full', async () => {
+    const owner = await gatedFactsOwner(2);
+    const engine = await clientOf(owner.server.socketPath);
+    await withReadDeadline(Date.now() + 80, () => engine.insertFact(fact)).catch(() => undefined);
+    const held = [engine.listFactsByEntity(fact.entity_slug), engine.listFactsByEntity(fact.entity_slug)];
+    await until(() => owner.server.stats().queued === 2);
+    expect(owner.server.stats()).toMatchObject({ active: 1, queued: 2 });
+    const refused = await engine.listFactsByEntity(fact.entity_slug).then(() => null, e => e as OperationError);
+    expect(refused).toMatchObject({ code: 'owner_busy', reason: 'queue_full', retryable: true });
+    owner.open();
+    expect(await Promise.all(held)).toEqual([[fact], [fact]]);
+    expect(owner.facts).toEqual([fact]);
   });
 
   // Value: protects=a write whose connection closed is held the same way; fails_when=a closed connection's started
