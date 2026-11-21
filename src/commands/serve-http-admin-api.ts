@@ -342,25 +342,8 @@ function mountAdminCalibrationApi(app: Express, ctx: ServeHttpContext): void {
       const statement = profile.pattern_statements[idx];
       // v0.36.1.0 ship state: surface the top resolved takes for the
       // holder as drill-down evidence. Per-pattern provenance is v0.37.
-      const takes = await engine.executeRaw<{
-        id: string;
-        page_slug: string;
-        row_num: number;
-        claim: string;
-        weight: number;
-        resolved_quality: string | null;
-        since_date: string | null;
-      }>(
-        // `takes` has no page_slug column — it comes from the joined page.
-        // id::text — it's a BIGSERIAL (bigint); res.json() below can't serialize a
-        // raw bigint ("cannot serialize BigInt"), so project it as a string.
-        `SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
-           FROM takes t JOIN pages p ON p.id = t.page_id
-           WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
-           ORDER BY t.weight DESC, t.since_date DESC, t.id
-           LIMIT 25`,
-        [holder],
-      );
+      // The holder's top 25 resolved takes (engine-sql/takes-reads.ts); `id` is the bigint id as text for res.json().
+      const takes = await engine.listTopResolvedTakesForHolder(holder);
       res.json({
         pattern_statement: statement,
         pattern_index: idx + 1,
@@ -427,26 +410,8 @@ function mountAdminCalibrationApi(app: Express, ctx: ServeHttpContext): void {
       if (type === 'abandoned-threads') {
         // v0.36.1.0 ship state: pull abandoned threads inline via a small
         // SQL query (the doctor check counts them; this surfaces details).
-        const rows = await engine.executeRaw<{
-          id: number;
-          page_slug: string;
-          claim: string;
-          weight: number;
-          since_date: string;
-        }>(
-          // `takes` has no page_slug column — it comes from the joined page.
-          // since_date is TEXT and may be month-precision ('YYYY-MM'); '2026-06'::date
-          // throws "invalid input syntax for type date", so normalize to the 1st
-          // before casting.
-          `SELECT t.id, p.slug AS page_slug, t.claim, t.weight, t.since_date
-             FROM takes t JOIN pages p ON p.id = t.page_id
-             WHERE t.active = true AND t.resolved_at IS NULL AND t.superseded_by IS NULL
-               AND t.weight >= 0.7
-               AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
-                   < (now() - INTERVAL '12 months')
-             ORDER BY t.since_date ASC, t.id
-             LIMIT 5`,
-        );
+        // The five oldest abandoned high-conviction takes (engine-sql/takes-reads.ts; month-precision dates read as the 1st).
+        const rows = await engine.listAbandonedTakes();
         const now = new Date();
         const threads = rows.map(r => {
           const since = new Date((r.since_date.length === 7 ? r.since_date + '-15' : r.since_date));
@@ -471,7 +436,7 @@ function mountAdminCalibrationApi(app: Express, ctx: ServeHttpContext): void {
 }
 
 function mountAdminKeyApi(app: Express, ctx: ServeHttpContext): void {
-  const { engine, sql, requireAdmin } = ctx;
+  const { engine, requireAdmin } = ctx;
   app.get('/admin/api/requests', requireAdmin, async (req: Request, res: Response) => {
     try {
       const page = parseInt(req.query.page as string) || 1;
@@ -481,45 +446,13 @@ function mountAdminKeyApi(app: Express, ctx: ServeHttpContext): void {
       const operation = req.query.operation as string;
       const status = req.query.status as string;
 
-      // Dynamic filtering: SqlQuery is deliberately scalar-only and does not
-      // support fragment composition (the prior `sql\`AND ... = ${v}\`` shape).
-      // Build the WHERE clause with positional placeholders + a params array.
-      // `WHERE 1=1` lets us always have a WHERE clause and conditionally
-      // append `AND col = $N` fragments — still parameterized, still escaped
-      // by the driver, no sql.unsafe.
-      const filters: string[] = [];
-      const params: (string | number)[] = [];
-      if (agent && agent !== 'all') {
-        filters.push(`AND token_name = $${params.length + 1}`);
-        params.push(agent);
-      }
-      if (operation && operation !== 'all') {
-        filters.push(`AND operation = $${params.length + 1}`);
-        params.push(operation);
-      }
-      if (status && status !== 'all') {
-        filters.push(`AND status = $${params.length + 1}`);
-        params.push(status);
-      }
-      const filterSql = filters.join(' ');
-      const limitParam = `$${params.length + 1}`;
-      const offsetParam = `$${params.length + 2}`;
-
-      const rows = await engine.executeRaw(
-        `SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
-                operation, latency_ms, status, params, error_message, created_at
-         FROM mcp_request_log
-         WHERE 1=1 ${filterSql}
-         ORDER BY created_at DESC, id DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
-        [...params, limit, offset],
-      );
-      const [countResult] = await engine.executeRaw<{ total: number }>(
-        `SELECT count(*)::int as total FROM mcp_request_log
-         WHERE 1=1 ${filterSql}`,
-        params,
-      );
+      // The page and the filtered total (engine-sql/telemetry.ts); 'all' or no value reads every row.
+      const filter = (value: string | undefined) => (value && value !== 'all' ? value : null);
+      const { rows, total } = await engine.readMcpRequestLogPage({
+        tokenName: filter(agent), operation: filter(operation), status: filter(status), limit, offset,
+      });
       const [retention_days, pruned_before] = await Promise.all([readMcpLogRetentionDays(engine), readMcpUsageCoverage(engine, 1).then(c => c.pruned_before)]);
-      res.json({ rows, total: countResult.total, page, pages: Math.ceil(countResult.total / limit), retention_days, pruned_before });
+      res.json({ rows, total, page, pages: Math.ceil(total / limit), retention_days, pruned_before });
     } catch {
       res.status(503).json({ error: 'service_unavailable' });
     }

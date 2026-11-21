@@ -94,6 +94,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'addSynthesisEvidence', 'listActiveTakesForPages', 'matchTakeRows', 'deleteTakeRows',
     // group D (takes reads)
     'countOffGridTakeWeights', 'countTakes', 'planFactPurgeTakes', 'listTakeRowsForPage', 'readTakePreimages', 'readTakeRowTrust', 'readTakeTrustRef', 'countMcpResolvedTakes',
+    'listTopResolvedTakesForHolder', 'listAbandonedTakes',
     'listTakeSupersessionCandidates', 'listHeldFenceTakeRows'],
   dream: ['getDreamVerdict', 'putDreamVerdict', 'sweepDreamVerdicts'],
   contradictions: ['writeContradictionsRun', 'loadContradictionsTrend', 'getContradictionCacheEntry', 'putContradictionCacheEntry',
@@ -309,7 +310,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore', 'logMcpRequest',
     'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch', 'readMcpLifetimeUsage', 'logChatUsage', 'readChatUsage',
     // the admin dashboard's request counts of the last day
-    'countMcpRequestsLastDay', 'countMcpRequestsLastDayByToken', 'readPendingWriteHealth',
+    'countMcpRequestsLastDay', 'countMcpRequestsLastDayByToken', 'readPendingWriteHealth', 'readMcpRequestLogPage',
   ],
   // field_usage: schema detect --fields page samples (engine-sql/field-usage.ts)
   field_usage: ['readFieldUsageSamples'],

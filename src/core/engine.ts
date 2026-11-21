@@ -129,7 +129,7 @@ import type {
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
-import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakeTrustRef } from './engine-sql/takes-reads.ts';
+import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakeTrustRef, AbandonedTakeRow, HolderResolvedTakeRow } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
   ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef,
@@ -159,7 +159,7 @@ import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContex
 import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
-import type { McpLifetimeUsageRow, McpRequestCountKind, PendingWriteHealth, McpTokenRequestCount, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
+import type { McpLifetimeUsageRow, McpRequestCountKind, McpRequestLogPage, McpRequestLogPageSpec, PendingWriteHealth, McpTokenRequestCount, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
 import type { ChatUsageLogRow, ChatUsageWindow } from './engine-sql/chat-usage.ts';
 import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
@@ -1858,6 +1858,8 @@ export interface BrainEngine {
   readMcpLifetimeUsage(tokenNames: readonly string[]): Promise<McpLifetimeUsageRow[]>;
   /** The request log rows of the last 24 hours: all of them, the traffic, or the failed traffic (the admin dashboard counts). */
   countMcpRequestsLastDay(kind: McpRequestCountKind): Promise<number>;
+  /** One page of the request log, newest first, with the filtered total (`/admin/api/requests`). */
+  readMcpRequestLogPage(spec: McpRequestLogPageSpec): Promise<McpRequestLogPage>;
   /** In-flight writes, the oldest one's age in seconds, and the pending writes of the last day that later failed (`/admin/api/health-indicators`). */
   readPendingWriteHealth(): Promise<PendingWriteHealth>;
   /** Requests of the last 24 hours per asked token; a token with none has no row. */
@@ -4863,6 +4865,10 @@ export interface BrainEngine {
   readTakeTrustRef(id: number): Promise<TakeTrustRef | null>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
+  /** A holder's 25 heaviest active resolved takes (the calibration pattern drill-down). */
+  listTopResolvedTakesForHolder(holder: string): Promise<HolderResolvedTakeRow[]>;
+  /** The five oldest abandoned high-conviction takes (the calibration abandoned-threads card). */
+  listAbandonedTakes(): Promise<AbandonedTakeRow[]>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */
   listTakeSupersessionCandidates(sourceIds: readonly string[]): Promise<Array<{ id: number; source_id: string; slug: string }>>;
   /** Pages with an active take and no emotional weight yet, and pages with a weight. */

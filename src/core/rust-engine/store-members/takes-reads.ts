@@ -8,7 +8,7 @@
  * serves), and refuses with `engine_capability_missing` for a caller whose folder rules, audience or lineage widen
  * the policy.
  */
-import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead, type TakeTrustRef } from '../../engine-sql/takes-reads.ts';
+import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead, type TakeTrustRef, type AbandonedTakeRow, type HolderResolvedTakeRow } from '../../engine-sql/takes-reads.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
@@ -64,3 +64,11 @@ export const countZeroWeightWithTakes: StoreMember<[], { zero_weight_with_takes:
 
 export const hasCodeEdgesSymbol: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
   storeCall({ member: 'hasCodeEdgesSymbol' }, () => brain.hasCodeEdgesSymbol(sourceId));
+
+/** The holder's 25 heaviest active resolved takes (the calibration pattern drill-down). */
+export const listTopResolvedTakesForHolder: StoreMember<[holder: string], HolderResolvedTakeRow[]> =
+  (brain, holder) => storeCall({ member: 'listTopResolvedTakesForHolder' }, () => brain.listTopResolvedTakesForHolder(holder));
+
+/** The five oldest abandoned high-conviction takes (the calibration abandoned-threads card). */
+export const listAbandonedTakes: StoreMember<[], AbandonedTakeRow[]> =
+  (brain) => storeCall({ member: 'listAbandonedTakes' }, () => brain.listAbandonedTakes());

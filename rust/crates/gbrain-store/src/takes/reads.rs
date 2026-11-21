@@ -1,10 +1,12 @@
 //! Takes: the reads behind the doctor weight-grid check, the onboarding takes count, the fact purge
-//! plan, the fence import's stored rows, the MCP-resolved count of the scorecard and the take
-//! supersession repair. Each is one `BrainEngine` member (`src/core/engine-sql/takes-reads.ts`); the
+//! plan, the fence import's stored rows, the MCP-resolved count of the scorecard, the take
+//! supersession repair and the two calibration admin reads (the pattern drill-down and the
+//! abandoned-threads card). Each is one `BrainEngine` member (`src/core/engine-sql/takes-reads.ts`); the
 //! answers match its SQL row for row.
 //!
 //! Members: countOffGridTakeWeights, countTakes, planFactPurgeTakes, listTakeRowsForPage,
-//! readTakeRowTrust, readTakeTrustRef, countMcpResolvedTakes, listTakeSupersessionCandidates.
+//! readTakeRowTrust, readTakeTrustRef, countMcpResolvedTakes, listTakeSupersessionCandidates,
+//! listTopResolvedTakesForHolder, listAbandonedTakes.
 //!
 //! `readTakeRowTrust` and `readTakeTrustRef` are the take trust reads of the take write gate, the
 //! accepted-takes and lost-fence-rows repairs and the trust explainers. The tier reads as the column
@@ -18,7 +20,9 @@
 
 use super::*;
 use crate::cli_reads::pg_text::jsonb_value;
+use crate::env::{civil_from_days, days_from_civil};
 use crate::facts::{PrivacyPolicy, fact_fingerprint, page_hidden, read_fact};
+use crate::timeline::parse_date;
 use crate::timeline_queries::timestamptz_text;
 
 /// The frontmatter key that quarantines a page (`QUARANTINE_KEY`, src/core/quarantine.ts).
@@ -27,6 +31,34 @@ const QUARANTINE_KEY: &str = "quarantine";
 /// The widest `10^-exp` the grid check works on exactly. A weight with more places than this is
 /// within 1e-30 of zero, and zero is on the grid.
 const MAX_PLACES: i32 = 30;
+
+/// The drill-down's row cap (`LIMIT 25`).
+const TOP_RESOLVED_LIMIT: usize = 25;
+/// The abandoned-threads card's row cap (`LIMIT 5`) and conviction floor (`t.weight >= 0.7`).
+const ABANDONED_LIMIT: usize = 5;
+const ABANDONED_MIN_WEIGHT: f64 = 0.7;
+const DAY_US: i64 = 86_400_000_000;
+
+/// `now() - INTERVAL '12 months'` on a UTC session clock: the same time of day a year back, the
+/// day clamped to the month's end (29 February goes to 28 February), as Postgres adds months.
+fn one_year_back(now_us: i64) -> i64 {
+    let days = now_us.div_euclid(DAY_US);
+    let time = now_us.rem_euclid(DAY_US);
+    let (y, m, d) = civil_from_days(days);
+    let leap = |y: i64| (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let d = if m == 2 && d == 29 && !leap(y - 1) {
+        28
+    } else {
+        d
+    };
+    days_from_civil(y - 1, m, d) * DAY_US + time
+}
+
+/// Midnight UTC of a `YYYY-MM-DD` date that `parse_date` gave back.
+fn date_start_us(date: &str) -> i64 {
+    let part = |r: std::ops::Range<usize>| date[r].parse::<i64>().unwrap_or(0);
+    days_from_civil(part(0..4), part(5..7), part(8..10)) * DAY_US
+}
 
 /// Whether `weight::numeric` is further than 0.001 from `ROUND(weight::numeric * 20) / 20`.
 ///
@@ -321,6 +353,106 @@ impl Store {
             n += 1;
         }
         Ok(n)
+    }
+
+    /// `listTopResolvedTakesForHolder(holder)`: `[{ id, page_slug, row_num, claim, weight,
+    /// resolved_quality, since_date }]`, the holder's 25 active resolved takes of highest weight,
+    /// on any page (a soft-deleted page too, as the plain join keeps its row). Within a weight the
+    /// newer `since_date` comes first in byte order, a null one before every date (Postgres's
+    /// `DESC` puts nulls first); `id` is the bigint id as text. Where Postgres leaves a tie in no
+    /// set order, this engine keeps id order.
+    pub fn list_top_resolved_takes_for_holder(&self, holder: &str) -> Result<Vec<Value>> {
+        no_nul("listTopResolvedTakesForHolder", &[("holder", holder)])?;
+        let read = self.read()?;
+        let mut takes: Vec<TakeRecord> = all_takes(&*read)?
+            .into_iter()
+            .filter(|t| t.holder == holder && t.active && t.resolved_at_us.is_some())
+            .collect();
+        takes.sort_by(|a, b| {
+            b.weight
+                .total_cmp(&a.weight)
+                .then_with(|| match (&a.since_date, &b.since_date) {
+                    (None, None) => std::cmp::Ordering::Equal,
+                    (None, Some(_)) => std::cmp::Ordering::Less,
+                    (Some(_), None) => std::cmp::Ordering::Greater,
+                    (Some(x), Some(y)) => y.as_bytes().cmp(x.as_bytes()),
+                })
+                .then(a.id.cmp(&b.id))
+        });
+        let mut pages = PageCache::new(&*read);
+        let mut out = Vec::new();
+        for take in takes {
+            if out.len() == TOP_RESOLVED_LIMIT {
+                break;
+            }
+            let Some(page) = pages.get(take.page_id)? else {
+                continue;
+            };
+            out.push(json!({
+                "id": take.id.to_string(),
+                "page_slug": page.slug,
+                "row_num": take.row_num,
+                "claim": take.claim,
+                "weight": real_out(take.weight),
+                "resolved_quality": take.resolved_quality,
+                "since_date": take.since_date,
+            }));
+        }
+        Ok(out)
+    }
+
+    /// `listAbandonedTakes()`: `[{ id, page_slug, claim, weight, since_date }]`, the five active,
+    /// unresolved, unsuperseded takes with `weight >= 0.7` (the `real` widened to double, so a
+    /// stored 0.7 is below it, as in Postgres) whose `since_date` is before `now - 12 months`,
+    /// oldest `since_date` first in byte order, on any page. A `YYYY-MM` date reads as its 1st.
+    /// The date compares at midnight UTC, the session time zone this engine assumes. Such a take
+    /// whose `since_date` is not a date this engine reads (`parse_date`: `YYYY-MM-DD`, `/` or `-`
+    /// separated, an optional time after it; Postgres reads more forms) fails the read with
+    /// `invalid_argument`, as the `::date` cast fails it; a null `since_date` is skipped. Where
+    /// Postgres leaves a tie in no set order, this engine keeps id order.
+    pub fn list_abandoned_takes(&self) -> Result<Vec<Value>> {
+        let cutoff = one_year_back(self.env.now_micros());
+        let read = self.read()?;
+        let mut takes = Vec::new();
+        for take in all_takes(&*read)? {
+            if !take.active
+                || take.resolved_at_us.is_some()
+                || take.superseded_by.is_some()
+                || f64::from(take.weight) < ABANDONED_MIN_WEIGHT
+            {
+                continue;
+            }
+            let Some(since) = &take.since_date else {
+                continue;
+            };
+            let text = if since.chars().count() == 7 {
+                format!("{since}-01")
+            } else {
+                since.clone()
+            };
+            if date_start_us(&parse_date(&text)?) < cutoff {
+                takes.push(take);
+            }
+        }
+        takes.sort_by(|a, b| a.since_date.cmp(&b.since_date).then(a.id.cmp(&b.id)));
+        let mut pages = PageCache::new(&*read);
+        let mut out = Vec::new();
+        for take in takes {
+            if out.len() == ABANDONED_LIMIT {
+                break;
+            }
+            let Some(page) = pages.get(take.page_id)? else {
+                continue;
+            };
+            out.push(json!({
+                "id": take.id,
+                "page_slug": page.slug,
+                "claim": take.claim,
+                "weight": real_out(take.weight),
+                "since_date": take.since_date,
+            }));
+        }
+        Ok(out)
     }
 
     /// `listTakeSupersessionCandidates(sourceIds)`: `[{ id, source_id, slug }]` by page id, the live

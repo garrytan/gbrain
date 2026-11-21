@@ -2,9 +2,9 @@
 
 Part of the takes family ([takes.md](takes.md)); the rules in [rust/README.md](../../README.md) ("The brain store") apply.
 
-Ten single-purpose reads that used to be raw SQL in doctor, onboarding, the fact purge, the fence import, the MCP
+Fourteen single-purpose reads that used to be raw SQL in doctor, onboarding, the fact purge, the fence import, the MCP
 scorecard, the take repair, the takes writes, the take rows generation adapter, the take write gate, the accepted-takes
-and lost-fence-rows repairs and the trust explainers. Each is now one engine member, with the SQL in
+and lost-fence-rows repairs, the trust explainers and the calibration admin routes. Each is now one engine member, with the SQL in
 `src/core/engine-sql/takes-reads.ts` (PGLite and Postgres) and a native read in the store, except
 `listHeldFenceTakeRows`, which needs state the store does not keep. A take is scoped by the page it hangs on, read now.
 
@@ -20,6 +20,8 @@ and lost-fence-rows repairs and the trust explainers. Each is now one engine mem
 | `brain.readTakeTrustRef(id)` | `{ id, source_id, claim, trust_tier, write_origin, active, quarantined }` or null: the page's source, `write_origin` in jsonb key order, and whether the page's frontmatter holds the `quarantine` key | `gbrain trust explain` (trust review and eligibility explain) |
 | `brain.countMcpResolvedTakes({ sourceIds, holders, excludePrivate })` | resolved takes whose `resolved_by` starts with `mcp:`, on a page in the source scope, held by a listed holder | `countMcpResolved` |
 | `brain.listTakeSupersessionCandidates(sourceIds)` | `[{ id, source_id, slug }]` by page id: live pages with an inactive take or a source cell saying `superseded by #` (any case) | take supersession repair |
+| `brain.listTopResolvedTakesForHolder(holder)` | `[{ id, page_slug, row_num, claim, weight, resolved_quality, since_date }]`: the holder's 25 active resolved takes of highest weight, a newer `since_date` first within a weight (a null one first); `id` is text | `/admin/api/calibration/pattern/:id` |
+| `brain.listAbandonedTakes()` | `[{ id, page_slug, claim, weight, since_date }]`: the 5 active, unresolved, unsuperseded takes of weight 0.7 or more whose `since_date` (`YYYY-MM` reads as the 1st) is more than 12 months ago, oldest first | `/admin/api/calibration/charts/abandoned-threads` |
 | `brain.countZeroWeightWithTakes()` | `{ zero_weight_with_takes, nonzero_weight }`: pages with an active take and weight 0 (never weighed reads 0), and pages with weight above 0; soft-deleted pages count | doctor `salience_health` |
 | `brain.hasCodeEdgesSymbol(sourceId)` | whether the source owns an unresolved (symbol-table) edge | `symbol-resolver` |
 
@@ -32,6 +34,16 @@ Differences from PGLite and PostgreSQL:
   (`callerReaders`), so a member reads the takes on pages whose readers name it and on private pages of a source it
   holds a grant for, as the SQL's `privatePagesFilterForCaller` does. The take's
   page is read whether or not it is soft-deleted, as the SQL joins `pages` without a deleted filter.
+- `listTopResolvedTakesForHolder` and `listAbandonedTakes` read every page, soft-deleted or not, as the SQL joins
+  `pages` without a deleted filter. They compare `since_date` in byte order; Postgres uses the database collation,
+  which agrees for the `YYYY-MM` and `YYYY-MM-DD` dates the takes writers store. Where Postgres leaves a tie (equal
+  weight and date, or equal date) in no set order, the store keeps id order.
+- `listAbandonedTakes` compares `weight >= 0.7` on the `real` widened to double, as Postgres does, so a stored 0.7
+  (0.699999988) is below the floor. It reads `now() - INTERVAL '12 months'` on a UTC session clock (29 February goes
+  to 28 February) and each date at midnight UTC. Its `::date` cast reads `YYYY-MM-DD` (or `/` separated, with an
+  optional time after it) only; Postgres also reads other date spellings. A row the other filters keep whose
+  `since_date` the cast cannot read fails the read with `invalid_argument`, as Postgres fails it; a null
+  `since_date` is skipped.
 - The weight grid check is exact integer arithmetic on the six-significant-digit decimal that `weight::numeric` of a
   `real` prints, so it agrees with Postgres at the 0.001 boundary and at half-way rounding. A weight with more than 30
   places is within 1e-30 of zero, which is on the grid.

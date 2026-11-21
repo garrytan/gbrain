@@ -156,4 +156,18 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_chat_usage(days))
     }
+
+    /// `readMcpRequestLogPage(spec)`: `{ rows, total }`, one page of the request log.
+    #[napi]
+    pub fn read_mcp_request_log_page<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::telemetry::McpRequestLogPageInput =
+                required(input, "readMcpRequestLogPage input")?;
+            s.read_mcp_request_log_page(&input)
+        })
+    }
 }

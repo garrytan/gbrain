@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1260/1266
+# covered: 1263/1269
 # lifecycle: 9/9
 # pages: 54/54
 # search: 7/7
@@ -22,7 +22,7 @@
 # timeline: 23/23
 # ontology: 4/4
 # raw_files: 6/6
-# takes: 27/27
+# takes: 29/29
 # dream: 3/3
 # contradictions: 5/5
 # facts: 19/19
@@ -77,7 +77,7 @@
 # wanted_links: 2/2
 # write_misc: 69/72
 # write_attribution: 5/5
-# telemetry: 13/13
+# telemetry: 14/14
 # field_usage: 1/1
 # session_state: 7/7
 # alias_fanout_reads: 5/5
@@ -103,13 +103,13 @@ getPage	pages	yes	127	yes	yes	yes	serves
 readPageSnapshot	pages	yes	41	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	711	yes	yes	yes	serves
+putPage	pages	yes	714	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	194	yes	yes	yes	serves
+softDeletePage	pages	yes	196	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	13	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	5	no	yes	yes	serves
@@ -333,7 +333,7 @@ upsertFile	raw_files	yes	6	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	1	no	yes	yes	serves
 listFiles	raw_files	yes	2	no	yes	yes	serves
-addTakesBatch	takes	yes	64	yes	yes	yes	serves
+addTakesBatch	takes	yes	67	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	6	no	yes	yes	serves
 listTakes	takes	yes	33	no	yes	yes	serves
 searchTakes	takes	yes	6	no	yes	yes	serves
@@ -343,7 +343,7 @@ countStaleTakes	takes	yes	1	no	yes	yes	serves
 listStaleTakes	takes	yes	1	no	yes	yes	serves
 updateTake	takes	yes	4	no	yes	yes	serves
 supersedeTake	takes	yes	7	no	yes	yes	serves
-resolveTake	takes	yes	15	no	yes	yes	serves
+resolveTake	takes	yes	18	no	yes	yes	serves
 getScorecard	takes	yes	4	no	yes	yes	serves
 getCalibrationCurve	takes	yes	4	no	yes	yes	serves
 addSynthesisEvidence	takes	yes	3	no	yes	yes	serves
@@ -359,6 +359,8 @@ readTakePreimages	takes	yes	1	no	yes	yes	serves
 readTakeRowTrust	takes	yes	2	no	yes	yes	serves
 readTakeTrustRef	takes	yes	1	no	yes	yes	serves
 countMcpResolvedTakes	takes	yes	5	no	yes	yes	serves
+listTopResolvedTakesForHolder	takes	yes	2	no	yes	yes	serves
+listAbandonedTakes	takes	yes	2	no	yes	yes	serves
 listTakeSupersessionCandidates	takes	yes	1	no	yes	yes	serves
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
 putDreamVerdict	dream	yes	1	yes	yes	yes	serves
@@ -422,7 +424,7 @@ replaceDerivedAliases	sync_aliases	yes	15	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	27	no	yes	yes	serves
+getConfig	config	yes	29	no	yes	yes	serves
 setConfig	config	yes	48	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
@@ -1280,12 +1282,13 @@ readRowAttribution	write_attribution	yes	2	no	yes	yes	serves
 recordSearchTelemetry	telemetry	yes	3	no	yes	yes	serves
 readSearchStats	telemetry	yes	3	no	yes	yes	serves
 readClientOpUsage	telemetry	yes	4	no	yes	yes	serves
-readMcpRollupPrunedBefore	telemetry	yes	3	no	yes	yes	serves
-logMcpRequest	telemetry	yes	8	no	yes	yes	serves
+readMcpRollupPrunedBefore	telemetry	yes	4	no	yes	yes	serves
+logMcpRequest	telemetry	yes	9	no	yes	yes	serves
 readMcpLogPruneCutoff	telemetry	yes	1	no	yes	yes	serves
 pruneMcpRequestLogBatch	telemetry	yes	3	no	yes	yes	serves
 readMcpLifetimeUsage	telemetry	yes	1	no	yes	yes	serves
 countMcpRequestsLastDay	telemetry	yes	3	no	yes	yes	serves
+readMcpRequestLogPage	telemetry	yes	1	no	yes	yes	serves
 readPendingWriteHealth	telemetry	yes	2	no	yes	yes	serves
 countMcpRequestsLastDayByToken	telemetry	yes	2	no	yes	yes	serves
 logChatUsage	telemetry	yes	2	no	yes	yes	serves

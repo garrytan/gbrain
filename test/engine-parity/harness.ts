@@ -367,6 +367,27 @@ export async function seedAccessPolicy(
   }
 }
 
+/**
+ * Fixture: store one calibration profile for a holder of the default source, so the calibration admin routes have a
+ * profile to read. Harness-only SQL behind the backend switch: no typed member writes a profile on this branch
+ * (rust-engine/main has `insertCalibrationProfile` from c1c524c7be; use it here at the main join).
+ */
+export async function seedCalibrationProfile(engine: BrainEngine, backend: ParityBackend, holder: string, patterns: readonly [string, string]): Promise<void> {
+  switch (backend) {
+    // The Rust arm has no calibration profile store on this branch; the same SQL stops on the typed raw_sql refusal.
+    case 'rust':
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw(`INSERT INTO calibration_profiles (source_id, holder, generated_at, total_resolved, brier, accuracy,
+          partial_rate, domain_scorecards, pattern_statements, voice_gate_passed, voice_gate_attempts, active_bias_tags, model_id)
+        VALUES ('default', $1, '2026-10-01T12:00:00Z', 6, 0.125, 0.75, 0.25, '{}'::jsonb, ARRAY[$2, $3]::text[], true, 1,
+          ARRAY['overconfidence']::text[], 'parity-model')`, [holder, patterns[0], patterns[1]]);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
 /** Wrap an engine so every direct method call on the handle is recorded. */
 function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unknown[] = []): BrainEngine {
   return new Proxy(engine, {

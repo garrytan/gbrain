@@ -12,8 +12,9 @@
  *  - Why existing coverage misses it: serve-http-admin-request-log-retention seeds one row per distinct created_at,
  *    and no test covers the two calibration routes with more tied rows than the limit.
  *  - Seam: none. The real routes are mounted on an Express app over a real socket, as the retention test does. This is
- *    an HTTP route test, not a parityTest case: the reads are executeRaw statements inside the route, so the Rust arm
- *    does not run it. Tied rows are rewritten one by one in a scrambled order after the insert, so their heap order is
+ *    an HTTP route test, not a parityTest case: it seeds through executeRaw, so the Rust arm does not run it. The routes
+ *    read through listTopResolvedTakesForHolder, listAbandonedTakes and readMcpRequestLogPage (engine-sql/takes-reads.ts
+ *    and telemetry.ts), so the statements under test are those members' SQL. Tied rows are rewritten one by one in a scrambled order after the insert, so their heap order is
  *    neither id order nor reverse id order.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';

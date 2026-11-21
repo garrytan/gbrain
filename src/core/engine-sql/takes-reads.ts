@@ -112,6 +112,59 @@ export async function listTakeSupersessionCandidates(
   return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug }));
 }
 
+/** A resolved take of a holder as the calibration pattern drill-down shows it (`id` is the bigint id as text). */
+export interface HolderResolvedTakeRow {
+  id: string;
+  page_slug: string;
+  row_num: number;
+  claim: string;
+  weight: number;
+  resolved_quality: string | null;
+  since_date: string | null;
+}
+
+/** The drill-down read of `/admin/api/calibration/pattern/:id`, byte for byte as serve-http-admin-api.ts sent it at 0b8fde313c (a tie ends at the lowest take id). */
+export const TOP_RESOLVED_TAKES_SQL = `SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
+           FROM takes t JOIN pages p ON p.id = t.page_id
+           WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
+           ORDER BY t.weight DESC, t.since_date DESC, t.id
+           LIMIT 25`;
+
+/** The holder's 25 heaviest active resolved takes, newest `since_date` first within a weight, then the lowest id, on any page. */
+export async function listTopResolvedTakesForHolder(tx: Raw, holder: string): Promise<HolderResolvedTakeRow[]> {
+  const rows = await tx.executeRaw<HolderResolvedTakeRow>(TOP_RESOLVED_TAKES_SQL, [holder]);
+  return rows.map(r => ({ id: String(r.id), page_slug: r.page_slug, row_num: Number(r.row_num), claim: r.claim, weight: Number(r.weight),
+    resolved_quality: r.resolved_quality ?? null, since_date: r.since_date ?? null }));
+}
+
+/** An abandoned high-conviction take as the calibration abandoned-threads card shows it. */
+export interface AbandonedTakeRow {
+  id: number;
+  page_slug: string;
+  claim: string;
+  weight: number;
+  since_date: string;
+}
+
+/** The abandoned-threads read of `/admin/api/calibration/charts/abandoned-threads`, byte for byte as serve-http-admin-api.ts sent it at 0b8fde313c (a tie ends at the lowest take id). */
+export const ABANDONED_TAKES_SQL = `SELECT t.id, p.slug AS page_slug, t.claim, t.weight, t.since_date
+             FROM takes t JOIN pages p ON p.id = t.page_id
+             WHERE t.active = true AND t.resolved_at IS NULL AND t.superseded_by IS NULL
+               AND t.weight >= 0.7
+               AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
+                   < (now() - INTERVAL '12 months')
+             ORDER BY t.since_date ASC, t.id
+             LIMIT 5`;
+
+/**
+ * The five oldest active, unresolved, unsuperseded takes of weight 0.7 or more whose `since_date` (a `YYYY-MM` date
+ * read as the 1st) is more than 12 months ago, oldest first and then the lowest id, on any page. A `since_date` that is not a date fails the read.
+ */
+export async function listAbandonedTakes(tx: Raw): Promise<AbandonedTakeRow[]> {
+  const rows = await tx.executeRaw<Omit<AbandonedTakeRow, 'id'> & { id: number | string }>(ABANDONED_TAKES_SQL);
+  return rows.map(r => ({ id: Number(r.id), page_slug: r.page_slug, claim: r.claim, weight: Number(r.weight), since_date: r.since_date }));
+}
+
 /** Pages with an active take whose emotional weight is still zero, and pages whose weight is above zero. */
 export async function countZeroWeightWithTakes(tx: Raw): Promise<{ zero_weight_with_takes: number; nonzero_weight: number }> {
   const rows = await tx.executeRaw<{ kind: string; n: string }>(

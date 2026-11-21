@@ -13,6 +13,7 @@
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
 import { executeRawJsonb } from '../sql-query.ts';
+import { joinFragments, renderFragment, sqlFragment, type SqlFragment } from './fragment.ts';
 
 /** One `(date, mode, intent)` search telemetry bucket the flush adds to its row (`date` is `YYYY-MM-DD`). */
 export interface SearchTelemetryBucket {
@@ -287,6 +288,68 @@ export async function readPendingWriteHealth(exec: LegacyUnscopedRead): Promise<
     pending_writes: Number(pending?.count ?? 0),
     oldest_pending_write_age_seconds: Number(pending?.oldest_age_seconds ?? 0),
     pending_writes_later_failed: Number(laterFailed?.count ?? 0),
+  };
+}
+
+/** The filters and the page of `/admin/api/requests`; a null or absent filter reads every row. */
+export interface McpRequestLogPageSpec {
+  tokenName?: string | null;
+  operation?: string | null;
+  status?: string | null;
+  limit: number;
+  offset: number;
+}
+
+/** One request log row as the admin request list shows it; `agent_name` falls back to the token name. */
+export interface McpRequestLogPageRow {
+  id: number;
+  token_name: string | null;
+  agent_name: string | null;
+  operation: string;
+  latency_ms: number | null;
+  status: string;
+  params: unknown;
+  error_message: string | null;
+  created_at: Date;
+}
+
+/** One page of the request log, newest first, and how many rows the filters match. */
+export interface McpRequestLogPage { rows: McpRequestLogPageRow[]; total: number }
+
+/**
+ * The request list of `/admin/api/requests`, byte for byte as serve-http-admin-api.ts built it at 0b8fde313c (newest first, the highest id first on a tie): each
+ * filter present adds `AND <column> = $N` in the order token, operation, status, then the page's LIMIT and OFFSET.
+ */
+export function mcpRequestLogPageSql(spec: McpRequestLogPageSpec): { list: string; count: string; params: string[] } {
+  const filters: SqlFragment[] = [];
+  if (spec.tokenName != null) filters.push(sqlFragment`AND token_name = ${spec.tokenName}`);
+  if (spec.operation != null) filters.push(sqlFragment`AND operation = ${spec.operation}`);
+  if (spec.status != null) filters.push(sqlFragment`AND status = ${spec.status}`);
+  const filterSql = joinFragments(filters, ' ');
+  // The page's LIMIT and OFFSET values are bound by the caller after the filter values; sentinels keep their slots.
+  const list = renderFragment(sqlFragment`SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
+                operation, latency_ms, status, params, error_message, created_at
+         FROM mcp_request_log
+         WHERE 1=1 ${filterSql}
+         ORDER BY created_at DESC, id DESC LIMIT ${0} OFFSET ${0}`);
+  const count = renderFragment(sqlFragment`SELECT count(*)::int as total FROM mcp_request_log
+         WHERE 1=1 ${filterSql}`);
+  return { list: list.text, count: count.text, params: count.params as string[] };
+}
+
+/** One page of the request log for the admin request list (newest first) and the filtered total. */
+export async function readMcpRequestLogPage(exec: LegacyUnscopedRead, spec: McpRequestLogPageSpec): Promise<McpRequestLogPage> {
+  const { list, count, params } = mcpRequestLogPageSql(spec);
+  const rows = await exec.executeRaw<Omit<McpRequestLogPageRow, 'id' | 'created_at'> & { id: number | string; created_at: Date | string }>(
+    list, [...params, spec.limit, spec.offset]);
+  const [total] = await exec.executeRaw<{ total: number | string }>(count, params);
+  return {
+    rows: rows.map(r => ({
+      id: Number(r.id), token_name: r.token_name, agent_name: r.agent_name, operation: r.operation,
+      latency_ms: r.latency_ms == null ? null : Number(r.latency_ms), status: r.status, params: r.params ?? null,
+      error_message: r.error_message ?? null, created_at: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
+    })),
+    total: Number(total?.total ?? 0),
   };
 }
 

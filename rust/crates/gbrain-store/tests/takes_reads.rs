@@ -1,7 +1,8 @@
 //! The count and list reads of takes, salience and code edges: `countOffGridTakeWeights`, `countTakes`,
 //! `planFactPurgeTakes`, `listTakeRowsForPage`, `readTakeRowTrust`, `readTakeTrustRef`,
 //! `countMcpResolvedTakes`, `listTakeSupersessionCandidates`, `countZeroWeightWithTakes`,
-//! `hasCodeEdgesSymbol` and `readTakePreimages`, matched to the SQL in
+//! `hasCodeEdgesSymbol`, `readTakePreimages`, `listTopResolvedTakesForHolder` and `listAbandonedTakes`,
+//! matched to the SQL in
 //! `src/core/engine-sql/takes-reads.ts`.
 
 mod memory_env;
@@ -702,4 +703,215 @@ fn a_take_trust_ref_reads_its_page_source_origin_in_jsonb_order_activity_and_qua
     assert_eq!(quarantined["write_origin"], Value::Null);
     assert_eq!(b.read_take_trust_ref(987_654_321).unwrap(), None);
     assert_eq!(b.read_take_trust_ref(-1).unwrap(), None);
+}
+
+#[test]
+fn top_resolved_takes_are_the_holders_heaviest_with_a_null_or_newer_date_first() {
+    let b = brain("top-resolved");
+    source(&b, "s1");
+    let p = page(&b, "s1", "calibration-a");
+    let q = page(&b, "s1", "calibration-b");
+    add(
+        &b,
+        &[
+            take(
+                p,
+                1,
+                "older",
+                json!({"weight": 0.9, "since_date": "2024-01"}),
+            ),
+            take(p, 2, "undated", json!({"weight": 0.9})),
+            take(
+                q,
+                1,
+                "newer",
+                json!({"weight": 0.9, "since_date": "2025-01-15"}),
+            ),
+            take(
+                q,
+                2,
+                "light",
+                json!({"weight": 0.5, "since_date": "2026-01"}),
+            ),
+            take(q, 3, "open", json!({"weight": 1.0})),
+            take(
+                q,
+                4,
+                "someone else",
+                json!({"weight": 1.0, "holder": "alice-example"}),
+            ),
+        ],
+    );
+    for (pg, row) in [(p, 1), (p, 2), (q, 1), (q, 2), (q, 4)] {
+        resolve(&b, pg, row, None);
+    }
+    let rows = b.list_top_resolved_takes_for_holder("garry").unwrap();
+    let claims: Vec<&str> = rows.iter().map(|r| r["claim"].as_str().unwrap()).collect();
+    assert_eq!(claims, vec!["undated", "newer", "older", "light"]);
+    assert_eq!(rows[1]["page_slug"], "calibration-b");
+    assert_eq!(
+        rows[1]["id"],
+        json!(take_id(&b, q, 1).to_string()),
+        "the id is text"
+    );
+    assert_eq!(rows[1]["weight"], json!(0.9));
+    assert_eq!(rows[1]["row_num"], 1);
+    assert_eq!(rows[1]["resolved_quality"], "correct");
+    assert_eq!(rows[0]["since_date"], Value::Null);
+
+    let many: Vec<TakeInput> = (10..40)
+        .map(|row| take(p, row, "bulk", json!({"weight": 0.1})))
+        .collect();
+    add(&b, &many);
+    for row in 10..40 {
+        resolve(&b, p, row, None);
+    }
+    assert_eq!(
+        b.list_top_resolved_takes_for_holder("garry").unwrap().len(),
+        25
+    );
+    assert!(
+        b.list_top_resolved_takes_for_holder("nobody")
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn abandoned_takes_are_the_oldest_unresolved_convictions_past_a_year() {
+    let b = brain("abandoned");
+    // 2026-11-20T00:00:00Z: the cutoff is 2025-11-20T00:00:00Z.
+    b.clock.set(1_795_132_800_000_000);
+    source(&b, "s1");
+    let p = page(&b, "s1", "threads");
+    add(
+        &b,
+        &[
+            take(
+                p,
+                1,
+                "month",
+                json!({"weight": 0.75, "since_date": "2020-01"}),
+            ),
+            take(
+                p,
+                2,
+                "at the floor",
+                json!({"weight": 0.7, "since_date": "2019-01"}),
+            ),
+            take(
+                p,
+                3,
+                "a day inside",
+                json!({"weight": 0.9, "since_date": "2025-11-19"}),
+            ),
+            take(
+                p,
+                4,
+                "on the cutoff",
+                json!({"weight": 0.9, "since_date": "2025-11-20"}),
+            ),
+            take(
+                p,
+                5,
+                "resolved",
+                json!({"weight": 0.9, "since_date": "2021-05-05"}),
+            ),
+            take(
+                p,
+                6,
+                "superseded",
+                json!({"weight": 0.9, "since_date": "2018-01", "superseded_by": 1}),
+            ),
+            take(
+                p,
+                7,
+                "inactive",
+                json!({"weight": 0.9, "since_date": "2018-01", "active": false}),
+            ),
+            take(p, 8, "undated", json!({"weight": 0.8})),
+            take(
+                p,
+                9,
+                "light and bad",
+                json!({"weight": 0.5, "since_date": "not a date"}),
+            ),
+        ],
+    );
+    resolve(&b, p, 5, None);
+    let rows = b.list_abandoned_takes().unwrap();
+    let claims: Vec<&str> = rows.iter().map(|r| r["claim"].as_str().unwrap()).collect();
+    assert_eq!(
+        claims,
+        vec!["month", "a day inside"],
+        "a stored 0.7 is below the 0.7 floor"
+    );
+    assert_eq!(rows[0]["id"], take_id(&b, p, 1));
+    assert_eq!(rows[0]["page_slug"], "threads");
+    assert_eq!(rows[0]["weight"], json!(0.75));
+    assert_eq!(rows[0]["since_date"], "2020-01");
+
+    let more: Vec<TakeInput> = (10..14)
+        .map(|row| {
+            take(
+                p,
+                row,
+                "old",
+                json!({"weight": 0.8, "since_date": format!("2022-0{}", row - 9)}),
+            )
+        })
+        .collect();
+    add(&b, &more);
+    let dates: Vec<String> = b
+        .list_abandoned_takes()
+        .unwrap()
+        .iter()
+        .map(|r| r["since_date"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        dates,
+        vec!["2020-01", "2022-01", "2022-02", "2022-03", "2022-04"]
+    );
+
+    add(
+        &b,
+        &[take(
+            p,
+            20,
+            "bad month",
+            json!({"weight": 0.9, "since_date": "2020-13"}),
+        )],
+    );
+    let err = b.list_abandoned_takes().unwrap_err();
+    assert_eq!(err.code, gbrain_store::error::INVALID_ARGUMENT);
+    assert!(err.message.contains("2020-13-01"), "{}", err.message);
+}
+
+#[test]
+fn abandoned_takes_on_29_february_look_back_to_28_february() {
+    let b = brain("abandoned-leap");
+    // 2028-02-29T12:00:00Z: the cutoff is 2027-02-28T12:00:00Z, so 2027-02-28 (midnight) is before it.
+    b.clock.set(1_835_438_400_000_000);
+    source(&b, "s1");
+    let p = page(&b, "s1", "leap");
+    add(
+        &b,
+        &[
+            take(
+                p,
+                1,
+                "the 28th",
+                json!({"weight": 0.9, "since_date": "2027-02-28"}),
+            ),
+            take(
+                p,
+                2,
+                "march",
+                json!({"weight": 0.9, "since_date": "2027-03-01"}),
+            ),
+        ],
+    );
+    let rows = b.list_abandoned_takes().unwrap();
+    let claims: Vec<&str> = rows.iter().map(|r| r["claim"].as_str().unwrap()).collect();
+    assert_eq!(claims, vec!["the 28th"]);
 }

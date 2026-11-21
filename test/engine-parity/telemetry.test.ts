@@ -266,7 +266,7 @@ describe('engine parity: telemetry', () => {
       'countMcpRequestLogRows', 'countMcpRequestsLastDay', 'countMcpRequestsLastDayByToken',
       'hasMcpLogRowsPastWindow', 'logChatUsage', 'logMcpRequest', 'pruneMcpRequestLogBatch', 'readChatUsage',
       'readClientOpUsage', 'readMcpLifetimeUsage', 'readMcpLogPruneCutoff', 'readMcpRequestLogBytes',
-      'readMcpRollupPrunedBefore', 'readPendingWriteHealth', 'readSearchStats',
+      'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPendingWriteHealth', 'readSearchStats',
       'recordSearchTelemetry',
     ]);
     const served = members.filter((m) => m in STORE_MEMBERS);

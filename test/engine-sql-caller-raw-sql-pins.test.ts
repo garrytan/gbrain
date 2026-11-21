@@ -27,6 +27,7 @@ import { clientGrantInsert, grantValidationContext, insertClientGrant } from '..
 import { CREDENTIAL_SQL, OAUTH_CODE_SQL, OAUTH_EXPIRE_ALL_SQL, OAUTH_REFRESH_SQL } from '../src/core/engine-sql/access-credentials.ts';
 import { CLIENT_GRANT_SQL } from '../src/core/engine-sql/client-grants.ts';
 import { PENDING_WRITE_HEALTH_SQL } from '../src/core/engine-sql/telemetry.ts';
+import { ABANDONED_TAKES_SQL, TOP_RESOLVED_TAKES_SQL } from '../src/core/engine-sql/takes-reads.ts';
 import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { markedScopeSources } from '../src/core/access/attest-sources.ts';
@@ -2323,6 +2324,53 @@ describe('the OAuth code flow and the token grant send the same statements throu
     WHERE l.status = 'accepted_pending' AND l.created_at > now() - interval '24 hours'
       AND r.state IN ('conflict', 'failed', 'cancelled')`);
     expect(capture.trace.flatMap(t => (t.kind === 'query' ? [t.text] : []))).toEqual([PENDING_WRITE_HEALTH_SQL.pending, PENDING_WRITE_HEALTH_SQL.later_failed]);
+  });
+  test('the request-log page member sends the list and count serve-http-admin-api.ts sent, filters numbered in order', async () => {
+    const queries = async (spec: Parameters<import('../src/core/engine.ts').BrainEngine['readMcpRequestLogPage']>[0]) => {
+      const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'readMcpRequestLogPage', variant: 'member', run: e => e.readMcpRequestLogPage(spec) }));
+      expect(capture.error).toBeUndefined();
+      return capture.trace.flatMap(t => (t.kind === 'query' ? [{ text: t.text, params: t.params }] : []));
+    };
+    // The texts at 0b8fde313c src/commands/serve-http-admin-api.ts:509-519, byte for byte, with the filters built there.
+    const list = (filterSql: string, limit: string, offset: string) => `SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
+                operation, latency_ms, status, params, error_message, created_at
+         FROM mcp_request_log
+         WHERE 1=1 ${filterSql}
+         ORDER BY created_at DESC, id DESC LIMIT ${limit} OFFSET ${offset}`;
+    const count = (filterSql: string) => `SELECT count(*)::int as total FROM mcp_request_log
+         WHERE 1=1 ${filterSql}`;
+    expect(await queries({ limit: 50, offset: 0 })).toEqual([{ text: list('', '$1', '$2'), params: [50, 0] }, { text: count(''), params: [] }]);
+    expect(await queries({ tokenName: 'a', operation: null, status: 'error', limit: 50, offset: 100 })).toEqual([
+      { text: list('AND token_name = $1 AND status = $2', '$3', '$4'), params: ['a', 'error', 50, 100] },
+      { text: count('AND token_name = $1 AND status = $2'), params: ['a', 'error'] },
+    ]);
+    expect(await queries({ tokenName: 'a', operation: 'search', status: 'ok', limit: 50, offset: 0 })).toEqual([
+      { text: list('AND token_name = $1 AND operation = $2 AND status = $3', '$4', '$5'), params: ['a', 'search', 'ok', 50, 0] },
+      { text: count('AND token_name = $1 AND operation = $2 AND status = $3'), params: ['a', 'search', 'ok'] },
+    ]);
+  });
+  test('the calibration take reads send the statements serve-http-admin-api.ts sent', async () => {
+    // The texts at 0b8fde313c src/commands/serve-http-admin-api.ts:357-361 and 441-448, byte for byte.
+    expect(TOP_RESOLVED_TAKES_SQL).toBe(`SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
+           FROM takes t JOIN pages p ON p.id = t.page_id
+           WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
+           ORDER BY t.weight DESC, t.since_date DESC, t.id
+           LIMIT 25`);
+    expect(ABANDONED_TAKES_SQL).toBe(`SELECT t.id, p.slug AS page_slug, t.claim, t.weight, t.since_date
+             FROM takes t JOIN pages p ON p.id = t.page_id
+             WHERE t.active = true AND t.resolved_at IS NULL AND t.superseded_by IS NULL
+               AND t.weight >= 0.7
+               AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
+                   < (now() - INTERVAL '12 months')
+             ORDER BY t.since_date ASC, t.id
+             LIMIT 5`);
+    const top = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'listTopResolvedTakesForHolder', variant: 'member', run: e => e.listTopResolvedTakesForHolder('alice-example') }));
+    const abandoned = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'listAbandonedTakes', variant: 'member', run: e => e.listAbandonedTakes() }));
+    const expected: Array<[typeof top, string, unknown[]]> = [[top, TOP_RESOLVED_TAKES_SQL, ['alice-example']], [abandoned, ABANDONED_TAKES_SQL, []]];
+    for (const [capture, text, params] of expected) {
+      expect(capture.error).toBeUndefined();
+      expect(capture.trace.flatMap(t => (t.kind === 'query' ? [{ text: t.text, params: t.params }] : []))).toEqual([{ text, params }]);
+    }
   });
   test('issueOauthTokens runs on the transaction handle, never on the pool', async () => {
     // The client row is locked by the grant's transaction: a token INSERT on another connection waits on its foreign key.
