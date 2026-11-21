@@ -89,9 +89,12 @@ describe('the takes re-extract sends the hand-written Postgres statements', () =
     e => e.executeRaw('SELECT id FROM takes WHERE page_id=$1 AND row_num=$2', [7, 2]),
     e => e.findTakeId(7, 2)));
 
+  // Main join (da99c637a7): main's member sorted `ORDER BY 1`; the cli-members line's copy of this read
+  // (engine-sql/doctor-acc.ts listBeliefCoveredSources at de72811022) sorted `ORDER BY s.id COLLATE "C"`. The join kept
+  // main's member and re-applied this line's byte order, so the hand-written statement carries it too.
   test('listCoveredSources (coveredSources)', () => same(
     e => e.executeRaw(`SELECT s.id FROM sources s WHERE EXISTS (SELECT 1 FROM belief_events e
-    WHERE e.source_id = s.id AND e.subject_kind = 'coverage' AND e.subject_key = $1 AND e.source_incarnation = s.incarnation) ORDER BY 1`, ['["coverage"]']),
+    WHERE e.source_id = s.id AND e.subject_kind = 'coverage' AND e.subject_key = $1 AND e.source_incarnation = s.incarnation) ORDER BY s.id COLLATE "C"`, ['["coverage"]']),
     e => e.listCoveredSources('["coverage"]')));
 
   for (const pending of [false, true]) {

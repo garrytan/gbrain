@@ -36,10 +36,11 @@ export interface TruncatedMarkdownBody { slug: string; body_len: number; raw_len
 export interface RecentPageBody { compiled_truth: string | null; timeline: string | null }
 export interface GitImageHoldCount { source_id: string; images: number }
 
-// moved from core/repair/aliases.ts ORPHANED_ALIAS_COUNTS_SQL unchanged (MISSING('sa', 'canonical_slug') and MISSING('pa', 'slug') written out)
+// moved from core/repair/aliases.ts ORPHANED_ALIAS_COUNTS_SQL unchanged (MISSING('sa', 'canonical_slug') and MISSING('pa', 'slug') written out),
+// including its byte-order sort (b7d1b3b2a3 added `COLLATE "C"` there after the move; this copy had kept the old ORDER BY)
 const ORPHANED_ALIAS_COUNTS_SQL = `SELECT source_id,sum(slug_redirects)::int AS slug_redirects,sum(page_aliases)::int AS page_aliases FROM (
     SELECT sa.source_id,1 AS slug_redirects,0 AS page_aliases FROM slug_aliases sa WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=sa.source_id AND p.slug=sa.canonical_slug)
-    UNION ALL SELECT pa.source_id,0,1 FROM page_aliases pa WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=pa.source_id AND p.slug=pa.slug)) o GROUP BY source_id ORDER BY source_id`;
+    UNION ALL SELECT pa.source_id,0,1 FROM page_aliases pa WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=pa.source_id AND p.slug=pa.slug)) o GROUP BY source_id ORDER BY source_id COLLATE "C"`;
 
 // moved from core/repair/aliases.ts SOFT_DELETED_ALIAS_COUNT_SQL unchanged (SOFT_DELETED('sa', 'canonical_slug') and SOFT_DELETED('pa', 'slug') written out)
 const SOFT_DELETED_ALIAS_COUNT_SQL = `SELECT

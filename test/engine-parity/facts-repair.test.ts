@@ -419,7 +419,11 @@ describe('engine parity: group 5 facts repair statements', () => {
     // A purge in another source is no evidence for a fact of this one.
     await createSource(engine, backend, 'other');
     await recordPagePurge(engine, backend, 'other', 'other', 'h5');
-    // Written after the purge: the ledger row is no evidence for these.
+    // Written after the purge: the ledger row is no evidence for these. PGLite's now() ticks in whole milliseconds, and the
+    // evidence test is `purged_at >= created_at`, so a fact written in the purge's millisecond counted as evidenced (the
+    // CI failure on da99c637a7: evidenced 3, ambiguous 0). Let the clock move past the purges first.
+    const purgedBy = Date.now();
+    while (Date.now() <= purgedBy + 1) await Bun.sleep(1);
     await at('slash written after the purge', 'gone/early');
     await at('bare written after the purge', 'early');
     const counted = await engine.countPurgedPageFacts(['default'], 10);

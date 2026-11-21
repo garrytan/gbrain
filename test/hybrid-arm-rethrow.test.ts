@@ -177,7 +177,10 @@ describe('a refused lexical option reaches the caller', () => {
 // The rethrow above is a no-op for PGLite and Postgres because neither engine
 // raises engine_capability_missing: outside the Rust engine, the one raiser
 // (`capabilityMissing`) is called only by `sqlEngineKind`, which returns for
-// both SQL kinds and refuses any other kind.
+// both SQL kinds and refuses any other kind, and by two shared-skill steps that
+// call it only behind a Rust-brain check (main join da99c637a7: the cli-members
+// line's Rust refusals for canonical pack adoption and for activation with an
+// expected state; main's guard named sqlEngineKind alone).
 describe('no PGLite or Postgres path raises engine_capability_missing', () => {
   test('sqlEngineKind returns for pglite and postgres and refuses anything else', () => {
     expect(sqlEngineKind('pglite', 'm')).toBe('pglite');
@@ -201,6 +204,17 @@ describe('no PGLite or Postgres path raises engine_capability_missing', () => {
       }
     };
     walk(root);
-    expect(callers).toEqual(['core/sql-engine-kind.ts']);
+    expect(callers.sort()).toEqual(['core/persistence/skill-activation.ts', 'core/shared-skills/publication.ts', 'core/sql-engine-kind.ts']);
+    // Each shared-skill call sits behind isRustBrain, so a PGLite or Postgres brain never reaches it.
+    const read = (rel: string) => readFileSync(join(root, rel), 'utf8');
+    const publication = read('core/shared-skills/publication.ts');
+    expect(publication.match(/\bcapabilityMissing\s*\(/g)).toHaveLength(1);
+    expect(publication).toContain("if (isRustBrain(ctx.engine)) throw capabilityMissing('persistence_journal', 'adoptSharedSkillpack');");
+    const activation = read('core/persistence/skill-activation.ts');
+    expect(activation.match(/\bcapabilityMissing\s*\(/g)).toHaveLength(1);
+    const onRust = activation.slice(activation.indexOf('async function activateOnRust('));
+    expect(onRust.slice(0, onRust.indexOf('\n}\n'))).toContain("throw capabilityMissing('persistence_journal', 'activateSharedSkillPersistence')");
+    expect(activation.match(/\bactivateOnRust\(/g)).toHaveLength(2);
+    expect(activation).toContain('if (isRustBrain(engine)) return activateOnRust(engine, options, quiescence);');
   });
 });

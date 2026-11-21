@@ -161,7 +161,9 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/rust-engine/store-members/config.ts', expr: 'key', why: P },
   // readSyncAdmissionSettingRow reads the sync admission setting under the config key its doctor check names.
   { file: 'src/core/rust-engine/store-members/doctor-checkpoints.ts', expr: 'key', why: P },
-  { file: 'src/core/rust-engine/store-members/init-schema.ts', expr: 'key', why: 'walk over the two embedding identity rows a Rust brain seeds at setup (embedding_model, embedding_dimensions), as PGLite does' },
+  // Main join (da99c637a7): main's init-schema.ts walked the two embedding identity rows by a `key` variable and was
+  // listed here; the join kept the cli-members line's init-schema.ts, which reads 'embedding_model' and
+  // 'embedding_dimensions' by literal name (both registered), so it needs no entry.
   // link-queries.ts reads the link extraction generation (a registered const key) and hands a `(key) => getConfig(brain,
   // key)` adapter to effectiveRangesEnabled; the scan reads `brain`, the store member's first argument.
   { file: 'src/core/rust-engine/store-members/link-queries.ts', expr: 'brain', why: P },
