@@ -88,7 +88,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	145	no	yes	yes	serves
+transaction	lifecycle	yes	146	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -505,15 +505,15 @@ readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	3	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	46	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	50	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	47	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	51	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	23	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	5	no	yes	yes	serves
 completeWriteRow	persistence_journal	yes	18	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	9	no	yes	yes	serves
-insertWithdrawalEffects	persistence_journal	yes	3	no	yes	yes	serves
+insertWithdrawalEffects	persistence_journal	yes	4	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	55	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	56	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -545,7 +545,7 @@ markProjectionRebuildFailed	persistence_journal	yes	1	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	4	no	yes	yes	serves
-readRequestEffects	persistence_journal	yes	8	no	yes	yes	serves
+readRequestEffects	persistence_journal	yes	9	no	yes	yes	serves
 listOverdueHeldWrites	persistence_journal	yes	1	no	yes	yes	serves
 lockOverdueHold	persistence_journal	yes	1	no	yes	yes	serves
 listOwnerRecoveryHeads	persistence_journal	yes	1	no	yes	yes	serves
@@ -560,7 +560,7 @@ retryBusyEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 requeueEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 parkEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 failEffectRow	persistence_journal	yes	1	no	yes	yes	serves
-readMirrorGateRows	persistence_journal	yes	1	no	yes	yes	serves
+readMirrorGateRows	persistence_journal	yes	2	no	yes	yes	serves
 lockEffectGuard	persistence_journal	yes	1	no	yes	yes	serves
 hasRearmableTargets	persistence_journal	yes	1	no	yes	yes	serves
 probeIdleWork	persistence_journal	yes	1	no	yes	yes	serves
