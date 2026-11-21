@@ -12,6 +12,9 @@
  *    overwritten-edits lists a database edit a managed sync import archived (seeded through the typed journal members
  *    and coordinated writes, so the version receipts name both requests) the same way on every arm; the restore is a
  *    page write on the SQL arms, and the Rust engine refuses it by name ("repair overwritten-edits page write").
+ *    accepted-takes lists the take an accepted `forget` proposal's `takes_remove` request removed (the archived version
+ *    holds the row, the live fence reserves its number) the same way on every arm; the restore is a page write on the
+ *    SQL arms, and the Rust engine refuses it by name ("repair accepted-takes page write").
  *  - Regression: these kinds read and rewrite `page_versions` through executeRaw, so a Rust brain failed on a generic
  *    executeRaw refusal that named no step.
  *  - Why existing coverage misses it: test/purged-change-reasons-repair-gst2886.test.ts,
@@ -34,6 +37,7 @@ import { resolveRepairScope, type RepairKind, type RepairResult } from '../../sr
 import { repairRunner } from '../../src/core/repair/registry.ts';
 import { renderFactsTable } from '../../src/core/facts-fence.ts';
 import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
+import { renderTakesFence, type ParsedTake } from '../../src/core/takes-fence.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -147,12 +151,12 @@ async function factTexts(engine: BrainEngine, ids: Record<string, number>) {
 const JOURNAL_KEYS = ['principal:local_cli:history-writer', 'brain'];
 
 /** A committed request of `operation` with `intent` and `outcome`; answers its row id. */
-async function committedRequest(engine: BrainEngine, requestId: string, operation: string, intent: unknown, outcome: unknown): Promise<string> {
+async function committedRequest(engine: BrainEngine, requestId: string, operation: string, intent: unknown, outcome: unknown, page: { id: number; slug: string } | null = null): Promise<string> {
   const source = await engine.readSourceMembership('default');
   await engine.lockPersistenceCounters(JOURNAL_KEYS);
   const { id } = await engine.insertWriteRequest({
     principalKind: 'local_cli', principalId: 'history-writer', requestId, operation, sourceId: 'default',
-    sourceIncarnation: source!.incarnation, pageId: null, slug: 'notes/overwritten', worktreeId: null,
+    sourceIncarnation: source!.incarnation, pageId: page?.id ?? null, slug: page?.slug ?? 'notes/overwritten', worktreeId: null,
     topologyGeneration: null, digest: 'd'.repeat(64), intent, authority: { scopes: ['write'] },
     intentBytes: 100, terminalReservation: 8192, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity',
     admitterHostId: null, counterKeys: JOURNAL_KEYS, clientRequestId: null, state: 'queued', deferredRefreshId: null,
@@ -177,6 +181,32 @@ async function seedOverwrite(engine: BrainEngine) {
     await tx.createVersion('notes/overwritten', { sourceId: 'default' });
     await tx.putPage('notes/overwritten', page('The committed file the import published.'), { sourceId: 'default' });
   });
+}
+
+
+// ---- accepted-takes ----
+
+const bet = (rowNum: number, claim: string): ParsedTake => ({ rowNum, claim, kind: 'bet', holder: 'world', weight: 0.6, active: true });
+
+/**
+ * people/mina-example: row 2 ("Mina prefers tea") was removed by a `takes_remove` request R that applied accepted
+ * proposal tp<n> (change `deactivated`); R archived the version holding the row, and the live fence reserves row 2.
+ */
+async function seedAcceptedRemoval(engine: BrainEngine) {
+  const slug = 'people/mina-example';
+  const body = (takes: ParsedTake[], reserved: number[]) => ({ type: 'person' as const, title: 'Mina Example', timeline: '',
+    compiled_truth: `# Mina Example\n\nProse.\n\n## Takes\n\n${renderTakesFence(takes, reserved)}\n` });
+  const saved = await engine.putPage(slug, body([bet(1, 'Mina will move to Lima'), bet(2, 'Mina prefers tea')], []), { sourceId: 'default' });
+  await engine.addTakesBatch([{ page_id: saved.id, row_num: 1, claim: 'Mina will move to Lima', kind: 'bet', holder: 'world', weight: 0.6, active: true, superseded_by: null }] as never);
+  const proposal = await engine.insertTrustProposal({ action: 'forget', sourceId: 'default', target: { table: 'takes', id: 1 },
+    before: { change: 'deactivated', writer_tier: 'agent_written' }, proposer: 'put_page' } as never);
+  expect(await engine.transitionTrustProposal(proposal.id, 'pending', 'accepted')).toBe(true);
+  const r = await committedRequest(engine, 'c0000000-0000-4000-8000-0000000000b1', 'takes_remove', { trust_accept: String(proposal.id), row_num: 2 }, {},
+    { id: Number(saved.id), slug });
+  await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], async () => {
+    await tx.createVersion(slug, { sourceId: 'default' });
+    await tx.putPage(slug, body([bet(1, 'Mina will move to Lima')], [2]), { sourceId: 'default' });
+  }, { requestId: r, principal: { kind: 'local_cli', id: 'history-writer' } }));
 }
 
 describe('engine parity: the history repair kinds of batch 6a', () => {
@@ -291,5 +321,17 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
     const scanned = await engine.listOverwriteCandidates('default', null, 10);
     expect(scanned.map(row => row.slug)).toEqual(['notes/overwritten']);
     return previewThenApply(engine, backend, 'overwritten-edits', 'repair overwritten-edits page write');
+  }));
+  parityTest('accepted-takes previews the take an accepted removal took, and the Rust engine refuses the restore by name', {
+    methods: ['putPage', 'addTakesBatch', 'insertTrustProposal', 'transitionTrustProposal', 'insertWriteRequest', 'completeWriteRow', 'setWriteContext',
+      'createVersion', 'listAcceptedTakeRemovals', 'readArchivedVersionBody', 'readTakeRowTier'],
+    requires: 'raw_sql', timeout: 60_000,
+  }, async (engine, backend) => withDir(async () => {
+    await seedAcceptedRemoval(engine);
+    expect((await engine.listAcceptedTakeRemovals(['default'], null)).map(r => r.row_num)).toEqual([2]);
+    const run = await previewThenApply(engine, backend, 'accepted-takes', 'repair accepted-takes page write');
+    const pageId = Number((await engine.getPage('people/mina-example', { sourceId: 'default' }))!.id);
+    expect(await engine.readTakeRowTier(pageId, 2)).not.toBeNull();
+    return run;
   }));
 });

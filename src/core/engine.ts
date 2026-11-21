@@ -3518,6 +3518,8 @@ export interface BrainEngine {
   listVersionsByChangeReason(sourceId: string, reasons: readonly string[]): Promise<import('./engine-sql/version-reasons.ts').VersionReasonRow[]>;
   /** The page's retained inline version bodies, newest first, at most `limit` (repair redacted-facts). */
   listRetainedVersionBodies(pageId: number, limit: number): Promise<Array<{ id: number; compiled_truth: string }>>;
+  /** The newest version of a page that a request archived, or null (repair accepted-takes). */
+  readArchivedVersionBody(pageId: number, receiptId: string): Promise<{ id: number; body_storage: string | null; compiled_truth: string | null; timeline: string | null } | null>;
   /** overwritten-edits: versions a managed sync import archived over a database edit, newest first (engine-sql/overwrite-reads.ts). */
   listOverwriteCandidates(sourceId: string, slugs: readonly string[] | null, limit: number): Promise<OverwriteSql.OverwriteCandidateRow[]>;
   /** The later versions of the pages, by id, with their writing request and content. */
@@ -5519,6 +5521,10 @@ export interface BrainEngine {
   listTakeSupersedeReceipts(sourceId: string, pageId: number, slug: string): Promise<Array<{ old_row: string | null; new_row: string | null }>>;
   /** Sets one take's stored `superseded_by` (null clears it), nothing else (engine-sql/takes-reads.ts). */
   setTakeSupersededBy(pageId: number, rowNum: number, supersededBy: number | null): Promise<void>;
+  /** repair accepted-takes: accepted take `forget` proposals with the `takes_remove` request that applied each, by proposal id (engine-sql/takes-reads.ts). */
+  listAcceptedTakeRemovals(sourceIds: readonly string[], proposalId: number | null): Promise<import('./engine-sql/takes-reads.ts').AcceptedTakeRemoval[]>;
+  /** The id and stored trust tier of the take in one row of a page, or null (engine-sql/takes-reads.ts). */
+  readTakeRowTier(pageId: number, rowNum: number): Promise<{ id: number; trust_tier: string } | null>;
   /** Pages with an active take and no emotional weight yet, and pages with a weight. */
   countZeroWeightWithTakes(): Promise<{ zero_weight_with_takes: number; nonzero_weight: number }>;
   /** Whether the source owns an unresolved (symbol-target) code edge. */

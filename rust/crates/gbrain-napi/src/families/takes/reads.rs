@@ -100,6 +100,20 @@ impl Brain {
         })
     }
 
+    /// `readTakeRowTier(pageId, rowNum)`: resolves `{ id, trust_tier }` of the take in that row, or null.
+    #[napi]
+    pub fn read_take_row_tier<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        row_num: i32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| match u64::try_from(page_id) {
+            Ok(page) => s.read_take_row_tier(page, row_num),
+            Err(_) => Ok(None),
+        })
+    }
+
     /// `setTakeSupersededBy(pageId, rowNum, supersededBy)`: resolves when the row is written.
     #[napi]
     pub fn set_take_superseded_by<'env>(

@@ -13,6 +13,7 @@
  *   source's versions that still hold a purged reason text, and its apply replaces each approved one only while it
  *   holds the text the apply found (rust/crates/gbrain-store/src/repair_versions.rs).
  *
+ * - `readArchivedVersionBody`: `gbrain repair accepted-takes` reads the newest version a request archived.
  * - `listRetainedVersionBodies`: `gbrain repair redacted-facts` reads a page's newest retained inline bodies.
  *
  * The purge's own bulk rewrite of stored reasons (facts/purge.ts) stays raw SQL: it matches a needle across a whole
@@ -73,4 +74,12 @@ export async function listRetainedVersionBodies(tx: Raw, pageId: number, limit: 
   const rows = await tx.executeRaw<{ id: number | string; compiled_truth: string }>(`SELECT id, compiled_truth FROM page_versions
     WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT $2`, [pageId, limit]);
   return rows.map(row => ({ id: Number(row.id), compiled_truth: row.compiled_truth }));
+}
+
+/** The newest version of page `pageId` that request `receiptId` archived, or null. */
+export async function readArchivedVersionBody(tx: Raw, pageId: number, receiptId: string): Promise<{ id: number; body_storage: string | null; compiled_truth: string | null; timeline: string | null } | null> {
+  const [row] = await tx.executeRaw<{ id: number; body_storage: string | null; compiled_truth: string | null; timeline: string | null }>(
+    `SELECT id::int AS id, body_storage, compiled_truth, timeline FROM page_versions
+      WHERE page_id = $1 AND archived_write_request_id::text = $2 ORDER BY id DESC LIMIT 1`, [pageId, receiptId]);
+  return row ?? null;
 }

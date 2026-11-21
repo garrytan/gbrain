@@ -298,6 +298,7 @@ export const RUST_ENGINE_MEMBERS = {
   listVersionsByChangeReason: 'page_versions',
   replaceVersionChangeReasons: 'page_versions',
   listRetainedVersionBodies: 'page_versions',
+  readArchivedVersionBody: 'page_versions',
   listOverwriteCandidates: 'page_versions',
   listVersionsAfter: 'page_versions',
   listOverwriteLivePages: 'page_versions',
@@ -1454,6 +1455,8 @@ export const RUST_ENGINE_MEMBERS = {
   listTakePointers: 'takes',
   listTakeSupersedeReceipts: 'persistence_journal',
   setTakeSupersededBy: 'takes',
+  listAcceptedTakeRemovals: 'takes',
+  readTakeRowTier: 'takes',
   countZeroWeightWithTakes: 'salience',
   hasCodeEdgesSymbol: 'code_edges',
   // Decide family, group B: calibration profiles (the eval_capture capability serves the decide family's Z-tag records).

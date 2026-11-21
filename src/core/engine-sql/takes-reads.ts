@@ -248,3 +248,32 @@ export async function listTakeSupersedeReceipts(tx: Raw, sourceId: string, pageI
 export async function setTakeSupersededBy(tx: Raw, pageId: number, rowNum: number, supersededBy: number | null): Promise<void> {
   await tx.executeRaw('UPDATE takes SET superseded_by = $3 WHERE page_id = $1 AND row_num = $2', [pageId, rowNum, supersededBy]);
 }
+
+/** One accepted take `forget` proposal with the committed `takes_remove` request that applied it (repair accepted-takes). */
+export interface AcceptedTakeRemoval {
+  proposal_id: number; source_id: string; slug: string; page_id: number; row_num: number; receipt_id: string; change: string; writer_tier: string;
+}
+
+/**
+ * The accepted `forget` proposals on takes of the sources (not proposed by `takes_remove`, their change `deactivated` or
+ * `replaced`; `proposalId` narrows to one) joined to the committed `takes_remove` request whose intent accepts them, by
+ * proposal id.
+ */
+export async function listAcceptedTakeRemovals(tx: Raw, sourceIds: readonly string[], proposalId: number | null): Promise<AcceptedTakeRemoval[]> {
+  return tx.executeRaw<AcceptedTakeRemoval>(`SELECT p.id::int AS proposal_id, r.source_id, r.slug, r.page_id::int AS page_id,
+      (r.intent->>'row_num')::int AS row_num, r.id::text AS receipt_id, p.before_state->>'change' AS change,
+      p.before_state->>'writer_tier' AS writer_tier
+    FROM trust_proposals p
+    JOIN persistence_requests r ON r.operation = 'takes_remove' AND r.state = 'committed' AND r.source_id = p.source_id
+      AND r.intent->>'trust_accept' = p.id::text AND r.page_id IS NOT NULL AND (r.intent->>'row_num') ~ '^[0-9]+$'
+    WHERE p.action = 'forget' AND p.target_table = 'takes' AND p.status = 'accepted' AND p.proposer <> 'takes_remove'
+      AND p.before_state->>'change' IN ('deactivated', 'replaced') AND p.source_id = ANY($1::text[])
+      AND ($2::bigint IS NULL OR p.id = $2::bigint)
+    ORDER BY p.id`, [[...sourceIds], proposalId]);
+}
+
+/** The id and stored trust tier of the take in row `rowNum` of page `pageId`, or null. */
+export async function readTakeRowTier(tx: Raw, pageId: number, rowNum: number): Promise<{ id: number; trust_tier: string } | null> {
+  const [row] = await tx.executeRaw<{ id: number; trust_tier: string }>('SELECT id::int AS id, trust_tier FROM takes WHERE page_id = $1 AND row_num = $2', [pageId, rowNum]);
+  return row ?? null;
+}

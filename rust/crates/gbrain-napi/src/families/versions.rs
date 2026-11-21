@@ -195,4 +195,19 @@ impl Brain {
             s.read_version_content(&q)
         })
     }
+
+    /// `readArchivedVersionBody({ pageId, receiptId })`: resolves the newest version of the page the request archived
+    /// (`{ id, body_storage, compiled_truth, timeline }`), or null.
+    #[napi]
+    pub fn read_archived_version_body<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::repair_versions::ArchivedBodyQuery =
+                required(query, "readArchivedVersionBody query")?;
+            s.read_archived_version_body(&q)
+        })
+    }
 }

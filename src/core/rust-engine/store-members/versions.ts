@@ -129,3 +129,11 @@ export const readVersionContent: StoreMember<[versionId: number, pageId: number]
   requireInteger(member, 'page id', pageId);
   return storeCall({ member }, () => brain.readVersionContent({ versionId, pageId }));
 };
+
+/** The newest version of the page that the request archived, or null (repair_versions.rs, `receipt.archived.request_id`). */
+export const readArchivedVersionBody: StoreMember<[pageId: number, receiptId: string], { id: number; body_storage: string | null; compiled_truth: string | null; timeline: string | null } | null> =
+  async (brain, pageId, receiptId) => {
+    const member = 'readArchivedVersionBody';
+    requireInteger(member, 'page id', pageId);
+    return storeCall({ member }, () => brain.readArchivedVersionBody({ pageId, receiptId }));
+  };

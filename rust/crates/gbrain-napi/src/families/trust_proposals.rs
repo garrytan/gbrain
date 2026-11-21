@@ -94,4 +94,19 @@ impl Brain {
             s.transition_trust_proposal(id, &from, &to, after.as_ref(), decided_by.as_ref())
         })
     }
+
+    /// `listAcceptedTakeRemovals({ sourceIds, proposalId })`: resolves each accepted take `forget` proposal with the
+    /// committed `takes_remove` request that applied it, by proposal id (`gbrain repair accepted-takes`).
+    #[napi]
+    pub fn list_accepted_take_removals<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let q: gbrain_store::trust::proposals::AcceptedTakeQuery =
+                required(query, "listAcceptedTakeRemovals query")?;
+            s.list_accepted_take_removals(&q)
+        })
+    }
 }

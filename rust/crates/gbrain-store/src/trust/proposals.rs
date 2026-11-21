@@ -753,3 +753,79 @@ mod tests {
         );
     }
 }
+
+/// `listAcceptedTakeRemovals({ sourceIds, proposalId })`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct AcceptedTakeQuery {
+    pub source_ids: Vec<String>,
+    pub proposal_id: Option<i64>,
+}
+
+impl Store {
+    /// `listAcceptedTakeRemovals`: each accepted `forget` proposal on a take of the sources (not proposed by
+    /// `takes_remove`, its `before_state.change` `deactivated` or `replaced`) with the committed `takes_remove` request
+    /// that applied it (`intent.trust_accept` names the proposal, a page and a numeric `intent.row_num`), by proposal id.
+    /// `accepted-takes` (src/core/repair/accepted-takes.ts) restores the take those requests removed.
+    pub fn list_accepted_take_removals(&self, q: &AcceptedTakeQuery) -> Result<Vec<Value>> {
+        let op = "listAcceptedTakeRemovals";
+        for source in &q.source_ids {
+            no_nul(op, &[("sourceIds", source)])?;
+        }
+        let text = |v: Option<&Value>| v.and_then(crate::cli_reads::entities::arrow_text);
+        let read = self.read()?;
+        let requests: Vec<_> = crate::persistence::all_requests(&*read)?
+            .into_iter()
+            .filter(|r| {
+                r.operation == "takes_remove" && r.state == "committed" && r.page_id.is_some()
+            })
+            .collect();
+        let mut proposals: Vec<ProposalRecord> = all_records(&*read)?
+            .into_iter()
+            .filter(|p| {
+                p.action == "forget"
+                    && p.target_table == "takes"
+                    && p.status == "accepted"
+                    && p.proposer != "takes_remove"
+                    && matches!(
+                        text(p.before_state.get("change")).as_deref(),
+                        Some("deactivated" | "replaced")
+                    )
+                    && q.source_ids.contains(&p.source_id)
+                    && q.proposal_id
+                        .is_none_or(|id| i64::try_from(p.id).is_ok_and(|own| own == id))
+            })
+            .collect();
+        proposals.sort_by_key(|p| p.id);
+        let mut out = Vec::new();
+        for p in &proposals {
+            let id_text = p.id.to_string();
+            for r in &requests {
+                let row_text = text(r.intent.get("row_num"));
+                let Some(row_num) = row_text
+                    .as_deref()
+                    .filter(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()))
+                    .and_then(|t| t.parse::<i32>().ok())
+                else {
+                    continue;
+                };
+                if r.source_id != p.source_id
+                    || text(r.intent.get("trust_accept")).as_deref() != Some(id_text.as_str())
+                {
+                    continue;
+                }
+                out.push(json!({
+                    "proposal_id": p.id,
+                    "source_id": r.source_id,
+                    "slug": r.slug,
+                    "page_id": r.page_id,
+                    "row_num": row_num,
+                    "receipt_id": r.id,
+                    "change": text(p.before_state.get("change")),
+                    "writer_tier": text(p.before_state.get("writer_tier")),
+                }));
+            }
+        }
+        Ok(out)
+    }
+}

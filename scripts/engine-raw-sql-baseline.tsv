@@ -748,7 +748,6 @@ src/core/questions/store.ts	execute_raw	7
 src/core/reason-trailers.ts	execute_raw	1
 src/core/reindex-consent.ts	execute_raw	1
 src/core/remediation/run.ts	execute_raw	1
-src/core/repair/accepted-takes.ts	execute_raw	4
 src/core/repair/atoms-restore.ts	execute_raw	3
 src/core/repair/attribution-backfill.ts	execute_raw	5
 src/core/repair/consolidate-ties.ts	execute_raw	1

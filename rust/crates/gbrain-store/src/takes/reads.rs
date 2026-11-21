@@ -243,6 +243,13 @@ impl Store {
             .collect())
     }
 
+    /// `readTakeRowTier(pageId, rowNum)`: `{ id, trust_tier }` of the take in that row of the page, or null.
+    pub fn read_take_row_tier(&self, page_id: u64, row_num: i32) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(take_at(&*read, page_id, row_num)?
+            .map(|t| json!({ "id": t.id, "trust_tier": t.trust.tier().as_str() })))
+    }
+
     /// `setTakeSupersededBy(pageId, rowNum, supersededBy)`: stores the take's `superseded_by`
     /// (null clears it). The `UPDATE` sets no other column, so `updated_at` and the trust stamp stay.
     pub fn set_take_superseded_by(

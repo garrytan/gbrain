@@ -13,6 +13,9 @@
 //!   (`receipt.written.request_id`) is a committed database write that published no file; no `git` effect carries the
 //!   version's revision. Request JSON is read with SQL's `->>` text rule ([`json_text`]).
 //!
+//! - `readArchivedVersionBody`: `gbrain repair accepted-takes` reads the newest version of a page that a request
+//!   archived (`receipt.archived.request_id`).
+//!
 //! A source's versions are the versions of every page row of the source, live or soft-deleted, as the SQL's join
 //! on `pages` reads them.
 
@@ -321,6 +324,28 @@ impl Store {
         Ok(out)
     }
 
+    /// The newest version of page `pageId` that request `receiptId` archived: `{ id, body_storage, compiled_truth,
+    /// timeline }`, or none.
+    pub fn read_archived_version_body(&self, q: &ArchivedBodyQuery) -> Result<Option<Value>> {
+        no_nul("readArchivedVersionBody", &[("receiptId", &q.receipt_id)])?;
+        let Ok(page_id) = u64::try_from(q.page_id) else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        Ok(versions_of(&*read, page_id)?
+            .into_iter()
+            .filter(|v| v.receipt.archived.request_id.as_deref() == Some(q.receipt_id.as_str()))
+            .max_by_key(|v| v.id)
+            .map(|v| {
+                json!({
+                    "id": v.id,
+                    "body_storage": v.body_storage.clone().unwrap_or_else(|| "inline".into()),
+                    "compiled_truth": v.compiled_truth.as_deref(),
+                    "timeline": v.timeline.as_deref(),
+                })
+            }))
+    }
+
     /// The content of version `versionId` of page `pageId`, or none.
     pub fn read_version_content(&self, q: &VersionContentQuery) -> Result<Option<Value>> {
         let (Ok(page_id), Ok(version_id)) = (u64::try_from(q.page_id), u64::try_from(q.version_id))
@@ -418,4 +443,12 @@ fn content_json(v: &VersionRecord) -> Value {
         "frontmatter": Value::Object(v.frontmatter.clone()),
         "tags": v.tags,
     })
+}
+
+/// `readArchivedVersionBody({ pageId, receiptId })`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchivedBodyQuery {
+    pub page_id: i64,
+    pub receipt_id: String,
 }
