@@ -37,9 +37,8 @@ import { waitForWrite, writeResponse } from '../persistence/service.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const PURGED_PAGE_FACTS_INTENT = 'managed_maintenance_expire_purged_page_facts';
 /** The request slug of every batch: a dot-led segment, which no page slug may have. */
@@ -150,7 +149,7 @@ export const purgedPageFactsRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     // The expiry still locks and updates facts through raw SQL, so a Rust brain stops here by name, before its first write.
-    if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair purged-page-facts expire');
+    requireRawSql(ctx.engine, 'repair purged-page-facts expire');
     const item = entry as BatchItem;
     const result = await managedPersistenceEnabled(ctx.engine)
       ? await expireManaged(ctx.engine, ctx.config, item, ctx.writeWaitMs)

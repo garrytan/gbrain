@@ -24,10 +24,9 @@ import { syncGit } from './sync-discovery.ts';
 import { readDeletionProvenance, type DeletionProvenance } from './sync-origin-evidence.ts';
 import { fileMatchesSnapshot } from './page-prepare.ts';
 import { twinMergeConflicts } from './twin-merge.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
 import { literalPathspecs } from '../git-env.ts';
 import { privateSnapshotFilterFragment } from '../search/private-visibility.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export interface MovedPageRef { page_id: number; slug: string; revision: string; path: string }
 export type MovedEvidence = 'same_commit' | 'first_commit';
@@ -139,7 +138,7 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
   if (storage?.segmented) return held('segmented_versions', `${old.path} moved to ${row.source_path}, but page ${old.slug} or one of its saved versions is stored in segments (over 1 MiB), whose body generations belong to ${old.slug} and cannot move to ${row.slug}, so it stays as it is`, [row.slug]);
   // The access comparison reads the privacy predicate (privateSnapshotFilterFragment, page_readers, folder_rule_ids): no
   // typed member serves it, so an engine without raw SQL stops here by name.
-  if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', 'repair moved-pages access check');
+  requireRawSql(engine, 'repair moved-pages access check');
   const access = await engine.executeRaw<{ id: number; readers: unknown; folder: unknown; readable_by: unknown; world: boolean }>(`SELECT p.id, p.page_readers AS readers, p.folder_rule_ids AS folder,
     p.frontmatter->'readable_by' AS readable_by, ${privateSnapshotFilterFragment('p')} AS world FROM pages p WHERE p.id=ANY($1::int[])`, [[old.page_id, Number(row.id)]]);
   const key = (id: number) => { const page = access.find(entry => Number(entry.id) === id); return page ? JSON.stringify([page.readers, page.folder, page.readable_by, page.world]) : null; };

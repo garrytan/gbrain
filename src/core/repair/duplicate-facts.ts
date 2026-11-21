@@ -44,8 +44,7 @@ import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export interface DuplicateRow {
   id: number;
@@ -171,7 +170,7 @@ export const duplicateFactsRepair: RepairHandler = {
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { group, hash, last } = entry as GroupItem;
     // The live recheck, the supersede and the page strike (the page write door) run through raw SQL, so a Rust brain stops here by name, before its first write.
-    if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair duplicate-facts page write');
+    requireRawSql(ctx.engine, 'repair duplicate-facts page write');
     const { retired, segmented } = await retireGroup(ctx, entry, group);
     if (last) await clearApprovedSet(ctx.engine, { command: 'duplicate-facts', hash });
     const changed = group.retire.filter(r => !retired.includes(r.id) && !segmented.includes(r.id)).map(r => r.id);

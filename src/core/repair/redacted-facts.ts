@@ -48,8 +48,6 @@
  * revisions. Nothing runs on upgrade.
  */
 import type { BrainEngine } from '../engine.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { parseFactsFence, parseFactsFenceFor } from '../facts-fence.ts';
@@ -69,6 +67,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { readBodyRange } from '../page-body/read-range.ts';
 import { sortSourcesById } from '../source-rows.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const REDACTED_FACTS_INTENT = 'managed_maintenance_restore_redacted_facts';
 const RESTORE_PATTERNS = [...INJECTION_PATTERNS, LEGACY_EVAL_SHELL];
@@ -278,7 +277,7 @@ export const redactedFactsRepair: RepairHandler = {
     });
     const restored: number[] = [];
     // A fence row is restored by a page write (lane 7's put_page); stop before any write of the page, database rows included.
-    if (lacksRawSql(engine) && unchanged.some(f => f.route === 'fence')) throw capabilityMissing('raw_sql', 'repair redacted-facts page write');
+    if (unchanged.some(f => f.route === 'fence')) requireRawSql(engine, 'repair redacted-facts page write');
     const dbOnly = unchanged.filter(f => f.route === 'database');
     if (dbOnly.length) restored.push(...await restoreDatabaseRows(engine, page, hash, dbOnly));
     const fenced = unchanged.filter(f => f.route === 'fence');

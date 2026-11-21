@@ -30,8 +30,8 @@ export async function listOverwriteCandidates(raw: Raw, sourceId: string, slugs:
   return raw.executeRaw<OverwriteCandidateRow>(`SELECT v.id AS version_id, v.page_id, p.slug, v.knowledge_revision::text AS lost_revision,
       w.id::text AS db_request_id, w.operation AS db_operation, s.id::text AS import_request_id, s.completed_at AS imported_at,
       COALESCE(w.outcome->'persistence'->>'mode' = 'database', false) AS db_outcome_known, v.body_storage, v.title, v.type, v.compiled_truth, v.timeline, v.frontmatter, v.tags
-    FROM pages p
-    JOIN page_versions v ON v.page_id = p.id
+    FROM page_versions v
+    JOIN pages p ON p.id = v.page_id
     JOIN persistence_requests s ON s.id = v.archived_write_request_id
     JOIN persistence_requests w ON w.id = v.write_request_id
     WHERE p.source_id = $1 AND p.deleted_at IS NULL AND ($3::text[] IS NULL OR p.slug = ANY($3::text[]))

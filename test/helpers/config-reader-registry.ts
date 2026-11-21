@@ -25,6 +25,7 @@ export interface InternalConfigState {
 
 export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'version', reason: 'schema version stamp written by migrate.ts' },
+  { key: 'persistence.writer_admin_lock', reason: 'the writer administration lock gbrain writer lock/unlock writes (persistence/admin-contract.ts); writer claim, activate and transfer refuse while it is set, so it is not a config set knob' },
   { key: 'transcripts.archive.pinned_timezone.', prefix: true, reason: 'the timezone the conversation archive pinned for a source on its first run (transcripts/archive.ts); a hand edit would re-slice every archived day' },
   { key: 'transcripts.archive.audience.', prefix: true, reason: 'the audience (personal or shared) the conversation archive last ran under per source (transcripts/archive.ts); it decides when earlier pages are kept to the owner' },
   { key: 'transcripts.archive.rescope_capped.', prefix: true, reason: 'the number of archive folders when the owner-only re-scope passed the per-source rule limit and kept the whole conversations/ folder to the owner instead (transcripts/archive.ts); status and doctor report it' },
@@ -91,6 +92,8 @@ const P = 'parameter' as const;
 export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/commands/autopilot/install-consent.ts', expr: 'k', why: P },
   { file: 'src/commands/config.ts', expr: 'key', why: 'gbrain config get <key>: the operator names the key' },
+  { file: 'src/core/rust-engine/store-members/managed-sync-orphans.ts', expr: 'key', why: P },
+  { file: 'src/core/rust-engine/store-members/sync-status-reads.ts', expr: 'configKey', why: 'SYNC_ADMISSION_SETTING_PARAMS[0], the sync.admission key (persistence/sync-admission.ts), destructured with its set-op pin' },
   { file: 'src/core/heal-audit.ts', expr: 'key', why: P },
   { file: 'src/commands/decide/probe-query.ts', expr: 'key', why: P },
   { file: 'src/commands/doctor/checks/keyword-plan.ts', expr: 'key', why: P },
@@ -157,7 +160,6 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/questions/phase.ts', expr: 'key', why: P },
   { file: 'src/core/reindex-consent.ts', expr: 'key', why: P },
   { file: 'src/core/rust-engine/store-members/config.ts', expr: 'key', why: P },
-  { file: 'src/core/rust-engine/store-members/init-schema.ts', expr: 'key', why: 'walk over the two embedding identity rows a Rust brain seeds at setup (embedding_model, embedding_dimensions), as PGLite does' },
   // link-queries.ts reads the link extraction generation (a registered const key) and hands a `(key) => getConfig(brain,
   // key)` adapter to effectiveRangesEnabled; the scan reads `brain`, the store member's first argument.
   { file: 'src/core/rust-engine/store-members/link-queries.ts', expr: 'brain', why: P },

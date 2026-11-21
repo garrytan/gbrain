@@ -11,9 +11,7 @@
  * as one string. Its timeline region is searched block by block for a fence
  * marker, and each such page is counted (`segmented_pages`) and named.
  */
-import { lacksRawSql } from '../engine-capabilities.ts';
 import type { BrainEngine } from '../engine.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../persistence/connector-kinds.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
@@ -24,6 +22,7 @@ import { segmentedRegionContains } from '../page-body/segment-lines.ts';
 import { countOutsideCode, locateOutsideCode } from '../fence-scan.ts';
 import { SEGMENTED_SAMPLE } from './timeline.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairScope, type RepairCursor } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 /**
  * The page with every below-sentinel fence moved into its body, or null when
@@ -93,7 +92,7 @@ export const connectorFencesRepair: RepairHandler = {
     if (!snapshot) return false;
     const next = relocateTimelineFences(snapshot.page);
     if (!next) return false;
-    if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair connector-fences page write');
+    requireRawSql(ctx.engine, 'repair connector-fences page write');
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug: item.slug, source_id: item.source_id,
       content: serializePageToMarkdown({ ...snapshot.page, ...next }, snapshot.tags), expected_revision: snapshot.revision,
       request_id: await repairRequestId(ctx, 'connector-fences', item, snapshot.revision) } });

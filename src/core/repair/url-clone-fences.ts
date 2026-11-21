@@ -53,8 +53,7 @@ import { resolveSlugForPath } from '../sync.ts';
 import { isOwnedClone, trackedChanges, urlCloneReadOnly, urlCloneRepairPreviewArgv } from '../url-clone.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan } from './core.ts';
 import { readSourceStates } from '../source-rows.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/repair.md#url-clone-fences';
 /** preview-approval's command union predates this kind; the store keys on the string alone. */
@@ -238,7 +237,7 @@ export const urlCloneFencesRepair: RepairHandler = {
   async apply(ctx, entry, opts) {
     // The page import publishes through the page write door and the clone checks read sources through raw SQL, so a Rust brain
     // stops here by name, before the filesystem lock, the backup or the first write.
-    if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair url-clone-fences page write');
+    requireRawSql(ctx.engine, 'repair url-clone-fences page write');
     const item = entry as FileItem;
     const { file } = item;
     const outcome = await withSourceFilesystemLock(ctx.engine, file.root,

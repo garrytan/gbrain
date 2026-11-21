@@ -24,7 +24,6 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
-import { capabilityMissing, servesRawSql } from '../rust-engine/errors.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { recordRenameAlias } from '../page-state/rename-alias.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
@@ -32,6 +31,7 @@ import { refreshRelationships, type RelationshipKey } from '../link-relationship
 import { SYNC_IMPORT_PROVENANCE_OP } from './sync-holds.ts';
 import { ORIGIN_TWIN_REASON } from './origin-twins.ts';
 import { twinLinkLosersStatement, twinMoveRowsStatement, twinTransitionLosersStatement } from '../engine-sql/repair-page-scans.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 /** Link provenances re-derived from page bodies and frontmatter: a survivor with the same body re-derives each one. */
 export const DERIVED_LINK_SOURCES = ['markdown', 'frontmatter', 'mentions', 'wikilink-resolved'];
@@ -68,7 +68,7 @@ export async function twinMergeConflicts(engine: Pick<BrainEngine, 'listTwinMerg
  * the refusal names the merge, not the first raw statement. PGLite, Postgres and transaction handles pass.
  */
 export function requireTwinMerge(engine: object, step: string): void {
-  if (!servesRawSql(engine)) throw capabilityMissing('raw_sql', `${step} (mergeTwinInto moves the twin's links, timeline, raw data, tags, aliases and facts through raw SQL)`);
+  requireRawSql(engine, `${step} (mergeTwinInto moves the twin's links, timeline, raw data, tags, aliases and facts through raw SQL)`);
 }
 
 async function relationshipKeys(exec: Exec, table: 'links' | 'link_transitions', pageIds: number[]): Promise<RelationshipKey[]> {

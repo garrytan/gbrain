@@ -71,6 +71,16 @@ export function requireRawSqlPublication(engine: object, step: string, why: stri
 }
 
 /**
+ * The named refusal of a step that still runs raw SQL (a repair's page or fact write, a privacy scan, a twin fold, the
+ * refresh writer), on an engine without `raw_sql` (the Rust engine). The step calls it before it reads or writes, so
+ * `step` names what did not run. PGLite, Postgres and transaction handles (no capability set) pass, so no SQL engine
+ * path raises it. `capability` names a narrower missing family when there is one; `outcome` says what already ran.
+ */
+export function requireRawSql(engine: object, step: string, opts: { capability?: Capability; outcome?: CapabilityOutcome } = {}): void {
+  if (!reports(engine, 'raw_sql')) throw capabilityMissing(opts.capability ?? 'raw_sql', step, opts.outcome);
+}
+
+/**
  * Whether `engine` can hold managed-checkout state at all. Without `managed_persistence` no worktree, refresh or
  * worktree-owned write can exist (their admission refuses above), so an owner scan over them has nothing to find and
  * returns empty instead of reading. PGLite, Postgres and transaction handles (no capability set) answer true.

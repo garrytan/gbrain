@@ -50,9 +50,8 @@ import { maintenancePreflight, publishMaintenancePage, submitDatabaseMaintenance
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { filesInCheckout, importAtRevision, labelFileRefusal, writeLabelFile } from './label-write.ts';
 import { PLAN_STATEMENT_MS } from './visibility.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const OPEN_FACTS_INTENT = 'managed_maintenance_open_fact_visibility';
 /** Facts one preview lists and one `--apply --expect` opens (`--limit` sets it, up to OPEN_FACTS_WINDOW_MAX). */
@@ -265,7 +264,7 @@ async function planUndo(engine: BrainEngine, scope: RepairScope, sel: Selection,
  * trust proposals), a predicate the Rust store does not carry, so a Rust brain stops here by name, before any of those reads.
  */
 function refusePrivacyScan(engine: BrainEngine): void {
-  if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', 'repair open-facts privacy scan');
+  requireRawSql(engine, 'repair open-facts privacy scan');
 }
 
 const listingOf = (groups: Group[]) => groups.flatMap(group => group.facts.map(fact => ({ item: `${group.source_id}:${group.slug}`, class: group.cls, detail: factLabel(group, fact) })));

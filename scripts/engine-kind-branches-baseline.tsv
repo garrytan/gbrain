@@ -166,7 +166,7 @@ src/core/persistence/journal.ts	kind_compare	2
 src/core/persistence/limits.ts	kind_compare	1
 src/core/persistence/links-maintenance.ts	kind_compare	1
 src/core/persistence/local-client.ts	kind_compare	2
-src/core/persistence/origin-index.ts	kind_compare	2
+src/core/persistence/origin-index.ts	kind_compare	1
 src/core/persistence/owner-activity.ts	kind_compare	2
 src/core/persistence/page-advisories.ts	kind_compare	1
 src/core/persistence/pool-capacity.ts	kind_compare	2

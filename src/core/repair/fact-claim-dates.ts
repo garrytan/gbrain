@@ -40,8 +40,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/repair.md#fact-claim-dates';
 /** Rows a listing line names before it counts the rest. */
@@ -220,7 +219,7 @@ export const factClaimDatesRepair: RepairHandler = {
     const { approved, hash, last } = entry as ClaimItem;
     // The page move goes through the page write door and the fact move updates facts, both raw SQL, so a Rust brain stops
     // here by name, before its first write.
-    if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', approved.page ? 'repair fact-claim-dates page write' : 'repair fact-claim-dates fact write');
+    requireRawSql(ctx.engine, approved.page ? 'repair fact-claim-dates page write' : 'repair fact-claim-dates fact write');
     const outcome = approved.page ? await movePage(ctx, entry, approved.page) : await moveFacts(ctx.engine, approved.facts!);
     if (last) await clearApprovedSet(ctx.engine, { command: 'fact-claim-dates', hash });
     return outcome;

@@ -5,12 +5,11 @@
  * terminal. A run stops at the first pending write, as before, only when no consumer here publishes (none running, or the
  * one running reports `restart_required`).
  */
-import { lacksRawSql } from '../engine-capabilities.ts';
 import type { BrainEngine } from '../engine.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
 import { outstandingAdmissionWindow } from '../persistence/limits.ts';
 import { isTerminalWriteState } from '../persistence/types.ts';
 import type { RepairItem } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export interface PendingRepair { index: number; item: RepairItem; request_id: string }
 export interface SettledRepair extends PendingRepair { state: string; error_code: string | null; error_message: string | null }
@@ -40,9 +39,7 @@ export async function settleRepairReceipts(engine: BrainEngine, unresolved: read
         error_message: row.error_message ?? null });
     }
     const refused = [...latest.values()].find(row => row.state === 'queued' && row.blocked_reason === 'engine_capability_missing');
-    if (refused && lacksRawSql(engine)) {
-      throw capabilityMissing('raw_sql', `repair write publication (request ${refused.request_id} stays queued)`, settled.length ? 'partial' : 'none');
-    }
+    if (refused) requireRawSql(engine, `repair write publication (request ${refused.request_id} stays queued)`, { outcome: settled.length ? 'partial' : 'none' });
     for (const row of [...latest.values()].sort((a, b) => (a.request_id < b.request_id ? -1 : a.request_id > b.request_id ? 1 : 0))) {
       const pending = open.get(row.request_id);
       if (!pending || !isTerminalWriteState(row.state as never)) continue;

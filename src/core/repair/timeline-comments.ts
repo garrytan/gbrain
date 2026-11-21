@@ -13,9 +13,7 @@
  * rows are database-only afterwards and are rendered back as clean marked
  * bullets by the next writer. Preview first; a second apply finds nothing.
  */
-import { lacksRawSql } from '../engine-capabilities.ts';
 import type { BrainEngine } from '../engine.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { TIMELINE_COMMENT_MARKUP } from '../persistence/canonical-projections.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
@@ -26,6 +24,7 @@ import { materializedMarkerHash } from '../timeline-marker.ts';
 import { stripHtmlComments } from '../timeline-citations.ts';
 import { SEGMENTED_SAMPLE } from './timeline.ts';
 import { repairRequestId, type RepairHandler, type RepairItem, type RepairScope, type RepairCursor } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 interface MarkupRow { id: number; page_id: number; source_id: string; slug: string; date: string; source: string; summary: string; detail: string; body_storage: string }
 
@@ -103,7 +102,7 @@ export const timelineCommentsRepair: RepairHandler = {
     const next = { compiled_truth: dropCommentBullets(snapshot.page.compiled_truth), timeline: dropCommentBullets(snapshot.page.timeline ?? '') };
     const rewrite = next.compiled_truth !== snapshot.page.compiled_truth || next.timeline !== (snapshot.page.timeline ?? '');
     if (rewrite) {
-      if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair timeline-comments page write');
+      requireRawSql(ctx.engine, 'repair timeline-comments page write');
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug: item.slug, source_id: item.source_id,
         content: serializePageToMarkdown({ ...snapshot.page, ...next }, snapshot.tags), expected_revision: snapshot.revision,
         request_id: await repairRequestId(ctx, 'timeline-comments', item, snapshot.revision) } });

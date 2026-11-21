@@ -50,8 +50,7 @@ import type { UnwithdrawnFactRow } from '../engine-sql/facts-repair.ts';
 import { attributionCompatible } from '../facts/attribution.ts';
 import type { FactPreimage } from '../generations/adapters/fact-rows.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const UNWITHDRAWN_FACTS_INTENT = 'managed_maintenance_restore_unwithdrawn_facts';
 const previewFix = (sourceId: string) => readFix('Previews the unwithdrawn-facts repair without changing anything.',
@@ -105,7 +104,7 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
     const page = rows.filter(other => other.source_id === row.source_id && other.slug === row.slug);
     // The page body and fence evidence reads are raw SQL (and the fence generation writer they follow is lane 7's), so a
     // Rust brain stops here by name once a candidate has a page.
-    if (lacksRawSql(db)) throw capabilityMissing('raw_sql', 'repair unwithdrawn-facts fence evidence');
+    requireRawSql(db, 'repair unwithdrawn-facts fence evidence');
     const [current] = await db.executeRaw<{ id: number; compiled_truth: string | null; timeline: string | null; body_storage: string | null }>(
       `SELECT id, CASE WHEN body_storage = 'segmented' THEN NULL ELSE compiled_truth END AS compiled_truth,
         CASE WHEN body_storage = 'segmented' THEN NULL ELSE timeline END AS timeline, body_storage FROM pages WHERE id = $1`, [row.page_id]);
@@ -246,7 +245,7 @@ export const unwithdrawnFactsRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     // The restore locks and rewrites facts through raw SQL, so a Rust brain stops here by name, before its first write.
-    if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair unwithdrawn-facts fact write');
+    requireRawSql(ctx.engine, 'repair unwithdrawn-facts fact write');
     const { page, hash, last } = entry as PageItem;
     const result = await managedPersistenceEnabled(ctx.engine)
       ? await restoreManaged(ctx.engine, page, hash)

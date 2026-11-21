@@ -55,8 +55,6 @@ import { CANONICAL_FILE_MISSING } from '../persistence/publication-failure.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugSql } from '../persistence/atom-origin.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement, type RepairCursor } from './core.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
 import { openTwins, openTwinsLines, openTwinsWarning, type OpenTwins } from '../access/open-twins.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import { filesInCheckout, labelFileRefusal, writeLabelFile, writeLabelPage, type LabelFileRefusal } from './label-write.ts';
@@ -66,6 +64,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { createProgress, startHeartbeat } from '../progress.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 interface DerivedRow { id: number; source_id: string; slug: string; type: string; visibility: string | null; chars: number }
 interface AtomRow extends DerivedRow { source_slug: string | null; origin_id: number | null; origin_type: string | null; origin_frontmatter: Record<string, unknown> | null; origin_folder_restricted: boolean; origin_moved_private: boolean }
@@ -395,7 +394,7 @@ export const visibilityRepair: RepairHandler = {
     const classes: readonly VisibilityClass[] = named.length ? ['pages'] : selection.class ? [selection.class] : VISIBILITY_CLASSES;
     // The events, alias and atom-lineage reads build a privacy predicate (folder rules, privacy aliases) and a named page's listing runs the open-twins scan
     // (readers and folder rules); none is ported to the Rust store, so a Rust brain stops here by name, before any read. The facts class reads no predicate.
-    if (lacksRawSql(engine) && classes.some(cls => cls !== 'facts')) throw capabilityMissing('raw_sql', 'repair visibility privacy scan');
+    if (classes.some(cls => cls !== 'facts')) requireRawSql(engine, 'repair visibility privacy scan');
     const command = visibilityPreviewCommand(scope, selection, true);
     if (named.length && opts?.apply && !opts.expect) throw opError('invalid_params', 'gbrain repair visibility --slug applies only the set a preview printed.',
       `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`);
@@ -527,7 +526,7 @@ export const visibilityRepair: RepairHandler = {
     const target = item.target ?? item.cursor;
     if (target.phase === READERS_PHASE) return applyReaders(ctx.engine, item as ReadersItem, (snapshot, content, edit, batch) => labelWrite(ctx, { ...item, cursor: target }, snapshot, content, edit, batch));
     // The fact tightening, the page label guard and the page write door all write through raw SQL, so a Rust brain stops here by name, before its first write.
-    if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair visibility page write');
+    requireRawSql(ctx.engine, 'repair visibility page write');
     return retireAfterLastItem(ctx.engine, 'visibility', item.hash, !!item.last, async () => {
       if (target.phase === 4) return await applyFactItem(ctx, item, target.id);
       const snapshot = await ctx.engine.readPageSnapshot(item.slug, { sourceId: item.source_id });

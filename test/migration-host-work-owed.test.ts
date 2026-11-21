@@ -390,11 +390,12 @@ describe('doctor, connected, reads which sources are in conflict now', () => {
 
   test('a source whose policy read fails is not inspected, so doctor keeps the warning with the inspect step', async () => {
     await live.executeRaw('INSERT INTO sources (id, name, local_path) VALUES ($1, $1, $2)', ['source-b', realpathSync(pack)]);
-    const executeRaw = live.executeRaw.bind(live);
-    live.executeRaw = (async (sql: string, params?: unknown[]) => {
-      if (sql.startsWith('SELECT config FROM sources WHERE id=$1')) throw new Error('Connection terminated unexpectedly');
-      return executeRaw(sql, params as any);
-    }) as typeof live.executeRaw;
+    // The policy read is the typed source-state read (shared-skills/setup-source-policy.ts readSourceState).
+    const readSourceState = live.readSourceState.bind(live);
+    live.readSourceState = (async (...args: Parameters<typeof live.readSourceState>) => {
+      if (args[0] === 'source-b') throw new Error('Connection terminated unexpectedly');
+      return readSourceState(...args);
+    }) as typeof live.readSourceState;
     try {
       const [row] = await owedChecks();
       expect(row?.status).toBe('warn');
@@ -403,7 +404,7 @@ describe('doctor, connected, reads which sources are in conflict now', () => {
       expect((row!.details as any).conflicts).toBeUndefined();
       expectInspectFix(row!.fix);
     } finally {
-      live.executeRaw = executeRaw;
+      live.readSourceState = readSourceState;
       await live.executeRaw("DELETE FROM sources WHERE id = 'source-b'");
     }
   }, 120_000);

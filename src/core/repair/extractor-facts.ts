@@ -65,8 +65,7 @@ import { compareWriterVersions, recentWriterVersions, writerVersionLabel } from 
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const EXTRACTOR_FACTS_INTENT = 'managed_maintenance_restore_extractor_facts';
 export { EXTRACTOR_FACTS_SOURCE_PREFIX } from '../engine-sql/facts-repair.ts';
@@ -220,7 +219,7 @@ async function finishedPages(engine: BrainEngine, hash: string, pages: Extractor
   if (!pages.length) return new Set();
   // The resume check and the restore read and write facts through raw SQL, so a Rust brain stops its apply here by name,
   // before its first write.
-  if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', 'repair extractor-facts fact write');
+  requireRawSql(engine, 'repair extractor-facts fact write');
   const committed = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT DISTINCT source_id, slug FROM persistence_requests
     WHERE state='committed' AND operation='submit_job' AND source_id=ANY($1::text[]) AND slug=ANY($2::text[])
       AND (intent->>'preview_hash'=$3 OR request_id=ANY($4::uuid[]))`,

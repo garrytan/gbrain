@@ -2,11 +2,11 @@
  * The read of `gbrain repair stale-atoms` (src/core/repair/stale-atoms.ts): `listStaleAtoms`, the live atoms whose origin
  * page is gone or moved past them with a completed extraction of its new content. Both SQL engines delegate here; the
  * Rust store serves the same member (rust/crates/gbrain-store/src/page_ops/stale_atoms.rs). The statement reuses the
- * origin-slug and managed-completion builders (persistence/atom-origin.ts, persistence/atom-maintenance.ts), vetted in
+ * origin-slug and managed-completion builders (persistence/atom-origin.ts, persistence/managed-atom-sql.ts), vetted in
  * scripts/check-engine-sql-dynamic.ts.
  */
 import type { BrainEngine } from '../engine.ts';
-import { managedAtomCompletedSql } from '../persistence/atom-maintenance.ts';
+import { managedAtomCompletedSql } from '../persistence/managed-atom-sql.ts';
 import { atomOriginSlugSql } from '../persistence/atom-origin.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;

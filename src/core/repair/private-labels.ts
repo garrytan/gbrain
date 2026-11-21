@@ -48,8 +48,6 @@
  * leaves the checkout, but the commits that held it keep the page's content.
  */
 import type { BrainEngine } from '../engine.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { openTwins, openTwinsLines, openTwinsWarning, type OpenTwins } from '../access/open-twins.ts';
 import { ownerMemberId } from '../access/owner.ts';
@@ -68,6 +66,7 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { PRIVACY_ALIASES, privacyAliasSql, privacyPartSql, privateSnapshotFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
 import { asciiLower } from '../edge-whitespace.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export type ClearClass = 'alias' | 'alias-and-visibility' | 'git-publish';
 export type KeepClass = 'pinned_question' | 'derived' | 'strong_alias' | 'explicit_visibility';
@@ -468,7 +467,7 @@ export const privateLabelsRepair: RepairHandler = {
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
     // The label scan and the dependents read evaluate the privacy predicate (privacyAliasSql, privacyPartSql), which has
     // no typed member: an engine without raw SQL stops here by name, before it reads or writes anything.
-    if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', 'repair private-labels privacy scan');
+    requireRawSql(engine, 'repair private-labels privacy scan');
     const selection: Selection = { source_ids: scope.source_ids, class: selectedClass(opts) };
     const command = previewCommand(scope, selection);
     const ledger = opts?.privateLabelsLedger;
