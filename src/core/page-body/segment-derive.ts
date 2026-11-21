@@ -15,6 +15,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import type { DerivationSweepHooks, DerivationSweepLimits, DerivationSweepOptions, DerivationSweepResult } from '../engine-sql/purge-receipt.ts';
 import { canonicalJson } from '../belief/keys.ts';
 import { planSegmentDerivations, segmentDerivationContextHash, type LiveSegment, type SegmentDerivationKind,
   type SegmentDerivationRow } from './derivations.ts';
@@ -490,9 +491,22 @@ type SweepRecord = { request_id: string; needles: string[]; patterns: string[]; 
  * purge's own call, `opts.inline`, so a purge returns `pending` soon after it recorded the sweep); the next call resumes
  * from the cursor. Returns the rows deleted.
  */
-export async function continueDerivationPurges(engine: BrainEngine, sourceId: string, opts: { first?: string; retry?: string; inline?: boolean } = {}): Promise<number> {
-  const { batchRows: maxRows, statementMs } = sweepLimits;
-  const deadline = performance.now() + (opts.inline ? Math.min(sweepLimits.inlineMs, sweepLimits.totalMs) : sweepLimits.totalMs);
+export async function continueDerivationPurges(engine: BrainEngine, sourceId: string, opts: DerivationSweepOptions = {}): Promise<number> {
+  const { deleted, work } = await engine.continueDerivationSweep(sourceId, opts, { ...sweepLimits },
+    { afterBatch: afterSweepBatch ?? undefined, beforeUnreadDelete: beforeUnreadDelete ?? undefined, statement: recordDerivationStatement });
+  if (recordSweepWork) derivationSweepWork.push(...work);
+  return deleted;
+}
+
+/**
+ * The sweep itself, as the SQL engines (PGLite, Postgres) run it for `continueDerivationSweep`: the statements, byte for byte as they
+ * were before the sweep became an engine member (test/derivation-sweep-sql-pin.test.ts). The Rust engine serves the member from its
+ * store and walks the same batches there. `limits` and `hooks` are the caller's bounds and test seams (see continueDerivationPurges).
+ */
+export async function runDerivationSweep(engine: BrainEngine, sourceId: string, opts: DerivationSweepOptions, limits: DerivationSweepLimits, hooks: DerivationSweepHooks = {}):
+  Promise<DerivationSweepResult> {
+  const { batchRows: maxRows, statementMs } = limits;
+  const deadline = performance.now() + (opts.inline ? Math.min(limits.inlineMs, limits.totalMs) : limits.totalMs);
   const pages = new Map<number, { scanned: number; normalized: number; deleted: number }>();
   if (opts.retry) await engine.executeRaw('UPDATE page_segment_derivation_purges SET stalled_at = NULL, stalled_reason = NULL, pending_reason = NULL WHERE request_id=$1::uuid', [opts.retry]);
   const skip: string[] = [];
@@ -546,7 +560,7 @@ export async function continueDerivationPurges(engine: BrainEngine, sourceId: st
   const finishParked = async (requestId: string) => {
     try {
       await engine.transaction(async tx => {
-        await tx.executeRaw("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true)", [`${statementMs}ms`, `${sweepLimits.finalizeWaitMs}ms`]);
+        await tx.executeRaw("SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true)", [`${statementMs}ms`, `${limits.finalizeWaitMs}ms`]);
         await faultPoint('purge:derivation_scope_lock', { sourceId, requestId });
         await tx.executeRaw(`SELECT pg_advisory_xact_lock(${derivationScopeLockSql('$1::text')})`, [sourceId]);
         const [purge] = await tx.executeRaw<SweepRecord>(`SELECT request_id::text AS request_id, needles, patterns, page_ids, phase, recheck, found, cursor_page,
@@ -640,7 +654,7 @@ export async function continueDerivationPurges(engine: BrainEngine, sourceId: st
             return [];
           }
           if (next.swept && !UNPAID_PIPELINES.includes(next.pipeline)) return 'paid' as const;
-          await beforeUnreadDelete?.(tx);
+          await hooks.beforeUnreadDelete?.(tx);
           const deleted = next.swept ? (await tx.executeRaw(`DELETE FROM page_segment_derivations d USING pages p WHERE d.page_id=$1 AND d.pipeline=$2
               AND d.occurrence_id=$3::bigint AND p.id = d.page_id AND p.source_id = $4 AND d.pipeline = ANY($6::text[]) AND ${derivationSweepScopeSql('d', 'p', '$5')} RETURNING 1`,
             [Number(next.page_id), next.pipeline, next.occurrence_id, sourceId, purge.page_ids, UNPAID_PIPELINES])).length : 0;
@@ -661,18 +675,17 @@ export async function continueDerivationPurges(engine: BrainEngine, sourceId: st
     }
     if (!rows) break;
     const walk = (picked as SweepRecord | null)?.phase === 'sweep' ? 'sweep' : 'verify';
-    recordDerivationStatement({ phase: walk, scanned: Number(rows[0]?.scanned ?? 0), normalized: rows.reduce((n, row) => n + Number(row.normalized), 0) });
+    hooks.statement?.({ phase: walk, scanned: Number(rows[0]?.scanned ?? 0), normalized: rows.reduce((n, row) => n + Number(row.normalized), 0) });
     if (walk === 'sweep') for (const row of rows) {
       if (row.page_id === null) continue;
       const page = pages.get(Number(row.page_id)) ?? { scanned: 0, normalized: 0, deleted: 0 };
       pages.set(Number(row.page_id), { scanned: page.scanned + Number(row.swept), normalized: page.normalized + Number(row.normalized), deleted: page.deleted + Number(row.deleted) });
     }
-    await afterSweepBatch?.();
+    await hooks.afterBatch?.();
     if (parked) await finishParked(parked);
   }
   const sorted = [...pages].sort((a, b) => a[0] - b[0]);
-  if (recordSweepWork) for (const [pageId, work] of sorted) derivationSweepWork.push({ pageId, ...work });
-  return sorted.reduce((n, [, work]) => n + work.deleted, 0);
+  return { deleted: sorted.reduce((n, [, work]) => n + work.deleted, 0), work: sorted.map(([pageId, work]) => ({ pageId, ...work })) };
 }
 
 /** SHA-256 hex (its first 32 digits) of a key, recorded in an output instead of the key's text. */

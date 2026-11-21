@@ -4146,6 +4146,14 @@ export interface BrainEngine {
   readDerivationPurgeState(requestId: string): Promise<PurgeReceiptSql.DerivationPurgeState | null>;
   /** Records a fact purge's derivation sweep in the purge's transaction (the claim forms, the pages it rewrote); a second record of the same request is a no-op. Writes page_segment_derivation_purges. */
   recordDerivationPurgeRow(row: PurgeReceiptSql.DerivationPurgeRecord): Promise<void>;
+  /**
+   * Continues the recorded derivation sweeps of `sourceId` (page-body/segment-derive.ts continueDerivationPurges documents the walk): in batches of
+   * `limits.batchRows` rows of the source in (page, pipeline, occurrence) order, deletes the rows in a sweep's scope that hold its claim, and ends
+   * a record once a verify walk deletes nothing. Returns the rows its first walks deleted. PGLite and Postgres run the walk as SQL in process (and
+   * honor `hooks` and every limit); the Rust engine runs it in its store (it honors `batchRows`, `totalMs` and `inlineMs`, and has no statement
+   * budget or scope lock, so no record stalls or waits). Reads and writes page_segment_derivations and page_segment_derivation_purges.
+   */
+  continueDerivationSweep(sourceId: string, opts: PurgeReceiptSql.DerivationSweepOptions, limits: PurgeReceiptSql.DerivationSweepLimits, hooks?: PurgeReceiptSql.DerivationSweepHooks): Promise<PurgeReceiptSql.DerivationSweepResult>;
   /** The claims' normalized, folded forms a fact purge's derivation probe and sweep search for: distinct, sorted, none empty (page-body/segment-derive.ts derivationNeedles). Reads no table. */
   listDerivationClaimForms(claims: readonly string[]): Promise<string[]>;
   // The parks and owed-purge records of a derived-origin purge (engine-sql/origin-holds.ts).

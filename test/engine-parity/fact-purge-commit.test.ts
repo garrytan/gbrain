@@ -116,15 +116,17 @@ describe('engine parity: a whole fact purge', () => {
     };
   });
 
-  parityTest('purge_fact --status --continue writes through the derivation sweep: the Rust arm refuses it before it reads or writes anything', {
-    // The continue's first stop is the sweep's raw SQL, which the Rust engine refuses with the raw_sql capability.
-    methods: ['readWriteRequest'],
-    requires: 'raw_sql',
+  parityTest('purge_fact --status --continue writes through the derivation sweep: the Rust arm refuses it, on the first stop left, before it reads or writes anything', {
+    // The sweep it continues is served on Rust; the first stop left on the continue is the receipt's effect read (the `facts` capability).
+    methods: ['readWriteRequest', 'loadPurgeTarget'],
     timeout: 60_000,
   }, async (engine, backend) => {
     await registerLocalWriter(engine, 'cli');
     const called = new Set<string>();
     const ctx = contextFor(noting(engine, called));
+    // A `facts` member the case reaches on every arm, so the Rust arm's refusal (`facts`, the receipt's effect read) is one it expects.
+    await engine.loadPurgeTarget(1, SRC);
+    called.clear();
     const outcome = await purge.handler(ctx, { status: true, continue: true, request_id: REQUEST })
       .then(() => ({ code: 'ok' }), (error: unknown) => ({ error }));
     if (!('error' in outcome)) return outcome;
@@ -132,10 +134,10 @@ describe('engine parity: a whole fact purge', () => {
     if (backend !== 'rust') return { code: error.code };
     expect({ backend, code: error.code }).toEqual({ backend: 'rust', code: 'engine_capability_missing' });
     expect([...called]).toEqual([]);
-    // This lane's own sweep is the stop: the continue reads and writes through raw SQL until it is typed.
-    expect(error.message).toContain('which needs continueDerivationPurges');
-    expect(error.message).toContain('owner lane 13, due 5 PM PST Nov 24');
-    expect(error.detail).toContain('owner="lane 13" due="5 PM PST Nov 24"');
+    // The sweep is no stop any more (it is the typed continueDerivationSweep); lane 4's receipt read of the effects is the first one left.
+    expect(error.message).toContain('which needs listPurgeEffects');
+    expect(error.message).toContain('owner lane 4 (rust-5a 90e7bea933), due 5 PM PST Nov 25');
+    expect(error.detail).toContain('owner="lane 4 (rust-5a 90e7bea933)" due="5 PM PST Nov 25"');
     throw outcome.error;
   });
 });

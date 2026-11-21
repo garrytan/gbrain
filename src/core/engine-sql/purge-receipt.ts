@@ -30,6 +30,23 @@ export async function readDerivationPurgeState(tx: Raw, requestId: string): Prom
   return row ? { state: row.stalled ? 'stalled' : 'pending', reason: row.stalled ? row.reason ?? 'statement_timeout' : row.pending ?? null } : null;
 }
 
+/** Which sweep `continueDerivationSweep` continues: `first` is walked first, `retry` is a stalled one to try again, `inline` bounds the call by the lower inline budget. */
+export interface DerivationSweepOptions { first?: string; retry?: string; inline?: boolean }
+/**
+ * The bounds of a sweep (page-body/segment-derive.ts DERIVATION_SWEEP_LIMITS): rows per batch, milliseconds a call starts new batches for
+ * (`inlineMs` for the purge's own call), a statement's budget and the wait for the scope lock. The Rust store honors `batchRows`,
+ * `totalMs` and `inlineMs`: it has no statement budget and no scope lock to wait on.
+ */
+export interface DerivationSweepLimits { batchRows: number; totalMs: number; statementMs: number; inlineMs: number; finalizeWaitMs: number }
+/** Test seams of the SQL engines' sweep (they run it in process); the Rust engine, which runs it in its store, ignores them. */
+export interface DerivationSweepHooks {
+  afterBatch?: () => Promise<void>;
+  beforeUnreadDelete?: (tx: BrainEngine) => Promise<void>;
+  statement?: (entry: { phase: 'sweep' | 'verify' | 'probe'; scanned: number; normalized: number }) => void;
+}
+/** The rows the sweep's first walk deleted, in all and per page with the rows it read and normalized there. */
+export interface DerivationSweepResult { deleted: number; work: Array<{ pageId: number; scanned: number; normalized: number; deleted: number }> }
+
 /** What a fact purge records of its derivation sweep: the purge request, the claim forms (derivationNeedles) and the pages it rewrote. */
 export interface DerivationPurgeRecord { requestId: string; sourceId: string; needles: readonly string[]; patterns: readonly string[]; pageIds: readonly number[] }
 

@@ -212,7 +212,7 @@ fn nullable(value: &Value) -> ProbeCell {
 }
 
 /// `COALESCE(col::text, '')` of that column.
-fn sql_text(value: &Value) -> String {
+pub(super) fn sql_text(value: &Value) -> String {
     if value.is_null() {
         String::new()
     } else {
@@ -317,7 +317,7 @@ fn like(text: &str, pattern: &str) -> bool {
 }
 
 /// `foldSql(lower(text)) LIKE ANY (patterns)`: the words of a claim occur in the text in the claim's order.
-fn has_words(text: &str, patterns: &[String]) -> bool {
+pub(super) fn has_words(text: &str, patterns: &[String]) -> bool {
     let folded = derivation_fold(&pg_lower(text));
     patterns.iter().any(|p| like(&folded, p))
 }

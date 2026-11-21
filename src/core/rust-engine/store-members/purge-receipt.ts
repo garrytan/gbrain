@@ -12,9 +12,12 @@
  *   one exception: it answers true though the store keeps none, the documented present-but-empty convention (`clearQueryCache`
  *   answers 0), so the purge receipt names no missing cache, as on a brain whose cache holds no row. A quoted or other-schema
  *   name answers false.
- * - `recordDerivationPurgeRow` and `readDerivationPurgeState` go to the store (page_body/purge_record.rs): the store keeps the sweep
- *   record, `page_segment_derivation_purges` is a relation it keeps, and a recorded sweep reads `pending` (null for none). The store
- *   walks no sweep, so a record is never stalled and is never deleted by the store (continueDerivationPurges runs through raw SQL).
+ * - `recordDerivationPurgeRow`, `readDerivationPurgeState` and `continueDerivationSweep` go to the store (page_body/purge_record.rs,
+ *   page_body/derivation_sweep.rs): the store keeps the sweep record, `page_segment_derivation_purges` is a relation it keeps, and a
+ *   recorded sweep reads `pending` (null for none). The store walks the sweep batch for batch as the SQL engines do (src/core/page-body/
+ *   segment-derive.ts runDerivationSweep) and deletes the record when a verify walk deletes nothing. It honors `batchRows`, `totalMs`
+ *   and `inlineMs`; it has no statement budget (no batch times out, halves or deletes a row unread, no record stalls: the state
+ *   never reads `stalled`) and no scope lock (no record waits on `scope_lock_busy`); the test seams `hooks` stay in the SQL engines.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { GRADUATION_INVENTORY } from '../../persistence/graduation-inventory.ts';
@@ -46,7 +49,7 @@ export const relationExists: Member<'relationExists'> = async (_brain, table) =>
   return name !== null && keptRelations().has(name);
 };
 
-/** (store `readDerivationPurgeState`) `pending` for a recorded sweep, null for none: the store walks no sweep, so none is stalled. */
+/** (store `readDerivationPurgeState`) `pending` for a recorded sweep, null for none (the sweep that ends a record is `continueDerivationSweep`); the store has no statement budget, so none is stalled. */
 export const readDerivationPurgeState: Member<'readDerivationPurgeState'> = (brain, requestId) =>
   storeCall({ member: 'readDerivationPurgeState' }, () => brain.readDerivationPurgeState({ requestId })) as ReturnType<Member<'readDerivationPurgeState'>>;
 
@@ -55,3 +58,9 @@ export const recordDerivationPurgeRow: Member<'recordDerivationPurgeRow'> = asyn
   await storeCall({ member: 'recordDerivationPurgeRow' }, () => brain.recordDerivationPurgeRow({
     requestId: row.requestId, sourceId: row.sourceId, needles: [...row.needles], patterns: [...row.patterns], pageIds: [...row.pageIds] }));
 };
+
+/** (store `continueDerivationSweep`) One call of the sweep: the batches it ran, the rows its first walk deleted and where. */
+export const continueDerivationSweep: Member<'continueDerivationSweep'> = (brain, sourceId, opts, limits) =>
+  storeCall({ member: 'continueDerivationSweep' }, () => brain.continueDerivationSweep({
+    sourceId, first: opts.first ?? null, retry: opts.retry ?? null, inline: opts.inline === true,
+    batchRows: limits.batchRows, totalMs: limits.totalMs, inlineMs: limits.inlineMs })) as ReturnType<Member<'continueDerivationSweep'>>;

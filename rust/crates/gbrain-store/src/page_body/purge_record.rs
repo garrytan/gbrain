@@ -2,8 +2,9 @@
 //!
 //! Members: `recordDerivationPurgeRow` (the purge's `INSERT ... ON CONFLICT (request_id) DO NOTHING`) and `readDerivationPurgeState`.
 //! The record is the claim's folded forms (`needles`, `patterns`) and `page_ids`, the pages the purge rewrote, keyed by the
-//! purge request: `b 0x09 <request id>`. The store keeps no sweep that walks it, so a record stays `pending` and carries no
-//! cursor, phase or stall (`readDerivationPurgeState` answers `pending` with no reason for it, null for no record).
+//! purge request: `b 0x09 <request id>`. The walk (derivation_sweep.rs) keeps its phase, cursor and found count in the record. The
+//! store has no statement budget and no scope lock, so a record is never stalled and never waits on a lock
+//! (`readDerivationPurgeState` answers `pending` with no reason for it, null for no record).
 //!
 //! While a record is there, `upsertSegmentDerivations` drops a row of the record's source that the sweep would delete (its
 //! page rewritten by the purge, deleted, or no live segment backing the row: `purge_probe::swept`) and that holds the claim
@@ -27,12 +28,21 @@ use std::collections::HashSet;
 /// One recorded sweep. `page_ids` keep the order the purge gave them (the table's `int[]`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SweepRecord {
-    request_id: String,
-    source_id: String,
-    needles: Vec<String>,
-    patterns: Vec<String>,
-    page_ids: Vec<i64>,
-    created_at_us: i64,
+    pub(super) request_id: String,
+    pub(super) source_id: String,
+    pub(super) needles: Vec<String>,
+    pub(super) patterns: Vec<String>,
+    pub(super) page_ids: Vec<i64>,
+    pub(super) created_at_us: i64,
+    /// The walk the record is in: `sweep` (empty for a record kept before the store walked), then `verify` until a walk deletes nothing.
+    #[serde(default)]
+    pub(super) phase: String,
+    /// The key of the last row the walk read: `(page, pipeline, occurrence)`; none before its first batch and after a walk ends.
+    #[serde(default)]
+    pub(super) cursor: Option<(u64, String, i64)>,
+    /// The rows the current walk has deleted.
+    #[serde(default)]
+    pub(super) found: i64,
 }
 
 /// `recordDerivationPurgeRow`'s arguments: the purge request and what its sweep searches for.
@@ -53,7 +63,7 @@ pub struct DerivationPurgeStateArgs {
     pub request_id: String,
 }
 
-fn record_key(request_id: &str) -> Vec<u8> {
+pub(super) fn record_key(request_id: &str) -> Vec<u8> {
     let mut key = kind_key(DERIVATION_PURGE);
     key.extend_from_slice(request_id.as_bytes());
     key
@@ -62,7 +72,7 @@ fn record_key(request_id: &str) -> Vec<u8> {
 /// `$1::uuid`: the canonical lowercase hyphenated text of a uuid, in every spelling Postgres accepts (`uuid_in`: optional braces,
 /// two hex digits per byte, an optional hyphen after any group of four digits but the last, upper or lower case), or the
 /// error Postgres raises for text that is not one. The record's key, its lookup and its conflict check all use this form.
-fn request_uuid(text: &str) -> Result<String> {
+pub(super) fn request_uuid(text: &str) -> Result<String> {
     let bad = || StoreError::invalid(format!("invalid input syntax for type uuid: \"{text}\""));
     let bytes = text.as_bytes();
     let braced = bytes.first() == Some(&b'{');
@@ -121,8 +131,17 @@ pub(super) fn sweep_drops(
     Ok(false)
 }
 
+/// The walk a record is in; a record kept before the store walked (no phase) is in the first.
+pub(super) fn phase_of(record: &SweepRecord) -> &str {
+    if record.phase.is_empty() {
+        "sweep"
+    } else {
+        &record.phase
+    }
+}
+
 /// The records as the table probe reads them: `source_id`, the two `text[]` columns, `page_ids` as `int[]` prints it, and the
-/// phase every record has here; the walk's cursor and the stall columns are NULL (the store walks nothing).
+/// phase and cursor pipeline of its walk; the recheck and the stall columns are NULL (the store has no scope lock or statement budget).
 pub(crate) fn probe_records(read: &dyn KvRead, f: EachRow) -> Result<()> {
     each_json::<SweepRecord>(read, &kind_key(DERIVATION_PURGE), &mut |_, record| {
         let ids: Vec<String> = record.page_ids.iter().map(i64::to_string).collect();
@@ -136,9 +155,15 @@ pub(crate) fn probe_records(read: &dyn KvRead, f: EachRow) -> Result<()> {
                     "page_ids",
                     ProbeCell::text(&format!("{{{}}}", ids.join(","))),
                 ),
-                ("phase", ProbeCell::text("sweep")),
+                ("phase", ProbeCell::text(phase_of(&record))),
                 ("recheck", ProbeCell::Null),
-                ("cursor_pipeline", ProbeCell::Null),
+                (
+                    "cursor_pipeline",
+                    record
+                        .cursor
+                        .as_ref()
+                        .map_or(ProbeCell::Null, |c| ProbeCell::text(&c.1)),
+                ),
                 ("stalled_reason", ProbeCell::Null),
                 ("pending_reason", ProbeCell::Null),
             ],
@@ -184,6 +209,9 @@ impl Store {
                     patterns: q.patterns.clone(),
                     page_ids: q.page_ids.clone(),
                     created_at_us: now,
+                    phase: "sweep".to_string(),
+                    cursor: None,
+                    found: 0,
                 },
             )
         })

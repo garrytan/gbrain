@@ -19,7 +19,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { __setAfterDerivationSweepBatchForTests, __setDerivationSweepLimitsForTests, continueDerivationPurges, recordDerivationPurge } from '../src/core/page-body/segment-derive.ts';
+import { DERIVATION_SWEEP_LIMITS, recordDerivationPurge, runDerivationSweep } from '../src/core/page-body/segment-derive.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { publishSegmentedPage, segmentText } from './helpers/page-body-fixtures.ts';
 
@@ -69,38 +69,42 @@ async function seed(slug: string, extra: { paid?: boolean } = {}): Promise<{ pag
 }
 const begin = async (id: string, pageId: number) => { await engine.transaction(tx => recordDerivationPurge(tx, id, 'default', [pageId], [CLAIM])); };
 const remaining = async (id: string) => (await engine.executeRaw('SELECT 1 FROM page_segment_derivation_purges WHERE request_id=$1::uuid', [id])).length;
-const sweep = (opts: { first?: string; retry?: string } = {}) => continueDerivationPurges(recording(engine) as BrainEngine, 'default', opts);
+let limits: { -readonly [K in keyof typeof DERIVATION_SWEEP_LIMITS]: number } = { ...DERIVATION_SWEEP_LIMITS };
+let afterBatch: (() => Promise<void>) | undefined;
+const bound = (change: Partial<typeof limits>) => { limits = { ...DERIVATION_SWEEP_LIMITS, ...change }; };
+/** The SQL engines' sweep, run on the recording engine (the engine member calls it with itself). */
+const sweep = (opts: { first?: string; retry?: string } = {}) => runDerivationSweep(recording(engine) as BrainEngine, 'default', opts, limits, { afterBatch });
 
 async function runAll(): Promise<void> {
   sent.clear();
   try {
     // 1. A full walk in batches of two rows: pick, batch, cursor, the move to the verify walk, the lock, the end of the record.
-    __setDerivationSweepLimitsForTests({ batchRows: 2 });
+    bound({ batchRows: 2 });
     const walk = request();
     await begin(walk, (await seed('notes/pin-walk', { paid: true })).pageId);
     await sweep({ first: walk });
     expect(await remaining(walk)).toBe(0);
 
     // 2. A note of a page that entered the scope during the verify walk: the end finds it and checks its page again.
-    __setDerivationSweepLimitsForTests({ batchRows: 1 });
+    bound({ batchRows: 1 });
     const noted = request();
     const { pageId } = await seed('notes/pin-noted');
     await begin(noted, pageId);
     let noteWritten = false;
-    __setAfterDerivationSweepBatchForTests(async () => {
+    afterBatch = async () => {
       const [state] = await engine.executeRaw<{ phase: string }>('SELECT phase FROM page_segment_derivation_purges WHERE request_id=$1::uuid', [noted]);
       if (state?.phase === 'verify' && !noteWritten) {
         noteWritten = true;
         await engine.executeRaw('INSERT INTO page_segment_derivation_purge_pages (request_id, page_id) VALUES ($1::uuid, $2)', [noted, pageId]);
       }
-    });
+    };
     await sweep({ first: noted });
-    __setAfterDerivationSweepBatchForTests(null);
+    afterBatch = undefined;
     expect(noteWritten).toBe(true);
     expect(await remaining(noted)).toBe(0);
 
     // 3. The end of a walk cannot take the scope lock: the record waits at the end of its walk, marked busy, and a later call ends it.
-    __setDerivationSweepLimitsForTests({ batchRows: 10, totalMs: 0 });
+    bound({ batchRows: 10, totalMs: 0 });
     const busy = request();
     await begin(busy, (await seed('notes/pin-busy')).pageId);
     installFaultHook(point => { if (point === 'purge:derivation_scope_lock') throw lockBusy(); });
@@ -110,7 +114,7 @@ async function runAll(): Promise<void> {
     expect(await remaining(busy)).toBe(0);
 
     // ... and when the lock is free by the time the record waits for it: the record is read again under it and the walk ends there.
-    __setDerivationSweepLimitsForTests({ batchRows: 10, totalMs: 60_000 });
+    bound({ batchRows: 10, totalMs: 60_000 });
     const freed = request();
     await begin(freed, (await seed('notes/pin-freed')).pageId);
     let tries = 0;
@@ -119,7 +123,7 @@ async function runAll(): Promise<void> {
     expect(await remaining(freed)).toBe(0);
 
     // 4. A batch that outruns its budget: halved to one row, then the row deleted unread, a paid row stalling the record.
-    __setDerivationSweepLimitsForTests({ batchRows: 4, totalMs: 60_000 });
+    bound({ batchRows: 4, totalMs: 60_000 });
     const paid = request();
     await begin(paid, (await seed('notes/pin-paid', { paid: true })).pageId);
     installFaultHook(point => { if (point === 'purge:derivation_batch') throw timeout(); });
@@ -131,7 +135,7 @@ async function runAll(): Promise<void> {
     try { await sweep({ first: paid, retry: paid }); } finally { installFaultHook(undefined); }
 
     // 5. The unread delete outruns the budget too: the record stalls on the statement timeout.
-    __setDerivationSweepLimitsForTests({ batchRows: 1, totalMs: 60_000 });
+    bound({ batchRows: 1, totalMs: 60_000 });
     const slow = request();
     await begin(slow, (await seed('notes/pin-slow')).pageId);
     installFaultHook(point => { if (point === 'purge:derivation_batch' || point === 'purge:derivation_unread') throw timeout(); });
@@ -140,8 +144,8 @@ async function runAll(): Promise<void> {
     expect(slowed?.stalled_reason).toBe('statement_timeout');
   } finally {
     installFaultHook(undefined);
-    __setAfterDerivationSweepBatchForTests(null);
-    __setDerivationSweepLimitsForTests(null);
+    afterBatch = undefined;
+    bound({});
   }
 }
 

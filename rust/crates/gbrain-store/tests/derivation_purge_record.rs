@@ -1,6 +1,8 @@
 //! A fact purge's derivation sweep record (`recordDerivationPurgeRow`, `readDerivationPurgeState`; page_body/purge_record.rs): the
 //! record is kept once per request, reads `pending`, is counted by the table probe within its source, and, while it is there,
-//! `upsertSegmentDerivations` drops a row the sweep would delete and that holds the claim and reports how many it dropped.
+//! `upsertSegmentDerivations` drops a row the sweep would delete and that holds the claim and reports how many it dropped. The sweep
+//! itself (`continueDerivationSweep`; page_body/derivation_sweep.rs) walks the record in batches, deletes the rows it drops and ends
+//! with the record deleted.
 
 mod common;
 
@@ -8,6 +10,7 @@ use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::error::*;
 use gbrain_store::facts::purge_plan::PurgeProbeArgs;
+use gbrain_store::page_body::derivation_sweep::DerivationSweepArgs;
 use gbrain_store::page_body::purge_record::{DerivationPurgeRecordArgs, DerivationPurgeStateArgs};
 use gbrain_store::page_body::{DerivationReadOptions, SegmentDerivationInput, SegmentedPageMeta};
 use gbrain_store::sources::SourceInput;
@@ -320,4 +323,96 @@ fn a_row_the_sweep_drops_reaches_neither_the_check_constraints_nor_the_conflict_
         CONSTRAINT_VIOLATION
     );
     assert_eq!(outputs(), vec![json!({ "excerpt": "harmless" })]);
+}
+
+fn sweep(
+    store: &Store,
+    first: Option<&str>,
+    batch_rows: i64,
+    total_ms: i64,
+) -> gbrain_store::Result<Value> {
+    store.continue_derivation_sweep(&args::<DerivationSweepArgs>(json!({
+        "sourceId": "default", "first": first, "inline": false, "batchRows": batch_rows, "totalMs": total_ms, "inlineMs": 5000,
+    })))
+}
+
+fn rows(store: &Store, page: i64) -> usize {
+    store
+        .read_segment_derivations(page, &DerivationReadOptions::default())
+        .unwrap()
+        .len()
+}
+
+#[test]
+fn a_sweep_walks_one_batch_per_call_deletes_the_rows_holding_the_claim_and_ends_with_its_record_deleted()
+ {
+    let (_dir, store) = brain("derivation-sweep");
+    let page = shell(&store, "notes/sweep");
+    // Three rows on a page whose segments back nothing, so the purge's scope holds them all: two hold the claim.
+    store
+        .upsert_segment_derivations(&[
+            derivation(page, 1, json!({ "excerpt": "Alice likes tea" })),
+            derivation(page, 2, json!({ "excerpt": "harmless" })),
+            derivation(page, 3, json!({ "excerpt": "alice  LIKES tea at noon" })),
+        ])
+        .unwrap();
+    record(&store, REQ, "default", &[], "alice likes tea").unwrap();
+    // Batches of two rows, one per call: [1 2] deletes row 1, [3] deletes row 3 and ends the walk, and the verify walk reads [2]: clean, so it ends the record.
+    let mut deleted = 0;
+    let mut calls = 0;
+    while state(&store, REQ).unwrap() != Value::Null {
+        let out = sweep(&store, Some(REQ), 2, 0).unwrap();
+        deleted += out["deleted"].as_i64().unwrap();
+        calls += 1;
+        assert!(calls < 10, "the sweep must end");
+    }
+    assert_eq!(deleted, 2);
+    assert_eq!(rows(&store, page), 1);
+    assert_eq!(calls, 3);
+    // Nothing is left to walk.
+    assert_eq!(sweep(&store, None, 2, 0).unwrap()["deleted"], json!(0));
+}
+
+#[test]
+fn a_sweep_walks_the_named_request_first_and_never_another_sources_record() {
+    let (_dir, store) = brain("derivation-sweep-order");
+    let page = shell(&store, "notes/sweep-order");
+    store
+        .upsert_segment_derivations(&[derivation(page, 1, json!({ "excerpt": "Alice likes tea" }))])
+        .unwrap();
+    record(&store, REQ, "default", &[], "alice likes tea").unwrap();
+    record(&store, REQ2, "default", &[], "bob owns a boat").unwrap();
+    record(
+        &store,
+        "c0000000-0000-4000-8000-0000000000c3",
+        "other",
+        &[],
+        "alice likes tea",
+    )
+    .unwrap();
+    // One call, one batch of the request named first: its walk has read the row and ends (the verify walk is next).
+    sweep(&store, Some(REQ2), 2, 0).unwrap();
+    assert_eq!(rows(&store, page), 1);
+    for _ in 0..8 {
+        sweep(&store, Some(REQ2), 2, 0).unwrap();
+    }
+    // REQ2 ended first; REQ was then walked and deleted its row; the other source's record is still there.
+    assert_eq!(state(&store, REQ2).unwrap(), Value::Null);
+    assert_eq!(state(&store, REQ).unwrap(), Value::Null);
+    assert_eq!(rows(&store, page), 0);
+    assert_eq!(
+        state(&store, "c0000000-0000-4000-8000-0000000000c3").unwrap(),
+        json!({ "state": "pending", "reason": null })
+    );
+}
+
+#[test]
+fn a_sweep_refuses_a_batch_of_no_rows_and_a_request_id_that_is_no_uuid() {
+    let (_dir, store) = brain("derivation-sweep-refusals");
+    assert!(sweep(&store, None, 0, 0).is_err());
+    assert!(sweep(&store, Some("not-a-uuid"), 2, 0).is_err());
+    let retry = args::<DerivationSweepArgs>(
+        json!({ "sourceId": "default", "retry": "nope", "batchRows": 2, "totalMs": 0, "inlineMs": 0 }),
+    );
+    assert!(store.continue_derivation_sweep(&retry).is_err());
 }

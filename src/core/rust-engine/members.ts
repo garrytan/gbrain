@@ -631,6 +631,7 @@ export const RUST_ENGINE_MEMBERS = {
   relationExists: 'pages',
   readDerivationPurgeState: 'pages',
   recordDerivationPurgeRow: 'pages',
+  continueDerivationSweep: 'pages',
   listDerivationClaimForms: 'facts',
   // The parks and owed-purge records of a derived-origin purge (engine-sql/origin-holds.ts).
   listPurgeOrigins: 'pages',

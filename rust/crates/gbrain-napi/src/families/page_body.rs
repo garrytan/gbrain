@@ -10,6 +10,7 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
+use gbrain_store::page_body::derivation_sweep::DerivationSweepArgs;
 use gbrain_store::page_body::purge_record::{DerivationPurgeRecordArgs, DerivationPurgeStateArgs};
 
 use crate::store_binding::{Brain, arg, required};
@@ -278,6 +279,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: DerivationPurgeStateArgs = required(args, "readDerivationPurgeState args")?;
             s.read_derivation_purge_state(&a)
+        })
+    }
+
+    /// `continueDerivationSweep(args)`: resolves `{ deleted, work }`, the rows the first walks deleted and per page the rows read.
+    #[napi]
+    pub fn continue_derivation_sweep<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DerivationSweepArgs = required(args, "continueDerivationSweep args")?;
+            s.continue_derivation_sweep(&a)
         })
     }
 

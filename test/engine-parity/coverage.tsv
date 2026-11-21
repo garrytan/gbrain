@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1435/1442
+# covered: 1436/1443
 # lifecycle: 12/12
 # pages: 60/60
 # search: 7/7
@@ -34,7 +34,7 @@
 # import_guards: 13/13
 # persistence_journal: 142/142
 # label_door: 5/5
-# page_purge: 46/46
+# page_purge: 47/47
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -736,6 +736,7 @@ clearQueryCache	page_purge	yes	2	no	yes	yes	serves
 relationExists	page_purge	yes	3	no	yes	yes	serves
 readDerivationPurgeState	page_purge	yes	7	no	yes	yes	serves
 recordDerivationPurgeRow	page_purge	yes	2	no	yes	yes	serves
+continueDerivationSweep	page_purge	yes	2	no	yes	yes	serves
 listDerivationClaimForms	page_purge	yes	7	no	yes	yes	serves
 listPurgeOrigins	page_purge	yes	2	no	yes	yes	serves
 upsertDerivedOriginPark	page_purge	yes	4	no	yes	yes	serves
@@ -991,7 +992,7 @@ readLiveStoredBody	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 listPageStates	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 countSegmentedVersionsOfPage	facts_cycle_sites	yes	1	no	yes	yes	refuses:facts
 countFactFingerprintLeftovers	facts_purge	yes	4	no	yes	yes	serves
-loadPurgeTarget	facts_purge	yes	31	no	yes	yes	serves
+loadPurgeTarget	facts_purge	yes	32	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	2	no	yes	yes	serves
 listFactsReconcileBacklog	facts_purge	yes	7	no	yes	yes	serves
 settleFactsReconcile	facts_purge	yes	4	no	yes	yes	serves

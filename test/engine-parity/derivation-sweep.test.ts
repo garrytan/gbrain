@@ -64,7 +64,7 @@ async function sweep(engine: BrainEngine, sourceId: string, first: string, until
 describe('engine parity: the derivation sweep of a fact purge', () => {
   parityTest('a sweep walks its batches, deletes the swept rows that hold the claim, keeps the others and ends with its record deleted', {
     methods: ['transaction', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration',
-      'setBodyStagingState', 'upsertSegmentDerivations', 'readSegmentDerivations', 'readDerivationPurgeState', 'recordDerivationPurgeRow', 'listDerivationClaimForms'],
+      'setBodyStagingState', 'upsertSegmentDerivations', 'readSegmentDerivations', 'readDerivationPurgeState', 'recordDerivationPurgeRow', 'listDerivationClaimForms', 'continueDerivationSweep'],
     timeout: 120_000,
   }, async (engine) => {
     const a = [segmentText('# One\nfirst segment\n'), segmentText('## Two\nsecond segment\n'), segmentText('## Three\nthird segment\n')];
@@ -90,17 +90,20 @@ describe('engine parity: the derivation sweep of a fact purge', () => {
     for (const pageId of [pa.pageId, pb.pageId]) {
       for (const r of await engine.readSegmentDerivations(pageId)) kept.push(`${label(pageId)}:${r.kind}:${occurrences.indexOf(r.occurrenceId)}`);
     }
+    // The member itself, with the call's bounds as the sweep gives it: nothing left to walk, nothing deleted.
+    const idle = await engine.continueDerivationSweep(SRC, {}, { batchRows: 2, totalMs: 0, statementMs: 5_000, inlineMs: 5_000, finalizeWaitMs: 1_500 });
+    expect(idle).toEqual({ deleted: 0, work: [] });
     expect(before).toEqual({ state: 'pending', reason: null });
     expect(steps.at(-1)!.states).toEqual([null]);
     expect(steps.slice(0, -1).every(step => (step.states[0] as { state: string }).state === 'pending')).toBe(true);
     expect(steps.reduce((n, step) => n + step.deleted, 0)).toBe(4);
     expect(kept.sort()).toEqual(['a:links:1', 'b:links:3']);
-    return { before, steps, kept: kept.sort() };
+    return { before, steps, kept: kept.sort(), idle };
   });
 
   parityTest('the request named first is swept first, then the others oldest first, and a record of another source is never walked', {
     methods: ['transaction', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration',
-      'setBodyStagingState', 'upsertSegmentDerivations', 'readSegmentDerivations', 'readDerivationPurgeState', 'recordDerivationPurgeRow', 'listDerivationClaimForms'],
+      'setBodyStagingState', 'upsertSegmentDerivations', 'readSegmentDerivations', 'readDerivationPurgeState', 'recordDerivationPurgeRow', 'listDerivationClaimForms', 'continueDerivationSweep'],
     timeout: 120_000,
   }, async (engine, backend) => {
     await createSource(engine, backend, OTHER);

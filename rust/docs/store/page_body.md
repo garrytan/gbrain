@@ -241,6 +241,21 @@ with the row's segment hash backing it) and that holds the claim (the output or 
 value or key) is not stored (it is dropped before the CHECK constraints and before the repeated-key check, as the BEFORE trigger drops it ahead of them), the stored row stays, the other rows are stored, and the member raises `derivation_purge_pending` with the
 count dropped. The table probe counts the records within their source.
 
-What the store does not do: nothing walks or ends a record. `continueDerivationPurges` (the batches, the verify walks and the record's
-deletion) runs through raw SQL, which the Rust engine refuses, so a record stays `pending`, and the scope-entry trigger's page notes
-(`page_segment_derivation_purge_pages`) have no reader. The store has no source delete, so the foreign key's cascade has nothing to remove.
+### The sweep (`page_body/derivation_sweep.rs`, `continueDerivationSweep`)
+
+`continueDerivationSweep(sourceId, { first, retry, inline }, limits)` walks the records the way the SQL engines' `runDerivationSweep`
+(`src/core/page-body/segment-derive.ts`, whose statements `test/derivation-sweep-sql-pin.test.ts` pins byte for byte) does, batch for
+batch, and `continueDerivationPurges` calls it. A call picks the record named `first`, then the source's others oldest first, and walks
+one batch of it in one write transaction: the next `batchRows` derivation rows of the source's pages after the record's cursor, in
+(page, pipeline, occurrence) order. A row in the sweep's scope (the same test the write guard above applies) that holds the claim (it
+passes the words prefilter first) is deleted. A batch that read `batchRows` rows stores the cursor and its deletions in the record
+(`phase`, `cursor`, `found`); a shorter one ends the walk. The first walk (`sweep`) is followed by a `verify` walk from the start,
+repeated until one deletes nothing, and then the record is deleted (`readDerivationPurgeState` answers null). A call starts batches
+until `totalMs` has passed (`inlineMs` for the purge's own call) and always runs one. It returns `{ deleted, work }`: the rows the first
+walks deleted, and per page the rows of those walks that were in scope, passed the prefilter and were deleted.
+
+What differs from the SQL engines: the store has no statement budget, so no batch times out, none is halved, no row is deleted unread
+and no record stalls (`readDerivationPurgeState` never answers `stalled`, and `retry` has nothing to clear); it has one writer and no
+scope lock, so no record waits on `scope_lock_busy`, and the scope-entry trigger's page notes (`page_segment_derivation_purge_pages`)
+are never written, so no walk's end checks a noted page again. The test seams (`hooks`: after each batch, before an unread delete, and the
+work counters) stay in the SQL engines. The store has no source delete, so the foreign key's cascade has nothing to remove.

@@ -176,6 +176,7 @@ test/engine-parity/decide-store.test.ts
 test/engine-parity/delegated-grant.test.ts
 test/engine-parity/delete-page.test.ts
 test/engine-parity/derivation-purge-record.test.ts
+test/engine-parity/derivation-sweep.test.ts
 test/engine-parity/dream-config-members.test.ts
 test/engine-parity/dream-cycle-sites.test.ts
 test/engine-parity/effect-scans.test.ts

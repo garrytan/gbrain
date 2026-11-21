@@ -33,7 +33,8 @@
  * What the stops are, from a trial merge of rust-engine/rust-5a bc4cc890fe (nothing merged, nothing pushed):
  * - rust-5a serves the purge transaction's statements and the fingerprint count (`factPurgeTx`, due Nov 23);
  * - it does not serve the version-body SELECT of `rewriteVersionBodies`, which is raw SQL with no constant text to type;
- * - the sweep after the commit, `continueDerivationPurges`, is raw SQL: this lane's (due Nov 24);
+ * - the sweep after the commit, `continueDerivationPurges`, is the typed member `continueDerivationSweep`, served on Rust by this lane
+ *   (page_body/derivation_sweep.rs): no stop is left for it;
  * - the receipt's ledger reads and the generation-ledger scrub keep the owners and dates the page purge list names;
  * - the segmented-page branches (a page stored as segments, a staged upload and the write that would publish it) add raw sites,
  *   each with the owner and date Ember ruled: the segmented rewrite statements (trunk, Nov 23), the segmented purge writes (the
@@ -143,9 +144,6 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   // The purge effects of the git mirror.
   tx('listPurgedPageRevisions', 'the read of the rewritten pages\' revisions is not served'),
   tx('insertPurgeEffects', 'the purge effect rows are not served'),
-  // continueDerivationPurges: the sweep of the stored derivation results, after the commit and again by `--status --continue`.
-  { site: 'continueDerivationPurges (page-body/segment-derive.ts)', owner: ours, due: nov24, stop: 'the derivation sweep\'s walk, its scope lock and its stall record run through raw SQL until lane 13 types them' },
-  { site: '<anonymous> (page-body/segment-derive.ts)', owner: ours, due: nov24, stop: 'the derivation sweep\'s batch transaction reads and deletes through raw SQL until lane 13 types it' },
   // verifyFactPurge: the receipt.
   { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, due: nov24, entry: 'purge', stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
   { member: 'listFactContextsForPurgeProbe', owner: factContextProbe, due: nov24, entry: 'purge', stop: 'the receipt pages the live fact contexts that quote the purged claims; not served' },
@@ -154,6 +152,8 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   tx('countPurgeFingerprintResidue', 'the receipt\'s count of the rows that still hold the claim\'s fingerprint is not served', 'purge and continue'),
   // The members the purge calls and the Rust engine serves.
   ...served(ours,
+    // the derivation sweep after the commit (and again by `--status --continue`): served on Rust since part B of step 6
+    'continueDerivationSweep',
     'listRequestsHoldingStagings', 'readManifest', 'readSegmentedPageHead', 'readSegmentTexts', 'readSourceIncarnation', 'openBodyStaging',
     'stageSegmentTexts', 'allocateBodyOccurrenceIds', 'stageManifestRows', 'stageSegmentChunks', 'setBodyStagingState', 'readPageOrigin',
     'flipBodyGeneration', 'sealSegmentedPage', 'readSegmentedVersionBodyBytes',

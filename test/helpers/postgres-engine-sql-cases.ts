@@ -1114,6 +1114,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readDerivationPurgeState': OOS.purgeReceipt,
   'listDerivationClaimForms': OOS.callerRawSql,
   'recordDerivationPurgeRow': OOS.callerRawSql,
+  // The walk's SQL stays in page-body/segment-derive.ts (runDerivationSweep); test/derivation-sweep-sql-pin.test.ts pins it.
+  'continueDerivationSweep': OOS.callerRawSql,
   'listPurgeOrigins': OOS.pagePurgeHolds,
   'upsertDerivedOriginPark': OOS.pagePurgeHolds,
   'recordOwedPurgeRows': OOS.pagePurgeHolds,
