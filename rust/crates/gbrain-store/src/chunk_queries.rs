@@ -1,14 +1,19 @@
 //! Chunk reads beyond the core chunks family: one page of a page's chunks
-//! (`getChunkPage`), batched chunk windows for evidence delivery (`getChunkWindows`) and the
+//! (`getChunkPage`), batched chunk windows for evidence delivery (`getChunkWindows`), the
 //! pages that have a body but no chunks (`countChunklessPagesWithContent`,
-//! `listChunklessPagesWithContent`).
+//! `listChunklessPagesWithContent`), and the chunk reads and deletes of
+//! `src/core/engine-sql/chunk-reads.ts` (`site_reads`).
 //!
 //! Members: getChunkPage, getChunkWindows, countChunklessPagesWithContent,
-//! listChunklessPagesWithContent.
+//! listChunklessPagesWithContent, findCodeDefinitions, listSymbolTypesForName,
+//! findCodeRefChunks, countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages,
+//! codeChunksExist, currentCodeChunksExist, listQualifiedSymbolNames, listWithdrawalChunks,
+//! deleteChunksForPages, deleteChunksExcept, listContextualModeCandidates, resolveFrozenHits.
 //!
 //! Every member reads records other families own (pages, chunks, sources) through their
-//! `pub(crate)` readers and writes nothing, so this family keeps no records of its own: no key
-//! starts with `keys::CHUNK_QUERIES` (`c`).
+//! `pub(crate)` readers; the two deletes remove chunk rows through the chunks family's
+//! `pub(crate)` deleters. This family keeps no records of its own: no key starts with
+//! `keys::CHUNK_QUERIES` (`c`).
 //!
 //! A segmented page is one whose body columns are NULL (`PageText::is_null`), the shell PGLite's
 //! `createSegmentedPageShell` leaves. Its `body_bytes` lives in the page_body family's private
@@ -23,6 +28,7 @@ use crate::chunks::{
     segmented, visible_chunks,
 };
 use crate::error::Result;
+use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden, page_hidden_with};
 use crate::keyword::served;
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, find_in_scope, read_page_by_id};
@@ -30,6 +36,12 @@ use crate::sources::read_source;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
+
+mod site_reads;
+pub use site_reads::{
+    ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,
+    FrozenHitsInput, QualifiedNamesInput, UnsealedPagesInput, WithdrawalChunksInput, WithdrawalKey,
+};
 
 /// `listChunklessPagesWithContent`'s default batch size.
 const DEFAULT_CHUNKLESS_BATCH: u64 = 50;
@@ -51,14 +63,19 @@ fn has_body(page: &PageRecord, body_bytes: Option<i64>) -> bool {
         || (segmented(page) && body_bytes.is_some_and(|b| b > 0))
 }
 
-/// `getChunkPage(slug, { sourceId, fromIndex, limit })`. The TypeScript member resolves the
-/// scope to one named source before it calls the store.
+/// `getChunkPage(slug, { sourceId, fromIndex, limit, excludePrivate, requireSafeChunks })`. The
+/// TypeScript member resolves the scope to one named source before it calls the store,
+/// `excludePrivate` to the store page policy (`storePagePolicy`), `null` when the read does not
+/// ask for it, and `requireSafeChunks` to `requiresSafeChunks(opts)` (an `excludePrivate` read
+/// asks for safe chunks unless it says otherwise).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChunkPageOptions {
     pub source_id: String,
     pub from_index: f64,
     pub limit: f64,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub require_safe_chunks: bool,
 }
 
 /// One `ChunkWindowRequest`: an inclusive `chunk_index` range of one page.
@@ -79,6 +96,10 @@ pub struct ChunkWindowOptions {
     pub source_ids: Option<Vec<String>>,
     pub chunk_sources: Vec<String>,
     pub max_rows: u64,
+    /// The store page policy of `excludePrivate` (`storePagePolicy`), `null` when not asked for.
+    pub exclude_private: Option<PrivacyPolicy>,
+    /// `requiresSafeChunks(opts)`: only pages past the chunker-version fence are authorized.
+    pub require_safe_chunks: bool,
 }
 
 /// `{ sourceId?, batchSize?, afterPageId? }` of the chunkless reads.
@@ -95,6 +116,13 @@ pub struct ChunklessOptions {
 /// (`getChunkPage`, `getChunkWindows`) use `servedTextProjectionFilter`, which also serves the marker (`served`).
 fn sealed(page: &PageRecord) -> bool {
     page.text_projection_revision.as_deref() == Some(page.knowledge_revision.as_str())
+}
+
+/// `safeChunksFilter('p')`: `chunker_version >= SAFE_FENCE_CHUNKER_VERSION`. A page that records
+/// no version fails it, as NULL fails the SQL comparison.
+pub(crate) fn safe_chunks(page: &PageRecord) -> bool {
+    page.chunker_version
+        .is_some_and(|v| v >= SAFE_FENCE_CHUNKER_VERSION)
 }
 
 fn source_archived(
@@ -163,7 +191,10 @@ impl Store {
     /// `getChunkPage(slug, opts)`: the page's chunks with `fromIndex <= chunk_index <
     /// fromIndex + limit` in index order, the page's chunk count and its highest chunk index
     /// (`null` with no chunks). The page is read as `getChunks` reads it: the slug as written, a
-    /// soft-deleted page like a live one, and no chunks unless they are served (sealed, or the v153 activation marker).
+    /// soft-deleted page like a live one, and no chunks unless they are served (sealed, or the v153 activation marker). Under
+    /// `excludePrivate` a page the page policy hides, and under `requireSafeChunks` a page short of
+    /// the chunker-version fence, reads as a page with no chunks, as `chunkReadWhere`'s
+    /// `privatePagesFilterForCaller('p')` and `safeChunksFilter('p')` make it.
     pub fn get_chunk_page(&self, slug: &str, options: &ChunkPageOptions) -> Result<Value> {
         let read = self.read()?;
         let empty = json!({ "chunks": [], "total_chunks": 0, "max_chunk_index": Value::Null });
@@ -173,6 +204,14 @@ impl Store {
             return Ok(empty);
         };
         if !served(&page) {
+            return Ok(empty);
+        }
+        if options.require_safe_chunks && !safe_chunks(&page) {
+            return Ok(empty);
+        }
+        if let Some(policy) = &options.exclude_private
+            && page_hidden(&*read, &page, policy)?
+        {
             return Ok(empty);
         }
         // `chunkVisibleFilter` and `chunkDocumentOrder`: the chunks of the live generation in document order. A segmented
@@ -206,7 +245,8 @@ impl Store {
     /// `getChunkWindows(requests, opts)`: the flat page and chunk rows of the SQL engines' UNION
     /// (`kind` `page` or `chunk`), which the TypeScript member groups with `mapChunkWindowRows`.
     /// A requested page is authorized when it is in scope, live, served (sealed, or the v153 marker), in a source that is not
-    /// archived and not quarantined; the others are absent. Chunk rows of the authorized pages
+    /// archived, not quarantined, under `excludePrivate` not hidden by the page policy and, under
+    /// `requireSafeChunks`, past the chunker-version fence; the others are absent. Chunk rows of the authorized pages
     /// come from the chunk sources asked for, are text chunks inside some requested range, and
     /// are cut at `maxRows + 1` in `(prio, page_id, chunk_index)` order.
     pub fn get_chunk_windows(
@@ -236,6 +276,11 @@ impl Store {
         let mut archived = HashMap::new();
         let mut page_rows = Vec::new();
         let mut chunk_rows: Vec<(i64, u64, u32, Value)> = Vec::new();
+        let owner_only = options
+            .exclude_private
+            .as_ref()
+            .map(|_| OwnerOnlySources::read(&*read))
+            .transpose()?;
         for (&page_id, &page_prio) in &prio {
             let Ok(id) = u64::try_from(page_id) else {
                 continue;
@@ -250,6 +295,15 @@ impl Store {
                 || !served(&page)
                 || source_archived(&*read, &mut archived, &page.source_id)?
                 || page.frontmatter.contains_key(QUARANTINE_KEY)
+            {
+                continue;
+            }
+            // `excludePrivate` and `requireSafeChunks` take the page out of the authorized set.
+            if options.require_safe_chunks && !safe_chunks(&page) {
+                continue;
+            }
+            if let (Some(policy), Some(owner_only)) = (&options.exclude_private, &owner_only)
+                && page_hidden_with(&*read, &page, policy, owner_only)?
             {
                 continue;
             }
@@ -428,6 +482,8 @@ mod tests {
                     source_id: "default".into(),
                     from_index: 0.0,
                     limit: 10.0,
+                    exclude_private: None,
+                    require_safe_chunks: false,
                 },
             )
             .unwrap();
