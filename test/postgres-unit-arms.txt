@@ -294,6 +294,7 @@ test/engine-parity/wanted-markers.test.ts
 test/engine-parity/withdrawal-discovery-reads.test.ts
 test/engine-parity/withdrawal-fence.test.ts
 test/engine-parity/withdrawal-forget.test.ts
+test/engine-parity/worktree-terms.test.ts
 test/engine-parity/write-attribution.test.ts
 test/engine-parity/write-guards.test.ts
 test/engine-parity/write-misc.test.ts
