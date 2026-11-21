@@ -1,4 +1,5 @@
-//! The belief side of a purge: the source purge epoch, the ledger presence probe, the purge's
+//! The belief side of a purge: the source purge epoch, the ledger presence probe, the purge
+//! receipt's ledger read, the purge's
 //! suppression writes, the restore replay's tombstones and the purge receipt's tombstone count.
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store` call on the pool through
@@ -33,6 +34,20 @@ impl Brain {
         source_id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.has_belief_events(&source_id))
+    }
+
+    /// `listBeliefEventsForPurgeProbe(sourceId, after)`: resolves the next 1000 events of the
+    /// source after id `after` that have a recorded value, in id order.
+    #[napi]
+    pub fn list_belief_events_for_purge_probe<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        after: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_belief_events_for_purge_probe(&source_id, after)
+        })
     }
 
     /// `registerPurgeRedaction(row)`: records the suppression unless it exists; resolves null.

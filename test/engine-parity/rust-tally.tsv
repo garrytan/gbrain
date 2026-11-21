@@ -20,7 +20,7 @@ test/engine-parity/attest-rights.test.ts	1	0
 test/engine-parity/attested-actor-link.test.ts	1	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
 test/engine-parity/belief-ledger.test.ts	12	0
-test/engine-parity/belief-purge-probes.test.ts	6	0
+test/engine-parity/belief-purge-probes.test.ts	8	0
 test/engine-parity/bench-save-repro.test.ts	2	1
 test/engine-parity/bound-write.test.ts	1	2
 test/engine-parity/brief-reads.test.ts	6	0
@@ -136,7 +136,7 @@ test/engine-parity/facts-conversation-sites.test.ts	21	1
 test/engine-parity/facts-cycle-sites.test.ts	16	0
 test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	14	0
-test/engine-parity/facts-purge-sites.test.ts	27	3
+test/engine-parity/facts-purge-sites.test.ts	30	0
 test/engine-parity/facts-purge.test.ts	29	0
 test/engine-parity/facts-quoted.test.ts	5	0
 test/engine-parity/facts-repair-sites.test.ts	19	1

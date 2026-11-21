@@ -1305,7 +1305,8 @@ with the typed `raw_sql` refusal until the store holds what it reads. The ten he
 receipt reads by `facts/purge_receipt.rs` and `facts/purge_plan.rs` (see "Purge receipt reads" below), the journal
 statements by `facts/purge_journal.rs` and `persistence/purge_effects.rs` (see "Purge journal statements" below), the
 reason tombstone write by `writeReasonPurgeTombstones` (see [sources.md](sources.md)), and the derivation probe by
-`page_body/purge_probe.rs` (see [purge-plan.md](purge-plan.md)). The other 2 have no Rust implementation yet, and `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for their cases. The Postgres text of each
+`page_body/purge_probe.rs` (see [purge-plan.md](purge-plan.md)), and `listBeliefEventsForPurgeProbe` by the store's belief
+ledger (`trust::belief_purge`, see [trust.md](trust.md)). The other 1 has no Rust implementation yet, and `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for their cases. The Postgres text of each
 statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
 
 | Member | What it does |
