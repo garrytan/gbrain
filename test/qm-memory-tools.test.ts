@@ -364,6 +364,37 @@ for (const kind of testBackends()) {
       expect(fits.structured!.status).toBe('committed');
     }, 60_000);
 
+    // Reading a receipt re-runs the write's authority check, which reads the person's link, folder access and page
+    // visibility several times. Each identical typed read is answered once inside that check (onceReads), as the raw
+    // statement it replaced was; the one read left over is the caller's own resolution before the check.
+    test('reading an attested receipt answers each identical member and visibility read once inside the access check', async () => {
+      const out = await write(alice, [{ fact: 'Alice reads her receipt canaryoncereads', provenance: 'turn 1' }]);
+      const counts: Record<string, number> = {};
+      const target = engine as unknown as Record<string, unknown>;
+      const keys = ['readLinkedMember', 'readFolderAccess', 'readLiveMember', 'hasLabelledOnlyMember', 'readWriteVisibilityProbe'];
+      const saved = keys.map(k => [k, Object.prototype.hasOwnProperty.call(target, k), target[k]] as const);
+      for (const [k, , fn] of saved) {
+        target[k] = (...a: unknown[]) => {
+          const id = JSON.stringify([k, ...a]);
+          counts[id] = (counts[id] ?? 0) + 1;
+          return (fn as (...x: unknown[]) => unknown).apply(engine, a);
+        };
+      }
+      try {
+        const receipt = await call(alice, 'get_write_request', { request_id: out.structured!.request_id });
+        expect(receipt.isError).toBe(false);
+        expect(receipt.all).toContain(out.structured!.request_id);
+      } finally {
+        for (const [k, own, fn] of saved) { if (own) target[k] = fn; else delete target[k]; }
+      }
+      expect(counts).toEqual({
+        '["readLinkedMember","qm","U0ALICE"]': 2,
+        '["readFolderAccess",["member:alice-example"]]': 2,
+        '["readWriteVisibilityProbe","qm-memory","memory/members/alice-example"]': 1,
+        '["hasLabelledOnlyMember"]': 1,
+      });
+    }, 60_000);
+
     test('a write still publishing answers pending with a request id its receipt is read by', async () => {
       const out = await write(alice, [{ fact: 'Alice books the ferry canarypending', provenance: 'turn 9' }], randomUUID(), { writeWaitMs: 0 });
       expect(out.isError).toBe(false);

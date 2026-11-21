@@ -286,9 +286,16 @@ async function authorizeStoredTakeHolders(engine: AuthorityEngine, row: WriteReq
 /**
  * #6007: one access check answers identical read-only statements once (the
  * current and the stored authority read the same writer row and visibility),
- * and the plain typed writer read (`readLocalWriterRow`) once too.
+ * and the plain typed writer read (`readLocalWriterRow`) and ONCE_TYPED_READS once too.
  * The memo lives for that single check and holds no locking reads.
  */
+/**
+ * Typed reads that replaced plain statement texts on the access check. None takes a lock, so one check answers each
+ * identical call once, like the statement text it replaced.
+ */
+const ONCE_TYPED_READS: ReadonlySet<PropertyKey> = new Set<keyof BrainEngine>([
+  'readLinkedMember', 'readFolderAccess', 'readLiveMember', 'hasLabelledOnlyMember', 'readWriteVisibilityProbe',
+]);
 function onceReads(engine: BrainEngine): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
   const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
@@ -310,7 +317,9 @@ function onceReads(engine: BrainEngine): BrainEngine {
       return once(id, () => target.executeRaw(sql, params, opts));
     };
     const value = Reflect.get(target, key, target);
-    return typeof value === 'function' ? value.bind(target) : value;
+    if (typeof value !== 'function') return value;
+    if (ONCE_TYPED_READS.has(key)) return (...args: unknown[]) => once(JSON.stringify([key, args]), () => value.apply(target, args));
+    return value.bind(target);
   } });
 }
 export async function ownRequestAccessible(ctx: OperationContext, row: WriteRequest): Promise<boolean> {
