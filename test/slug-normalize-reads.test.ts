@@ -20,7 +20,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { normalizeSlug } from '../src/core/utils.ts';
 import { intentDigest } from '../src/core/persistence/journal.ts';
-import { normalizeSlugParams, SLUG_PARAMS, SLUG_PARAM_EXEMPT } from '../src/core/ops/slug-params.ts';
+import { normalizeSlugParams, withNormalizedSlugParams, SLUG_PARAMS, SLUG_PARAM_EXEMPT } from '../src/core/ops/slug-params.ts';
 import { operations } from '../src/core/operations.ts';
 import type { ParamDef } from '../src/core/ops/contract.ts';
 
@@ -227,5 +227,99 @@ describe('accented entities keep their slug in facts (memory-07)', () => {
     expect(after.entity_slug).toBe(accented);
     const recalled = await call<{ facts?: Array<{ fact: string }> }>('recall', { entity: accented });
     expect((recalled.facts ?? []).map(f => f.fact).sort()).toEqual(['Mehmet Example likes jazz', 'Mehmet Example likes tea']);
+  });
+});
+
+/** Store `slug` and move it to a decomposed spelling, as a page written before writes composed slugs. */
+async function legacyPage(slug: string, stored: string, body: string, sourceId = 'default'): Promise<void> {
+  await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [sourceId]);
+  await operationsByName.put_page!.handler({ ...ctx(), sourceId }, { slug, content: page(`Legacy ${slug}`, 'note', body) });
+  await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2 AND source_id = $3', [stored, slug, sourceId]);
+  // A raw slug update changes the knowledge revision and clears the served-text one; a real legacy page kept both in step.
+  await engine.executeRaw('UPDATE pages SET text_projection_revision = knowledge_revision WHERE slug = $1 AND source_id = $2', [stored, sourceId]);
+}
+
+describe('the legacy-spelling retry obeys the caller\'s source scope', () => {
+  test('a composed twin in a source outside the caller\'s scope does not hide the caller\'s decomposed page', async () => {
+    const stored = 'notes/scope-cafe\u0301';
+    await legacyPage('notes/scope-seed', stored, 'mine', 'scope-y');
+    await engine.executeRaw('INSERT INTO tags (page_id, tag) SELECT id, $1 FROM pages WHERE slug = $2 AND source_id = $3', ['mine', stored, 'scope-y']);
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', ['scope-x']);
+    await operationsByName.put_page!.handler({ ...ctx(), sourceId: 'scope-x' }, { slug: 'notes/scope-caf\u00e9', content: page('Twin', 'note', 'twin') });
+    const asY = { ...ctx(), sourceId: 'scope-y' };
+    expect(await operationsByName.get_tags!.handler(asY, { slug: stored })).toEqual(['mine']);
+  });
+
+  test('the probe is made inside the caller\'s scope, never across sources', async () => {
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    const spy = { ...engine, getPage: async (slug: string, opts?: Record<string, unknown>) => { seen.push(opts); return null; } };
+    const asY = { ...ctx(), engine: spy as never, sourceId: 'scope-y' };
+    await withNormalizedSlugParams(operationsByName.get_tags!, async () => [])(asY, { slug: 'Notes/Scope-Probe-Cafe\u0301' }).catch(() => undefined);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every(o => o?.sourceId === 'scope-y')).toBe(true);
+  });
+});
+
+describe('a put by the exact decomposed spelling writes that page, not a composed twin', () => {
+  const stored = 'notes/put-cafe\u0301';
+  const composed = 'notes/put-caf\u00e9';
+  const count = async () => Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE slug IN ($1, $2)', [stored, composed]))[0]!.n);
+
+  test('without expected_revision the page exists: revision_required, and no twin', async () => {
+    await legacyPage('notes/put-seed', stored, 'before');
+    const err = await errorOf('put_page', { slug: stored, content: page('Twin', 'note', 'twin') });
+    expect(err?.code).toBe('revision_required');
+    expect(await count()).toBe(1);
+  });
+
+  test('with the page\'s revision it updates the page and keeps its tags', async () => {
+    await engine.executeRaw('INSERT INTO tags (page_id, tag) SELECT id, $1 FROM pages WHERE slug = $2', ['kept', stored]);
+    const snapshot = await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true });
+    await call('put_page', { slug: stored, content: page('Put cafe', 'note', 'after'), expected_revision: snapshot!.revision });
+    expect(await count()).toBe(1);
+    expect((await call('get_page', { slug: stored })).compiled_truth).toContain('after');
+    expect(await call<string[]>('get_tags', { slug: composed })).toEqual(['kept']);
+  });
+
+  test('a stale expected_revision is a conflict and still makes no twin', async () => {
+    const err = await errorOf('put_page', { slug: stored, content: page('Stale', 'note', 'stale'), expected_revision: crypto.randomUUID() });
+    expect(err?.code).toBe('revision_conflict');
+    expect(await count()).toBe(1);
+  });
+});
+
+describe('writes that carry no digest over the slug normalize it like their reads', () => {
+  test('ontology_propose with a mixed-case entity is read back by ontology_get with the same argument', async () => {
+    await call('ontology_propose', { entity: 'People/Onto-Example', dimension: 'role', value: 'advisor' });
+    const rows = await call<Array<{ entity_slug?: string; value: string }>>('ontology_get', { entity: 'People/Onto-Example' });
+    expect(rows.map(r => r.value)).toEqual(['advisor']);
+  });
+
+  test('file_upload, file_register and ontology_propose receive the normal form; a journaled page write receives what was sent', async () => {
+    const reached: Record<string, unknown> = {};
+    const through = (name: string, key: string) => withNormalizedSlugParams({ ...operationsByName[name]!, mutating: true }, async (_c, p) => { reached[name] = p[key]; return null; });
+    await through('file_upload', 'page_slug')(ctx(), { page_slug: 'People/File-Example' });
+    await through('file_register', 'page_slug')(ctx(), { page_slug: 'notes/caf\u0065\u0301' });
+    await through('ontology_propose', 'entity')(ctx(), { entity: 'People/Onto-Two' });
+    await through('put_page', 'slug')(ctx(), { slug: 'People/Put-Example' });
+    expect(reached).toEqual({ file_upload: 'people/file-example', file_register: 'notes/caf\u00e9', ontology_propose: 'people/onto-two', put_page: 'People/Put-Example' });
+  });
+});
+
+describe('assemble_evidence joins on the stored slug', () => {
+  test('a decomposed hit finds its own evidence, and a composed twin never returns the other page\'s', async () => {
+    const stored = 'notes/ev-cafe\u0301';
+    const composed = 'notes/ev-caf\u00e9';
+    await legacyPage('notes/ev-seed', stored, 'legacy-only-marker words about the old page');
+    await call('put_page', { slug: composed, content: page('Composed twin', 'note', 'composed-only-marker words about the new page') });
+    const evidence = async (slug: string) => await call<{ results: Array<{ slug: string; chunk_text: string }>; unresolved: unknown[] }>('assemble_evidence',
+      { hits: [{ source_id: 'default', slug, chunk_id: 0 }], return_unit: 'page' });
+    const old = await evidence(stored);
+    expect(old.unresolved).toEqual([]);
+    expect(old.results.map(r => r.chunk_text).join(' ')).toContain('legacy-only-marker');
+    expect(old.results.map(r => r.chunk_text).join(' ')).not.toContain('composed-only-marker');
+    const twin = await evidence(composed);
+    expect(twin.results.map(r => r.chunk_text).join(' ')).toContain('composed-only-marker');
+    expect(twin.results.map(r => r.chunk_text).join(' ')).not.toContain('legacy-only-marker');
   });
 });
