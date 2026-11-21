@@ -60,7 +60,7 @@ import {
 import { lockRenewalAudit } from '../audit/lock-renewal-audit.ts';
 import { loadavg, cpus } from 'os';
 import { monitorEventLoopDelay } from 'perf_hooks';
-import { isRetryableConnError, isServerRefusingConnections, isVanishedSocketError } from '../retry-matcher.ts';
+import { isRetryableConnError, isServerRefusingConnections, isVanishedSocketError, isWatchdogConnectionLoss } from '../retry-matcher.ts';
 import { reconnectAfterConnectionError as reconnectEngineAfterConnError } from './reconnect.ts';
 import { LocalConfigurationError, isLocalConfigurationError } from './configuration-error.ts';
 
@@ -886,10 +886,15 @@ export class MinionWorker extends EventEmitter {
             // reconnect once and let the NEXT poll tick re-claim against a live
             // pool. Non-retryable errors propagate (real bug → PM restart). A vanished
             // local socket or a server refusing connections is the same lost connection (#9540).
-            if (!isRetryableConnError(e) && !isVanishedSocketError(e) && !isServerRefusingConnections(e)) throw e;
-            const msg = e instanceof Error ? e.message : String(e);
-            console.error(`[worker] claim hit a connection error; reconnecting, retry on next tick: ${msg}`);
-            await this.reconnectAfterConnectionError('claim', e);
+            if (isWatchdogConnectionLoss(e)) {
+              // The driver already retired this socket. Other pool connections may be serving active jobs.
+              console.error('[worker] claim connection retired by the Postgres watchdog; polling resumes on the next tick');
+            } else {
+              if (!isRetryableConnError(e) && !isVanishedSocketError(e) && !isServerRefusingConnections(e)) throw e;
+              const msg = e instanceof Error ? e.message : String(e);
+              console.error(`[worker] claim hit a connection error; reconnecting, retry on next tick: ${msg}`);
+              await this.reconnectAfterConnectionError('claim', e);
+            }
             await new Promise(resolve => setTimeout(resolve, this.opts.pollInterval));
             continue;
           }

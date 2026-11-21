@@ -54,7 +54,7 @@ import {
   isRetryableConnError,
   type BatchAuditSite,
 } from './retry.ts';
-import { isConnectionEndedError } from './retry-matcher.ts';
+import { isConnectionEndedError, isWatchdogConnectionLoss } from './retry-matcher.ts';
 import { CheckoutGauge, PoisonedDiscardCounter, PoolIncidentCounter, type PoolGaugeSnapshot } from './pool-gauge.ts';
 import { driverPoolStats, enginePoolStats, type DriverPoolStats } from './postgres-engine/pool-stats.ts';
 import {
@@ -3045,6 +3045,8 @@ export class PostgresEngine implements BrainEngine {
    */
   async reconnect(ctx?: { error?: unknown }): Promise<void> {
     if (!this._savedConfig || this._reconnecting) return;
+    // The driver already retired the socket and reconnects on demand. Other sessions may hold live transactions.
+    if (this._sql && isWatchdogConnectionLoss(ctx?.error)) return;
     if (this._connectionStyle !== 'instance') {
       // Module-singleton: never tear down the shared pool. db.connect() is
       // idempotent (no-op when the singleton is alive — the common #1745 path).

@@ -48,7 +48,7 @@ beforeAll(async () => withEnv(env, async () => {
 afterAll(async () => { await engine.disconnect(); rmSync(home, { recursive: true, force: true }); });
 
 test('isConnectionLoss: the drop shapes a pooler, a failover and pg_terminate_backend produce; not auth, not a lock or statement timeout', () => {
-  for (const error of [dropped(), dropped('CONNECTION_ENDED'), dropped('CONNECTION_DESTROYED'), Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' }),
+  for (const error of [dropped(), dropped('CONNECTION_ENDED'), dropped('CONNECTION_DESTROYED'), dropped('CONNECTION_STUCK'), Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' }),
     Object.assign(new Error('connection_failure'), { code: '08006' }), new Error('write ECONNABORTED db.example.invalid:5432'), new Error('write EPIPE'), new Error('Connection terminated unexpectedly')]) {
     expect(isConnectionLoss(error)).toBe(true);
   }
