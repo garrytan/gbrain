@@ -9,6 +9,8 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { resolveServeGbrainCommand } from '../core/serve-service.ts';
+import type { FollowOptions } from './follow.ts';
+import { InvalidationLines } from './invalidations.ts';
 import { MirrorQueue } from './mirror.ts';
 import type { ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
@@ -19,12 +21,19 @@ export interface AttachShadowDeps {
   gbrainArgv?: string[];
   supervisor?: Partial<ShadowSupervisorOptions>;
   random?: () => number;
+  /**
+   * Shadow follow: a producer to publish committed primary writes to, or 'ndjson' to send them as `inv` lines to the
+   * child. Off by default; the default wiring is a later change.
+   */
+  follow?: FollowOptions | 'ndjson';
 }
 
 export interface AttachedShadow<E extends BrainEngine> {
   engine: E;
   queue: MirrorQueue;
   supervisor: ShadowSupervisor;
+  /** Set when `follow: 'ndjson'` asked for lines. */
+  invalidations?: InvalidationLines;
 }
 
 /** The child's argv for `dir`. */
@@ -49,7 +58,9 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       supervisor.stop();
     }
   });
-  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random }), queue, supervisor };
+  const invalidations = deps.follow === 'ndjson' ? new InvalidationLines(supervisor) : undefined;
+  const follow = invalidations ? { sink: invalidations } : deps.follow === 'ndjson' ? undefined : deps.follow;
+  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow }), queue, supervisor, invalidations };
 }
 
 /** The engine factory's entry point: the wrapped engine. */

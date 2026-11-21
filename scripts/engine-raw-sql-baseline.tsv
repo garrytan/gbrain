@@ -1252,3 +1252,4 @@ src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4
 src/mcp/http-transport.ts	sql_template	3
 src/mcp/source-preflight.ts	execute_raw	1
+src/shadow/follow.ts	execute_raw	1	selectWhere: the shadow follow producer reads page ids and the keys of rows a delete removes, on the engine or transaction the write runs on

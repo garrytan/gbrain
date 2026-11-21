@@ -8,17 +8,22 @@
  * sink a capture of `{ op, args, result, primary_ms }`. A sampled read encodes its arguments (codec.ts `encodeValue`)
  * before the primary call and its result inside that capture, so neither the primary nor the caller can change what
  * the shadow compares; unsampled reads encode nothing. Nothing awaits the sink and a sink or encode error never
- * reaches the caller. Writes are not mirrored here.
+ * reaches the caller. Writes are not mirrored as reads.
  *
  * `transaction` and `transactionDirect` hand the callback a wrapped transaction engine whose reads are counted as
  * `skipped_in_transaction` and not mirrored: a read inside an open transaction may see uncommitted state the shadow
  * cannot have. Reads with a function argument are counted `shed_unmirrorable` (a callback cannot cross the pipe).
+ *
+ * With the `follow` option the wrapper also watches writes (follow.ts): every committed write is published as an
+ * invalidation batch after the outermost commit. Without it, writes pass through bound and untouched.
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
 import { encodeValue } from './codec.ts';
+import { followRaw, followScope, followWrite, type FollowContext, type FollowOptions, type Frame } from './follow.ts';
 import type { CapturedRead, MirrorCounters } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
+import { memberKind } from './write-map.ts';
 
 export interface ShadowSink {
   readonly counters: MirrorCounters;
@@ -35,6 +40,11 @@ export interface ShadowWrapperOptions {
   random?: () => number;
   /** Seam for tests; default performance.now. */
   now?: () => number;
+  /**
+   * Shadow follow (follow.ts): when set, committed primary writes are published to this sink as invalidation batches.
+   * Active only while the shadow sink is active; when off, writes cost nothing extra.
+   */
+  follow?: FollowOptions;
 }
 
 const TX_MEMBERS: ReadonlySet<PropertyKey> = new Set(SHADOW_TRANSACTION_MEMBERS);
@@ -55,10 +65,10 @@ function isThenable(value: unknown): value is Promise<unknown> {
 
 /** Wraps `engine` for shadow mode. The result is registered as a view of `engine` (persistence/switches.ts). */
 export function wrapShadowEngine<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions): E {
-  return buildProxy(engine, sink, opts, false);
+  return buildProxy(engine, sink, opts, false, null);
 }
 
-function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions, inTransaction: boolean): E {
+function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions, inTransaction: boolean, frame: Frame | null): E {
   const random = opts.random ?? Math.random;
   const now = opts.now ?? (() => performance.now());
   const sampleRate = Math.min(1, Math.max(0, opts.sampleRate));
@@ -101,12 +111,38 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     });
   };
 
+  const follow = opts.follow;
+  const followCtx = (target: unknown, at: Frame | null, inTx: boolean): FollowContext =>
+    ({ follow: follow!, shadowActive: () => sink.active(), engine: target, frame: at, inTransaction: inTx });
+
   const wrapTransaction = (fn: Function): Function => function shadowTransaction(this: unknown, callback: unknown, ...rest: unknown[]) {
     if (typeof callback !== 'function') return fn.apply(engine, [callback, ...rest]);
-    return fn.apply(engine, [
-      (tx: BrainEngine) => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true) : tx),
+    const call = (scope: Frame | null) => fn.apply(engine, [
+      (tx: BrainEngine) => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope) : tx),
       ...rest,
     ]);
+    return follow ? followScope(followCtx(engine, frame, inTransaction), false, call) : call(null);
+  };
+
+  /** `withReservedConnection`: the callback's connection gets a raw-SQL wrapper whose writes publish when the callback ends. */
+  const wrapReserved = (fn: Function): Function => function shadowReserved(this: unknown, callback: unknown, ...rest: unknown[]) {
+    if (typeof callback !== 'function') return fn.apply(engine, [callback, ...rest]);
+    return followScope(followCtx(engine, frame, inTransaction), true, (scope) => fn.apply(engine, [
+      (conn: any) => (callback as (conn: unknown) => unknown)(
+        scope && conn && typeof conn.executeRaw === 'function'
+          ? new Proxy(conn, { get: (target, prop) => (prop === 'executeRaw' ? followRaw(followCtx(target, scope, false), target.executeRaw) : Reflect.get(target, prop, target)) })
+          : conn),
+      ...rest,
+    ]));
+  };
+
+  /** A member outside the mirrored reads: ignored and read-named ones stay bound; raw SQL and writes publish invalidations. */
+  const wrapFollowed = (name: string, fn: Function, target: E): Function => {
+    const kind = memberKind(name);
+    if (kind === 'ignored' || kind === 'read_name') return fn.bind(target);
+    if (kind === 'reserved') return wrapReserved(fn);
+    const ctx = followCtx(target, frame, inTransaction);
+    return kind === 'raw' ? followRaw(ctx, fn) : followWrite(ctx, name, fn);
   };
 
   const proxy = new Proxy(engine, {
@@ -118,6 +154,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       let wrapped: Function;
       if (isShadowReadMember(prop)) wrapped = wrapRead(prop, value);
       else if (TX_MEMBERS.has(prop)) wrapped = wrapTransaction(value);
+      else if (follow && typeof prop === 'string') wrapped = wrapFollowed(prop, value, target);
       else wrapped = value.bind(target);
       cache.set(prop, { original: value, wrapped });
       return wrapped;
