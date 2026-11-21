@@ -58,7 +58,8 @@ escape hatches `GBRAIN_REMOTE_PRIVATE_PAGES=1` / `gbrain config set search.remot
 remote caller). Neither relaxes `readable_by` or folder rules, and neither reaches a shared-room audience.
 Fact privacy has its own operator grant, `gbrain auth rescope --private-facts granted-sources`: that credential reads
 facts saved `private` in the sources its grant names, never one held on, provenanced from or about a private,
-`readable_by`, folder-ruled, quarantined or member page, nor one with no page to check, and never under an asserted
+`readable_by`, folder-ruled, quarantined or member page, nor one with no page to check, nor a held row (a private
+restatement waiting on a visibility proposal) unless it also reads every copy the proposals name, and never under an asserted
 audience or an attested call ([MCP administration](../mcp/ADMIN.md)).
 
 `gbrain access check --token <name>` reports whether a credential reads as the owner, and
@@ -248,8 +249,8 @@ stay kept to it.
 
 ### Owner-only sources (`owner_only`)
 
-An `imessage` source, and any source whose `sources.config` has `owner_only: true`, is read only by the local CLI and
-by the owner's own credentials speaking for themselves. Every other remote caller gets `not_found` for its pages
+An `imessage` source, and any source whose `sources.config` has `owner_only: true` (an `apple-contacts` source is
+registered with it), is read only by the local CLI and by the owner's own credentials speaking for themselves. Every other remote caller gets `not_found` for its pages
 (private or not), for its facts and timeline rows, and for pages, facts, takes and timeline rows derived from them:
 a synthesized concept with an input page there, and any page, fact, take or timeline row whose recorded derivation
 inputs reach a row there, wherever its page is. A meeting in an owner-only source adds timeline rows only to pages in

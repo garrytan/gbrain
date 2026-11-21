@@ -45,7 +45,7 @@ import { withTrustKeep } from '../persistence/context.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from '../persistence/purge-name-stores.ts';
 import { pageSecretOccurrences, scrubPurgedSlugHolds, scrubPurgedSlugStores } from '../persistence/purge-slug-stores.ts';
-import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
+import { expireFactsOfGonePages } from './facts-purge.ts';
 import { guestSourceExclusionSql } from '../guests/derived.ts';
 
 /**
@@ -391,7 +391,7 @@ export async function purgeDeletedPages(
       `);
       const gone = new Set(rows.map(r => Number(r.id)));
       const goneSecrets = secrets.filter(o => gone.has(Number(o.page_id))).map(o => o.id);
-      await expireGonePageFacts(tx, rows);
+      if (rows.length) await expireFactsOfGonePages((sql, params) => tx.executeRaw(sql, params), rows.map(r => r.source_id), rows.map(r => r.slug));
       if (rows.length) await tx.run(sqlFragment`DELETE FROM page_body_stagings s USING unnest(${rows.map(r => r.source_id)}::text[], ${rows.map(r => r.slug)}::text[]) AS d(source_id, slug)
         WHERE s.source_id = d.source_id AND s.slug = d.slug`);
       if (texts.length) await tx.run(sqlFragment`DELETE FROM page_segment_texts t

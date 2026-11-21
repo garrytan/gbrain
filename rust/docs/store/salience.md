@@ -44,7 +44,7 @@ Numbers: arithmetic widens the f32 weight to a double first, as Postgres does fo
 - Source scope: a non-empty `sourceIds` wins over a truthy `sourceId`; neither is no scope.
 - `takesHoldersAllowList`: honoured (see above).
 - `excludePrivate` (any truthy value, as `pageReadFilter` tests it) applies the page policy on both reads; see
-  "Private pages" below. Links and timeline reads still refuse it. The input carries the policy as
+  "Private pages" below. The input carries the policy as
   `exclude_private` (`{ honorAliases, entityPrivacy, ownerOnly }`); a page it hides, an owner-only page included, is
   not scored or ranked. A read finds the owner-only sources once, on the first page it judges (`OwnerOnlyCache`).
 - `minTrust` and `suppressFlagged` apply on `getSalienceScores` (its SQL applies `pageEligibleSql`) through

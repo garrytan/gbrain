@@ -7,7 +7,9 @@
  * - Calls run on a permit pool (OWNER_IPC_DEFAULT_PERMITS). A call over the limit waits in its connection's queue,
  *   and a free permit goes to the connections in turn (round-robin, FIFO inside one connection), so one client that
  *   floods the owner does not starve another. At its `deadline_at` a call ends with `timeout` (queued or running), and
- *   a `cancel` frame ends it with nothing more sent.
+ *   a `cancel` frame ends it with nothing more sent. The timeout reason is `not_started` when the call never left
+ *   the queue and `outcome_unknown` when it was running (the store does not observe the abort, so a running write can
+ *   still commit).
  * - Every call runs under its own AbortController: the request signal of the call (request-signal.ts), any
  *   AbortSignal argument the client sent, and the read deadline of the caller are restored in the owner.
  * - A permit is released only when the engine call itself settles, never when its reply is sent early (a timeout or
@@ -22,6 +24,7 @@ import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
 import type { BrainEngine } from '../../engine.ts';
 import { withRequestSignal } from '../../request-signal.ts';
 import { withReadDeadline } from '../../read-deadline.ts';
+import { withCallerAccess, withoutCallerAccess, type CallerAccess } from '../../search/private-visibility.ts';
 import { claimLocalIpcBinding, isWindowsIpcPipe } from '../../context/ipc-path.ts';
 import { decodeValue, encodeError, encodeValue, type Wire } from './codec.ts';
 import {
@@ -61,6 +64,17 @@ interface PendingCall {
   /** Epoch ms after which the call must not start; a call past it ends with `timeout` and never runs. */
   deadlineAt?: number;
   reply(frame: object): void;
+}
+
+/**
+ * The caller-access record a frame carried, as withCallerAccess takes it. Anything that is not an object with an array
+ * `identity` is refused, never read as no record: a caller that had a record never runs with the owner's wider view.
+ */
+function callerAccessOf(member: string, value: unknown): CallerAccess {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !Array.isArray((value as { identity?: unknown }).identity)) {
+    throw ownerIpcRefusal(member, 'its caller access record is not an object with an identity list');
+  }
+  return value as CallerAccess;
 }
 
 function timeoutReason(): Error {
@@ -123,7 +137,7 @@ export async function serveOwnerEngine(
 
   const expire = (call: PendingCall, queued: boolean) => {
     if (call.timer) clearTimeout(call.timer);
-    call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerCallTimeout(call.member, 0, queued)) });
+    call.reply({ t: 'result', id: call.id, ok: false, error: encodeError(ownerCallTimeout(call.member, 0, queued ? 'queued' : 'sent')) });
     call.controller.abort(timeoutReason());
   };
 
@@ -173,14 +187,15 @@ export async function serveOwnerEngine(
     if (closing) { socket.destroy(); return; }
     sockets.add(socket);
     const calls = new Map<number, PendingCall>();
-    const send = (frame: object) => {
+    // `member` names the call a result answers; `reply` passes it because it drops the call from `calls` first.
+    const send = (frame: object, member?: string) => {
       if (socket.destroyed) return;
       const line = frameLine(frame, maxFrameBytes);
       if (line !== null) { socket.write(line); return; }
       const id = (frame as { id?: number }).id;
-      const call = id === undefined ? undefined : calls.get(id);
-      if ((frame as { t?: string }).t === 'result' && call) {
-        socket.write(frameLine({ t: 'result', id, ok: false, error: encodeError(ownerResponseTooLarge(call.member, maxFrameBytes)) })!);
+      const name = member ?? (id === undefined ? undefined : calls.get(id)?.member);
+      if ((frame as { t?: string }).t === 'result' && name !== undefined) {
+        socket.write(frameLine({ t: 'result', id, ok: false, error: encodeError(ownerResponseTooLarge(name, maxFrameBytes)) })!);
       }
     };
     socket.once('close', () => {
@@ -207,13 +222,13 @@ export async function serveOwnerEngine(
     }, () => { /* the close handler ends this connection's calls */ }, maxFrameBytes);
   };
 
-  const admit = (frame: Record<string, unknown>, calls: Map<number, PendingCall>, send: (frame: object) => void) => {
+  const admit = (frame: Record<string, unknown>, calls: Map<number, PendingCall>, send: (frame: object, member?: string) => void) => {
     const id = Number(frame.id);
     const member = String(frame.t === 'fn' ? frame.name : frame.member);
     const controller = new AbortController();
     const call: PendingCall = {
       id, member, controller, done: false, queued: true, run: () => Promise.resolve(),
-      reply: out => { if (calls.get(id) === call) calls.delete(id); call.done = true; send(out); },
+      reply: out => { if (calls.get(id) === call) calls.delete(id); call.done = true; send(out, member); },
     };
     calls.set(id, call);
     const refuse = (error: unknown) => call.reply({ t: 'result', id, ok: false, error: encodeError(error) });
@@ -238,8 +253,12 @@ export async function serveOwnerEngine(
     } catch (error) { refuse(error); return; }
     const deadlineAt = typeof frame.deadline_at === 'number' ? frame.deadline_at : undefined;
     const readDeadlineAt = typeof frame.read_deadline_at === 'number' ? frame.read_deadline_at : undefined;
+    let access: CallerAccess | null;
+    try { access = frame.access === undefined ? null : callerAccessOf(member, decodeValue(frame.access as Wire)); } catch (error) { refuse(error); return; }
+    const invoke = () => readDeadlineAt === undefined ? target(...args) : withReadDeadline(readDeadlineAt, () => target(...args));
+    // The call runs under the caller's access record, re-checked by withCallerAccess, or under none when it had none.
     call.run = () => withRequestSignal(controller.signal, () =>
-      readDeadlineAt === undefined ? target(...args) : withReadDeadline(readDeadlineAt, () => target(...args)));
+      access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke));
     if (deadlineAt !== undefined) {
       call.deadlineAt = deadlineAt;
       // A request that arrives after its deadline never starts: a fast write would otherwise commit before the timer.
@@ -248,7 +267,7 @@ export async function serveOwnerEngine(
       call.timer = setTimeout(() => {
         if (call.done) return;
         const queued = call.queued;
-        call.reply({ t: 'result', id, ok: false, error: encodeError(ownerCallTimeout(member, ms, queued)) });
+        call.reply({ t: 'result', id, ok: false, error: encodeError(ownerCallTimeout(member, ms, queued ? 'queued' : 'sent')) });
         controller.abort(timeoutReason());
       }, ms);
       call.timer.unref?.();

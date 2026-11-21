@@ -36,9 +36,9 @@ async function liveSlugs(brain: StoreBrain, member: string, sourceId: string, pr
   return storeCall({ member, sourceId }, () => brain.listAccessPrefixSlugs(sourceId, [prefix]));
 }
 
-export const listUnarchivedSourceIds: StoreMember<[ids: readonly string[]], string[]> = async (brain, ids) => {
+export const filterUnarchivedSourceIds: StoreMember<[ids: readonly string[]], string[]> = async (brain, ids) => {
   const wanted = new Set(ids);
-  return (await sourceRows(brain, 'listUnarchivedSourceIds', false)).map(s => s.id).filter(id => wanted.has(id));
+  return (await sourceRows(brain, 'filterUnarchivedSourceIds', false)).map(s => s.id).filter(id => wanted.has(id));
 };
 
 /** `LIKE 'company/calls/%'` has no `_`, so it is a starts-with test. */

@@ -769,7 +769,7 @@ example `families/timeline.rs` and `store-members/timeline.ts`) for the details.
 
 ### page_ops
 
-Batch page reads and writes the pages capability still refuses.
+Batch page reads and writes of the `pages` and `page_versions` capabilities (served; `pages` stays unreported while its other members refuse).
 
 - **Files:** `gbrain-store/src/page_ops.rs`, `gbrain-napi/src/families/page_ops.rs`, `store-members/page-ops.ts`.
 - **Tag:** `p` (`PAGE_OPS`). Cascade on page delete: no.
@@ -945,7 +945,7 @@ Facts and their supersession chains.
     A page policy the store does not render refuses, and `heldFenceLines` then holds every fence line (fail closed). Before the member existed the
     check ran through `executeRaw`, which the Rust engine refuses, so a Rust brain held every fence line. Parity:
     `held-fence-cells.test.ts`.
-- **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding needs core vectors (built); the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
+- **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding needs core vectors (built); the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: `cascade::rename_slug_rows` calls `facts::rename_slug_rows` ("Rename slug rows").
 - **Estimate:** about 4 days.
 - **Notes:** `listFactsKeyset` cursors are microsecond ISO text; `grep` is ILIKE with wildcards treated literally. `migrateFactsToCanonical` rewrites `entity_slug`, `source_markdown_slug` and `row_num` only.
 - **Parity cases (22, in `facts.test.ts`, `sync-aliases.test.ts`):**

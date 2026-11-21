@@ -72,11 +72,13 @@ async function* parseFile(path: string, format: TranscriptFormat): AsyncGenerato
 async function loadSession(harness: TranscriptFormat, sessionId: string, paths: string[]): Promise<ArchiveConversation | null> {
   let meta: ParsedSession['meta'] | undefined;
   let metaNewest = '';
+  const bases = new Set<string | undefined>();
   const seen = new Set<string>();
   const messages: TranscriptMessage[] = [];
   for (const path of paths) {
     for await (const session of parseFile(path, harness)) {
       if (session.meta.harness !== harness || session.meta.sessionId !== sessionId) continue;
+      bases.add(session.meta.ownerBasis);
       const last = session.messages[session.messages.length - 1]?.timestamp ?? '';
       if (!meta || last > metaNewest) { meta = session.meta; metaNewest = last; }
       for (const m of session.messages) {
@@ -88,6 +90,8 @@ async function loadSession(harness: TranscriptFormat, sessionId: string, paths: 
     }
   }
   if (!meta || messages.length === 0) return null;
+  // GST-3216: the user turns are the owner's only when every file of the session says so on the same signal.
+  if (bases.size !== 1) { const { ownerBasis: _mixed, ...rest } = meta; meta = rest; }
   messages.sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
   return { harness, conversationKey: sessionId, session: { meta, messages }, via: 'file' };
 }
