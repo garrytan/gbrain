@@ -1304,6 +1304,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('expireFactUntil', [
     ['ownEnd', (e) => e.expireFactUntil(7, null)],
     ['until', (e) => e.expireFactUntil(7, EPOCH)],
+    ['dayText', (e) => e.expireFactUntil(7, '2026-06-01')],
   ]),
   ...variants('insertFacts', [
     ['default', (e) => e.insertFacts([{ fact: 'f1', source: 'cli:test', entity_slug: SLUG, row_num: 1, source_markdown_slug: SLUG }], { source_id: SRC }), [[/INSERT INTO facts/, [{ id: 7 }]]]],

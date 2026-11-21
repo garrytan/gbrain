@@ -1967,6 +1967,17 @@
         ]
       },
       "expireFactUntil": {
+        "dayText": [
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
         "ownEnd": [
           {
             "paramCount": 2,

@@ -2871,8 +2871,8 @@ export interface BrainEngine {
    */
   expireFact(id: number, opts?: { supersededBy?: number; at?: Date; successorFrom?: Date }): Promise<boolean>;
 
-  /** Expire fact `id` now and end it at `until`, else at its own earlier end or now (never before it began); true iff an unexpired row changed. forgetFactInFence's expiry. */
-  expireFactUntil(id: number, until: Date | null): Promise<boolean>;
+  /** Expire fact `id` now, ended at `until` (a 'YYYY-MM-DD' text: midnight in the session zone), else at its own earlier end or now (never before it began); true iff a row changed. */
+  expireFactUntil(id: number, until: Date | string | null): Promise<boolean>;
 
   /** List active facts about an entity within a source, newest first. */
   listFactsByEntity(

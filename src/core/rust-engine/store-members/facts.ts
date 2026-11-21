@@ -174,7 +174,7 @@ export const expireFact: Member<'expireFact'> = (brain, id, opts) => {
 };
 
 export const expireFactUntil: Member<'expireFactUntil'> = (brain, id, until) =>
-  storeCall({ member: 'expireFactUntil' }, () => brain.expireFactUntil({ id, until: iso(until) }));
+  storeCall({ member: 'expireFactUntil' }, () => brain.expireFactUntil({ id, until: typeof until === 'string' ? until : iso(until) }));
 
 export const listFactsByEntity: Member<'listFactsByEntity'> = async (brain, sourceId, entitySlug, opts) => {
   const q = listQuery('listFactsByEntity', sourceId, opts, false);

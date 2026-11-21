@@ -3088,7 +3088,7 @@ export class PGLiteEngine implements BrainEngine {
     return factsImpl.expireFact(this.engineSql, id, opts);
   }
 
-  async expireFactUntil(id: number, until: Date | null): Promise<boolean> {
+  async expireFactUntil(id: number, until: Date | string | null): Promise<boolean> {
     return factsImpl.expireFactUntil(this.engineSql, id, until);
   }
 

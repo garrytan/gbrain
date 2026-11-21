@@ -323,7 +323,7 @@ export async function forgetFactInFence(
       // This keeps DB query patterns (active facts WHERE expired_at IS NULL)
       // accurate the moment the forget commits, without waiting for the
       // next extract_facts cycle phase to reconcile.
-      await maintenanceTransaction(engine, tx => tx.expireFactUntil(factId, new Date(`${today}T00:00:00.000Z`)));
+      await maintenanceTransaction(engine, tx => tx.expireFactUntil(factId, today));
 
       // #4696: mirror the rewritten file into the DB body, or the reconcile
       // (which reads pages.compiled_truth) resurrects the claim before the

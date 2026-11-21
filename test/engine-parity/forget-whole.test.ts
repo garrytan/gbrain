@@ -111,4 +111,18 @@ describe('a whole forget', () => {
       const unknown = await engine.readFactForForget(Math.max(...ids.values()) + 1000);
       return { superseded, retired, again, missing, elsewhere, supersededEnd, target, unknown, ...await pageState(engine) };
     });
+
+  // forget.ts's file-mirror stamp binds today's 'YYYY-MM-DD' text, as master did; the server casts it (UTC on every
+  // arm here: PGLite's default zone, the test database's zone and the Rust store's). An ISO time is kept as given.
+  parityTest('expireFactUntil takes a day text as that midnight and an ISO time as that instant',
+    { methods: ['expireFactUntil', 'listFactsForPage'], timeout: 180_000 },
+    async (engine) => {
+      const ids = await seed(engine, CLAIMS.slice(0, 3));
+      const day = await engine.expireFactUntil(ids.get(CLAIMS[0])!, '2026-06-01');
+      const instant = await engine.expireFactUntil(ids.get(CLAIMS[1])!, '2026-03-04T05:06:07.000Z');
+      const again = await engine.expireFactUntil(ids.get(CLAIMS[0])!, '2026-07-01');
+      const ends = (await engine.listFactsForPage(SRC, SLUG)).map(f => ({ fact: f.fact, end: iso(f.valid_until ?? null), expired: f.expired_at !== null }))
+        .filter(f => f.fact !== CLAIMS[2]);
+      return { day, instant, again, ends };
+    });
 });

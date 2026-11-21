@@ -190,9 +190,10 @@ export async function expireFact(exec: SqlExecutor, id: number, opts?: { superse
 
 /**
  * Expire fact `id` now and end it at `until`, or, without one, at its own earlier end or now (never before it began).
- * forgetFactInFence's supersession, retirement and file-mirror expiry. True iff an unexpired row changed.
+ * forgetFactInFence's supersession, retirement and file-mirror expiry. True iff an unexpired row changed. A date text
+ * (`'YYYY-MM-DD'`) is cast by the server, to midnight in the session TimeZone, as master's file-mirror stamp bound it.
  */
-export async function expireFactUntil(exec: SqlExecutor, id: number, until: Date | null): Promise<boolean> {
+export async function expireFactUntil(exec: SqlExecutor, id: number, until: Date | string | null): Promise<boolean> {
   const result = await exec.run(sqlFragment`
     UPDATE facts SET valid_until = COALESCE(${until}::timestamptz, GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now()))),
       expired_at = now()
