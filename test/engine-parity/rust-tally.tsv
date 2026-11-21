@@ -125,7 +125,7 @@ test/engine-parity/spend-log.test.ts	11	0
 test/engine-parity/stats-vectors.test.ts	3	0
 test/engine-parity/stats.test.ts	7	0
 test/engine-parity/sync-aliases.test.ts	10	0
-test/engine-parity/takes.test.ts	28	0
+test/engine-parity/takes.test.ts	29	0
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/timeline-reads.test.ts	4	0
 test/engine-parity/timeline.test.ts	33	0
