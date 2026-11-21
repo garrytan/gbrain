@@ -16,6 +16,7 @@ mod engine_migration;
 mod fact_relink;
 mod fact_relink_writes;
 mod field_usage;
+mod generations;
 mod graph;
 mod import_members;
 mod journal;

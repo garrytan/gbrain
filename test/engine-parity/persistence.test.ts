@@ -21,6 +21,8 @@ import { describe, expect } from 'bun:test';
 import { basisEmbedding, createSource, parityArms } from './harness.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { fenceHoldEntries, fenceReadOf } from '../../src/core/generations/fence.ts';
+import { projectFactFenceGeneration } from '../../src/core/generations/adapters/fact-rows.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import type { ClaimHeadSpec, TopologyChange } from '../../src/core/engine-sql/persistence-claims.ts';
@@ -241,6 +243,283 @@ describe('engine parity: write journal', () => {
     const answers = { everyOwner, oneOwner, noSources };
     expect(answers).toEqual({ everyOwner: [], oneOwner: [], noSources: [] });
     return answers;
+  });
+
+  parityTest('a fence publish reads its page and the held list reads its pages\' files', {
+    methods: ['putPage', 'softDeletePage', 'readFenceOriginGone', 'readFenceHoldFiles'],
+  }, async (engine) => {
+    await engine.putPage('notes/filed', { type: 'note', title: 'Filed', compiled_truth: 'filed body', source_path: 'notes/filed.md' });
+    await engine.putPage('notes/blank-path', { type: 'note', title: 'Blank', compiled_truth: 'blank body', source_path: '  ' });
+    await engine.putPage('notes/db-only', { type: 'note', title: 'Db only', compiled_truth: 'db body' });
+    await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'gone body', source_path: 'notes/gone.md' });
+    await engine.softDeletePage('notes/gone');
+    const origin = {
+      live: await engine.readFenceOriginGone('default', 'notes/filed'),
+      deleted: await engine.readFenceOriginGone('default', 'notes/gone'),
+      missing: await engine.readFenceOriginGone('default', 'notes/never'),
+      otherSource: await engine.readFenceOriginGone('other', 'notes/filed'),
+    };
+    const files = (await engine.readFenceHoldFiles(['default', 'other'], ['notes/filed', 'notes/blank-path', 'notes/db-only', 'notes/gone', 'notes/never']))
+      .map(row => ({ ...row })).sort((a, b) => `${a.source_id}/${a.slug}`.localeCompare(`${b.source_id}/${b.slug}`));
+    const answers = { origin, files, none: await engine.readFenceHoldFiles([], []) };
+    expect(answers).toEqual({
+      origin: { live: false, deleted: true, missing: true, otherSource: true },
+      files: [
+        { source_id: 'default', slug: 'notes/blank-path', database_only: true },
+        { source_id: 'default', slug: 'notes/db-only', database_only: true },
+        { source_id: 'default', slug: 'notes/filed', database_only: false },
+      ],
+      none: [],
+    });
+    return answers;
+  });
+
+  parityTest('gbrain get and doctor list no held fence result on a brain with none', {
+    methods: ['putPage', 'listFenceHoldRows'],
+  }, async (engine) => {
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: 'alice body' });
+    // `gbrain get` lists one page's holds; doctor's generation_held check lists every source's.
+    const answers = { get: await fenceHoldEntries(engine, ['default'], { slug: 'people/alice-example' }), doctor: await fenceHoldEntries(engine, ['default', 'other']) };
+    expect(answers).toEqual({ get: [], doctor: [] });
+    return answers;
+  });
+
+  parityTest('a readable fence clears its page\'s hold under the generation key lock', {
+    methods: ['transaction', 'lockGenerationKey', 'clearFenceHoldRows', 'listFenceHoldRows'],
+  }, async (engine) => {
+    const key = { sourceId: 'default', kind: 'fact_fence', ownerKey: 'page:people/alice-example' };
+    const held = await engine.transaction(async tx => {
+      await tx.lockGenerationKey('fact_fence:default:page:people/alice-example');
+      await tx.clearFenceHoldRows(key);
+      return tx.listFenceHoldRows(['default'], ['fact_fence', 'take_fence'], key.ownerKey);
+    });
+    expect(held).toEqual([]);
+    return held;
+  });
+
+  parityTest('the generation ledger activates generation 1 then 2 and keeps one held row per key', {
+    methods: ['transaction', 'putPage', 'readLiveGenerationRow', 'activateGenerationRows', 'recordHeldGenerationRow', 'listFenceHoldRows'],
+  }, async (engine) => {
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: 'alice body' });
+    const key = { sourceId: 'default', kind: 'fact_fence', ownerKey: 'page:people/alice-example' };
+    const row = (generation: number, operationId: string) => ({ generation, runId: null, operationId, inputPin: 'pin', inputSize: 4,
+      completeness: '{"complete":true}', setHash: 'h', restoreOf: null, activationId: null, locator: null });
+    const item = (itemKey: string, action: string) => ({ item_key: itemKey, identity_hash: itemKey, action, preimage: null, preimage_bytes: null, pending: false });
+    const held = (holdId: string) => ({ holdId, runId: null, inputPin: null, inputSize: null, setHash: 'h', reason: 'no_proof', context: '{"slug":"people/alice-example"}',
+      proposal: '[]', proposalBytes: 2 });
+    const none = await engine.readLiveGenerationRow(key);
+    const first = await engine.transaction(tx => tx.activateGenerationRows(key, null, row(1, 'op-1'), [item('row:a', 'published')]));
+    const one = await engine.readLiveGenerationRow(key);
+    await engine.transaction(tx => tx.activateGenerationRows(key, one!.id, row(2, 'op-2'), [item('row:a', 'kept'), item('row:b', 'published'), item('row:c', 'retired')]));
+    const two = await engine.readLiveGenerationRow(key);
+    await engine.transaction(tx => tx.recordHeldGenerationRow(key, held('hold-1')));
+    await engine.transaction(tx => tx.recordHeldGenerationRow(key, held('hold-1')));
+    const sameHold = (await engine.listFenceHoldRows(['default'], ['fact_fence'], key.ownerKey)).map(r => r.held_reason);
+    await engine.transaction(tx => tx.recordHeldGenerationRow(key, held('hold-2')));
+    const otherHold = (await engine.listFenceHoldRows(['default'], ['fact_fence'], key.ownerKey)).length;
+    const answers = { none, firstIsNumber: typeof first === 'number', one: { generation: one?.generation, items: one?.items },
+      two: { generation: two?.generation, input_pin: two?.input_pin, input_size: two?.input_size, locator: two?.locator,
+        items: [...(two?.items ?? [])].sort((a, b) => a.item_key.localeCompare(b.item_key)) }, sameHold, otherHold };
+    expect(answers).toEqual({ none: null, firstIsNumber: true, one: { generation: 1, items: [{ item_key: 'row:a', identity_hash: 'row:a' }] },
+      two: { generation: 2, input_pin: 'pin', input_size: 4, locator: null, items: [{ item_key: 'row:a', identity_hash: 'row:a' }, { item_key: 'row:b', identity_hash: 'row:b' }] },
+      sameHold: ['no_proof'], otherHold: 1 });
+    return answers;
+  });
+
+  parityTest('a publication counts its failures, reads its replay and adds to its valve window', {
+    methods: ['transaction', 'activateGenerationRows', 'recordHeldGenerationRow', 'heldGenerationRowsForInput', 'readHeldGenerationContext',
+      'liveGenerationForOperation', 'countGenerationAttempt', 'clearGenerationAttempts', 'readGenerationValve', 'bumpGenerationValve'],
+  }, async (engine) => {
+    const key = { sourceId: 'default', kind: 'publish_parity', ownerKey: 'input:parity' };
+    const row = (generation: number, operationId: string) => ({ generation, runId: 'r1', operationId, inputPin: 'pin', inputSize: 4,
+      completeness: '{"complete":true}', setHash: 'h', restoreOf: null, activationId: null, locator: null });
+    const item = (itemKey: string, action: string) => ({ item_key: itemKey, identity_hash: itemKey, action, preimage: null, preimage_bytes: null, pending: false });
+    const counts = [];
+    for (const code of ['a', 'b']) counts.push(await engine.transaction(tx => tx.countGenerationAttempt(key, 'hold-1', code)));
+    await engine.transaction(tx => tx.clearGenerationAttempts('hold-1'));
+    counts.push(await engine.transaction(tx => tx.countGenerationAttempt(key, 'hold-1', 'c')));
+    const emptyValve = await engine.readGenerationValve(key, 'run:r1');
+    const noReplay = await engine.liveGenerationForOperation('op-1');
+    const first = await engine.transaction(tx => tx.activateGenerationRows(key, null, row(1, 'op-1'), [item('a', 'published'), item('b', 'published'), item('c', 'retired')]));
+    const replay = await engine.liveGenerationForOperation('op-1');
+    await engine.transaction(tx => tx.activateGenerationRows(key, first, row(2, 'op-2'), [item('a', 'kept')]));
+    const afterSupersede = [await engine.liveGenerationForOperation('op-1'), await engine.liveGenerationForOperation('op-2')];
+    // The activation deleted the key's attempt counter: the next count starts at one.
+    const afterActivation = await engine.transaction(tx => tx.countGenerationAttempt(key, 'hold-1', 'd'));
+    await engine.transaction(tx => tx.bumpGenerationValve(key, 'run:r1', 2));
+    await engine.transaction(tx => tx.bumpGenerationValve(key, 'run:r1', 3));
+    const valve = await engine.readGenerationValve(key, 'run:r1');
+    await engine.transaction(tx => tx.recordHeldGenerationRow(key, { holdId: 'hold-x', runId: null, inputPin: 'pin', inputSize: 4, setHash: 'h', reason: 'valve',
+      context: '{"window_retired":5}', proposal: '[]', proposalBytes: 2 }));
+    const held = await engine.heldGenerationRowsForInput(key, 'pin');
+    const otherPin = await engine.heldGenerationRowsForInput(key, 'pin-2');
+    const context = await engine.readHeldGenerationContext(key, 'hold-x');
+    const otherHold = await engine.readHeldGenerationContext(key, 'hold-y');
+    await engine.transaction(tx => tx.clearGenerationAttempts('hold-1'));
+    const answers = { counts, emptyValve, noReplay, replay, afterSupersede, afterActivation, valve, held, otherPin, context, otherHold };
+    expect(answers).toEqual({ counts: [{ attempts: 1, codes: ['a'] }, { attempts: 2, codes: ['a', 'b'] }, { attempts: 1, codes: ['c'] }],
+      emptyValve: { retired: null, owned: 0 }, noReplay: null, replay: 1, afterSupersede: [null, 2], afterActivation: { attempts: 1, codes: ['d'] },
+      valve: { retired: 5, owned: 1 }, held: [{ hold_id: 'hold-x', item_set_hash: 'h', held_reason: 'valve' }], otherPin: [],
+      context: { held_context: { window_retired: 5 } }, otherHold: null });
+    return answers;
+  });
+
+  parityTest('a purge scrubs the generation ledger by page and by text', {
+    methods: ['transaction', 'activateGenerationRows', 'recordHeldGenerationRow', 'readHeldGenerationContext', 'scrubGenerationPageRows', 'scrubGenerationTextRows'],
+  }, async (engine) => {
+    const live = { sourceId: 'default', kind: 'scrub_parity', ownerKey: 'page:notes/x' };
+    const asking = { sourceId: 'default', kind: 'scrub_parity', ownerKey: 'input:x' };
+    const fence = { sourceId: 'default', kind: 'fact_fence', ownerKey: 'page:notes/x' };
+    const held = (holdId: string, context: string, proposal: string) => ({ holdId, runId: null, inputPin: holdId, inputSize: 1, setHash: 'h', reason: 'no_proof',
+      context, proposal, proposalBytes: 2 });
+    await engine.transaction(tx => tx.recordHeldGenerationRow(fence, held('hold-f', '{}', '[]')));
+    await engine.transaction(tx => tx.recordHeldGenerationRow(asking, held('hold-a', '{"note":"Secret Words"}', '[{"key":"notes/x"}]')));
+    await engine.transaction(tx => tx.activateGenerationRows(live, null, { generation: 1, runId: null, operationId: 'scrub-parity', inputPin: 'p', inputSize: 1,
+      completeness: '{"fence":{"text":"secret words"}}', setHash: 'h', restoreOf: null, activationId: null, locator: null },
+      [{ item_key: 'notes/x', identity_hash: 'x', action: 'published', preimage: { body: 'SECRET words' }, preimage_bytes: 9, pending: false }]));
+    const byText = await engine.transaction(tx => tx.scrubGenerationTextRows('default', ['secret words']));
+    const context = await engine.readHeldGenerationContext(asking, 'hold-a');
+    const textAgain = await engine.transaction(tx => tx.scrubGenerationTextRows('default', ['secret words']));
+    const byPage = await engine.transaction(tx => tx.scrubGenerationPageRows('default', ['fact_fence', 'take_fence'], 'notes/x'));
+    const pageAgain = await engine.transaction(tx => tx.scrubGenerationPageRows('default', ['fact_fence', 'take_fence'], 'notes/x'));
+    const answers = { byText, context, textAgain, byPage, pageAgain };
+    expect(answers).toEqual({ byText: { derived_generation_items: 1, derived_generations: 2 }, context: { held_context: null },
+      textAgain: { derived_generation_items: 0, derived_generations: 0 }, byPage: { derived_generation_items: 0, derived_generations: 1 },
+      pageAgain: { derived_generation_items: 0, derived_generations: 0 } });
+    return answers;
+  });
+
+  parityTest('a managed activation records, flips, gates, settles and lists its members', {
+    methods: ['transaction', 'putPage', 'activateGenerationRows', 'recordGenerationActivation', 'markGenerationActivated', 'readGenerationActivationState',
+      'settleGenerationMember', 'listPendingGenerationMembers', 'listGenerationOrphanCandidates'],
+  }, async (engine) => {
+    const key = { sourceId: 'default', kind: 'managed_parity', ownerKey: 'input:x' };
+    const first = '00000000-0000-8000-a000-00000000ac01';
+    const second = '00000000-0000-8000-a000-00000000ac02';
+    await engine.putPage('notes/made', { type: 'note', title: 'Made', compiled_truth: 'made body' });
+    const record = (activationId: string, slug: string, action: string) => engine.transaction(tx => tx.recordGenerationActivation(key,
+      { activationId, expectedGeneration: 0, inputPin: 'p', setHash: 'h', members: [{ slug, action, identity: `id-${slug}`, before: null }] }));
+    await record(first, 'notes/x', 'overwrite');
+    await record(first, 'notes/made', 'create');
+    const pendingState = await engine.readGenerationActivationState(first, 'notes/x', 'default');
+    const id = await engine.transaction(async tx => {
+      const made = await tx.activateGenerationRows(key, null, { generation: 1, runId: null, operationId: 'managed-parity', inputPin: 'p', inputSize: 1,
+        completeness: '{"managed":true}', setHash: 'h', restoreOf: null, activationId: first, locator: null },
+        [{ item_key: 'notes/x', identity_hash: 'id-notes/x', action: 'published', preimage: null, preimage_bytes: null, pending: true }]);
+      await tx.markGenerationActivated(first, made);
+      return made;
+    });
+    const liveState = await engine.readGenerationActivationState(first, 'notes/x', 'default');
+    const pending = (await engine.listPendingGenerationMembers(['default'], 'managed_parity')).map(row => ({ ...row, generation_id: Number(row.generation_id) === id ? 'G' : row.generation_id }));
+    await engine.transaction(tx => tx.settleGenerationMember(first, 'notes/x'));
+    const settled = await engine.readGenerationActivationState(first, 'notes/x', 'default');
+    await record(second, 'notes/made', 'create');
+    const orphans = (await engine.listGenerationOrphanCandidates(['default'], null)).filter(row => row.kind === 'managed_parity').map(({ created_at: _c, ...row }) => row);
+    const answers = { pendingState, liveState, pending, settled, orphans };
+    expect(answers).toEqual({ pendingState: { state: 'pending', generation_state: null, pending: null }, liveState: { state: 'activated', generation_state: 'live', pending: true },
+      pending: [{ source_id: 'default', kind: 'managed_parity', owner_key: 'input:x', generation_id: 'G', activation_id: first, slug: 'notes/x', item_action: 'published', identity: 'id-notes/x' }],
+      settled: { state: 'activated', generation_state: 'live', pending: false },
+      orphans: [{ source_id: 'default', kind: 'managed_parity', owner_key: 'input:x', activation_id: second, slug: 'notes/made' }] });
+    return answers;
+  });
+
+  parityTest('the repair generations reads select by run, time, key and id, and read the held proposal', {
+    methods: ['transaction', 'activateGenerationRows', 'recordHeldGenerationRow', 'readGenerationItemsByIds', 'listUnmatchedGenerationRows',
+      'listRestorableGenerationRows', 'listHeldGenerationRows', 'readHeldGenerationProposal', 'listSourceIncarnations'],
+  }, async (engine) => {
+    const key = (ownerKey: string) => ({ sourceId: 'default', kind: 'repair_parity', ownerKey });
+    const row = (generation: number, runId: string, completeness: string) => ({ generation, runId, operationId: `repair-parity-${runId}-${generation}`, inputPin: 'p',
+      inputSize: 1, completeness, setHash: 'h', restoreOf: null, activationId: null, locator: null });
+    const item = (action: string) => [{ item_key: 'notes/x', identity_hash: 'id-x', action, preimage: action === 'kept' ? { x: 1 } : null, preimage_bytes: null, pending: false }];
+    const ids = await engine.transaction(async tx => {
+      const prev = await tx.activateGenerationRows(key('a'), null, row(1, 'ra', '{}'), item('published'));
+      const live = await tx.activateGenerationRows(key('a'), prev, row(2, 'ra', '{"unmatched":[{"slug":"notes/old","why":"no_subject","missing":null}]}'), item('kept'));
+      await tx.activateGenerationRows(key('b'), null, row(1, 'rb', '{}'), []);
+      await tx.recordHeldGenerationRow(key('c'), { holdId: 'hold-c', runId: 'ra', inputPin: null, inputSize: null, setHash: 'h', reason: 'shrunk', context: '{}',
+        proposal: '[{"slug":"notes/p"}]', proposalBytes: 20 });
+      return { prev, live };
+    });
+    const held = await engine.listHeldGenerationRows(['default'], 'repair_parity', { runId: 'ra' });
+    const heldId = Number(held[0]?.id);
+    const name = (id: unknown) => Number(id) === ids.live ? 'live' : Number(id) === ids.prev ? 'prev' : Number(id) === heldId ? 'held' : 'other';
+    const answers = {
+      items: (await engine.readGenerationItemsByIds([ids.live, ids.prev])).map(r => ({ ...r, generation_id: name(r.generation_id) })).sort((x, y) => x.generation_id.localeCompare(y.generation_id)),
+      unmatched: (await engine.listUnmatchedGenerationRows(['default'], 'repair_parity', { runId: 'ra', ownerKey: 'a' })).map(r => ({ ...r, id: name(r.id) })),
+      restorable: (await engine.listRestorableGenerationRows(['default'], 'repair_parity', { id: ids.live })).map(r => ({ ...r, id: name(r.id), prev_id: name(r.prev_id),
+        generation: Number(r.generation), prev_generation: Number(r.prev_generation) })),
+      noneSince: await engine.listRestorableGenerationRows(['default'], 'repair_parity', { since: '2999-01-01T00:00:00Z' }),
+      held: held.map(r => ({ id: name(r.id), owner_key: r.owner_key, held_reason: r.held_reason, items: Number(r.items) })),
+      proposal: await engine.readHeldGenerationProposal(heldId),
+      proposalOfLive: await engine.readHeldGenerationProposal(ids.live),
+      sources: (await engine.listSourceIncarnations(['default', 'elsewhere'])).map(r => r.id),
+    };
+    expect(answers).toEqual({
+      items: [{ generation_id: 'live', item_key: 'notes/x', identity_hash: 'id-x', action: 'kept', preimage: { x: 1 } },
+        { generation_id: 'prev', item_key: 'notes/x', identity_hash: 'id-x', action: 'published', preimage: null }],
+      unmatched: [{ id: 'live', source_id: 'default', owner_key: 'a', activation_id: null, unmatched: [{ slug: 'notes/old', why: 'no_subject', missing: null }] }],
+      restorable: [{ id: 'live', source_id: 'default', owner_key: 'a', generation: 2, prev_id: 'prev', prev_generation: 1 }],
+      noneSince: [],
+      held: [{ id: 'held', owner_key: 'c', held_reason: 'shrunk', items: 1 }],
+      proposal: { proposal: [{ slug: 'notes/p' }], hold_id: 'hold-c' },
+      proposalOfLive: null,
+      sources: ['default'],
+    });
+    return answers;
+  });
+
+  parityTest('the facts fence evidence and restore reads: recorded keys, fence versions, the kept row move and the fence blocks', {
+    methods: ['transaction', 'putPage', 'createVersion', 'insertFacts', 'listFactsForPage', 'activateGenerationRows', 'listRecordedFenceItemKeys',
+      'hasBodylessPageVersion', 'listFenceVersionBodies', 'moveKeptFactRows', 'readGenerationFenceBlocks', 'listOwnedGenerationItems', 'readLiveGenerationId'],
+  }, async (engine) => {
+    const slug = 'notes/fence-parity';
+    const key = { sourceId: 'default', kind: 'fact_fence', ownerKey: `page:${slug}` };
+    const row = (generation: number, completeness: string) => ({ generation, runId: null, operationId: `fence-parity-${generation}`, inputPin: 'p', inputSize: 1,
+      completeness, setHash: 'h', restoreOf: null, activationId: null, locator: null });
+    const item = (item_key: string, action: string) => ({ item_key, identity_hash: `id-${item_key}`, action, preimage: null, preimage_bytes: null, pending: false });
+    await engine.putPage(slug, { type: 'note', title: 'Fence parity', compiled_truth: 'one <!--- gbrain:facts:begin --> x' });
+    await engine.createVersion(slug, { sourceId: 'default' });
+    await engine.putPage(slug, { type: 'note', title: 'Fence parity', compiled_truth: 'two, no marker' });
+    await engine.createVersion(slug, { sourceId: 'default' });
+    const ids = await engine.transaction(async tx => {
+      const prev = await tx.activateGenerationRows(key, null, row(1, '{"fence":{"body":"B1","timeline":null}}'), [item('row:1', 'published'), item('row:2', 'published')]);
+      const live = await tx.activateGenerationRows(key, prev, row(2, '{}'), [item('row:1', 'kept'), item('row:2', 'retired')]);
+      return { prev, live };
+    });
+    const name = (id: unknown) => Number(id) === ids.live ? 'live' : Number(id) === ids.prev ? 'prev' : 'other';
+    const facts = await engine.insertFacts([1, 2].map(n => ({ fact: `fact ${n}`, kind: 'fact' as const, entity_slug: slug, source: 'test', row_num: n,
+      source_markdown_slug: slug })), { source_id: 'default' });
+    await engine.transaction(tx => tx.moveKeptFactRows('default', slug, facts.ids, [1]));
+    const answers = {
+      recorded: (await engine.listRecordedFenceItemKeys(key, ['row:1', 'row:2', 'row:3'])).map(r => r.item_key).sort(),
+      bodyless: await engine.hasBodylessPageVersion('default', slug),
+      versions: (await engine.listFenceVersionBodies('default', slug, null, 10)).map(r => r.compiled_truth),
+      rows: (await engine.listFactsForPage('default', slug)).map(r => ({ fact: r.fact, row_num: Number(r.row_num) })).sort((x, y) => x.row_num - y.row_num),
+      blocks: (await engine.readGenerationFenceBlocks([ids.live, ids.prev])).map(r => ({ id: name(r.id), fence: r.fence })).sort((x, y) => x.id.localeCompare(y.id)),
+      owned: (await engine.listOwnedGenerationItems([ids.live, ids.prev])).map(r => `${name(r.generation_id)}:${r.item_key}`).sort(),
+      live: name((await engine.readLiveGenerationId(key))?.id),
+    };
+    expect(answers).toEqual({
+      recorded: ['row:1', 'row:2'],
+      bodyless: false,
+      versions: ['one <!--- gbrain:facts:begin --> x'],
+      rows: [{ fact: 'fact 2', row_num: 2 }, { fact: 'fact 1', row_num: 3 }],
+      blocks: [{ id: 'live', fence: null }, { id: 'prev', fence: { body: 'B1', timeline: null } }],
+      owned: ['live:row:1', 'prev:row:1', 'prev:row:2'],
+      live: 'live',
+    });
+    return answers;
+  });
+
+  parityTest('forgetting a fact reprojects its page\'s facts fence: the generation key lock, then the generation read', {
+    methods: ['transaction', 'putPage', 'listFenceRetireCandidates', 'lockGenerationKey'],
+  }, async (engine) => {
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: 'alice body' });
+    // The forget's page publication reprojects the fence (persistence/canonical-projections.ts) with the rows it still holds.
+    const rows = [{ row_num: 1, fact: 'Alice keeps bees', visibility: 'world' }];
+    const outcome = await engine.transaction(tx => projectFactFenceGeneration(tx, { sourceId: 'default', slug: 'people/alice-example',
+      read: fenceReadOf({ body: '## Facts block', timeline: null }), incoming: JSON.stringify(rows), rows, writer: 'projection' }));
+    expect(outcome).toMatchObject({ state: 'published', generation: 1, retiring: 0 });
+    return outcome;
   });
 
   parityTest('one request is admitted, read, claimed, locked and completed, and its counters are charged then released', {

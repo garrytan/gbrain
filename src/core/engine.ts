@@ -80,8 +80,17 @@ import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
 import type { FenceFactRow, FenceRowsTarget, GuardedTakeRow, GuardedTakeRowsQuery, HeldRowsQuery, PageTrustRestore } from './engine-sql/trust-fence.ts';
-import type { FenceHoldRow } from './engine-sql/fence-holds.ts';
+import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from './engine-sql/fence-holds.ts';
 import type { PageBodySizes } from './engine-sql/large-page.ts';
+import type { GenerationActivationRow, GenerationAttemptCount, GenerationLedgerRow, GenerationRowKey, GenerationValveRow, HeldGenerationRow, HeldInputRow, LiveGenerationRow } from './engine-sql/derived-generations.ts';
+import type { LedgerScrubCounts } from './engine-sql/generation-ledger.ts';
+import type { GenerationActivationRecord, GenerationActivationState, GenerationOrphanRow, PendingGenerationMemberRow } from './engine-sql/generation-activations.ts';
+import type { GenerationRepairFilter, GenerationRepairItemRow, HeldGenerationListRow, HeldGenerationProposalRow, RestorableGenerationRow,
+  UnmatchedGenerationRow } from './engine-sql/generation-repair.ts';
+import type { FenceVersionBodyRow } from './engine-sql/generation-fence-evidence.ts';
+import type { GenerationPageRow, GenerationPageRowsQuery } from './engine-sql/generation-page-rows.ts';
+import type { AtomOriginInputRow, AtomWriteReceiptRow, GenerationVersionProducer, ProducerVersionRow } from './engine-sql/generation-atom-reads.ts';
+import type { GenerationFenceBlockRow, GenerationOwnedItemRow } from './engine-sql/generation-fence-restore.ts';
 import type { TrustTable } from './trust/schema.ts';
 import type { NewTrustProposal, PendingContradictionFilter, PendingContradictionRow, TrustProposalFilter, TrustProposalRow, TrustProposalStatus, TrustProposalTransition } from './engine-sql/trust-proposals.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from './engine-sql/connect-gate.ts';
@@ -127,7 +136,7 @@ import type {
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
-import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakesLeavingFence } from './engine-sql/takes-reads.ts';
+import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakesLeavingFence } from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
   ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef, PageKeyRef,
@@ -3424,6 +3433,27 @@ export interface BrainEngine {
   listFenceRetireCandidates(target: FenceProjectionTarget): Promise<FactPreimage[]>;
 
   /**
+   * The before-state of the facts `ids` of `sourceId` (engine-sql/facts.ts `readFactPreimages`, `FACT_PREIMAGE_SQL`),
+   * in id order; an id that is no fact of the source is left out, and an id that is not a whole number is refused. The
+   * generation adapters (generations/adapters/fact-rows.ts `factPreimages`) record it before rows change.
+   */
+  readFactPreimages(sourceId: string, ids: readonly number[]): Promise<FactPreimage[]>;
+
+  /**
+   * Puts the recorded before-state `preimage` (`FACT_PREIMAGE_SQL`) back onto its fact of `sourceId` in the caller's
+   * transaction (engine-sql/facts.ts `restoreFactPreimage`): lifecycle, consolidation marks, and the fence position
+   * when no other row of the page holds it. Only a row whose claim and visibility still match changes; resolves whether it did.
+   */
+  restoreFactPreimage(sourceId: string, preimage: Record<string, unknown>): Promise<boolean>;
+
+  /**
+   * The extracted facts generation's rows and retire (engine-sql/facts.ts): the ids of a page coordinate's facts whose
+   * `source` starts with `sourcePrefix` (matched literally; `%`, `_` and `\` refuse), by id; and the expiry, now, of the live facts of `ids`.
+   */
+  listFactIdsBySourcePrefix(sourceId: string, slug: string, sourcePrefix: string): Promise<number[]>;
+  expireFactRows(sourceId: string, ids: readonly number[]): Promise<void>;
+
+  /**
    * Find candidate duplicates for a new fact within a source+entity bucket.
    * Entity-prefilter is mandatory (bounds the contradiction-classifier blast
    * radius). Hard cap k=5 by default. Embedding-cosine when both sides have
@@ -4640,6 +4670,57 @@ export interface BrainEngine {
   readUnembeddedPageSummary(sourceId: string, column: string): Promise<UnembeddedPageSummary>;
   /** The held fence results of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first (`listFenceHolds`, engine-sql/fence-holds.ts). */
   listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string): Promise<FenceHoldRow[]>;
+  /** A fence publish's statements (generations/fence.ts, engine-sql/fence-holds.ts): whether the page is deleted or gone, the generation key lock, the held rows a readable fence clears, and the held pages' file state. */
+  readFenceOriginGone(sourceId: string, slug: string): Promise<boolean>;
+  lockGenerationKey(lockKey: string): Promise<void>;
+  clearFenceHoldRows(key: FenceHoldKey): Promise<void>;
+  readFenceHoldFiles(sourceIds: readonly string[], slugs: readonly string[]): Promise<FenceHoldFileRow[]>;
+  /** The generation ledger statements of generations/publish.ts (engine-sql/derived-generations.ts): the live generation with its items, a new generation's activation, and a held result. */
+  readLiveGenerationRow(key: GenerationRowKey): Promise<LiveGenerationRow | null>;
+  activateGenerationRows(key: GenerationRowKey, liveId: number | null, row: GenerationActivationRow, items: readonly GenerationLedgerRow[]): Promise<number>;
+  recordHeldGenerationRow(key: GenerationRowKey, row: HeldGenerationRow): Promise<void>;
+  /** publishGeneration's producer-path statements: held rows of one input, a held row's context, the identical replay, the attempt counter and the valve. */
+  heldGenerationRowsForInput(key: GenerationRowKey, pin: string): Promise<HeldInputRow[]>;
+  readHeldGenerationContext(key: GenerationRowKey, holdId: string): Promise<{ held_context: Record<string, unknown> | null } | null>;
+  liveGenerationForOperation(operationId: string): Promise<number | null>;
+  countGenerationAttempt(key: GenerationRowKey, holdId: string, code: string): Promise<GenerationAttemptCount>;
+  clearGenerationAttempts(holdId: string): Promise<void>;
+  /** The consolidation ledger statements of generations/adapters/fact-rows.ts: whether a key's live row is a restore, and the clear of one entity's `tie` holds (`ownerPrefix` is compared over its JavaScript length). */
+  readGenerationRestored(key: GenerationRowKey): Promise<boolean>;
+  clearTieHeldGenerationRows(sourceId: string, kind: string, ownerPrefix: string): Promise<void>;
+  readGenerationValve(key: GenerationRowKey, windowKey: string): Promise<GenerationValveRow>;
+  bumpGenerationValve(key: GenerationRowKey, windowKey: string, retired: number): Promise<void>;
+  /** The purge scrub of the generation ledger (generations/ledger-scrub.ts, engine-sql/generation-ledger.ts): one page's rows, or every row whose text carries a needle. */
+  scrubGenerationPageRows(sourceId: string, fenceKinds: readonly string[], slug: string): Promise<LedgerScrubCounts>;
+  scrubGenerationTextRows(sourceId: string, needles: readonly string[]): Promise<LedgerScrubCounts>;
+  /** The managed activation rows of generations/managed.ts (engine-sql/generation-activations.ts): record, flip, member gate, settle and the two operator lists. */
+  recordGenerationActivation(key: GenerationRowKey, row: GenerationActivationRecord): Promise<void>;
+  markGenerationActivated(activationId: string, generationId: number): Promise<void>;
+  readGenerationActivationState(activationId: string, slug: string, sourceId: string): Promise<GenerationActivationState | null>;
+  settleGenerationMember(activationId: string, slug: string): Promise<void>;
+  listPendingGenerationMembers(sourceIds: readonly string[], kind: string | null): Promise<PendingGenerationMemberRow[]>;
+  listGenerationOrphanCandidates(sourceIds: readonly string[], kind: string | null): Promise<GenerationOrphanRow[]>;
+  /** The reads of gbrain repair generations (engine-sql/generation-repair.ts); the three lists take the typed selector filter. */
+  readGenerationItemsByIds(generationIds: readonly number[]): Promise<GenerationRepairItemRow[]>;
+  listUnmatchedGenerationRows(sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter): Promise<UnmatchedGenerationRow[]>;
+  listRestorableGenerationRows(sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter): Promise<RestorableGenerationRow[]>;
+  listHeldGenerationRows(sourceIds: readonly string[], kind: string, filter: GenerationRepairFilter): Promise<HeldGenerationListRow[]>;
+  readHeldGenerationProposal(id: number): Promise<HeldGenerationProposalRow | null>;
+  /** The fence evidence statements of generations/fence-evidence.ts (engine-sql/generation-fence-evidence.ts, #8819). */
+  listRecordedFenceItemKeys(key: GenerationRowKey, itemKeys: readonly string[]): Promise<Array<{ item_key: string }>>;
+  hasBodylessPageVersion(sourceId: string, slug: string): Promise<boolean>;
+  listFenceVersionBodies(sourceId: string, slug: string, before: number | null, limit: number): Promise<FenceVersionBodyRow[]>;
+  moveKeptFactRows(sourceId: string, slug: string, ids: readonly number[], claimed: readonly number[]): Promise<void>;
+  /** The fence restore reads of generations/fence-restore.ts (engine-sql/generation-fence-restore.ts). */
+  readGenerationFenceBlocks(generationIds: readonly number[]): Promise<GenerationFenceBlockRow[]>;
+  listOwnedGenerationItems(generationIds: readonly number[]): Promise<GenerationOwnedItemRow[]>;
+  readLiveGenerationId(key: GenerationRowKey): Promise<{ id: number | string } | null>;
+  /** The page rows a page generation adapter reads, deleted rows included, by slug (engine-sql/generation-page-rows.ts). */
+  readGenerationPageRows(query: GenerationPageRowsQuery): Promise<GenerationPageRow[]>;
+  /** The atom adapter's reads (engine-sql/generation-atom-reads.ts): a live page origin's input pin, the stored versions a producer wrote, committed managed atom receipts. */
+  readAtomOriginInput(sourceId: string, slug: string): Promise<AtomOriginInputRow | null>;
+  listProducerVersionRows(sourceId: string, slugs: readonly string[], producer: GenerationVersionProducer): Promise<ProducerVersionRow[]>;
+  listAtomWriteReceipts(sourceId: string, slugs: readonly string[]): Promise<AtomWriteReceiptRow[]>;
   /** The request a principal admitted under `requestId` (a uuid), or null. */
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The requests a principal admitted under any of `requestIds` (uuids), in no order (a grouped admission's replays). */
@@ -5525,6 +5606,8 @@ export interface BrainEngine {
   deleteTakesByIds(ids: readonly number[]): Promise<void>;
   /** The id of the page's take at `rowNum`, or null. */
   findTakeId(pageId: number, rowNum: number): Promise<number | null>;
+  /** The takes generation adapter's before-states: the takes a write deletes (`gone`) or replaces at their row number, by row number. */
+  readTakePreimages(read: TakePreimageRead): Promise<Array<{ preimage: TakePreimage; gone: boolean }>>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */

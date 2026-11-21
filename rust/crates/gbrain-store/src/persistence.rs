@@ -108,7 +108,9 @@ pub(crate) use op_checkpoint::{
 pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
-pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
+pub(crate) use projection_queue::{
+    activation_started_us, parse_timestamptz, queue_page_projection,
+};
 pub use receipt_list::WriteRequestListFilter;
 pub use topology::TopologyChangeInsert;
 pub use worktree_admission::WorktreeAdmissionKey;

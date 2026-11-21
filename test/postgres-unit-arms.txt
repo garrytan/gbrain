@@ -209,6 +209,7 @@ test/engine-parity/files-ops-sites.test.ts
 test/engine-parity/forget-commit.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-remember.test.ts
+test/engine-parity/generation-output-parity.test.ts
 test/engine-parity/git-holds.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/holding-page-purges.test.ts
@@ -882,6 +883,14 @@ test/request-tools-combined-gbra449.test.ts
 test/requester-scope.test.ts
 test/restated-private-cross-entity-2891.test.ts
 test/retrieval-coverage-notices.test.ts
+test/rust-derived-generations.test.ts
+test/rust-fence-generations.test.ts
+test/rust-generation-fence-evidence.test.ts
+test/rust-generation-fence-restore.test.ts
+test/rust-generation-managed.test.ts
+test/rust-generation-publish.test.ts
+test/rust-generation-repair.test.ts
+test/rust-generation-scrub.test.ts
 test/salience-enrich-parity.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts

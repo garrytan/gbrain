@@ -64,6 +64,7 @@ test/engine-parity/files-ops-sites.test.ts	0	4
 test/engine-parity/forget-commit.test.ts	3	0
 test/engine-parity/forget-reach-reads.test.ts	4	1
 test/engine-parity/forget-remember.test.ts	2	0
+test/engine-parity/generation-output-parity.test.ts	15	0
 test/engine-parity/git-holds.test.ts	5	1
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/holding-page-purges.test.ts	2	0
@@ -108,7 +109,7 @@ test/engine-parity/page-vector-overflow.test.ts	2	0
 test/engine-parity/page-visibility.test.ts	6	0
 test/engine-parity/pages.test.ts	39	1
 test/engine-parity/persistence-declaration.test.ts	7	3
-test/engine-parity/persistence.test.ts	55	0
+test/engine-parity/persistence.test.ts	65	0
 test/engine-parity/private-page-reads.test.ts	23	0
 test/engine-parity/raw-sql.test.ts	0	4
 test/engine-parity/reads-privacy.test.ts	51	0

@@ -61,6 +61,7 @@ import * as cliEntities from './cli-entities.ts';
 import * as factsDoctor from './facts-doctor.ts';
 import * as embeddingCatalog from './embedding-catalog.ts';
 import * as fenceHolds from './fence-holds.ts';
+import * as derivedGenerations from './derived-generations.ts';
 import * as factsCycle from './facts-cycle.ts';
 import * as factsPurge from './facts-purge.ts';
 import * as factsRepair from './facts-repair.ts';
@@ -144,7 +145,7 @@ export const STORE_MEMBERS = {
   ...cliReadsExport,
   ...cliEntities,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...factsCycle, ...factsPurge, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...factsTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...factsTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...factRelinkWrites,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").
   ...trustTierReads,

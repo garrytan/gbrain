@@ -379,21 +379,8 @@ src/core/fence-repair/hold-fix.ts	execute_raw	2
 src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
 src/core/function-search-path.ts	execute_raw	3
-src/core/generations/adapters/atoms.ts	execute_raw	3
+src/core/generations/adapters/atoms.ts	execute_raw	1
 src/core/generations/adapters/chronicle-events.ts	execute_raw	13
-src/core/generations/adapters/extracted-facts.ts	execute_raw	4
-src/core/generations/adapters/fact-rows.ts	execute_raw	6
-src/core/generations/adapters/page.ts	execute_raw	2
-src/core/generations/adapters/single-page.ts	execute_raw	1
-src/core/generations/adapters/synthesis.ts	execute_raw	1
-src/core/generations/adapters/take-rows.ts	execute_raw	1
-src/core/generations/fence-evidence.ts	execute_raw	4
-src/core/generations/fence-restore.ts	execute_raw	3
-src/core/generations/fence.ts	execute_raw	4
-src/core/generations/ledger-scrub.ts	execute_raw	7
-src/core/generations/managed.ts	execute_raw	7
-src/core/generations/publish.ts	execute_raw	19
-src/core/generations/repair.ts	execute_raw	5
 src/core/ghost-pages.ts	execute_raw	1
 src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut

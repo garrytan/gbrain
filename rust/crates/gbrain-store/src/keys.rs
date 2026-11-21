@@ -113,6 +113,9 @@ pub const REASON_TOMBSTONE: u8 = b'y';
 /// Family `embedding_holds` (`embedding_holds.rs`): a page's `page_embedding_budget` state and
 /// reason, `h page_id`.
 pub const EMBEDDING_HOLD: u8 = b'h';
+/// Family `persistence_journal`, the `derived_generations` ledger (`generations.rs`). `h` is the
+/// embedding-hold family on the other lanes, so the ledger takes `x`.
+pub const DERIVED_GENERATION: u8 = b'x';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

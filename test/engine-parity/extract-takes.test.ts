@@ -11,10 +11,11 @@
  *    no SQL, so every read and write on the path has to be a typed member.
  *  - Why existing coverage misses it: the reads ran through `executeRaw` inside cycle/extract-takes.ts and
  *    trust/fence-guard.ts, which the parity cases cannot call (D18); test/extract-takes*.test.ts run PGLite only.
- *  - Rust: the write publishes a take-fence generation (generations/publish.ts `publishFenceGeneration`), whose ledger
- *    statements still run through `executeRaw`, so on the Rust arm both cases end on the typed `raw_sql` refusal, and
- *    `atFenceGeneration` pins that the refusal comes from inside `publishFenceGeneration`: every read before it on the
- *    path (the page, tier, fence, guard, preimage and coverage reads) is a typed member the store serves.
+ *  - Rust: the write publishes a take-fence generation (generations/publish.ts `publishFenceGeneration`, typed by lane 7),
+ *    then records the derivation edges of the written takes (trust/taint.ts `recordTaintEdges`), whose member
+ *    `recordDerivationEdges` is a facts member lane 4 serves on rust-engine/rust-5a. Until it reaches this branch, both
+ *    cases end on the typed `facts` refusal of `recordDerivationEdges`, and `atDerivationEdges` pins that the refusal
+ *    comes from inside `recordTaintEdges`: every read and the generation publish before it run on the Rust arm.
  *  - Seam: `withWriteTrustSettings` stamps the operator-curated take (the transaction-local `gbrain.write_trust_tier`
  *    every arm sets with `applyTransactionSettings`). The FS path reads a markdown checkout in a temp directory.
  */
@@ -73,22 +74,23 @@ async function takeProposals(engine: BrainEngine, claimOf: Map<number, string>) 
 }
 
 /**
- * On the Rust arm, run `fn` and require it to stop on the typed refusal raised inside `publishFenceGeneration`; the
- * refusal is rethrown so the harness counts the case as stopped. Any other failure, or a finish, fails the case.
+ * On the Rust arm, run `fn` and require it to stop on the typed refusal of `recordDerivationEdges` raised inside
+ * `recordTaintEdges`; the refusal is rethrown so the harness counts the case as stopped. Any other failure, or a finish,
+ * fails the case.
  */
-async function atFenceGeneration<T>(backend: string, fn: () => Promise<T>): Promise<T> {
+async function atDerivationEdges<T>(backend: string, fn: () => Promise<T>): Promise<T> {
   if (backend !== 'rust') return fn();
   let value: T;
   try {
     value = await fn();
   } catch (error) {
-    const e = error as { code?: unknown; stack?: unknown };
-    if (e?.code !== 'engine_capability_missing' || !String(e.stack ?? '').includes('publishFenceGeneration')) {
-      throw new Error(`the takes re-extract stopped outside publishFenceGeneration: ${String(e?.stack ?? error)}`);
+    const e = error as { code?: unknown; stack?: unknown; message?: unknown };
+    if (e?.code !== 'engine_capability_missing' || !String(e.message ?? '').includes('recordDerivationEdges') || !String(e.stack ?? '').includes('recordTaintEdges')) {
+      throw new Error(`the takes re-extract stopped outside recordTaintEdges: ${String(e?.stack ?? error)}`);
     }
     throw error;
   }
-  throw new Error(`the takes re-extract finished, but publishFenceGeneration has no typed member yet (${JSON.stringify(value).slice(0, 200)})`);
+  throw new Error(`the takes re-extract finished, but recordDerivationEdges has no store member on this branch yet (${JSON.stringify(value).slice(0, 200)})`);
 }
 
 const summary = (r: Awaited<ReturnType<typeof extractTakesFromDb>>) => ({ scanned: r.pagesScanned, withTakes: r.pagesWithTakes, upserted: r.takesUpserted,
@@ -97,7 +99,7 @@ const summary = (r: Awaited<ReturnType<typeof extractTakesFromDb>>) => ({ scanne
 describe('engine parity: the takes re-extract write', () => {
   parityTest('extractTakesFromDb projects a page fence, prunes and replaces the rows that left it, and keeps a more trusted take with a contest', {
     methods: ['putPage', 'listAllPageRefs', 'getPage', 'addTakesBatch', 'listActiveTakesForPages', 'readRowTrustRows', 'listTrustProposals'],
-  }, async (engine, backend) => atFenceGeneration(backend, async () => {
+  }, async (engine, backend) => atDerivationEdges(backend, async () => {
     const page = await engine.putPage(SLUG, { type: 'person', title: 'Takes Example', compiled_truth: FIRST, timeline: '' });
     const first = summary(await extractTakesFromDb(engine, {}));
     const afterFirst = await storedTakes(engine, page.id);
@@ -131,7 +133,7 @@ describe('engine parity: the takes re-extract write', () => {
 
   parityTest('extractTakesFromFs projects the checkout\'s fences onto their pages, skips a page not in the brain and a quarantined page', {
     methods: ['putPage', 'listActiveTakesForPages', 'readRowTrustRows'],
-  }, async (engine, backend) => atFenceGeneration(backend, async () => {
+  }, async (engine, backend) => atDerivationEdges(backend, async () => {
     const repo = mkdtempSync(join(tmpdir(), 'gbrain-parity-extract-takes-'));
     try {
       mkdirSync(join(repo, 'people'), { recursive: true });

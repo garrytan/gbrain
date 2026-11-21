@@ -10,7 +10,8 @@
  * The reads and the delete of `gbrain extract takes` (readLivePageIdBySlug through findTakeId) refuse a page, take or
  * row id that is not an integer, as the SQL's integer casts refuse it.
  */
-import type { AcceptedTakeRemoval, HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakesLeavingFence } from '../../engine-sql/takes-reads.ts';
+import { checkTakePreimageRead, type AcceptedTakeRemoval, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PageTierRef, type PurgeTakesSpec,
+  type TakePreimage, type TakePreimageRead, type TakesLeavingFence } from '../../engine-sql/takes-reads.ts';
 import { storedTrustTier } from '../../trust/tier.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -34,6 +35,15 @@ export const listTakeRowsForPage: StoreMember<[pageId: number], Array<{ row_num:
  * `fence_absent`, and the answer is none, as PGLite gives for a page whose fence generation is not held.
  */
 export const listHeldFenceTakeRows: StoreMember<[spec: HeldFenceTakeSpec], HeldFenceTakeRow[]> = async () => [];
+
+/** The store reads the page's takes by row number and joins the incoming rows as the SQL does; the arguments are checked first. */
+export const readTakePreimages: StoreMember<[read: TakePreimageRead], Array<{ preimage: TakePreimage; gone: boolean }>> = async (brain, read) => {
+  checkTakePreimageRead(read);
+  if (!read.gone.length && !read.incoming.length) return [];
+  return storeCall({ member: 'readTakePreimages' }, () => brain.readTakePreimages({
+    pageId: read.pageId, by: read.by, gone: [...read.gone], incoming: read.incoming.map(take => ({ ...take })),
+  }));
+};
 
 export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number> = (brain, spec) => {
   const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate, { callerReaders: true });

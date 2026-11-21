@@ -3,9 +3,9 @@
 Part of the takes family ([takes.md](takes.md)); the rules in [rust/README.md](../../README.md) ("The brain store") apply.
 
 Nine single-purpose reads that used to be raw SQL in doctor, onboarding, the fact purge, the fence import, the MCP
-scorecard, the take repair and the takes writes. Each is now one engine member, with the SQL in
-`src/core/engine-sql/takes-reads.ts` (PGLite and Postgres) and a native read in the store, except
-`listHeldFenceTakeRows`, which needs state the store does not keep. A take is scoped by the page it hangs on, read now.
+scorecard, the take repair, the takes writes and the take rows generation adapter. Each is now one engine member, with
+the SQL in `src/core/engine-sql/takes-reads.ts` (PGLite and Postgres) and a native read in the store, except
+`listHeldFenceTakeRows`, which answers none (see its row). A take is scoped by the page it hangs on, read now.
 
 | Member | Returns | Used by |
 | --- | --- | --- |
@@ -14,6 +14,7 @@ scorecard, the take repair and the takes writes. Each is now one engine member, 
 | `brain.planFactPurgeTakes({ sourceId, factIds, factHash, subject })` | `[{ id, page_id }]` by id: takes of the source that the purged facts were consolidated into, or whose claim has the purged fingerprint on the subject's page (`*` is every page) | `planFactPurge` |
 | `brain.listTakeRowsForPage(pageId)` | `[{ row_num, claim }]` by row number (the SQL gained an `ORDER BY row_num`; it was unordered) | fence import `storedFenceRows` |
 | `brain.listHeldFenceTakeRows({ sourceId, kind, ownerKey, pageId })` | `[]`: the store keeps no fence generations (`derived_generations`), so no take_fence generation is ever held `fence_absent`. PGLite gives the page's takes by row number, resolution cells included, only while that generation is held. | `takes_add`, `takes_update` and the lost-fence repair (`heldTakeRows`) |
+| `brain.readTakePreimages({ pageId, by, gone, incoming })` | `[{ preimage, gone }]` by row number: the full row (`TAKE_PREIMAGE_SQL`, `resolved_at` as jsonb writes it, `…+00:00`) of each take of the page that `gone` names (by id or by row number), and of each take an incoming row of its number would replace (another claim, kind or holder; a missing field differs). A take is listed once per incoming row of its number, as the `LEFT JOIN` does. The member checks every number first | `generations/adapters/take-rows.ts` |
 | `brain.countMcpResolvedTakes({ sourceIds, holders, excludePrivate })` | resolved takes whose `resolved_by` starts with `mcp:`, on a page in the source scope, held by a listed holder | `countMcpResolved` |
 | `brain.listTakeSupersessionCandidates(sourceIds)` | `[{ id, source_id, slug }]` by page id: live pages with an inactive take or a source cell saying `superseded by #` (any case) | take supersession repair |
 | `brain.countZeroWeightWithTakes()` | `{ zero_weight_with_takes, nonzero_weight }`: pages with an active take and weight 0 (never weighed reads 0), and pages with weight above 0; soft-deleted pages count | doctor `salience_health` |

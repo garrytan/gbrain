@@ -70,6 +70,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     crate::persistence::remove_notifier_source_rows(tx, source_id)?;
     crate::reason_tombstones::remove_source_rows(tx, source_id)?;
     crate::eval_capture::calibration_profiles::remove_source_rows(tx, source_id)?;
+    crate::generations::remove_source_rows(tx, source_id)?;
     Ok(())
 }
 
