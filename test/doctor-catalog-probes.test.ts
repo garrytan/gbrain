@@ -153,16 +153,14 @@ describe('engine parity: catalog probes', () => {
     }
   });
 
-  parityTest('pgvector: the extension check answers from the vector_search capability on Rust', { methods: [] }, async (engine, backend) => {
+  parityTest('pgvector: the extension check answers ok from the vector_search capability on Rust', { methods: [] }, async (engine, backend) => {
     const result = await answered(() => pgvectorCheck(engine));
     if (!result.answered) return result;
     const [check] = result.checks;
-    if (backend === 'rust') {
-      // The Rust store does not report vector_search yet: skipped, naming the capability.
-      expect({ skipped: skipped(check), capability: (check?.details as { capability?: unknown })?.capability }).toEqual({ skipped: true, capability: 'vector_search' });
-    } else {
-      expect(skipped(check)).toBe(false);
-    }
+    // Named Rust divergence: the Rust store reports vector_search and has no pgvector extension, so its ok
+    // answer says the store serves vector search where PGLite and Postgres say "Extension installed".
+    const message = backend === 'rust' ? 'Vector search is served by the engine store (no pgvector extension)' : 'Extension installed';
+    expect({ skipped: skipped(check), status: check?.status, message: check?.message }).toEqual({ skipped: false, status: 'ok', message });
     return { answered: true, name: check?.name, status: check?.status };
   });
 });
