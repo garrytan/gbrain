@@ -46,8 +46,9 @@ number Postgres prints for it.
 - A window is a whole number of hours; a null or `NaN` window is refused and a non-whole one is `invalid_argument`. A window
   that reaches before 4713 BC or past 294276 AD is refused as Postgres's "timestamp out of range".
 - Days are 24 hours (no daylight-saving nuance).
-- Orderings that Postgres leaves to the database collation use byte order (`COLLATE "C"`) on every engine. The
-  calibration list used to order by `slot` in the database collation.
+- Orderings that Postgres leaves to the database collation (the calibration list by `slot`, for one) use byte order
+  in Rust. The SQL engines use the database's collation, so rows whose keys compare differently by bytes and by
+  locale can come out in a different order.
 - Replay ties break by insertion id.
 - A mean adds in insertion order, as a heap scan does.
 - A refused calibration insert uses no id on Rust; Postgres `BIGSERIAL` consumes one. Parity cases never assert an id after

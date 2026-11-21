@@ -25,7 +25,8 @@ export async function pendingUpgradeMigrationsNotice(engine: BrainEngine, comman
     const entries = (await import('../core/preferences.ts')).loadCompletedMigrations();
     const history = ledger.indexCompletedEntries(entries);
     // A wedge a newer completed migration ran past is history to apply-migrations, which then exits 0, so commands stay quiet
-    // about it; doctor and apply-migrations --dry-run still report a conflict it left (its host work owed).
+    // about it; doctor and apply-migrations --dry-run still report a conflict it left (its host work owed). Host work owed
+    // waits on a person, not on a run, so only serve names it, once at startup; every other command stays quiet about it.
     const live = summary.wedged.filter(v => ledger.forwardProgressPast(v, entries) === null);
     const owed = live.filter(v => ledger.hostWorkOwedForVersion(v, history));
     const wedged = live.filter(v => !owed.includes(v));
@@ -33,7 +34,7 @@ export async function pendingUpgradeMigrationsNotice(engine: BrainEngine, comman
       const { wedgedMigrationFix } = await import('../commands/apply-migrations.ts');
       return { ...migrationsNotice(`Upgrade migration(s) ${wedged.join(', ')} failed several runs in a row and are wedged; the command ran, and apply-migrations --yes will not clear them until the cause is fixed.`), fix: wedgedMigrationFix(wedged) };
     }
-    if (owed.length > 0) return { ...migrationsNotice(`${ledger.hostWorkOwedMessage(owed)} The command ran.`), fix: ledger.hostWorkOwedFix(owed) };
+    if (owed.length > 0 && command === 'serve') return { ...migrationsNotice(`${ledger.hostWorkOwedMessage(owed)} The command ran.`), fix: ledger.hostWorkOwedFix(owed) };
     const pending = [...summary.pending, ...summary.partial];
     if (pending.length === 0) return null;
     const notice = migrationsNotice(`${pending.length} upgrade migration(s) have not finished on this brain yet (${pending.join(', ')}); the command ran, and gbrain apply-migrations --yes --no-autopilot-install finishes the upgrade.`);

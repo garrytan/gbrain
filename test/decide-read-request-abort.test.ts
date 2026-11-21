@@ -39,9 +39,13 @@ function fakeEngine() {
   return { fake, engine: engine as unknown as BrainEngine };
 }
 
-test('every decideRead member has a case', async () => {
-  const source = await Bun.file(new URL('../src/core/postgres-engine.ts', import.meta.url)).text();
-  const members = [...source.matchAll(/^ +(\w+)\([^)\n]*\)[^{\n]*\{ return this\.decideRead\(/gm)].map(m => m[1]);
+test('every decideRead member has a case', () => {
+  // The engine's own runtime surface: every prototype method whose body routes through decideRead.
+  const proto = PostgresEngine.prototype;
+  const members = Object.getOwnPropertyNames(proto).filter(name => {
+    const fn = Object.getOwnPropertyDescriptor(proto, name)?.value;
+    return name !== 'constructor' && name !== 'decideRead' && typeof fn === 'function' && String(fn).includes('this.decideRead(');
+  });
   expect(members.sort()).toEqual(Object.keys(CALLS).sort());
 });
 
