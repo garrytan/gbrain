@@ -2828,6 +2828,7 @@
           "private cliReads",
           "private configRead",
           "private connRetry",
+          "private decideRead",
           "private directEngineSql",
           "private directRawSql",
           "private disconnectInternal",

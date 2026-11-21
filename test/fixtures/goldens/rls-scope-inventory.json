@@ -5827,6 +5827,7 @@
         "dailyDecideSpend": "none",
         "deactivateDerivedTakes": "none",
         "decideConflictNoEntityCounts": "none",
+        "decideRead": "none",
         "decideSlotUsage": "none",
         "decideWriteGateHold": "none",
         "declarePersistence": "none",

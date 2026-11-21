@@ -37,7 +37,39 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
-const { parityTest } = parityArms(testBackends());
+const { parityTest: armsParityTest } = parityArms(testBackends());
+
+/**
+ * The lists below read in the database's own collation and leave ties to the plan, as master does (a Postgres brain
+ * on en_US sorts `a` before `A`; PGLite and the Rust store sort bytes). The engines' answers are compared after one
+ * client-side byte order, so a case compares what each engine lists, not how its collation sorts it.
+ */
+type Row = Record<string, unknown>;
+const bytes = (a: unknown, b: unknown): number => (a === b ? 0 : a === null ? 1 : b === null ? -1 : String(a) < String(b) ? -1 : 1);
+const bySlotThen = (...keys: string[]) => (rows: Row[]): Row[] =>
+  [...rows].sort((x, y) => { for (const k of ['slot', ...keys]) { const c = bytes(x[k], y[k]); if (c) return c; } return 0; });
+const NEWEST_GROUP_FIRST = (rows: Row[]): Row[] =>
+  [...rows].sort((x, y) => (y.last_at as Date).getTime() - (x.last_at as Date).getTime()
+    || bytes(x.slot, y.slot) || bytes(x.provider, y.provider) || bytes(x.model_resolved, y.model_resolved));
+const BYTE_ORDERED: Record<string, (rows: Row[]) => Row[]> = {
+  listDecideSpendBySlot: bySlotThen(),
+  listDecideReceiptStats: bySlotThen('mode', 'outcome', 'error_reason'),
+  decideSlotUsage: bySlotThen(),
+  listDecideCalibrations: bySlotThen(),
+  listDecideMixedModelDecisions: bySlotThen(),
+  listDecideResolvedModels: NEWEST_GROUP_FIRST,
+  listDecideReplayReceipts: (rows) => [...rows].sort((x, y) => bytes(x.decision_id, y.decision_id)),
+};
+const byteOrdered = (engine: BrainEngine): BrainEngine => new Proxy(engine, {
+  get(target, key) {
+    const sort = typeof key === 'string' ? BYTE_ORDERED[key] : undefined;
+    const member = Reflect.get(target, key, target);
+    if (!sort || typeof member !== 'function') return member;
+    return async (...args: unknown[]) => sort(await (member as (...a: unknown[]) => Promise<Row[]>).apply(target, args));
+  },
+});
+const parityTest: typeof armsParityTest = ((name: string, opts: never, run: (engine: BrainEngine, ...rest: never[]) => Promise<unknown>, ...rest: never[]) =>
+  (armsParityTest as unknown as (...a: unknown[]) => unknown)(name, opts, (engine: BrainEngine, ...r: never[]) => run(byteOrdered(engine), ...r), ...rest)) as typeof armsParityTest;
 
 /** Whether a call threw. A typed `engine_capability_missing` refusal propagates so the Rust arm counts it as refused. */
 async function threw(run: () => Promise<unknown>): Promise<boolean> {

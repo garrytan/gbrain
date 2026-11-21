@@ -387,6 +387,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'lockRegisteredSourceIds': OOS.wantedLinks,
   'replaceWantedLinkRows': OOS.wantedLinks,
   'searchRead': OOS.helper,
+  'decideRead': OOS.helper,
   'countOnboardSignal': OOS.stats,
   'linkRead': OOS.helper,
   'inboundLinkCoverage': OOS.linkReads,
