@@ -170,7 +170,9 @@ import * as notifierImpl from './engine-sql/notifier.ts';
 import * as cliReadsImpl from './engine-sql/cli-reads-import.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as worktreeClaimImpl from './engine-sql/worktree-claim.ts';
+import * as topologyStoreImpl from './engine-sql/topology-store.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
+import type { TopologyStore } from './engine-sql/topology-store.ts';
 import * as writerAdminImpl from './engine-sql/writer-admin.ts';
 import * as writerStatusImpl from './engine-sql/writer-status.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
@@ -1717,6 +1719,7 @@ export class PostgresEngine implements BrainEngine {
   listSharedSkillPackRoots(hostId: string) { return this.writeMiscRead(exec => writeMiscImpl.listSharedSkillPackRoots(exec, hostId)); }
   getWorktreeBinding(sourceId: string, hostId: string | null) { return this.writeMiscRead(exec => writeMiscImpl.getWorktreeBinding(exec, sourceId, hostId)); }
   worktreeClaimStore(): Promise<WorktreeClaimStore> { return worktreeClaimImpl.worktreeClaimStore(this); }
+  topologyStore(): Promise<TopologyStore> { return topologyStoreImpl.topologyStore(this); }
   readWriterAdminState(opts?: WriterAdminStateOptions): Promise<string> { return writerAdminImpl.readWriterAdminState(this, opts); }
   readWorktreeManifest(worktreeId: string): Promise<StoredWorktreeManifest | null> { return writerAdminImpl.readWorktreeManifest(this, worktreeId); }
   readWriterDiagnosticRows(abandonedCutoff: string | null, excludedOrigins: readonly string[]) { return writerStatusImpl.readWriterDiagnosticRows(this, abandonedCutoff, excludedOrigins); }

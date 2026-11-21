@@ -294,6 +294,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'writerReleaseStore', 'addPersistenceCounters',
   // A bound publication's request-row recovery work (engine-sql/publication-journal.ts).
   'publicationJournalStore',
+  // The reads a source lifecycle change makes before its first write (engine-sql/topology-store.ts).
+  'topologyStore',
   // Writer status (engine-sql/writer-status.ts).
   'readWriterDiagnosticRows', 'readWriterStatusRows', 'listOnboardingSources', 'listBlockingEffectRows', 'listActiveWorktreeRefreshRows',
   // Code edges

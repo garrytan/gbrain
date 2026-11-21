@@ -622,6 +622,32 @@ counter row changes nothing. recoverPublication and upgradeRecoveryStaging move 
 `requireManagedPersistence` (`journal.ts` admission), which this engine refuses until that
 admission is typed. The owner pending-wait read in `owner-activity.ts` stays raw SQL.
 
+## Topology store
+
+A source lifecycle change (`src/core/persistence/topology-locks.ts`, `topology-clone.ts`,
+`topology-transaction.ts`) reads its source, worktrees, owners and pending requests through
+`engine.topologyStore()` before its first write. On PGLite and Postgres the store is the SQL in
+`src/core/engine-sql/topology-store.ts`, statement for statement as the callers ran it; on this engine it
+is the reads below, on the handle it was taken from (a transaction's store reads the transaction).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.topologySource(sourceId)` | `{ incarnation, config, last_commit, local_path }`; `null` for an unknown source | the clone's `SELECT … FROM sources` |
+| `brain.topologyHostWorktrees(hostId)` | host `hostId`'s bindings with their worktree's owner, epoch and generation as text | `withTopologyLocks`' additional-root read |
+| `brain.topologyMembers(worktreeIds)` | the source ids bound to the worktrees, sorted | `lockTopologyRows`' member read, `firstMember`, `anyMember` |
+| `brain.topologyOwners(worktreeIds)` | `{ owner_host_id, owner_epoch, state }` per worktree, in id order | the owner `SELECT … FOR UPDATE` |
+| `brain.topologyCanonicalStamp(worktreeId)` | the md5 of `id:knowledge_revision:incarnation` of every page of the bound sources, in page id order, joined with `,` | `topologyCanonicalStamp` |
+| `brain.topologyUnsettledRequests(sourceIds, worktreeIds)` | the requests on the sources or worktrees that are queued, deferred, running or recovering or hold a recovery record, in sequence order | `assertTopologyRequestsSettled` |
+| `brain.topologyBlockingEffect(sourceIds, worktreeIds)` | the first effect on them that is running, holds a recovery record, or is a queued `withdrawal-mirror`: `{ id, source_id }`; `null` when none | the same check's effect read |
+
+`durable`, `syncCommit`, `lockBrain`, `lockSources` and `sharePrincipal` do nothing: a store commit is
+durable before it returns and the store runs one write transaction at a time, so the commit setting,
+the wait bounds and the row locks change nothing. `activeRefresh` is always `null`: this engine keeps no
+worktree refresh rows (`gbrain sources refresh` refuses before it writes one). `hostLocalPaths`,
+`hostBinding` and `lockedSource` are served from `listHostWorktrees`, `readHostBinding` and
+`topologySource`. A managed clone runs every read here, then stops at its first write (the
+`persistence_worktrees` row), which still runs raw SQL; the transaction rolls back.
+
 ## TypeScript members with no stored state
 
 | Member | Answer | Why |

@@ -774,11 +774,10 @@ src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
 src/core/persistence/takes-prepare.ts	execute_raw	7
 src/core/persistence/terminal-failures.ts	execute_raw	4
-src/core/persistence/topology-clone.ts	execute_raw	19
-src/core/persistence/topology-locks.ts	execute_raw	19
+src/core/persistence/topology-clone.ts	execute_raw	11
+src/core/persistence/topology-locks.ts	execute_raw	2
 src/core/persistence/topology-receipts.ts	execute_raw	9
 src/core/persistence/topology-recovery.ts	execute_raw	16
-src/core/persistence/topology-transaction.ts	execute_raw	1
 src/core/persistence/transient-retry.ts	execute_raw	1
 src/core/persistence/twin-merge.ts	execute_raw	16
 src/core/persistence/unbound-source.ts	execute_raw	4

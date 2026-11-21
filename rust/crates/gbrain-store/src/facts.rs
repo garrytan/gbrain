@@ -46,6 +46,7 @@ pub mod contest;
 pub mod cycle;
 pub mod doctor;
 mod embedding;
+pub(crate) use embedding::md5_hex;
 pub mod extractor_classify;
 mod fence;
 mod fence_overlay;

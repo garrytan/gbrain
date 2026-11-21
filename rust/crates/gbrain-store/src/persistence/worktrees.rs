@@ -44,6 +44,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 mod release;
+mod topology_reads;
 pub use release::{CounterDelta, ReleaseRead};
 
 /// `persistence_worktrees.state` CHECK.

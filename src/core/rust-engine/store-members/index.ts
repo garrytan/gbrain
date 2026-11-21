@@ -76,6 +76,7 @@ import * as embeddingInstall from './embedding-install.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as worktreeClaim from './worktree-claim.ts';
+import * as topologyStore from './topology-store.ts';
 import * as writerAdmin from './writer-admin.ts';
 import * as writerRelease from './writer-release.ts';
 import * as publicationJournal from './publication-journal.ts';
@@ -165,6 +166,8 @@ export const STORE_MEMBERS = {
   ...writeMisc,
   // The unmanaged writer claim over the store's worktree bindings (rust/docs/store/persistence.md, "Worktree bindings").
   ...worktreeClaim,
+  // A source lifecycle change's reads before its first write (same doc, "Topology store").
+  ...topologyStore,
   // Writer administration: the reviewed state digest, the operator lock, transfer prepare and cancel (same section).
   ...writerAdmin,
   // Writer activation, deactivation and the pre-activation release over the stored brain mode (same doc, "Writer release").

@@ -132,7 +132,8 @@ test/engine-parity/timeline-reads.test.ts	4	0
 test/engine-parity/timeline.test.ts	33	0
 test/engine-parity/title-fuzzy-like-bound.test.ts	1	0
 test/engine-parity/title-fuzzy-unicode.test.ts	1	0
-test/engine-parity/topology-named-stop.test.ts	0	2
+test/engine-parity/topology-named-stop.test.ts	1	2
+test/engine-parity/topology-store.test.ts	1	0
 test/engine-parity/transaction-settings.test.ts	10	0
 test/engine-parity/traversal-cache.test.ts	5	2
 test/engine-parity/trust-fence.test.ts	7	0

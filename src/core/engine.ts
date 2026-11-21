@@ -89,6 +89,7 @@ import type {
   AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
+import type { TopologyStore } from './engine-sql/topology-store.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type { CounterColumn, WriterReleaseStore } from './engine-sql/writer-release.ts';
 import type { PublicationJournalStore } from './engine-sql/publication-journal.ts';
@@ -1596,6 +1597,13 @@ export interface BrainEngine {
    * body)` opens the transaction and the store.
    */
   worktreeClaimStore(): Promise<WorktreeClaimStore>;
+  /**
+   * The reads a source lifecycle change makes before its first write (engine-sql/topology-store.ts): the source, the
+   * host's worktrees, owners, members, active refreshes, unsettled requests and blocking effects, and the transaction's
+   * durable-commit and row locks. Making the store takes no lock; call it on the root engine before the topology locks
+   * and on the transaction engine inside them, so each statement runs where the caller is.
+   */
+  topologyStore(): Promise<TopologyStore>;
   /**
    * The writer topology a reviewed `--expected-state` binds to, as jsonb text (engine-sql/writer-admin.ts); the digest
    * is its SHA-256 (persistence/admin-intent.ts). `lock` holds the topology until the transaction commits.

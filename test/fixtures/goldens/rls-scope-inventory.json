@@ -7634,6 +7634,7 @@
         "takePageEmbeddingLease": "none",
         "telemetryRead": "none",
         "timelineRead": "none",
+        "topologyStore": "none",
         "transaction": "none",
         "transactionDirect": "none",
         "transactionOn": "none",

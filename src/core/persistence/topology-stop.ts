@@ -1,11 +1,11 @@
 /**
- * The named Rust stop for source topology changes (docs/ENGINES.md, "Topology recovery on the Rust engine"). Two
- * managed-checkout steps still read and lock through raw SQL: the owner's topology recovery
- * (topology-recovery.ts `recoverSourceTopologies`, which finishes an interrupted clone, reclone or retire under
- * topology-locks.ts `withTopologyLocks`) and the managed clone itself (topology-clone.ts `runManagedSourceClone`, used by
- * `sources add --url` and `sources reclone`). On an engine without `raw_sql` (the Rust engine) each step refuses by
- * its own name before any lock, filesystem write or row change, so a recovering change stays exactly as recorded and
- * no partial clone directory exists. PGLite, Postgres and transaction handles (no capability set) pass.
+ * The named Rust stop for source topology changes (docs/ENGINES.md, "Topology recovery on the Rust engine"). The
+ * owner's topology recovery (topology-recovery.ts `recoverSourceTopologies`, which finishes an interrupted clone,
+ * reclone or retire under topology-locks.ts `withTopologyLocks`) still claims and writes through raw SQL. On an engine
+ * without `raw_sql` (the Rust engine) it refuses by name before any lock, filesystem write or row change, so a
+ * recovering change stays exactly as recorded. PGLite, Postgres and transaction handles (no capability set) pass.
+ * The managed clone (topology-clone.ts `runManagedSourceClone`) reads and locks through the typed `topologyStore`
+ * member instead; on Rust it stops at its first clone-transaction write (`member=executeRaw`), which rolls back.
  *
  * Doctor (`topology_recovery_stopped`) and `gbrain sources writer status` (`topology_recoveries`) name the stop for
  * each recovering change on this host through `readTopologyRecoveryStops`, a typed read only.
@@ -16,7 +16,6 @@ import { capabilityMissing, servesRawSql } from '../rust-engine/errors.ts';
 /** Each named step, with why it needs raw SQL (the text the refusal names after the step). */
 export const TOPOLOGY_STOPS = {
   source_topology_recovery: 'it finishes an interrupted source lifecycle change under topology locks that need raw SQL',
-  managed_source_clone: 'a managed clone or reclone reserves, locks and publishes its checkout through raw SQL',
 } as const;
 export type TopologyStop = keyof typeof TOPOLOGY_STOPS;
 

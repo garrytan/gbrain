@@ -1,23 +1,28 @@
 /**
- * BrainEngine parity: the named Rust stop for source topology changes (persistence/topology-stop.ts). The owner's
- * topology recovery (topology-recovery.ts `recoverSourceTopologies`) and the managed clone (topology-clone.ts
- * `runManagedSourceClone`, reached by `sources add --url` and `sources reclone`) still lock and read through raw SQL.
+ * BrainEngine parity: the Rust stops for source topology changes. The owner's topology recovery
+ * (topology-recovery.ts `recoverSourceTopologies`) still locks through raw SQL and refuses by name
+ * (persistence/topology-stop.ts). The managed clone (topology-clone.ts `runManagedSourceClone`, reached by
+ * `sources add --url` and `sources reclone`) reads and locks through the typed `topologyStore` member, so on Rust it
+ * stops at its first clone-transaction write, the `persistence_worktrees` INSERT, which still runs raw SQL.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on PGLite and Postgres the recovery scan reaches a recovering change under its topology locks and the
- *    clone runs its own checks; both arms agree. On the Rust engine each step refuses by its own name
- *    (`member=source_topology_recovery` / `member=managed_source_clone`, capability raw_sql, written=nothing) before any
- *    lock: the recovering change is exactly as recorded, no clone directory or staging directory exists, no source is
- *    registered, and the typed status read (`readTopologyRecoveryStops`) names the stop for the change.
+ *    clone runs its own checks; both arms agree. On the Rust engine the recovery scan refuses by name
+ *    (`member=source_topology_recovery`, capability raw_sql, written=nothing) before any lock, and the typed status
+ *    read (`readTopologyRecoveryStops`) names the stop for the change. A clone refuses `member=executeRaw`,
+ *    written=nothing, at the `persistence_worktrees` INSERT inside the clone transaction, which rolls back: no clone or
+ *    staging directory exists, no source is registered, and no change is recovering. Before that write every engine
+ *    runs the same checks: a loopback remote refuses `internal_target` and a reclone of a source this host does not
+ *    own refuses `owner_unavailable`, with no lock or directory taken.
  *  - Regression: on the Rust engine the recovery scan reached topology-locks.ts `withTopologyLocks` and the clone its
- *    first raw read (topology-clone.ts), so each refused as the generic `member=executeRaw`, which names neither the
- *    step nor what was left; doctor and status could not say why a recovering change never converged.
+ *    first raw read (topology-clone.ts), so each refused as the generic `member=executeRaw` before its own checks; doctor
+ *    and status could not say why a recovering change never converged. Case 3 pins where the clone stop now fires.
  *  - Why existing coverage misses it: owner-recovery-scans.test.ts runs the scan with no recovering change, and
  *    journal-typed-sites.test.ts lists a recovering change without running the scan.
- *  - Seam: none. The real scan, lifecycle and typed members; the clone remote is a closed local port, so the SQL arms'
- *    clone fails without the network.
+ *  - Seam: case 3 passes the `hooks.clone` seam (a local bare repository), so the SQL arms' clone commits; on Rust it
+ *    reads the source line of the first frame outside the Rust engine. Cases 1 and 2 use the real scan and lifecycle.
  */
-import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
@@ -31,6 +36,10 @@ import { runPersistenceAdministration } from '../../src/core/persistence/adminis
 import { localHostId, registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { runManagedSourceLifecycle } from '../../src/core/persistence/source-lifecycle.ts';
+import { runManagedSourceClone } from '../../src/core/persistence/topology-clone.ts';
+import { topologyPrincipal } from '../../src/core/persistence/topology-locks.ts';
+import { largeBareRepository } from '../helpers/large-worktree.ts';
+import { execFileSync } from 'node:child_process';
 import { recoverSourceTopologies } from '../../src/core/persistence/topology-recovery.ts';
 import { readTopologyRecoveryStops } from '../../src/core/persistence/topology-stop.ts';
 
@@ -38,7 +47,7 @@ const { parityTest } = parityArms(testBackends());
 
 const RECOVERY = 'd0000000-0000-4000-8000-0000000000f1';
 const WRITER = 'd0000000-0000-4000-8000-0000000000f2';
-/** A closed local port: the SQL arms' clone fails at once, without DNS or the network. */
+/** A loopback remote: every engine refuses it as an internal target before any lock, without DNS or the network. */
 const CLOSED_REMOTE = 'https://127.0.0.1:9/none.git';
 
 /** Runs `run` under a scratch GBRAIN_HOME with a plain checkout registered as source `work`. */
@@ -99,9 +108,8 @@ describe('engine parity: the named Rust stop for source topology changes', () =>
     return { recovered, recovering: after.map(row => ({ source: row.source_id, state: row.state })), listed };
   }));
 
-  parityTest('a managed clone and reclone stop by name on Rust before any lock or directory, and register nothing', {
-    methods: ['readSourceMembership', 'listTopologyRecoveries'],
-    requires: 'raw_sql',
+  parityTest('a clone from an internal remote and a reclone off the owner refuse before any lock or directory on every engine, and register nothing', {
+    methods: ['topologyStore', 'readSourceMembership', 'listTopologyRecoveries'],
     timeout: 60_000,
   }, async (engine, backend) => withCheckout(engine, backend, async (home) => {
     await registerLocalWriter(engine, 'cli');
@@ -111,13 +119,38 @@ describe('engine parity: the named Rust stop for source topology changes', () =>
     const left = { target: existsSync(target), staging: readdirSync(home).filter(name => name.startsWith('.gbrain-clone-') || name.includes('.gbrain-old-')),
       registered: (await engine.readSourceMembership('cloned')) !== null, recovering: (await engine.listTopologyRecoveries(localHostId(), null, 16)).length };
     expect(left).toEqual({ target: false, staging: [], registered: false, recovering: 0 });
-    if (backend === 'rust') {
-      expect({ add: named(add), reclone: named(reclone) }).toEqual({
-        add: { code: 'engine_capability_missing', member: 'managed_source_clone', written: 'nothing' },
-        reclone: { code: 'engine_capability_missing', member: 'managed_source_clone', written: 'nothing' } });
-      throw add;
-    }
     const code = (error: unknown) => (error as { code?: unknown } | null)?.code ?? null;
     return { add: code(add), reclone: code(reclone), left };
+  }));
+
+  parityTest('the clone stop on Rust is the persistence_worktrees INSERT in the clone transaction, after every typed read', {
+    methods: ['topologyStore', 'readSourceMembership', 'listTopologyRecoveries'],
+    requires: 'raw_sql',
+    timeout: 60_000,
+  }, async (engine, backend) => withCheckout(engine, backend, async (home) => {
+    await registerLocalWriter(engine, 'cli');
+    const bare = largeBareRepository(home, 3);
+    const target = join(home, 'cloned');
+    const clone = async (_url: string, stage: string) => { execFileSync('git', ['clone', '--quiet', bare, stage], { stdio: ['ignore', 'ignore', 'pipe'] }); };
+    const add = { operation: 'add' as const, sourceId: 'cloned', path: target, remoteUrl: 'https://example.invalid/example.git', requestId: RECOVERY };
+    let result: Record<string, unknown> | null = null;
+    const refusal = await caught(async () => {
+      result = await runManagedSourceClone(engine, add, await topologyPrincipal(engine), add.requestId, { ...add, requestId: undefined }, { clone });
+    });
+    const left = { target: existsSync(target), staging: readdirSync(home).filter(name => name.startsWith('.gbrain-clone-') || name.includes('.gbrain-old-')),
+      registered: (await engine.readSourceMembership('cloned')) !== null, recovering: (await engine.listTopologyRecoveries(localHostId(), null, 16)).length };
+    if (backend === 'rust') {
+      // The first frame under src/ outside the Rust engine and the error builder is the caller that ran raw SQL.
+      const frames = [...String((refusal as Error | null)?.stack ?? '').matchAll(/(\/[^\s()]*\/src\/[^\s()]*?):(\d+):\d+/g)];
+      const frame = frames.find(([, file]) => !/\/src\/core\/(rust-engine|ops\/contract\.ts)/.test(file!));
+      const site = frame ? { file: frame[1]!.split('/src/').pop(), line: readFileSync(frame[1]!, 'utf8').split('\n')[Number(frame[2]) - 1]!.trim() } : null;
+      expect({ refusal: named(refusal), file: site?.file, insert: site?.line.includes('INSERT INTO persistence_worktrees') ?? false, left }).toEqual({
+        refusal: { code: 'engine_capability_missing', member: 'executeRaw', written: 'nothing' }, file: 'core/persistence/topology-clone.ts', insert: true,
+        left: { target: false, staging: [], registered: false, recovering: 0 } });
+      throw refusal;
+    }
+    if (refusal) throw refusal;
+    const committed = result as Record<string, unknown> | null;
+    return { state: committed?.state, cloned: committed?.cloned, left };
   }));
 });

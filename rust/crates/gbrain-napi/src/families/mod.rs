@@ -80,6 +80,7 @@ mod stats;
 mod takes;
 mod telemetry;
 mod timeline_queries;
+mod topology_store;
 mod transactions;
 mod trust_tier_reads;
 mod vectors;

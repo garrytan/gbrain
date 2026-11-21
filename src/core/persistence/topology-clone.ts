@@ -22,7 +22,6 @@ import { priorTopologyChange, recordTopologyChange, topologyReceipt, type Topolo
 import { readJournalLimits } from './limits.ts';
 import { cloneTopologyCheckout, flushTopologyDirectory, flushTopologyTree, topologyDirectoryBytes, topologyDirectoryIdentity } from './topology-filesystem.ts';
 import { finishTopologyClone } from './topology-recovery.ts';
-import { requireTopologyRawSql } from './topology-stop.ts';
 import { reservePhysicalRoot, preparePhysicalRootReplacement, readPhysicalRootReservation } from './physical-root.ts';
 
 const writerStatusFix=(sourceId?:string):Action=>readFix(
@@ -39,10 +38,7 @@ export interface CloneLifecycleHooks {
 }
 export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifecycleInput,principal:string,requestId:string,intent:unknown,
   hooks:CloneLifecycleHooks={}):Promise<Record<string,unknown>>{
-  // The named Rust stop (topology-stop.ts): the clone reserves, locks and publishes through raw SQL.
-  requireTopologyRawSql(engine,'managed_source_clone');
-  const [source]=await engine.executeRaw<{incarnation:string;config:Record<string,unknown>;last_commit:string|null;local_path:string|null}>(
-    'SELECT incarnation,config,last_commit,local_path FROM sources WHERE id=$1',[input.sourceId]);
+  const source=await (await engine.topologyStore()).source(input.sourceId);
   if(source)source.config=parseSourceConfig(source.config);
   if(input.operation==='add'&&source)throw opError('source_id_taken','Source ID is already registered.',
     `Source ${input.sourceId} already exists, so nothing was cloned. Choose a different source id, or use gbrain sources reclone ${input.sourceId} to replace its managed checkout.`,
@@ -103,22 +99,21 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
       const oldBytes=existsSync(target)?await topologyDirectoryBytes(target,reserved):0;
       const token=randomUUID(),stage=join(dirname(target),`.gbrain-clone-${basename(target)}-${token}`),aside=`${target}.gbrain-old-${token}`;
       accepted=await topologyTransaction(engine,async tx=>{
-        await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-        await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
-        const [preparedOwner]=currentBinding?[]:await tx.executeRaw<{owner_host_id:string;owner_epoch:string;state:string}>(
-          'SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE',[worktreeId]);
+        const store=await tx.topologyStore();
+        await store.syncCommit();
+        await store.lockBrain();
+        const preparedOwner=currentBinding?null:await store.lockOwner(worktreeId);
         if(preparedOwner){
-          const members=await tx.executeRaw('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid LIMIT 1',[worktreeId]);
-          const [host]=await tx.executeRaw<{local_path:string;coordination_path:string}>(
-            'SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[worktreeId,hostIdFor(engine)]);
-          if(preparedOwner.owner_host_id!==hostIdFor(engine)||preparedOwner.state!=='active'||members.length
+          const member=await store.anyMember(worktreeId);
+          const host=await store.hostBinding(worktreeId,hostIdFor(engine));
+          if(preparedOwner.owner_host_id!==hostIdFor(engine)||preparedOwner.state!=='active'||member!==null
             ||host?.local_path!==target||host.coordination_path!==coordination)
             throw opError('recovery_required','The reserved checkout is still bound, recovering, or has a different physical identity.',
               `${target} is reserved by worktree ${worktreeId}, which is still bound to a source, recovering, or owned elsewhere, so source ${input.sourceId} was not cloned. Show the user the writer status; an interrupted clone there must finish recovery first.`,
               {fix:writerStatusFix()});
         }
         const sources=await lockTopologyRows(tx,input.sourceId,bindings);
-        const [current]=await tx.executeRaw<{incarnation:string;last_commit:string|null;config:unknown}>('SELECT incarnation,last_commit,config FROM sources WHERE id=$1',[input.sourceId]);
+        const current=await store.lockedSource(input.sourceId);
         if(current)lockedConfig=current.config;
         const replay=await priorTopologyChange(tx,principal,requestId,intent);if(replay)return replay;
         if((current?.incarnation??null)!==(source?.incarnation??null)||current?.last_commit!==source?.last_commit
@@ -128,8 +123,8 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
         const invalidated=await settleTopologyRequests(tx,sources,bindings.map(row=>row.worktree_id),principal);
         const incarnation=source?.incarnation??randomUUID();
         let canonicalStamp=currentBinding?await topologyCanonicalStamp(tx,worktreeId):'';
-        const [owner]=currentBinding?await tx.executeRaw<{manifest:TopologyCloneRecovery['manifest']}>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid',[worktreeId]):[];
-        const manifest=before?{...before,canonical_stamp:canonicalStamp}:owner?.manifest?compactStoredManifest(owner.manifest):null;
+        const stored=(currentBinding?await tx.readWorktreeManifest(worktreeId):null) as TopologyCloneRecovery['manifest'];
+        const manifest=before?{...before,canonical_stamp:canonicalStamp}:stored?compactStoredManifest(stored):null;
         if(input.operation==='reclone'&&(!manifest||manifest.canonical_stamp!==canonicalStamp))
           throw opError('recovery_required','The missing checkout has no current verified canonical manifest. Recover it from a verified checkpoint before recloning.',
             `Source ${input.sourceId} has no manifest matching its current canonical content, so a fresh clone could not be verified and nothing was recloned. Show the user the writer status; restoring the checkout from a verified copy is their decision (docs/architecture/topologies.md).`,
