@@ -18,12 +18,36 @@ export type ShadowDuration =
   | { kind: 'days'; days: number; expires?: string }
   | { kind: 'not_required'; expires?: string };
 
+/** The ruling behind an override, quoted as given: the words, who gave them, when and where. */
+export interface OverrideRuling {
+  words: string;
+  by: string;
+  /** Local time of the ruling, as the ruling states it. */
+  at: string;
+  place: string;
+}
+
+/**
+ * A dated override of criterion 1's duration for ONE brain. It applies only while `now` is before `expires` and only
+ * to the brain whose `brainRefFor(persistence_brain.brain_id)` equals `brain_ref`; a null `brain_ref` binds no brain
+ * yet, so the override applies nowhere. Once it expires the policy's own duration (14 days) stands again.
+ */
+export interface ShadowOverride {
+  id: string;
+  brain_ref: string | null;
+  shadow_min: { kind: 'days'; days: number };
+  expires: string;
+  ruling: OverrideRuling;
+}
+
 export interface ReadinessPolicy {
   version: 1;
   /** Criterion 1's minimum shadow duration. */
   shadow_min: ShadowDuration;
   /** Who approved this value and when (`D14`, or the ruling that changed it). */
   approved_by: string;
+  /** Dated per-brain overrides of `shadow_min`; the first that applies wins. */
+  overrides?: readonly ShadowOverride[];
 }
 
 /** The approved policy. Change it only with the maintainer's ruling, and name the ruling in `approved_by`. */
@@ -31,7 +55,79 @@ export const READINESS_POLICY: ReadinessPolicy = {
   version: 1,
   shadow_min: { kind: 'days', days: DEFAULT_SHADOW_MIN_DAYS },
   approved_by: 'D14 (docs/designs/RUST_ENGINE.md "Swap readiness")',
+  overrides: [{
+    // C1 of the Dec 1 swap ask: keep the Dec 1 opt-in swap with a dated override of criterion 1 for the
+    // maintainer's own brain. `brain_ref` is that brain's `brain_ref` from `gbrain engine swap --to rust --plan --json`.
+    id: 'c1-dec1-swap',
+    brain_ref: null,
+    shadow_min: { kind: 'days', days: 5 },
+    expires: '2026-12-08T08:00:00.000Z',
+    ruling: {
+      words: 'Do it', by: 'the maintainer', at: '2026-11-21 at 1:17 PM PST',
+      place: 'Slack channel C0CJDTJG5PE, thread 1795295460.046919, message 1795295827.787139',
+    },
+  }],
 };
+
+/** The brain reference an override binds: a one-way digest of `persistence_brain.brain_id`. */
+export function brainRefFor(brainId: string): string {
+  return createHash('sha256').update(`gbrain-engine-swap-brain-ref-v1\0${brainId}`).digest('hex').slice(0, 16);
+}
+
+export type OverrideMiss = 'another_brain' | 'expired' | 'unknown_brain' | 'unbound';
+
+/** The policy in force for one brain at `now`: the base policy, or the base with an applying override's duration. */
+export interface PolicyInForce {
+  policy: ReadinessPolicy;
+  /** The override that applies, else the first one listed with why it does not; null when none is listed. */
+  override: { id: string; applies: boolean; why: OverrideMiss | null; expires: string; ruling: OverrideRuling } | null;
+  /** The policy as the plan prints it, naming the override, its expiry and the ruling's words, time and place. */
+  text: string;
+  /** Part of the plan hash: it differs when an override applies, so an approved plan cannot carry one elsewhere. */
+  hash: string;
+  brain_ref: string | null;
+}
+
+function overrideMiss(o: ShadowOverride, ref: string | null, now: Date): OverrideMiss | null {
+  const expiry = Date.parse(o.expires);
+  if (!Number.isFinite(expiry) || now.getTime() >= expiry) return 'expired';
+  if (o.brain_ref === null) return 'unbound';
+  if (ref === null) return 'unknown_brain';
+  return ref === o.brain_ref ? null : 'another_brain';
+}
+
+const MISS_TEXT: Record<OverrideMiss, string> = {
+  another_brain: 'it is for another brain',
+  expired: 'it has expired',
+  unknown_brain: 'this brain has no persistence identity',
+  unbound: 'it names no brain yet',
+};
+
+function quote(r: OverrideRuling): string {
+  return `${r.by}, "${r.words}" (${r.place}, ${r.at})`;
+}
+
+/** Resolves the policy for the brain whose `persistence_brain.brain_id` is `brainId` (null when unknown). */
+export function policyInForce(base: ReadinessPolicy, brainId: string | null, now: Date): PolicyInForce {
+  const ref = brainId ? brainRefFor(brainId) : null;
+  const { overrides, ...plain } = base;
+  const list = overrides ?? [];
+  const hit = list.find(o => overrideMiss(o, ref, now) === null);
+  const shown = hit ?? list[0];
+  const why = shown && !hit ? overrideMiss(shown, ref, now) : null;
+  const policy: ReadinessPolicy = hit
+    ? { ...plain, shadow_min: { ...hit.shadow_min, expires: hit.expires }, approved_by: `${quote(hit.ruling)}; override ${hit.id}, this brain only` }
+    : plain;
+  const note = shown && why ? `; override ${shown.id} (${quote(shown.ruling)}, until ${shown.expires}) does not apply: ${MISS_TEXT[why]}` : '';
+  return {
+    policy,
+    override: shown ? { id: shown.id, applies: !!hit, why, expires: shown.expires, ruling: shown.ruling } : null,
+    text: describePolicy(policy, now) + note,
+    hash: createHash('sha256').update(JSON.stringify({ policy: policyHash(policy), override: hit?.id ?? null, brain_ref: hit ? ref : null }))
+      .digest('hex').slice(0, 16),
+    brain_ref: ref,
+  };
+}
 
 /** What no policy can waive (the design's list); the evaluator checks each whatever the policy says. */
 export const UNWAIVABLE = [
