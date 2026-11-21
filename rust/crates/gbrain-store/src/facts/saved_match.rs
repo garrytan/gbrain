@@ -1,5 +1,6 @@
 //! `matchSavedFacts` (src/core/engine-sql/facts-trust.ts): the keyword scan behind a `search` /
-//! `query` saved-facts block.
+//! `query` saved-facts block, and `readEntityNewestFacts`: a named entity's newest facts under the
+//! same candidate rules, without the scan.
 //!
 //! The candidate rows are, clause by clause:
 //!
@@ -60,6 +61,24 @@ pub struct SavedFactsMatchQuery {
 
 /// Rows each pool keeps (`pool_rank <= 200`).
 const POOL_CAP: usize = 200;
+
+/// What `readEntityNewestFacts` sends (search/entity-facts.ts): one source's entity slugs and the
+/// read policy the caller resolved.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct EntityNewestFactsQuery {
+    pub source_id: String,
+    pub slugs: Vec<String>,
+    /// A remote caller's private-provenance policy (`facts/privacy.rs`); null for a local caller.
+    pub exclude_private: Option<PrivacyPolicy>,
+    /// `visibility = 'world'`, for a remote caller worldOnlyFacts admits only world facts for.
+    pub world_only: bool,
+    /// `minTrust`: `trustFloorSql` over the row's stored tier; null sets none.
+    pub min_trust: Option<String>,
+}
+
+/// Rows `readEntityNewestFacts` returns (`SAVED_FACTS_COLLAPSE_WINDOW`).
+const NEWEST_FACTS_WINDOW: usize = 50;
 
 /// The phrases of `CORRECTION_CUE`, `\m(correction|retract(s|ed|ing|ion)?|disregard|scratch that|
 /// i misspoke|i was wrong|not what (i|we) (posted|said|wrote)|ignore (the|my|that|what))\M`, each
@@ -232,6 +251,44 @@ impl Store {
         Ok(out)
     }
 
+    /// `readEntityNewestFacts`: the source's active facts about any of `slugs` under the read
+    /// policy, newest `valid_from` first, then highest id, at most 50, with the collapse columns.
+    /// The candidate rules are `matchSavedFacts`'s, without the keyword scan.
+    pub fn read_entity_newest_facts(&self, q: &EntityNewestFactsQuery) -> Result<Vec<Value>> {
+        const OP: &str = "readEntityNewestFacts";
+        let mut texts: Vec<(&str, &str)> = vec![("sourceId", q.source_id.as_str())];
+        texts.extend(q.slugs.iter().map(|s| ("slugs", s.as_str())));
+        no_nul(OP, &texts)?;
+        let slugs: BTreeSet<&str> = q.slugs.iter().map(String::as_str).collect();
+        let trust = TrustPolicy::parse(q.min_trust.as_deref(), false)?;
+        let now = self.env.now_micros();
+        let read = self.read()?;
+        let mut found = Vec::new();
+        for row in source_rows(&*read, &q.source_id)? {
+            if !row
+                .entity_slug
+                .as_deref()
+                .is_some_and(|s| slugs.contains(s))
+                || !row.active(now)
+                || AUDIT_ROW_SOURCES.contains(&row.source.as_str())
+                || (q.world_only && row.visibility != "world")
+                || hidden_by_policy(&*read, &row, &q.exclude_private)?
+                || hidden_by_deleted_page(&*read, &row)?
+                || hidden_by_quarantine(&*read, &row)?
+                || !trust.admits(&*read, "facts", row.id, row.tier())?
+            {
+                continue;
+            }
+            found.push(row);
+        }
+        found.sort_by(|a, b| b.valid_from_us.cmp(&a.valid_from_us).then(b.id.cmp(&a.id)));
+        Ok(found
+            .iter()
+            .take(NEWEST_FACTS_WINDOW)
+            .map(newest_row_json)
+            .collect())
+    }
+
     /// `matchHeadStems(heads, terms)`: one row per head in `heads` order, each with the 1-based
     /// indexes of the terms whose `plainto_tsquery` the head's `to_tsvector` matches, in `terms`
     /// order. A term that stems to nothing (a stopword) matches no head. English only; the
@@ -266,6 +323,23 @@ impl Store {
 pub struct HeadStemRow {
     pub h: String,
     pub i: Vec<u64>,
+}
+
+/// One `readEntityNewestFacts` row: the fact columns, then `savedFactCollapseColumns`.
+fn newest_row_json(row: &FactRecord) -> Value {
+    json!({
+        "id": row.id,
+        "fact": row.fact,
+        "entity_slug": row.entity_slug,
+        "kind": row.kind,
+        "valid_from": timestamptz_text(row.valid_from_us),
+        "source": row.source,
+        "source_id": row.source_id,
+        "visibility": row.visibility,
+        "created_at": iso(row.created_at_us),
+        "attributed_to": row.attributed_to,
+        "fact_fingerprint": super::fact_fingerprint(&row.fact),
+    })
 }
 
 /// One row as the SQL returns it: the match columns, `savedFactCollapseColumns`, then the scores.

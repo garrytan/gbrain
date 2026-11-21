@@ -470,6 +470,7 @@ export const RUST_ENGINE_MEMBERS = {
   listFactsForRelevance: 'facts',
   countUncomparableFacts: 'facts',
   matchSavedFacts: 'facts',
+  readEntityNewestFacts: 'facts',
   matchHeadStems: 'facts',
   readFactForOwnerAction: 'facts',
   listStandingPreferences: 'facts',

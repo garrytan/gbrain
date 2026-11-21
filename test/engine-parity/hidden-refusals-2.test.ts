@@ -20,6 +20,8 @@ import type { Notice } from '../../src/core/agent-output.ts';
 import { withIgnoredPrivacyLabelNotice } from '../../src/core/search/ignored-privacy-labels.ts';
 import { reconcileTypeFilter } from '../../src/core/ops/search-type-filter.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
+import { entitySavedFacts } from '../../src/core/search/entity-facts.ts';
+import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -97,6 +99,47 @@ describe('engine parity: fail-soft reads on the search, put and entity paths', (
       narrowed: { types: ['person'], notice: 'No pages have type nosuchtype; filtered to person. Page types in this brain: note, person.' },
       kept: { types: ['note'] },
     });
+    return answer;
+  });
+
+  parityTest('readEntityNewestFacts reads the named slugs newest first under the caller read policy', {
+    methods: ['putPage', 'insertFact', 'insertFacts', 'readEntityNewestFacts'],
+  }, async (engine) => {
+    await putCallerPages(engine);
+    await engine.insertFacts(callerFactRows().map((r, i) => ({
+      ...r, kind: 'fact' as const, visibility: 'world' as const, source: 'fence', valid_from: new Date(Date.UTC(2026, 6, 1 + i)),
+    })) as never, { source_id: SRC });
+    for (const [i, fact] of ['Ada leads the lab', 'Ada moved to Lisbon', 'Ada joined the board'].entries()) {
+      await engine.insertFact({ fact, kind: 'fact', source: 'mcp:remember', entity_slug: i === 1 ? 'ada' : 'people/ada-example',
+        visibility: i === 2 ? 'private' : 'world', valid_from: new Date(Date.UTC(2026, 0, 1 + i)) }, { source_id: SRC });
+    }
+    const read = async (q: { slugs: string[]; remote: boolean; worldOnly: boolean }) =>
+      (await engine.readEntityNewestFacts({ sourceId: SRC, ...q })).map(r => `${r.fact}@${r.entity_slug}`);
+    const answer = {
+      local: await read({ slugs: ['people/ada-example', 'ada'], remote: false, worldOnly: false }),
+      worldOnly: await read({ slugs: ['people/ada-example', 'ada'], remote: true, worldOnly: true }),
+      otherSource: (await engine.readEntityNewestFacts({ sourceId: 'elsewhere', slugs: ['people/ada-example'], remote: false, worldOnly: false })).length,
+      callers: await readAsCallers(async () => (await read({ slugs: CALLER_ENTITIES.map(([slug]) => slug), remote: true, worldOnly: false })).sort()),
+    };
+    expect(answer.local).toEqual(['Ada joined the board@people/ada-example', 'Ada moved to Lisbon@ada', 'Ada leads the lab@people/ada-example']);
+    expect(answer.worldOnly).toEqual(['Ada moved to Lisbon@ada', 'Ada leads the lab@people/ada-example']);
+    expect(answer.otherSource).toBe(0);
+    expect(answer.callers.member.length).toBeGreaterThan(answer.callers.stranger.length);
+    return answer;
+  });
+
+  parityTest('a search that names an entity returns its newest saved facts, capped, newest first', {
+    methods: ['putPage', 'insertFact', 'readEntityNewestFacts'],
+  }, async (engine) => {
+    await engine.putPage('people/nova-example', { ...note('Nova Example'), type: 'person' });
+    for (let i = 0; i < 7; i++) {
+      await engine.insertFact({ fact: `Nova fact number ${i}`, kind: 'fact', source: 'mcp:remember', entity_slug: 'people/nova-example',
+        visibility: 'world', valid_from: new Date(Date.UTC(2026, 1, 1 + i)) }, { source_id: SRC });
+    }
+    const entity = { pages: [{ slug: 'people/nova-example', source_id: SRC }], tokens: [0, 2] as [number, number] };
+    const facts = await entitySavedFacts(engine, entity, { remote: false, excludePrivate: false });
+    const answer = facts.map(f => ({ fact: f.fact, entity: f.entity_slug, linked: f.linked_from ?? null }));
+    expect(answer.map(a => a.fact)).toEqual(['Nova fact number 6', 'Nova fact number 5', 'Nova fact number 4', 'Nova fact number 3', 'Nova fact number 2']);
     return answer;
   });
 });

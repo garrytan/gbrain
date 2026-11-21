@@ -3613,6 +3613,8 @@ export interface BrainEngine {
   countUncomparableFacts(q: FactsTrustSql.UncomparableFactsQuery): Promise<Array<{ source_id: string; n: number }>>;
   /** The keyword scan behind a search's saved-facts block: active facts sharing the query's words, with match counts and trust ranks. */
   matchSavedFacts(q: FactsTrustSql.SavedFactsMatchQuery): Promise<FactsTrustSql.SavedFactMatchRow[]>;
+  /** A named entity's newest active facts under the caller's read policy, with the collapse columns (search/entity-facts.ts). */
+  readEntityNewestFacts(q: FactsTrustSql.EntityNewestFactsQuery): Promise<FactsTrustSql.EntityNewestFactRow[]>;
   /** The query terms each name head matches after stemming with the brain's full-text language, one row per head. */
   matchHeadStems(heads: readonly string[], terms: readonly string[]): Promise<FactsTrustSql.HeadStemRow[]>;
   /** The fact an owner action targets, with its stored trust tier, or null when no fact has the id. */

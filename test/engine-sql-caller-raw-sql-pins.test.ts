@@ -40,6 +40,9 @@ import { quarantineFilterFragment } from '../src/core/quarantine.ts';
 import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 import { pageReadFilter } from '../src/core/search/read-policy-sql.ts';
 import type { TrustTier } from '../src/core/trust/tier.ts';
+import { privateFactFilterForReader } from '../src/core/search/private-visibility.ts';
+import { projectionEligibleSql } from '../src/core/eligibility/sql.ts';
+import { SAVED_FACT_COLLAPSE_COLUMNS } from '../src/core/search/saved-fact-collapse.ts';
 
 interface Pin {
   /** The caller site the statement came from, at 7470c703ed unless it names another commit. */
@@ -1687,7 +1690,36 @@ const PINS: Pin[] = [
     // The caller's JIT-off bound rides along: the same server-side envelope its executeRaw call sent.
     texts: () => ["SELECT current_setting('jit') AS jit", 'BEGIN READ WRITE; SET LOCAL jit = off', pinnedTypeProbe([['note']], { sourceIds: ['default', 'wiki'], minTrust: 'operator_curated' }), 'COMMIT'],
   },
+  {
+    from: 'src/core/search/entity-facts.ts:53 newestFacts (a local caller under a trust floor; at efeb078093)',
+    case: { method: 'readEntityNewestFacts', variant: 'local', run: e => e.readEntityNewestFacts({ sourceId: 'default', slugs: ['people/alice-example'], remote: false, worldOnly: false, minTrust: 'operator_curated' }) },
+    texts: () => [pinnedNewestFacts(false, false, 'operator_curated')],
+  },
+  {
+    from: 'src/core/search/entity-facts.ts:53 newestFacts (a remote caller with world-only facts; at efeb078093)',
+    case: { method: 'readEntityNewestFacts', variant: 'remote', run: e => e.readEntityNewestFacts({ sourceId: 'default', slugs: ['people/alice-example', 'alice-example'], remote: true, worldOnly: true }) },
+    texts: () => [pinnedNewestFacts(true, true)],
+  },
+  {
+    from: 'src/core/search/entity-facts.ts:53 newestFacts (a remote caller with private facts allowed; at efeb078093)',
+    case: { method: 'readEntityNewestFacts', variant: 'remotePrivate', run: e => e.readEntityNewestFacts({ sourceId: 'default', slugs: ['people/alice-example'], remote: true, worldOnly: false }) },
+    texts: () => [pinnedNewestFacts(true, false)],
+  },
 ];
+
+/** search/entity-facts.ts newestFacts's statement at efeb078093, verbatim (`worldOnly` stands for `worldOnlyFacts(opts.remote)`). */
+function pinnedNewestFacts(remote: boolean, worldOnly: boolean, minTrust?: TrustTier): string {
+  const visibility = remote ? `${worldOnly ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''} AND ${privateFactFilterForReader('f')}` : '';
+  return `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, ${SAVED_FACT_COLLAPSE_COLUMNS}
+       FROM facts f
+      WHERE f.source_id = $1 AND f.entity_slug = ANY($2::text[])
+        AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
+        AND f.source != ALL($3::text[])
+        ${visibility}
+        AND ${projectionEligibleSql('facts', 'f', { floor: minTrust })}
+      ORDER BY f.valid_from DESC, f.id DESC
+      LIMIT 50`;
+}
 
 /** ops/search-type-filter.ts reconcileTypeFilter's probe statement at efeb078093, verbatim (`{ ...scope, excludePrivate }`). */
 function pinnedTypeProbe(expanded: string[][], scope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier; excludePrivate?: boolean }): string {

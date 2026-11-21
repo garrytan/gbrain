@@ -18,6 +18,7 @@ import { claimPendingSql } from '../trust/claim-state.ts';
 import { escapeLikePattern } from '../cjk.ts';
 import { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns } from '../search/saved-fact-collapse.ts';
 import type { SavedFactMatch } from '../search/saved-facts-match.ts';
+import type { EntityFact } from '../search/entity-facts.ts';
 import { renderFragment, sqlFragment, trustedSql, joinFragments, type SqlFragment } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -265,6 +266,40 @@ export async function matchSavedFacts(raw: EngineRawRead, q: SavedFactsMatchQuer
        WHERE p.pool_rank <= 200
        ORDER BY cardinality(p.matched) DESC, p.at DESC, p.id DESC`);
   return raw<SavedFactMatchRow>(text, params);
+}
+
+/** Rows `readEntityNewestFacts` reads, so copies of one claim collapse before the caller's cap (#7043). */
+const COLLAPSE_WINDOW_SQL = '50';
+export const SAVED_FACTS_COLLAPSE_WINDOW = Number(COLLAPSE_WINDOW_SQL);
+
+/** What `readEntityNewestFacts` reads: one source's entity slugs and the read policy the caller resolved. */
+export interface EntityNewestFactsQuery {
+  sourceId: string;
+  slugs: string[];
+  /** A remote caller: the private-provenance filter applies, and `worldOnly` (worldOnlyFacts) adds the visibility rule. */
+  remote: boolean;
+  worldOnly: boolean;
+  minTrust?: TrustTier;
+}
+
+export type EntityNewestFactRow = EntityFact & CollapseColumns;
+
+/**
+ * A named entity's newest active facts under the caller's read policy, with the collapse columns, newest first
+ * (search/entity-facts.ts): at most SAVED_FACTS_COLLAPSE_WINDOW rows, which the caller collapses and caps.
+ */
+export async function readEntityNewestFacts(raw: EngineRawRead, q: EntityNewestFactsQuery): Promise<EntityNewestFactRow[]> {
+  const visibility = q.remote ? `${q.worldOnly ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''} AND ${privateFactFilterForReader('f')}` : '';
+  const { text, params } = renderFragment(sqlFragment`SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, ${trustedSql(savedFactCollapseColumns())}
+       FROM facts f
+      WHERE f.source_id = ${q.sourceId} AND f.entity_slug = ANY(${q.slugs}::text[])
+        AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
+        AND f.source != ALL(${factsAuditSources()}::text[])
+        ${trustedSql(visibility)}
+        AND ${trustedSql(projectionEligibleSql('facts', 'f', { floor: q.minTrust }))}
+      ORDER BY f.valid_from DESC, f.id DESC
+      LIMIT ${trustedSql(COLLAPSE_WINDOW_SQL)}`);
+  return raw<EntityNewestFactRow>(text, params);
 }
 
 /** One name head and the 1-based indexes of the query terms it matches (`matchHeadStems`). */

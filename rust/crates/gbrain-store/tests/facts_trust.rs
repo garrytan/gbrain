@@ -2,7 +2,7 @@
 
 mod memory_env;
 
-use gbrain_store::facts::saved_match::SavedFactsMatchQuery;
+use gbrain_store::facts::saved_match::{EntityNewestFactsQuery, SavedFactsMatchQuery};
 use gbrain_store::facts::trust::{RelevanceQuery, UncomparableQuery};
 use gbrain_store::facts::{InsertFactArgs, InsertFactsArgs};
 use memory_env::{T0, brain};
@@ -420,4 +420,52 @@ fn head_stems_name_the_terms_each_head_matches_by_stem() {
             .code,
         "invalid_argument"
     );
+}
+
+fn newest(b: &memory_env::Brain, q: Value) -> Vec<Value> {
+    b.read_entity_newest_facts(&args::<EntityNewestFactsQuery>(q))
+        .unwrap()
+}
+
+#[test]
+fn entity_newest_facts_read_the_named_slugs_newest_first_under_the_read_policy() {
+    let b = brain("facts-trust-entity-newest");
+    page(&b, "notes/private", json!({ "visibility": "private" }));
+    let rows = vec![
+        json!({ "fact": "a-old", "source": "s", "entity_slug": "people/a", "valid_from": "2026-01-01T00:00:00.000Z", "visibility": "world" }),
+        json!({ "fact": "a-new", "source": "s", "entity_slug": "people/a", "valid_from": "2026-03-01T00:00:00.000Z", "visibility": "world" }),
+        json!({ "fact": "a-alias", "source": "s", "entity_slug": "a", "valid_from": "2026-02-01T00:00:00.000Z", "visibility": "world" }),
+        json!({ "fact": "b-other", "source": "s", "entity_slug": "people/b", "valid_from": "2026-04-01T00:00:00.000Z", "visibility": "world" }),
+        json!({ "fact": "a-private-fact", "source": "s", "entity_slug": "people/a", "valid_from": "2026-01-15T00:00:00.000Z" }),
+        json!({ "fact": "a-private-page", "source": "s", "entity_slug": "people/a", "source_markdown_slug": "notes/private", "row_num": 1, "valid_from": "2026-01-20T00:00:00.000Z", "visibility": "world" }),
+        json!({ "fact": "a-audit", "source": "cli:extract-conversation-facts:terminal:v2", "entity_slug": "people/a", "visibility": "world" }),
+    ];
+    b.insert_facts(&args::<InsertFactsArgs>(
+        json!({ "rows": rows, "sourceId": "default" }),
+    ))
+    .unwrap();
+    let slugs = json!(["people/a", "a"]);
+    let local = newest(&b, json!({ "sourceId": "default", "slugs": slugs }));
+    assert_eq!(
+        texts(&local),
+        [
+            "a-new",
+            "a-alias",
+            "a-private-page",
+            "a-private-fact",
+            "a-old"
+        ]
+    );
+    assert_eq!(local[0]["valid_from"], json!("2026-03-01 00:00:00+00"));
+    assert_eq!(local[0]["source_id"], json!("default"));
+    assert!(local[0]["fact_fingerprint"].is_string());
+    assert!(local[0].get("matched").is_none());
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let remote = newest(
+        &b,
+        json!({ "sourceId": "default", "slugs": slugs, "worldOnly": true, "excludePrivate": policy }),
+    );
+    assert_eq!(texts(&remote), ["a-new", "a-alias", "a-old"]);
+    assert!(newest(&b, json!({ "sourceId": "other", "slugs": slugs })).is_empty());
+    assert!(newest(&b, json!({ "sourceId": "default", "slugs": [] })).is_empty());
 }

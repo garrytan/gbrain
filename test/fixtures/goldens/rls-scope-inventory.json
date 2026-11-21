@@ -7519,6 +7519,7 @@
         "readEntityCardRows": "none",
         "readEntityIdentityIdsForPages": "none",
         "readEntityInboundEdges": "none",
+        "readEntityNewestFacts": "none",
         "readEntityOpenLoops": "none",
         "readExactSnippetChunks": "none",
         "readExtractionLagCounts": "none",

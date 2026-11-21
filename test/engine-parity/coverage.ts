@@ -191,7 +191,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listWorldFactsFromPrivateSources'],
 
   // facts_trust: search relevance and trust reads
-  facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts', 'matchHeadStems',
+  facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts', 'readEntityNewestFacts', 'matchHeadStems',
     'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listRestatedPrivateCopies', 'countDerivedFactTaint',
     'listFactProvenance', 'listOntologyStreamSlugs', 'readOntologyRival', 'listFactIdsAtTrustRank', 'listBeliefStreamSlugs', 'recordDerivationEdges'],
 

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 952/955
+# covered: 953/956
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -49,7 +49,7 @@
 # facts_cycle: 11/11
 # facts_purge: 14/14
 # facts_repair: 10/10
-# facts_trust: 15/15
+# facts_trust: 16/16
 # facts_recall: 4/4
 # trust_tier_reads: 15/15
 # raw_sql: 4/4
@@ -89,7 +89,7 @@ getPage	pages	yes	117	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	533	yes	yes	yes	serves
+putPage	pages	yes	535	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -336,8 +336,8 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	56	yes	yes	yes	serves
-insertFacts	facts	yes	84	no	yes	yes	serves
+insertFact	facts	yes	58	yes	yes	yes	serves
+insertFacts	facts	yes	85	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	29	no	yes	yes	serves
 listFactsByEntity	facts	yes	31	yes	yes	yes	serves
@@ -780,6 +780,7 @@ listWorldFactsFromPrivateSources	facts_repair	yes	2	no	yes	yes	serves
 listFactsForRelevance	facts_trust	yes	6	no	yes	yes	serves
 countUncomparableFacts	facts_trust	yes	4	no	yes	yes	serves
 matchSavedFacts	facts_trust	yes	6	no	yes	yes	serves
+readEntityNewestFacts	facts_trust	yes	2	no	yes	yes	serves
 matchHeadStems	facts_trust	yes	2	no	yes	yes	serves
 readFactForOwnerAction	facts_trust	yes	1	no	yes	yes	refuses:facts
 listStandingPreferences	facts_trust	yes	1	no	yes	yes	refuses:facts

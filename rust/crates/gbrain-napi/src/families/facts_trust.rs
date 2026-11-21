@@ -10,7 +10,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::saved_match::SavedFactsMatchQuery;
+use gbrain_store::facts::saved_match::{EntityNewestFactsQuery, SavedFactsMatchQuery};
 use gbrain_store::facts::trust::{RelevanceQuery, UncomparableQuery};
 
 #[napi]
@@ -51,6 +51,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: SavedFactsMatchQuery = required(query, "matchSavedFacts query")?;
             s.match_saved_facts(&a)
+        })
+    }
+
+    /// `readEntityNewestFacts`: resolves the entity's newest facts, at most 50, newest first.
+    #[napi]
+    pub fn read_entity_newest_facts<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: EntityNewestFactsQuery = required(query, "readEntityNewestFacts query")?;
+            s.read_entity_newest_facts(&a)
         })
     }
 

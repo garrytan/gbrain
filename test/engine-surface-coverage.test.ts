@@ -137,7 +137,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'insertFactPurge', 'loopFactDrift', 'closedLoopWithActiveFact',
   'listSessionFactsForClassification', 'listSessionFactTwins', 'listCapturedFactsForClassification', 'countLabelFacts',
   'listExtractorFactsForClassification', 'countPurgedPageFacts', 'listUnwithdrawnFacts', 'listWorldFactsFromPrivateSources', 'listFactsForRelevance',
-  'countUncomparableFacts', 'matchSavedFacts', 'matchHeadStems', 'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates',
+  'countUncomparableFacts', 'matchSavedFacts', 'readEntityNewestFacts', 'matchHeadStems', 'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates',
   'listRestatedPrivateCopies', 'countDerivedFactTaint', 'listFactProvenance', 'listOntologyStreamSlugs', 'readOntologyRival',
   'listFactIdsAtTrustRank', 'listBeliefStreamSlugs', 'recordDerivationEdges',
   // Quote and slot-history reads (engine-sql/facts-recall.ts; test/engine-parity/facts-quoted.test.ts)

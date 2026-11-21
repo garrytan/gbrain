@@ -200,6 +200,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'loadPurgeTarget': OOS.factsPurge,
   'loopFactDrift': OOS.factsRepair,
   'matchSavedFacts': OOS.factsTrust,
+  'readEntityNewestFacts': OOS.callerRawSql,
   'maxFenceRowNum': OOS.factsCycle,
   'planFactPurgeIds': OOS.factsPurge,
   'placeRelinkedFact': OOS.factRelinkWrites,

@@ -13,6 +13,9 @@
  * `matchSavedFacts` is served under the same rules, for the one correction cue saved-facts-match.ts sends; a widened
  * `worldOnly` visibility (a private-facts grant) refuses.
  *
+ * `readEntityNewestFacts` (search/entity-facts.ts) is served under the same rules: a remote caller reads the private-provenance
+ * policy, and a world-only one whose private-facts grant widens the visibility refuses.
+ *
  * `matchHeadStems` stems with the store's `english` configuration; another FTS language refuses.
  *
  * Refused (not exported): `readFactForOwnerAction`, `listStandingPreferences`,
@@ -101,6 +104,20 @@ export const matchSavedFacts: Member<'matchSavedFacts'> = async (brain, q) => {
     minTrust: q.minTrust || null,
   }));
   return rows.map(row => withDates(row, ['at', 'created_at']) as unknown as Awaited<ReturnType<BrainEngine['matchSavedFacts']>>[number]);
+};
+
+export const readEntityNewestFacts: Member<'readEntityNewestFacts'> = async (brain, q) => {
+  const member = 'readEntityNewestFacts';
+  if (q.remote && q.worldOnly && grantedPrivateFactSql('f') !== 'FALSE') refuseMember(member, 'visibility widened by a private-facts grant');
+  const rows: Row[] = await storeCall({ member, sourceId: q.sourceId }, () => brain.readEntityNewestFacts({
+    sourceId: q.sourceId,
+    slugs: q.slugs,
+    // A local caller reads no visibility or private-provenance rule; a remote one reads privateFactFilterForReader('f').
+    excludePrivate: storePrivacyPolicy(member, q.remote, () => privateFactFilterForReader('facts'), { callerReaders: true }),
+    worldOnly: q.remote && q.worldOnly,
+    minTrust: q.minTrust || null,
+  }));
+  return rows.map(row => withDates(row, ['created_at']) as unknown as Awaited<ReturnType<BrainEngine['readEntityNewestFacts']>>[number]);
 };
 
 export const matchHeadStems: Member<'matchHeadStems'> = async (brain, heads, terms) => {

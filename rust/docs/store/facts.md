@@ -394,6 +394,7 @@ Parity: `test/engine-parity/facts-quoted.test.ts`.
 | `listFactsForRelevance` | `search/fact-relevance.ts` | keyword and entity arms | The pool predicate and `similarity` are below. `entity_ended` refuses (it reads `fact_withdrawals` and `gbrain_fact_fingerprint`). |
 | `countUncomparableFacts` | `search/fact-relevance.ts` | yes | Per source, the most first, then by source id. |
 | `matchSavedFacts` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | The match columns, `need`, the cue flag, `trust_rank` and `pool_rank`, as below. The member refuses another correction cue, a non-`english` FTS language and a `worldOnly` read a private-facts grant widens. |
+| `readEntityNewestFacts` | `search/entity-facts.ts` | yes (`facts/saved_match.rs`) | The saved-fact columns plus the collapse columns, newest `valid_from` first, then the highest id, 50 rows at most. The member refuses a `worldOnly` read a private-facts grant widens, and the caller rethrows that refusal instead of reading it as no facts. |
 | `matchHeadStems` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | One row per name head, in input order, with the 1-based indexes of the terms its `to_tsvector` matches by `plainto_tsquery`; a stopword term matches nothing. The member refuses a non-`english` FTS language, and the caller rethrows that refusal instead of reading it as no match. |
 | `readFactForOwnerAction` | `trust/owner-actions.ts` | refused | `trust_tier` is hashed into the owner binding. |
 | `listStandingPreferences` | `trust/review.ts` | refused | Reads `trust_tier`, `write_gate_receipts` and the `sources` claim state. |
@@ -423,6 +424,10 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
   `CORRECTION_CUE` written out as its 20 phrases, each matched case-insensitively between word boundaries
   (the store has no regular-expression engine). `trust_rank` is 0 for a tier name it does not know, as
   `trustRankSql` is.
+- `readEntityNewestFacts` reads the named entity slugs in one source: active rows, no audit source,
+  `worldOnly` and the private-provenance policy for a remote caller, then `projectionEligibleSql` (a
+  soft-deleted page, a live quarantined provenance page, the trust floor). `valid_from` is the timestamptz
+  text Postgres prints. The caller collapses copies of one claim before its caps.
 - `listFactsForRelevance` serves the pool reads only. Its caller `collectFactCandidates` still makes
   other reads on the way (the word stems, the facts embedding column, the named-entity anchor and the
   nearest-vector arm); on Rust each of those is served or refused by the family that owns it.
