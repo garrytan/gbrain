@@ -73,6 +73,8 @@ const UNREAD: Array<{ label: string; content: (canary: string) => string }> = [
   { label: 'an explicit key whose value is on the next line', content: c => ` ---\n? readable_by\n: [alice-example]\n---\n${BODY(c)}` },
   { label: 'a --- inside an indented block scalar before the key', content: c => ` ---\ndescription: |\n  ---\nreadable_by: [alice-example]\n---\n${BODY(c)}` },
   { label: 'a byte order mark, a blank line and a no-break space line before the fence', content: c => `\uFEFF\n\u00A0\n---\n${keys}---\n${BODY(c)}` },
+  { label: 'an indented opener with a trailing comment', content: c => ` --- # note\nreadable_by: [alice-example]\n---\n${BODY(c)}` },
+  { label: 'a --- prefix before the key inside the block', content: c => ` ---\ntitle: Example\n--- readable_by: [alice-example]\n---\n${BODY(c)}` },
   { label: 'a four-dash fence', content: c => `----\n${keys}---\n${BODY(c)}` },
   { label: 'a fence that never closes', content: c => `---\n${keys}${BODY(c)}` },
   { label: 'a fence closed by an indented line', content: c => `---\n${keys}  ---\n${BODY(c)}` },
@@ -107,6 +109,9 @@ describe('unread leading block detection', () => {
     expect(unreadReadersLine(' ---\n' + ' '.repeat(64_000) + '{ { { x\n---\nbody\n')).toBeNull();
     expect(performance.now() - started).toBeLessThan(1000);
     expect(unreadReadersLine(` ---\n{title: ${'x'.repeat(5000)}, readable_by: [alice-example]}\n---\nbody`)).toBe(2);
+    const dashes = performance.now();
+    expect(unreadReadersLine(` ---\n${'readable '.repeat(8000)}\n${'- '.repeat(30_000)}x\n${'{,'.repeat(30_000)}\n---\nbody`)).toBeNull();
+    expect(performance.now() - dashes).toBeLessThan(1000);
   });
 
   test('the detector agrees with the parser: it flags only content the parser read no frontmatter from, and a read block is never flagged', () => {

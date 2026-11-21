@@ -24,31 +24,32 @@ interface HeadFile { read(buffer: Buffer, offset: number, length: number, positi
 
 /** The most a file head read for a streamed import covers (the frontmatter head limit). */
 const FILE_HEAD_BYTES = 256 * 1024;
-/** The most of one line the key tests read exactly; a longer line is tested for the key word alone, which stays linear. */
-const LINE_MAX = 2048;
-const SPACE = '[^\\S\\r\\n]*';
-/** A trimmed line that looks like a frontmatter fence: `---`, `----`, `+++`, with an optional language word. */
+/** The most of one line the key tests read; the tests are linear, and a longer line is cut here (a key past it on one line is not a YAML key the parser would read in an indented block anyway). */
+const LINE_MAX = 65_536;
+/** A trimmed line that looks like a frontmatter fence: `---`, `----`, `+++`, with an optional language word and a trailing comment. */
 const FENCE_OPEN = /^(?:-{3,}|\+{3,})\s*[A-Za-z]*$/;
 const FENCE_CLOSE = /^(?:-{3,}|\.{3}|\+{3,})$/;
-/** A readers-like key: a block line (optionally a list item), or a flow-mapping entry after `{` or `,`; case, `-`, `_` and spaces ignored. */
-const KEY = String.raw`["']?readable[-_ \t]*by["']?[^\S\r\n]*[:=]`;
-/** What may precede a key on its line without hiding it: list dashes, an explicit-key marker (`?`), an anchor (`&a`) or a tag (`!!str`). */
-const DECORATION = String.raw`(?:(?:-|\?|&\S+|!\S*)[^\S\r\n]+)*`;
-const BLOCK_KEY = new RegExp(`^${SPACE}${DECORATION}${KEY}`, 'i');
+/**
+ * A readers-like key anywhere on a line, in any decoration (list dash, `?`, anchor, tag, a `---` prefix, a flow mapping, quotes):
+ * `readable`, `by` and any run of `-`, `_`, spaces or tabs between them, in any case, then `:` or `=`. Nothing is anchored, so a spelling
+ * the parser would read once the fence is fixed cannot hide behind a prefix; the cost is that the same words in prose (`readable by: all`) count.
+ */
+const KEY_WORD = /readable[-_ \t]*by["']?[ \t]*[:=]/i;
 /** An explicit key whose value is on the next line: `? readable_by`. */
-const EXPLICIT_KEY = new RegExp(`^${SPACE}(?:-[^\\S\\r\\n]+)*\\?[^\\S\\r\\n]+["']?readable[-_ \\t]*by["']?[^\\S\\r\\n]*$`, 'i');
-const FLOW_KEY = new RegExp(`[{,]${SPACE}${DECORATION}${KEY}`, 'i');
-const KEY_WORD = /readable[-_ \t]*by["']?[^\S\r\n]*[:=]/i;
+const EXPLICIT_KEY = /^[ \t]*(?:-[ \t]+)*\?[ \t]+["']?readable[-_ \t]*by["']?[ \t]*$/i;
 
 /** Zero-width and format characters the parser does not treat as space; they are ignored when looking for a fence or a key, so hiding one before `---` or inside the key hides nothing. */
 const ZERO_WIDTH = /[\u200B-\u200D\u2060\uFEFF]/g;
 
-/** True when `line` (a comment line is not one) names a readers-like key. */
+/** True when `line` names a readers-like key; a comment line, and the comment at the end of a line, name nothing. */
 function namesReaders(line: string): boolean {
   if (line.trimStart().startsWith('#')) return false;
-  if (line.length > LINE_MAX) return KEY_WORD.test(line);
-  return BLOCK_KEY.test(line) || EXPLICIT_KEY.test(line) || FLOW_KEY.test(line.replace(/[^\S\r\n]#.*$/, ''));
+  const code = line.slice(0, LINE_MAX).replace(/[ \t]#.*$/, '');
+  return KEY_WORD.test(code) || EXPLICIT_KEY.test(code);
 }
+
+/** A fence line with its trailing comment (` --- # note`) removed. */
+const fenceText = (line: string): string => line.slice(0, LINE_MAX).trim().replace(/\s#.*$/, '');
 
 /** The leading whitespace of a line. */
 const indentOf = (line: string): string => line.slice(0, line.length - line.trimStart().length);
@@ -62,11 +63,11 @@ function scanLeadingBlock(content: string): { line: number | null; unclosed: boo
   const lines = content.split(/\r?\n/).map(line => line.replace(ZERO_WIDTH, ''));
   let first = 0;
   while (first < lines.length && lines[first]!.trim() === '') first++;
-  if (first >= lines.length || lines[first]!.length > LINE_MAX || !FENCE_OPEN.test(lines[first]!.trim())) return { line: null, unclosed: false };
+  if (first >= lines.length || !FENCE_OPEN.test(fenceText(lines[first]!))) return { line: null, unclosed: false };
   const opener = indentOf(lines[first]!);
   for (let i = first + 1; i < lines.length; i++) {
     const line = lines[i]!;
-    if (line.length <= LINE_MAX && FENCE_CLOSE.test(line.trim()) && (indentOf(line) === opener || indentOf(line) === '')) return { line: null, unclosed: false };
+    if (FENCE_CLOSE.test(fenceText(line)) && (indentOf(line) === opener || indentOf(line) === '')) return { line: null, unclosed: false };
     if (namesReaders(line)) return { line: i + 1, unclosed: false };
   }
   return { line: null, unclosed: true };
