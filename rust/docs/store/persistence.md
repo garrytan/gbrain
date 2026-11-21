@@ -156,6 +156,8 @@ their parent's op and fingerprint, so deleting a parent deletes its paths in the
 | `brain.appendOpCheckpointPaths(op, fingerprint, paths)` | the parent created with no keys or stamped now, then each path not yet stored added | `appendOpCheckpointPaths` (`appendCompleted`, `appendCompletedOnce`) |
 | `brain.deleteOpCheckpoint(op, fingerprint)` | the parent and its paths deleted; a missing parent is a no-op | `deleteOpCheckpoint` (`clearOpCheckpoint`) |
 | `brain.deleteOpCheckpointPaths(op, fingerprint)` | the paths deleted, the parent kept | `deleteOpCheckpointPaths` (`clearOpCheckpoint`) |
+| `brain.readOpCheckpointRecords(op, fingerprints)` | each found parent's first completed key (`completed_keys->0`), null for an empty array, in the order named; a fingerprint with no parent adds nothing, and one named twice is read once | `readOpCheckpointRecords` (`readSyncImportProvenances`) |
+| `brain.writeOpCheckpointRecords(op, rows)` | each row's parent set to `[record]`, stamped now; the paths stay. A record with a NUL in a string or object key refuses the whole batch with `invalid_input`, writing nothing | `writeOpCheckpointRecords` (`recordSyncImportProvenances`) |
 
 Differences from the SQL engines:
 
@@ -163,7 +165,10 @@ Differences from the SQL engines:
   use the keys as a set.
 - `purgeStaleCheckpoints` (the cycle's 7-day purge) is still raw SQL, which this engine refuses, so a
   checkpoint that no run clears stays until an op clears it.
-- The other `op_checkpoints` writers (sync identity downgrades, sync holds, fence repair, the
+- The SQL record read names no order; the store answers in the order the fingerprints are named. The
+  caller keys the records by page.
+- The sync import provenance records (op `sync-import-provenance`, one per page) go through the two record
+  members. The other `op_checkpoints` writers (sync identity downgrades, sync holds, fence repair, the
   persistence receipts) are still raw SQL. Their rows are not in this store.
 
 ## Sync pass pages
