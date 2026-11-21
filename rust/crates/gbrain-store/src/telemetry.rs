@@ -222,6 +222,7 @@ pub(crate) struct LogRecord {
     pub latency_ms: Option<i32>,
     pub status: String,
     pub error_message: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub params: Option<Value>,
     pub created_us: i64,
 }
