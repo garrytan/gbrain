@@ -22,6 +22,7 @@ func bundleFile(_ name: String) throws -> [String: Any] {
         #expect(info["LSUIElement"] as? Bool == true)
         #expect(info["LSMinimumSystemVersion"] as? String == "13.0")
         #expect((info["NSAppleEventsUsageDescription"] as? String)?.isEmpty == false)
+        #expect((info["NSContactsUsageDescription"] as? String)?.contains("read and update your contacts") == true)
         #expect(info["CFBundleShortVersionString"] is String)
     }
 
@@ -34,9 +35,10 @@ func bundleFile(_ name: String) throws -> [String: Any] {
         #expect(agent["Program"] == nil)
     }
 
-    @Test func entitlementsAllowAppleEventsOnly() throws {
+    @Test func entitlementsAllowAppleEventsAndContactsOnly() throws {
         let entitlements = try bundleFile("\(HelperIdentity.executable).entitlements")
-        #expect(entitlements.keys.sorted() == ["com.apple.security.automation.apple-events"])
+        #expect(entitlements.keys.sorted() == ["com.apple.security.automation.apple-events", "com.apple.security.personal-information.addressbook"])
         #expect(entitlements["com.apple.security.automation.apple-events"] as? Bool == true)
+        #expect(entitlements["com.apple.security.personal-information.addressbook"] as? Bool == true)
     }
 }

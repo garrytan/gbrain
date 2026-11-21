@@ -3517,8 +3517,6 @@ export class PGLiteEngine implements BrainEngine {
 
   listFiles(opts: ListFilesOptions) { return filesImpl.listFiles(unscopedExecutor(this.engineSql, 'files: unscoped on master (EO4 inventory)'), opts); }
   // The files commands' and file operations' statements (engine-sql/files-ops.ts).
-  listFileRowsForSlug(slug: string) { return filesOpsImpl.listFileRowsForSlug(this.rawRead, slug); }
-  listAllFileRows() { return filesOpsImpl.listAllFileRows(this.rawRead); }
   hasFileWithHash(contentHash: string, storagePath: string) { return filesOpsImpl.hasFileWithHash(this.rawRead, contentHash, storagePath); }
   listFileRowsForVerify() { return filesOpsImpl.listFileRowsForVerify(this.rawRead); }
   readSourceLocalPathForVerify(sourceId: string) { return filesOpsImpl.readSourceLocalPathForVerify(this.rawRead, sourceId); }

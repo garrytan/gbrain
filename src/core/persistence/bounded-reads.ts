@@ -106,7 +106,8 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
   'getConfig', 'getAllConfig', 'listConfigKeys', 'readPageSnapshot', 'getPage',
   'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
-  'readSegmentTexts', 'readManifest', 'readJournalCeiling', 'sweepJournalChunk',
+  'readSegmentTexts', 'readManifest', 'hasLabelledOnlyMember', 'readSegmentedPageHead', 'readSourceIncarnation', 'readStoredPageTier',
+  'readJournalCeiling', 'sweepJournalChunk',
   'listPurgeClaimFacts', 'listPurgeClaimTakes', 'listQueuedPagePurges', 'listPageLinkStreams', 'listPagePurgeTombstones']);
 
 /** Test seam (test/e2e/typed-preparation-reads-guard-postgres.test.ts): told of every engine method a bounded view hands out. */

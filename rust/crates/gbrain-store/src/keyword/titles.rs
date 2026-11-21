@@ -55,7 +55,7 @@ use super::rank::ts_rank_cd;
 use super::stem::pg_lower;
 use super::tsearch::{
     TsQuery, TsVector, Weight, check_query_items, concat, fts_input, is_vector_overflow, setweight,
-    to_tsvector, ts_filter, ts_matches, tsquery_or_all, websearch_to_tsquery,
+    to_tsvector, ts_filter, ts_matches, tsquery_or_all, websearch_to_tsquery, with_query_stack,
 };
 use super::vector_cache::{VectorKind, cached};
 use crate::Store;
@@ -279,18 +279,20 @@ struct Ranked {
     score: f64,
 }
 
-/// The representative chunk: visible, text, compiled truth first (only compiled truth for
-/// `detail` low), then the lowest chunk index.
+/// The representative chunk: in the page's live body (`chunkGenerationFilter`, as `title-statement.ts` reads it, so a
+/// chunk a deferred retire left is never shown), text, compiled truth first (only compiled truth for `detail` low),
+/// then the lowest chunk index.
 fn representative(
     read: &dyn KvRead,
     page: &PageRecord,
     detail_low: bool,
 ) -> Result<Option<ChunkRecord>> {
-    let generation = read_segment_view(read, page.id)?.generation;
+    let view = read_segment_view(read, page.id)?;
+    let segmented_page = crate::chunks::segmented(page);
     Ok(read_chunks(read, page.id)?
         .into_iter()
         .filter(|c| {
-            c.visible_at(generation)
+            crate::chunks::in_live_body(c, segmented_page, &view)
                 && c.modality == "text"
                 && (!detail_low || c.chunk_source == "compiled_truth")
         })
@@ -378,32 +380,36 @@ impl Store {
         let mut out = Vec::with_capacity(attempts.len());
         for (attempt, (limit, offset, query)) in attempts.iter().zip(windows) {
             let kind = attempt.kind;
-            let matched: Vec<usize> = (0..candidates.len())
-                .filter(|&i| ts_matches(candidates[i].vector(kind), &query))
-                .collect();
-            let cut = kind != TitleAttemptKind::Title && matched.len() > cap;
-            let ranked_pages: &[usize] = match kind {
-                TitleAttemptKind::Title => &matched,
-                TitleAttemptKind::Whole => &matched[..matched.len().min(cap)],
-                TitleAttemptKind::Complete if cut => &[],
-                TitleAttemptKind::Complete => &matched,
-            };
-            let mut ranked: Vec<Ranked> = ranked_pages
-                .iter()
-                .map(|&index| {
-                    let factor = *factors
-                        .entry(index)
-                        .or_insert_with(|| source_factor(&candidates[index].page, &options.boosts));
-                    let c = &mut candidates[index];
-                    let exact = exact_title_key(&c.page.title) == exact_key;
-                    let score = f64::from(ts_rank_cd(c.vector(kind), &query)) * factor;
-                    Ranked {
-                        index,
-                        exact,
-                        score,
-                    }
-                })
-                .collect();
+            // One deep-stack thread per attempt when the query is deep, not one per candidate.
+            let (cut, mut ranked) = with_query_stack(query.items.len(), || {
+                let matched: Vec<usize> = (0..candidates.len())
+                    .filter(|&i| ts_matches(candidates[i].vector(kind), &query))
+                    .collect();
+                let cut = kind != TitleAttemptKind::Title && matched.len() > cap;
+                let ranked_pages: &[usize] = match kind {
+                    TitleAttemptKind::Title => &matched,
+                    TitleAttemptKind::Whole => &matched[..matched.len().min(cap)],
+                    TitleAttemptKind::Complete if cut => &[],
+                    TitleAttemptKind::Complete => &matched,
+                };
+                let ranked: Vec<Ranked> = ranked_pages
+                    .iter()
+                    .map(|&index| {
+                        let factor = *factors.entry(index).or_insert_with(|| {
+                            source_factor(&candidates[index].page, &options.boosts)
+                        });
+                        let c = &mut candidates[index];
+                        let exact = exact_title_key(&c.page.title) == exact_key;
+                        let score = f64::from(ts_rank_cd(c.vector(kind), &query)) * factor;
+                        Ranked {
+                            index,
+                            exact,
+                            score,
+                        }
+                    })
+                    .collect();
+                (cut, ranked)
+            });
             ranked.sort_by(|a, b| {
                 b.exact
                     .cmp(&a.exact)
@@ -498,6 +504,33 @@ pub(super) mod tests {
         assert_eq!(
             parts(&["alpha beta", "gamma delta", "epsilon"]).to_text(),
             "'alpha' & 'beta' | 'gamma' & 'delta' | 'epsilon'"
+        );
+    }
+
+    #[test]
+    fn a_deep_title_query_matches_every_candidate_on_one_deep_thread() {
+        // Minder row 3: one deep-query thread per attempt, not one per candidate page.
+        let store = crate::test_support::store();
+        for i in 0..12 {
+            put(&store, &format!("notes/deep-{i}"), "Red Apple", "");
+        }
+        let text = "red apple ".repeat(400);
+        let all: KeywordOptions = serde_json::from_value(json!({})).unwrap();
+        super::super::tsearch::reset_deep_spawns();
+        let out = store
+            .search_titles_attempts(
+                &[attempt(&[text.as_str()], TitleAttemptKind::Whole, 100.0)],
+                "red apple",
+                100.0,
+                &all,
+            )
+            .unwrap();
+        assert_eq!(slugs(&out[0]).len(), 12);
+        let spawned = super::super::tsearch::deep_spawns();
+        // One for parsing the text and one for the attempt's walk.
+        assert!(
+            spawned <= 2,
+            "the title search started {spawned} deep-query threads"
         );
     }
 

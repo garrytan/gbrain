@@ -49,7 +49,7 @@ export function delegatedPolicyHandle(brain: StoreBrain, member: string): Delega
     executeRaw: async () => refuseMember(member, 'the job owner\'s principal read (oauth_clients or access_tokens) is raw SQL'),
   };
   const tx = new Proxy(served, {
-    get: (target, prop) => (prop in target ? (target as Record<PropertyKey, unknown>)[prop] : refuseMember(member, 'the delegated admission policy read the database')),
+    get: (target, prop) => (prop in target ? (target as Record<string | symbol, unknown>)[prop] : refuseMember(member, 'the delegated admission policy read the database')),
   }) as BrainEngine;
   return { tx, locked: () => locked };
 }

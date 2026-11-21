@@ -220,6 +220,7 @@ test/harness-onboarding.test.ts	harness identity and private handoff	6	readFileS
 test/hook-command.serial.test.ts	user-prompt	18	source-surface-helper
 test/hook-push-spawn-env.test.ts	spawnDetachedPush env handoff	2	readFileSync
 test/hook-push-spawn-env.test.ts	tryExecAsync env handoff	1	readFileSync
+test/imessage-owned-folder.test.ts	owned folder (${kind})	28	readFileSync
 test/imessage-source.test.ts	repo-less brain (${kind})	10	readFileSync
 test/import-calls.test.ts	operations filter guard	1	exec-scan
 test/import-private-hold-callers-7897.test.ts	import entry points hold a non-canonical private request (#7897)	2	readFileSync
@@ -386,6 +387,7 @@ test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution covera
 test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)	8	readFileSync
 test/scripts/rust-cli-parity-workflow.test.ts	Rust CLI parity workflow	5	readFileSync
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync
+test/scripts/sql-move-check.test.ts	sql-move-check: the real engine-sql copies	2	readFileSync
 test/scripts/stable-daily.test.ts	stable-daily.yml	2	readFileSync
 test/scripts/stress-gate.test.ts	docs anchors	1	readFileSync
 test/scripts/stress-gate.test.ts	gate plan	8	readFileSync

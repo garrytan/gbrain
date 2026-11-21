@@ -4,8 +4,9 @@
  * connection carries all of the process's calls at once.
  *
  * - A call carries the caller's deadline (the read deadline and the statement deadline of its async context) as
- *   `deadline_at`; the owner ends it there with `timeout`, queued or running. The client keeps a short grace timer of
- *   its own in case the owner is stuck.
+ *   `deadline_at`; the owner ends it there with `timeout`, queued (`not_started`) or running (`outcome_unknown`: a
+ *   running write is not interrupted). The client keeps a short grace timer of its own in case the owner is stuck.
+ *   The caller's access record (`callerAccessRecord()`) goes with each call as `access`, so the owner reads as that caller.
  * - The caller's AbortSignals (the request signal of request-signal.ts and any signal argument) end the call at once
  *   with `cancelled`, or `timeout` when the signal's reason is a TimeoutError, and tell the owner to stop it.
  * - When the owner goes away, every call in flight ends with `owner_unavailable` (`outcome_unknown`) and is never sent
@@ -19,6 +20,7 @@ import { engineKey } from '../../engine-key.ts';
 import { requestSignal } from '../../request-signal.ts';
 import { readDeadline } from '../../read-deadline.ts';
 import { currentStatementDeadline } from '../../statement-deadline.ts';
+import { callerAccessRecord } from '../../search/private-visibility.ts';
 import { prepareLocalIpcPath } from '../../context/ipc-path.ts';
 import type { Capability } from '../../engine-capabilities.ts';
 import { capabilityMissing } from '../errors.ts';
@@ -86,7 +88,7 @@ function callDeadline(): { deadlineAt?: number; readDeadlineAt?: number } {
 function abortError(member: string, signal: AbortSignal, startedAt: number, sent: boolean): Error {
   const reason = signal.reason as { name?: unknown } | undefined;
   return reason?.name === 'TimeoutError'
-    ? ownerCallTimeout(member, Date.now() - startedAt, false)
+    ? ownerCallTimeout(member, Date.now() - startedAt, sent ? 'sent' : 'not_sent')
     : ownerCallCancelled(member, sent);
 }
 
@@ -170,9 +172,13 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
         if (signal.aborted) return Promise.reject(abortError(member, signal, startedAt, false));
       }
       const { deadlineAt, readDeadlineAt } = callDeadline();
+      // The caller's access record (who it is, what it may read) goes with the call, so the owner reads as this caller.
+      const record = callerAccessRecord();
+      const access = record ? encodeValue(record) : undefined;
       const line = frameLine({ t: kind, id, [kind === 'fn' ? 'name' : 'member']: member, args: wireArgs,
         ...(deadlineAt !== undefined ? { deadline_at: deadlineAt } : {}),
-        ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}) });
+        ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}),
+        ...(access ? { access } : {}) });
       if (line === null) return Promise.reject(ownerIpcRefusal(member, `its arguments are larger than ${OWNER_IPC_MAX_FRAME_BYTES} bytes, the most the owner socket carries`));
       return new Promise((resolveCall, rejectCall) => {
         let grace: ReturnType<typeof setTimeout> | undefined;
@@ -195,7 +201,7 @@ export function connectOwner(legacySocketPath: string, opts: { timeoutMs?: numbe
         }
         if (deadlineAt !== undefined) {
           const ms = Math.max(0, deadlineAt - Date.now());
-          grace = setTimeout(() => endLocally(ownerCallTimeout(member, ms, false)), ms + CLIENT_DEADLINE_GRACE_MS);
+          grace = setTimeout(() => endLocally(ownerCallTimeout(member, ms, 'sent')), ms + CLIENT_DEADLINE_GRACE_MS);
         }
         pending.set(id, { member, resolve: resolveCall, reject: rejectCall, callbacks, cleanup });
         refresh();

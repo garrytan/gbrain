@@ -71,6 +71,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "apple-contacts": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "apply-migrations": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

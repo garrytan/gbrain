@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1432/1439
+# covered: 1430/1437
 # lifecycle: 12/12
 # pages: 59/59
 # search: 7/7
@@ -21,7 +21,7 @@
 # tags: 5/5
 # timeline: 20/20
 # ontology: 10/10
-# raw_files: 27/27
+# raw_files: 25/25
 # takes: 59/59
 # dream: 37/37
 # contradictions: 22/22
@@ -49,11 +49,11 @@
 # fact_relink_writes: 3/3
 # facts_cycle: 14/14
 # facts_cycle_sites: 34/34
-# facts_purge: 98/98
+# facts_purge: 99/99
 # purge_plan: 4/4
 # projection_rebuild: 5/6
 # facts_repair: 25/25
-# facts_trust: 48/48
+# facts_trust: 47/47
 # facts_recall: 7/7
 # facts_conversation: 30/30
 # belief_ledger: 17/17
@@ -331,9 +331,7 @@ getRawData	raw_files	yes	5	yes	yes	yes	serves
 upsertFile	raw_files	yes	6	no	yes	yes	serves
 getFile	raw_files	yes	2	no	yes	yes	serves
 listFilesForPage	raw_files	yes	3	no	yes	yes	serves
-listFiles	raw_files	yes	1	no	yes	yes	serves
-listFileRowsForSlug	raw_files	yes	1	no	yes	yes	refuses:files
-listAllFileRows	raw_files	yes	2	no	yes	yes	refuses:files
+listFiles	raw_files	yes	3	no	yes	yes	serves
 hasFileWithHash	raw_files	yes	1	no	yes	yes	refuses:files
 listFileRowsForVerify	raw_files	yes	1	no	yes	yes	refuses:files
 readSourceLocalPathForVerify	raw_files	yes	2	no	yes	yes	serves
@@ -1005,6 +1003,7 @@ listWithdrawalSlugs	facts_purge	yes	5	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	6	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	14	no	yes	yes	serves
 insertTakePurge	facts_purge	yes	14	no	yes	yes	serves
+listDerivedRows	facts_purge	yes	3	no	yes	yes	serves
 upsertPagePurges	facts_purge	yes	6	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	refuses:facts
 readPurgeSourceLocalPath	facts_purge	yes	2	no	yes	yes	serves
@@ -1120,7 +1119,6 @@ listPagelessEntityFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
 listSourceIncarnations	facts_repair	yes	1	no	yes	yes	refuses:facts
 readEntityRehomeState	facts_repair	yes	1	no	yes	yes	refuses:facts
 rehomeEntityFacts	facts_repair	yes	1	no	yes	yes	refuses:facts
-listDerivedRows	facts_trust	yes	3	no	yes	yes	serves
 listFactsForRelevance	facts_trust	yes	7	no	yes	yes	serves
 countUncomparableFacts	facts_trust	yes	4	no	yes	yes	serves
 matchSavedFacts	facts_trust	yes	6	no	yes	yes	serves

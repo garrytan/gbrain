@@ -28,6 +28,8 @@ export interface SyncStatusSourceRow<P = Record<string, unknown>, W = Record<str
   pass_value: P | null; pass_updated_at: Date | string | null; pass_read_at: Date | string; withheld: W | null;
   admission_stored: string | null; admission_row_value: string | null; admission_set_at: string | null; admission_pinned: boolean | null; admission_destructive: boolean | null;
   writeback_failed: string | null; refresh: F | string | null;
+  /** GST-3256: the apple-contacts identity-review and pending-delete checkpoint values of the source (`completed_keys`), null when none. */
+  identity_reviews: unknown; held_deletes: unknown;
 }
 
 /** The source read of one live (not archived) source, or null. */

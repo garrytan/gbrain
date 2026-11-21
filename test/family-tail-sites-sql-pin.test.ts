@@ -19,7 +19,7 @@ import { NOT_CONVERSATION_SLOT_SQL, CONVERSATION_SLOT_SQL } from '../src/core/ch
 import { UNBACKED_FACT_SQL } from '../src/core/engine-sql/fact-relink-writes.ts';
 import { projectionEligibleSql } from '../src/core/eligibility/sql.ts';
 import { NON_EMPLOYER_PREFIXES, NON_EMPLOYER_TYPES } from '../src/core/link-target-roles.ts';
-import { callerAccessAllowedSql, privatePagesFilterForCaller } from '../src/core/search/private-visibility.ts';
+import { callerAccessAllowedSql, ownerOnlyTakeAllowedSql, privatePagesFilterForCaller } from '../src/core/search/private-visibility.ts';
 import { pageReadFilter } from '../src/core/search/read-policy-sql.ts';
 import { chunkVisibleFilter, safeChunksFilter } from '../src/core/search/safe-chunks.ts';
 import type { PageReadPolicy } from '../src/core/types.ts';
@@ -90,7 +90,7 @@ const takesText = (policy: PageReadPolicy, floor: TrustTier | undefined) => {
   }
   return { text: `SELECT t.id, t.page_id, t.row_num, t.claim, t.holder, p.slug, p.source_id
        FROM takes t JOIN pages p ON p.id = t.page_id
-      WHERE t.id = ANY($1::bigint[]) AND t.active AND ${pageSql}${holderSql}
+      WHERE t.id = ANY($1::bigint[]) AND t.active AND ${pageSql}${holderSql}${policy.excludePrivate ? ownerOnlyTakeAllowedSql('t') : ''}
         AND ${projectionEligibleSql('takes', 't', floor ? { floor } : undefined)}`, params };
 };
 const POLICIES: Array<[string, PageReadPolicy]> = [

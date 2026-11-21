@@ -15,6 +15,7 @@ import { dumpFrontmatterYaml } from '../data-frontmatter.ts';
 import { neutralizeOutsideText } from '../outside-content.ts';
 import { BUILTIN_PATTERNS } from '../conversation-parser/builtins.ts';
 import type { IMessageMessage, IMessageThread } from './types.ts';
+import { SPEAKER_OWNER_KEY, speakerOwnerFromTurns, type SpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 
 /** A rendered page larger than this is held, never truncated. */
 export const MAX_IMESSAGE_PAGE_BYTES = 2 * 1024 * 1024;
@@ -64,8 +65,11 @@ export function imessageDayFingerprint(thread: IMessageThread, day: string, mess
   return createHash('sha256').update(JSON.stringify([RENDER_VERSION, imessageChatTitle(thread), thread.isGroup, day, rows])).digest('hex').slice(0, 32);
 }
 
+const speakerOf = (m: IMessageMessage, thread: IMessageThread) =>
+  speakerName(m.isFromMe ? 'Me' : m.from ?? (thread.isGroup ? 'Unknown' : thread.displayName ?? thread.participants[0] ?? 'Unknown'));
+
 function messageLines(m: IMessageMessage, thread: IMessageThread, zone: string): string[] {
-  const speaker = speakerName(m.isFromMe ? 'Me' : m.from ?? (thread.isGroup ? 'Unknown' : thread.displayName ?? thread.participants[0] ?? 'Unknown'));
+  const speaker = speakerOf(m, thread);
   const body = m.textStatus === 'undecodable' ? '_(message could not be decoded)_'
     : neutralizeOutsideText((m.text ?? '').split('\n').map(line => line.trimStart()).filter(Boolean).join('\n'));
   const lines = body ? body.split('\n') : [];
@@ -84,6 +88,8 @@ export interface IMessageDayInput {
   timezone: string;
   /** The day's messages, oldest first. */
   messages: readonly IMessageMessage[];
+  /** GST-3216: stamp speaker_owner from the Mac's own is-from-me flag (identity/speaker-owner.ts). */
+  owner?: SpeakerOwnerStamp;
 }
 
 export function renderIMessageDay(input: IMessageDayInput): string {
@@ -101,6 +107,8 @@ export function renderIMessageDay(input: IMessageDayInput): string {
     messages: shown.length,
     visibility: 'private',
   };
+  const owner = input.owner ? speakerOwnerFromTurns(shown.map(m => ({ label: speakerOf(m, input.thread), owner: m.isFromMe })), 'is_from_me', input.owner.member) : null;
+  if (owner) frontmatter[SPEAKER_OWNER_KEY] = owner;
   const lines = [`# ${inline(title)} ${input.day}`, '', `**Chat:** ${inline(title)} · **Day:** ${input.day} (${input.timezone}) · **Messages:** ${shown.length}`, '',
     ...shown.flatMap(m => messageLines(m, input.thread, input.timezone))];
   const page = `---\n${dumpFrontmatterYaml(frontmatter, { lineWidth: 1000 })}---\n\n${lines.join('\n')}\n`;
