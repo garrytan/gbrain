@@ -1,0 +1,5 @@
+**The Rust engine agent is now woken at once only for urgent events on its own pull requests, and gets everything else as one summary every 30 minutes.**
+
+### Changed
+- The Vorflux notify workflow rings the agent right away only for a `capy-ai[bot]` comment or review, the maintainer's own unmarked comments and reviews, a merge or close, or a red or timed-out `full-suite`, `e2e-full-suite` or macOS 26 validation check on the pull request's current head. Pushes no longer trigger the workflow, and failed cheap-tier runs and runs on master and merge-queue branches no longer start a runner.
+- A new `digest` job runs at :05 and :35 and sends one summary of everything else on the agent's pull requests from the last half hour: pushes by other people, label and other pull-request events, outside comments and reviews, and completed Test, E2E and macOS 26 validation runs on the current head that didn't ring. It catches up on half hours a delayed or dropped run missed, up to six hours back, reruns send the same delivery id, a failed API listing fails the run so the next one reads that window again, and a manual dispatch only prints the summary.
