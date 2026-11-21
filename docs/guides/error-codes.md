@@ -4724,6 +4724,16 @@ More: [docs/guides/dream-patterns.md#child-read-budget](../../docs/guides/dream-
 
 More: [docs/guides/write-refusals.md#readable_by_invalid](../../docs/guides/write-refusals.md#readable_by_invalid)
 
+### readers_noncanonical
+
+<a id="readers_noncanonical"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page's frontmatter names its readers with a key page access does not read (Readable_By, readable-by, readableBy), so the write was refused, or sync or import held the file, instead of storing a page every member can read. | Page access reads only the exact lowercase key readable_by. A page that spells it another way (another case, a hyphen or space for the underscore) is stored as an ordinary frontmatter key, so its restriction would be lost silently and every member could read it. put_page, edit_page, capture, ingest_capture, brainstorm --save and sources reconcile refuse the write with this code, and sync and import hold the file; a page that also carries the exact key is refused too, because its intent is ambiguous. | Write the key as readable_by (lowercase, with an underscore) on its own frontmatter line and remove any other spelling, then submit, sync or import again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#readers_noncanonical](../../docs/guides/write-refusals.md#readers_noncanonical)
+
 ### reason_purge_scan_capped
 
 <a id="reason_purge_scan_capped"></a>
