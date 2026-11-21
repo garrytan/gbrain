@@ -11,7 +11,8 @@
  *    revision_conflict and the page can never be recovered by the displayed retry).
  *    Also protects (pages-03 follow-up): the same bound for a page the input cap cut, whose failed requests' receipts
  *    were compacted before the upgrade (fails when the carried failure count is filed under a key the drain never reads,
- *    so the page gets three more paid attempts).
+ *    so the page gets three more paid attempts); and the displayed retry of a held page renamed in the same sync as the
+ *    re-read (fails when the retry reads the page at its old slug and is refused source_changed).
  * 3. Runs on PGLite and, with DATABASE_URL, on Postgres (the managed-brain fixture). The Rust engine serves no raw SQL,
  *    so the managed sync stops there with engine_capability_missing. The model and the embedding provider are stubs;
  *    no network.
@@ -207,5 +208,40 @@ describe(`pages-03: the re-read keeps managed atom failure checkpoints usable ($
     });
   }, { setup, databaseUrl }), 240_000);
 
+  test('the retry a held page displays recovers it after a re-read that also renamed it', () => managedBrain(async ({ engine, root }) => {
+    await withStubs(async () => {
+      const opts = { sourceId: 'default', noPull: true };
+      const MOVED = 'meetings/moved';
+      expect((await performManagedSync(engine, opts)).status).toBe('first_sync');
+      await drainEffects(engine);
+      const oldHash = await storedByOlderGbrain(engine);
+      const m = model();
+      for (let attempt = 1; attempt <= MAX_DETERMINISTIC_FAILURES; attempt++) await extract(engine, m.chat);
+      const [heldBefore] = await listHeldManagedAtoms(engine, ['default']);
+      expect(heldBefore).toMatchObject({ locator: SLUG, attempts: MAX_DETERMINISTIC_FAILURES });
+
+      // The upgrade's first sync finds the file moved to another name, unchanged: one rename the sync reads anew.
+      git(root, 'mv', `${SLUG}.md`, `${MOVED}.md`);
+      git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'move');
+      expect(await performManagedSync(engine, opts)).toMatchObject({ status: 'synced' });
+      const moved = await pageRow(engine, MOVED);
+      expect(moved?.content_hash).not.toBe(oldHash);
+      const held = await listHeldManagedAtoms(engine, ['default']);
+      expect(held.map(entry => entry.locator)).toEqual([MOVED]);
+      expect(held[0]!.request_id).toBe(heldBefore!.request_id);
+
+      m.replies.push(VALID);
+      __setChatTransportForTests(m.chat as never);
+      const retried = await retryManagedAtomBatch(engine, 'default', held[0]!.request_id, 'reviewed-retry-after-rename');
+      await disposePersistenceConsumer(engine);
+      expect(retried).toMatchObject({ status: 'ok', model_rerun: true });
+      expect(m.calls()).toBe(MAX_DETERMINISTIC_FAILURES + 1);
+      expect(await listHeldManagedAtoms(engine, ['default'])).toEqual([]);
+      const atoms = await engine.executeRaw<{ source_slug: string }>("SELECT frontmatter->>'source_slug' AS source_slug FROM pages WHERE type='atom' AND deleted_at IS NULL");
+      expect(atoms).toEqual([{ source_slug: MOVED }]);
+      await extract(engine, m.chat, MOVED);
+      expect(m.calls()).toBe(MAX_DETERMINISTIC_FAILURES + 1);
+    });
+  }, { setup, databaseUrl }), 240_000);
 });
 }

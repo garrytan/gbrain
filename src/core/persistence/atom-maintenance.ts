@@ -331,12 +331,13 @@ export async function carriedAtomDrainKey(engine: BrainEngine, pageId: number, f
 /**
  * pages-03: an explicit retry of a held page's batch after a one-time re-read moved the page to a new content hash:
  * the checkpoint the re-read carried names the held request at the drain key of the new hash, so the retry runs
- * against the page's current content (the same text and meaning) and advances that checkpoint. Null otherwise.
+ * against the page's current content (the same text and meaning) at its current slug (a rename in the same sync moved
+ * it) and advances that checkpoint. Null otherwise.
  */
 async function carriedRetryCheckpoint(engine: BrainEngine, session: ManagedAtomSession, requestId: string, p: AtomIntent): Promise<{ origin: AtomOrigin; checkpointKey: string } | null> {
   if (p.origin.kind !== 'page' || p.origin.pageId === null) return null;
-  const [page] = await engine.executeRaw<{ content_hash: string | null }>('SELECT content_hash FROM pages WHERE id=$1 AND source_id=$2 AND deleted_at IS NULL',
-    [p.origin.pageId, session.sourceId]);
+  const [page] = await engine.executeRaw<{ content_hash: string | null; slug: string }>(
+    'SELECT content_hash, slug FROM pages WHERE id=$1 AND source_id=$2 AND deleted_at IS NULL', [p.origin.pageId, session.sourceId]);
   if (!page?.content_hash || page.content_hash === p.origin.contentHash) return null;
   const checkpointKey = await carriedAtomDrainKey(engine, Number(p.origin.pageId), p.checkpointKey ?? p.runKey, p.origin.contentHash, page.content_hash);
   if (!checkpointKey) return null;
@@ -346,7 +347,7 @@ async function carriedRetryCheckpoint(engine: BrainEngine, session: ManagedAtomS
   if (!carried) return null;
   const generation = await atomGeneration(engine, Number(p.origin.pageId), page.content_hash);
   const { generation: _old, ...rest } = p.origin;
-  return { origin: { ...rest, contentHash: page.content_hash, ...(generation ? { generation } : {}) }, checkpointKey };
+  return { origin: { ...rest, locator: page.slug, contentHash: page.content_hash, ...(generation ? { generation } : {}) }, checkpointKey };
 }
 
 function atomRequestId(key: string, slug: string): string {

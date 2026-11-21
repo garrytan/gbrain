@@ -174,7 +174,8 @@ export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string,
     [pageId, fromHash, toHash, sourceId]);
   // Keyed by content (managedAtomIdentitySql). A drain key's row (a failure's attempt count, a hold, a cut) is copied to
   // the drain key of the new hash, which the drain and the held page's retry read; any other row is copied under its own
-  // fingerprint. Either way a run keyed to the old hash keeps its row.
+  // fingerprint. Every copy names the page's current slug (a rename in the same sync moved it), so a hold listed from
+  // either copy shows where the page is now. Either way a run keyed to the old hash keeps its row.
   const { carriedAtomDrainKey } = await import('./persistence/atom-maintenance.ts');
   const checkpoints = await tx.executeRaw<{ fingerprint: string }>(
     `SELECT ac.fingerprint FROM op_checkpoints ac
@@ -186,9 +187,13 @@ export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string,
     const carried = await carriedAtomDrainKey(tx, pageId, fingerprint, fromHash, toHash) ?? `${fingerprint}:carried:${toHash}`;
     await tx.executeRaw(
       `INSERT INTO op_checkpoints (op, fingerprint, completed_keys)
-       SELECT ac.op, $2, jsonb_set(ac.completed_keys, '{0,contentHash}', to_jsonb($3::text)) FROM op_checkpoints ac WHERE ac.op='managed-atoms' AND ac.fingerprint=$1
+       SELECT ac.op, $2, CASE WHEN p.slug IS NOT NULL AND ac.completed_keys->0 ? 'locator'
+           THEN jsonb_set(c.keys, '{0,locator}', to_jsonb(p.slug)) ELSE c.keys END
+         FROM op_checkpoints ac CROSS JOIN LATERAL (SELECT jsonb_set(ac.completed_keys, '{0,contentHash}', to_jsonb($3::text)) AS keys) c
+         LEFT JOIN pages p ON p.id=$4 AND p.source_id=$5 AND p.deleted_at IS NULL
+        WHERE ac.op='managed-atoms' AND ac.fingerprint=$1
        ON CONFLICT DO NOTHING`,
-      [fingerprint, carried, toHash]);
+      [fingerprint, carried, toHash, pageId, sourceId]);
   }
   // The chronicle ledger row moves: it carries recorded spend and failed attempts, which a copy would count twice.
   await tx.executeRaw(
