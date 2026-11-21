@@ -5,6 +5,7 @@
  * their text (page and row trust, guest source lists) stay at their call sites.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import type { EngineRawRead } from './cli-reads-ops.ts';
 
 /** One `sources` row as `listSourceRecords` returns it; `archived` and `newest_content_at` are absent on a schema that lacks them. */
 export interface SourceRecordRow {
@@ -35,31 +36,52 @@ function isUndefinedColumnError(err: unknown): boolean {
  * `archived` or `newest_content_at` (pre-v0.26.5, pre-v109) is read again with the historical minimal columns.
  */
 export async function listSourceRecords(exec: LegacyUnscopedRead): Promise<SourceRecordRow[]> {
+  return listSourceRecordsEach(run => run(exec));
+}
+
+/**
+ * `listSourceRecords` with each of its two statements run through `read` (a bounded read on Postgres, as master's two
+ * `executeRaw` calls were: the undefined-column error ends the first read's transaction, so the fallback cannot share it).
+ */
+export async function listSourceRecordsEach(read: (run: (exec: LegacyUnscopedRead) => Promise<SourceRecordRow[]>) => Promise<SourceRecordRow[]>): Promise<SourceRecordRow[]> {
   try {
-    return await exec.executeRaw<SourceRecordRow>(
-      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
-         FROM sources
-       ORDER BY (id = 'default') DESC, id`,
-    );
+    return await read(listSourceRecordsFull);
   } catch (err) {
     if (!isUndefinedColumnError(err)) throw err;
-    return exec.executeRaw<SourceRecordRow>(
-      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
-           FROM sources
-         ORDER BY (id = 'default') DESC, id`,
-    );
+    return read(listSourceRecordsMinimal);
   }
 }
 
-/** One source's config and incarnation, or null for an unknown id (the company-brain profile read). */
-export async function readSourceIncarnation(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceIncarnationRow | null> {
-  const [row] = await exec.executeRaw<SourceIncarnationRow>('SELECT config,incarnation FROM sources WHERE id=$1', [sourceId]);
+/** `listSourceRecords`' first statement. */
+export async function listSourceRecordsFull(exec: LegacyUnscopedRead): Promise<SourceRecordRow[]> {
+  return exec.executeRaw<SourceRecordRow>(
+    `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
+         FROM sources
+       ORDER BY (id = 'default') DESC, id`,
+  );
+}
+
+/** `listSourceRecords`' fallback for a schema without `archived` or `newest_content_at`: the historical minimal columns. */
+export async function listSourceRecordsMinimal(exec: LegacyUnscopedRead): Promise<SourceRecordRow[]> {
+  return exec.executeRaw<SourceRecordRow>(
+    `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
+           FROM sources
+         ORDER BY (id = 'default') DESC, id`,
+  );
+}
+
+/**
+ * One source's config and incarnation, or null for an unknown id (the company-brain profile read). It runs through the
+ * engine's own `executeRaw`, as the profile read did, so a cancelled request and a wrapped `executeRaw` see it.
+ */
+export async function readSourceIncarnation(raw: EngineRawRead, sourceId: string): Promise<SourceIncarnationRow | null> {
+  const [row] = await raw<SourceIncarnationRow>('SELECT config,incarnation FROM sources WHERE id=$1', [sourceId]);
   return row ?? null;
 }
 
 /** Whether the source's current incarnation has a company-brain ingestion receipt. */
-export async function hasCompanyBrainReceipt(exec: LegacyUnscopedRead, sourceId: string): Promise<boolean> {
-  const rows = await exec.executeRaw(`SELECT r.id FROM source_ingestion_receipts r JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation
+export async function hasCompanyBrainReceipt(raw: EngineRawRead, sourceId: string): Promise<boolean> {
+  const rows = await raw(`SELECT r.id FROM source_ingestion_receipts r JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation
       WHERE r.source_id=$1 AND r.profile='company-brain' LIMIT 1`, [sourceId]);
   return rows.length > 0;
 }

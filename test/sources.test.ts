@@ -13,6 +13,7 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { N4_SOURCE_MEMBERS } from './helpers/n4-engine-members.ts';
 
 // ── Stub engine that records queries ───────────────────────
 
@@ -46,6 +47,7 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
   // Minimal BrainEngine stub — only the methods sources.ts touches.
   const engine = {
     kind: 'pglite' as const,
+    ...N4_SOURCE_MEMBERS,
     executeRaw,
     // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
     readManagedModeRows: () => executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1'),

@@ -43,6 +43,8 @@ const CASES: Case[] = [
   { member: 'readMaxTimelineEntryId', table: 'timeline_entries', call: (e) => e.readMaxTimelineEntryId() },
   { member: 'storedTimelineRowsByPageIds', table: 'timeline_entries', call: (e) => e.storedTimelineRowsByPageIds([1]) },
   { member: 'countSegmentedTimelinePages', table: 'timeline_entries', call: (e) => e.countSegmentedTimelinePages(['default'], 10) },
+  // N4: the source list commit_notifier and federation_health read through loadAllSources.
+  { member: 'listSourceRecords', table: 'sources', call: (e) => e.listSourceRecords() },
 ];
 
 test('the bounded typed reads are exactly the S2 members a doctor check reaches', () => {
