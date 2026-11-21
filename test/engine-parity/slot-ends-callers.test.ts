@@ -20,7 +20,9 @@
  * The second lander removes the Rust branches below and shows the cases equal on all three arms. Loss rows (Rust
  * capability-loss list, until then):
  *   - Rust entity saved facts shows no saved facts until lane 4 serves listSlotRows, due 5 PM PST Nov 25
+ *     (it also needs readEntityNewestFacts, 58f2be32e8 on brief-reads-rust and hidden-refusals-2-rust)
  *   - Rust question recall shows a "could not rank facts" refusal instead of the ranked facts until lane 4 serves listSlotRows, due 5 PM PST Nov 25
+ *     (it also needs listFactRowsByIds, same rust-5a branch)
  *   - Rust hot memory shows no hot-memory block until lane 4 serves listSlotRows, due 5 PM PST Nov 25
  */
 import { describe, expect } from 'bun:test';
@@ -87,10 +89,12 @@ describe('engine parity: the readers that keep a best-effort catch around the sl
     const entity = (await resolveQueryEntities(engine, 'Alice Example', { sourceId: 'default', excludePrivate: false }))[0];
     const answer = async () => shown(entity ? await entitySavedFacts(engine, entity, { remote: false, excludePrivate: false }) : undefined);
     if (backend === 'rust') {
-      // RUST_KNOWN_STOP (lane 4, rust-5a 12bee2c026, due 5 PM PST Nov 25; the second lander removes this pin): entitySavedFacts
+      // RUST_KNOWN_STOP (two members: listSlotRows, lane 4, rust-engine/rust-5a 12bee2c026, due 5 PM PST Nov 25, AND readEntityNewestFacts,
+      // 58f2be32e8 on rust-engine/brief-reads-rust and hidden-refusals-2-rust; the second lander removes this pin): entitySavedFacts
       // catches every error and returns [], so Rust shows no saved facts. The pin fails when Rust starts answering.
-      // Caveat, measured at 5bca1a6f8a: newestFacts reads the facts through executeRaw, which the Rust engine refuses (raw_sql), so the
-      // [] comes from that refusal first; serving listSlotRows alone does not flip this case until that read is typed too.
+      // Measured at 5bca1a6f8a: newestFacts reads the facts through executeRaw, which the Rust engine refuses (raw_sql), so the
+      // [] comes from that refusal first. This case flips only when both land: readEntityNewestFacts (58f2be32e8, "A search that names an
+      // entity keeps the entity's saved facts on a Rust brain") types that read, and listSlotRows (rust-5a 12bee2c026) serves the slot ends.
       expect(await answer()).toEqual([]);
       const stop = await slotRead(engine);
       expect(refusalOf(stop)).toEqual(REFUSED);
@@ -108,10 +112,11 @@ describe('engine parity: the readers that keep a best-effort catch around the sl
     const rank = () => rankFactsByQuestion(ctxOf(engine), { question: 'Where does Alice Example work?', params: { question: 'Where does Alice Example work?' },
       factSources: ['default'], limit: 10, scope: SCOPE, entity: null, sessionId: null, since: null, grep: null });
     if (backend === 'rust') {
-      // RUST_KNOWN_STOP (lane 4, rust-5a 12bee2c026, due 5 PM PST Nov 25; the second lander removes this pin): the read failure
+      // RUST_KNOWN_STOP (two members, both lane 4 on rust-engine/rust-5a, due 5 PM PST Nov 25: listSlotRows 12bee2c026 and listFactRowsByIds;
+      // the second lander removes this pin): the read failure
       // surfaces as rankingUnavailable ("recall could not rank facts"), never as an empty list. The pin fails when Rust starts answering.
-      // Caveat, measured at 5bca1a6f8a: the candidate read stops first, on listFactRowsByIds (not served on Rust either), so serving
-      // listSlotRows alone does not flip this case until listFactRowsByIds is served too.
+      // Measured at 5bca1a6f8a: the candidate read stops first, on listFactRowsByIds, so this case flips when rust-5a lands, which
+      // serves listFactRowsByIds and listSlotRows together.
       const failed = await rank().then(() => null, (e: unknown) => e);
       expect((failed as { message?: string } | null)?.message).toBe('recall could not rank facts for this question: the facts read failed.');
       const stop = await slotRead(engine);
