@@ -342,7 +342,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   jobs_wake: [
     'openWakeWatch', 'listWakeWatches', 'endWakeWatches', 'countWakeWatches', 'readWakeDoctor', 'countPendingWakeForgets', 'listWakeCrons',
     'addWakeCron', 'removeWakeCron', 'hasWakeCron', 'recordWakeCronRun', 'hasWakeTermsAcceptance', 'recordWakeTermsAcceptance', 'listDueWakeWatches',
-    'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'claimWakeForgets', 'settleWakeForget',
+    'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'forgetWakeMember', 'claimWakeForgets', 'settleWakeForget',
   ],
   owner_only: ['ownerOnlyMarkTriggers'],
 };

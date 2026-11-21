@@ -180,6 +180,16 @@ impl Brain {
         })
     }
 
+    /// `forgetWakeMember(memberId)`: `{ ended, queued }`.
+    #[napi]
+    pub fn forget_wake_member<'env>(
+        &self,
+        env: &'env Env,
+        member_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.forget_wake_member(&member_id))
+    }
+
     /// `claimWakeForgets`.
     #[napi]
     pub fn claim_wake_forgets<'env>(

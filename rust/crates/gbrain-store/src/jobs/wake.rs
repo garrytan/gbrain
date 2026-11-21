@@ -19,6 +19,7 @@
 use super::*;
 use crate::env::parse_iso;
 use crate::journal::RequestRecord;
+use std::collections::BTreeSet;
 
 const SUB: u8 = 0x10;
 const SUB_OPEN: u8 = 0x11;
@@ -1044,6 +1045,82 @@ impl Store {
                 updated_at: now,
             };
             save_forget(tx, None, &row)
+        })
+    }
+
+    /// `forgetWakeMember`: a removed member's Wakeshift state, in one write. Queue a forget of
+    /// each distinct `wake_user` the member watched under (any state; bytewise, one sequence value
+    /// per user as the SQL `INSERT ... SELECT DISTINCT` spends, and none queued while one is
+    /// pending), end the member's open watches (`principal_revoked`, lease dropped) and delete the
+    /// terms acceptances of exactly `member:<id>`. Returns `{ ended, queued }`.
+    pub fn forget_wake_member(&self, member_id: &str) -> Result<Value> {
+        if member_id.contains('\0') {
+            return Ok(json!({ "ended": 0, "queued": 0 }));
+        }
+        let mine = |w: &WatchRecord| w.member_id.as_deref() == Some(member_id);
+        self.forget_wake_principal(&mine, &mine, &format!("member:{member_id}"))
+    }
+
+    /// The forget write: queue a forget of each distinct `wake_user` of the watches
+    /// `queue` picks, end the open watches `end` picks and delete the terms acceptances of exactly
+    /// `principal_key`.
+    fn forget_wake_principal(
+        &self,
+        queue: &dyn Fn(&WatchRecord) -> bool,
+        end: &dyn Fn(&WatchRecord) -> bool,
+        principal_key: &str,
+    ) -> Result<Value> {
+        self.write(|tx| {
+            let now = self.env.now_micros();
+            let watches = all_watches(tx)?;
+            let users: BTreeSet<String> = watches
+                .iter()
+                .filter(|w| queue(w))
+                .map(|w| w.wake_user.clone())
+                .collect();
+            let mut queued = 0i64;
+            for wake_user in users {
+                let id = next_seq(tx, "wake_forget")?;
+                if tx.get(&pending_key(&wake_user))?.is_some() {
+                    continue;
+                }
+                let row = ForgetRecord {
+                    id,
+                    wake_user,
+                    state: "pending".into(),
+                    attempts: 0,
+                    next_attempt_at: now,
+                    lease_until: None,
+                    last_error: None,
+                    created_at: now,
+                    updated_at: now,
+                };
+                save_forget(tx, None, &row)?;
+                queued += 1;
+            }
+            let mut ended = 0i64;
+            for old in watches.into_iter().filter(|w| w.state == "open" && end(w)) {
+                let mut row = old.clone();
+                row.state = "ended".into();
+                row.last_error = Some("principal_revoked".into());
+                row.lease_until = None;
+                row.updated_at = now;
+                save_watch(tx, Some(&old), &row)?;
+                ended += 1;
+            }
+            let under = terms_key(principal_key, "");
+            let exact = under.len() + 16;
+            let mut gone = Vec::new();
+            scan_prefix(tx, &under, false, &mut |k, _| {
+                if k.len() == exact {
+                    gone.push(k.to_vec());
+                }
+                true
+            })?;
+            for k in gone {
+                tx.delete(&k)?;
+            }
+            Ok(json!({ "ended": ended, "queued": queued }))
         })
     }
 

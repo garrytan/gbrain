@@ -367,7 +367,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Group A (jobs-tables): the Wakeshift report-back tables (engine-sql/jobs-wake.ts)
   'openWakeWatch', 'listWakeWatches', 'endWakeWatches', 'countWakeWatches', 'readWakeDoctor', 'countPendingWakeForgets', 'listWakeCrons',
   'addWakeCron', 'removeWakeCron', 'hasWakeCron', 'recordWakeCronRun', 'hasWakeTermsAcceptance', 'recordWakeTermsAcceptance', 'listDueWakeWatches',
-  'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'claimWakeForgets', 'settleWakeForget',
+  'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'forgetWakeMember', 'claimWakeForgets', 'settleWakeForget',
   // GST-3032 owner-only delete triggers (src/core/engine-sql/owner-only-marks.ts; covered by test/owner-only-removal-lineage.test.ts)
   'ownerOnlyMarkTriggers',
   'readEntityOpenLoops', 'linkEntityIdentityRow', 'unlinkEntityIdentityRow', 'listEntityIdentityRows', 'readEntityIdentityIdsForPages', 'readCanonicalTwin', 'listPendingContradictions', 'listTrustAllowRuleRows', 'notifierCoverageRecorded', 'bumpPageRetrievals',

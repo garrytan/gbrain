@@ -1280,6 +1280,7 @@ export const RUST_ENGINE_MEMBERS = {
   claimWakeWatch: 'minion_queue',
   settleWakeWatch: 'minion_queue',
   queueWakeForget: 'minion_queue',
+  forgetWakeMember: 'minion_queue',
   claimWakeForgets: 'minion_queue',
   settleWakeForget: 'minion_queue',
   // Group D (trust tier reads)

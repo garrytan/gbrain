@@ -445,6 +445,15 @@ const PINS: Pin[] = [
     case: { method: 'writeCredentialReadsUnscoped', variant: kind, run: (e: Parameters<SqlCase['run']>[0]) => e.writeCredentialReadsUnscoped({ kind, id: 'cred-1' }, true) },
     texts: [`UPDATE ${kind === 'token' ? 'access_tokens' : 'oauth_clients'} SET reads_unscoped = CASE WHEN $2::boolean THEN now() ELSE NULL END WHERE ${kind === 'token' ? 'id::text' : 'client_id'} = $1`],
   })),
+  {
+    from: 'src/core/wakeshift/forget.ts:23-27 forgetWakePrincipal (a member) at 8d2e667543',
+    case: { method: 'forgetWakeMember', variant: 'default', run: e => e.forgetWakeMember('alice-example') },
+    texts: [`INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions WHERE member_id = $1
+        ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`,
+    `UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
+        WHERE member_id = $1 AND state = 'open' RETURNING id`,
+    'DELETE FROM wake_terms_acceptances WHERE principal_key = $1'],
+  },
   // Equivalent, not verbatim (the next four): the old-line statements add COLLATE "C" to every ORDER BY, so groups,
   // group members and pages come in byte order on every engine whatever the database collation.
   {

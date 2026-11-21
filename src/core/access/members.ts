@@ -24,7 +24,6 @@ import type { BrainEngine } from '../engine.ts';
 import type { AccessMemberRow } from '../engine-sql/access-control.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
 import { forgetWakePrincipal } from '../wakeshift/forget.ts';
-import { sqlEngineKind } from '../sql-engine-kind.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
@@ -303,14 +302,12 @@ export async function previewRemoveMember(engine: BrainEngine, rawId: unknown): 
 
 export async function removeMember(engine: BrainEngine, rawId: unknown): Promise<MemberRemovalPreview> {
   const preview = await previewRemoveMember(engine, rawId);
-  // The Wakeshift forget below is raw SQL that swallows its errors: an engine without it refuses before the tombstone.
-  sqlEngineKind(engine.kind, 'removeMember (the Wakeshift forget of the member)');
   if (preview.member.status === 'removed') {
-    await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
+    await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id, engine });
     return preview;
   }
   await engine.tombstoneAccessMember(preview.member.id);
-  await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
+  await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id, engine });
   return { ...preview, member: (await getMember(engine, preview.member.id))! };
 }
 

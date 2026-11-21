@@ -75,7 +75,8 @@ Under the jobs tag `keys::JOBS` (`m`). Integers are big-endian, signed ones with
 - The `committed` write request with a recovery record is not reachable through a typed member (no member writes that
   column), so only `tests/jobs_wake.rs` covers it.
 
-Left on `executeRaw`, which the Rust engine refuses: `src/core/wakeshift/forget.ts` (it runs inside the OAuth and
+`forgetWakeMember` (a removed member's watches, forgets and terms, `brain.forgetWakeMember(memberId)`) is served. Left on
+`executeRaw`, which the Rust engine refuses: the credential half of `src/core/wakeshift/forget.ts` (it runs inside the OAuth and
 access-token transactions) and `principalLive` in `src/core/wakeshift/drain.ts` (it reads `oauth_clients`,
 `access_tokens` and the member identity). On a Rust brain a watch from the local stdio principal with no member works end
 to end; any other principal refuses loudly where it reads those tables.

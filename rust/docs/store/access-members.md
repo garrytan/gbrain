@@ -38,8 +38,8 @@ The binding columns live on the token records of [access-tokens.md](access-token
 | `brain.readAccessCredentials(by)` | `[{ kind, id, name }]`: the tokens not revoked with exactly `tokenName`, oldest first; or the tokens not revoked bound to exactly `memberId`, by name bytes, then the clients not deleted bound to it, by client id bytes |
 
 A member insert with `bindTokenId` binds the token whose id text is exactly that, in the same write; no token with the
-id binds nothing. `gbrain access member rm` still refuses on Rust before it writes (row 32f): its Wakeshift forget is
-raw SQL that swallows its own errors.
+id binds nothing. `gbrain access member rm` runs its Wakeshift forget through `forgetWakeMember`
+([jobs-wake.md](jobs-wake.md)).
 
 ## Trigger halves
 

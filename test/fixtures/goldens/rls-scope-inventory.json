@@ -6120,6 +6120,7 @@
         "findTopologyChanges": "none",
         "findTrajectory": "none",
         "flipBodyGeneration": "none",
+        "forgetWakeMember": "none",
         "generatedPagesIn": "none",
         "getAdjacencyBoosts": "none",
         "getAllConfig": "none",

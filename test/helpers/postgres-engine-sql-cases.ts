@@ -1000,7 +1000,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readWakeDoctor': OOS.minionJobs, 'countPendingWakeForgets': OOS.minionJobs, 'listWakeCrons': OOS.minionJobs, 'addWakeCron': OOS.minionJobs,
   'removeWakeCron': OOS.minionJobs, 'hasWakeCron': OOS.minionJobs, 'recordWakeCronRun': OOS.minionJobs, 'hasWakeTermsAcceptance': OOS.minionJobs,
   'recordWakeTermsAcceptance': OOS.minionJobs, 'listDueWakeWatches': OOS.minionJobs, 'claimWakeWatch': OOS.minionJobs, 'settleWakeWatch': OOS.minionJobs,
-  'queueWakeForget': OOS.minionJobs, 'claimWakeForgets': OOS.minionJobs, 'settleWakeForget': OOS.minionJobs,
+  'queueWakeForget': OOS.minionJobs, 'forgetWakeMember': OOS.callerRawSql, 'claimWakeForgets': OOS.minionJobs, 'settleWakeForget': OOS.minionJobs,
   // facts-repair-sites: the repair, doctor and write-path statements that ran through executeRaw
   'listActiveSourceIds': OOS.factsRepairSites,
   'readRepairBrainId': OOS.factsRepairSites,

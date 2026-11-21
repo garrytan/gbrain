@@ -9,24 +9,18 @@
  * which outlives that one credential: its watches end, and the member's user
  * is forgotten when the member is removed.
  *
- * Written over the scalar-only SqlQuery so auth.ts and token-mint.ts can call
- * it with the handle they already hold. Best effort: a failure prints one
- * stderr line and never fails the removal.
+ * A credential goes over the scalar-only SqlQuery so auth.ts and token-mint.ts can call it with the handle they
+ * already hold; a member goes through the typed engine member forgetWakeMember (engine-sql/jobs-wake.ts), so a Rust
+ * brain runs it too. Best effort: a failure prints one stderr line and never fails the removal.
  */
+import type { BrainEngine } from '../engine.ts';
 import type { SqlQuery } from '../sql-query.ts';
 
-export type ForgetTarget = { member: string } | { kind: 'oauth_client' | 'legacy_token'; id: string };
+export type ForgetTarget = { member: string; engine: Pick<BrainEngine, 'forgetWakeMember'> } | { kind: 'oauth_client' | 'legacy_token'; id: string };
 
 export async function forgetWakePrincipal(sql: SqlQuery, who: ForgetTarget): Promise<{ ended: number; queued: number }> {
   try {
-    if ('member' in who) {
-      const queued = await sql`INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions WHERE member_id = ${who.member}
-        ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`;
-      const ended = await sql`UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
-        WHERE member_id = ${who.member} AND state = 'open' RETURNING id`;
-      await sql`DELETE FROM wake_terms_acceptances WHERE principal_key = ${`member:${who.member}`}`;
-      return { ended: ended.length, queued: queued.length };
-    }
+    if ('member' in who) return await who.engine.forgetWakeMember(who.member);
     const id = who.kind === 'legacy_token' ? who.id.toLowerCase() : who.id;
     const queued = await sql`INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions
       WHERE principal_kind = ${who.kind} AND principal_id = ${id} AND member_id IS NULL

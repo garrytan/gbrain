@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1195/1198
+# covered: 1196/1199
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -80,7 +80,7 @@
 # connect_gate: 4/4
 # decide_proposals: 16/16
 # decide_store: 20/20
-# jobs_wake: 19/19
+# jobs_wake: 20/20
 # owner_only: 1/1
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	1	yes	yes	yes	serves
@@ -1152,7 +1152,7 @@ readAccessMembers	write_misc	yes	7	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	7	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	3	no	yes	yes	serves
 readLiveMember	write_misc	yes	8	no	yes	yes	serves
-insertAccessMember	write_misc	yes	13	no	yes	yes	serves
+insertAccessMember	write_misc	yes	14	no	yes	yes	serves
 setAccessMemberDisabled	write_misc	yes	3	no	yes	yes	serves
 setAccessMemberEmail	write_misc	yes	3	no	yes	yes	serves
 setAccessMemberKind	write_misc	yes	2	no	yes	yes	serves
@@ -1261,23 +1261,24 @@ storeDecideQualification	decide_store	yes	3	no	yes	yes	serves
 listDecideCalibrations	decide_store	yes	7	no	yes	yes	serves
 getDecideCalibration	decide_store	yes	6	no	yes	yes	serves
 setDecideCalibrationRetired	decide_store	yes	4	no	yes	yes	serves
-openWakeWatch	jobs_wake	yes	11	no	yes	yes	serves
-listWakeWatches	jobs_wake	yes	6	no	yes	yes	serves
+openWakeWatch	jobs_wake	yes	12	no	yes	yes	serves
+listWakeWatches	jobs_wake	yes	7	no	yes	yes	serves
 endWakeWatches	jobs_wake	yes	6	no	yes	yes	serves
 countWakeWatches	jobs_wake	yes	1	no	yes	yes	serves
 readWakeDoctor	jobs_wake	yes	3	no	yes	yes	serves
-countPendingWakeForgets	jobs_wake	yes	3	no	yes	yes	serves
+countPendingWakeForgets	jobs_wake	yes	4	no	yes	yes	serves
 listWakeCrons	jobs_wake	yes	1	no	yes	yes	serves
 addWakeCron	jobs_wake	yes	4	no	yes	yes	serves
 removeWakeCron	jobs_wake	yes	1	no	yes	yes	serves
 hasWakeCron	jobs_wake	yes	2	no	yes	yes	serves
 recordWakeCronRun	jobs_wake	yes	3	no	yes	yes	serves
-hasWakeTermsAcceptance	jobs_wake	yes	1	no	yes	yes	serves
-recordWakeTermsAcceptance	jobs_wake	yes	1	no	yes	yes	serves
+hasWakeTermsAcceptance	jobs_wake	yes	2	no	yes	yes	serves
+recordWakeTermsAcceptance	jobs_wake	yes	2	no	yes	yes	serves
 listDueWakeWatches	jobs_wake	yes	5	no	yes	yes	serves
 claimWakeWatch	jobs_wake	yes	4	no	yes	yes	serves
 settleWakeWatch	jobs_wake	yes	4	no	yes	yes	serves
 queueWakeForget	jobs_wake	yes	3	no	yes	yes	serves
+forgetWakeMember	jobs_wake	yes	2	no	yes	yes	serves
 claimWakeForgets	jobs_wake	yes	2	no	yes	yes	serves
 settleWakeForget	jobs_wake	yes	2	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql

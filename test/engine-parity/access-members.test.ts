@@ -25,8 +25,8 @@
  *  - Why existing coverage misses it: test/access-members.test.ts runs the commands on PGLite only, and the write-misc
  *    parity cases seed members with raw SQL, which stops on the Rust arm.
  *  - Seam: none. Timestamps are reduced to their shape. Token rows are written through the typed insertAccessToken.
- *  - Known losses on Rust (docs/designs/RUST_ENGINE.md rows 32c to 32g): applyAttestSources, verifiedMember, the
- *    labelled-only page policy, the Wakeshift forget of member rm and the token list (listAccessTokens). The last describe pins each
+ *  - Known losses on Rust (docs/designs/RUST_ENGINE.md rows 32c, 32d, 32e and 32g): applyAttestSources, verifiedMember,
+ *    the labelled-only page policy and the token list (listAccessTokens). The last describe pins each
  *    refusal, so a pin fails when Rust stops refusing and its row must leave the table.
  */
 import { describe, expect, test } from 'bun:test';
@@ -312,9 +312,7 @@ describe('engine parity: access members', () => {
     return shown;
   });
 
-  // Rust arm: a known stop (row 32f): the Wakeshift forget is raw SQL that swallows its errors, so member rm refuses
-  // before the tombstone. Pinned below.
-  parityTest('member rm previews the bound credentials and the pages naming the member, then tombstones it', { methods: ['insertAccessMember', 'insertOauthClient', 'readAccessCredentials', 'listPagesNamingReader', 'tombstoneAccessMember'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('member rm previews the bound credentials and the pages naming the member, then tombstones it', { methods: ['insertAccessMember', 'insertOauthClient', 'readAccessCredentials', 'listPagesNamingReader', 'tombstoneAccessMember', 'forgetWakeMember'] }, async (engine) => {
     await engine.insertAccessToken(tokenRow('alice-laptop'));
     await addMember(engine, 'alice-example', { bindToken: 'alice-laptop' });
     await engine.insertOauthClient({ client_id: 'client-alice', client_name: 'alice-app', member_id: 'alice-example' });
@@ -324,6 +322,37 @@ describe('engine parity: access members', () => {
       after: (await engine.readAccessCredentials({ memberId: 'alice-example' })).map(c => c.name), live: await engine.listActiveAccessMembers() };
     expect(shown).toEqual({ status: 'removed', credentials: [['token', 'alice-laptop'], ['client', 'alice-app']], pages: ['notes/for-alice'], after: ['alice-laptop', 'alice-app'], live: [] });
     return shown;
+  });
+
+  // Wakeshift forget on remove: the member's open watches end (principal_revoked), each user it watched under is queued
+  // for a forget once, its terms acceptance goes, and another member's watch, terms and users are left alone.
+  parityTest('member rm ends the member\'s Wakeshift watches, queues a forget per user and drops its terms acceptance', {
+    methods: ['insertAccessMember', 'openWakeWatch', 'recordWakeTermsAcceptance', 'forgetWakeMember', 'listWakeWatches', 'countPendingWakeForgets', 'hasWakeTermsAcceptance'],
+  }, async (engine) => {
+    for (const id of ['alice-example', 'bob-example']) await addMember(engine, id);
+    const user = (n: number) => n.toString(16).padStart(32, '0');
+    const watch = (memberId: string, wakeUser: string, ws: string) => engine.openWakeWatch({ event: 'gbrain.job.finished', target: '1', targetRef: null,
+      principalKind: 'legacy_token', principalId: `tok-${memberId}`, memberId, wakeUser, wsSubscriptionId: ws, expiresAt: '2099-01-01T00:00:00.000Z' });
+    await watch('alice-example', user(1), 'ws-a1');
+    await watch('alice-example', user(2), 'ws-a2');
+    await watch('alice-example', user(1), 'ws-a3');
+    await watch('bob-example', user(3), 'ws-b1');
+    const terms = 'aaaaaaaaaaaaaaaa';
+    await engine.recordWakeTermsAcceptance('member:alice-example', terms);
+    await engine.recordWakeTermsAcceptance('member:bob-example', terms);
+    await removeMember(engine, 'alice-example');
+    const states = async (memberId: string) => (await engine.listWakeWatches({ principalKind: 'legacy_token', principalId: `tok-${memberId}`, memberId, scope: 'open_or_recent' }))
+      .map(w => [w.ws_subscription_id, w.state, w.last_error]).sort();
+    const out = {
+      alice: await states('alice-example'), bob: await states('bob-example'), pending: await engine.countPendingWakeForgets(),
+      aliceTerms: await engine.hasWakeTermsAcceptance('member:alice-example', terms), bobTerms: await engine.hasWakeTermsAcceptance('member:bob-example', terms),
+      again: await engine.forgetWakeMember('alice-example'),
+    };
+    expect(out).toEqual({
+      alice: [['ws-a1', 'ended', 'principal_revoked'], ['ws-a2', 'ended', 'principal_revoked'], ['ws-a3', 'ended', 'principal_revoked']],
+      bob: [['ws-b1', 'open', null]], pending: 2, aliceTerms: false, bobTerms: true, again: { ended: 0, queued: 0 },
+    });
+    return out;
   });
 
   parityTest('a credential binding locks the row, writes the member and attest columns, and stamps reads_unscoped', {
@@ -426,7 +455,7 @@ describe('engine parity: access members', () => {
   });
 });
 
-describe('the Rust arm refuses what it does not serve yet (rows 32c to 32g), and writes nothing', () => {
+describe('the Rust arm refuses what it does not serve yet (rows 32c, 32d, 32e and 32g), and writes nothing', () => {
   // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine and pin each refusal: a pin
   // fails when Rust stops refusing, and its row must then leave docs/designs/RUST_ENGINE.md.
   const RAW_SQL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
@@ -457,15 +486,6 @@ describe('the Rust arm refuses what it does not serve yet (rows 32c to 32g), and
     expect(access.labelledOnly).toBe(true);
     const read = await refusal(() => withCallerAccess(access, () => corePages(engine)));
     expect(read).toMatchObject({ code: 'engine_capability_missing' });
-  });
-
-  test('loss (32f): member rm refuses before the tombstone, because the Wakeshift forget is raw SQL', async () => {
-    const engine = await rustArm();
-    if (!engine) return;
-    await addMember(engine, 'alice-example');
-    expect(await refusal(() => removeMember(engine, 'alice-example')))
-      .toEqual(stop("This brain's engine does not support removeMember (the Wakeshift forget of the member) yet (it needs the raw_sql capability), so nothing ran."));
-    expect((await getMember(engine, 'alice-example'))!.status).toBe('enabled');
   });
 
   test('loss (32g): gbrain auth list and the open-page count refuse once a token exists, never an empty list', async () => {

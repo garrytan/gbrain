@@ -568,3 +568,41 @@ fn a_watch_ended_by_unwatch_loses_its_lease_and_a_forget_for_a_member_queues_her
         CONSTRAINT_VIOLATION
     );
 }
+
+#[test]
+fn forget_wake_member_ends_its_watches_queues_each_user_once_and_drops_its_terms() {
+    let b = brain("forget-member");
+    let member = |m: &str, u: u32| json!({ "memberId": m, "wakeUser": user(u) });
+    open(&b, 1, member("alice", 1));
+    open(&b, 2, member("alice", 2));
+    open(&b, 3, member("alice", 1));
+    open(&b, 4, member("bob", 3));
+    let terms = "a".repeat(16);
+    b.record_wake_terms_acceptance("member:alice", &terms)
+        .unwrap();
+    b.record_wake_terms_acceptance("member:alice2", &terms)
+        .unwrap();
+    b.record_wake_terms_acceptance("member:bob", &terms)
+        .unwrap();
+    b.queue_wake_forget(&user(2), None).unwrap();
+    // user(2) already has a pending forget, so only user(1) queues; the three open watches end.
+    assert_eq!(
+        b.forget_wake_member("alice").unwrap(),
+        json!({ "ended": 3, "queued": 1 })
+    );
+    assert_eq!(b.count_pending_wake_forgets().unwrap(), 2);
+    assert!(!b.has_wake_terms_acceptance("member:alice", &terms).unwrap());
+    assert!(
+        b.has_wake_terms_acceptance("member:alice2", &terms)
+            .unwrap()
+    );
+    assert!(b.has_wake_terms_acceptance("member:bob", &terms).unwrap());
+    assert_eq!(
+        b.forget_wake_member("alice").unwrap(),
+        json!({ "ended": 0, "queued": 0 })
+    );
+    assert_eq!(
+        b.forget_wake_member("al\0ice").unwrap(),
+        json!({ "ended": 0, "queued": 0 })
+    );
+}

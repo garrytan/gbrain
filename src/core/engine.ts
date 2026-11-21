@@ -5452,6 +5452,8 @@ export interface BrainEngine {
   settleWakeWatch(settle: JobsWake.WakeWatchSettle): Promise<boolean>;
   /** Queue a Wakeshift forget of a user (once while one is pending); with a member id, only when that member is not removed. */
   queueWakeForget(wakeUser: string, memberId: string | null): Promise<void>;
+  /** A removed member's Wakeshift state: queue a forget of each user it watched under, end its open watches, drop its terms acceptances. */
+  forgetWakeMember(memberId: string): Promise<{ ended: number; queued: number }>;
   /** Lease up to `limit` due pending forgets. */
   claimWakeForgets(spec: { leaseSeconds: number; limit: number }): Promise<JobsWake.WakeForgetClaim[]>;
   /** Settle a leased forget; false when its lease no longer matches. */

@@ -998,7 +998,7 @@ src/core/verbs/entity-source.ts	execute_raw	1
 src/core/verbs/entity-text-mentions.ts	execute_raw	1
 src/core/verbs/entity-variants.ts	execute_raw	4
 src/core/wakeshift/drain.ts	execute_raw	2
-src/core/wakeshift/forget.ts	sql_template	6
+src/core/wakeshift/forget.ts	sql_template	3
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-through.ts	execute_raw	2
 src/eval/brainbench/adapters/codex.ts	execute_raw	1
