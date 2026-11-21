@@ -42,6 +42,8 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['readManifest', 'FROM page_body_manifest m', e => e.readManifest(1)],
   // The fact-fence adoption's facts read (prepared-maintenance.ts `readFacts`), unlocked in preparation.
   ['readFactSnapshots', 'AS value FROM facts f', e => e.readFactSnapshots('default', [1], false)],
+  // The segmented-storage writer gate a page or sync preparation reads through readPageBodyPolicy (page-body/limits.ts).
+  ['readSegmentedGateEvidence', 'FROM ingest_log l CROSS JOIN win', e => e.readSegmentedGateEvidence(7)],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];
