@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/google-source.ts';
 import { parseGitHubSourceConfig, runGitHubSync } from '../src/core/github-source.ts';
+import { beginConnectorSync } from '../src/core/persistence/connector-sync.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { readManagedConnectorState, writeManagedConnectorState, type ConnectorRunFailure } from '../src/core/persistence/connector-state.ts';
@@ -168,6 +169,31 @@ test('#9968: sources status and sync status do not report a recovery_required st
     } finally {
       await engine.executeRaw('UPDATE persistence_requests SET source_id=$2,recovery=NULL WHERE id=$1::uuid', [row.id, f.id]);
     }
+  }
+}), 120_000);
+
+test('#9968: a --full sweep stopped at its deadline keeps unreached retries, its recorded failure and the re-walk', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await boundSource(engine, githubConfig);
+    const cfg = parseGitHubSourceConfig(githubConfig, f.dir);
+    await runGitHubSync(engine, f.id, cfg, options, githubFetch());
+    await settleConnectorWrites(engine, f.id);
+    const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [f.id]);
+    const failure = { code: 'storage_error', message: 'Synthetic earlier failure.', slug: null, request_id: null, at: new Date(Date.now() - DAY).toISOString(), consecutive: 1 };
+    await writeManagedConnectorState(engine, f.id, source.incarnation,
+      { ...await readManagedConnectorState(engine, f.id, source.incarnation), last_failure: failure, upgrade_recovery: 'rewalking_once' });
+    const session = (await beginConnectorSync(engine, f.id, 'github', cfg, { ...options, full: true }))!;
+    // The run banked its cursor, then the deadline stopped it before it reached a failed item carried from an earlier run.
+    const unreached = { itemRef: 'gh/acme-example/app/9', requestId: randomUUID(), baseRequestId: randomUUID(), admittedAt: new Date().toISOString() };
+    Object.assign(session as unknown as Record<string, unknown>, { carried: [unreached], lastSaveCommitted: true });
+    session.stoppedAtDeadline = true;
+    await session.finish();
+    await disposePersistenceConsumer(engine);
+    const state = await connectorState(engine, f.id);
+    expect(state.pending.map(entry => entry.requestId)).toContain(unreached.requestId);
+    expect(state.last_run?.dropped_upstream).toBe(0);
+    expect(state.last_failure?.code).toBe('storage_error');
+    expect(state.upgrade_recovery).toBe('rewalking_once');
   }
 }), 120_000);
 

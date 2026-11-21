@@ -877,7 +877,8 @@ export class ManagedConnectorSync {
   /**
    * Records the run's pending set, counts and upgrade state; written only while the lease is held. `failure` is the
    * error the run ended on (#6831): it is recorded with a count of runs in a row that ended that way. Only a complete
-   * run (its cursor saved, nothing pending or failed) clears it; a partial or wait-budget stop leaves it as it was.
+   * run (its cursor saved, nothing pending or failed) clears it; a partial, wait-budget or deadline stop leaves it as it was,
+   * except a recorded recovery_required with no retained publication left.
    */
   async finish(failure?: unknown): Promise<void> {
     await this.refreshPending().catch(() => {});
@@ -886,7 +887,8 @@ export class ManagedConnectorSync {
     if (this.inflight) this.pendingCheckpoint = this.inflight.entry;
     const now = new Date().toISOString();
     const outstanding = [...this.pendingRows.values()].map(pending => pending.entry);
-    const complete = this.lastSaveCommitted && !outstanding.length && !this.failedPending.length && !this.pendingCheckpoint && !this.stopped;
+    const complete = this.lastSaveCommitted && !outstanding.length && !this.failedPending.length && !this.pendingCheckpoint && !this.stopped
+      && !this.stoppedAtDeadline;
     // Only a complete --full sweep (which also reconciles deletions) proves that a failed item it never reached
     // was deleted upstream. Delta and targeted runs keep every unreached carried entry for its automatic retry.
     const unreached = this.unreachedCarried();
