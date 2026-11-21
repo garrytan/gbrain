@@ -14,6 +14,7 @@
 //! writer that binds here must also delete a source's generations with the source.
 
 use super::purge::withdrawal_covers;
+use super::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
 use super::{FactRecord, fact_fingerprint, read_fact, source_rows};
 use crate::Store;
 use crate::env::iso;
@@ -296,6 +297,61 @@ fn covers_fact(read: &dyn KvRead, f: &FactRecord, subject: &str) -> Result<bool>
     withdrawal_covers(read, f, subject)
 }
 
+/// The `derived_generations` rows as the table probe of a fact purge's receipt reads them (`purge_probe.rs`). The ledger keeps no
+/// run, hold, pin, completeness, proposal or locator columns, so those read as NULL; `held_context` and `proposal` (the probed
+/// ones) are among them.
+pub(crate) fn probe_generations(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<GenerationRecord>(read, &[keys::FACT, GENERATION], &mut |_, g| {
+        let mut cells = vec![
+            ("source_id", ProbeCell::text(&g.source_id)),
+            ("kind", ProbeCell::text(&g.kind)),
+            ("owner_key", ProbeCell::text(&g.owner_key)),
+            ("state", ProbeCell::text(&g.state)),
+        ];
+        for column in [
+            "run_id",
+            "operation_id",
+            "hold_id",
+            "input_pin",
+            "completeness",
+            "item_set_hash",
+            "held_reason",
+            "held_context",
+            "proposal",
+            "locator",
+            "activation_id",
+        ] {
+            cells.push((column, ProbeCell::Null));
+        }
+        f(ProbeRow {
+            source_id: Some(g.source_id),
+            cells,
+        })
+    })
+}
+
+/// The `derived_generation_items` rows as the table probe reads them: the table has no `source_id`, so the probe is brain-wide.
+/// The item's identity hash is not kept (NULL).
+pub(crate) fn probe_items(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<GenerationRecord>(read, &[keys::FACT, GENERATION], &mut |_, g| {
+        for item in &g.items {
+            let row = ProbeRow {
+                source_id: None,
+                cells: vec![
+                    ("item_key", ProbeCell::text(&item.item_key)),
+                    ("identity_hash", ProbeCell::Null),
+                    ("action", ProbeCell::text(&item.action)),
+                    ("preimage", ProbeCell::opt_jsonb(item.preimage.as_ref())),
+                ],
+            };
+            if !f(row)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,5 +433,71 @@ mod tests {
                 .len(),
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+    use crate::facts::purge_probe::test_support::render;
+    use crate::kv::counting::Counting;
+
+    fn ledger() -> Counting {
+        let mut store = Counting::default();
+        for (id, source, items) in [(1u64, "default", 3), (2, "other", 2)] {
+            let record = GenerationRecord {
+                source_id: source.into(),
+                kind: "fence".into(),
+                owner_key: format!("owner-{id}"),
+                generation: 1,
+                state: "active".into(),
+                created_at_us: 0,
+                items: (0..items)
+                    .map(|n| ItemRecord {
+                        item_key: format!("item-{id}-{n}"),
+                        action: "insert".into(),
+                        preimage: Some(json!({ "claim": format!("claim {id} {n}") })),
+                    })
+                    .collect(),
+            };
+            store
+                .entries
+                .insert(key(id), serde_json::to_vec(&record).unwrap());
+        }
+        store
+    }
+
+    #[test]
+    fn a_generation_reads_its_source_and_no_held_text_and_each_item_its_preimage() {
+        let store = ledger();
+        let generations = render(usize::MAX, |f| probe_generations(&store, f));
+        assert_eq!(generations.len(), 2);
+        assert!(
+            generations[0].contains("source_id=default")
+                && generations[0].contains("held_context=NULL")
+        );
+        assert!(
+            generations[1].contains("owner_key=owner-2")
+                && generations[1].contains("proposal=NULL")
+        );
+        let items = render(usize::MAX, |f| probe_items(&store, f));
+        assert_eq!(items.len(), 5);
+        assert!(
+            items[0].starts_with("-|") && items[0].contains(r#"preimage={"claim": "claim 1 0"}"#),
+            "{}",
+            items[0]
+        );
+    }
+
+    #[test]
+    fn a_stop_leaves_the_later_generations_unread() {
+        let store = ledger();
+        store.delivered.set(0);
+        assert_eq!(render(1, |f| probe_generations(&store, f)).len(), 1);
+        assert_eq!(store.delivered.get(), 1);
+        store.delivered.set(0);
+        // The second item of the first generation ends the walk: the second generation is never delivered.
+        assert_eq!(render(2, |f| probe_items(&store, f)).len(), 2);
+        assert_eq!(store.delivered.get(), 1);
     }
 }

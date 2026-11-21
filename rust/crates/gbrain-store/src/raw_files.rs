@@ -30,6 +30,7 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, PAGE_NOT_FOUND, Result, StoreError};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page, read_page_by_id, scope_sources};
@@ -655,6 +656,24 @@ impl Store {
         files.truncate(limit as usize);
         Ok(files.iter().map(FileRecord::to_json).collect())
     }
+}
+
+/// The `files` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`): every source's, keyed by path.
+pub(crate) fn probe_files(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<FileRecord>(read, &[keys::RAW_FILES, FILE], &mut |_, file| {
+        f(ProbeRow {
+            source_id: Some(file.source_id.clone()),
+            cells: vec![
+                ("source_id", ProbeCell::text(&file.source_id)),
+                ("page_slug", ProbeCell::opt_text(file.page_slug.as_deref())),
+                ("filename", ProbeCell::text(&file.filename)),
+                ("storage_path", ProbeCell::text(&file.storage_path)),
+                ("mime_type", ProbeCell::opt_text(file.mime_type.as_deref())),
+                ("content_hash", ProbeCell::text(&file.content_hash)),
+                ("metadata", ProbeCell::jsonb(&file.metadata)),
+            ],
+        })
+    })
 }
 
 #[cfg(test)]

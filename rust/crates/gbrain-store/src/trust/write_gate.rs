@@ -18,6 +18,7 @@
 
 use crate::env::iso;
 use crate::error::{Result, StoreError};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
@@ -860,6 +861,33 @@ impl Store {
             Ok(true)
         })
     }
+}
+
+/// The `write_gate_holds` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`), every source's, in
+/// id order.
+pub(crate) fn probe_holds(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<HoldRecord>(read, &[keys::TRUST, HOLD], &mut |_, h| {
+        f(ProbeRow {
+            source_id: Some(h.source_id.clone()),
+            cells: vec![
+                ("kind", ProbeCell::text(&h.kind)),
+                ("source_id", ProbeCell::text(&h.source_id)),
+                ("slug", ProbeCell::text(&h.slug)),
+                ("fingerprint", ProbeCell::text(&h.fingerprint)),
+                ("payload", ProbeCell::jsonb(&h.payload)),
+                (
+                    "write_origin",
+                    ProbeCell::opt_jsonb(h.write_origin.as_ref()),
+                ),
+                ("tier", ProbeCell::text(&h.tier)),
+                ("reason_families", ProbeCell::text_array(&h.reason_families)),
+                ("reasons", ProbeCell::text_array(&h.reasons)),
+                ("request_id", ProbeCell::opt_text(h.request_id.as_deref())),
+                ("status", ProbeCell::text(&h.status)),
+                ("decided_by", ProbeCell::opt_text(h.decided_by.as_deref())),
+            ],
+        })
+    })
 }
 
 #[cfg(test)]

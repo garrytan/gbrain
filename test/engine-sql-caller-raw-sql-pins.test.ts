@@ -44,6 +44,13 @@ interface Pin {
 
 const PINS: Pin[] = [
   {
+    // Moved after 7470c703ed: the statement is copied verbatim from the caller at 51df179097.
+    from: 'src/core/page-body/segment-derive.ts:355 derivationNeedles',
+    case: { method: 'listDerivationClaimForms', variant: 'default', run: e => e.listDerivationClaimForms(['Alice likes tea']) },
+    texts: [`SELECT DISTINCT f FROM (SELECT replace(translate(gbrain_fact_normalize(c), 'ς', 'σ'), 'i\u0307', 'i') AS f
+    FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`],
+  },
+  {
     from: 'src/core/access/caller.ts:376 appliedAccessSummary',
     case: { method: 'listAppliedPolicyRevisions', variant: 'default', run: e => e.listAppliedPolicyRevisions() },
     texts: [`SELECT s.source_id, (SELECT r.revision FROM access_policy_revisions r WHERE r.source_id = s.source_id AND r.applied_at IS NOT NULL

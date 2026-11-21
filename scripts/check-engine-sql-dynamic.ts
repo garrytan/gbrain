@@ -93,6 +93,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   extractedFromPageSql: 'src/core/facts/gone-page-facts.ts: constant extracted-from-page predicate over a caller facts alias and slug expression; the source list is a module constant; engine-sql passes f and g.slug; no values',
   derivationSweepScopeSql: 'src/core/page-body/schema.ts: constant sweep-scope predicate over caller aliases d and p with a hand-numbered page-id placeholder bound by the caller; no values',
   derivationAfterSql: 'src/core/page-body/segment-derive.ts: constant key-after predicate over the caller alias d with three hand-numbered cursor placeholders bound by the caller; no values',
+  foldSql: 'src/core/page-body/schema.ts: wraps the caller-given constant expression in the constant replace and translate fold; the one caller passes the literal gbrain_fact_normalize(c); no values',
   derivationHoldsClaimSql: 'src/core/page-body/schema.ts: constant holds-claim predicate over the caller alias d with hand-numbered needle and pattern placeholders bound by the caller; no values',
   derivationClaimCandidateSql: 'src/core/page-body/schema.ts: constant claim-candidate predicate over the caller alias d with a hand-numbered pattern placeholder bound by the caller; no values',
 

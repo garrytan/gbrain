@@ -15,6 +15,7 @@
 //!
 //! Deleting a source removes its loops (`ON DELETE CASCADE`, [`remove_source_rows`]).
 
+use super::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::jsonb;
@@ -622,6 +623,39 @@ fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopRecord)>> {
         return Err(StoreError::invalid(format!("{op}: corrupt record: {e}")));
     }
     Ok(rows)
+}
+
+/// The `open_loops` rows as the table probe of a fact purge's receipt reads them (`purge_probe.rs`), every source's, in id order.
+pub(crate) fn probe_loops(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<LoopRecord>(read, &[keys::FACT, ROW], &mut |_, l| {
+        f(ProbeRow {
+            source_id: Some(l.source_id.clone()),
+            cells: vec![
+                ("source_id", ProbeCell::text(&l.source_id)),
+                ("dedup_key", ProbeCell::text(&l.dedup_key)),
+                ("loop_type", ProbeCell::text(&l.loop_type)),
+                (
+                    "counterparty_slug",
+                    ProbeCell::opt_text(l.counterparty_slug.as_deref()),
+                ),
+                (
+                    "counterparty_source_id",
+                    ProbeCell::opt_text(l.counterparty_source_id.as_deref()),
+                ),
+                (
+                    "counterparty_email",
+                    ProbeCell::opt_text(l.counterparty_email.as_deref()),
+                ),
+                ("summary", ProbeCell::text(&l.summary)),
+                ("evidence", ProbeCell::jsonb(&l.evidence)),
+                ("thread_id", ProbeCell::opt_text(l.thread_id.as_deref())),
+                ("page_slug", ProbeCell::opt_text(l.page_slug.as_deref())),
+                ("status", ProbeCell::text(&l.status)),
+                ("detector", ProbeCell::text(&l.detector)),
+                ("closed_by", ProbeCell::opt_text(l.closed_by.as_deref())),
+            ],
+        })
+    })
 }
 
 #[cfg(test)]

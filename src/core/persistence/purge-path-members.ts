@@ -41,7 +41,7 @@ export const PURGE_OWNERS = {
   /** The recorded-value probe of the receipt's ledger report: rust-engine/rust-belief-purge e211982aba serves it (not merged here). */
   beliefProbe: 'lane 3 (rust-belief-purge e211982aba)',
   /** The fact-context probe of the receipt's ledger report. */
-  factContextProbe: 'lane 4',
+  factContextProbe: 'lane 4 (rust-5a 90e7bea933)',
   /** The origin-twin read: rust-engine/repair-rust b5945d814f (origin-twins.ts calls the readPageDatabaseOnlyReason member). */
   repairOriginTwin: 'lane 10 (repair-rust b5945d814f)',
   /** The online-built request index read: rust-engine/doctor-checks-3 (8d4d809039) makes it a typed member whose Rust store answers every index as valid. */

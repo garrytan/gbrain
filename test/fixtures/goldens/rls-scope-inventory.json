@@ -2648,6 +2648,17 @@
           "src-a"
         ]
       },
+      "listDerivationClaimForms#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listEffectRecoveries#after": {
         "flagOffLanes": [
           "pool"
@@ -7094,6 +7105,7 @@
         "listDecideReviewProposals": "none",
         "listDecideSpendBySlot": "none",
         "listDeletedPageSlugsWithActiveFacts": "none",
+        "listDerivationClaimForms": "none",
         "listDerivedRows": "none",
         "listDreamAtomPages": "none",
         "listDreamChildJobTimings": "none",

@@ -12,10 +12,11 @@
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that counts a store differently reports a purged claim as gone while a store still holds it (or the
  *    reverse), so the fact purge receipt's store report is wrong. The Rust engine refused both probe kinds by name, so a fact purge on
- *    a Rust brain printed no receipt. The two probe cases now run equal on the Rust arm. The whole-receipt case still stops there on a
- *    typed refusal, or here on `executeRaw` (a raw read the receipt makes, derivationNeedles in page-body/segment-derive.ts), and
- *    behind it on the belief-ledger probe and the table probes of the swept inventory (files, open loops, aliases, ...): the gaps are
- *    listed in the commit message and the report, each with its owner.
+ *    a Rust brain printed no receipt. The two probe cases now run equal on the Rust arm. The whole-receipt case still stops there, on the
+ *    first read of the receipt's ledger report: `listBeliefEventsForPurgeProbe`, owned by lane 3 (rust-belief-purge e211982aba), and
+ *    behind it `listFactContextsForPurgeProbe`, owned by lane 4 (rust-5a 90e7bea933). With that report set aside, the rest of the receipt
+ *    (the derivation probe, every swept store, the file and fingerprint reads) answers the same on Rust as on PGLite, which
+ *    fact-purge-inventory-probes.test.ts pins store by store.
  *  - Why existing coverage misses it: the one parity case that counted these probes (purge-verify.test.ts) seeds one row per store and
  *    stopped on the first fingerprint probe on the Rust arm (before this file); no case seeded the near misses (another subject, visibility or source, a
  *    segmented page, a JSON-escaped claim, an outcome marker).
@@ -203,11 +204,11 @@ describe('engine parity: the store probes of a fact purge receipt', () => {
     return { empty, afterPages, withChunks, afterSoftDelete, afterVersions, afterIntent, afterOutcome, reasonRequest, otherSource, noClaim, afterSegmented, bound };
   });
 
-  parityTest('a fact purge receipt reports the same stores on every engine, or stops naming the read it cannot serve', {
+  parityTest('a fact purge receipt reports the same stores on every engine, or stops naming the ledger read it cannot serve and its owner', {
     methods: ['putPage', 'insertFact', 'loadPurgeTarget', 'addTakesBatch', 'insertTakeProposal', 'upsertChunks', 'createVersion', 'transaction', 'countPurgeProbe', 'setPurgeProbeTimeout',
       'countLegacyDerivedPages', 'countFactFingerprintLeftovers'],
     timeout: 120_000,
-  }, async (engine) => {
+  }, async (engine, backend) => {
     const page = await engine.putPage('notes/doomed', note('Doomed', `The page says ${CLAIM}.`));
     await engine.upsertChunks('notes/doomed', [{ chunk_index: 0, chunk_text: `The page says ${CLAIM}.`, chunk_source: 'compiled_truth' }]);
     await engine.createVersion('notes/doomed');
@@ -217,8 +218,12 @@ describe('engine parity: the store probes of a fact purge receipt', () => {
     const target = (await engine.loadPurgeTarget(row.id, SRC))!;
     const plan = await planFactPurge(engine, target, false);
     expect(reasonNeedle(CLAIM).length).toBeGreaterThan(0);
-    // A typed refusal is not caught: the case stops on it, and the Rust arm counts it as stopped.
-    const { tell_user_to_run: _engineAdvice, ...receipt } = await verifyFactPurge(engine, { target, plan, dryRun: false }) as Awaited<ReturnType<typeof verifyFactPurge>> & { tell_user_to_run?: unknown };
+    // A typed refusal is rethrown, not swallowed: the case stops on it, and the Rust arm counts it as stopped. The refusal names its
+    // owner: lane 3 for the ledger's recorded values (lane 4's fact contexts are read right after them).
+    const { tell_user_to_run: _engineAdvice, ...receipt } = await verifyFactPurge(engine, { target, plan, dryRun: false }).catch((error: unknown) => {
+      if (backend === 'rust') expect((error as Error).message).toContain('listBeliefEventsForPurgeProbe (owner lane 3 (rust-belief-purge e211982aba))');
+      throw error;
+    }) as Awaited<ReturnType<typeof verifyFactPurge>> & { tell_user_to_run?: unknown };
     // The physical-copy residual and the operator's VACUUM advice name the engine's own storage; every other line is engine-independent.
     const residuals = receipt.residuals.map(r => (r.store === 'database_physical' ? { ...r, detail: '<engine vacuum advice>' } : r));
     expect(receipt.fact_id).toBe(row.id);

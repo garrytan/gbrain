@@ -12,7 +12,12 @@
  * The inventory probes (`countPurgeProbe`, `listPurgeProbeItems`) send the probe's shape (purgeProbeShape). The store
  * answers the named probes (`links`, `timeline_entries`, `raw_data`) and the whole-table probes of every inventory
  * table it keeps (facts/purge_probe.rs `table_rows`, plus `wanted_links`); a table the store does not keep at all
- * holds no row (0, or no item). A named `raw_data` probe names its rows by the `raw_data.id` the store keeps; it refuses
+ * holds no row (0, or no item). The swept stores a fact purge's receipt probes (the belief and generation ledgers, files, open
+ * loops, page aliases, held writes, trust proposals, the effect queue and the segmented-body stores) stream their rows through
+ * `for_each_table_row`, so a count stops at its bound. The store keeps no raw upload part, derivation sweep record or
+ * retrieval event, feedback or weight record, so a probe of those finds nothing. The belief ledger's table probe is a plain
+ * count of the store's own events; the receipt's ledger report reads the recorded values through lane 3's member instead
+ * (`listBeliefEventsForPurgeProbe`), which stays a stop. A named `raw_data` probe names its rows by the `raw_data.id` the store keeps; it refuses
  * its item list only when a matching record was written before the store kept that id (its next putRawData adds one).
  *
  * A page purge receipt's store probes (engine-sql/purge-verify.ts) run through the same two members, as
@@ -39,6 +44,9 @@ const STORE_PROBED_TABLES: ReadonlySet<string> = new Set([
   'eval_candidates', 'eval_contradictions_cache', 'eval_contradictions_runs', 'fact_relink_attempts', 'ingest_log',
   'mcp_request_log', 'minion_attachments', 'minion_inbox', 'minion_jobs', 'persistence_topology_changes',
   'subagent_messages', 'subagent_tool_executions',
+  // The swept stores a fact purge's receipt probes (facts/purge_probe.rs `for_each_table_row`).
+  'belief_events', 'derived_generations', 'derived_generation_items', 'files', 'open_loops', 'page_aliases', 'page_body_manifest', 'page_body_stagings',
+  'page_body_staging_texts', 'page_segment_texts', 'page_segment_derivations', 'persistence_effects', 'trust_proposals', 'write_gate_holds',
 ]);
 
 /** Inventory tables the store keeps no rows of: a probe of one finds nothing. */
@@ -47,6 +55,9 @@ export const STORE_ABSENT_PROBE_TABLES: ReadonlySet<string> = new Set([
   'eval_takes_quality_runs', 'link_edge_proposals', 'memory_proposals', 'migration_impact_log', 'persistence_graduation',
   'persistence_worktree_refreshes', 'pinned_questions', 'session_context_state', 'shared_skill_revisions',
   'source_ingestion_receipts', 'sync_notifier_sources', 'take_grade_cache', 'think_ab_results',
+  // The store keeps no raw upload parts, no derivation sweep record and no retrieval event, feedback or weight record.
+  'page_body_staging_parts', 'page_segment_derivation_purges', 'retrieval_event_links', 'retrieval_event_pages', 'retrieval_feedback',
+  'retrieval_weights',
 ]);
 
 type ProbeRoute = { kind: 'none' } | { kind: 'store'; args: Record<string, unknown> } | { kind: 'receipt'; probe: Record<string, unknown> };
@@ -165,6 +176,25 @@ export const listSegmentedPageBodies: Member<'listSegmentedPageBodies'> = (brain
 /** (store `listSegmentedPurgeBodies`, the saved versions) */
 export const listSegmentedVersionBodies: Member<'listSegmentedVersionBodies'> = (brain, sourceId, limit) =>
   storeCall({ member: 'listSegmentedVersionBodies' }, () => brain.listSegmentedPurgeBodies({ sourceId, store: 'page_versions', limit }));
+
+/**
+ * (store `probePurgeDerivations`) One batch of the stored derivation results after `cursor`: the rows walked, the claim candidates,
+ * those a sweep covers and holds the claim, those it does not, and the last key. The store walks from the cursor and stops at the batch.
+ */
+export const probePurgeDerivations: Member<'probePurgeDerivations'> = (brain, sourceId, needles, pageIds, patterns, cursor, rows) =>
+  storeCall({ member: 'probePurgeDerivations' }, () => brain.probePurgeDerivations({
+    sourceId, needles: [...needles], pageIds: [...pageIds], patterns: [...patterns],
+    cursor: cursor ? { page: cursor[0], pipeline: cursor[1], occurrence: cursor[2] } : null, rows })) as ReturnType<Member<'probePurgeDerivations'>>;
+
+/**
+ * The claims' derivation forms: each claim normalized as the fact fingerprint does, then folded (a final sigma to sigma, a dotted
+ * i to i), distinct, in byte order, none empty (store `listDerivationClaimForms`). No claim makes no store call.
+ */
+export const listDerivationClaimForms: Member<'listDerivationClaimForms'> = async (brain, claims) => {
+  const list = [...new Set(claims.filter(Boolean))];
+  if (!list.length) return [];
+  return await storeCall({ member: 'listDerivationClaimForms' }, () => brain.listDerivationClaimForms({ claims: list })) as string[];
+};
 
 export const countLegacyDerivedPages: Member<'countLegacyDerivedPages'> = (brain, sourceId) =>
   storeCall({ member: 'countLegacyDerivedPages' }, () => brain.countLegacyDerivedPages({ sourceId }));

@@ -71,9 +71,45 @@ engine keeps is read, and a store it keeps no rows of is answered 0 by the membe
 
 Answered 0 in the member, because the store keeps no such rows: `core_edit_notices`, `retrieval_event_pages`,
 `retrieval_event_links`, `retrieval_feedback`, `retrieval_weights`, `context_volunteer_events`,
-`mention_gazetteer_entries` and `query_cache` (as `clearQueryCache` answers 0). Refused naming the kind: the fact purge's
-`fingerprint` and `claim_text` probes. A segment text that is not UTF-8 refuses, as `convert_from` does. Pinned by
-`rust/crates/gbrain-store/tests/purge_store_probe.rs` and `test/engine-parity/page-purge-probes.test.ts`.
+`mention_gazetteer_entries` and `query_cache` (as `clearQueryCache` answers 0). A segment text that is not UTF-8 refuses, as
+`convert_from` does. Pinned by `rust/crates/gbrain-store/tests/purge_store_probe.rs` and
+`test/engine-parity/page-purge-probes.test.ts`.
+
+## A fact purge receipt's probes
+
+The receipt of a fact purge (`verifyFactPurge`) counts the rows that still carry the purged claim. Every count stops at
+`rows + 1`, reading the store as it goes, so a count that has reached its bound leaves the later entries unread.
+
+- `fingerprint` and `claim_text` (`facts/purge_claim_probe.rs`, through `countPurgeStoreProbe`): `fingerprint` counts the
+  facts (source, visibility, subject `*` or the entity, never a purge's outcome marker), takes (their page is in the source and,
+  for a named subject, is the subject page) and take proposals of the source whose claim has the purged fact's fingerprint.
+  `claim_text` counts live pages (body, timeline, title, frontmatter as JSON text), chunks of every generation (a soft-deleted
+  page's too), page versions (the same text, or a change reason holding the claim or the reason) and journal requests (intent,
+  outcome, error detail or message) that state the claim, its JSON form or the reason's. `core_edit_notices` is answered 0 in the
+  member: the store keeps no edit notice.
+- The swept inventory stores, through `countPurgeProbe` of a `table` probe (`facts/purge_probe.rs` `for_each_table_row`, one row
+  streamer in each owning module): `belief_events`, `derived_generations`, `derived_generation_items`, `files`, `open_loops`,
+  `page_aliases`, `page_body_manifest`, `page_body_stagings`, `page_body_staging_texts`, `page_segment_texts`,
+  `page_segment_derivations`, `persistence_effects`, `trust_proposals` and `write_gate_holds`. Each row hands the probe its probed
+  columns as Postgres prints `col::text` (a `bytea` as `\x` and hex, `jsonb` and text arrays as above); a column the store keeps no
+  value of reads NULL (the ledger's held context and proposal, a trust proposal's principal, an item's identity hash). A table with a
+  `source_id` is searched within the source, one without (`derived_generation_items`, `page_segment_derivations`) brain-wide.
+  Answered 0 in the member, because the store keeps no such rows: `page_body_staging_parts` (no raw upload part),
+  `page_segment_derivation_purges` (no derivation sweep record) and the retrieval event, link, feedback and weight stores;
+  `relationExists` answers false for them.
+- `probePurgeDerivations` (`page_body/purge_probe.rs`): one batch of at most `rows` stored derivation results of the source after
+  the (page, pipeline, occurrence) cursor, walked in key order from the cursor: the rows walked, those that pass the claim prefilter
+  (`LIKE ANY` of the claim forms, on the folded lowercase JSON text), those that hold a claim as whole words of one string value or
+  object key and are swept (the page was rewritten or deleted, or no published manifest row of the page and occurrence has the row's
+  segment hash) and those that are kept, and the last key. A word is matched after `fact_normalize` and the fold.
+- `listDerivationClaimForms` (`facts/purge_plan.rs`): the claims as `derivationNeedles` takes them: `fact_normalize`, then the fold
+  of `foldSql` (a final sigma to sigma, a dotted i to i), distinct and non-empty. Sorted by byte here; Postgres sorts by the
+  database's collation, and a needle's place in the list matters to nothing.
+
+Still stopped on Rust, each naming its owner in the refusal (`rust-engine/receipt-stops.ts`): `listBeliefEventsForPurgeProbe`
+(lane 3, rust-belief-purge e211982aba) and `listFactContextsForPurgeProbe` (lane 4, rust-5a 90e7bea933), the two reads of the
+ledger report. Pinned by `rust/crates/gbrain-store/tests/purge_table_probe.rs`, `test/engine-parity/fact-purge-inventory-probes.test.ts`
+and `test/engine-parity/fact-purge-probes.test.ts`.
 
 ## Not modeled
 

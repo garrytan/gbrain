@@ -19,6 +19,7 @@ use super::{request_by_id, violation};
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso};
 use crate::error::{Result, STORE_CORRUPT, StoreError};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow};
 use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::{get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -515,6 +516,26 @@ impl crate::Store {
             })
             .collect())
     }
+}
+
+/// The `persistence_effects` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`), in id order. The
+/// index is read a page at a time, so a stop leaves the later pages and records unread.
+pub(crate) fn probe_effects(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    for_each_effect(read, &mut |e| {
+        f(ProbeRow {
+            source_id: e.source_id.clone(),
+            cells: vec![
+                ("kind", ProbeCell::text(&e.kind)),
+                ("data", ProbeCell::jsonb(&e.data)),
+                ("state", ProbeCell::text(&e.state)),
+                ("source_id", ProbeCell::opt_text(e.source_id.as_deref())),
+                ("error_code", ProbeCell::opt_text(e.error_code.as_deref())),
+                ("outcome", ProbeCell::opt_jsonb(e.outcome.as_ref())),
+                ("recovery", ProbeCell::opt_jsonb(e.recovery.as_ref())),
+                ("claim_owner", ProbeCell::opt_jsonb(e.claim_owner.as_ref())),
+            ],
+        })
+    })
 }
 
 #[cfg(test)]

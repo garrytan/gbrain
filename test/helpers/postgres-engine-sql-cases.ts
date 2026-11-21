@@ -1112,6 +1112,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'clearQueryCache': OOS.pagePurgeScrubs,
   'relationExists': OOS.purgeReceipt,
   'readDerivationPurgeState': OOS.purgeReceipt,
+  'listDerivationClaimForms': OOS.callerRawSql,
   'listPurgeOrigins': OOS.pagePurgeHolds,
   'upsertDerivedOriginPark': OOS.pagePurgeHolds,
   'recordOwedPurgeRows': OOS.pagePurgeHolds,
@@ -1988,6 +1989,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ]),
   ...variants('isFolderRestricted', [['default', (e) => e.isFolderRestricted(SRC, SLUG)]]),
   ...variants('listAppliedPolicyRevisions', [['default', (e) => e.listAppliedPolicyRevisions()]]),
+  ...variants('listDerivationClaimForms', [['default', (e) => e.listDerivationClaimForms(['Alice likes tea'])]]),
   ...variants('readMayActFor', [
     ['legacy-token', (e) => e.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')],
     ['oauth-client', (e) => e.readMayActFor('oauth_client', 'client-a')],

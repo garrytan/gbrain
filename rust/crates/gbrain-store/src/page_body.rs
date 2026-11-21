@@ -47,7 +47,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-pub(crate) mod purge_probe;
+pub mod purge_probe;
 pub(crate) mod purge_scan;
 mod purge_sweep;
 

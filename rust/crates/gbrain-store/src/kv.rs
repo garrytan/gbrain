@@ -167,9 +167,21 @@ pub fn for_each_prefix_paged(
     page: usize,
     f: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool>,
 ) -> Result<()> {
+    for_each_prefix_paged_from(read, prefix, prefix, page, f)
+}
+
+/// [`for_each_prefix_paged`] from the key `from` (at or after `prefix`) on: a walk that resumes where an earlier one stopped reads
+/// nothing before it.
+pub fn for_each_prefix_paged_from(
+    read: &dyn KvRead,
+    prefix: &[u8],
+    from: &[u8],
+    page: usize,
+    f: &mut dyn FnMut(&[u8], &[u8]) -> Result<bool>,
+) -> Result<()> {
     let page = page.max(1);
     let end = prefix_end(prefix).unwrap_or_else(|| vec![0xFF; 64]);
-    let mut start = prefix.to_vec();
+    let mut start = from.to_vec();
     loop {
         let mut entries: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(page);
         read.scan(&start, &end, false, &mut |k, v| {

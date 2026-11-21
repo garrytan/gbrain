@@ -12,18 +12,21 @@
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: an engine that counts one of these stores differently reports a purged claim as gone while the store still holds it
  *    (or the reverse); an engine that folds a claim differently searches the derivation results for another text than PGLite does.
- *    The Rust engine refused every table probe below by name, so a fact purge receipt stopped at its first swept store.
+ *    The Rust engine refused every table probe below by name (and the claim forms by raw SQL), so a fact purge receipt stopped at its
+ *    first swept store.
  *  - Why existing coverage misses it: test/engine-parity/purge-verify.test.ts and fact-purge-probes.test.ts probe the stores a receipt
  *    names itself, and facts-purge-sites.test.ts reads the derivation probe's batches; none seeds the swept inventory stores (files,
  *    open loops, aliases, held writes, trust proposals, the segmented-body stores) with a match, a near miss and another source's row.
  *  - Seam: `boundedProbe` of facts/purge-verify.ts, called with the arm's engine (it opens its own transaction, as the receipt does),
  *    and `derivationNeedles` of page-body/segment-derive.ts. Every row is seeded through typed writers: putPage, upsertFile,
- *    upsertOpenLoop, setPageAliases, upsertWriteGateHold, insertTrustProposal, the page-body fixtures and upsertSegmentDerivations. The
- *    derived generation ledger, the effect queue and the stores the Rust engine keeps no rows of have no typed writer here and hold
- *    nothing on every arm. Counts are compared as returned, never by generated value.
+ *    upsertOpenLoop, setPageAliases, upsertWriteGateHold, insertTrustProposal, the page-body fixtures, upsertSegmentDerivations and the
+ *    belief ledger's production baseline. The derived generation ledger, the effect queue and the stores the Rust engine keeps no rows of
+ *    have no typed writer here and hold nothing on every arm (the Rust store's own tests seed those). Counts are compared as returned, never by generated value. The belief ledger's table probe is a plain count of
+ *    the events each engine keeps (a baseline the production path writes when coverage is enabled); the receipt's ledger report reads their
+ *    values through another member, pinned by fact-purge-probes.test.ts.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, enableBeliefCoverage, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { PurgeProbe } from '../../src/core/engine-sql/facts-purge-plan.ts';
@@ -184,12 +187,35 @@ describe('engine parity: the table probes of a fact purge receipt', () => {
     return { found, absent };
   });
 
-  parityTest('the belief ledger table probe counts nothing on an empty ledger, or stops naming the read it cannot serve', {
-    methods: ['transaction', 'countPurgeProbe', 'setPurgeProbeTimeout'],
-  }, async (engine) => ({ empty: await count(engine, 'belief_events', [NEEDLE]) }));
+  parityTest('the belief ledger events that carry a needle are counted within their source, whatever the recorded value or subject', {
+    methods: ['putPage', 'insertFact', 'transaction', 'countPurgeProbe', 'setPurgeProbeTimeout'],
+    timeout: 120_000,
+  }, async (engine, backend) => {
+    await createSource(engine, backend, OTHER);
+    const before = await count(engine, 'belief_events', [NEEDLE]);
+    await engine.putPage('notes/belief', note('Belief page', 'A page the ledger records.'));
+    await engine.putPage('notes/belief-away', note('Away', 'Another source.'), { sourceId: OTHER } as never);
+    await engine.insertFact({ fact: 'The harbor will reopen', entity_slug: 'notes/belief', source: 'chat' }, { source_id: SRC });
+    // Enabling the ledger writes a baseline event for each page and fact the source already holds.
+    await enableBeliefCoverage(engine, backend, SRC);
+    await enableBeliefCoverage(engine, backend, OTHER);
+    const found = {
+      before, slug: await count(engine, 'belief_events', ['notes/belief']), slugOther: await count(engine, 'belief_events', ['notes/belief-away'], OTHER),
+      slugAway: await count(engine, 'belief_events', ['notes/belief-away']), value: await count(engine, 'belief_events', [NEEDLE]),
+      valueOther: await count(engine, 'belief_events', [NEEDLE], OTHER),
+      page: await count(engine, 'belief_events', ['page']), miss: await count(engine, 'belief_events', ['never stated anywhere']),
+    };
+    expect(found.before).toBe(0);
+    expect(found.slug).toBeGreaterThan(0);
+    expect(found.slugAway).toBe(0);
+    expect(found.value).toBeGreaterThan(0);
+    expect(found.valueOther).toBe(0);
+    expect(found.miss).toBe(0);
+    return found;
+  });
 
   parityTest('the claim forms of the derivation probe are the claims normalized and folded, distinct, sorted and never empty', {
-    methods: ['executeRaw'],
+    methods: ['listDerivationClaimForms'],
   }, async (engine) => {
     const plain = await derivationNeedles(engine, ['Alice  likes TEA.', 'alice likes tea', 'Hello, World! (v2.0)']);
     const none = await derivationNeedles(engine, []);

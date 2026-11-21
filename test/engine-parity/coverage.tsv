@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1433/1440
+# covered: 1434/1441
 # lifecycle: 12/12
 # pages: 60/60
 # search: 7/7
@@ -34,7 +34,7 @@
 # import_guards: 13/13
 # persistence_journal: 142/142
 # label_door: 5/5
-# page_purge: 44/44
+# page_purge: 45/45
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -106,7 +106,7 @@ getPage	pages	yes	147	yes	yes	yes	serves
 readPageSnapshot	pages	yes	38	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	6	no	yes	yes	serves
-putPage	pages	yes	683	yes	yes	yes	serves
+putPage	pages	yes	684	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	27	yes	yes	yes	serves
@@ -470,7 +470,7 @@ listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
 listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
-insertFact	facts	yes	112	yes	yes	yes	serves
+insertFact	facts	yes	113	yes	yes	yes	serves
 insertFacts	facts	yes	153	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	62	no	yes	yes	serves
@@ -735,6 +735,7 @@ deletePurgedNameStoreRows	page_purge	yes	2	no	yes	yes	serves
 clearQueryCache	page_purge	yes	2	no	yes	yes	serves
 relationExists	page_purge	yes	2	no	yes	yes	serves
 readDerivationPurgeState	page_purge	yes	2	no	yes	yes	serves
+listDerivationClaimForms	page_purge	yes	1	no	yes	yes	serves
 listPurgeOrigins	page_purge	yes	2	no	yes	yes	serves
 upsertDerivedOriginPark	page_purge	yes	4	no	yes	yes	serves
 recordOwedPurgeRows	page_purge	yes	2	no	yes	yes	serves
@@ -1029,7 +1030,7 @@ readHeldVersionsEdited	facts_purge	yes	1	no	yes	yes	refuses:facts
 listSegmentedPageBodies	facts_purge	yes	2	no	yes	yes	serves
 listSegmentedVersionBodies	facts_purge	yes	2	no	yes	yes	serves
 setPurgeProbeTimeout	facts_purge	yes	16	no	yes	yes	serves
-probePurgeDerivations	facts_purge	yes	2	no	yes	yes	refuses:facts
+probePurgeDerivations	facts_purge	yes	2	no	yes	yes	serves
 listBeliefEventsForPurgeProbe	facts_purge	yes	2	no	yes	yes	refuses:facts
 listFactContextsForPurgeProbe	facts_purge	yes	1	no	yes	yes	refuses:facts
 listPageSourcePathsForPurge	facts_purge	yes	2	no	yes	yes	serves
@@ -1263,7 +1264,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	10	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	9	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 hasCodeEdgesSymbol	code_edges	yes	1	no	yes	yes	serves
