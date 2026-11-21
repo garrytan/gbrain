@@ -337,7 +337,12 @@ function receipt(decisionId: string, over: Partial<Receipt> = {}): Receipt {
   return { decision_id: decisionId, slot: 'conflict', mode: 'live', provider: 'typesafe:openai', outcome: 'kept', call_site: 'sweep', lane: 'sweep', ...over };
 }
 
-/** Batches written this far apart get different timestamps even on an engine whose clock ticks in milliseconds. */
+/**
+ * Batches written this far apart get different timestamps even on an engine whose clock ticks in milliseconds. A
+ * zero-hour or zero-day window read waits this long after the last insert, so every receipt is strictly older than the
+ * read's now(): a receipt stamped in the same clock tick as the read is inside `created_at >= now() - 0` and outside
+ * `created_at < now() - 0`. The receipt insert takes no created_at, so a past timestamp cannot be written on every arm.
+ */
 const apart = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
 
 const badReceipt = (over: Record<string, unknown>) => ({ ...receipt('bad'), ...over }) as unknown as Receipt;
@@ -464,6 +469,7 @@ describe('engine parity: decide receipts', () => {
         receipt('w1', { slot: 'zeta', outcome: 'error', error_reason: 'egress_x', input_tokens: 0 }),
       ]);
       const usage = await engine.decideSlotUsage(1);
+      await apart();
       const none = await engine.decideSlotUsage(0);
       expect(usage.map((r) => r.slot)).toEqual(['Alpha', 'alpha', 'conflict', 'zeta']);
       expect(usage[2]).toEqual({ slot: 'conflict', decisions: 11, rows: 12, input_tokens: 30, errors: 2, skipped: 8, egress: 4 });
@@ -485,6 +491,7 @@ describe('engine parity: decide receipts', () => {
         receipt('t1', { slot: 'triage', outcome: 'skipped', error_reason: 'no_entity' }),
       ]);
       const counts = await engine.decideConflictNoEntityCounts(1);
+      await apart();
       const none = await engine.decideConflictNoEntityCounts(0);
       expect(counts).toEqual({ receipts: 5, skipped: 2 });
       expect(none).toEqual({ receipts: 0, skipped: 0 });
@@ -542,6 +549,7 @@ describe('engine parity: decide receipts', () => {
       await engine.insertDecideReceipts([receipt('m7', { slot: 'triage', provider: 'typesafe:anthropic', model_resolved: 'claude-y', error_reason: 'mixed_model' })]);
       const models = await engine.listDecideResolvedModels(1);
       const mixed = await engine.listDecideMixedModelDecisions(1);
+      await apart();
       const noneModels = await engine.listDecideResolvedModels(0);
       const noneMixed = await engine.listDecideMixedModelDecisions(0);
       expect(models.every((r) => r.last_at instanceof Date && Math.abs(r.last_at.getTime() - Date.now()) < 3_600_000)).toBe(true);
@@ -561,6 +569,7 @@ describe('engine parity: decide receipts', () => {
       await engine.insertDecideSpend([spend('keep-me', { cost_usd: 0.5 })]);
       const sevenDays = await engine.pruneDecideReceipts(7);
       const afterSeven = await engine.decideSlotUsage(1);
+      await apart();
       const zeroDays = await engine.pruneDecideReceipts(0);
       const afterZero = await engine.decideSlotUsage(1);
       const again = await engine.pruneDecideReceipts(0);
