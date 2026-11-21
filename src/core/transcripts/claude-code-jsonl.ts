@@ -487,7 +487,23 @@ function isSkippedTurnEntry(e: Record<string, unknown>): boolean {
   return e.isSidechain === true || e.isMeta === true || e.isCompactSummary === true;
 }
 
+/** The harness relays a message from another Claude session as a user turn with this lead-in. */
+const RELAYED_AGENT_MESSAGE_PREFIX = 'Another Claude session sent a message:';
+
+function isRelayedAgentMessage(e: Record<string, unknown>): boolean {
+  const content = typeof e.message === 'object' && e.message !== null
+    ? (e.message as Record<string, unknown>).content
+    : undefined;
+  let text: unknown = content;
+  if (Array.isArray(content)) {
+    const first = content.find((b) => typeof b === 'object' && b !== null && (b as Record<string, unknown>).type === 'text');
+    text = first ? (first as Record<string, unknown>).text : undefined;
+  }
+  return typeof text === 'string' && text.trimStart().startsWith(RELAYED_AGENT_MESSAGE_PREFIX);
+}
+
 function hasNonHumanOrigin(e: Record<string, unknown>): boolean {
+  if (isRelayedAgentMessage(e)) return true;
   if (typeof e.origin !== 'object' || e.origin === null) return false;
   const kind = (e.origin as Record<string, unknown>).kind;
   return typeof kind === 'string' && kind.length > 0 && kind !== 'human';
