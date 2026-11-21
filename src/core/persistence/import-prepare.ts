@@ -39,6 +39,7 @@ import type { Action } from '../agent-output.ts';
 import { bindOrigin } from './origin-guard.ts';
 import { segmentedOutcome } from './searchable.ts';
 import { isQuarantined } from '../quarantine.ts';
+import { assertPlainImportBaseline, recordPlainImportBaseline } from './plain-import-baseline.ts';
 
 export type ImportPack = { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
 /** A Markdown file over the single-string ceiling, journaled by reference: the preparer streams and verifies it (Wave B). */
@@ -48,6 +49,7 @@ export interface ManagedImportIntent extends Record<string, unknown> {
   kind: 'managed_file_import'; slug: string; content?: string; body_ref?: ManagedImportBodyRef; sourcePath: string; path?: string;
   inputPath: string; inputHash: string; targetHash: string | null;
   ownerEpoch: string; expected_revision?: string; noEmbed: boolean; activePack?: ImportPack;
+  preserveDatabaseEdits?: boolean;
 }
 
 const reimportFix = (inputPath: string, sourceId: string): Action => ({
@@ -263,6 +265,7 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
     `${p.sourcePath} was rejected while preparing import request ${row.request_id} for source ${row.source_id}; nothing was published. Fix the file content or frontmatter named in the message, then import it again.`,
     { fix: reimportFix(p.inputPath, row.source_id) });
   const ready = prepared;
+  if (p.preserveDatabaseEdits) await assertPlainImportBaseline(engine, row.source_id, physicalPath, snapshot, ready.noop);
   if (ready.slug !== row.slug || ready.observedRevision !== (snapshot?.revision ?? null)) throw opError('revision_conflict', 'The import identity changed during preparation.',
     `Page ${row.slug} in source ${row.source_id} changed while import request ${row.request_id} was prepared, so it published nothing. Import ${p.sourcePath} again against the current page.`,
     { fix: reimportFix(p.inputPath, row.source_id) });
@@ -296,6 +299,7 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
         }
         mutation.postimage = final;
       } else if (!ready.noop && !image && !applied?.projectionPending) await sealPageTextProjection(tx, row.slug, row.source_id);
+      await recordPlainImportBaseline(tx, row.source_id, physicalPath, mutation.postimage ?? await tx.readPageSnapshot(row.slug, { ...source, includeDeleted: true }));
       // #6188: the canonical file is written from the normalized page; the outcome reports what Tier 1 rewrote.
       return { ...result, parsedPage: undefined, imported_file: true, source_id: row.source_id,
         ...(ready.noop ? {} : segmentedOutcome(applied?.segmented, isQuarantined(ready.parsedPage?.frontmatter ?? {}))), fences_normalized: result.fences_normalized?.length
@@ -353,6 +357,7 @@ async function prepareStreamedManagedImport(engine: BrainEngine, row: WriteReque
     `${p.sourcePath} was rejected while preparing import request ${row.request_id} for source ${row.source_id}; nothing was published. Fix the file content or frontmatter named in the message, then import it again.`,
     { fix: reimportFix(p.inputPath, row.source_id) });
   const prepared: StreamedPreparedImport = ready;
+  if (p.preserveDatabaseEdits) await assertPlainImportBaseline(engine, row.source_id, p.path ?? p.sourcePath, snapshot, prepared.noop);
   if (prepared.slug !== row.slug || prepared.observedRevision !== (snapshot?.revision ?? null)) throw opError('revision_conflict', 'The import identity changed during preparation.',
     `Page ${row.slug} in source ${row.source_id} changed while import request ${row.request_id} was prepared, so it published nothing. Import ${p.sourcePath} again against the current page.`,
     { fix: reimportFix(p.inputPath, row.source_id) });
@@ -363,6 +368,7 @@ async function prepareStreamedManagedImport(engine: BrainEngine, row: WriteReque
     apply: async tx => {
       const applied = await prepared.apply(tx);
       mutation.postimage = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+      await recordPlainImportBaseline(tx, row.source_id, p.path ?? p.sourcePath, mutation.postimage);
       return { ...result, imported_file: true, source_id: row.source_id, ...segmentedOutcome(applied?.segmented, isQuarantined(prepared.frontmatter)) };
     } };
   return mutation;

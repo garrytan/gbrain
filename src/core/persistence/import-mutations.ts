@@ -28,6 +28,7 @@ import type { WorktreeBinding } from './ownership.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { writeThroughConfigured } from './switches.ts';
+import { recordPlainImportBaseline } from './plain-import-baseline.ts';
 
 /** One file of a managed import batch: its path and the source-relative path its slug is derived from. */
 export interface ManagedImportFile { filePath: string; sourcePath: string }
@@ -89,7 +90,7 @@ export async function managedImportWriteThroughRefusal(engine: BrainEngine, sour
 }
 
 export async function importManagedFile(engine: BrainEngine, filePath: string, sourcePath: string,
-  opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string } = {}): Promise<ImportResult> {
+  opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string; preserveDatabaseEdits?: boolean } = {}): Promise<ImportResult> {
   const [settled] = await importManagedFiles(engine, [{ filePath, sourcePath }], opts);
   if (settled!.status === 'rejected') throw settled!.reason;
   return settled!.value;
@@ -104,7 +105,7 @@ export async function importManagedFile(engine: BrainEngine, filePath: string, s
  * there; that file and the rest import after it, as they would one by one.
  */
 export async function importManagedFiles(engine: BrainEngine, files: readonly ManagedImportFile[],
-  opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string } = {}): Promise<PromiseSettledResult<ImportResult>[]> {
+  opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string; preserveDatabaseEdits?: boolean } = {}): Promise<PromiseSettledResult<ImportResult>[]> {
   const caller = currentSubmissionAuthority();
   if (caller && caller.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
     throw trustedCliRequired('Managed filesystem import requires the trusted local CLI.');
@@ -156,7 +157,7 @@ export async function importManagedFiles(engine: BrainEngine, files: readonly Ma
 
 async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
   planned: Array<{ i: number; slug: string; content?: string; bodyRef?: ManagedImportBodyRef; sourcePath: string; path: string; inputPath: string; inputHash: string; target: string }>,
-  opts: { noEmbed?: boolean; activePack?: ImportPack },
+  opts: { noEmbed?: boolean; activePack?: ImportPack; preserveDatabaseEdits?: boolean },
   fail: (i: number, reason: unknown) => void, done: (i: number, value: ImportResult) => void): Promise<void> {
   const { engine } = ctx;
   const sourceId = binding.source_id;
@@ -166,7 +167,7 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
     principal = await requestPrincipalForContext(ctx);
   } catch (error) { for (const entry of planned) fail(entry.i, error); return; }
   const members = planned.map(entry => ({ ...entry, key: digest({ principal, incarnation: binding.source_incarnation, inputPath: entry.inputPath, sourcePath: entry.sourcePath,
-    path: entry.path, inputHash: entry.inputHash, noEmbed: !!opts.noEmbed, activePack: opts.activePack ?? null }),
+    path: entry.path, inputHash: entry.inputHash, noEmbed: !!opts.noEmbed, activePack: opts.activePack ?? null, ...(opts.preserveDatabaseEdits ? { preserveDatabaseEdits: true } : {}) }),
     params: undefined as PendingImport | undefined, stored: undefined as StoredImport | undefined }));
   const readPending = async (keys: string[]) => new Map((await engine.executeRaw<{ fingerprint: string; completed_keys: [StoredImport] }>(
     'SELECT fingerprint,completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])', [IMPORT_OP, keys])).map(row => [row.fingerprint, row.completed_keys[0]]));
@@ -199,7 +200,7 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
         const targetHash = member.target === member.inputPath ? member.inputHash : existsSync(member.target) ? sha256(readImportBytes(member.target)) : null;
         const intent: ManagedImportIntent = { kind: 'managed_file_import', slug: member.slug, ...(member.bodyRef ? { body_ref: member.bodyRef } : { content: member.content }),
           sourcePath: member.sourcePath, path: member.path,
-          inputPath: member.inputPath, inputHash: member.inputHash, targetHash,
+          inputPath: member.inputPath, inputHash: member.inputHash, targetHash, ...(opts.preserveDatabaseEdits ? { preserveDatabaseEdits: true } : {}),
           ownerEpoch: String(binding.owner_epoch), ...(snapshot ? { expected_revision: snapshot.revision } : {}),
           noEmbed: !!opts.noEmbed, ...(opts.activePack ? { activePack: opts.activePack } : {}) };
         // #5470: an import whose publication would change nothing takes no admission.
@@ -312,6 +313,9 @@ async function unchangedManagedImport(ctx: OperationContext, binding: WorktreeBi
     const prepared = await prepareManagedImportMutation(ctx.engine, row, ctx.config, { snapshot });
     if ((await inspectUnchanged(ctx.engine, { prepared, snapshot, sourcePath: intent.sourcePath, databaseOnly: false })).admitReason) return false;
     await prepared.validate?.(ctx.engine);
+    // Equal reviewed bytes also adopt a baseline. Store the observed revision,
+    // never a later read: a concurrent database edit must remain detectable.
+    await recordPlainImportBaseline(ctx.engine, binding.source_id, intent.path ?? intent.sourcePath, snapshot);
     return true;
   } catch {
     return false;
