@@ -7,6 +7,7 @@
  * PGLite has a single connection, so its reads share the primary and queue behind its other work.
  */
 import type { BrainEngine } from '../core/engine.ts';
+import { hasCapability } from '../core/engine-capabilities.ts';
 import { DIGEST_SESSION_SETTINGS, digestQuery } from '../core/persistence/graduation-digest.ts';
 
 export type ReadQuery = ReturnType<typeof digestQuery>;
@@ -21,7 +22,7 @@ export interface ReadSource {
 const READ_TIMEOUT_MS = 30_000;
 
 export function openReadSource(primary: BrainEngine, opts: { pauseMs?: number } = {}): ReadSource {
-  const postgres = primary.kind === 'postgres';
+  const postgres = hasCapability(primary, 'postgres_admin'); // a server database: a second connection is cheap, PGLite has one
   let dedicated: Promise<BrainEngine> | null = null;
   const engine = (): Promise<BrainEngine> => {
     if (!postgres) return Promise.resolve(primary);
