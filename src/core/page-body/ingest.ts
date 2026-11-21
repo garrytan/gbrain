@@ -101,6 +101,8 @@ export interface PreparedSegmentedBody {
   rows: { texts: number; manifest: number; chunks: number };
   /** `chunk_index` of every chunk row this preparation staged; the flip drops any other row staged under `newGeneration` (a dead preparation's). */
   stagedChunkIndexes: number[];
+  /** The body's content_hash with this frontmatter in place of the staged one (a full import's staging only). */
+  hashWith?: (frontmatter: Record<string, unknown>) => string;
 }
 
 /**
@@ -300,7 +302,9 @@ async function stageBody(engine: BrainEngine, input: SegmentedBodyInput, staging
   }
   await flushTexts();
   await faultPoint('segmented:texts_staged', { sourceId: input.sourceId });
-  const contentHash = (hasher ?? resume(prefixIntact ? rows.length : 0)).finish({ frontmatter: input.frontmatter, tags: [...input.tags] });
+  const finalHasher = hasher ?? resume(prefixIntact ? rows.length : 0);
+  const contentHash = finalHasher.finish({ frontmatter: input.frontmatter, tags: [...input.tags] });
+  const hashWith = (frontmatter: Record<string, unknown>) => finalHasher.finish({ frontmatter: frontmatter as JsonObject, tags: [...input.tags] });
 
   const fresh = rows.filter((_, i) => !matched[i]);
   const ids = fresh.length ? await engine.allocateBodyOccurrenceIds(fresh.length) : [];
@@ -327,7 +331,7 @@ async function stageBody(engine: BrainEngine, input: SegmentedBodyInput, staging
     if (createChunks) await stageOccurrenceChunks(engine, { pageId: 0, sourceId: input.sourceId, slug: input.slug, generation: newGeneration, occurrences: rows,
       title: input.title, frontmatter: input.frontmatter, flags: body.body_flags, chunking: input.chunking, retiredOccurrences: [], hold: createChunks.chunks });
     return { stagingId, expectedGeneration, newGeneration, createRows: rows, createChunks, closeOccurrences: [], retireChunkOccurrences: [],
-      unchunked: createChunks ? 0 : rows.length, priorStale: false, body, bodyUnchanged: false, rows: { texts, manifest: rows.length, chunks: createChunks?.chunks.length ?? 0 }, stagedChunkIndexes: [] };
+      unchunked: createChunks ? 0 : rows.length, priorStale: false, body, bodyUnchanged: false, rows: { texts, manifest: rows.length, chunks: createChunks?.chunks.length ?? 0 }, stagedChunkIndexes: [], hashWith };
   }
   if (changed.length) await writes(exec => exec.stageManifestRows(changed));
   await faultPoint('segmented:manifest_staged', { sourceId: input.sourceId });
@@ -342,7 +346,7 @@ async function stageBody(engine: BrainEngine, input: SegmentedBodyInput, staging
   return { stagingId, expectedGeneration, newGeneration, createRows: null, createChunks: null, closeOccurrences, retireChunkOccurrences,
     unchunked: input.chunking.quarantined ? 0 : chunkable.length - chunks.occurrences, priorStale, body,
     bodyUnchanged: changed.length === 0 && retireChunkOccurrences.length === 0, rows: { texts, manifest: changed.length, chunks: chunks.rows },
-    stagedChunkIndexes: chunks.indexes };
+    stagedChunkIndexes: chunks.indexes, hashWith };
 }
 
 /**

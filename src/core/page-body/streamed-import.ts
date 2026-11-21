@@ -78,6 +78,8 @@ import { buildSegmentedProjection } from './projection.ts';
 import { prepareSegmentedBody, segmentWriteScope, utf8Prefix, type SegmentedStagingOwner } from './ingest.ts';
 import { readGarbageCollector } from './segment-blocks.ts';
 import type { JsonObject } from './types.ts';
+import { carryHashKeyedPageState, legacyHashToCarry, mayHoldLegacyTyped } from '../frontmatter-legacy.ts';
+import { hasCapability } from '../engine-capabilities.ts';
 
 const READ_BYTES = 1024 * 1024;
 const FENCE_MARKER = /gbrain:(facts|takes):begin/;
@@ -287,6 +289,12 @@ async function scanFile(file: FileHandle, bom: number, prefix: Uint8Array, size:
   return scanner.finish();
 }
 
+/** The text of the file's frontmatter head as the import reads it: the inferred prefix, then at most FRONTMATTER_HEAD_MAX_BYTES after the BOM. */
+async function frontmatterHeadText(file: FileHandle, bom: number, prefix: Uint8Array, size: number): Promise<string> {
+  const buffer = Buffer.alloc(Math.max(0, Math.min(FRONTMATTER_HEAD_MAX_BYTES, size - bom)));
+  await file.read(buffer, 0, buffer.length, bom);
+  return Buffer.concat([prefix, buffer]).toString('utf8');
+}
 /** Frontmatter inference on the head, exactly as on the whole file when the head holds its first 20 lines; else null (undecidable). */
 async function inferredPrefix(file: FileHandle, bom: number, size: number, relativePath: string): Promise<Uint8Array | null> {
   const buffer = Buffer.alloc(Math.min(FRONTMATTER_HEAD_MAX_BYTES, size - bom));
@@ -442,6 +450,9 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
     return opts.coordinated ? opts.coordinated.prepare({ slug, observedRevision: opts.coordinated.snapshot?.revision ?? null, noop: true, result: skipped, frontmatter: parsed.frontmatter,
       validate: async () => {}, apply: async () => {} }) : skipped;
   }
+  // pages-03: a re-read that changes only how values are kept carries the paid phases' records to the new hash.
+  const carryHashFrom = existing && !existing.deleted_at && prepared.hashWith && mayHoldLegacyTyped(existing.frontmatter)
+    ? legacyHashToCarry(existing, parsed.frontmatter, await frontmatterHeadText(file, bom, prefix, size), hash, prepared.hashWith) : null;
   const identity = opts.coordinated?.moved || opts.content ? { kind: 'none' as const }
     : await decideImportIdentity(engine, { sourceId, slug, hash, frontmatterId: null, sourcePath: relativePath, sourceRoot, body: { title: parsed.title, compiled_truth: '', timeline: '' } });
   if (identity.kind === 'shared_hash') process.stderr.write(`[import] WARNING: ${relativePath} shares content_hash with ${identity.dupSlug} in source ${sourceId}. Indexing both.\n`);
@@ -459,6 +470,7 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   const apply = async (tx: BrainEngine, preimage?: PageSnapshot | null) => {
     if (existing) await tx.createVersion(slug, preimage ? { sourceId, ...opts.history, preimage } : { sourceId, ...opts.history });
     const result = await applySegmentedBody(tx, { slug, sourceId, pageId: live?.id ?? null, prepared, meta, promotion: live?.storage === 'inline', retireMaxRows: input.policy.flipRetireMaxRows });
+    if (carryHashFrom && hasCapability(tx, 'raw_sql')) await carryHashKeyedPageState(tx, sourceId, result.pageId, carryHashFrom, hash);
     await tx.updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration);
     await tx.executeRaw(`DELETE FROM tags t USING pages p WHERE p.id = t.page_id AND p.source_id = $1 AND p.slug = $2
       AND t.tag_source = 'frontmatter' AND NOT (t.tag = ANY($3::text[]))`, [sourceId, slug, parsed.tags]);
