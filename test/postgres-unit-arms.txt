@@ -101,6 +101,7 @@ test/cycle/synthesize-concepts-merge.test.ts
 test/db-lock-reconnect.test.ts
 test/db-only-labels-gst2519.test.ts
 test/db-wins-unimported-gst2579.test.ts
+test/decide-sql-move-parity.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
@@ -123,6 +124,7 @@ test/doctor-routing-skill-pack-source.test.ts
 test/doctor-session-lane-gbra133.test.ts
 test/doctor-strict-facts-outside-git.test.ts
 test/doctor-sync-freshness-skill-pack-6076.test.ts
+test/doctor-typed-reads-deadline.test.ts
 test/edge-whitespace-twins.test.ts
 test/effect-commit-moved-head.test.ts
 test/embed-once-per-content-version.serial.test.ts
@@ -141,6 +143,8 @@ test/engine-parity/chunks.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/cycle-locks.test.ts
+test/engine-parity/decide-proposals.test.ts
+test/engine-parity/decide-store.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/field-usage.test.ts
