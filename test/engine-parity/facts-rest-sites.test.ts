@@ -890,6 +890,77 @@ describe('engine parity: facts write-path and recall statements that left execut
     return out;
   });
 
+  parityTest('listSlotRows keeps the whole pool scope: source scope, visibility, trust floor, flagged rows, quarantine and private pages', {
+    methods: ['listSlotRows', 'insertFacts', 'expireFact', 'putPage', 'transaction', 'applyTransactionSettings', 'upsertWriteGateReceipt'],
+  }, async (engine, backend) => {
+    // GST-3170: slot ends (search/slot-ends.ts) and the slot history read these rows to end a value, so a row the scope
+    // hides must never come back here, or it ends (or shows) a value the caller cannot read.
+    await createSource(engine, backend, 'other');
+    await engine.putPage('people/carol', note('Carol', {}, 'person'));
+    await engine.putPage('notes/open', note('Open'));
+    await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    await engine.putPage('notes/held', note('Held', { quarantine: { reason: 'junk_pattern', detail: 'test', assessed_at: '2026-01-01T00:00:00Z' } }));
+    const row = (fact: string, value: string, day: number, extra: Record<string, unknown> = {}) => ({
+      fact, entity_slug: 'people/carol', source: CONVERSATION, dimension: 'location', value, source_markdown_slug: 'notes/open', row_num: day,
+      valid_from: at(`2026-01-${String(day).padStart(2, '0')}T00:00:00Z`), ...extra });
+    // One write per trust tier, so each row's tier comes from its own transaction. The lower tiers write other entities,
+    // so this case reads the scope, not the rules between tiers of one slot. Each row has its own row_num: a second
+    // write with a row_num already in use inserts nothing.
+    const tiered = async (tier: string, rows: Array<Record<string, unknown> & { fact: string }>, sourceId = SRC) => engine.transaction(async tx => {
+      await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'], [tier, tier, JSON.stringify({ channel: tier })]);
+      return fenced(tx, rows, sourceId);
+    });
+    const curated = await tiered('operator_curated', [
+      row('carol in Lisbon', 'Lisbon', 1),
+      row('carol in Paris until last year', 'Paris', 2, { valid_until: at('2025-01-01T00:00:00Z') }),
+      row('carol in Rome, forgotten', 'Rome', 3),
+      row('carol private fact in Madrid', 'Madrid', 4, { visibility: 'private' }),
+      row('carol in Oslo on a private page', 'Oslo', 5, { source_markdown_slug: 'notes/hidden' }),
+      row('carol in Bern on a quarantined page', 'Bern', 6, { source_markdown_slug: 'notes/held' }),
+      row('carol in Vienna, not a conversation row', 'Vienna', 7, { source: 'fence' }),
+      { ...row('carol employer Acme', 'Acme', 8), dimension: 'employer' },
+    ]);
+    await engine.expireFact(curated.get('carol in Rome, forgotten')!);
+    const agent = await tiered('agent_written', [row('dave in Prague, agent written', 'Prague', 9, { entity_slug: 'people/dave' }), row('dave in Riga, flagged', 'Riga', 10, { entity_slug: 'people/dave' })]);
+    await engine.upsertWriteGateReceipt({ target_table: 'facts', target_id: String(agent.get('dave in Riga, flagged')), source_id: SRC,
+      content_hash: 'h1', tier: 'agent_written', detector_version: 1, verdict: 'flag', reason_families: ['standing_instruction'],
+      reasons: ['standing_instruction found'], detector_error: false, request_id: null } as never);
+    const untrusted = await tiered('external_untrusted', [row('erin in Kyiv, untrusted', 'Kyiv', 11, { entity_slug: 'people/erin' })]);
+    const other = await tiered('operator_curated', [row('carol in Lima, other source', 'Lima', 12)], 'other');
+    const name = namer(new Map([...curated, ...agent, ...untrusted, ...other]));
+    const slot = (sourceId: string, dimension = 'location', entity = 'people/carol') => ({ source_id: sourceId, entity_slug: entity, dimension });
+    const local = [slot(SRC), slot(SRC, 'location', 'people/dave'), slot(SRC, 'location', 'people/erin')];
+    const read = async (scopeArg: unknown, slots = local) =>
+      (await engine.listSlotRows(scopeArg as never, slots)).map(r => ({ name: name(r.id), source: r.source_id, dimension: r.dimension, from: iso(r.valid_from) }));
+    const out = {
+      plain: await read(scope()),
+      worldOnly: await read(scope({ worldOnly: true })),
+      excludePrivate: await read(scope({ excludePrivate: true })),
+      floorAgent: await read(scope({ minTrust: 'agent_written' })),
+      floorCurated: await read(scope({ minTrust: 'operator_curated' })),
+      suppressFlagged: await read(scope({ suppressFlagged: true })),
+      everything: await read(scope({ worldOnly: true, excludePrivate: true, minTrust: 'agent_written', suppressFlagged: true }), [...local, slot(SRC, 'employer')]),
+      otherSlotOutOfScope: await read(scope(), [slot('other')]),
+      twoSources: await read({ sourceIds: [SRC, 'other'], worldOnly: false, excludePrivate: false }, [...local, slot('other')]),
+      twoSourcesOneSlot: await read({ sourceIds: [SRC, 'other'], worldOnly: false, excludePrivate: false }, [slot('other')]),
+    };
+    const names = (rows: Array<{ name: string }>) => rows.map(r => r.name);
+    // Each knob takes out its own row and nothing else, so no read here passes vacuously.
+    const base = ['carol in Lisbon', 'carol in Paris until last year', 'carol private fact in Madrid', 'carol in Oslo on a private page',
+      'dave in Prague, agent written', 'dave in Riga, flagged', 'erin in Kyiv, untrusted'];
+    expect(names(out.plain)).toEqual(base);
+    expect(names(out.worldOnly)).toEqual(base.filter(n => n !== 'carol private fact in Madrid'));
+    expect(names(out.excludePrivate)).toEqual(base.filter(n => n !== 'carol in Oslo on a private page'));
+    expect(names(out.floorAgent)).toEqual(base.filter(n => n !== 'erin in Kyiv, untrusted'));
+    expect(names(out.floorCurated)).toEqual(base.filter(n => !/Prague|Riga|Kyiv/.test(n)));
+    expect(names(out.suppressFlagged)).toEqual(base.filter(n => n !== 'dave in Riga, flagged'));
+    expect(names(out.everything)).toEqual(['carol in Lisbon', 'carol in Paris until last year', 'carol employer Acme', 'dave in Prague, agent written']);
+    expect(out.otherSlotOutOfScope).toEqual([]);
+    expect(names(out.twoSources)).toEqual([...base, 'carol in Lima, other source']);
+    expect(names(out.twoSourcesOneSlot)).toEqual(['carol in Lima, other source']);
+    return out;
+  });
+
   parityTest('listPoolUnbackedKeys, listPoolEntityPairs and listCallOffCueFacts read the pool: entities without a live page, entities with a fact, and the facts that call one off', {
     methods: ['listPoolUnbackedKeys', 'listPoolEntityPairs', 'listCallOffCueFacts', 'insertFact', 'insertFacts', 'putPage', 'expireFact'],
   }, async (engine, backend) => {
