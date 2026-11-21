@@ -49,7 +49,7 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { liveSearchable } from './searchable.ts';
 import { ADMISSION_SOURCE_SQL, cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
-import { refuseLegacySpelling } from './legacy-slug-put.ts';
+import { EXISTING_PAGE_OPERATIONS, refuseLegacySpelling } from './legacy-slug-put.ts';
 import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscriptText } from '../search/transcript-quote.ts';
 import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
@@ -507,7 +507,14 @@ export async function preparePageAdmission(ctx: OperationContext,
   enforceSubagentSlugFence(ctx, slug, input.operation);
   // Preserve same-source diagnostics for new timeline writes without making
   // terminal replay depend on a page that may have since been purged.
-  if (input.operation === 'add_timeline_entry') await requireWritablePage({ ...ctx, sourceId }, slug, input.operation, 'page');
+  if (input.operation === 'add_timeline_entry') {
+    try { await requireWritablePage({ ...ctx, sourceId }, slug, input.operation, 'page'); }
+    catch (error) {
+      // A page stored under the decomposed spelling the caller sent is not missing: say why the write cannot reach it.
+      if ((error as { code?: unknown } | null)?.code === 'page_not_found') await refuseLegacySpelling(ctx, sourceId, p.slug, slug, input.operation);
+      throw error;
+    }
+  }
   intent.slug = slug;
   // #8667: only a remote write that supplies page text is an ingestion; any other keeps the page's provenance.
   if (ctx.remote !== false) {
@@ -524,7 +531,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     async () => !source.local_path && sourceId === 'default' ? ctx.engine.getConfig('sync.repo_path') : null,
   ]) as [Awaited<ReturnType<typeof submissionAuthority>>, unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, Awaited<ReturnType<typeof getWorktreeBinding>>, string | null, string | null];
   // A put by a page's exact decomposed spelling is refused, never written to a composed twin (legacy-slug-put.ts).
-  if (snapshot === null && input.operation === 'put_page' && input.managedFileImport !== true) await refuseLegacySpelling(ctx, sourceId, p.slug, slug);
+  if (snapshot === null && (input.operation === 'put_page' && input.managedFileImport !== true || EXISTING_PAGE_OPERATIONS.includes(input.operation))) await refuseLegacySpelling(ctx, sourceId, p.slug, slug, input.operation);
   if (typeof intent.content === 'string' && (typeof p.expected_revision !== 'string' || p.expected_revision === snapshot?.revision)) {
     await assertTimelineNotOmitted(ctx.engine, { intent, remote: ctx.remote !== false, writer: typeof p.expected_revision === 'string' ? 'editing' : 'preserving',
       slug, sourceId, content: intent.content, prior: snapshot });
