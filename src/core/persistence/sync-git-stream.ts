@@ -253,21 +253,22 @@ class HistoryRead extends Error {}
  * HISTORY_LOG_OPTIONS shape), so an earlier version is found however many commits to other paths came since. The walk stops
  * once every path of the group holds `depth` blobs. `onPath` runs for each path that got an entry as its group's read ends;
  * `beat` runs at most every HISTORY_BEAT_MS while a group streams, so a long walk still reports progress. A throw from either
- * (an abort) rejects. No group starts at or after `deadline` (epoch ms), and a group's read ends by it; the paths of groups
- * never started go to `unstarted`. A group whose read is incomplete (a timeout, the deadline, a Git failure) keeps the blobs
- * it read for the paths that got some, and adds its paths with fewer than `depth` to `partial`: each blob is a version that
- * path held, so a match against it is as sound as after a full walk, and a path with none has no entry. A path a pathspec
- * cannot carry has no entry and is in neither set.
+ * (an abort) rejects. No group starts at or after `deadline` (epoch ms), and a group's read ends by it. A group whose read is
+ * incomplete (a timeout, the deadline, a Git failure) keeps the blobs it read for the paths that got some: each is a version
+ * that path held, so a match against it is as sound as after a full walk, and a path with none has no entry. Its paths with
+ * fewer than `depth` go to `deferred` when the read ended at or after `deadline` (the budget, not the file, ran out), else
+ * to `partial`; the paths of groups never started go to `deferred` too. A path a pathspec cannot carry has no entry and is
+ * in neither set.
  */
 export async function pathBlobHistories(gitRoot: string, commit: string, paths: readonly string[], depth: number,
-  onPath?: (path: string) => void, options: { beat?: () => void; deadline?: number; partial?: Set<string>; unstarted?: Set<string> } = {}): Promise<Map<string, string[]>> {
+  onPath?: (path: string) => void, options: { beat?: () => void; deadline?: number; partial?: Set<string>; deferred?: Set<string> } = {}): Promise<Map<string, string[]>> {
   const histories = new Map<string, string[]>();
   if (!OID.test(commit) || depth < 1) return histories;
   const carried = paths.filter(path => !/[\n\r]/.test(path));
   let beatAt = Date.now();
   for (let start = 0; start < carried.length; start += HISTORY_GROUP_PATHS) {
     const left = (options.deadline ?? Infinity) - Date.now();
-    if (left <= 0) { for (const path of carried.slice(start)) options.unstarted?.add(path); break; }
+    if (left <= 0) { for (const path of carried.slice(start)) options.deferred?.add(path); break; }
     const group = carried.slice(start, start + HISTORY_GROUP_PATHS);
     const wanted = new Set(group), found = new Map<string, string[]>();
     const splitter = new NulRecordSplitter();
@@ -293,9 +294,10 @@ export async function pathBlobHistories(gitRoot: string, commit: string, paths: 
         }
       } }).catch((error: unknown) => { if (error instanceof HistoryRead) return null; throw error; });
     const complete = result === null || (hardenedStreamComplete(result) && splitter.atRecordBoundary);
+    const cut = Date.now() >= (options.deadline ?? Infinity);
     for (const path of wanted) {
       const list = found.get(path);
-      if (!complete && (list?.length ?? 0) < depth) options.partial?.add(path);
+      if (!complete && (list?.length ?? 0) < depth) (cut ? options.deferred : options.partial)?.add(path);
       if (!complete && !list) continue;
       histories.set(path, list ?? []);
       onPath?.(path);

@@ -80,10 +80,11 @@ const PASS_HEARTBEAT_MS = 30_000;
 /**
  * GST-3328 follow-up: the Git time one pass spends reading re-screened holds' file histories. Each read walks every commit
  * that changed its paths, so on a deep repository a pass over many holds would otherwise spend minutes there. A path whose
- * history read the budget never started, or cut short, is screened with what was read, is counted in the pass's
- * `driftHistoryUnread`, and a hold it gets is marked `history_unread`, so the next sync screens it again. A read cut short
- * does not mark a hold that was already due a screen (marked, or written by an older screen), so it settles after that one
- * retry; a read never started always marks, since the next pass's budget reaches it first.
+ * history read the budget never reached in full (not started, or cut short by the pass deadline), or a read that timed out
+ * on its own, is screened with what was read, is counted in the pass's `driftHistoryUnread`, and a hold it gets is marked
+ * `history_unread`, so the next sync screens it again. A read that timed out on its own does not mark a hold that was
+ * already due a screen (marked, or written by an older screen), so it settles after that one retry; one the budget never
+ * reached always marks, since the next pass's budget reaches it first.
  */
 const DRIFT_HISTORY_BUDGET_MS = 120_000;
 
@@ -166,18 +167,18 @@ async function readDriftHistories(level: ShadowLevel, chunk: PassEntry[], owed: 
   const due = chunk.flatMap(entry => { const shadow = owed.get(entry); return shadow ? [[entry, shadow] as const] : []; });
   if (!due.length) return;
   let done = 0;
-  const started = Date.now(), partial = new Set<string>(), unstarted = new Set<string>();
+  const started = Date.now(), partial = new Set<string>(), deferred = new Set<string>();
   const step = () => { value.telemetry.step = { name: 'drift_history', at: new Date().toISOString(), done, total: due.length }; };
   const read = await pathBlobHistories(level.gitRoot, level.baselineCommit ?? level.head, due.map(([, shadow]) => shadow.path), DRIFT_HISTORY_DEPTH, () => {
     done++; step(); onHistoryRead();
-  }, { beat: () => { step(); onHistoryRead(); }, deadline: started + budget.leftMs, partial, unstarted }).finally(() => {
+  }, { beat: () => { step(); onHistoryRead(); }, deadline: started + budget.leftMs, partial, deferred }).finally(() => {
     budget.leftMs = Math.max(0, budget.leftMs - (Date.now() - started));
     delete value.telemetry.step;
   });
   for (const [entry, shadow] of due) {
-    if (unstarted.has(shadow.path) || partial.has(shadow.path)) {
+    if (deferred.has(shadow.path) || partial.has(shadow.path)) {
       counts.driftHistoryUnread = (counts.driftHistoryUnread ?? 0) + 1;
-      if (unstarted.has(shadow.path) || !shadow.state.hold?.unscreened) entry.driftHistoryUnread = true;
+      if (deferred.has(shadow.path) || !shadow.state.hold?.unscreened) entry.driftHistoryUnread = true;
     }
     const versions = [...new Set(read.get(shadow.path) ?? [])].filter(oid => oid !== shadow.state.level && oid !== shadow.state.baseline).slice(0, DRIFT_HISTORY_VERSIONS);
     if (versions.length) entry.driftHistory = versions;
