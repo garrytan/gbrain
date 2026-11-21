@@ -122,6 +122,23 @@ describe('GST-3251 conversation fact extraction', () => {
     expect(after.terminal).toBe(true);
   });
 
+  test('GST-3347: a half that reads keeps the keep-quiet cue its declined sibling half carries', async () => {
+    await engine.setConfig('facts.default_visibility', 'world');
+    try {
+      await put('conversations/quiet', page([
+        turn('Alice Example', '01', '9:00 AM', 'Note topic-alpha for the launch.'),
+        turn('Alice Example', '01', '9:01 AM', 'Keep this quiet: the team discussed topic-alpha. DECLINE-ME'),
+      ]));
+      const run = await extract('conversations/quiet');
+      expect(run.windows_declined).toBe(1);
+      const rows = await engine.executeRaw<{ fact: string; visibility: string }>(
+        `SELECT fact, visibility FROM facts WHERE source_id='default' AND source_markdown_slug=$1 AND expired_at IS NULL AND source NOT LIKE 'cli:extract-conversation-facts:terminal%'`, ['conversations/quiet']);
+      expect(rows).toEqual([{ fact: 'The team discussed topic-alpha', visibility: 'private' }]);
+    } finally {
+      await engine.setConfig('facts.default_visibility', 'private');
+    }
+  });
+
   test('a page where every window and half declines stays unfinished, and a one-message half is not split again', async () => {
     await put('conversations/short', page([
       turn('Alice Example', '01', '9:00 AM', 'Note topic-alpha.'),
