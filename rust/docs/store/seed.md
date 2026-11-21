@@ -232,5 +232,82 @@ Some unmapped columns are expected, not losses:
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.seedPlan()` | `{ relations: [{ relation, key }], carried: [[table, relation]], not_copied: [{ table, kind, read, gap_rows }], gap_columns: [{ table, column, gap }] }`: the relations in import order with their key columns, the tables carried in them, the tables left behind on purpose, and the gap columns | none |
-| `brain.importRelation(seedId, relation, rows)` | `{ imported, skipped, dropped, unmapped_columns, losses }` for the batch. `imported` counts rows stored (for `sources` and `config`, also rows that replaced a different value), `skipped` rows already held, `dropped` rows the store cannot hold. `invalid_argument` for an unknown relation, an empty seed id or a NUL byte; `invalid_state` for a store another seed owns or a store that is not fresh | none (the seed reads the primary's tables) |
+| `brain.seedPlan()` | `{ relations: [{ relation, key, removable }], carried: [[table, relation]], not_copied: [{ table, kind, read, gap_rows }], gap_columns: [{ table, column, gap }] }`: the relations in import order with their key columns and whether the store can remove their rows (`removable`, see "Follow and reconcile"), the tables carried in them, the tables left behind on purpose, and the gap columns | none |
+| `brain.importRelation(seedId, relation, rows, digests?)` | `{ imported, skipped, dropped, unmapped_columns, losses }` for the batch. `imported` counts rows stored (for `sources` and `config`, also rows that replaced a different value), `skipped` rows already held, `dropped` rows the store cannot hold. `invalid_argument` for an unknown relation, an empty seed id or a NUL byte, or `digests` that do not align with `rows` (see "Follow and reconcile"); `invalid_state` for a store another seed owns or a store that is not fresh | none (the seed reads the primary's tables) |
+
+## Follow and reconcile
+
+After the seed, the store is kept level with the primary by comparing and replacing rows, not by replaying the
+primary's writes. The caller (`src/shadow/`) hashes each primary row, sends the changed rows, and compares a digest of
+a sort interval on each side. The store keeps the hashes and the sort keys as opaque bytes; it never computes them.
+
+### The digest index
+
+A row sent with a digest gets a digest entry, written in the same write transaction as the row:
+
+- Key: `M shadow_digest/<relation>/<sort bytes>`. The entries of a relation are therefore in sort-key order.
+- Value: the 32-byte row digest, the generation (u64, big-endian), and the row's identity as JSON `{ column: text }`.
+  The identity is the primary key columns plus the natural-key and parent columns the relation's family needs to find
+  the row again (for example a link's `from_page_id` and `to_page_id`). It is how a row is removed later, by sort key
+  alone.
+
+`importRelation` with digests stores an entry at generation 0 for every row it was given: stored, skipped and dropped.
+The entry records the primary row the caller read, whether or not the store could hold it, so a dropped row still counts
+in the interval digest. A retried batch rewrites its generation 0 entries and never lowers a later generation. A row
+imported without digests has no entry: it is neither counted in `relationDigest` nor found by a delete that names only
+a sort key, and a remover that lacks the columns it finds the row by removes nothing.
+
+### The byte contract
+
+The sort key and the row digest are defined by `src/shadow/follow-digest.ts` (the vectors in its tests pin them). The
+store takes both as lowercase hex of whole bytes and a digest is exactly 32 bytes; anything else is
+`invalid_argument`. The interval digest, which the store computes, is the sha256 over each entry in sort order of
+`u32be(length of sort) || sort || row digest`. An empty interval is the sha256 of nothing,
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+### The calls
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.importRelation(seedId, relation, rows, digests)` | as above, with `digests: [{ sort, digest }]` aligned with `rows`: one entry per row at generation 0. `invalid_argument` when the lengths differ, a value is not hex, a digest is not 32 bytes or two rows share a sort key | none |
+| `brain.replaceRelationRows(seedId, relation, generation, keys, rows, digests)` | `{ upserted, deleted, skipped_older, dropped, unmapped_columns, losses }`. `keys: [{ sort, key: { column: text } }]` are the rows the primary changed. A key with a row in `rows` (its digest has the key's sort) is stored over its old version, or inserted: `upserted`. A key with no row is deleted: `deleted`. Deletes run before stores, so a natural key a deleted row held is free for a new row. One write transaction; an error stores nothing. `invalid_argument` for an unknown relation, a generation that is not a whole number from 0 to 2^53-1, lengths that differ, a row whose sort is not among the keys or two keys or rows with one sort; `invalid_state` when no seed owns the store or another seed does; `unsupported` for a relation that is not `removable` | none |
+| `brain.replaceInterval(seedId, relation, generation, lo, hi, rows, digests)` | the same result. `lo` is inclusive and `hi` exclusive, as hex sort keys; `null` is unbounded. The primary holds exactly `rows` in `[lo, hi)`: every entry in the interval that is not among them is deleted, the rows are stored or inserted. One write transaction. A row whose sort is outside `[lo, hi)` is `invalid_argument` and stores nothing. Other errors as above | none |
+| `brain.relationDigest(seedId, relation, lo, hi)` | `{ rows, digest }`: the entry count and the hex digest of the entries in `[lo, hi)`. Read only. `invalid_argument` for an unknown relation or a bad bound; `invalid_state` as above | none |
+| `brain.factFingerprints(texts)` | `[{ fingerprint, fingerprint_v1 }]`, one per text, in order. `fingerprint` is `gbrain_fact_fingerprint(claim)`, the sha256 hex of the normalized claim. `fingerprint_v1` is the sha256 hex of `regexp_replace(lower(btrim(claim)), '[[:space:]]+', ' ', 'g')`, which keeps punctuation (`"Hello,  World."` and `"hello, world."` share it; the normalized one drops it). Needs no seed | none |
+
+`seedId` is claimed the way `importRelation` claims it: a store no seed owns, or one another seed owns, is
+`invalid_state` and nothing is written.
+
+### The generation rule
+
+Each call carries a generation, a counter the caller raises with each read of the primary. An entry stored at a
+generation above the call's is never overwritten or deleted: the call counts it in `skipped_older` and leaves the row
+and its entry alone. So a read taken before another cannot undo it, whatever order the calls land in. An entry at the
+same or a lower generation is replaced or deleted. Entries imported without a generation are generation 0.
+
+A row the store cannot hold (`dropped`, with its reason in `losses`) still gets its entry at the call's generation.
+
+### Delete and replace
+
+- Delete (the primary row is gone, or a key has no row): the row, every index key its family keeps, and its digest
+  entry go. Rows that depend on it go or change the way the primary's foreign keys say: `ON DELETE CASCADE` removes them
+  and their digest entries, `SET NULL` clears the column. Deleting a page removes its tags, chunks (and their
+  code edges), links from and to it, timeline entries, versions, raw data, takes (and the citations of those takes),
+  wanted links and facts reconcile mark, and the digest entries of those rows go with them.
+- Replace (the row changed): the old row is removed or overwritten in place and the new one stored, and its dependents
+  stay. Replacing a page keeps its chunks, links and tags readable. Where a relation's importer
+  overwrites a different stored value itself (`sources`, `config`), the row is stored over the old one.
+
+A delete that finds no stored row still removes its digest entry, and counts as `deleted` only when it removed a row
+or an entry.
+
+### Relations the store cannot remove
+
+`seedPlan()` marks each relation `removable`. Every relation is removable except:
+
+| Relation | Why |
+| --- | --- |
+| `sources` | the store has no source delete: a source is only added or updated, and the rows of other relations name it. A changed source row is replaced in place; a delete is `unsupported` and writes nothing |
+
+`config` rows are removable, except the key `version`, which is never copied or removed: the store keeps its own
+schema version, and the importer drops a different primary value (`config_version_differs`).

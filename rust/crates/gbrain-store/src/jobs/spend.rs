@@ -944,6 +944,28 @@ fn owner_text(row: &JobRecord) -> Option<String> {
     row.data.get("__owner_client_id").and_then(jsonb_field_text)
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the reservation `reservation_id` and its index
+/// entries. `false` when there is none.
+pub(crate) fn remove_reservation(tx: &mut dyn KvWrite, reservation_id: &str) -> Result<bool> {
+    let id = uuid_bytes(reservation_id)?;
+    let Some(old) = load_res(&*tx, &id)? else {
+        return Ok(false);
+    };
+    if let Some(job) = old.job_id {
+        tx.delete(&res_job_key(job, &id))?;
+    }
+    if old.status == "pending" {
+        tx.delete(&res_exp_key(old.expires_at, &id))?;
+    }
+    if old.status != "settled"
+        && let Some((kind, owner)) = res_owner(&old)
+    {
+        tx.delete(&res_open_key(kind, owner, &id))?;
+    }
+    tx.delete(&res_key(&id))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

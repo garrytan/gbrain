@@ -628,6 +628,32 @@ impl Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the file `id` stored at `storage_path`, with its
+/// page index entry. `false` when the path holds no file of that id.
+pub(crate) fn remove_file(tx: &mut dyn KvWrite, id: u64, storage_path: &str) -> Result<bool> {
+    let Some(old) = read_file(&*tx, storage_path)? else {
+        return Ok(false);
+    };
+    if old.id != id {
+        return Ok(false);
+    }
+    if let Some(page) = old.page_id {
+        tx.delete(&file_page_key(page, id))?;
+    }
+    tx.delete(&file_key(storage_path))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the raw data of `source` on a page. `false` when there is none.
+pub(crate) fn remove_raw_data(tx: &mut dyn KvWrite, page_id: u64, source: &str) -> Result<bool> {
+    let key = raw_key(page_id, source);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     //! The cascade hooks are crate-private; their contract is tested here. The members are

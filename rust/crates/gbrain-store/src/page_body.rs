@@ -621,6 +621,12 @@ pub(crate) fn seed_body_state(tx: &mut dyn KvWrite, page_id: u64, columns: Value
     put_json(tx, &body_key(page_id), &state)
 }
 
+/// The shadow follow (`seed/follow.rs`): removes a page's body columns and nothing else: its
+/// manifest, derivations and stagings stay.
+pub(crate) fn clear_body_state(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&body_key(page_id))
+}
+
 fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>> {
     get_json(read, &body_key(page_id))
 }
