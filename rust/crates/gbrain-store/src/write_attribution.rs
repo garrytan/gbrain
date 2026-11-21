@@ -106,13 +106,22 @@ pub enum RowAttributionTarget {
 
 /// A take's or timeline entry's own owner-only test for a caller who is not the owner. The
 /// closed form hides every row while the brain holds an owner-only source or a mark. The
-/// function form reads the row's own lineage, and here it has none: the store marks no take or
-/// timeline row and keeps no `derivation_inputs` (owner_only_marks.rs). The row's page is
-/// tested apart, as in SQL. A target that names no form takes `closed`.
-fn row_owner_only_hidden(read: &dyn KvRead, form: OwnerOnlyForm) -> Result<bool> {
+/// function form reads the row's own lineage behind its guard: marked, or derived (by its
+/// recorded inputs, `derivation_inputs.rs`) from an owner-only row. The row's page is tested
+/// apart, as in SQL. A target that names no form takes `closed`.
+fn row_owner_only_hidden(
+    read: &dyn KvRead,
+    form: OwnerOnlyForm,
+    table: &str,
+    id: u64,
+) -> Result<bool> {
     match form {
-        OwnerOnlyForm::Off | OwnerOnlyForm::Fn => Ok(false),
+        OwnerOnlyForm::Off => Ok(false),
         OwnerOnlyForm::Closed => Ok(OwnerOnlySources::read(read)?.guarded()),
+        OwnerOnlyForm::Fn => {
+            let sources = OwnerOnlySources::read(read)?;
+            Ok(sources.guarded() && sources.row_lineage(read, table, id, None)?)
+        }
     }
 }
 
@@ -284,7 +293,7 @@ impl Store {
                     return Ok(None);
                 };
                 if holders.as_ref().is_some_and(|h| !h.contains(&t.holder))
-                    || row_owner_only_hidden(&*read, *owner_only)?
+                    || row_owner_only_hidden(&*read, *owner_only, "takes", t.id)?
                 {
                     return Ok(None);
                 }
@@ -306,7 +315,7 @@ impl Store {
                 let Some(e) = timeline_entry(&*read, *page_id, *id)? else {
                     return Ok(None);
                 };
-                if row_owner_only_hidden(&*read, *owner_only)? {
+                if row_owner_only_hidden(&*read, *owner_only, "timeline_entries", e.id)? {
                     return Ok(None);
                 }
                 Ok(Some(row_json(

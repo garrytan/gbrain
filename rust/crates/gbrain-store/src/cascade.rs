@@ -59,6 +59,7 @@ pub(crate) fn remove_chunk_rows(
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     crate::facts::remove_source_rows(tx, source_id)?;
+    crate::derivation_inputs::remove_source_rows(tx, source_id)?;
     crate::aliases::remove_source_rows(tx, source_id)?;
     crate::code_edges::remove_source_rows(tx, source_id)?;
     crate::link_queries::remove_source_rows(tx, source_id)?;

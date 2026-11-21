@@ -260,15 +260,30 @@ impl Store {
     }
 
     /// `listDerivedRows(frontier, limit)`: the rows one hop of the derivation walk reaches from
-    /// the frontier (`derivation_inputs` rows whose input is a frontier row). The store keeps no
-    /// `derivation_inputs`: every SQL writer of it (`recordDerivationInputs`) goes through
-    /// `executeRaw`, which this engine refuses, so no row here has a recorded derivation and the walk
-    /// answers no rows. A NUL in a table or id is refused as a text column refuses it.
+    /// the frontier (`derivation_inputs` rows whose input is a frontier row, `derivation_inputs.rs`),
+    /// distinct, in `(derived_table, derived_id)` byte order, at most `limit`. A NUL in a table or id
+    /// is refused as a text column refuses it.
     pub fn list_derived_rows(&self, q: &DerivedRowsQuery) -> Result<Vec<Value>> {
         for r in &q.frontier {
             no_nul("listDerivedRows", &[("table", &r.table), ("id", &r.id)])?;
         }
-        Ok(Vec::new())
+        let read = self.read()?;
+        let mut found = std::collections::BTreeSet::new();
+        for r in &q.frontier {
+            let input = crate::derivation_inputs::EdgeRef {
+                table: r.table.clone(),
+                id: r.id.clone(),
+            };
+            for d in crate::derivation_inputs::derived_from(&*read, &input)? {
+                found.insert((d.table, d.id));
+            }
+        }
+        let limit = usize::try_from(q.limit).unwrap_or(0);
+        Ok(found
+            .into_iter()
+            .take(limit)
+            .map(|(table, id)| json!({ "derived_table": table, "derived_id": id }))
+            .collect())
     }
 
     /// `loadPurgeTarget(id, sourceId)`: the fact row `id` of the source unless it is an outcome
@@ -693,11 +708,38 @@ mod tests {
         assert_eq!(vector_text(&[]), "[]");
     }
 
-    /// The store keeps no `derivation_inputs`, so the derivation walk from any stored row answers
-    /// no rows: a page and a fact derived in SQL from it would be linked only by that table.
+    /// The walk answers what one hop of `derivation_inputs` reaches from the frontier, distinct, in
+    /// key order, cut at the limit; a frontier row no edge names reaches nothing.
     #[test]
-    fn list_derived_rows_answers_no_rows_because_the_store_keeps_no_derivation_inputs() {
+    fn list_derived_rows_walks_one_hop_of_the_recorded_edges() {
         let store = crate::test_support::store();
+        let edge = |derived: (&str, &str), input: (&str, &str)| {
+            let spec: crate::derivation_inputs::DerivationEdges = serde_json::from_value(json!({
+                "derived": { "table": derived.0, "id": derived.1 }, "sourceId": "default",
+                "edges": [{ "table": input.0, "id": input.1 }],
+            }))
+            .unwrap();
+            store.record_derivation_edges(&spec).unwrap();
+        };
+        edge(("pages", "9"), ("facts", "1"));
+        edge(("facts", "2"), ("facts", "1"));
+        edge(("pages", "9"), ("pages", "5"));
+        let hop: DerivedRowsQuery = serde_json::from_value(json!({
+            "frontier": [{ "table": "facts", "id": "1" }, { "table": "pages", "id": "5" }], "limit": 10,
+        }))
+        .unwrap();
+        assert_eq!(
+            store.list_derived_rows(&hop).unwrap(),
+            vec![
+                json!({ "derived_table": "facts", "derived_id": "2" }),
+                json!({ "derived_table": "pages", "derived_id": "9" }),
+            ]
+        );
+        let cut: DerivedRowsQuery = serde_json::from_value(json!({
+            "frontier": [{ "table": "facts", "id": "1" }], "limit": 1,
+        }))
+        .unwrap();
+        assert_eq!(store.list_derived_rows(&cut).unwrap().len(), 1);
         let input: crate::pages::PageInput = serde_json::from_value(json!({
             "type": "note", "title": "Input", "compiled_truth": "input body", "frontmatter": {},
         }))
@@ -707,7 +749,7 @@ mod tests {
         let page = store.put_page("notes/input", &input, &options).unwrap();
         let page_id = page["id"].to_string();
         let q: DerivedRowsQuery = serde_json::from_value(json!({
-            "frontier": [{ "table": "pages", "id": page_id }, { "table": "facts", "id": "1" }],
+            "frontier": [{ "table": "pages", "id": page_id }, { "table": "facts", "id": "77" }],
             "limit": 1001,
         }))
         .unwrap();

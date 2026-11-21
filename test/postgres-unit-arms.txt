@@ -200,6 +200,7 @@ test/engine-parity/cycle-locks.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
 test/engine-parity/delegated-grant.test.ts
+test/engine-parity/derivation-inputs.test.ts
 test/engine-parity/doctor-acc.test.ts
 test/engine-parity/doctor-brain.test.ts
 test/engine-parity/doctor-checkpoints.test.ts

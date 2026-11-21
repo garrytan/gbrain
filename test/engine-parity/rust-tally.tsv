@@ -14,7 +14,7 @@ test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/attested-actor-link.test.ts	1	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
 test/engine-parity/calibration-profiles.test.ts	5	0
-test/engine-parity/chronicle-publish-parity.test.ts	2	1
+test/engine-parity/chronicle-publish-parity.test.ts	3	0
 test/engine-parity/chunk-page-segmented.test.ts	7	0
 test/engine-parity/chunk-reads.test.ts	14	0
 test/engine-parity/chunk-safe-fence.test.ts	3	0
@@ -51,6 +51,7 @@ test/engine-parity/cycle-locks.test.ts	11	0
 test/engine-parity/decide-proposals.test.ts	8	0
 test/engine-parity/decide-store.test.ts	36	0
 test/engine-parity/delegated-grant.test.ts	2	0
+test/engine-parity/derivation-inputs.test.ts	5	0
 test/engine-parity/doctor-acc.test.ts	7	0
 test/engine-parity/doctor-brain.test.ts	4	0
 test/engine-parity/doctor-checkpoints.test.ts	5	0
@@ -77,7 +78,7 @@ test/engine-parity/entity-fuzzy.test.ts	3	0
 test/engine-parity/entity-identities.test.ts	8	4
 test/engine-parity/entity-reads.test.ts	12	1
 test/engine-parity/extract-takes-reads.test.ts	9	0
-test/engine-parity/extract-takes.test.ts	0	2
+test/engine-parity/extract-takes.test.ts	2	0
 test/engine-parity/extraction.test.ts	6	0
 test/engine-parity/fact-future-order.test.ts	1	0
 test/engine-parity/fact-pool-widening.test.ts	2	0
@@ -92,7 +93,7 @@ test/engine-parity/facts-conversation-sites.test.ts	0	22
 test/engine-parity/facts-cycle-sites.test.ts	0	15
 test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	14	0
-test/engine-parity/facts-purge-sites.test.ts	1	26
+test/engine-parity/facts-purge-sites.test.ts	2	25
 test/engine-parity/facts-purge.test.ts	25	2
 test/engine-parity/facts-repair-sites.test.ts	1	13
 test/engine-parity/facts-repair.test.ts	17	2
@@ -110,7 +111,7 @@ test/engine-parity/forget-reach-reads.test.ts	4	1
 test/engine-parity/forget-remember.test.ts	2	0
 test/engine-parity/generation-output-parity.test.ts	15	0
 test/engine-parity/generation-page-rows-order.test.ts	1	0
-test/engine-parity/generation-write-parity.test.ts	1	2
+test/engine-parity/generation-write-parity.test.ts	3	0
 test/engine-parity/git-holds.test.ts	3	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/holding-page-purges.test.ts	2	0

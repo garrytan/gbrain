@@ -33,8 +33,8 @@ impl Brain {
         })
     }
 
-    /// `listDerivedRows({ frontier, limit })`: resolves the rows one walk hop reaches (none: the
-    /// store keeps no `derivation_inputs`).
+    /// `listDerivedRows({ frontier, limit })`: resolves the rows one walk hop of the recorded
+    /// `derivation_inputs` edges reaches.
     #[napi]
     pub fn list_derived_rows<'env>(
         &self,

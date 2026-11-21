@@ -172,6 +172,7 @@ Reserved tags:
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
 | session_state | `y` | `SESSION_STATE` | no |
 | persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
+| facts, the `derivation_inputs` edges and their reverse index | `3` | `DERIVATION_INPUT` | no (a source delete removes its rows) |
 | access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage

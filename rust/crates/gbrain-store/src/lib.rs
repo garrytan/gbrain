@@ -53,6 +53,7 @@ pub mod chat_usage;
 pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
+pub mod derivation_inputs;
 pub mod dream;
 pub mod dream_config;
 pub mod embedding_catalog;
