@@ -289,8 +289,8 @@ listEvalCandidates	eval_capture	yes	2	no	yes	yes	serves
 deleteEvalCandidatesBefore	eval_capture	yes	1	no	yes	yes	serves
 logEvalCaptureFailure	eval_capture	yes	1	no	yes	yes	serves
 listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
-readStoredBodyBytes	large_page	yes	1	no	yes	yes	refuses:raw_sql
-readPageBodySizes	large_page	yes	1	no	yes	yes	refuses:raw_sql
+readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
+readPageBodySizes	large_page	yes	1	no	yes	yes	serves
 readFieldUsageSamples	field_usage	yes	3	no	yes	yes	serves
 insertDecideProposal	decide_proposals	yes	5	no	yes	yes	serves
 getDecideProposal	decide_proposals	yes	2	no	yes	yes	serves

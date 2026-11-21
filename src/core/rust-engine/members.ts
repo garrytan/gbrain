@@ -47,9 +47,8 @@ export const RUST_ENGINE_MEMBERS = {
   replaceDerivedAliases: 'pages',
   getPageSealState: 'pages',
   refreshPageOrigin: 'pages',
-  // Refused as the raw SQL it replaces until the Rust store serves it, so the reported capabilities stay as before.
-  readStoredBodyBytes: 'raw_sql',
-  readPageBodySizes: 'raw_sql',
+  readStoredBodyBytes: 'pages',
+  readPageBodySizes: 'pages',
   getPage: 'pages',
   readPageSnapshot: 'pages',
   readPageSnapshotsBatch: 'pages',
@@ -308,10 +307,9 @@ export const RUST_ENGINE_MEMBERS = {
   readCycleLocks: 'minion_queue',
   deleteCycleLock: 'minion_queue',
   deleteCycleLockIfStale: 'minion_queue',
-  // Refused as the raw SQL it replaces until the Rust store serves it, so the reported capabilities stay as before.
-  listSegmentedPages: 'raw_sql',
-  invalidateWithdrawnPages: 'raw_sql',
-  hasWithdrawnFenceClaim: 'raw_sql',
+  listSegmentedPages: 'facts',
+  invalidateWithdrawnPages: 'facts',
+  hasWithdrawnFenceClaim: 'facts',
   // The decide store and proposal lanes (engine-sql/decide-store.ts, decide-proposals.ts), served by the store.
   applyDecideReviewQueue: 'eval_capture',
   applyDecideSweepDeferred: 'eval_capture',

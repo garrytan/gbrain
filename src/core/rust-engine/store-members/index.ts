@@ -42,6 +42,9 @@ import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
 import * as fieldUsage from './field-usage.ts';
 import * as decideProposals from './decide-proposals.ts';
 import * as decideStore from './decide-store.ts';
+import * as largePage from './large-page.ts';
+import * as withdrawalPages from './withdrawal-pages.ts';
+import * as withdrawalFence from './withdrawal-fence.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -61,6 +64,12 @@ export const STORE_MEMBERS = {
   ...decideProposals, ...decideStore,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsSearchPages,
+  // The page statements a fact withdrawal runs on the pages that carry the claim (rust/docs/store/facts.md).
+  ...withdrawalPages,
+  // The withdrawal check a prepared import runs on a malformed facts fence (rust/docs/store/facts.md).
+  ...withdrawalFence,
+  // The large-page write guard's stored body size read (rust/docs/store/large-page.md).
+  ...largePage,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
