@@ -77,6 +77,13 @@ export const PASS_BATCH_MAX = 10_000;
 const IN_FLIGHT_WAITS = 4;
 /** #7355: how often a long level read writes the open pass row, so a follower and `sync status` see it working. */
 const PASS_HEARTBEAT_MS = 30_000;
+/**
+ * GST-3328 follow-up: the Git time one pass spends reading re-screened holds' file histories. Each read walks every commit
+ * that changed its paths, so on a deep repository a pass over many holds would otherwise spend minutes there. A path the
+ * budget leaves unread is screened as if it had no earlier versions (it keeps its hold) and is counted in the pass's
+ * `driftHistoryUnread`; `gbrain sources retry-held` re-screens it in a later pass.
+ */
+const DRIFT_HISTORY_BUDGET_MS = 120_000;
 
 export interface SyncPassInput {
   opts: SyncOpts; slice?: { maxPages: number; maxMs: number }; context: ManagedSyncContext; authority: SyncAuthority;
@@ -152,14 +159,21 @@ function entryPaths(level: ShadowLevel, gitPath: string): { path: string; source
  * looks stalled and a pass over many such holds commits each batch before it reads the next one's history. While it reads,
  * the pass row's `telemetry.step` says how far it got (the beat saves it), so status can name the step a killed pass stopped in.
  */
-async function readDriftHistories(level: ShadowLevel, chunk: PassEntry[], owed: ReadonlyMap<PassEntry, ShadowPath>, value: ManagedSyncPassValue, onHistoryRead: () => void): Promise<void> {
+async function readDriftHistories(level: ShadowLevel, chunk: PassEntry[], owed: ReadonlyMap<PassEntry, ShadowPath>, value: ManagedSyncPassValue,
+  onHistoryRead: () => void, budget: { leftMs: number }, counts: Record<string, number>): Promise<void> {
   const due = chunk.flatMap(entry => { const shadow = owed.get(entry); return shadow ? [[entry, shadow] as const] : []; });
   if (!due.length) return;
   let done = 0;
+  const started = Date.now();
+  const step = () => { value.telemetry.step = { name: 'drift_history', at: new Date().toISOString(), done, total: due.length }; };
   const read = await pathBlobHistories(level.gitRoot, level.baselineCommit ?? level.head, due.map(([, shadow]) => shadow.path), DRIFT_HISTORY_DEPTH, () => {
-    value.telemetry.step = { name: 'drift_history', at: new Date().toISOString(), done: ++done, total: due.length };
-    onHistoryRead();
-  }).finally(() => { delete value.telemetry.step; });
+    done++; step(); onHistoryRead();
+  }, { beat: () => { step(); onHistoryRead(); }, deadline: started + budget.leftMs }).finally(() => {
+    budget.leftMs = Math.max(0, budget.leftMs - (Date.now() - started));
+    delete value.telemetry.step;
+  });
+  const unread = due.filter(([, shadow]) => !read.has(shadow.path)).length;
+  if (unread) counts.driftHistoryUnread = (counts.driftHistoryUnread ?? 0) + unread;
   for (const [entry, shadow] of due) {
     const versions = [...new Set(read.get(shadow.path) ?? [])].filter(oid => oid !== shadow.state.level && oid !== shadow.state.baseline).slice(0, DRIFT_HISTORY_VERSIONS);
     if (versions.length) entry.driftHistory = versions;
@@ -787,7 +801,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
 
   const counts = { added: 0, modified: 0, deleted: 0, renamed: 0, chunks: 0, waivedImports: 0, waivedDeletes: 0, held: 0, pausedDeletes: 0, collisions: 0, episodeReleased: 0, costDeferred: costDeferred ? 1 : 0,
     skippedContextualMode: 0, skippedCanonicalBytes: 0 };
-  const collisions: SyncSlugCollision[] = [];
+  const collisions: SyncSlugCollision[] = [], historyBudget = { leftMs: DRIFT_HISTORY_BUDGET_MS };
   // What the batches report beside their counts, as a cursor run reported it: committed pages' size states and #5751's legacy skips.
   let sizeStates: SyncSizeStates | undefined;
   const foldReport = (sizes: SyncSizeStates | undefined) => {
@@ -1025,7 +1039,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       for (let i = 0; i < built.entries.length; i += PASS_BATCH_MAX) {
         const chunk = built.entries.slice(i, i + PASS_BATCH_MAX), last = !!fold && i + chunk.length >= built.entries.length; opts.onProgress?.({ phase: 'managed_sync.round_batch', round: { round, target: head, paths: level.paths.length, batch: i / PASS_BATCH_MAX + 1, batches: Math.ceil(built.entries.length / PASS_BATCH_MAX), base: i } });
         // A folded stamp writes the pass row with the obligations as they stand when its import is frozen.
-        const stopped = await readDriftHistories(level, chunk, built.historyOwed, value, () => { assertActive(); beat.report(); }).then(async () => drain(chunk, last ? { ...await stampFor(level), fold: { ...fold, obligations: structuredClone(value.obligations), batch: chunk.length } } : undefined));
+        const stopped = await readDriftHistories(level, chunk, built.historyOwed, value, () => { assertActive(); beat.report(); }, historyBudget, counts).then(async () => drain(chunk, last ? { ...await stampFor(level), fold: { ...fold, obligations: structuredClone(value.obligations), batch: chunk.length } } : undefined));
         if (stopped) return stop(stopped);
         await consumeRetry(chunk.map(entry => entry.path));
         value.telemetry.remaining = Math.max(0, built.entries.length - i - chunk.length) + inFlight.length + owed.length + mismatch.length;
