@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { extractLinksForSlugs, runExtract, runExtractCore } from '../src/commands/extract.ts';
-import { LINK_ENDPOINTS_SQL, prepareAutomaticLinks } from '../src/core/persistence/links-preparation.ts';
+import { prepareAutomaticLinks } from '../src/core/persistence/links-preparation.ts';
 import { disposePersistenceConsumer, persistenceConsumerStatus } from '../src/core/persistence/service.ts';
 import { runMaintenanceSweep } from '../src/core/sweep.ts';
 import { buildRelationalArm } from '../src/core/search/relational-recall.ts';
@@ -514,11 +514,11 @@ for (const kind of testBackends()) {
         const snapshot = (await engine.readPageSnapshot(meeting, { sourceId }))!;
         const rows = () => engine.executeRaw('SELECT l.* FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 ORDER BY l.id', [sourceId]);
         const before = await rows();
-        const executeRaw = engine.executeRaw;
+        const listEndpoints = engine.listLinkEndpointPages;
         let armed = true;
-        const race = spyOn(engine, 'executeRaw').mockImplementation(async function<T>(this: BrainEngine, sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) {
-          const result = await executeRaw.bind(this)<T>(sql, params, opts);
-          if (armed && sql === LINK_ENDPOINTS_SQL) {
+        const race = spyOn(engine, 'listLinkEndpointPages').mockImplementation(async function(this: BrainEngine, ...args: Parameters<BrainEngine['listLinkEndpointPages']>) {
+          const result = await listEndpoints.apply(this, args);
+          if (armed) {
             armed = false;
             if (change === 'delete') await engine.softDeletePage(person, { sourceId });
             else await engine.putPage(person, { type: change === 'retype' ? 'company' : 'person', title: 'Alice Example', compiled_truth: 'A concurrent edit.' }, { sourceId });
@@ -595,11 +595,7 @@ for (const kind of testBackends()) {
         link_type: 'attended', link_source: 'frontmatter', origin_slug: meeting, origin_source_id: sourceId, origin_field: 'attendees' }]);
       const before = await engine.getLinks(meeting, { sourceId });
       const snapshot = (await engine.readPageSnapshot(meeting, { sourceId }))!;
-      const executeRaw = engine.executeRaw;
-      const metadata = spyOn(engine, 'executeRaw').mockImplementation(function<T>(this: BrainEngine, sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) {
-        return sql === LINK_ENDPOINTS_SQL
-          ? Promise.resolve<T[]>([]) : executeRaw.bind(this)<T>(sql, params, opts);
-      });
+      const metadata = spyOn(engine, 'listLinkEndpointPages').mockImplementation(() => Promise.resolve([]));
       try {
         const op = operations.find(op => op.name === 'put_page')!;
         const result = await op.handler({ engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId,
