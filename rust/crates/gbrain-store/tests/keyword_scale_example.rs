@@ -73,6 +73,11 @@ fn the_nosync_loader_refuses_a_brain_another_handle_holds_and_leaves_it_alone() 
     let example = example();
 
     let held = Store::open_dir(&brain, OpenOptions::default()).unwrap();
+    // The raw-byte check reads the record file through a second handle. On
+    // Windows the holder's byte-range lock refuses that read (and every open
+    // of the store rewrites bytes, so closing first is no fix there); the
+    // held store's own read below covers Windows.
+    #[cfg(not(windows))]
     let before = std::fs::read(brain.join("records.redb")).unwrap();
     let refused = load(&example, &corpus_dir, &brain);
     assert!(
@@ -86,6 +91,7 @@ fn the_nosync_loader_refuses_a_brain_another_handle_holds_and_leaves_it_alone() 
             .is_none(),
         "the refused loader wrote a page"
     );
+    #[cfg(not(windows))]
     assert_eq!(
         std::fs::read(brain.join("records.redb")).unwrap(),
         before,
