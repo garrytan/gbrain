@@ -102,10 +102,22 @@ function refuse(scope: StatementDeadline): never {
 /** The write-journal reads (engine-sql/persistence-journal.ts, persistence-claims.ts, persistence-housekeeping.ts, config.ts) that replaced statements this wrapper bounded through executeRaw. */
 const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readCounterRows', 'readAdmissionRate', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceMembership', 'getConfigValues', 'readReceiptBudget', 'readCapacityForecastInputs', 'listHostConsumerRows', 'probeLiveConsumerRows']);
+/**
+ * Typed reads that replaced a statement a doctor entry sent through this wrapper's executeRaw, outside the doctor-*.ts
+ * member lists: the embedding column check, the entity duplicate finder, the source lists, onboard coverage, derived
+ * taint, managed generations, backup maturity, the trust backfill, and the sync hold and pass-row reads.
+ */
+const DOCTOR_PATH_TYPED_READS: readonly string[] = [
+  'readChunkColumnTypes', 'countChunkColumnCoverage', 'listUnretiredPagesBySlugPattern', 'countDistinctInboundLinkers',
+  'listNameVariantCandidates', 'readSoleSourceId', 'readFirstSourceId', 'listSourceIds', 'countDatedMeetingPages',
+  'entityFeatureCoverage', 'countDerivedRowTaint', 'listPendingGenerationMembers', 'listGenerationOrphanCandidates',
+  'readBrainMaturity', 'readOpCheckpointKeys', 'readGitHoldRecords', 'readLiveSyncPassRows',
+];
 /** Those reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
 const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set([
   ...JOURNAL_TYPED_READS, 'getWorktreeBinding', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS,
   ...DOCTOR_CHECKPOINT_MEMBERS, ...DOCTOR_TERMINAL_MEMBERS, ...DOCTOR_BRAIN_MEMBERS, ...DOCTOR_SYNC_MEMBERS, ...DOCTOR_SRC_MEMBERS, ...DOCTOR_FACTS_TRUST_MEMBERS, ...FENCE_CENSUS_MEMBERS,
+  ...DOCTOR_PATH_TYPED_READS,
 ]);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
@@ -143,8 +155,10 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
         return Reflect.apply(fn, target, args);
       }
       // A typed read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline.
+      // It runs with this wrapper as `this`, so a member built on `this.executeRaw` sends its statement through the
+      // bounded executeRaw above; the raw engine's executeRaw does not read the ambient read deadline.
       const deadlineAt = scope.deadlineAt;
-      return withReadDeadline(deadlineAt, () => Reflect.apply(fn, target, args) as Promise<unknown>)
+      return withReadDeadline(deadlineAt, () => Reflect.apply(fn, wrapper, args) as Promise<unknown>)
         .catch((error: unknown) => {
           if (error instanceof ReadDeadlineError) refuse(scope);
           if (cancelled(error) && Date.now() >= deadlineAt - 100) scope.expired = true;

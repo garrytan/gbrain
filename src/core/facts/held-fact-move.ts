@@ -232,6 +232,8 @@ export async function moveRuledSharedHeld(engine: BrainEngine, sourceId: string)
  * holdingHome's config read included, ends on the server at `deadlineAt`, and one ended there rejects as a
  * PreparationDeadlineError. PGLite plans on the engine.
  */
+/** The entity resolver's typed reads (entities/resolve.ts) a plan reaches through heldFactTarget: once raw statements, each takes the plan's deadline. */
+const PLAN_TYPED_READS = new Set(['readLivePageTypes', 'readTrigramCandidates', 'readNamedEntitySlugs', 'readPrefixCandidates', 'readRetirementHop', 'readLiveSlugs', 'readPrefixDirs', 'readPrefixTitleMatches']);
 function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {
   if (engine.kind !== 'postgres') return engine;
   const view: BrainEngine = registerEngineView(new Proxy(engine, { get(target, key) {
@@ -245,9 +247,10 @@ function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {
     const value = Reflect.get(target, key, target);
     // The alias read runs on the engine's own executeRaw: bound to the view, it takes the deadline too.
     if (key === 'resolveAliases') return value.bind(view);
-    // holdingHome's writer-binding read is a typed member: the engine ends it at the same deadline.
-    if (key === 'getWorktreeBinding') return (sourceId: string, hostId: string | null) =>
-      withReadDeadline(deadlineAt, () => target.getWorktreeBinding(sourceId, hostId)).catch((error: unknown) => {
+    // holdingHome's writer-binding read and the strict resolver's typed reads (heldFactTarget) are typed members: the
+    // engine ends each at the same deadline.
+    if (key === 'getWorktreeBinding' || (typeof key === 'string' && PLAN_TYPED_READS.has(key))) return (...args: unknown[]) =>
+      withReadDeadline(deadlineAt, () => (value as (...a: unknown[]) => Promise<unknown>).apply(target, args)).catch((error: unknown) => {
         if (error instanceof ReadDeadlineError) throw new PreparationDeadlineError('held_move_plan', null, error);
         if (isStatementTimeout(error)) throw new PreparationDeadlineError('held_move_plan', error.code, error);
         throw error;
