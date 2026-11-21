@@ -224,6 +224,8 @@ for (const backend of testBackends()) describe(`[${backend}] LC-1: a file restor
       ['a delete a consented put_page undid', [['delete_page', { outcome: removed }], ['put_page', {}]], false],
       ['a no-op repeat of the delete does not hide its removal', [['delete_page', { outcome: removed }], ['delete_page', { outcome: { ...kept, noop: true } }]], true],
       ['a put_page of another page does not undo it', [['delete_page', { outcome: removed }], ['put_page', { pageId: 8 }]], true],
+      ['a put_page deduplicated onto another live page revives nothing and does not undo it', [['delete_page', { outcome: removed }], ['put_page', { outcome: { status: 'duplicate', slug: 'notes/other', duplicate_revision: 3 } }]], true],
+      ['a no-op put_page revives nothing and does not undo it', [['delete_page', { outcome: removed }], ['put_page', { outcome: { status: 'skipped', noop: true } }]], true],
       ['a later delete that kept the file', [['delete_page', { outcome: removed }], ['put_page', {}], ['delete_page', { outcome: kept }]], false],
       ['a retention purge after the removal', [['delete_page', { outcome: removed }], ['delete_page', { outcome: { status: 'purged', retention: true } }]], true],
       ['a retention purge read from the intent only', [['delete_page', { outcome: removed }], ['delete_page', { intent: { purge: true, retention: true }, outcome: { status: 'purged' } }]], true],

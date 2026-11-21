@@ -580,7 +580,7 @@ async function readRemovedFiles(exec: Exec, sourceId: string, input: { pages: Pa
  * evidence is the newest committed `delete_page` of the page that is neither a retention purge (`gbrain pages purge-deleted`,
  * the autopilot purge phase) nor a no-op repeat of a delete (`outcome.noop`, a page already deleted): it wrote the removal (`outcome.write_through.written`), it is not an owner purge, and no
  * committed `restore_page` or `put_page` (a consented `repair file-drift --prefer file` restores through `put_page`) brought
- * the page back after it. So a later delete that left the file (`sync.write_through=false`) is the evidence, not an older
+ * the page back after it (a no-op or a `put_page` deduplicated onto another page brings nothing back). So a later delete that left the file (`sync.write_through=false`) is the evidence, not an older
  * removal a repair already undid. An owner purge tombstones the content source-wide, so its bytes can never be saved again
  * and its path keeps settling `deleted_same`. Retention and owner purge are read from the receipt's outcome (`status`,
  * `retention`), which receipt compaction keeps; the intent it clears is read only while it is there. One indexed read
@@ -597,7 +597,8 @@ export async function readFileRemovingDeletes(exec: Exec, sourceId: string, asks
         ORDER BY r.sequence DESC LIMIT 1) d
       WHERE d.outcome->'write_through'->>'written'='true' AND d.outcome->>'status' IS DISTINCT FROM 'purged'
         AND NOT EXISTS (SELECT 1 FROM persistence_requests l WHERE l.source_id=$1 AND l.slug=x.slug AND l.sequence>d.sequence
-          AND l.state='committed' AND l.operation IN ('restore_page','put_page') AND (l.page_id IS NULL OR l.page_id=x.page_id))`,
+          AND l.state='committed' AND l.operation IN ('restore_page','put_page') AND (l.page_id IS NULL OR l.page_id=x.page_id)
+          AND l.outcome->>'noop' IS DISTINCT FROM 'true' AND l.outcome->>'status' IS DISTINCT FROM 'duplicate')`,
       [sourceId, chunk.map(ask => ask.path), chunk.map(ask => ask.slug), chunk.map(ask => ask.pageId)]);
     for (const row of rows) found.add(row.path);
   }
