@@ -149,6 +149,24 @@ describe('readers key detection', () => {
     expect(misspelledReaderKeys(page(nested[0]), parseMarkdown(page(nested[0]), 'notes/example.md').frontmatter)).toEqual([]);
   });
 
+  test('an anchor or a tag before a flow collection still opens it: the key-looking line inside is nested data; a real one after it is still found', () => {
+    const decorated = ['meta: &defaults {\nReadable_By: [alice-example]\n}\n', 'meta: !!map {\nReadable_By: [alice-example]\n}\n', 'meta: !<tag:yaml.org,2002:map> {\nReadable_By: [alice-example]\n}\n',
+      'meta: &base !!map {\nReadable_By: [alice-example]\n}\n', 'list: &items [\n  a,\nReadable_By: x\n]\n'];
+    for (const extra of decorated) expect({ extra, keys: misspelledReaderKeys(page(extra), null) }).toEqual({ extra, keys: [] });
+    for (const extra of decorated) expect({ extra, keys: misspelledReaderKeys(page(`${extra}Readable_By: [alice-example]\n`), null) }).toEqual({ extra, keys: ['Readable_By'] });
+    expect(misspelledReaderKeys(page(decorated[0]), parseMarkdown(page(decorated[0]), 'notes/example.md').frontmatter)).toEqual([]);
+    // An anchor or tag inside a plain scalar is not a decoration, and an unclosed decorated collection still counts every key-looking line.
+    expect(misspelledReaderKeys(page('note: see &ref {\nReadable_By: x\n'), null)).toEqual(['Readable_By']);
+    expect(misspelledReaderKeys(page('meta: &defaults {\nReadable_By: [alice-example]\n'), null)).toEqual(['Readable_By']);
+  });
+
+  test('a top-level flow mapping and a block-style key under either fence are still misspellings', () => {
+    const flow = '---\n{title: Example, Readable_By: [alice-example]}\n---\nBody\n';
+    expect(misspelledReaderKeys(flow, parseMarkdown(flow, 'notes/example.md').frontmatter)).toEqual(['Readable_By']);
+    for (const fenced of ['---\ntitle: Example\nReadable_By: [alice-example]\n---\nBody\n', ' ---\ntitle: Example\nReadable_By: [alice-example]\n---\nBody\n'])
+      expect({ fenced, keys: misspelledReaderKeys(fenced, parseMarkdown(fenced, 'notes/example.md').frontmatter) }).toEqual({ fenced, keys: ['Readable_By'] });
+  });
+
   test('a flow collection or quote that never closes before the block ends counts every key-looking line (the guard only refuses)', () => {
     expect(misspelledReaderKeys(page('meta: {\nReadable_By: [alice-example]\n'), null)).toEqual(['Readable_By']);
     expect(misspelledReaderKeys(page('note: "open\nReadable_By: x\n'), null)).toEqual(['Readable_By']);
@@ -218,6 +236,22 @@ for (const managed of [false, true]) describe(`${managed ? 'managed brain with a
         expect(normalizeReaders((await snapshot(engine, ctx, slug))!.page.frontmatter)).toBeNull();
         expect({ slug, thrown: (await put(ctx, `${slug}-bad`, page(`${extra}Readable_By: [alice-example]\n`))).thrown }).toEqual({ slug, thrown: 'readers_noncanonical' });
         expect(await snapshot(engine, ctx, `${slug}-bad`)).toBeNull();
+      }
+    });
+  }, 120_000);
+
+  test('a Readable_By line nested under an anchored or tagged flow collection is stored as it is; a flow mapping or a block key under either fence is still refused', async () => {
+    await brain(managed, async (ctx, engine) => {
+      for (const [slug, extra] of [['notes/anchor', 'meta: &defaults {\nReadable_By: [alice-example]\n}\n'], ['notes/tag', 'meta: !!map {\nReadable_By: [alice-example]\n}\n']] as const) {
+        expect({ slug, thrown: (await put(ctx, slug, page(extra))).thrown }).toEqual({ slug, thrown: undefined });
+        expect(normalizeReaders((await snapshot(engine, ctx, slug))!.page.frontmatter)).toBeNull();
+        expect({ slug, thrown: (await put(ctx, `${slug}-bad`, page(`${extra}Readable_By: [alice-example]\n`))).thrown }).toEqual({ slug, thrown: 'readers_noncanonical' });
+        expect(await snapshot(engine, ctx, `${slug}-bad`)).toBeNull();
+      }
+      for (const [slug, content] of [['notes/flow-map', '---\n{title: Example, Readable_By: [alice-example]}\n---\nBody\n'],
+        ['notes/block', '---\ntitle: Example\nReadable_By: [alice-example]\n---\nBody\n'], ['notes/block-indented', ' ---\ntitle: Example\nReadable_By: [alice-example]\n---\nBody\n']] as const) {
+        expect({ slug, thrown: (await put(ctx, slug, content)).thrown }).toEqual({ slug, thrown: 'readers_noncanonical' });
+        expect(await snapshot(engine, ctx, slug)).toBeNull();
       }
     });
   }, 120_000);

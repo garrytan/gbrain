@@ -27,7 +27,7 @@ const misspelled = (key: string): boolean => key !== READERS_KEY && key.toLowerC
 /** Where a value's text leaves the scan: inside a flow collection (`{`, `[`) or a quoted scalar a line break did not close. */
 interface ValueState { depth: number; quote: '"' | "'" | null; last: string }
 
-/** Advances `state` over `text`, the rest of a line: flow brackets and quotes open only where a YAML value can start, and a `#` after a space is a comment. */
+/** Advances `state` over `text`, the rest of a line: flow brackets and quotes open only where a YAML value can start (an anchor or a tag before one does not hide it), and a `#` after a space is a comment. */
 function scanValue(text: string, state: ValueState): void {
   for (let i = 0; i < text.length; i++) {
     const c = text[i]!;
@@ -42,6 +42,13 @@ function scanValue(text: string, state: ValueState): void {
       if (c === '#' && (i === 0 || /\s/.test(text[i - 1]!))) return;
       if (/\s/.test(c)) continue;
       const startsValue = state.last === '' || ':[{,'.includes(state.last);
+      if ((c === '&' || c === '!') && startsValue) {
+        // An anchor or a tag decorates the value after it: skip it and leave `last`, so a `{` or `[` after it still opens a collection.
+        const end = c === '!' && text[i + 1] === '<' ? text.indexOf('>', i) : -1;
+        if (end >= 0) i = end;
+        else while (i + 1 < text.length && !/[\s,[\]{}]/.test(text[i + 1]!)) i++;
+        continue;
+      }
       if ((c === '"' || c === "'") && startsValue) state.quote = c;
       else if ((c === '[' || c === '{') && startsValue) state.depth++;
       else if ((c === ']' || c === '}') && state.depth > 0) state.depth--;
