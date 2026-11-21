@@ -37,6 +37,7 @@ import { deriveBrainId } from '../src/core/skillpack/brain-resident-locate.ts';
 import type { AdvisorContext } from '../src/core/advisor/types.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
+import { N4_SOURCE_MEMBERS } from './helpers/n4-engine-members.ts';
 
 function ctx(engine: unknown, over: Partial<AdvisorContext> = {}): AdvisorContext {
   return {
@@ -151,6 +152,7 @@ describe('collect-uninstalled-brain-pack (five-gate matrix)', () => {
 
   function sourcesEngine(rows: unknown[], counter = { calls: 0 }): { engine: BrainEngine; counter: { calls: number } } {
     const engine = {
+      ...N4_SOURCE_MEMBERS,
       executeRaw: async () => {
         counter.calls++;
         return rows;
@@ -277,6 +279,7 @@ describe('collect-uninstalled-brain-pack (five-gate matrix)', () => {
   test('fail-open — loadAllSources throwing → []', async () => {
     await withEnv({ GBRAIN_HOME: emptyHome() }, async () => {
       const engine = {
+        ...N4_SOURCE_MEMBERS,
         executeRaw: async () => {
           throw new Error('relation "sources" does not exist');
         },

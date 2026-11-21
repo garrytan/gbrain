@@ -19,6 +19,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { N4_SOURCE_MEMBERS } from './helpers/n4-engine-members.ts';
 
 let workerConnects = 0;
 let workerPoolSizes: number[] = [];
@@ -86,6 +87,7 @@ beforeEach(() => {
 function fakeEngine(kind: 'postgres' | 'pglite'): BrainEngine {
   return {
     kind,
+    ...N4_SOURCE_MEMBERS,
     executeRaw: async (sql: string) => sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [], // #6482: one well-formed unmanaged row
     getConfig: async () => null,
   } as unknown as BrainEngine;
