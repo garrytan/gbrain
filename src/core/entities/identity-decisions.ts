@@ -37,6 +37,7 @@ import { gitChildEnv } from '../git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { spawnSync } from '../spawn.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const IDENTITY_DIR = '.gbrain/identity';
 const DECISION_ID = /^[0-9a-f]{16}$/;
@@ -348,7 +349,8 @@ async function databaseOnly(engine: BrainEngine, home: IdentityHome, decisions: 
 /**
  * Sync's hook: re-project the home source's decisions after it syncs, retry pending members after any sync, fill the
  * fingerprints of "different" decisions recorded before they were kept, then run the company sweep from the pages the
- * sync changed. Never throws.
+ * sync changed. Logs and swallows any failure except an engine capability refusal (`engine_capability_missing`),
+ * which it rethrows so an engine that does not serve a step never passes a sync that skipped it.
  */
 export async function syncIdentityDecisions(engine: BrainEngine, sourceId: string, log?: (line: string) => void, changedSlugs?: readonly string[] | 'all'): Promise<void> {
   try {
@@ -361,6 +363,7 @@ export async function syncIdentityDecisions(engine: BrainEngine, sourceId: strin
     }
     await fillDecisionEvidence(engine);
   } catch (e) {
+    rethrowCapabilityRefusal(e);
     log?.(`[dedupe] duplicate decisions were not reconciled after this sync: ${e instanceof Error ? e.message : String(e)} (gbrain dedupe reconcile retries)`);
   }
   if (!changedSlugs?.length) return;
@@ -369,6 +372,7 @@ export async function syncIdentityDecisions(engine: BrainEngine, sourceId: strin
     const r = await autoLinkCompanies(engine, { ...(changedSlugs === 'all' ? {} : { near: changedSlugs.map(slug => ({ source_id: sourceId, slug })) }), log });
     if (r.linked || r.unlinked) log?.(`[dedupe] linked ${r.linked} and unlinked ${r.unlinked} company group(s) that share an id`);
   } catch (e) {
+    rethrowCapabilityRefusal(e);
     log?.(`[dedupe] companies that share an id were not linked after this sync: ${e instanceof Error ? e.message : String(e)} (gbrain dedupe reconcile retries)`);
   }
 }
