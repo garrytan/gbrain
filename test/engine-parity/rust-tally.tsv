@@ -15,7 +15,7 @@ test/engine-parity/chunks.test.ts	21	0
 test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-export.test.ts	15	0
 test/engine-parity/cli-reads-import.test.ts	19	0
-test/engine-parity/cli-reads-ops.test.ts	22	0
+test/engine-parity/cli-reads-ops.test.ts	24	0
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/config-ingest.test.ts	9	0
 test/engine-parity/connect-gate.test.ts	7	0

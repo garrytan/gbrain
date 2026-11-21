@@ -488,8 +488,8 @@ replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	22	no	yes	yes	serves
-setConfig	config	yes	35	no	yes	yes	serves
+getConfig	config	yes	23	no	yes	yes	serves
+setConfig	config	yes	36	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -814,7 +814,7 @@ listAccessPolicySourceIds	cli_reads_export	yes	2	no	yes	yes	serves
 setLocalStatementTimeout	cli_reads_export	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	5	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
-listExactIdentityCandidates	cli_reads_ops	yes	5	no	yes	yes	serves
+listExactIdentityCandidates	cli_reads_ops	yes	7	no	yes	yes	serves
 rankEntities	cli_reads_ops	yes	4	no	yes	yes	serves
 readRankCoverage	cli_reads_ops	yes	1	no	yes	yes	serves
 readExactSnippetChunks	cli_reads_ops	yes	1	no	yes	yes	serves

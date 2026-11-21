@@ -502,7 +502,6 @@ src/core/ops/search.ts	execute_raw	1
 src/core/ops/storage-manifest.ts	execute_raw	1
 src/core/ops/tags.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
-src/core/ops/whois.ts	execute_raw	1
 src/core/output/writer.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6
 src/core/owned-folder/destination.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the default source's local_path and config
