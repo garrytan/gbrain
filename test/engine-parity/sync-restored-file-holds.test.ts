@@ -71,6 +71,8 @@ describe('engine parity: a file restored after a delete asks first', () => {
             const root = join(home, SOURCE);
             mkdirSync(join(root, 'notes'), { recursive: true });
             git(root, 'init', '-q');
+            // gbrain's own Git effect commits with the checkout's identity; a CI runner has no global one.
+            git(root, 'config', 'user.name', 'Example'); git(root, 'config', 'user.email', 'example@example.invalid');
             writeFileSync(join(root, '.git', 'hooks', 'post-commit'), '#!/bin/sh\n# gbrain brain-durability post-commit hook (v0.42.44+)\n');
             chmodSync(join(root, '.git', 'hooks', 'post-commit'), 0o755);
             writeFileSync(join(root, 'notes', 'ivy.md'), note('Ivy', 'Ivy private note. Okapi keyword.'));
