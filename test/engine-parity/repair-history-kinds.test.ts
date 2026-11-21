@@ -473,4 +473,43 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
       throw err;
     }
   }));
+  parityTest('the version, overwrite and moved-page reads answer the same rows on every arm', {
+    methods: ['insertWriteRequest', 'completeWriteRow', 'setWriteContext', 'putPage', 'createVersion', 'listOverwriteCandidates', 'listVersionsAfter',
+      'listOverwriteLivePages', 'readVersionContent', 'readArchivedVersionBody', 'listLivePagesBySourcePaths', 'listLivePagesByFileName',
+      'listLivePagesSharingFrontmatterId', 'hasSegmentedHistory', 'readLivePagesByIds'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await seedOverwrite(engine);
+    const [candidate] = await engine.listOverwriteCandidates('default', ['notes/overwritten'], 5);
+    const pageId = Number(candidate!.page_id), versionId = Number(candidate!.version_id);
+    const content = (row: { title: unknown; type: unknown; compiled_truth: unknown; timeline: unknown; frontmatter: unknown; tags: unknown; body_storage: unknown } | null) =>
+      row && { title: row.title, type: row.type, compiled_truth: row.compiled_truth, timeline: row.timeline, body_storage: row.body_storage,
+        frontmatter: typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter, tags: row.tags };
+    const later = (await engine.listVersionsAfter([pageId], 0)).map(v => ({ ...content(v), writer: v.write_request_id === candidate!.db_request_id ? 'w' : v.write_request_id === null ? null : 'other' }));
+    const none = await engine.listVersionsAfter([pageId], versionId);
+    const live = (await engine.listOverwriteLivePages([pageId, 999_999])).map(p => ({ ...content(p), revision_writer: p.revision_write_request_id === candidate!.import_request_id ? 's' : 'other' }));
+    const version = content(await engine.readVersionContent(versionId, pageId));
+    const wrongPage = await engine.readVersionContent(versionId, pageId + 1);
+    const archived = await engine.readArchivedVersionBody(pageId, candidate!.import_request_id);
+    const notArchived = await engine.readArchivedVersionBody(pageId, candidate!.db_request_id);
+    const put = (slug: string, sourcePath: string | null, frontmatter: Record<string, unknown> = {}) =>
+      engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body.`, timeline: '', frontmatter, ...(sourcePath ? { source_path: sourcePath } : {}) }, { sourceId: 'default' });
+    const a = await put('notes/a', 'notes/a.md', { id: 'shared-id' });
+    const b = await put('notes/b', 'docs/a.md', { id: 'shared-id' });
+    await put('notes/c', 'notes/c.md', { id: 7 });
+    await put('notes/d', 'a.md');
+    const slugsOf = (rows: Array<{ slug: string }>) => rows.map(r => r.slug);
+    const strip = (rows: Array<{ id: number; slug: string; revision: string; source_path: string | null }>) => rows.map(({ slug, source_path }) => ({ slug, source_path }));
+    return {
+      later, none, live, version, wrongPage,
+      archived: archived && { compiled_truth: archived.compiled_truth, body_storage: archived.body_storage, same: archived.id === versionId }, notArchived,
+      byPaths: strip(await engine.listLivePagesBySourcePaths('default', Number(a.id), ['notes/a.md', 'docs/a.md', 'notes/c.md', 'missing.md'])),
+      byName: await engine.listLivePagesByFileName('default', Number(a.id), 'a.md'),
+      sharing: await engine.listLivePagesSharingFrontmatterId('default', Number(a.id)),
+      sharingNone: await engine.listLivePagesSharingFrontmatterId('default', 999_999),
+      segmented: await engine.hasSegmentedHistory(Number(a.id)),
+      byIds: slugsOf(await engine.readLivePagesByIds('default', [Number(a.id), Number(b.id), 999_999])).sort(),
+      otherSource: await engine.readLivePagesByIds('missing-source', [Number(a.id)]),
+    };
+  });
 });

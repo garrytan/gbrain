@@ -94,6 +94,14 @@ const INTERFACE_METHODS: readonly string[] = [
   'readLivePageIdBySlug', 'readPageTierRef', 'readPageTierRows', 'pageHasFrontmatterKey', 'listTakeIdsLeavingFence', 'listTakePreimages', 'deleteTakesByIds', 'findTakeId',
   // The take-supersession repair reads and pointer write (engine-sql/takes-reads.ts; test/engine-parity/repair-takes-timeline.test.ts)
   'listTakePointers', 'listTakeSupersedeReceipts', 'setTakeSupersededBy',
+  // The accepted-takes repair reads (engine-sql/takes-reads.ts; test/engine-parity/repair-history-kinds.test.ts)
+  'listAcceptedTakeRemovals', 'readTakeRowTier',
+  // The batch 6a history repair reads (engine-sql/version-reasons.ts, overwrite-reads.ts, atom-restore-reads.ts,
+  // moved-page-reads.ts; test/engine-parity/repair-history-kinds.test.ts)
+  'listVersionsByChangeReason', 'replaceVersionChangeReasons', 'listRetainedVersionBodies', 'readArchivedVersionBody',
+  'listOverwriteCandidates', 'listVersionsAfter', 'listOverwriteLivePages', 'readVersionContent',
+  'listRestorableAtoms', 'countKeptAtomRetirements',
+  'listLivePagesBySourcePaths', 'listLivePagesByFileName', 'listLivePagesSharingFrontmatterId', 'hasSegmentedHistory', 'readLivePagesByIds',
   // decide family, group B: calibration profiles
   'getLatestCalibrationProfile', 'isCalibrationProfileUnchanged', 'insertCalibrationProfile', 'readVoiceGateHealth', 'purgeCalibrationProfilesByWave',
   'listHeldFenceTakeRows',
@@ -205,6 +213,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'listSessionFactsForClassification', 'listSessionFactTwins', 'listCapturedFactsForClassification', 'countLabelFacts',
   // conversation-labels preview reads (engine-sql/label-repair-reads.ts; test/engine-parity/repair-takes-timeline.test.ts)
   'listLabelFactCandidates', 'listSegmentedLabelPages', 'hasActiveAuditMarker',
+  // redacted-facts and the conversation-labels retirement (engine-sql/fact-text-repair.ts; test/engine-parity/repair-history-kinds.test.ts)
+  'listRedactedFactCandidates', 'restoreRedactedFactTexts', 'listProjectedFenceRows', 'listUnexpiredFactIds', 'lockFactRows',
+  'expireFactWithNote', 'expirePageFactsBySource', 'readMaxFactRowNum',
   'listExtractorFactsForClassification', 'listClosedConsolidationTies', 'listPagelessEntityFacts', 'listOntologyFactCandidates', 'listDuplicateFactRows', 'listFactsOnValidDay', 'readLivePageByPath', 'listPurgedPageFactCandidates', 'listFactsHomeCandidates', 'listHeldHomeRows', 'listOrphanedFenceRows', 'readFactSnapshots', 'listConceptLineageRows', 'listConceptInputRows', 'listNamedVisibilityRows', 'countPurgedPageFacts', 'listUnwithdrawnFacts', 'listWorldFactsFromPrivateSources', 'listFactsForRelevance',
   'countUncomparableFacts', 'matchSavedFacts', 'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listFactsFromQuotedPages',
   'listOwnerTierFacts', 'listRestatedPrivateCopies', 'countDerivedFactTaint',
