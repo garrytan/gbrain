@@ -109,7 +109,6 @@ src/commands/doctor/checks/content-quality.ts#runContentSanity	promise_catch_emp
 src/commands/doctor/checks/content-quality.ts#runFrontmatter>dbPageCountForSource	capability_refusal_swallowed	1
 src/commands/doctor/checks/content-quality.ts#runFrontmatter>dbPageCountForSource	catch_empty	1
 src/commands/doctor/checks/content-quality.ts#runQuarantine	capability_refusal_swallowed	2
-src/commands/doctor/checks/content-quality.ts#runQuarantine	catch_empty	2	audit health-5: quarantined_pages and flagged_pages answer ok "Skipped"
 src/commands/doctor/checks/conversation-outcomes.ts#conversationLabelFactsCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/conversation-outcomes.ts#conversationOutcomesStaleCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/coordination-lock.ts#checkCoordinationLockLocation	capability_refusal_swallowed	1
@@ -275,7 +274,6 @@ src/commands/doctor/checks/queue-assets.ts#runImageAssets	capability_refusal_swa
 src/commands/doctor/checks/queue-assets.ts#runImageAssets	catch_empty	2
 src/commands/doctor/checks/queue-assets.ts#runQueueHealth	capability_refusal_swallowed	1
 src/commands/doctor/checks/queue-jobs.ts#checkBatchRetryHealth	catch_empty	1
-src/commands/doctor/checks/queue-jobs.ts#computeAutopilotFanoutConcurrencyCheck	catch_empty	1	audit health-5: autopilot_fanout_concurrency answers ok "Skipped"
 src/commands/doctor/checks/queue-jobs.ts#computeOrphanedPrivateQueueCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/queue-jobs.ts#computePgliteQueueHealth	capability_refusal_swallowed	1
 src/commands/doctor/checks/queue-jobs.ts#computeQueueHealthCheck	capability_refusal_swallowed	2
@@ -1648,6 +1646,7 @@ src/core/persistence/topology-recovery.ts#finishTopologyClone<anon@1>	capability
 src/core/persistence/topology-transaction.ts#topologyTransaction	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/unbound-pages.ts#entries	catch_empty	1
 src/core/persistence/unbound-source.ts#readDatabaseOnlyActivatedSources	catch_empty	1
+src/core/persistence/unsourced-put-fork.ts#noteSuppressedSourceFlip	catch_empty	1	landed on master (#9915, #9939) after this guard was written; known debt, fix by a typed degraded marker
 src/core/persistence/worktree-lease.ts#foreignWaiterAhead	catch_empty	1
 src/core/persistence/worktree-refresh.ts#boundedMemberSync>drain	promise_catch_empty	1
 src/core/persistence/worktree-refresh.ts#fenceAndMerge	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
@@ -1723,6 +1722,7 @@ src/core/repair/fences.ts#reportFences	capability_refusal_swallowed	1
 src/core/repair/fences.ts#settings	promise_catch_empty	1
 src/core/repair/fences.ts#tier3	promise_catch_empty	1
 src/core/repair/file-drift-class.ts#readManifest	catch_empty	1
+src/core/repair/file-drift-compare.ts#earlierVersionHeld	catch_empty	1	landed on master (#9915, #9939) after this guard was written; known debt, fix by a typed degraded marker
 src/core/repair/file-drift.ts#fileDriftConsentText	catch_empty	1
 src/core/repair/label-write.ts#labelFileRefusal>read	catch_empty	1
 src/core/repair/missing-tables.ts#apply<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
@@ -2164,7 +2164,6 @@ src/eval/brainbench/adapters/codex.ts#CodexAdapter.buildPreamble	capability_refu
 src/eval/brainbench/trust-scenario.ts#executeStep	capability_refusal_swallowed	1
 src/eval/brainbench/trust-scenario.ts#probeStores	capability_refusal_swallowed	1
 src/eval/brainbench/trust-scenario.ts#probeStores	catch_empty	1
-src/eval/decide-eval-flags.ts#decideSpendTotals	capability_refusal_swallowed	1
 src/eval/decide-eval-flags.ts#decideSpendTotals	promise_catch_empty	1
 src/eval/longmemeval/diagnostics.ts#diagnoseOne<anon@2>	catch_empty	1
 src/eval/longmemeval/diagnostics.ts#runDiagnostics	promise_catch_empty	1
