@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { assertPurgeAge } from '../engine-errors.ts';
 import { loadConfig } from '../config.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { requireConsent, type ConsentRequest } from '../consent.ts';
@@ -176,7 +177,8 @@ interface RecordedExpiry { slugs: string[]; exclude: number[]; blocked: DeletedP
  * PURGE_PARK_LIMIT failures it is parked and skipped, like the managed purge's; a transient one is retried next run.
  */
 async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: number, retryParked: boolean, held: ReadonlySet<number>, only?: PurgeFilter): Promise<RecordedExpiry> {
-  const hours = String(Math.max(0, Math.floor(olderThanHours)));
+  assertPurgeAge(olderThanHours);
+  const hours = String(Math.floor(olderThanHours));
   const { parkUncarriedInPurge } = await import('../repair/origin-carry.ts');
   await prunePurgeParks(engine);
   const run = new ItemRun('purge.recorded_tombstones');
@@ -288,9 +290,10 @@ export function purgeHoldsSql(page: string, source: string, released?: string): 
  * origins it parks; the run itself reads the parks as they are.
  */
 export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; forecast?: CarryForecast; model?: boolean } = {}): Promise<PurgeSelection> {
+  assertPurgeAge(olderThanHours);
   const release = (opts.forecast?.release ?? []).map(origin => origin.id), hold = (opts.forecast?.hold ?? []).map(origin => origin.id);
   if (!await managedPersistenceEnabled(engine)) {
-    const parked = (await recordedTombstones(engine, String(Math.max(0, Math.floor(olderThanHours))), release))
+    const parked = (await recordedTombstones(engine, String(Math.floor(olderThanHours)), release))
       .filter((row): row is RecordedTombstone & { park: PurgePark } => isParked(row.park));
     const skipped = new Set(opts.retryParked ? [] : parked.map(row => row.id));
     const unreviewed = (await readUnreviewedSyncTombstones(engine, olderThanHours)).filter(row => !skipped.has(row.id));
@@ -409,6 +412,10 @@ export function purgePhaseNote(result: DeletedPagePurge): string {
 export type PurgeFilter = (page: { source_id: string; slug: string }) => boolean;
 
 export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; only?: PurgeFilter; release?: readonly number[] } = {}): Promise<DeletedPagePurge> {
+  // Refuse an age that is not a finite number of hours, 0 or more, before the carry, the recorded-tombstone expiry or
+  // any other step runs: a negative or NaN age used to clamp to 0 there and hard-delete every recorded tombstone even
+  // though the engine purge itself refuses it (engine-errors.ts PurgeAgeError).
+  assertPurgeAge(olderThanHours);
   const { release = [], ...purge } = opts;
   // GST-2766: an owner purge a park held is recorded apart from the park, so the carry clearing the park never drops it.
   await releaseStaleHolds(engine);

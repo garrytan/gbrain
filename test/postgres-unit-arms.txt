@@ -42,6 +42,7 @@ test/access-room.test.ts
 test/access-rule-hints-owner-gst2128.test.ts
 test/access-rule-owner-gst2698.test.ts
 test/access-token-grant-columns.test.ts
+test/access-unborn-head-gbra706.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-who-can-read-owner-only.test.ts
 test/access-writes.test.ts
@@ -157,10 +158,13 @@ test/engine-parity/links.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
+test/engine-parity/page-write-readers.test.ts
 test/engine-parity/pages.test.ts
 test/engine-parity/private-page-reads.test.ts
+test/engine-parity/put-source-fork.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
+test/engine-parity/repair-frontmatter-holds.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts
@@ -639,6 +643,7 @@ test/projection-rebuild-progress-9192.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
 test/publish-redact-unpushed-gst2988.test.ts
+test/purge-age-coordinated.test.ts
 test/purge-context-facts-8859.test.ts
 test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts
@@ -664,6 +669,8 @@ test/qm-scope-read.test.ts
 test/qm-scope-writes.test.ts
 test/read-meta-diag.test.ts
 test/readers-label-setter.test.ts
+test/readers-noncanonical-owner-reads.test.ts
+test/readers-noncanonical.test.ts
 test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
