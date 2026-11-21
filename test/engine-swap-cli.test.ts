@@ -8,7 +8,7 @@
  * refresh gate has its own test (engine-swap-refresh-drain.test.ts). (4) No seam beyond injected env, home and status.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -39,7 +39,7 @@ async function run(args: string[], extra: Partial<EngineSwapCliDeps> = {}) {
   const code = await runEngineSwap(args, {
     openEngine: async () => Object.assign(Object.create(engine), { disconnect: async () => undefined }) as BrainEngine,
     env: { GBRAIN_DATABASE_URL: 'postgresql://db.example/brain?app=VALUECANARY', HOME: home },
-    home, dataDir: home, resolveBrain: () => 'host',
+    home, dataDir: home, resolveBrain: () => 'host', cliBrain: null,
     out: t => { stdout += t; },
     writeError: (e, o) => { const r = renderCliError(e, { json: o.json, command: 'engine swap', tty: false }); error = r.stdout ?? r.stderr ?? ''; return r.exitCode; },
     ...extra,
@@ -116,6 +116,31 @@ describe('engine swap --plan opens only the host brain, and only if it exists', 
     await run(['--to', 'rust', '--plan', '--brain', 'mount-a', '--json'], { resolveBrain: e => { asked.push(e); return 'mount-a'; } });
     expect(asked).toEqual(['mount-a']);
   });
+
+  test('the global --brain flag (stripped before dispatch) reaches the resolver', async () => {
+    const asked: Array<string | null> = [];
+    const r = await run(['--to', 'rust', '--plan', '--json'], { cliBrain: 'team-x', resolveBrain: e => { asked.push(e); return e ?? 'host'; } });
+    expect(asked).toEqual(['team-x']);
+    expect(JSON.parse(r.error).reason).toBe('team_brain');
+  });
+
+  test('an existing empty directory is not a brain: refused, and nothing is created in it', async () => {
+    const gh = mkdtempSync(join(tmpdir(), 'gbrain-swap-cfg-'));
+    const empty = join(gh, 'empty-brain');
+    mkdirSync(empty);
+    mkdirSync(join(gh, '.gbrain'), { recursive: true });
+    writeFileSync(join(gh, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: empty }));
+    try {
+      let error = '';
+      const code = await withEnv({ GBRAIN_HOME: gh, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_BRAIN_ID: undefined }, () => runEngineSwap(['--to', 'rust', '--plan', '--json'], {
+        resolveBrain: () => 'host', env: {}, home: '', out: () => undefined,
+        writeError: (e, o) => { const r = renderCliError(e, { json: o.json, command: 'engine swap', tty: false }); error = r.stdout ?? ''; return r.exitCode; },
+      }));
+      expect(code).not.toBe(0);
+      expect(JSON.parse(error).code).toBe('no_brain');
+      expect(readdirSync(empty)).toEqual([]);
+    } finally { rmSync(gh, { recursive: true, force: true }); }
+  }, 60_000);
 
   test('a configured PGLite path that does not exist is refused and never created', async () => {
     const gh = mkdtempSync(join(tmpdir(), 'gbrain-swap-cfg-'));

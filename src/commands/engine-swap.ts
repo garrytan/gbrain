@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { writeCliError } from '../cli/cli-error.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { noBrainError } from '../core/engine-connect.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -106,6 +107,8 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
   openEngine?: () => Promise<BrainEngine>;
   /** Resolves the selected brain id (default: resolveBrainId, which reads --brain, GBRAIN_BRAIN_ID and .gbrain-mount). */
   resolveBrain?: (explicit: string | null) => string;
+  /** The global --brain value (default: getCliOptions().brain). */
+  cliBrain?: string | null;
   out?: (text: string) => void;
   writeError?: (e: unknown, opts: { json: boolean }) => number;
 }
@@ -116,7 +119,8 @@ async function openConfiguredEngine(): Promise<BrainEngine> {
   // Read only: PGLite creates a database at a missing path on connect, so a missing store is refused, never made.
   const engineConfig = toEngineConfig(config);
   // A brain with no server URL is a file datastore: its path must already exist.
-  if (!engineConfig.database_url && (!engineConfig.database_path || !existsSync(engineConfig.database_path))) {
+  // An existing directory is not enough: PGLite runs initdb on a directory with no PG_VERSION.
+  if (!engineConfig.database_url && (!engineConfig.database_path || !existsSync(join(engineConfig.database_path, 'PG_VERSION')))) {
     throw opError('no_brain', `No brain exists at ${engineConfig.database_path ?? '(no path configured)'}; the swap plan creates nothing.`,
       'Check the configured path with `gbrain engine status --json`; nothing was created.', { docs: 'docs/guides/engine-swap.md#plan' });
   }
@@ -136,7 +140,9 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
   if (parsed.to !== 'rust') return writeError(usage(`--to ${parsed.to ?? '(missing)'} is not available: this build previews a move to rust only.`), parsed);
   if (!parsed.plan) return writeError(usage('Only the read-only plan is available in this build: add --plan.'), parsed);
   let brainId: string;
-  try { brainId = (deps.resolveBrain ?? resolveBrainId)(parsed.brain ?? null); } catch (e) { return writeError(e, parsed); }
+  // The global --brain flag is stripped into getCliOptions() before dispatch; a local one wins.
+  const explicitBrain = parsed.brain ?? (deps.cliBrain !== undefined ? deps.cliBrain : getCliOptions().brain) ?? null;
+  try { brainId = (deps.resolveBrain ?? resolveBrainId)(explicitBrain); } catch (e) { return writeError(e, parsed); }
   if (brainId !== HOST_BRAIN_ID) return writeError(mountedBrainError(brainId), parsed);
   let engine: BrainEngine | null = null;
   try {
