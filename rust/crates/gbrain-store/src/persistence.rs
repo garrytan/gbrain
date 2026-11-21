@@ -776,6 +776,19 @@ pub struct WriteCompletion {
     pub probe_purges: bool,
 }
 
+/// `TerminalIntentCompaction` of `src/core/engine-sql/persistence-journal.ts`: the compaction of a
+/// terminal request whose stored intent carried purged content (`journal.ts` finishTerminal).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalIntentCompaction {
+    pub id: String,
+    /// What the receipt keeps without its intent.
+    pub left: i64,
+    /// The terminal reservation the completion left.
+    pub reservation: i64,
+    pub counter_keys: Vec<String>,
+}
+
 /// `TRUE_UP_CLAMP_SQL`: adds `clamped` counters to `persistence.true_up.clamped` (a value that is
 /// not digits counts as 0); nothing is written when none clamped.
 fn add_true_up_clamped(tx: &mut dyn KvWrite, clamped: u64) -> Result<()> {
@@ -795,6 +808,49 @@ fn add_true_up_clamped(tx: &mut dyn KvWrite, clamped: u64) -> Result<()> {
 /// committed the reservation is kept whole. `None`, with nothing changed, when the result does not fit the
 /// terminal reservation. A source has no fact or page purge rows here, so the purge probe answers
 /// false.
+/// `compactTerminalIntent(compaction)`, as the SQL member's one statement: drops the request's
+/// intent and marks it compacted; its terminal reservation shrinks to `left` plus its effect bytes
+/// unless an effect is unfinished; each named counter (once) releases `reservation` minus what is
+/// kept, never below zero. The compacted row, or `None` for an unknown id (nothing changes). The
+/// row's `updated_at` stays as it was.
+pub(crate) fn compact_terminal_intent_in(
+    tx: &mut dyn KvWrite,
+    c: &TerminalIntentCompaction,
+) -> Result<Option<Value>> {
+    let Some(mut record) = request_by_id(&*tx, &c.id)? else {
+        return Ok(None);
+    };
+    let (effect_bytes, unfinished) = effects::effect_totals(&*tx, &c.id)?;
+    let current = extra_i64(&record, "terminal_reservation");
+    let out_of_range = || {
+        StoreError::invalid("compactTerminalIntent: a byte count is out of range for type bigint")
+    };
+    let kept = if unfinished {
+        current
+    } else {
+        let left = c.left.checked_add(effect_bytes).ok_or_else(out_of_range)?;
+        current.min(left)
+    };
+    record.intent = Value::Null;
+    record.extra.insert("compacted".into(), json!(true));
+    record
+        .extra
+        .insert("terminal_reservation".into(), json!(kept));
+    write_request(tx, &record)?;
+    let released = c.reservation.checked_sub(kept).ok_or_else(out_of_range)?;
+    for key in distinct_keys(&c.counter_keys) {
+        let Some(mut counter) = read_counter(&*tx, &key)? else {
+            continue;
+        };
+        counter.terminal_bytes = counter
+            .terminal_bytes
+            .checked_sub(released.min(counter.terminal_bytes))
+            .ok_or_else(out_of_range)?;
+        write_counter(tx, &key, &counter)?;
+    }
+    Ok(Some(record.to_row()))
+}
+
 pub(crate) fn complete_write_row_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
@@ -1271,6 +1327,14 @@ impl Store {
     /// `completeWriteRow(completion)`: the completed row, or `None` when it does not fit.
     pub fn complete_write_row(&self, completion: &WriteCompletion) -> Result<Option<Value>> {
         self.write(|tx| complete_write_row_in(tx, &*self.env, completion))
+    }
+
+    /// `compactTerminalIntent(compaction)`: the compacted row, or `None` for an unknown id.
+    pub fn compact_terminal_intent(
+        &self,
+        compaction: &TerminalIntentCompaction,
+    ) -> Result<Option<Value>> {
+        self.write(|tx| compact_terminal_intent_in(tx, compaction))
     }
 
     /// `cancelWriteRow(cancellation)`: `{ status, row }`, or `None` when the row does not exist.

@@ -258,6 +258,18 @@ impl Brain {
         })
     }
 
+    /// `compactTerminalIntent(compaction)`: the compacted row, or `null` for an unknown id.
+    #[napi]
+    pub fn compact_terminal_intent<'env>(
+        &self,
+        env: &'env Env,
+        compaction: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.compact_terminal_intent(&required(compaction, "compactTerminalIntent compaction")?)
+        })
+    }
+
     /// `cancelWriteRow(cancellation)`: `{ status, row }`, or `null` when the row does not exist.
     #[napi]
     pub fn cancel_write_row<'env>(

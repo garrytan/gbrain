@@ -990,7 +990,7 @@ export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leas
 }
 
 /** In the SAME transaction as page publication. Counters are always before request locks. */
-export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersistenceCounters' | 'lockWriteRequest' | 'completeWriteRow' | 'declarePersistence' | 'requireSynchronousCommit'>, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
+export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersistenceCounters' | 'lockWriteRequest' | 'completeWriteRow' | 'declarePersistence' | 'requireSynchronousCommit' | 'compactTerminalIntent'>, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
   outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown },
   /** #5984: the caller's transaction already declared the protocol, set synchronous_commit, locked these counters and this row FOR UPDATE. */
   locked?: WriteRequest): Promise<WriteRequest> {
@@ -1018,7 +1018,7 @@ export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersi
  * counters and read `current` through `lockWriteRequest`. The engine re-checks and completes the row in one step
  * (`cancelWriteRow`), so a request that another pass claimed, published or ended meanwhile is returned unchanged.
  */
-export async function cancelLockedWrite(tx: SqlEngine & Pick<BrainEngine, 'cancelWriteRow'>, row: WriteRequest, current: WriteRequest): Promise<WriteRequest> {
+export async function cancelLockedWrite(tx: SqlEngine & Pick<BrainEngine, 'cancelWriteRow' | 'compactTerminalIntent'>, row: WriteRequest, current: WriteRequest): Promise<WriteRequest> {
   const error = { code: 'cancelled', message: 'Cancelled before publication.' };
   const completion = terminalCompletion(tx, row, current, 'cancelled', {}, error);
   const result = await tx.cancelWriteRow({ ...completion, state: 'cancelled', expectState: current.state, expectExecutionToken: current.execution_token ?? null });
@@ -1054,7 +1054,7 @@ function terminalCompletion(tx: SqlEngine, row: WriteRequest, current: WriteRequ
 }
 
 /** After the completion statement: a terminal write whose intent carries purged content keeps no copy of it. */
-async function finishTerminal(tx: SqlEngine, row: WriteRequest, current: WriteRequest, terminal: CompletedWriteRow,
+async function finishTerminal(tx: SqlEngine & Pick<BrainEngine, 'compactTerminalIntent'>, row: WriteRequest, current: WriteRequest, terminal: CompletedWriteRow,
   error?: { code: string; message: string; detail?: unknown }): Promise<WriteRequest> {
   const probePurges = intentCarriesContent(current.intent);
   const { purge_has_facts: purgeFacts, purge_has_pages: purgePages, ...doneRow } = terminal;
@@ -1065,13 +1065,9 @@ async function finishTerminal(tx: SqlEngine, row: WriteRequest, current: WriteRe
   if (error && PURGED_REFUSAL.test(`${error.code}: ${error.message}`) || probePurges && await intentCarriesPurgedContent(tx as BrainEngine, current, { facts: purgeFacts === true, pages: purgePages === true })) {
     // #6696: the redaction compacts the receipt, so its reservation shrinks to what is left (no intent) once no effect is unfinished.
     const left = retainedReceiptBytes({ ...done, intent: null }, { stage: 'terminal' });
-    const [redacted] = await tx.executeRaw<WriteRequest>(`WITH effects AS (SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0) AS bytes,
-        COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
-      r AS (UPDATE persistence_requests SET intent=NULL,compacted=true,terminal_reservation=CASE WHEN (SELECT unfinished FROM effects) THEN terminal_reservation
-        ELSE LEAST(terminal_reservation,$2::bigint+(SELECT bytes FROM effects)) END WHERE id=$1::uuid RETURNING *),
-      released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST($3::bigint-r.terminal_reservation,c.terminal_bytes)
-        FROM r WHERE c.key=ANY($4::text[]))
-      SELECT * FROM r`, [row.id, left, Number(done.terminal_reservation), ['brain', principalKey(requestPrincipal(row))]]);
+    // The compaction is the typed compactTerminalIntent member (engine-sql/persistence-journal.ts).
+    const redacted = await tx.compactTerminalIntent({ id: row.id, left, reservation: Number(done.terminal_reservation),
+      counterKeys: ['brain', principalKey(requestPrincipal(row))] });
     return redacted ?? done;
   }
   // Recovery bytes remain reserved until physical cleanup has been verified.

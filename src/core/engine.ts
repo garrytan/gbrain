@@ -50,7 +50,7 @@ import type { ChunkMove } from './page-state/chunk-moves.ts';
 import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, TerminalIntentCompaction, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from './engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
 import type { GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
 import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from './engine-sql/persistence-effect-worker.ts';
@@ -4221,6 +4221,10 @@ export interface BrainEngine {
   lockWriteRequest(id: string): Promise<WriteRequest | null>;
   /** Records a request's terminal state and releases its counters; null when the result exceeds its reservation. */
   completeWriteRow(completion: WriteCompletion): Promise<CompletedWriteRow | null>;
+  /** The requests with these ids, locked FOR UPDATE until the transaction ends, in id order (a purge's cancel of the writes holding a staging). */
+  lockWriteRequestsById(ids: readonly string[]): Promise<WriteRequest[]>;
+  /** Drops a terminal request's intent that carried purged content and shrinks its reservation (journal.ts finishTerminal); null for an unknown id. */
+  compactTerminalIntent(compaction: TerminalIntentCompaction): Promise<WriteRequest | null>;
   /** Inserts a publication's effects in queue order (a gated one only while auto-linking is on); returns the kinds inserted. */
   insertPublicationEffects(spec: PublicationEffectsSpec): Promise<string[]>;
   /** Queues a managed-request withdrawal's three effects for its source; an unknown source queues none, a kind already queued is kept. */
