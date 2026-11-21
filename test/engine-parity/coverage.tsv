@@ -578,7 +578,7 @@ readCredentialBindingForUpdate	access_members	yes	4	no	yes	yes	serves
 readCredentialMemberId	access_members	yes	1	no	yes	yes	serves
 readLinkedMember	access_members	yes	1	no	yes	yes	serves
 writeCredentialBinding	access_members	yes	7	no	yes	yes	serves
-writeCredentialReadsUnscoped	access_members	yes	4	no	yes	yes	serves
+writeCredentialReadsUnscoped	access_members	yes	5	no	yes	yes	serves
 readSharedSkillCatalogIdentity	shared_skill_members	yes	3	no	yes	yes	serves
 listSharedSkillCatalogHeads	shared_skill_members	yes	5	no	yes	yes	serves
 readSharedSkillPolicyRow	shared_skill_members	yes	4	no	yes	yes	serves
@@ -945,10 +945,10 @@ readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	26	no	yes	yes	serves
 listOauthClients	minion_queue	yes	4	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
-insertAccessToken	minion_queue	yes	36	no	yes	yes	serves
+insertAccessToken	minion_queue	yes	37	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	3	no	yes	yes	serves
 setAccessTokenMinTrust	minion_queue	yes	2	no	yes	yes	serves
-readLiveAccessTokenScope	minion_queue	yes	1	no	yes	yes	serves
+readLiveAccessTokenScope	minion_queue	yes	2	no	yes	yes	serves
 insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
 countLeasePressure	minion_queue	yes	2	no	yes	yes	serves
 listRecentLeasePressure	minion_queue	yes	2	no	yes	yes	serves

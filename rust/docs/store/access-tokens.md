@@ -17,7 +17,7 @@ below; rotate is still raw SQL and stops on a Rust brain.
 | `brain.insertAccessToken(row)` | `{ id }`, the generated UUID. `row` has `name`, `token_hash`, `scopes` (null is a full-access token), `permissions` (an object), the five grant columns (`source_grant`, `source_id`, `federated_read`, `allowed_operations`, `takes_holders`, each null for NULL) and, optionally, `min_trust`, `revoked_at`, `member_id`, `may_act_for`, `read_shared` (true is born with the read-shared switch on: `read_shared_revision` 1, the birth revision; absent or false leaves it off) and `created_at` (ISO text; left out, the store clock). The row is born at `grant_revision` 1 |
 
 | `brain.findActiveAccessTokens(target)` | `[{ id, name, min_trust }]`: the tokens with no `revoked_at` whose id (as text) or name is `target`, by id. Names are not unique, so there may be several |
-| `brain.readLiveAccessTokenScope(id)` | `{ reads_unscoped, created_at }` of the token when it is not revoked (`created_at` as ISO text; `reads_unscoped` always null, as the column is not kept and no token the store mints opts out), or null for a revoked token or an id no token has |
+| `brain.readLiveAccessTokenScope(id)` | `{ reads_unscoped, created_at }` of the token when it is not revoked (both as ISO text; `reads_unscoped` is the stored opt-out time, null unless the token opted out), or null for a revoked token or an id no token has |
 | `brain.setAccessTokenMinTrust(id, tier)` | null. Sets the token's read floor, or clears it with null. An id no token has changes nothing |
 | `brain.listAccessTokens()` | every token, revoked ones too, newest first (`ORDER BY created_at DESC`; a tie by id): `{ id, name, scopes, created_at, last_used_at, revoked_at }` plus the grant columns `gbrain auth list` prints. `last_used_at` is always null (not kept) |
 | `brain.readActiveAccessTokenGrant(id)` | `{ permissions, private_pages }` of the token not revoked with this id, or null; the TypeScript member returns the field the caller asked for |
@@ -75,8 +75,8 @@ write a token's binding are served from these records (gbrain-store `jobs::crede
 | `readLiveMember('legacy_token', id)`, `readMayActFor('legacy_token', id)` | `brain.readLiveCredential`: the member and may_act_for of the token not revoked whose id text is exactly `id`, or null |
 | `readAccessCredentials({ tokenName })`, `readAccessCredentials({ memberId })` | `brain.readAccessCredentials`: the active tokens with that name, oldest first (a tie by id); or the active tokens bound to the member by name in byte order (a tie by id), then the live clients by client id in byte order. The SQL sorts with `COLLATE "C"` and the same tie-break, so an `en_US` Postgres gives the same order |
 | `readAccessTokenWriteGrant(id)` | `brain.readAccessTokenWriteGrant`: the grant columns and `revoked_at` of the token with this id, revoked or not, or null; the write re-check refuses a revoked token with PGLite's text ([journal.md](journal.md)) | `credentialScopeFor` (`src/core/access/requester-scope.ts`)
-calls `readLiveAccessTokenScope` for an agent job's legacy token, so the requester-scope gate compares its real creation
-time with the time the brain began to serve several people.
+calls `readLiveAccessTokenScope` for an agent job's legacy token, so the requester-scope gate reads the token's stored
+opt-out and compares its real creation time with the time the brain began to serve several people.
 
 ## Constraints
 

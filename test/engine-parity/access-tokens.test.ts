@@ -20,8 +20,9 @@
  *    60 seconds), and the stamp leaves a row with no `source_grant` alone when it is the unified one. A token still on the
  *    legacy shape (no `source_grant`) authenticates with its permissions grant and its first check converts the row once,
  *    one more grant revision; a second conversion finds nothing.
- *    `credentialScopeFor` on an agent job's legacy token reads the live token's creation time and its opt-out (a minted
- *    token has none); a revoked token and an id no token has read as not opted out, creation unknown.
+ *    `credentialScopeFor` on an agent job's legacy token reads the live token's creation time and its stored
+ *    `--reads-unscoped` opt-out (a minted token has none; an opted-out token reads unscoped, a cleared one does not); a
+ *    revoked token and an id no token has read as not opted out, creation unknown.
  *  - Regression: a store that finds a revoked token, ignores the id-or-name pair, matches a name partly, lets two tokens
  *    share a hash, takes a tier it should refuse, or returns the ambiguity as a pick of the first row: a floor set on the
  *    wrong credential, which widens or narrows what an agent can read. A store whose scope read fails, which
@@ -833,5 +834,29 @@ describe('engine parity: access_tokens members', () => {
         revoked: await engine.readLiveAccessTokenScope(revoked.id),
       };
       return { member, live: await scope(live.id), revoked: await scope(revoked.id), missing: await scope('00000000-0000-4000-8000-000000000000') };
+    });
+
+  // An agent job's legacy token that opted out with --reads-unscoped reads unscoped: the requester-scope gate lets its
+  // unbound reads through. A store that answers the opt-out as not kept refuses that token's reads.
+  parityTest('the requester-scope read of a legacy token that opted out with --reads-unscoped reads the stored opt-out, and a cleared one reads not opted out',
+    { methods: ['insertAccessToken', 'writeCredentialReadsUnscoped', 'readLiveAccessTokenScope'] }, async (engine) => {
+      const token = await mintLegacyToken(engine, { name: 'unscoped-agent', scopes: ['read'], takesHolders: ['world'] });
+      const target = { kind: 'token' as const, id: token.id };
+      const scope = async () => {
+        const auth = await credentialScopeFor(engine, { clientName: 'agent', scopes: ['read'], principal: { kind: 'legacy_token', id: token.id } } as never) as
+          { readsUnscoped: boolean; createdAt: number | null };
+        const row = await engine.readLiveAccessTokenScope(token.id);
+        return { readsUnscoped: auth.readsUnscoped, created: auth.createdAt !== null,
+          stored: row === null ? 'no row' : row.reads_unscoped instanceof Date ? 'a time' : row.reads_unscoped };
+      };
+      const minted = await scope();
+      await engine.writeCredentialReadsUnscoped(target, true);
+      const optedOut = await scope();
+      await engine.writeCredentialReadsUnscoped(target, false);
+      const cleared = await scope();
+      expect(minted).toEqual({ readsUnscoped: false, created: true, stored: null });
+      expect(optedOut).toEqual({ readsUnscoped: true, created: true, stored: 'a time' });
+      expect(cleared).toEqual(minted);
+      return { minted, optedOut, cleared };
     });
 });

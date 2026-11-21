@@ -161,11 +161,10 @@ export const lockLegacyAccessTokens: StoreMember<[], Record<string, unknown>[]> 
 };
 
 /**
- * A live token's requester-scope fields. The store keeps no `reads_unscoped` column and mints no token that opts out, so
- * it answers null there (read as not opted out); `created_at` crosses as ISO text and is returned as a Date, as the SQL
- * engines return it.
+ * A live token's requester-scope fields: its `--reads-unscoped` opt-out and its creation time, both crossing as ISO text
+ * and returned as Dates (or null), as the SQL engines return the two timestamp columns; null for a revoked or missing token.
  */
 export const readLiveAccessTokenScope: StoreMember<[id: string], AccessTokenScopeRow | null> = async (brain, id) => {
   const row = await storeCall({ member: 'readLiveAccessTokenScope' }, () => brain.readLiveAccessTokenScope(id)) as AccessTokenScopeRow | null;
-  return row ? withDates(row, ['created_at']) : null;
+  return row ? withDates(row, ['created_at', 'reads_unscoped']) : null;
 };

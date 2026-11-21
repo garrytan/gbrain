@@ -293,13 +293,13 @@ impl Store {
         ))
     }
 
-    /// `readLiveAccessTokenScope(id)`: `{ reads_unscoped, created_at }` of the token `id` names when it is not revoked,
-    /// or null. `reads_unscoped` is always null: the column is not kept, and no token this store mints opts out.
+    /// `readLiveAccessTokenScope(id)`: `{ reads_unscoped, created_at }` of the token `id` names when it is not revoked
+    /// (both as ISO text; `reads_unscoped` is null unless the token opted out with `--reads-unscoped`), or null.
     pub fn read_live_access_token_scope(&self, id: &str) -> Result<Value> {
         let read = self.read()?;
         match get_json::<TokenRecord>(&*read, &token_key(id))? {
             Some(t) if t.revoked_at.is_none() => Ok(json!({
-                "reads_unscoped": Value::Null,
+                "reads_unscoped": t.reads_unscoped.map(iso),
                 "created_at": iso(t.created_at),
             })),
             _ => Ok(Value::Null),
