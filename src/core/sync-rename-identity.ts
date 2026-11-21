@@ -89,15 +89,16 @@ export function frontmatterIdentity(head: Buffer | string | null): FrontmatterId
 
 /**
  * pages-03: the frontmatter id of a file, read against the id a page row stores. An older gbrain stored the id with its
- * old typing (`id: 007` as the number 7, so the row's id reads '7'), while today's reading keeps the text ('007'). When
- * that old reading of this very file is the stored id, the file is the same document and the stored id is returned, so
- * an identity check sees no change; otherwise the id as written. A quoted `id: "007"` read as the text '007' then too,
- * so it never matches a stored 7.
+ * old typing (`id: 007` as the number 7, so the row's id reads '7'), while today's reading keeps the text ('007'). Only
+ * for a page proven stored that way (`legacyTyped`, from `legacyTypedIdSql`) is the old reading of this very file
+ * compared too: when it is the stored id, the file reads as the stored id, as it did before the upgrade; otherwise, and
+ * for every other page, the id as written. A quoted `id: "007"` read as the text '007' then too, so it never matches a
+ * stored 7.
  */
-export function fileIdAgainstStored(text: string | null, storedId: string | null): string | null {
+export function fileIdAgainstStored(text: string | null, storedId: string | null, legacyTyped: boolean): string | null {
   const id = frontmatterIdentity(text).id;
   const stored = storedId?.trim() || null;
-  if (text === null || id === null || stored === null || id === stored) return id;
+  if (!legacyTyped || text === null || id === null || stored === null || id === stored) return id;
   const legacy = legacyTypedFrontmatter(text.replace(/^\uFEFF/, ''))?.id;
   const legacyText = typeof legacy === 'string' ? legacy.trim() : typeof legacy === 'number' && Number.isFinite(legacy) ? String(legacy) : null;
   return legacyText === stored ? stored : id;

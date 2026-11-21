@@ -32,7 +32,7 @@ import { assertDistinctSyncOrigins, legacySyncOrigin, sameSyncOrigin, selectOrig
 import { assertManagedSyncActive } from './sync-authority.ts';
 import { decideOriginTwins, readOriginClaimants, slugPathOccupied, type OriginConflict } from './origin-twins.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
-import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds, readSyncImportProvenances } from './sync-holds.ts';
+import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds, legacyTypedIdSql, readSyncImportProvenances } from './sync-holds.ts';
 import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
@@ -647,8 +647,8 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     ...(workingTreeKept ? { workingTreeKept } : {}), ...(uncommittedKept?.length ? { uncommittedKept } : {}), ...(company ? {} : identityDowngradesOf([delta?.status === 'ok' ? delta.manifest : null, working ? dirty : null], eligible, sourcePath)) };
   // Freeze all logical identities in one database statement, before yielding
   // between pages. A later interactive edit must conflict with this scan.
-  const identities = await engine.executeRaw<{ id: number; slug: string; source_path: string | null; knowledge_revision: string; deleted_at: Date | string | null; fm_id: string | null }>(
-    "SELECT q.*,f.frontmatter->>'id' AS fm_id FROM (SELECT id,slug,source_path,knowledge_revision,deleted_at FROM pages WHERE source_id=$1) q JOIN pages f ON f.id=q.id", [sourceId]);
+  const identities = await engine.executeRaw<{ id: number; slug: string; source_path: string | null; knowledge_revision: string; deleted_at: Date | string | null; fm_id: string | null; fm_legacy: boolean }>(
+    `SELECT q.*,f.frontmatter->>'id' AS fm_id,${legacyTypedIdSql('f')} AS fm_legacy FROM (SELECT id,slug,source_path,knowledge_revision,deleted_at FROM pages WHERE source_id=$1) q JOIN pages f ON f.id=q.id`, [sourceId]);
   const bySlug = new Map(identities.map(p => [p.slug, p]));
   const byPath = new Map<string, typeof identities>();
   const storableIdentities = identities.filter(storable);
@@ -745,7 +745,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     // #5988: a held rename destination (or a held one renamed again) still owes its page the move; the deletion of a held path stays to clear its hold.
     const held = holdByPath.get(winner.path)?.meta.rename_from ?? (deletion ? holdByPath.get(deletion.path)?.meta.rename_from : undefined);
     const origin = held ? identities.find(page => page.id === held.pageId) : undefined;
-    if (held && origin && !deleted.has(origin.id) && origin.source_path != null && sameSyncOrigin(origin.source_path, held.sourcePath, originScope, origin.slug) && !explicitIdVeto(incomingId(discovered, winner, origin.fm_id), origin.fm_id)) {
+    if (held && origin && !deleted.has(origin.id) && origin.source_path != null && sameSyncOrigin(origin.source_path, held.sourcePath, originScope, origin.slug) && !explicitIdVeto(incomingId(discovered, winner, origin), origin.fm_id)) {
       if (origin.knowledge_revision === held.revision) winner.renameFrom = held;
       else winner.renameHeld = held;
     }
@@ -764,7 +764,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   }
   return discovered;
 }
-export type LegacyIdentity = { id: number; slug: string; source_path: string | null; deleted_at: Date | string | null; fm_id: string | null };
+export type LegacyIdentity = { id: number; slug: string; source_path: string | null; deleted_at: Date | string | null; fm_id: string | null; fm_legacy: boolean };
 /**
  * #6727: per discovery, its live pages with no recorded origin whose slug the current fold changes, by folded slug. Built on
  * first need; database-only pages (never imported from a file) are left out by one read over just those candidates, so a
@@ -791,8 +791,9 @@ export async function adoptLegacyPage(engine: BrainEngine, discovery: SyncDiscov
   if (!folded) legacyByFold.set(identities, folded = foldLegacyPages(engine, identities));
   const legacy = (await folded).get(slug) ?? [];
   const writable = () => { try { return validateSlug(legacy[0]!) === legacy[0]; } catch { return false; } };
-  const legacyId = legacy.length === 1 ? identities.find(page => page.slug === legacy[0] && page.deleted_at == null)?.fm_id ?? null : null;
-  const vetoed = legacyId !== null && explicitIdVeto(incomingId(discovery, entry, legacyId), legacyId);
+  const legacyPage = legacy.length === 1 ? identities.find(page => page.slug === legacy[0] && page.deleted_at == null) : undefined;
+  const legacyId = legacyPage?.fm_id ?? null;
+  const vetoed = legacyId !== null && explicitIdVeto(incomingId(discovery, entry, legacyPage!), legacyId);
   if (legacy.length === 1 && writable() && !vetoed) return legacy[0]!;
   if (vetoed) entry.legacyIdVeto = true;
   if (legacy.length) entry.legacySlugs = [...legacy].sort();
@@ -809,8 +810,8 @@ function identityDowngradesOf(manifests: Array<SyncManifest | null>, eligible: (
  * so it must not when both carry an explicit frontmatter id and the ids differ: they are two different documents that
  * happen to map to one slug. The sync is refused before any write, naming both.
  */
-export function assertTakeoverIdentity(discovery: SyncDiscovery, winner: SyncEntry, holder: { slug: string; fm_id: string | null }): void {
-  const incoming = holder.fm_id ? incomingId(discovery, winner, holder.fm_id) : null;
+export function assertTakeoverIdentity(discovery: SyncDiscovery, winner: SyncEntry, holder: { slug: string } & StoredId): void {
+  const incoming = holder.fm_id ? incomingId(discovery, winner, holder) : null;
   if (!explicitIdVeto(incoming, holder.fm_id)) return;
   throw opError('page_identity_changed', 'A file would take over a page whose frontmatter id differs from its own.',
     `${winner.sourcePath} in ${discovery.sourceId} maps to page ${holder.slug}, whose file is gone, but its frontmatter id '${incoming}' differs from the page's id '${holder.fm_id}', so it is a different document and must not inherit that page's facts, links and history; nothing was written. `
@@ -823,11 +824,12 @@ function readableId(discovery: SyncDiscovery, entry: SyncEntry): string | null |
 }
 /**
  * #6729: the frontmatter id of the file an entry imports (null when it has none or cannot be read), read against
- * `storedId`, the id of the page it is compared with: an id an older gbrain stored under the old typing (`id: 007` as 7)
- * reads as that stored id (pages-03, `fileIdAgainstStored`).
+ * the id of the page it is compared with: on a page proven stored under the old typing (`fm_legacy`), an id that typing
+ * read as the stored one (`id: 007` as 7) reads as that stored id (pages-03, `fileIdAgainstStored`).
  */
-export function incomingId(discovery: SyncDiscovery, entry: SyncEntry, storedId: string | null): string | null {
-  try { return fileIdAgainstStored(readSyncContent(discovery, entry), storedId); } catch { return null; }
+export type StoredId = { fm_id: string | null; fm_legacy: boolean };
+export function incomingId(discovery: SyncDiscovery, entry: SyncEntry, stored: StoredId): string | null {
+  try { return fileIdAgainstStored(readSyncContent(discovery, entry), stored.fm_id, stored.fm_legacy); } catch { return null; }
 }
 /**
  * #6948: the conflict record of an entry several live pages claim: the claimants (with the verdict inputs, read only on
