@@ -40,7 +40,7 @@ const MATCH_CHARS: usize = 160;
 const SOURCE_PATH_LIMIT: usize = 64;
 /// `FACT_NEIGHBOURS_SQL`'s LIMIT.
 const NEIGHBOURS: usize = 5;
-/// `probeItemsSql`: `ORDER BY 1 LIMIT 20`.
+/// `probeItemsSql`: `ORDER BY 1 COLLATE "C" LIMIT 20`, so byte order.
 const PROBE_ITEMS: usize = 20;
 
 fn lower_has(text: Option<&str>, needles: &[&str]) -> bool {

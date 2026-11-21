@@ -32,7 +32,7 @@ A claim matches as the SQL does: `strpos(lower(text), needle) > 0`, with `lower`
 | `brain.countPurgeProbe({ table, sourceId, columns, needles, rows })` | the rows of a probed table carrying a needle, at most `rows + 1` | `countPurgeProbe` |
 | `brain.listPurgeProbeItems({ table, sourceId, columns, needles })` | the first 20 item names, sorted, or null when the store keeps no name for the table's rows | `listPurgeProbeItems` |
 | `brain.countPurgeStoreProbe({ probe, rows })` | a page purge receipt's store probe (`probe.kind`, below): the rows still naming the purged page, at most `rows + 1` | `countPurgeProbe` |
-| `brain.listPurgeStoreProbeItems({ probe })` | the first 20 `effect:<id> <kind> <state>` items, sorted, of an `effect_payload` probe; any other kind refuses | `listPurgeProbeItems` |
+| `brain.listPurgeStoreProbeItems({ probe })` | the first 20 `effect:<id> <kind> <state>` items, sorted bytewise (the SQL says `COLLATE "C"`, so `effect:1 ` comes before `effect:10` on every engine), of an `effect_payload` probe; any other kind refuses | `listPurgeProbeItems` |
 
 ## Members the JS layer answers
 
