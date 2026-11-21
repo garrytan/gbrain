@@ -43,6 +43,7 @@ export const DEGRADED_STAGE_GUIDANCE: Readonly<Record<RecallStage, StageGuidance
   rescore_skipped: { why: 'the rescoring pass was skipped', fix: 'doctor' },
   vector_arm_failed: { why: 'the vector retrieval arm failed', fix: 'doctor' },
   keyword_arm_failed: { why: 'the keyword retrieval arm failed', fix: 'doctor' },
+  supersede_check_failed: { why: 'the check for pages a newer page replaced failed, so results may include outdated pages that are neither flagged superseded nor ranked below their replacement; if currency matters, repeat the call', fix: 'doctor' },
   title_arm_failed: { why: 'the title retrieval arm failed', fix: 'doctor' },
   budget_dropped_all: { why: 'the token budget dropped every result; raise the budget parameter to see them', fix: null },
   budget_truncated: { why: 'the token budget cut some results; raise the budget parameter to see more', fix: null },
