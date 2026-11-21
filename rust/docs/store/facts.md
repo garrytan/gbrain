@@ -819,7 +819,8 @@ each of them with `engine_capability_missing` naming the member until the store 
 The statements `facts/gone-page-facts.ts`, `facts/purge-reasons.ts`, `facts/held-fact-move.ts` and
 `facts/purge-verify.ts` ran through `executeRaw` are 34 typed members, so the Rust arm answers each with
 the typed `raw_sql` refusal until the store holds what it reads. Only `readPurgeSourceLocalPath` has a Rust
-implementation (the source record's checkout); the parity file `test/engine-parity/facts-purge-sites.test.ts` stops on
+implementation (the source record's checkout), and `listBeliefEventsForPurgeProbe` one in the store's belief ledger
+(`trust.md`, `trust::belief_purge`); the parity file `test/engine-parity/facts-purge-sites.test.ts` stops on
 that refusal for every case, and the
 Postgres text of each statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
 

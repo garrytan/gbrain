@@ -5,7 +5,7 @@ test/engine-parity/access-tokens.test.ts	2	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/belief-ledger.test.ts	11	0
-test/engine-parity/belief-purge-probes.test.ts	6	0
+test/engine-parity/belief-purge-probes.test.ts	7	0
 test/engine-parity/calibration-profiles.test.ts	5	0
 test/engine-parity/chunk-page-segmented.test.ts	7	0
 test/engine-parity/chunk-reads.test.ts	12	0
@@ -49,7 +49,7 @@ test/engine-parity/facts-conversation-sites.test.ts	0	22
 test/engine-parity/facts-cycle-sites.test.ts	0	15
 test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	14	0
-test/engine-parity/facts-purge-sites.test.ts	5	22
+test/engine-parity/facts-purge-sites.test.ts	6	21
 test/engine-parity/facts-purge.test.ts	25	2
 test/engine-parity/facts-repair-sites.test.ts	0	14
 test/engine-parity/facts-repair.test.ts	16	1

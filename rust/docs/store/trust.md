@@ -363,6 +363,11 @@ The store serves the purge statements of src/core/engine-sql/belief-purge.ts
   hash. It skips one already released to that hash and one whose redacted text has that hash, and answers the purge
   request of each released row, in id order.
 - `replayPagePurges` and `countPagePurgeTombstones` live with the page purge ledger (`facts.md`, `facts/page_purges.rs`).
+- `listBeliefEventsForPurgeProbe` is the purge receipt's read of recorded history (`ledgerReports` in
+  src/core/facts/purge-verify.ts): the source's events with a recorded value and an id above `after`, the lowest 1000
+  across every incarnation, in id order. Each incarnation is a seek under `t 0x09 0x00 source \0 incarnation \0` to the
+  id after the cursor; a NaN cursor, or one past the last id, answers none. The member serves one statement of
+  engine-sql/facts-purge.ts, so it keeps the `facts` refusal class there; its case is in `belief-purge-probes.test.ts`.
 - `readPurgeReplaySchema` makes no store call: the store always has the live schema, so it answers every listed store
   and every probed table and column as present.
 - Pinned by `test/engine-parity/belief-purge-probes.test.ts` on every arm and by the unit tests in each module.
