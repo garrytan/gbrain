@@ -187,6 +187,39 @@ describe('engine parity: the table probes of a fact purge receipt', () => {
     return { found, absent };
   });
 
+  parityTest('a derivation result with no output or receipt is SQL NULL and matches no needle, where a nested JSON null reads as the text null, on both probe paths', {
+    methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState',
+      'upsertSegmentDerivations', 'transaction', 'countPurgeProbe', 'setPurgeProbeTimeout', 'probePurgeDerivations'],
+    timeout: 120_000,
+  }, async (engine) => {
+    const first = segmentText('# One\nfirst segment\n');
+    const second = segmentText('## Two\nsecond segment\n');
+    const third = segmentText('## Three\nthird segment\n');
+    const page = await publishSegmentedPage(engine, 'notes/empty', [first, second, third]);
+    const derivation = (occurrence: number, segment: Uint8Array, over: { output: unknown; receipt: unknown }) =>
+      ({ pageId: page.pageId, kind: 'links' as const, occurrenceId: page.occurrences[occurrence]!, version: 1, segmentSha256: segment, contextHash: sha256('ctx'), state: 'done' as const, ...over });
+    await engine.upsertSegmentDerivations([
+      // Neither column is written (the input leaves them undefined): both are SQL NULL.
+      derivation(0, first.sha256, { output: undefined, receipt: undefined }),
+      // A top-level JSON null is SQL NULL too.
+      derivation(1, second.sha256, { output: null, receipt: null }),
+      // A JSON null inside a document is the text null.
+      derivation(2, third.sha256, { output: { note: null }, receipt: {} }),
+    ]);
+    const batch = (needle: string, rows: number) => engine.transaction(async tx => {
+      await tx.setPurgeProbeTimeout(5000);
+      const r = await tx.probePurgeDerivations(SRC, [` ${needle} `], [], [`%${needle}%`], null, rows);
+      return { scanned: Number(r.scanned), normalized: Number(r.normalized), swept: Number(r.swept), kept: Number(r.kept) };
+    });
+    const out = {
+      tableNull: await count(engine, 'page_segment_derivations', ['null']), tableNote: await count(engine, 'page_segment_derivations', ['note']),
+      tableBraces: await count(engine, 'page_segment_derivations', ['{}']), batchNull: await batch('null', 100), batchNote: await batch('note', 100), batchFirst: await batch('null', 1),
+    };
+    expect(out.tableNull).toBe(1);
+    expect(out.batchNull).toMatchObject({ scanned: 3, normalized: 1 });
+    return out;
+  });
+
   parityTest('the belief ledger events that carry a needle are counted within their source, whatever the recorded value or subject', {
     methods: ['putPage', 'insertFact', 'transaction', 'countPurgeProbe', 'setPurgeProbeTimeout'],
     timeout: 120_000,

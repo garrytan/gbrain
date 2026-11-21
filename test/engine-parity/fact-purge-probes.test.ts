@@ -34,7 +34,7 @@ import type { PurgeProbe } from '../../src/core/engine-sql/facts-purge-plan.ts';
 import { TERMINAL_AUDIT_SOURCE } from '../../src/core/facts/audit-sources.ts';
 import { planFactPurge } from '../../src/core/facts/purge.ts';
 import { __setPurgeProbeLimitsForTests, boundedProbe, claimNeedles, reasonNeedle, verifyFactPurge } from '../../src/core/facts/purge-verify.ts';
-import { publishSegmentedPage, segmentText } from '../helpers/page-body-fixtures.ts';
+import { flipInput, publishSegmentedPage, segmentText, stageGeneration } from '../helpers/page-body-fixtures.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -202,6 +202,38 @@ describe('engine parity: the store probes of a fact purge receipt', () => {
     expect(afterSoftDelete.core_edit_notices).toBe(0);
     expect(bound.pages).toBe('row_bound');
     return { empty, afterPages, withChunks, afterSoftDelete, afterVersions, afterIntent, afterOutcome, reasonRequest, otherSource, noClaim, afterSegmented, bound };
+  });
+
+  parityTest('the content_chunks claim-text probe counts the live, staged and retired chunks of a segmented page alike, and a page of another source not at all', {
+    methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'stageSegmentChunks', 'setBodyStagingState',
+      'flipBodyGeneration', 'transaction', 'countPurgeProbe', 'setPurgeProbeTimeout'],
+    timeout: 120_000,
+  }, async (engine, backend) => {
+    await createSource(engine, backend, OTHER);
+    const [needle, json] = claimNeedles(CLAIM);
+    const chunks = async (sourceId = SRC) => count(engine, { kind: 'claim_text', store: 'content_chunks', sourceId, claim: needle, json, reason: 'never stated', reasonJson: 'never stated' });
+    const claimed = segmentText(`First generation: ${CLAIM}\n`);
+    const empty = await chunks();
+    // Generation 1, published with a chunk that states the claim.
+    const one = await publishSegmentedPage(engine, 'notes/gens', [claimed], { chunkTexts: true });
+    const live = await chunks();
+    // Generation 2, staged with its own claim-stating chunk and not published: the staged chunk counts.
+    const next = segmentText(`Second generation: ${CLAIM}\n`);
+    const two = await stageGeneration(engine, { pageId: one.pageId, slug: 'notes/gens', genFrom: 2, texts: [next], chunkTexts: true });
+    const staged = await chunks();
+    // Published, with generation 1's occurrence closed and its chunk retired: the probe reads what the engine still holds.
+    await engine.transaction(async tx => {
+      await tx.flipBodyGeneration(flipInput(one.pageId, 1, two.stagingId, [next], { closeOccurrences: [one.occurrences[0]!], retireChunkOccurrences: [one.occurrences[0]!] }));
+      await tx.setBodyStagingState(two.stagingId, 'committed');
+    });
+    const retired = await chunks();
+    // Another source's page with the claim in a chunk is no chunk of this source.
+    await publishSegmentedPage(engine, 'notes/away', [segmentText(`Elsewhere: ${CLAIM}\n`)], { sourceId: OTHER, chunkTexts: true });
+    const out = { empty, live, staged, retired, otherSource: await chunks(OTHER), source: await chunks() };
+    expect(out).toMatchObject({ empty: 0, live: 1, staged: 2 });
+    expect(out.retired).toBeGreaterThan(0);
+    expect(out.otherSource).toBe(1);
+    return out;
   });
 
   parityTest('a fact purge receipt reports the same stores on every engine, or stops naming the ledger read it cannot serve and its owner', {
