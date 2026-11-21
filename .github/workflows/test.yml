@@ -89,17 +89,16 @@ jobs:
     outputs:
       security-regressions: ${{ steps.dynamic-ci.outputs.security-regressions }}
       native-locks: ${{ steps.dynamic-ci.outputs.native-locks }}
-      persistence-validation: ${{ steps.dynamic-ci.outputs.persistence-validation }}
       stress-changed-tests: ${{ steps.dynamic-ci.outputs.stress-changed-tests }}
       enumeration-census-tests: ${{ steps.dynamic-ci.outputs.enumeration-census-tests }}
     steps:
       - id: dynamic-ci
-        uses: trunk-io/dynamic-ci@5bcddbf3615c2b032c21eed1b514c91164bda4a8  # v1 (v0.1.7)
+        uses: trunk-io/dynamic-ci@09739668b8d766d05e3dbf6f3eb0159da6597aaf  # v1 (v0.1.12)
         continue-on-error: true
         timeout-minutes: 3
         with:
           token: ${{ secrets.TRUNK_API_TOKEN }}
-          job-keys: security-regressions,native-locks,persistence-validation,stress-changed-tests,enumeration-census-tests
+          job-keys: security-regressions,native-locks,stress-changed-tests,enumeration-census-tests
           enable-annotation: 'true'
 
   # Planning gate for the native platform matrix. Pull requests that touch
@@ -1288,13 +1287,20 @@ jobs:
   # tier) calls it only when its diff can change persistence or managed sync, and
   # then runs only the crash robot and convergence; the full-ci dispatch, every
   # push and the nightly run every lane.
-  # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
+  # Trunk Dynamic CI gates the crash robot and convergence one by one inside
+  # persistence-validation.yml (docs/ci-event-parity.md#trunk-dynamic-ci), not this
+  # call, so a flaky lane's history does not decide for the other.
   persistence-validation:
-    needs: [changes, dynamic-ci]
-    if: ${{ !cancelled() && needs.dynamic-ci.outputs.persistence-validation != 'false' && needs.changes.result == 'success' && needs.changes.outputs.reuse != 'true' && ((github.event_name != 'pull_request' || needs.changes.outputs.convergence != 'skip') && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
+    needs: [changes]
+    if: ${{ needs.changes.result == 'success' && needs.changes.outputs.reuse != 'true' && ((github.event_name != 'pull_request' || needs.changes.outputs.convergence != 'skip') && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base))) }}
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/persistence-validation.yml
     with:
       convergence: ${{ needs.changes.outputs.convergence || 'run' }}
+    secrets:
+      TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
 
   # PR stress gate (docs/TESTING.md#stress-gate): every added or modified test
   # file, plus direct importers of changed test/helpers/ files by the fan-in
@@ -1653,7 +1659,7 @@ jobs:
           DCI_SECURITY: ${{ needs.dynamic-ci.outputs.security-regressions }}
           DCI_STRESS: ${{ needs.dynamic-ci.outputs.stress-changed-tests }}
           DCI_NATIVE: ${{ needs.dynamic-ci.outputs.native-locks }}
-          DCI_PERSISTENCE: ${{ needs.dynamic-ci.outputs.persistence-validation }}
+          DCI_PERSISTENCE: ${{ needs.persistence-validation.outputs.crash-robot-verdict }}
         run: bash scripts/ci-cheap-tier.sh
 
   # Master-push reuse marker (scripts/ci-reuse.ts, scripts/release-gate.ts): exists

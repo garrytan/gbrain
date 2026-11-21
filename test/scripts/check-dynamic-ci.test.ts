@@ -23,19 +23,20 @@ describe('check-dynamic-ci.ts', () => {
     expect(r.status, r.stderr).toBe(0);
     expect(checkWorkflow('test.yml', real('test.yml'))).toEqual([]);
     expect(checkWorkflow('scale-tier.yml', real('scale-tier.yml'))).toEqual([]);
+    expect(checkWorkflow('persistence-validation.yml', real('persistence-validation.yml'))).toEqual([]);
   });
 
   test.each<[string, (doc: Doc) => void, RegExp]>([
     ['the filter runs on every event', doc => { delete doc.jobs['dynamic-ci']!.if; }, /must have if: github.event_name == 'pull_request'/],
     ['the filter also runs on pushes', doc => { doc.jobs['dynamic-ci']!.if = "github.event_name == 'pull_request' || github.event_name == 'push'"; }, /must have if: github.event_name == 'pull_request'/],
-    ['the filter is in a workflow without a pull_request trigger', doc => { delete doc.on.pull_request; }, /no pull_request trigger/],
+    ['the filter is in a workflow without a pull_request trigger', doc => { delete doc.on.pull_request; }, /no pull_request trigger and is not a reusable workflow/],
     ['the action is not pinned to a SHA', doc => { filterStep(doc).uses = 'trunk-io/dynamic-ci@v1'; }, /full commit SHA/],
     ['the token is not the repo secret', doc => { filterStep(doc).with.token = 'abc'; }, /secrets\.TRUNK_API_TOKEN/],
     ['job-keys and outputs disagree', doc => { filterStep(doc).with['job-keys'] = 'native-locks'; }, /job-keys \[native-locks\] must name exactly/],
     ['an output reads the wrong step output', doc => { doc.jobs['dynamic-ci']!.outputs['native-locks'] = '${{ steps.dynamic-ci.outputs.verify }}'; }, /output native-locks must be/],
     ['a gated job drops !cancelled()', doc => { doc.jobs['stress-changed-tests']!.if = doc.jobs['stress-changed-tests']!.if.replace('!cancelled() && ', ''); }, /stress-changed-tests: a gated job's if must start with/],
     ['a gated job tests == true instead of != false', doc => { doc.jobs['native-locks']!.if = doc.jobs['native-locks']!.if.replace("!= 'false'", "== 'true'"); }, /native-locks: a gated job's if must start with/],
-    ['a gated job drops its other needs check', doc => { doc.jobs['persistence-validation']!.if = doc.jobs['persistence-validation']!.if.replace("needs.changes.result == 'success' && ", ''); }, /add needs\.changes\.result == 'success'/],
+    ['a gated job drops its other needs check', doc => { doc.jobs['native-locks']!.if = doc.jobs['native-locks']!.if.replace("needs.changes.result == 'success' && ", ''); }, /add needs\.changes\.result == 'success'/],
     ['a gated job adds always()', doc => { doc.jobs['security-regressions']!.if = doc.jobs['security-regressions']!.if.replace("!= 'false' && ", "!= 'false' && always() && "); }, /no other status function/],
     ['a gated job forgets to need the filter', doc => { doc.jobs['security-regressions']!.needs = []; }, /security-regressions: a gated job must list dynamic-ci in needs/],
     ['an aggregate is gated', doc => { doc.jobs['dynamic-ci']!.outputs['full-suite'] = '${{ steps.dynamic-ci.outputs.full-suite }}'; filterStep(doc).with['job-keys'] += ',full-suite'; }, /full-suite: merge and release aggregates are never gated/],
@@ -48,6 +49,16 @@ describe('check-dynamic-ci.ts', () => {
     ['a non-aggregate job reads the verdicts', doc => { doc.jobs.verify!.needs = ['dynamic-ci']; }, /verify: needs dynamic-ci but is not one of its outputs/],
   ])('fails when %s', (_, mutate, message) => {
     const problems = broken(mutate);
+    expect(problems.join('\n')).toMatch(message);
+  });
+
+  test.each<[string, (doc: Doc) => void, RegExp]>([
+    ['the reusable workflow loses its workflow_call trigger', doc => { delete doc.on.workflow_call; }, /no pull_request trigger and is not a reusable workflow/],
+    ['the called filter runs on every event', doc => { delete doc.jobs['dynamic-ci']!.if; }, /must have if: github.event_name == 'pull_request'/],
+    ['a called gated job drops !cancelled()', doc => { doc.jobs.convergence!.if = doc.jobs.convergence!.if.replace('!cancelled() && ', ''); }, /convergence: a gated job's if must start with/],
+    ['a gated job with no other condition tests == true', doc => { doc.jobs['crash-robot']!.if = doc.jobs['crash-robot']!.if.replace("!= 'false'", "== 'true'"); }, /crash-robot: a gated job's if must start with/],
+  ])('persistence-validation.yml fails when %s', (_, mutate, message) => {
+    const problems = broken(mutate, 'persistence-validation.yml');
     expect(problems.join('\n')).toMatch(message);
   });
 });

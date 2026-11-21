@@ -79,7 +79,7 @@ describe('full CI on pull requests', () => {
   // waits for its other needs to succeed.
   test('Dynamic CI skips a gated pull-request lane only on an exact false verdict and never filters another event', () => {
     const gated = Object.keys(unit.jobs['dynamic-ci']!.outputs!).sort();
-    expect(gated).toEqual(['enumeration-census-tests', 'native-locks', 'persistence-validation', 'security-regressions', 'stress-changed-tests']);
+    expect(gated).toEqual(['enumeration-census-tests', 'native-locks', 'security-regressions', 'stress-changed-tests']);
     const selected = { 'native-scope': 'primary', convergence: 'run' };
     const all = runs(unit, { event: 'pull_request', outputs: selected });
     for (const verdict of ['', 'true']) {
@@ -96,6 +96,17 @@ describe('full CI on pull requests', () => {
       expect(runs(unit, { event: 'push', changes: 'failure' }), job).not.toContain(job);
       expect(runs(unit, { event: 'pull_request', outputs: selected, changes: 'failure' }), job).not.toContain(job);
     }
+  });
+
+  // persistence-validation.yml gates the crash robot and convergence one by one; test.yml calls it
+  // ungated, passes the token, and reads the crash robot's verdict back for the cheap tier.
+  test('Dynamic CI gates persistence-validation lanes inside the reusable workflow', () => {
+    const called = load(readFileSync(join(root, '.github/workflows/persistence-validation.yml'), 'utf8')) as Workflow;
+    expect(Object.keys(called.jobs['dynamic-ci']!.outputs!).sort()).toEqual(['convergence', 'crash-robot']);
+    const caller = unit.jobs['persistence-validation'] as Job & { secrets?: Record<string, string> };
+    expect(caller.needs).not.toContain('dynamic-ci');
+    expect(caller.secrets).toEqual({ TRUNK_API_TOKEN: '${{ secrets.TRUNK_API_TOKEN }}' });
+    expect(JSON.stringify(unit.jobs['cheap-tier'])).toContain('needs.persistence-validation.outputs.crash-robot-verdict');
   });
 
   test('a pull-request run never reports test-status or full-suite under any name', () => {
