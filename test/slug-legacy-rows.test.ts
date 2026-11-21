@@ -269,9 +269,12 @@ describe('final review: a read answers the page the exact input names, or refuse
     expect({ title: out.title, slug: out.slug }).toEqual({ title: 'Alias target', slug: 'f4/alias-target' });
   });
 
-  test('finding 5: a slug already in normal form finds the one other spelling, and is ambiguous between two', async () => {
+  test('finding 5: a slug already in normal form finds the one other spelling', async () => {
     await storeAs('f5/one-seed', 'F5/One-Cafe', 'Only capital', 'o');
     expect((await call('get_page', { slug: 'f5/one-cafe' })).title).toBe('Only capital');
+  });
+
+  test('finding 5: a slug already in normal form is ambiguous between two other stored spellings', async () => {
     await storeAs('f5/two-seed-a', 'F5/Two-Caf\u00e9', 'Two composed', 'a');
     await storeAs('f5/two-seed-b', NFD('F5/Two-Caf\u00e9'), 'Two decomposed', 'b');
     const err = await errorOf('get_page', { slug: 'f5/two-caf\u00e9' });
@@ -328,6 +331,19 @@ describe('final review: a put by a spelling a page is stored under is refused, w
     expect(answers).toEqual(['legacy_slug_spelling', 'legacy_slug_spelling', 'legacy_slug_spelling']);
     expect({ nfd: (await snap(nfd))!.revision, nfc: (await snap(nfc))!.revision }).toEqual(before);
     expect((await snap(nfc))!.page.title).toBe('Composed original');
+  });
+
+  test('finding 1: a forced put by the decomposed spelling does not write the decomposed page or its composed twin', async () => {
+    const nfd = 'f1/caf\u0065\u0301-force';
+    const nfc = 'f1/caf\u00e9-force';
+    await storeAs('f1/force-seed', nfd, 'Decomposed original', 'old');
+    await call('put_page', { slug: nfc, content: page('Composed original', 'composed') });
+    const before = { nfd: (await snap(nfd))!.revision, nfc: (await snap(nfc))!.revision };
+    const err = await errorOf('put_page', { slug: nfd, content, force: true, request_id: crypto.randomUUID() });
+    expect({ code: err?.code, detail: err?.detail }).toEqual({ code: 'invalid_params', detail: 'legacy_slug_spelling' });
+    expect({ nfd: (await snap(nfd))!.revision, nfc: (await snap(nfc))!.revision }).toEqual(before);
+    expect({ nfd: (await snap(nfd))!.page.title, nfc: (await snap(nfc))!.page.title })
+      .toEqual({ nfd: 'Decomposed original', nfc: 'Composed original' });
   });
 
   test('finding 1: a capital-stored page is not replaced by a put by its capital spelling, and no lowercase page appears', async () => {
