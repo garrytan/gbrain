@@ -120,6 +120,21 @@ for (const backend of testBackends()) {
     expect(live).toMatchObject({ still_present: null, reason: 'invalid_params' });
     expect(live.message).toContain('valid UTF-8');
   }, { databaseUrl, setup }), 240_000);
+
+  test(`[${backend}] on a read-only mirror the held preview names why it could not read a held file, not only the error code`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await unrecorded(engine, ['notes/a']);
+    edit(root, ['notes/a'], 'A first Git edit'); git(root, 'commit', '-qam', 'first edit');
+    await performManagedSync(engine, OPTS);
+    expect(await held(engine)).toEqual(['notes/a.md']);
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"mirror_read_only": true}'::jsonb WHERE id='default'`);
+    writeFileSync(join(root, 'notes/a.md'), Buffer.concat([Buffer.from(note('notes/a', 'Bytes that are not ')), Buffer.from([0xff, 0xfe])]));
+    const preview = await withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () =>
+      (await repairRunner(engine, { apply: false, logger })).run('file-drift', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', held: true, side: 'unknown' }));
+    const listed = preview.listing!.find(entry => entry.item === 'default:notes/a')!;
+    expect(listed.class).toBe('unknown');
+    expect(String(listed.detail)).toContain('invalid_params: The canonical file must contain valid UTF-8.');
+  }, { databaseUrl, setup }), 240_000);
 }
 
 test('the doctor routes file-drift holds to the whole-set preview, on a writable source and on a read-only mirror', () => {

@@ -176,7 +176,7 @@ export async function heldLiveDrift(engine: BrainEngine, sourceId: string, slug:
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;
     if (error.detail === 'canonical_file_missing') return live;
-    return { still_present: null, reason: typeof error.detail === 'string' ? error.detail : error.code };
+    return typeof error.detail === 'string' ? { still_present: null, reason: error.detail } : { still_present: null, reason: error.code, message: error.message };
   }
 }
 
