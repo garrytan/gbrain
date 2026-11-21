@@ -358,13 +358,14 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   else if (project && settings.autoRebuild) await scheduleBuild(home, project.name, ['skills', 'index', 'build', '--catalog', project.name, ...project.dirs.flatMap(d => ['--dir', d]), '--scope', 'project', '--harness', harness], spawnFn);
   if (catalogs.length === 0) return { outcome: 'no_catalog' };
 
+  const excludeNamespaces = pluginsBuilt ? await projectDisabledPlugins(harness === 'claude-code' ? env.CLAUDE_PROJECT_DIR || cwd : cwd) : [];
   const worker = ctl.worker;
   if (!worker || laneWorkerFailed()) return { outcome: 'error', code: 'skill_resolver_internal', catalogs };
   const posted = await new Promise<{ output?: TurnOutput; pending?: { key: string; delta: TurnDelta } | null; error?: { code: string } }>((resolve) => {
     worker.once('message', resolve);
     worker.once('error', () => resolve({ error: { code: 'skill_resolver_internal' } }));
     worker.once('exit', () => resolve({ error: { code: 'skill_resolver_internal' } }));
-    worker.postMessage({ input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}), ...(reset ? { reset_session: true } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) } satisfies LaneWorkerTurn);
+    worker.postMessage({ input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}), ...(reset ? { reset_session: true } : {}) }, home, catalogs, excludeNamespaces, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) } satisfies LaneWorkerTurn);
   });
   if (posted.error || !posted.output) return { outcome: 'error', code: posted.error?.code ?? 'skill_resolver_internal', catalogs };
   const out = posted.output;
@@ -385,6 +386,38 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     await commitSessionAsync(home, posted.pending.key, { ...posted.pending.delta, ...(hookEvent.history !== undefined ? { history: hookEvent.history } : {}) }, ctl.commit, gc);
   }
   return { outcome, catalogs };
+}
+
+/**
+ * Plugin names a project's .claude/settings.json and settings.local.json turn
+ * off: enabledPlugins is merged key by key, the local file over the shared one.
+ */
+async function projectDisabledPlugins(root: string): Promise<string[]> {
+  const merged = new Map<string, unknown>();
+  for (const file of ['settings.json', 'settings.local.json']) {
+    try {
+      const enabled = ((await readJsonFile(join(root, '.claude', file))) as { enabledPlugins?: unknown } | null)?.enabledPlugins;
+      if (enabled && typeof enabled === 'object' && !Array.isArray(enabled)) for (const [id, v] of Object.entries(enabled)) merged.set(id, v);
+    } catch { /* absent or unreadable: names nothing */ }
+  }
+  const off = [...merged].filter(([, v]) => v === false).map(([id]) => id);
+  const names = new Set(off.map(id => id.split('@')[0]!));
+  if (off.length === 0) return [];
+  // A plugin manifest name outranks the id's plugin part as the catalog namespace.
+  try {
+    const plugins = ((await readJsonFile(join(dirname(claudeUserSettingsPath()), 'plugins', 'installed_plugins.json'))) as { plugins?: Record<string, unknown> } | null)?.plugins ?? {};
+    for (const id of off) {
+      const raw = plugins[id];
+      for (const x of (Array.isArray(raw) ? raw : [raw]) as { installPath?: unknown }[]) {
+        if (!x || typeof x.installPath !== 'string') continue;
+        try {
+          const name = (await readJsonFile(join(x.installPath, '.claude-plugin', 'plugin.json'), 64 * 1024) as { name?: unknown }).name;
+          if (typeof name === 'string') names.add(name);
+        } catch { /* no manifest: the id's plugin part stands */ }
+      }
+    }
+  } catch { /* no install record */ }
+  return [...names];
 }
 
 const isBuilt = (home: string, name: string) => stat(catalogFile(home, name, 'receipt.json')).then(() => true, () => false);
