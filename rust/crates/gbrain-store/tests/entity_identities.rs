@@ -381,3 +381,44 @@ fn identity_decisions_keep_non_empty_evidence_and_sweep_a_broken_sync_link() {
     );
     assert!(b.members().is_empty());
 }
+
+#[test]
+fn identity_decisions_take_back_the_decided_at_text_the_list_returns() {
+    use gbrain_store::identity_reviews::ApplyDecisions;
+    // fillDecisionEvidence reads the decisions and writes them back with their evidence; the SQL
+    // casts the `timestamptz::text` it read (`2026-11-18 00:00:00+00`), so the time must survive.
+    let b = Brain::new("identity-decided-at");
+    b.page("default", "people/alice-example");
+    b.page("other", "people/alice-example");
+    let decision = |decided_at: &str| {
+        json!({
+            "decision_id": "00000000000000ab", "verdict": "different",
+            "members": [{"source_id": "default", "slug": "people/alice-example"}, {"source_id": "other", "slug": "people/alice-example"}],
+            "group_id": null, "entity_id": null, "canonical": null,
+            "decided_by": "owner", "decided_at": decided_at, "origin": "database", "home_source_id": null, "git_blob": null,
+        })
+    };
+    let apply = |d: Value| {
+        b.store
+            .apply_identity_decisions(&de::<ApplyDecisions>(json!({ "upsert": [d] })))
+    };
+    apply(decision("2026-11-18T00:00:00Z")).unwrap();
+    let read = b.store.list_identity_decisions().unwrap();
+    let text = read["decisions"][0]["decided_at"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(text, "2026-11-18 00:00:00+00");
+    apply(decision(&text)).unwrap();
+    apply(decision("2026-11-18 01:30:00-01:30")).unwrap();
+    let read = b.store.list_identity_decisions().unwrap();
+    assert_eq!(
+        read["decisions"][0]["decided_at"],
+        json!("2026-11-18 03:00:00+00")
+    );
+    let err = apply(decision("yesterday")).unwrap_err().to_string();
+    assert!(
+        err.contains("decided_at is not a timestamp: yesterday"),
+        "{err}"
+    );
+}

@@ -28,6 +28,7 @@ use crate::identity_auto::{
 };
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::{PageRecord, all_pages, read_page};
+use crate::persistence::projection_queue::parse_timestamptz;
 use crate::sources::read_source;
 use crate::{Store, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -406,9 +407,17 @@ impl Store {
             }
             let at = match &d.decided_at {
                 None => None,
-                Some(text) => Some(parse_iso(text).ok_or_else(|| {
-                    StoreError::invalid(format!("{MEMBER}: decided_at is not a timestamp: {text}"))
-                })?),
+                // `<text>::timestamptz`, as the SQL casts it: ISO, or the `timestamptz::text` this
+                // member's list returns, so a decision read and written back keeps its time.
+                Some(text) => Some(
+                    parse_iso(text)
+                        .or_else(|| parse_timestamptz(text, "decided_at").ok())
+                        .ok_or_else(|| {
+                            StoreError::invalid(format!(
+                                "{MEMBER}: decided_at is not a timestamp: {text}"
+                            ))
+                        })?,
+                ),
             };
             decided.push(at);
         }
