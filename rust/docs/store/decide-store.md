@@ -6,9 +6,9 @@ The decide store holds four tables of `gbrain decide` that used to run as raw SQ
 `decide_state`, `decide_spend`, `decision_receipts` and `decide_calibrations`. It lives inside the eval_capture
 family (tag `Z`, sub-tags `0x10..=0x1F`, see [eval_capture.md](eval_capture.md)). Rust: `gbrain-store/src/eval_capture/decide_store.rs`
 plus `decide_store/receipts.rs` and `decide_store/calibrations.rs`; binding: `gbrain-napi/src/families/decide_store.rs`;
-This landing carries the native store and binding only. The TypeScript member, the shared SQL module
-(`src/core/engine-sql/decide-store.ts`) and the parity test arrive in a later landing; until then `src/core/ai/decide/store.ts`
-still holds its own SQL and nothing in TypeScript calls these members.
+TypeScript members: `src/core/rust-engine/store-members/decide-store.ts`. The shared SQL module for PGLite and
+Postgres is `src/core/engine-sql/decide-store.ts`, and `src/core/ai/decide/store.ts` calls these engine members.
+Parity test: `test/engine-parity/decide-store.test.ts`.
 
 Timestamps cross the binding as ISO strings; the TypeScript members turn them into `Date`s. All 20 members are capability `eval_capture`.
 
@@ -46,8 +46,9 @@ number Postgres prints for it.
 - A window is a whole number of hours; a null or `NaN` window is refused and a non-whole one is `invalid_argument`. A window
   that reaches before 4713 BC or past 294276 AD is refused as Postgres's "timestamp out of range".
 - Days are 24 hours (no daylight-saving nuance).
-- Orderings that Postgres leaves to the database collation use byte order (`COLLATE "C"`) on every engine. The
-  calibration list used to order by `slot` in the database collation.
+- Orderings that Postgres leaves to the database collation (the calibration list by `slot`, for one) use byte order
+  in Rust. The SQL engines use the database's collation, so rows whose keys compare differently by bytes and by
+  locale can come out in a different order.
 - Replay ties break by insertion id.
 - A mean adds in insertion order, as a heap scan does.
 - A refused calibration insert uses no id on Rust; Postgres `BIGSERIAL` consumes one. Parity cases never assert an id after
@@ -67,5 +68,5 @@ call loudly. `review-lane.ts` and `proposals-store.ts` read `decision_receipts` 
 ## Tests
 
 `gbrain-store/tests/decide_store.rs` (28 cases) covers the native store. The cross-engine parity file
-(`test/engine-parity/decide-store.test.ts`) arrives with the TypeScript member, so the clock-window edges and the
-insertion-order sum have cargo coverage only in this landing.
+`test/engine-parity/decide-store.test.ts` runs the members on PGLite, Postgres and the Rust store; the clock-window
+edges and the insertion-order sum have cargo coverage only (see above).
