@@ -164,7 +164,9 @@ describe('credential files', () => {
 function fakeEngine(config: Record<string, string>, sources: Array<{ id: string; config: unknown }> = []) {
   return {
     getConfig: async (key: string) => config[key] ?? null,
-    executeRaw: async () => sources.map(s => ({ id: s.id, name: s.id, local_path: null, remote_url: null, config: {}, archived: false, page_count: 0 })),
+    // listSources reads the source rows through the typed members (e674407264), not executeRaw.
+    listSourceRecords: async () => sources.map(s => ({ id: s.id, name: s.id, local_path: null, last_commit: null, last_sync_at: null, config: {}, created_at: new Date(0), archived: false })),
+    countSourcePages: async () => 0,
     getSource: async (id: string) => sources.find(s => s.id === id) ?? null,
   } as unknown as Parameters<typeof runAppleContacts>[0];
 }
