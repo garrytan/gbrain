@@ -1,7 +1,8 @@
 /**
  * The write-journal members the Rust store answers: the state reads (readManagedModeRows, readLocalWriterRow,
  * insertLocalWriterRow, readJournalLimitRows; the held-file reads are in sync-hold-store.ts), the request rows the put path
- * reads and writes (readWriteRequest, readWriteRequestById, listWriteRequestRows, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
+ * reads and writes (readWriteRequest, readWriteRequestById, the dream cycle's readDreamDeferralReceipt, listLaterPersistenceRequests and
+ * listCommittedOutputRequests, listWriteRequestRows, readWriteRequestProgress, countOutstandingBySource, ownsSchemaTables, readOAuthClientWriteGrant, readAccessTokenWriteGrant, shareLockWriteCredential, readCounterRows, readAdmissionRate, lockPersistenceCounters, insertWriteRequest,
  * insertWriteRequestGroup, readWriteRequestsByRequestIds, readOwnerHostBinding,
  * stampWriteClaim, lockWriteRequest, completeWriteRow, cancelWriteRow), the claim upkeep (renewWriteClaim, expireStaleWriteClaims,
  * hasClaimableWrite), the consumer rows (listHostConsumerRows, probeLiveConsumerRows, renewConsumerRow,
@@ -24,6 +25,7 @@ import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../../engine-sql/applied-watermark-reads.ts';
 import type { SourceDetailRow } from '../../engine.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
+import type { DreamDeferralReceipt } from '../../engine-sql/dream-cycle.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow, withDates } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
@@ -114,6 +116,28 @@ export const listWriteRequestRows: StoreMember<[principalKind: string, principal
 /** The request with journal id `id`, or null. `signal` changes nothing: the read does not wait on anything. */
 export const readWriteRequestById: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequest | null> =
   async (brain, id) => requestRow(await storeCall({ member: 'readWriteRequestById' }, () => brain.readWriteRequestById(id)));
+
+/** The state and error of the deferral receipt `receiptId` (a journal id), or null: the dream cycle's `readDreamDeferralReceipt`. */
+export const readDreamDeferralReceipt: StoreMember<[receiptId: string], DreamDeferralReceipt | null> = async (brain, receiptId) => {
+  const row = requestRow<WriteRequest>(await storeCall({ member: 'readDreamDeferralReceipt' }, () => brain.readWriteRequestById(receiptId)));
+  return row ? { state: row.state, error_code: row.error_code ?? null, error_message: row.error_message ?? null } : null;
+};
+
+/** The queued, running, recovering and committed requests on an output page after `sequence`, in sequence order (gbrain-store `persistence/dream_reads.rs`). */
+export const listLaterPersistenceRequests: StoreMember<[sourceId: string, incarnation: string, slug: string, sequence: number | string], WriteRequest[]> =
+  async (brain, sourceId, incarnation, slug, sequence) => {
+    const rows = await storeCall({ member: 'listLaterPersistenceRequests', slug, sourceId },
+      () => brain.listLaterPersistenceRequests(sourceId, incarnation, slug, String(sequence))) as unknown[];
+    return rows.map(row => requestRow<WriteRequest>(row)!);
+  };
+
+/** The committed put_page rows of `requestIds` in the source and incarnation, newest sequence first (gbrain-store `persistence/dream_reads.rs`). */
+export const listCommittedOutputRequests: StoreMember<[requestIds: string[], sourceId: string, incarnation: string], Array<{ request: WriteRequest }>> =
+  async (brain, requestIds, sourceId, incarnation) => {
+    const rows = await storeCall({ member: 'listCommittedOutputRequests', sourceId },
+      () => brain.listCommittedOutputRequests([...requestIds], sourceId, incarnation)) as Array<{ request: unknown }>;
+    return rows.map(row => ({ request: requestRow<WriteRequest>(row.request)! }));
+  };
 
 /**
  * The progress columns of request `id`, or null: the columns PGLite's WRITE_PROGRESS_SQL selects, taken from the

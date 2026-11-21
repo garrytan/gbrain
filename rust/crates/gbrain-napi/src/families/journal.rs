@@ -547,6 +547,37 @@ impl Brain {
         self.run(env, move |s| s.list_reservations_after(&after, limit))
     }
 
+    /// `listLaterPersistenceRequests(sourceId, incarnation, slug, sequence)`: the live and committed
+    /// request rows on the slug after the sequence (decimal text), in sequence order.
+    #[napi]
+    pub fn list_later_persistence_requests<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+        slug: String,
+        sequence: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_later_persistence_requests(&source_id, &incarnation, &slug, &sequence)
+        })
+    }
+
+    /// `listCommittedOutputRequests(requestIds, sourceId, incarnation)`: `{ request }` per committed
+    /// `put_page` row, newest sequence first.
+    #[napi]
+    pub fn list_committed_output_requests<'env>(
+        &self,
+        env: &'env Env,
+        request_ids: Vec<String>,
+        source_id: String,
+        incarnation: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_committed_output_requests(&request_ids, &source_id, &incarnation)
+        })
+    }
+
     #[napi]
     pub fn list_true_up_requests<'env>(
         &self,
