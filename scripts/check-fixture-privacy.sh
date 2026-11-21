@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # v0.41.13.0 — Privacy guard for committed fixtures, eval corpora and audit
 # evidence: test/fixtures/conversation-formats/, test/fixtures/transcripts/,
-# evals/ and docs/test-audit/.
+# evals/, docs/test-audit/ and skills/.
 #
 # Per CLAUDE.md privacy rule: "Never reference real people, companies,
 # funds, or private agent names in any public-facing artifact."
@@ -25,7 +25,10 @@
 # the product and repository names (openclaw, garrytan/gbrain) are
 # legitimate there. evals/ carries generated corpora and qrels, where a real
 # person's brain-page slug once shipped in a public repo; docs/test-audit/
-# carries audit evidence that quotes eval data.
+# carries audit evidence that quotes eval data. skills/ ships in every
+# install and once carried a real downstream agent's name in
+# skillpack-harvest's SKILL.md and routing evals; it may name the product
+# (OpenClaw) but not real people, companies, funds or private agents.
 #
 # Seam: GBRAIN_GUARD_ROOT (fixture tree root, used by scripts/guard-self-test.sh).
 
@@ -48,8 +51,8 @@ done
 for f in "${FIXTURE_FILES[@]}"; do
   [ -f "$f" ] && EXISTING_DIRS+=("$f")
 done
-# Eval corpora and audit evidence: real-entity tokens only (see header).
-SCOPED_DIRS=("evals" "docs/test-audit")
+# Eval corpora, audit evidence and bundled skills: real-entity tokens only (see header).
+SCOPED_DIRS=("evals" "docs/test-audit" "skills")
 EXISTING_SCOPED=()
 for d in "${SCOPED_DIRS[@]}"; do
   [ -d "$d" ] && EXISTING_SCOPED+=("$d")
