@@ -885,3 +885,34 @@ describe('engine parity: decide calibrations', () => {
     },
   );
 });
+
+/**
+ * The one decide case that does not sort client-side (Ember ruling A, Nov 20). Slot and decision-id keys differ only
+ * by case and by a non-ASCII letter, so byte order and an en_US collation list them differently. PGLite and the Rust
+ * store list bytes and must match exactly. A Postgres database on a non-C collation lists them in its own order: that
+ * order is pinned here as the known divergence (docs/designs/RUST_ENGINE.md, loss table), then the Postgres arm hands
+ * back the byte order so the arms still compare the rows themselves. A Postgres database on the C collation lists bytes
+ * and is held to them like the other two.
+ */
+describe('engine parity: decide orderings without a client-side sort', () => {
+  const KEYS = ['b', 'A', 'z', 'a', '\u00e9', 'B', 'e'];
+  const BYTE_ORDER = ['A', 'B', 'a', 'b', 'e', 'z', '\u00e9'];
+  const EN_US_ORDER = ['a', 'A', 'b', 'B', 'e', '\u00e9', 'z'];
+  armsParityTest(
+    'decideSlotUsage and listDecideReplayReceipts list case and non-ASCII keys in byte order on PGLite and Rust; Postgres on a non-C collation is the pinned divergence',
+    { methods: ['insertDecideReceipts', 'decideSlotUsage', 'listDecideReplayReceipts'] },
+    async (engine, backend) => {
+      await engine.insertDecideReceipts(KEYS.map((k) => receipt(k, { slot: k })));
+      await engine.insertDecideReceipts(KEYS.map((k) => receipt(`r-${k}`)));
+      const slots = (await engine.decideSlotUsage(1)).map((r) => r.slot).filter((s) => s !== 'conflict');
+      const refs = (await engine.listDecideReplayReceipts('conflict', 1)).map((r) => r.decision_id);
+      const byteRefs = BYTE_ORDER.map((k) => `r-${k}`);
+      if (backend === 'postgres' && slots.join() !== BYTE_ORDER.join()) {
+        expect({ backend, slots, refs }).toEqual({ backend, slots: EN_US_ORDER, refs: EN_US_ORDER.map((k) => `r-${k}`) });
+        return { slots: BYTE_ORDER, refs: byteRefs };
+      }
+      expect({ backend, slots, refs }).toEqual({ backend, slots: BYTE_ORDER, refs: byteRefs });
+      return { slots, refs };
+    },
+  );
+});
