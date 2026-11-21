@@ -11,7 +11,6 @@
  */
 import { execFileSync } from '../spawn.ts';
 import { GIT_READ_ENV, gitChildEnv } from '../git-env.ts';
-import { realpathSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { ParsedPage } from '../import-file.ts';
@@ -116,7 +115,7 @@ async function earlierVersionHeld(engine: BrainEngine, sourceId: string, slug: s
     // The same read sync's screen takes (sync-pass-run.ts readDriftHistories: the Git top level and a path from it), so
     // the two always compare the same versions, a source rooted in a subdirectory of its checkout included.
     const top = git(['rev-parse', '--show-toplevel']).trim();
-    const path = relative(realpathSync(top), realpathSync(state.path)).split(sep).join('/');
+    const path = git(['rev-parse', '--show-prefix']).trim() + relative(state.root, state.path).split(sep).join('/');
     const head = git(['rev-parse', '--verify', 'HEAD']).trim();
     let atHead: string | null = null;
     try { atHead = git(['rev-parse', '--verify', '--quiet', `HEAD:${path}`]).trim() || null; } catch { /* not at HEAD */ }
