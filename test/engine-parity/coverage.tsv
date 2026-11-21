@@ -608,7 +608,7 @@ readSourcePurgeEpoch	persistence_journal	yes	3	no	yes	yes	serves
 readWriteWatermarkRow	persistence_journal	yes	1	no	yes	yes	serves
 readSourceCheckoutRoot	persistence_journal	yes	1	no	yes	yes	serves
 readUnembeddedPageSummary	persistence_journal	yes	1	no	yes	yes	serves
-readWriteRequest	persistence_journal	yes	9	no	yes	yes	serves
+readWriteRequest	persistence_journal	yes	10	no	yes	yes	serves
 readWriteRequestById	persistence_journal	yes	14	no	yes	yes	serves
 listWriteRequestRows	persistence_journal	yes	2	no	yes	yes	serves
 readWriteRequestProgress	persistence_journal	yes	1	no	yes	yes	serves
@@ -1061,7 +1061,7 @@ abortPurgedStagings	facts_purge	yes	2	no	yes	yes	refuses:facts
 deletePurgedStagingParts	facts_purge	yes	2	no	yes	yes	refuses:facts
 deletePageViewDigests	facts_purge	yes	2	no	yes	yes	refuses:facts
 deleteUnreferencedPurgedTexts	facts_purge	yes	2	no	yes	yes	refuses:facts
-listPurgeMatchCandidates	facts_purge	yes	2	no	yes	yes	serves
+listPurgeMatchCandidates	facts_purge	yes	3	no	yes	yes	serves
 lockPurgeSource	facts_purge	yes	2	no	yes	yes	serves
 insertHoldingPagePurges	facts_purge	yes	4	no	yes	yes	serves
 deletePurgedTakes	facts_purge	yes	2	no	yes	yes	refuses:facts

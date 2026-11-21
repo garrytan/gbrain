@@ -46,25 +46,30 @@ export const PURGE_OWNERS = {
   repairOriginTwin: 'lane 10 (repair-rust b5945d814f)',
   /** The online-built request index read: rust-engine/doctor-checks-3 (b78e56edb9, contains 8d4d809039) makes it a typed member whose Rust store answers every index as valid. */
   requestIndexes: 'lane 14 (doctor-checks-3 b78e56edb9, contains 8d4d809039)',
+  /** The fact purge's transaction statements and receipt counts: rust-engine/rust-5a bc4cc890fe serves them (not merged here); see fact-purge-path-members.ts. */
+  factPurgeTx: 'lane 4 (rust-5a bc4cc890fe)',
 } as const;
 
 /**
  * When another lane's stop is due to lift: the date its serving head reaches this branch's base. Ember's rulings, Nov 21:
  * the fact purge receipt's ledger reads are due Nov 24; the page receipt reads, the slot-end read and the four page purge
  * stops served on other branches (request index, origin twin, publication stamp, generation-ledger scrub) are due Nov 25,
- * the last landing date.
+ * the last landing date. The fact purge's transaction statements, served on rust-5a, are due Nov 23 (the step 6 ruling).
  */
-export const PURGE_DUE = { nov24: '5 PM PST Nov 24', nov25: '5 PM PST Nov 25' } as const;
+export const PURGE_DUE = { nov23: '5 PM PST Nov 23', nov24: '5 PM PST Nov 24', nov25: '5 PM PST Nov 25' } as const;
 
 export type PurgeEntryPoint = 'delete_page' | 'retention';
 
-/** `due`: when the owning lane lifts the stop. Every stop another lane owns carries one (test/page-purge-path-members.test.ts). */
-interface Base { owner: string; entry?: 'retention'; due?: string }
+/**
+ * `due`: when the owning lane lifts the stop. Every stop another lane owns carries one (test/page-purge-path-members.test.ts).
+ * `entry`: the entry point that alone reaches the entry (`E`; the page purge's is `retention`, the fact purge's `purge`).
+ */
+interface Base<E extends string = 'retention'> { owner: string; entry?: E; due?: string }
 /** A BrainEngine member the purge calls. `stop`: not served on Rust (must match the classification). `refuses`: served, but refuses the purge's arguments. */
-export interface PurgePathMember extends Base { member: keyof BrainEngine & string; stop?: string; refuses?: string }
+export interface PurgePathMember<E extends string = 'retention'> extends Base<E> { member: keyof BrainEngine & string; stop?: string; refuses?: string }
 /** A raw-SQL site, named `function (file under src/core)` as the recording test attributes it. */
-export interface PurgePathSite extends Base { site: string; guarded?: string; stop?: string }
-export type PurgePathEntry = PurgePathMember | PurgePathSite;
+export interface PurgePathSite<E extends string = 'retention'> extends Base<E> { site: string; guarded?: string; stop?: string }
+export type PurgePathEntry<E extends string = 'retention'> = PurgePathMember<E> | PurgePathSite<E>;
 
 const { ours, receiptReads, publicationStamp, ledgerScrub, beliefProbe, factContextProbe, repairOriginTwin, requestIndexes } = PURGE_OWNERS;
 const { nov24, nov25 } = PURGE_DUE;
@@ -188,22 +193,23 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
 ];
 
 /** An entry's name, as the refusal and the tests print it. */
-export const purgeEntryName = (entry: PurgePathEntry): string => ('member' in entry ? entry.member : entry.site);
+export const purgeEntryName = (entry: PurgePathEntry<string>): string => ('member' in entry ? entry.member : entry.site);
 
-export interface PurgePathStop { entry: PurgePathEntry; name: string; owner: string; due?: string; capability: Capability; why: string }
+export interface PurgePathStop<E extends string = 'retention'> { entry: PurgePathEntry<E>; name: string; owner: string; due?: string; capability: Capability; why: string }
 
 /**
- * Every listed entry that stops a purge on `engine` from `entryPoint`, in list order. An engine that is not the Rust
- * engine serves every entry (PGLite, Postgres) and a transaction handle or fake has nothing to refuse, so only a Rust
- * engine is read against the list.
+ * Every entry of `path` that `reached` selects and that stops a purge on `engine`, in list order: a site that is marked
+ * `stop`, a member the Rust engine does not serve (or serves but `refuses`). An engine that is not the Rust engine serves
+ * every entry (PGLite, Postgres) and a transaction handle or fake has nothing to refuse, so only a Rust engine is read
+ * against the list. The page purge's check and the fact purge's (fact-purge-path-members.ts) both read their list here.
  */
-export async function purgePathStops(engine: object, entryPoint: PurgeEntryPoint = 'delete_page'): Promise<PurgePathStop[]> {
+export async function entryStops<E extends string>(path: readonly PurgePathEntry<E>[], engine: object, reached: (entry: PurgePathEntry<E>) => boolean): Promise<PurgePathStop<E>[]> {
   if ((engine as { kind?: unknown }).kind !== 'rust') return [];
   const { rustMemberCapability } = await import('../rust-engine.ts');
   const { RUST_ENGINE_MEMBERS } = await import('../rust-engine/members.ts');
-  const stops: PurgePathStop[] = [];
-  for (const entry of PURGE_PATH) {
-    if (entry.entry === 'retention' && entryPoint !== 'retention') continue;
+  const stops: PurgePathStop<E>[] = [];
+  for (const entry of path) {
+    if (!reached(entry)) continue;
     const name = purgeEntryName(entry);
     if ('site' in entry) {
       if (entry.stop) stops.push({ entry, name, owner: entry.owner, due: entry.due, capability: 'raw_sql', why: entry.stop });
@@ -215,6 +221,10 @@ export async function purgePathStops(engine: object, entryPoint: PurgeEntryPoint
   }
   return stops;
 }
+
+/** Every listed entry that stops a purge on `engine` from `entryPoint`, in list order. */
+export const purgePathStops = (engine: object, entryPoint: PurgeEntryPoint = 'delete_page'): Promise<PurgePathStop[]> =>
+  entryStops(PURGE_PATH, engine, entry => entry.entry !== 'retention' || entryPoint === 'retention');
 
 /**
  * The pre-write check of every entry that reaches a purge (delete_page --purge, the retention purge, a recovered purge

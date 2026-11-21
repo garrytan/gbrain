@@ -43,6 +43,8 @@ const RAW_PRIMITIVES = ['executeRaw', 'executeRawDirect', 'withReservedConnectio
 /** What each phase called: a purge's real run, a dry run, `--match`, and the status read with and without `--continue`. */
 const phases = { real: new Set<string>(), dry: new Set<string>(), match: new Set<string>(), status: new Set<string>(), resume: new Set<string>() };
 const sites = new Set<string>();
+/** The raw sites each phase reached. */
+const sitesBy: Record<string, Set<string>> = { real: new Set(), dry: new Set(), match: new Set(), status: new Set(), resume: new Set() };
 type Phase = keyof typeof phases;
 let phase: Phase = 'real';
 
@@ -53,7 +55,7 @@ function recording<T extends object>(engine: T): T {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function' || typeof prop !== 'string') return value;
       return (...args: unknown[]) => {
-        if (RAW_PRIMITIVES.includes(prop)) sites.add(rawSite(new Error().stack ?? ''));
+        if (RAW_PRIMITIVES.includes(prop)) { const site = rawSite(new Error().stack ?? ''); sites.add(site); sitesBy[phase]!.add(site); }
         else phases[phase].add(prop);
         if ((prop === 'transaction' || prop === 'transactionDirect') && typeof args[0] === 'function') {
           const fn = args[0] as (tx: object) => unknown;
@@ -190,8 +192,17 @@ describe('the fact purge calls only what the list names', () => {
   });
 
   test('a dry run and --match call nothing the check refuses on', () => {
+    // A plain --status is not checked either, but it reads the completion of the purge (listPurgeEffects and the
+    // fingerprint count), which are stops; on a Rust brain it gets the engine's own typed refusal, which names them.
     const stops = new Set(stopEntries.map(purgeEntryName));
-    expect([...phases.dry, ...phases.match, ...phases.status].filter(name => stops.has(name))).toEqual([]);
+    expect([...phases.dry, ...phases.match, ...sitesBy.dry!, ...sitesBy.match!].filter(name => stops.has(name))).toEqual([]);
+  });
+
+  test('an entry not marked as a real-run entry is reached by --status --continue, and one marked is not', () => {
+    const resume = new Set([...phases.resume, ...sitesBy.resume!]);
+    const stopsOnly = stopEntries.map(entry => ({ name: purgeEntryName(entry), purgeOnly: entry.entry === 'purge' }));
+    expect(stopsOnly.filter(entry => entry.purgeOnly && resume.has(entry.name)).map(entry => entry.name)).toEqual([]);
+    expect(stopsOnly.filter(entry => !entry.purgeOnly && !resume.has(entry.name)).map(entry => entry.name)).toEqual([]);
   });
 
   test('the check reads only the list: PGLite and Postgres have no stop, and the real run lists more than the continue', async () => {

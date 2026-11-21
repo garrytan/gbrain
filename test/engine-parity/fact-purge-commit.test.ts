@@ -117,7 +117,9 @@ describe('engine parity: a whole fact purge', () => {
   });
 
   parityTest('purge_fact --status --continue writes through the derivation sweep: the Rust arm refuses it before it reads or writes anything', {
+    // The continue's first stop is the sweep's raw SQL, which the Rust engine refuses with the raw_sql capability.
     methods: ['readWriteRequest'],
+    requires: 'raw_sql',
     timeout: 60_000,
   }, async (engine, backend) => {
     await registerLocalWriter(engine, 'cli');
