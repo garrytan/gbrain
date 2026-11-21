@@ -6,7 +6,8 @@
  *    always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1) and leaves the page soft-deleted.
  *    A soft delete of a private origin carries the label to its derived page (`derived_from`), so the digest reads
  *    `visibility: private` on every arm. A purge removes the page on PGLite and Postgres; on the Rust arm it ends on
- *    the typed raw_sql refusal before it writes anything, so the page is still live and unchanged.
+ *    the pre-write purge-path refusal (persistence/purge-path-members.ts: engine_capability_missing naming the first
+ *    member or raw-SQL site the Rust engine cannot serve and its owner lane), so nothing is written and the page is still live and unchanged.
  *  - Regression: on the Rust engine the origin carry read the origin and its dependents through raw SQL, and a silent
  *    `.catch(() => null)` dropped the refusal, so the soft delete committed and the digest of a private origin stayed
  *    world-visible. The Rust purge wrote a fallback soft delete and a `purge_held` record and only then failed.
@@ -24,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { purgePathStops } from '../../src/core/persistence/purge-path-members.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -110,10 +112,15 @@ describe('engine parity: delete_page', () => {
       const outcome = await deletePage(engine, 'notes/doomed', { purge: true });
       return { before, outcome, after: { page: await state(engine, 'notes/doomed'), digest: await state(engine, 'notes/doomed-digest') } };
     } catch (error) {
-      // The refusal must come before any write: the page and its digest read exactly as they did before.
+      // The refusal must come before any write: the page and its digest read exactly as they did before, and it names
+      // the first stop the purge-path list holds for this engine, with its owner lane.
       if ((error as { code?: string }).code === 'engine_capability_missing') {
-        expect({ backend, page: await state(engine, 'notes/doomed'), digest: await state(engine, 'notes/doomed-digest') })
-          .toEqual({ backend, ...before });
+        const [first] = await purgePathStops(engine);
+        const refusal = error as { message?: string; detail?: string };
+        expect({ backend, names: first ? [first.name, first.owner].filter(part => `${refusal.message} ${refusal.detail}`.includes(part)) : null })
+          .toEqual({ backend, names: first ? [first.name, first.owner] : null });
+        expect({ backend, page: await state(engine, 'notes/doomed'), digest: await state(engine, 'notes/doomed-digest'), tombstones: await engine.countPagePurgeTombstones(SRC, 'notes/doomed') })
+          .toEqual({ backend, ...before, tombstones: 0 });
       }
       throw error;
     }
