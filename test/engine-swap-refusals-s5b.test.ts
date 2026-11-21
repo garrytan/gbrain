@@ -17,7 +17,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { renderCliError } from '../src/core/agent-output.ts';
 import { opError } from '../src/core/ops/contract.ts';
 import { runEngineSwap, type EngineSwapCliDeps } from '../src/commands/engine-swap.ts';
-import { READINESS_POLICY, type ReadinessPolicy } from '../src/core/engine-swap/policy.ts';
+import { brainRefFor, READINESS_POLICY, type ReadinessPolicy } from '../src/core/engine-swap/policy.ts';
 import { readinessReadyFor } from './helpers/swap-ready-status.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -170,6 +170,26 @@ describe('the readiness policy (criterion 1 minimum shadow duration)', () => {
     const none = await plan({ ...READINESS_POLICY, shadow_min: { kind: 'not_required' }, approved_by: 'test' });
     expect(none.criteria[0].state).toBe('pass');
     expect(none.policy.text).toContain('not required');
+  });
+
+  test('the shipped dated override names its ruling and expiry, and applies to no brain until it names one', async () => {
+    const p = await plan(READINESS_POLICY);
+    expect(p.policy.override).toMatchObject({ id: 'c1-dec1-swap', applies: false, why: 'unbound' });
+    expect(p.policy.text).toContain('"Do it" (Slack channel C0CJDTJG5PE');
+    expect(p.policy.text).toContain('2026-11-21 at 1:17 PM PST');
+    expect(p.policy.text).toContain(READINESS_POLICY.overrides![0]!.expires);
+    expect(p.policy.brain_ref).toBe(brainRefFor((await engine.readPersistenceBrainId())!));
+  });
+
+  test('bound to this brain, the dated override sets the duration, and the plan hash changes', async () => {
+    const shipped = READINESS_POLICY.overrides![0]!;
+    const bound: ReadinessPolicy = { ...READINESS_POLICY, overrides: [{ ...shipped, brain_ref: brainRefFor((await engine.readPersistenceBrainId())!), shadow_min: { kind: 'days', days: 0 } }] };
+    const before = await plan(READINESS_POLICY);
+    const after = await plan(bound);
+    expect(after.policy.override).toMatchObject({ applies: true, why: null });
+    expect(after.policy.text).toContain('this brain only');
+    expect(after.criteria[0].state).toBe('pass');
+    expect(after.plan_hash).not.toBe(before.plan_hash);
   });
 
   test('an expired value falls back to 14 days', async () => {

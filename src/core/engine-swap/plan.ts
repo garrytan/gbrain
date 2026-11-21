@@ -14,7 +14,7 @@ import { activeWorktreeRefreshes } from '../persistence/worktree-refresh.ts';
 import { evaluateReadiness, type ReadinessVerdict, type ShadowStatus } from './readiness.ts';
 import { capabilityReport, estimateWritePause, type CapabilityReport, type WritePauseEstimate } from './capability.ts';
 import { swapBlockers, type SwapBlocker } from './gates.ts';
-import { describePolicy, policyHash, READINESS_POLICY, type ReadinessPolicy } from './policy.ts';
+import { policyInForce, READINESS_POLICY, type PolicyInForce, type ReadinessPolicy } from './policy.ts';
 import { managedStorageError, refreshUnsettledError, type SwapRefusalReason, type UnsettledRefresh } from './refusals.ts';
 
 /** Environment variables that can select the current engine or its database (names only; values are never read out). */
@@ -44,8 +44,9 @@ export interface SwapPlan {
   refreshes: { unsettled: 0; checked: true };
   routes: { env: string[]; services: ServiceDefinition[] };
   disk: { path: string; free_bytes: number | null };
-  /** The readiness policy in force (criterion 1's minimum shadow duration) and its hash. */
-  policy: { text: string; hash: string };
+  /** The readiness policy in force for this brain (criterion 1's minimum shadow duration), its hash, the dated
+   * override considered (applies or why not) and the brain reference an override binds. */
+  policy: { text: string; hash: string; override: PolicyInForce['override']; brain_ref: string | null };
   /** What the Rust engine does not serve that the current engine does. */
   capability_report: CapabilityReport;
   /** The estimated time writes are refused during a run. */
@@ -114,9 +115,9 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
   await assertNotManaged(engine);
   await assertRefreshesSettled(engine);
   const now = deps.now ?? new Date();
-  const policy = deps.policy ?? READINESS_POLICY;
+  const inForce = policyInForce(deps.policy ?? READINESS_POLICY, await engine.readPersistenceBrainId(), now);
   const status = deps.readShadowStatus ? await deps.readShadowStatus() : null;
-  const readiness = evaluateReadiness(status, now, policy);
+  const readiness = evaluateReadiness(status, now, inForce.policy);
   const base: Omit<SwapPlan, 'plan_hash'> = {
     schema_version: 1,
     to: 'rust',
@@ -129,7 +130,7 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     refreshes: { unsettled: 0, checked: true },
     routes: { env: [...(deps.envNames ?? [])], services: [...(deps.services ?? [])] },
     disk: deps.disk ?? { path: '', free_bytes: null },
-    policy: { text: describePolicy(policy, now), hash: policyHash(policy) },
+    policy: { text: inForce.text, hash: inForce.hash, override: inForce.override, brain_ref: inForce.brain_ref },
     capability_report: capabilityReport(String(engine.kind)),
     write_pause: await estimateWritePause(engine),
     blockers: await swapBlockers(engine, { remoteMcpConfigured: !!deps.remoteMcpConfigured }),

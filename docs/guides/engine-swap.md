@@ -92,7 +92,10 @@ is refused while one is recorded and not finished.
 
 Criterion 1's minimum shadow duration is a policy value, not a flag: 14 days by default (D14), or a number of days with
 an expiry date, or "not required", as an approved ruling sets it. The plan prints it and its hash; the hash is part of
-the plan hash, so a change needs a new plan. An expired value falls back to 14 days. Privacy, fingerprints, topology,
+the plan hash, so a change needs a new plan. An expired value falls back to 14 days. A policy can also carry a dated override for one brain: it names the ruling (words, time, place), the
+brain it binds (`brain_ref` in the plan's JSON, a digest of the brain's persistence identity) and an expiry date. The
+plan prints it and whether it applies here; for every other brain, and after the expiry, the policy's own duration
+stands. Today one override is listed (`c1-dec1-swap`, 5 days until Dec 8 2026), for the maintainer's own brain. Privacy, fingerprints, topology,
 platform, capabilities, recovery drills, caught-up following and the final digests are never part of a policy.
 
 <a id="readiness"></a>

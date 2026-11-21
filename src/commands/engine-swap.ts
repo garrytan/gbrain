@@ -88,6 +88,7 @@ export function renderPlanText(p: SwapPlan): string {
     `Service definitions: ${p.routes.services.length ? p.routes.services.map(s => `${s.name} (${s.kind}${s.unread ? '; unreadable, names unknown' : s.sets.length ? `; sets ${s.sets.join(', ')}` : ''})`).join('; ') : 'none found'}`,
     `Free disk at ${p.disk.path || '(unknown)'}: ${p.disk.free_bytes === null ? 'unknown' : `${(p.disk.free_bytes / 2 ** 30).toFixed(1)} GiB`}`,
     `Readiness policy: ${p.policy.text} (policy ${p.policy.hash})`,
+    ...(p.policy.brain_ref ? [`Brain reference (binds a dated override): ${p.policy.brain_ref}`] : []),
     `Capability report: Rust serves ${p.capability_report.served.length} capabilities; ${p.capability_report.lost.length ? `not served: ${p.capability_report.lost.map(l => `${l.capability} (${l.members.length} member(s))`).join(', ')}` : 'nothing this brain uses is lost'}`,
     `Expected write pause: about ${p.write_pause.seconds} s (${p.write_pause.basis})`,
     ...p.blockers.map(b => `Blocked: ${b.reason} (${b.detail}): ${SWAP_RECOVERY[b.reason].blocker}`),
