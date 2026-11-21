@@ -93,12 +93,24 @@ export function ownerCallTimeout(member: string, ms: number, stage: 'queued' | '
     { reason: 'outcome_unknown', retryable: true, detail });
 }
 
-/** The caller's AbortSignal fired; the owner was told to cancel the call. */
+/**
+ * The caller's AbortSignal fired. Before the call was sent it never ran: `cancelled`. After it was sent the owner is
+ * told to stop it, but a call the owner already started is not interrupted (the store does not observe the abort), so
+ * a write can still commit: the outcome is unknown, as for a sent call's timeout, and rerunning the call could repeat
+ * the write.
+ */
 export function ownerCallCancelled(member: string, sent: boolean): OperationError {
+  if (sent) {
+    return opError('owner_unavailable',
+      `${member} was cancelled by its caller after it was sent to the brain's owner. A call the owner already started is not interrupted, so a write may or may not have committed.`,
+      'Read the page or run the read again before you rerun a write: running it again without that check can repeat a write that already committed.',
+      { reason: 'outcome_unknown', retryable: false, detail: `member=${member} via=owner_ipc sent=true`,
+        why: 'The owner process is not told to stop a started store call, so it finishes the call after this process stopped waiting.' });
+  }
   return opError('cancelled',
-    `${member} was cancelled by its caller${sent ? '; the owner was told to stop it' : ' before it was sent'}.`,
+    `${member} was cancelled by its caller before it was sent.`,
     'Nothing to do unless the cancel was unexpected; run the call again to repeat it.',
-    { detail: `member=${member} via=owner_ipc sent=${sent}` });
+    { detail: `member=${member} via=owner_ipc sent=false` });
 }
 
 /** The owner's reply exceeded the frame cap. */

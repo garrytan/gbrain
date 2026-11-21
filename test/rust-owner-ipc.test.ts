@@ -305,7 +305,7 @@ describe('deadlines, cancel and permits', () => {
     } finally { close(); }
   });
 
-  test('an aborted signal ends the call with cancelled and frees its permit', async () => {
+  test('a cancel after the call was sent reports an unknown outcome (the owner may still commit), a cancel before it was sent reports cancelled', async () => {
     const { engine, close } = await clientOf(server.socketPath);
     try {
       const controller = new AbortController();
@@ -313,10 +313,19 @@ describe('deadlines, cancel and permits', () => {
       await Bun.sleep(50);
       expect(server.stats().active).toBe(1);
       controller.abort();
-      expect(((await call) as OperationError).code).toBe('cancelled');
+      const sent = (await call) as OperationError;
+      // The owner does not stop a call it started, so `cancelled` ("cancelled before it committed") would be untrue and
+      // "run it again" would repeat a write that may have committed (a second insertFact).
+      expect(sent.code).not.toBe('cancelled');
+      expect(sent.reason).toBe('outcome_unknown');
+      expect(sent.message).toContain('may or may not have committed');
+      expect(sent.suggestion).toContain('before you rerun');
+      expect(sent.suggestion).not.toContain('run the call again to repeat it');
+      expect(sent.detail).toContain('sent=true');
       expect(await settled()).toMatchObject({ active: 0, queued: 0 });
       const already = await withRequestSignal(AbortSignal.abort(), () => engine.getPage('x')).then(() => null, e => e);
       expect((already as OperationError).code).toBe('cancelled');
+      expect((already as OperationError).detail).toContain('sent=false');
     } finally { close(); }
   });
 
