@@ -495,7 +495,7 @@ applyTransactionSettings	import_guards	yes	71	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
-readLedgerSource	import_guards	yes	21	no	yes	yes	serves
+readLedgerSource	import_guards	yes	22	no	yes	yes	serves
 listCoveredSources	import_guards	yes	2	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	4	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	24	no	yes	yes	serves
@@ -877,7 +877,7 @@ listSegmentedPageBodies	facts_purge	yes	2	no	yes	yes	serves
 listSegmentedVersionBodies	facts_purge	yes	2	no	yes	yes	serves
 setPurgeProbeTimeout	facts_purge	yes	3	no	yes	yes	serves
 probePurgeDerivations	facts_purge	yes	2	no	yes	yes	refuses:facts
-listBeliefEventsForPurgeProbe	facts_purge	yes	3	no	yes	yes	serves
+listBeliefEventsForPurgeProbe	facts_purge	yes	4	no	yes	yes	serves
 listFactContextsForPurgeProbe	facts_purge	yes	1	no	yes	yes	refuses:facts
 listPageSourcePathsForPurge	facts_purge	yes	2	no	yes	yes	serves
 listNearestFactsForPurge	facts_purge	yes	2	no	yes	yes	serves
@@ -1052,7 +1052,7 @@ countBeliefBaselineSlugs	belief_ledger	yes	2	no	yes	yes	serves
 readBeliefRedactions	belief_ledger	yes	4	no	yes	yes	serves
 insertBeliefRedaction	belief_ledger	yes	2	no	yes	yes	serves
 releaseBeliefRedactions	belief_ledger	yes	2	no	yes	yes	serves
-insertBeliefEvents	belief_ledger	yes	8	no	yes	yes	serves
+insertBeliefEvents	belief_ledger	yes	9	no	yes	yes	serves
 markBeliefCommits	belief_ledger	yes	5	no	yes	yes	serves
 readOpenBeliefLifetimes	belief_ledger	yes	2	no	yes	yes	serves
 endBeliefLifetime	belief_ledger	yes	2	no	yes	yes	serves
