@@ -270,8 +270,8 @@ store takes both as lowercase hex of whole bytes and a digest is exactly 32 byte
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.importRelation(seedId, relation, rows, digests)` | as above, with `digests: [{ sort, digest }]` aligned with `rows`: one entry per row at generation 0. `invalid_argument` when the lengths differ, a value is not hex, a digest is not 32 bytes or two rows share a sort key | none |
-| `brain.replaceRelationRows(seedId, relation, generation, keys, rows, digests)` | `{ upserted, deleted, skipped_older, dropped, unmapped_columns, losses }`. `keys: [{ sort, key: { column: text } }]` are the rows the primary changed. A key with a row in `rows` (its digest has the key's sort) is stored over its old version, or inserted: `upserted`. A key with no row is deleted: `deleted`. Deletes run before stores, so a natural key a deleted row held is free for a new row. One write transaction; an error stores nothing. `invalid_argument` for an unknown relation, a generation that is not a whole number from 0 to 2^53-1, lengths that differ, a row whose sort is not among the keys or two keys or rows with one sort; `invalid_state` when no seed owns the store or another seed does; `unsupported` for a relation that is not `removable` | none |
-| `brain.replaceInterval(seedId, relation, generation, lo, hi, rows, digests)` | the same result. `lo` is inclusive and `hi` exclusive, as hex sort keys; `null` is unbounded. The primary holds exactly `rows` in `[lo, hi)`: every entry in the interval that is not among them is deleted, the rows are stored or inserted. One write transaction. A row whose sort is outside `[lo, hi)` is `invalid_argument` and stores nothing. Other errors as above | none |
+| `brain.replaceRelationRows(seedId, relation, generation, keys, rows, digests)` | `{ upserted, deleted, skipped_older, displaced, dropped, unmapped_columns, losses }`. `keys: [{ sort, key: { column: text } }]` are the rows the primary changed. A key with a row in `rows` (its digest has the key's sort) is stored over its old version, or inserted: `upserted`. A key with no row is deleted: `deleted`. Deletes run before stores, so a natural key a deleted row held is free for a new row, and every row's old version is removed before any new version is stored, so rows can swap a unique natural key (see "Natural keys that move"). One write transaction; an error stores nothing. `invalid_argument` for an unknown relation, a generation that is not a whole number from 0 to 2^53-1, lengths that differ, a row whose sort is not among the keys or two keys or rows with one sort; `invalid_state` when no seed owns the store or another seed does; `unsupported` for a relation that is not `removable` | none |
+| `brain.replaceInterval(seedId, relation, generation, lo, hi, rows, digests)` | the same result. `lo` is inclusive and `hi` exclusive, as hex sort keys; `null` is unbounded. The primary holds exactly `rows` in `[lo, hi)`: every entry in the interval that is not among them is deleted, the rows are stored or inserted. One write transaction. A row whose sort is outside `[lo, hi)` is `invalid_argument` and stores nothing. The call also records a fence over `[lo, hi)` (see "The generation rule"). Other errors as above | none |
 | `brain.relationDigest(seedId, relation, lo, hi)` | `{ rows, digest }`: the entry count and the hex digest of the entries in `[lo, hi)`. Read only. `invalid_argument` for an unknown relation or a bad bound; `invalid_state` as above | none |
 | `brain.relationEntries(seedId, relation, lo, hi, limit)` | `[{ sort, digest, generation }]`: the digest entries with a sort key in `[lo, hi)` (hex; `null` is unbounded), in sort order, at most `limit`, as hex sort key, hex row digest and the generation of the call that last wrote the entry. The caller counts exactly which rows differ inside an interval whose `relationDigest` differs. Read only. `invalid_argument` for a `limit` that is not a whole number from 1 to 5000, an unknown relation or a bad bound; `invalid_state` as above | none |
 | `brain.allocatorCheck(seedId, primaryMax)` | `[{ relation, counter, primary_max, ok }]` for every relation whose import raises an id counter, in import order. `primaryMax` is `{ [relation]: text }`, the primary's highest integer id per relation; a relation that is absent or `null` has an empty table. `counter` is the id the store hands out next, as text (1 when nothing raised it). `primary_max` echoes the input (`null` when empty). `ok` is `counter > primary_max`, and true for an empty table. A relation that keeps no counter is not reported. `invalid_argument` for an unknown relation in `primaryMax` or a value that is not a non-negative whole number up to 2^64-1; `invalid_state` as above. Read only | none |
@@ -290,12 +290,58 @@ the primary used. A delete does not lower a counter.
 
 ### The generation rule
 
-Each call carries a generation, a counter the caller raises with each read of the primary. An entry stored at a
-generation above the call's is never overwritten or deleted: the call counts it in `skipped_older` and leaves the row
-and its entry alone. So a read taken before another cannot undo it, whatever order the calls land in. An entry at the
-same or a lower generation is replaced or deleted. Entries imported without a generation are generation 0.
+Each call carries a generation, a counter the caller raises with each read of the primary. A call at generation `g`
+leaves a key alone, and counts it in `skipped_older`, when the store holds a newer record of it, which is the highest of:
+
+- the generation of the key's live digest entry;
+- the generation of a tombstone of the key;
+- the generation of the interval fence that covers the key.
+
+So a read taken before another cannot undo it, whatever order the calls land in, also where the newer call removed the
+row and its entry. A record at the same or a lower generation does not stop the call. Entries imported without a
+generation are generation 0.
+
+A delete removes a row's digest entry, which would take its generation along, so two small records keep it:
+
+- A tombstone, `M shadow_tomb/<relation>/<sort>`, is written by a `replaceRelationRows` delete at the call's generation,
+  also for a key the store never held. It holds the generation and nothing else: no digest, so it is not an entry and
+  `relationDigest` and `relationEntries` never count it. A delete never lowers a tombstone. A stored row at a generation
+  at or above it removes it.
+- An interval fence, `M shadow_fence/<relation>/<lo>`, is written by `replaceInterval` over `[lo, hi)` at the call's
+  generation. Entries it removed need no tombstone, and a key it found absent is covered by the fence. The fences of a
+  relation are disjoint pieces of one function from sort key to the highest generation that read the key: a new fence
+  raises the pieces it overlaps and merges neighbours of equal generation, so repeating a pass over the same intervals
+  leaves one fence per interval and passes over adjacent intervals at one generation leave one fence in all.
+
+A `replaceInterval` at `g` also removes the tombstones inside `[lo, hi)` with a generation up to `g`, which its own
+fence supersedes. What stays is bounded by the keys followers deleted since the last pass over their sort range, plus
+one fence per interval. `importRelation` writes neither record and does not check them.
 
 A row the store cannot hold (`dropped`, with its reason in `losses`) still gets its entry at the call's generation.
+
+### Natural keys that move
+
+A primary update can move a unique natural key from one row to another: two chunks trade their `chunk_index`, two pages
+their slug, two aliases their name. The store handles it in two steps.
+
+1. In one call, the old version of every row to store is removed first (`Mode::Replace`, so dependents stay). Rows that
+   trade a key within the call then store without meeting each other's old version.
+2. A new version that still collides with a stored row the call does not name, because the primary's change to that
+   row has not arrived yet, displaces it: the stale row is removed and so is its digest entry, with no tombstone, and
+   the call retries the row once. The importers refuse such a row (`constraint_violation`), or skip it silently for the
+   aliases. `displaced` counts the rows removed. The relation is then behind the primary until the row's own change
+   arrives or a reconcile restores it from the primary, so the caller marks the relation dirty when `displaced` is above
+   zero.
+
+The relations whose rows are looked up this way, with the column sets that are unique, are the `unique` lists of each
+relation's follow spec: `pages` (source, slug), `tags` (page, tag), `content_chunks` (page, index), `links` (from, to,
+type, source, origin), `slug_aliases`, `page_aliases`, `facts` (the markdown row fence and the stint index), `takes`
+(page, row), `raw_data`, `files` (storage path), `open_loops`, `wanted_links`, `trust_proposals` (the pending key),
+`code_edges_chunk`, `code_edges_symbol`, `decide_proposals`, `decide_review_proposals` and `wake_forgets`. The holder is
+found through the digest entries' identity columns, scanning the relation's entries once per call that collides, so a
+swap costs a pass over the relation. A stored row that has no digest entry (imported without digests) cannot be found:
+the collision stays an error, except for a row with no entry of its own, which replaces the stored row it names by its
+primary key as before.
 
 ### Delete and replace
 
