@@ -106,6 +106,15 @@ export interface HybridRequest {
 
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
 
+/** Drop a non-positive limit / negative offset so they fall back to defaults instead of reaching slice(). */
+export function sanitizePaging<T extends { limit?: number; offset?: number }>(opts: T | undefined): T | undefined {
+  if (!opts) return opts;
+  const badLimit = opts.limit !== undefined && !(opts.limit > 0);
+  const badOffset = opts.offset !== undefined && !(opts.offset >= 0);
+  if (!badLimit && !badOffset) return opts;
+  return { ...opts, ...(badLimit ? { limit: undefined } : {}), ...(badOffset ? { offset: undefined } : {}) };
+}
+
 export async function resolveHybridRequest(
   engine: BrainEngine,
   query: string,
