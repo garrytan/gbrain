@@ -495,6 +495,8 @@ Rules: TypeScript on PGLite, TypeScript on Postgres and Rust run on the same mac
 
 The E1 and E2 retrieval thresholds are "equal or better", not "within N points", because a better ranker or a higher-recall vector index returns different results (D17). With the `ts_rank` compatibility ranker (D5), the keyword arm must also reproduce PGLite's fixture ordering exactly; that mode stays the regression baseline. E3 is an intentional exception to the D17 change: its thresholds stay as written, and Cat 22 stays at zero leaks.
 
+Minder's ruling GBRA-108: the engine-bench default-on gate is the 95% paired lower bound ≥ −0.018 at N = 470 against each TypeScript engine, with identical top-k ids counted as ties and the point estimate reported beside it. LB ≥ 0 and −0.02 are secondary rows.
+
 ### Performance
 
 - Scales: 10k, 200k and 1M chunks with real 1,024- and 1,536-dimension vectors; filters on source, type and date at 100, 50, 10, 1 and 0.1 percent selectivity.
