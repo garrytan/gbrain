@@ -418,7 +418,7 @@ staleness pass and mutes) still run through `executeRaw`, so they refuse on this
 - `evidence` is kept in jsonb key order.
 - Times: the store reads `YYYY-MM-DDTHH:MM:SS[.ffffff]Z`. The member rewrites an ISO time with an
   offset and at most 3 fractional digits through `Date#toISOString`. It sends any other spelling (a
-  bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
+  bare date, a time with no zone, a day the calendar lacks such as `02-30`) as written, and the store refuses it with `invalid_argument`, where
   Postgres would read it in the session time zone.
 - Deleting a source removes its loops (`ON DELETE CASCADE`).
 

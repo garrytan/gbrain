@@ -92,7 +92,9 @@ describe('engine parity: timeline reads', () => {
       const rel = <T extends { id: number }>(rows: T[]) => rows.map(r => ({ ...r, id: r.id - base }));
       const batched = await engine.storedTimelineRowsByPageIds([b.id, a.id, 999_999]);
       // Postgres sequences keep counting across cases (harness resetPostgres), so the raw page_id becomes a page label.
-      const batchedRel = batched.map(({ page_id, ...r }) => ({ ...rel([r])[0]!, page: page_id === a.id ? 'alice' : page_id === b.id ? 'bob' : 'other' }));
+      const batchedRel = batched.map(({ page_id, ...r }) => ({ ...rel([r])[0]!, page: page_id === a.id ? 'alice' : page_id === b.id ? 'bob' : 'other' }))
+        // The statement has no ORDER BY, so the engines may deliver the rows in different orders.
+        .sort((x, y) => x.page.localeCompare(y.page) || x.id - y.id);
       const later = ordered.find(r => r.summary === 'Later')!;
       const earlier = ordered.find(r => r.summary === 'Earlier')!;
       const sameDay = ordered.find(r => r.summary === 'Same day')!;

@@ -20,6 +20,15 @@ export const OWNER_IPC_LOCAL_ONLY_READS: ReadonlySet<string> = new Set([
   'listDecideCalibrations', 'getDecideCalibration', 'getDecideProposal', 'listDecideProposalIds', 'listDecideProposals',
   'listDecideProposedPairs', 'listDecideReviewProposals', 'getDecideReviewProposal', 'listDecideReviewProposalIds',
   'readProposalReviewRates', 'listDueDecideReviewQueue', 'listDueDecideSweepDeferred',
+  // The open-loop, timeline, source-state, proposal and access reads of the write-side members (engine-sql/open-loops.ts,
+  // timeline-reads.ts, write-misc.ts): SELECTs only (readSourceState may take a share lock, released when the call ends).
+  'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'getWorktreeBinding', 'hasExtractedEvents',
+  'hasLabelledOnlyMember', 'listAccessTokens', 'listActiveAccessMembers', 'listAwaitingMemoryProposals',
+  'listMemoryProposalRows', 'listOpenLoops', 'listOwnerProposalRows', 'listSharedSkillPackRoots',
+  'listStoredTimelineRowsOrdered', 'listSynopsisSourceIds', 'listTimelineOrphanPages', 'notifierCoverageRecorded',
+  'readAdmissionSource', 'readEntityOpenLoops', 'readHealthMemoClock', 'readMaxTimelineEntryId',
+  'readMemoryProposal', 'readOpCheckpointKeys', 'readPendingProposalSummary', 'readSourceState',
+  'sampleEffectiveDateSources', 'sampleEffectiveDates', 'sharedSkillPackTablePresent', 'storedTimelineRowsByPageIds',
 ]);
 
 const page = 'getPage for that slug and source';
@@ -97,6 +106,10 @@ export const OWNER_IPC_CONFIRMING_READS: Readonly<Record<string, string>> = {
   transitionDecideReviewProposal: 'getDecideReviewProposal for that id',
   applyDecideReviewQueue: 'listDueDecideReviewQueue for that kind and source',
   applyDecideSweepDeferred: 'listDueDecideSweepDeferred for that source',
+  // The write-side members (engine-sql/open-loops.ts, timeline-reads.ts, write-misc.ts).
+  upsertOpenLoop: 'listOpenLoops for that loop\'s source', closeOpenLoop: 'listOpenLoops for that loop\'s source',
+  deleteTimelineRows: 'storedTimelineRowsByPageIds for the pages the call named', attachSourcePath: 'readSourceState for that source',
+  expireMemoryProposals: 'listMemoryProposalRows for that source', purgeMemoryProposals: 'listMemoryProposalRows for that source',
 };
 
 /**
