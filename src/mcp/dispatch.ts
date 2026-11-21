@@ -247,7 +247,7 @@ export interface DispatchOpts {
    */
   localFederatedSourceIds?: string[];
   /** GBRA-585: the trusted local CLI named no source (OperationContext.localSourceImplicit); ignored unless remote is false. */
-  localSourceImplicit?: boolean;
+  localSourceImplicit?: boolean; localSourceFromCheckout?: boolean; // the implicit source came from the cwd checkout (OperationContext.localSourceFromCheckout)
   /**
    * #5081: explicit-read admission for a stdio connection bound by
    * GBRAIN_SOURCE or a .gbrain-source pin. Stdio transport only; see
@@ -982,7 +982,7 @@ export function buildOperationContext(
     sourceId: opts.sourceId ?? 'default',
     ...(sessionId ? { sessionId } : {}),
     ...(opts.localFederatedSourceIds ? { localFederatedSourceIds: opts.localFederatedSourceIds } : {}),
-    ...(opts.localSourceImplicit && opts.remote === false ? { localSourceImplicit: true } : {}),
+    ...(opts.localSourceImplicit && opts.remote === false ? { localSourceImplicit: true, ...(opts.localSourceFromCheckout ? { localSourceFromCheckout: true } : {}) } : {}),
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}), ...(opts.surface ? { surface: opts.surface } : {}),
     ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
