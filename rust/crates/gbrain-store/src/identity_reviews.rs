@@ -32,6 +32,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 const REVIEW: u8 = 0x03;
 const CONFIRM: &str = "dedupe:confirm";
+const AUTO: &str = "dedupe:auto";
 
 /// A page named by `(source_id, slug)`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -55,6 +56,10 @@ struct ReviewRecord {
     origin: String,
     home_source_id: Option<String>,
     git_blob: Option<String>,
+    /// The ids the decision rests on (a JSON array), or none; a record written before the column
+    /// reads as none.
+    #[serde(default)]
+    evidence: Option<Value>,
 }
 
 impl ReviewRecord {
@@ -102,6 +107,9 @@ pub struct DecisionInput {
     pub origin: String,
     pub home_source_id: Option<String>,
     pub git_blob: Option<String>,
+    /// Stored only when it is a non-empty array, as the SQL stores `evidence?.length ? ... : NULL`.
+    #[serde(default)]
+    pub evidence: Option<Value>,
 }
 
 /// `applyIdentityDecisions(input)`.
@@ -282,7 +290,7 @@ impl Store {
                     "decision_id": id, "verdict": r.verdict, "members": r.members, "group_id": r.group_id,
                     "entity_id": r.entity_id, "canonical": canonical, "decided_by": r.decided_by,
                     "decided_at": timestamptz_text(r.decided_at_us), "origin": r.origin,
-                    "home_source_id": r.home_source_id, "git_blob": r.git_blob,
+                    "home_source_id": r.home_source_id, "git_blob": r.git_blob, "evidence": r.evidence,
                 })
             })
             .collect();
@@ -358,6 +366,17 @@ impl Store {
             decided.push(at);
         }
         self.write(|tx| {
+            // The SQL also sweeps the company links the sync made ('dedupe:auto' rows); the store
+            // has no such sweep, so it refuses rather than leave a link the SQL would remove.
+            if all_records(tx)?
+                .iter()
+                .any(|(_, r)| r.established_by == AUTO)
+            {
+                return Err(StoreError::new(
+                    "invalid_state",
+                    format!("{MEMBER}: the store holds identity rows established_by {AUTO}"),
+                ));
+            }
             if let Some(expect) = &input.expect_revision
                 && revision(&all_reviews(tx)?) != *expect
             {
@@ -386,6 +405,10 @@ impl Store {
                     origin: d.origin.clone(),
                     home_source_id: d.home_source_id.clone(),
                     git_blob: d.git_blob.clone(),
+                    evidence: d
+                        .evidence
+                        .clone()
+                        .filter(|e| e.as_array().is_some_and(|a| !a.is_empty())),
                 };
                 put_json(tx, &review_key(&d.decision_id), &rec)?;
             }
@@ -500,12 +523,24 @@ mod tests {
             origin: "database".into(),
             home_source_id: None,
             git_blob: None,
+            evidence: None,
         };
         let rows = vec![
             ("a".to_string(), rec("same", Some("e"))),
             ("b".to_string(), rec("different", None)),
         ];
         assert_eq!(revision(&rows), "a:same:e:database:,b:different::database:");
+    }
+
+    #[test]
+    fn a_record_written_before_evidence_reads_none() {
+        let old = json!({
+            "verdict": "same", "members": [], "group_id": null, "entity_id": "e",
+            "canonical_source_id": null, "canonical_slug": null, "decided_by": "owner",
+            "decided_at_us": 0, "origin": "database", "home_source_id": null, "git_blob": null,
+        });
+        let rec: ReviewRecord = serde_json::from_value(old).unwrap();
+        assert_eq!(rec.evidence, None);
     }
 
     #[test]

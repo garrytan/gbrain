@@ -414,14 +414,8 @@ export async function movePhantomFacts(
   canonicalSlug: string,
   rowMap: ReadonlyMap<number, number>,
 ): Promise<number> {
-  const rows = await tx.executeRaw<{ id: number; row_num: number | null }>(
-    'SELECT id, row_num FROM facts WHERE source_id = $1 AND source_markdown_slug = $2',
-    [sourceId, phantomSlug],
-  );
-  const taken = new Set((await tx.executeRaw<{ row_num: number }>(
-    'SELECT row_num FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL',
-    [sourceId, canonicalSlug],
-  )).map(r => Number(r.row_num)));
+  const rows = await tx.listPhantomFactRows(sourceId, phantomSlug);
+  const taken = new Set((await tx.listCanonicalFenceRowNums(sourceId, canonicalSlug)).map(r => Number(r.row_num)));
   let moved = 0;
   for (const row of rows) {
     const mapped = row.row_num == null ? undefined : rowMap.get(Number(row.row_num));
@@ -430,12 +424,7 @@ export async function movePhantomFacts(
       taken.add(target);
       moved += 1;
     }
-    await tx.executeRaw(
-      `UPDATE facts SET entity_slug = $3, source_markdown_slug = $3, row_num = $4::integer,
-          expired_at = CASE WHEN $4::integer IS NULL THEN COALESCE(expired_at, now()) ELSE expired_at END
-        WHERE id = $1 AND source_id = $2`,
-      [row.id, sourceId, canonicalSlug, target ?? null],
-    );
+    await tx.moveFactToPage(sourceId, row.id, canonicalSlug, target ?? null);
   }
   return moved;
 }
@@ -447,24 +436,8 @@ export async function movePhantomFacts(
  * soft-deleted phantom.
  */
 export async function mergePhantomLinks(engine: BrainEngine, phantomId: number, canonicalId: number): Promise<void> {
-  await engine.executeRaw(
-    `UPDATE links l SET to_page_id = $2
-      WHERE l.to_page_id = $1 AND l.from_page_id <> $2
-        AND NOT EXISTS (SELECT 1 FROM links d
-          WHERE d.from_page_id = l.from_page_id AND d.to_page_id = $2 AND d.link_type = l.link_type
-            AND d.link_source IS NOT DISTINCT FROM l.link_source
-            AND d.origin_page_id IS NOT DISTINCT FROM l.origin_page_id)`,
-    [phantomId, canonicalId],
-  );
-  await engine.executeRaw(
-    `UPDATE links l SET from_page_id = $2
-      WHERE l.from_page_id = $1 AND l.to_page_id <> $2
-        AND NOT EXISTS (SELECT 1 FROM links d
-          WHERE d.from_page_id = $2 AND d.to_page_id = l.to_page_id AND d.link_type = l.link_type
-            AND d.link_source IS NOT DISTINCT FROM l.link_source
-            AND d.origin_page_id IS NOT DISTINCT FROM l.origin_page_id)`,
-    [phantomId, canonicalId],
-  );
+  await engine.repointInboundLinks(phantomId, canonicalId);
+  await engine.repointOutboundLinks(phantomId, canonicalId);
 }
 
 /**
@@ -561,7 +534,7 @@ export async function phantomHasResidue(engine: BrainEngine, page: Page): Promis
     + (page.timeline ?? '').trim()
     + Object.keys(page.frontmatter ?? {}).filter(key => !PHANTOM_STUB_FRONTMATTER.has(key)).join(',');
   if (residue.length > 0) return true;
-  return (await engine.executeRaw('SELECT 1 FROM timeline_entries WHERE page_id=$1 LIMIT 1', [page.id])).length > 0;
+  return await engine.pageHasTimelineEntries(page.id);
 }
 
 /**
@@ -661,12 +634,9 @@ export async function tryRedirectPhantom(
   const target = await engine.getPage(canonical, { sourceId });
   if (target) assertInlineBody(target, 'phantom redirect');
   const phantomFence = parseFactsFence(page.compiled_truth ?? '');
-  const [dbMax] = await engine.executeRaw<{ n: number | string | null }>(
-    'SELECT MAX(row_num) AS n FROM facts WHERE source_id = $1 AND source_markdown_slug = $2',
-    [sourceId, canonical],
-  );
+  const dbMax = await engine.maxFenceRowNumOfPage(sourceId, canonical);
   let merged: Awaited<ReturnType<typeof mergeIntoCanonicalFile>>;
-  if (writeThroughOff) merged = await mergeIntoCanonicalBody(engine, target, sourceId, phantomFence.facts, Number(dbMax?.n ?? 0));
+  if (writeThroughOff) merged = await mergeIntoCanonicalBody(engine, target, sourceId, phantomFence.facts, dbMax);
   else {
     // The canonical file is the page's file of record (recorded source_path,
     // own-local_path roots), resolved like every other fence writer. Only a
@@ -682,7 +652,7 @@ export async function tryRedirectPhantom(
       return { outcome: 'drift', canonical };
     }
     const canonicalPath = writeTarget.ok ? writeTarget.filePath : path.join(brainDir, `${canonical}.md`);
-    merged = await mergeIntoCanonicalFile(engine, page.slug, canonical, sourceId, canonicalPath, phantomFence.facts, Number(dbMax?.n ?? 0));
+    merged = await mergeIntoCanonicalFile(engine, page.slug, canonical, sourceId, canonicalPath, phantomFence.facts, dbMax);
   }
   if ('held' in merged) return driftHold(page.slug, sourceId, canonical, merged.held);
   const rowMap = merged.renumber;
@@ -779,17 +749,7 @@ export async function runPhantomRedirectPass(
     const held = [...holdSlugs].filter(slug => !slug.includes('/'));
     result.held_legacy_rows = held.length;
     const after = await rotationAfter(engine, PHANTOM_REDIRECT_CURSOR_OP, sourceId) ?? '';
-    const rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages
-       WHERE source_id = $1
-         AND deleted_at IS NULL
-         AND slug NOT LIKE '%/%'
-         AND slug <> ALL($3::text[])
-         AND slug > $4
-       ORDER BY slug ASC
-       LIMIT $2`,
-      [sourceId, limit + 1, held, after],
-    );
+    const rows = await engine.listRootPageSlugsAfter(sourceId, limit + 1, held, after);
     result.more_pending = rows.length > limit;
 
     const touchedSet = new Set<string>();

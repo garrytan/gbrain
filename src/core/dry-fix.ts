@@ -41,6 +41,13 @@ import {
 
 export interface AutoFixOptions {
   dryRun?: boolean;
+  /**
+   * Also run MISSING_RULE_PATTERNS (the brain-first callout insert). Defaults
+   * to true for doctor, whose skill_brain_first check reports those skills;
+   * `gbrain check-resolvable` passes false because its report has no such
+   * finding, so its preview would otherwise propose edits it never reported.
+   */
+  insertMissingRules?: boolean;
 }
 
 export type FixStatus = 'applied' | 'proposed' | 'skipped' | 'error';
@@ -136,6 +143,12 @@ export interface Block {
   endLine: number;     // 0-indexed inclusive
 }
 
+/** Headings and code fences bound every block: a replacement never takes a
+ *  heading or a fence with it (GST-3155: whole-section replacements). */
+function isBlockBoundary(line: string): boolean {
+  return /^#{1,6}\s/.test(line) || /^\s*(?:```|~~~)/.test(line);
+}
+
 /** Detect which block shape the line at `lineIdx` belongs to. */
 export function detectBlockShape(lines: string[], lineIdx: number): BlockShape {
   const line = lines[lineIdx] ?? '';
@@ -160,7 +173,7 @@ export function expandBullet(lines: string[], lineIdx: number): Block | null {
     const prevIsBullet = /^(\s*)(?:[-*]\s|\d+\.\s)/.test(prev);
     const prevIndent = prev.match(/^(\s*)/)?.[1].length ?? 0;
     if (prevIsBullet && prevIndent <= baseIndent) break;
-    if (prev.trim() === '') break;
+    if (prev.trim() === '' || isBlockBoundary(prev)) break;
     start--;
   }
 
@@ -169,7 +182,7 @@ export function expandBullet(lines: string[], lineIdx: number): Block | null {
   let end = lineIdx;
   for (let i = lineIdx + 1; i < lines.length; i++) {
     const l = lines[i];
-    if (l.trim() === '') break;
+    if (l.trim() === '' || isBlockBoundary(l)) break;
     const isBullet = /^(\s*)(?:[-*]\s|\d+\.\s)/.test(l);
     const indent = l.match(/^(\s*)/)?.[1].length ?? 0;
     if (isBullet && indent <= baseIndent) break;
@@ -195,12 +208,15 @@ export function expandBlockquote(lines: string[], lineIdx: number): Block | null
   return { startLine: start, endLine: end };
 }
 
-/** Expand a paragraph: previous blank line → next blank line. */
+/** Expand a paragraph: previous blank line → next blank line, stopping at a
+ *  heading or fence. A match on a heading is the heading alone. */
 export function expandParagraph(lines: string[], lineIdx: number): Block | null {
+  if (isBlockBoundary(lines[lineIdx] ?? '')) return { startLine: lineIdx, endLine: lineIdx };
+  const inBlock = (l: string) => l.trim() !== '' && !isBlockBoundary(l);
   let start = lineIdx;
-  while (start > 0 && lines[start - 1].trim() !== '') start--;
+  while (start > 0 && inBlock(lines[start - 1])) start--;
   let end = lineIdx;
-  while (end + 1 < lines.length && lines[end + 1].trim() !== '') end++;
+  while (end + 1 < lines.length && inBlock(lines[end + 1])) end++;
   return { startLine: start, endLine: end };
 }
 
@@ -303,7 +319,7 @@ export function autoFixDryViolations(
     // (Belt + suspenders: brain-first's detect() reads the current file
     // content and calls analyzeSkillBrainFirst, which already short-
     // circuits on CONVENTION_CALLOUT_RE match.)
-    for (const mrp of MISSING_RULE_PATTERNS) {
+    for (const mrp of opts.insertMissingRules === false ? [] : MISSING_RULE_PATTERNS) {
       const outcome = attemptInsertFix(skill.name, skillPath, content, mrp, opts);
       if (!outcome) continue;
       if (outcome.status === 'applied' || outcome.status === 'proposed') {

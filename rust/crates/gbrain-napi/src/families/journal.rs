@@ -556,6 +556,36 @@ impl Brain {
         self.run(env, move |s| s.list_true_up_requests(&ids))
     }
 
+    /// `listLaterPersistenceRequests(sourceId, incarnation, slug, sequence)`: the stored rows;
+    /// `sequence` is the bigint as text.
+    #[napi]
+    pub fn list_later_persistence_requests<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+        slug: String,
+        sequence: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_later_persistence_requests(&source_id, &incarnation, &slug, &sequence)
+        })
+    }
+
+    /// `listCommittedOutputRequests(requestIds, sourceId, incarnation)`: `[{ request }]`.
+    #[napi]
+    pub fn list_committed_output_requests<'env>(
+        &self,
+        env: &'env Env,
+        request_ids: Vec<String>,
+        source_id: String,
+        incarnation: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_committed_output_requests(&request_ids, &source_id, &incarnation)
+        })
+    }
+
     /// `trueUpReservations(rows)`: the bytes the true-up gave back, as text.
     #[napi]
     pub fn true_up_reservations<'env>(

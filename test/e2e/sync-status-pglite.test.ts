@@ -307,6 +307,8 @@ describe('buildSyncStatusReport against real PGLite (IRON RULE regression for Bl
 
     const proxyEngine: BrainEngine = {
       kind: engine.kind,
+      // The report reads the source rows through the typed listSourceRecords member (e674407264), not executeRaw.
+      listSourceRecords: () => engine.listSourceRecords(),
       executeRaw: async (sql: string, params?: unknown[]) => {
         if (/WITH s AS \(\s*SELECT unnest/.test(sql)) {
           throw new Error('synthetic test error: count query failed');

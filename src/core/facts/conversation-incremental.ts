@@ -366,7 +366,7 @@ export async function processSegmentedConversationPage(run: SegmentedConversatio
     const out = await writeDerivedFacts(engine, sourceId, page.slug, async db => {
       let unchanged = true;
       if (final) {
-        await db.executeRaw('SELECT id FROM pages WHERE id = $1 FOR UPDATE', [page.id]);
+        await db.lockPageById(page.id);
         const now = await db.getPage(page.slug, { sourceId });
         unchanged = !!now && now.id === page.id && regularPageVersionToken(now) === versionToken;
       }

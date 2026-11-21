@@ -15,6 +15,7 @@ import { identityPageNotFound, type CanonicalTwinRow, type EntityIdentityFilter,
 import type { SourceRoutingRow } from '../../engine-sql/sources.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeErrorCode } from '../store-errors.ts';
 import type { EntityKeyRow, EntityKeyRowsOpts } from '../../engine-sql/entity-keys.ts';
 import type {
   ApplyIdentityDecisionsInput, ApplyIdentityDecisionsResult, IdentityDecisionsRead, IdentityMemberRef,
@@ -67,12 +68,12 @@ export const readEntityIdentityIdsForPages: StoreMember<[pages: ReadonlyArray<{ 
 export const readCanonicalTwin: StoreMember<[sourceId: string, slug: string], CanonicalTwinRow[]> = (brain, sourceId, slug) =>
   storeCall({ member: 'readCanonicalTwin', slug, sourceId }, () => brain.readCanonicalTwin(sourceId, slug)) as Promise<CanonicalTwinRow[]>;
 
-/** Duplicate finder read: live, unretired pages of the types in unarchived sources, the named keys only, keyset-paged. */
-export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKeyRow[]> = (brain, opts) =>
-  storeCall({ member: 'listEntityKeyRows' }, () => brain.listEntityKeyRows({
-    types: [...opts.types], keys: [...opts.keys], after: opts.after ? { source_id: opts.after.source_id, slug: opts.after.slug } : null,
-    limit: opts.limit,
-  }));
+/**
+ * Duplicate finder read. Refused: the SQL row carries the page's `generation` (the company auto-link plan pins it), and
+ * the store keeps no page generation, so no row it could build would be the row the SQL engines return.
+ */
+export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKeyRow[]> = async () =>
+  refuseMember('listEntityKeyRows', 'the store keeps no page generation');
 
 /** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. */
 export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = (brain) =>
@@ -85,14 +86,25 @@ export const listRestrictedIdentityMembers: StoreMember<[members: ReadonlyArray<
     members.map(m => ({ source_id: m.source_id, slug: m.slug })), pagePolicyFlags(privatePagesFilterFragment('p'))));
 };
 
-/** Writes and removes decisions and reconciles the 'dedupe:confirm' identity rows in one store write. */
-export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsInput], ApplyIdentityDecisionsResult> = (brain, input) =>
-  storeCall({ member: 'applyIdentityDecisions' }, () => brain.applyIdentityDecisions({
+/**
+ * Writes and removes decisions and reconciles the 'dedupe:confirm' identity rows in one store write. An `auto` input is
+ * refused (its link plan pins page generations, which the store does not keep), and the store refuses (`invalid_state`)
+ * while it holds a 'dedupe:auto' membership, since it has no sweep for the company links the sync made.
+ */
+export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsInput], ApplyIdentityDecisionsResult> = async (brain, input) => {
+  const member = 'applyIdentityDecisions';
+  if (input.auto) refuseMember(member, 'option auto: the store keeps no page generation');
+  return storeCall({ member }, () => brain.applyIdentityDecisions({
     upsert: (input.upsert ?? []).map(d => ({
       decision_id: d.decision_id, verdict: d.verdict, members: d.members, group_id: d.group_id ?? null, entity_id: d.entity_id ?? null,
       canonical: d.canonical ? { source_id: d.canonical.source_id, slug: d.canonical.slug } : null, decided_by: d.decided_by,
       decided_at: d.decided_at ?? null, origin: d.origin, home_source_id: d.home_source_id ?? null, git_blob: d.git_blob ?? null,
+      evidence: d.evidence?.length ? [...d.evidence] : null,
     })),
     remove: [...(input.remove ?? [])],
     expect_revision: input.expectRevision ?? null,
-  }));
+  }).catch((error: unknown) => {
+    if (storeErrorCode(error) === 'invalid_state') refuseMember(member, "a 'dedupe:auto' membership the store cannot sweep");
+    throw error;
+  })) as Promise<ApplyIdentityDecisionsResult>;
+};

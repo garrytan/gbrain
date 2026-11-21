@@ -41,6 +41,9 @@ import * as trustWithdrawals from './trust-withdrawals.ts';
 import * as openLoops from './open-loops.ts';
 import * as trustWriteGate from './trust-write-gate.ts';
 import * as cliSources from './cli-sources.ts';
+import * as filesSources from './files-sources.ts';
+import * as dreamConfig from './dream-config.ts';
+import * as factsHoldingPurges from './facts-holding-purges.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
 import * as cliReadsOps from './cli-reads-ops.ts';
 import * as cliReadsSearchPages from './cli-reads-search-pages.ts';
@@ -107,6 +110,7 @@ import * as synopsisTier from './synopsis-tier.ts';
 import * as sourceCrMode from './source-cr-mode.ts';
 import * as remoteLinks from './remote-links.ts';
 import * as factsBackstop from './facts-backstop.ts';
+import * as dreamJournal from './dream-journal.ts';
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -120,7 +124,7 @@ export const STORE_MEMBERS = {
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
-  ...cliSources,
+  ...cliSources, ...filesSources, ...dreamConfig, ...factsHoldingPurges,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages,
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
@@ -197,6 +201,8 @@ export const STORE_MEMBERS = {
   ...remoteLinks,
   // The facts backstop effect's two extraction reads (rust/docs/store/jobs.md, "Facts extraction reads").
   ...factsBackstop,
+  // The dream cycle's persistence journal reads (rust/docs/store/dream.md, "Dream cycle statements").
+  ...dreamJournal,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
