@@ -60,6 +60,7 @@
 
 mod attachments;
 mod checks;
+mod dream_reads;
 mod health;
 mod inbox;
 mod insight;

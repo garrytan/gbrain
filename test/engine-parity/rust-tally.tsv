@@ -16,7 +16,7 @@ test/engine-parity/cycle-locks.test.ts	11	0
 test/engine-parity/decide-proposals.test.ts	8	0
 test/engine-parity/decide-store.test.ts	35	0
 test/engine-parity/dream-config-members.test.ts	5	0
-test/engine-parity/dream-cycle-sites.test.ts	1	9
+test/engine-parity/dream-cycle-sites.test.ts	10	0
 test/engine-parity/edge-proposals-cli.test.ts	2	1
 test/engine-parity/effect-scans.test.ts	3	0
 test/engine-parity/embedding-catalog.test.ts	5	0
