@@ -1,3 +1,4 @@
+import { alsoPrefixes } from './slug-params.ts';
 import { normalizeSlug } from '../utils.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { recordFunnelEvent } from '../funnel.ts';
@@ -190,6 +191,7 @@ const takes_scorecard: Operation = {
         ...await readPolicyOpts(ctx),
         holder: p.holder as string | undefined,
         domainPrefix: p.domain_prefix as string | undefined,
+        ...(typeof p.domain_prefix === 'string' ? alsoPrefixes('domainPrefixAlso', p.domain_prefix) : {}),
         since: p.since as string | undefined,
         until: p.until as string | undefined,
       },

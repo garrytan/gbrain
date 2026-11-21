@@ -42,8 +42,8 @@ async function call<T = Record<string, any>>(name: string, params: Record<string
   return await operationsByName[name]!.handler(ctx(), params) as T;
 }
 
-async function errorOf(name: string, params: Record<string, unknown>): Promise<{ code?: string; message?: string } | null> {
-  try { await call(name, params); return null; } catch (e) { return e as { code?: string; message?: string }; }
+async function errorOf(name: string, params: Record<string, unknown>): Promise<{ code?: string; message?: string; detail?: string } | null> {
+  try { await call(name, params); return null; } catch (e) { return e as { code?: string; message?: string; detail?: string }; }
 }
 
 const page = (title: string, type: string, body: string) => `---\ntitle: ${title}\ntype: ${type}\n---\n${body}\n`;
@@ -329,15 +329,15 @@ describe('assemble_evidence joins on the stored slug', () => {
   });
 });
 
-describe('two stored spellings of one slug (ambiguity refusal)', () => {
-  const nfd = 'notes/ambig-cafe\u0301';
-  const nfc = 'notes/ambig-caf\u00e9';
-  const asked = 'Notes/Ambig-Cafe\u0301';
-  const REFUSAL = `The slug "${asked}" is ambiguous: this brain stores two pages whose slugs read the same, "${nfd}" (decomposed) and "${nfc}" (composed), and "${asked}" is neither of them exactly.`;
+describe('two stored spellings of one slug (ambiguity refusal only where a read found nothing before)', () => {
+  const nfd = 'Notes/Ambig-Cafe\u0301';
+  const nfc = 'Notes/Ambig-Caf\u00e9';
+  const asked = 'notes/ambig-cafe\u0301';
+  const REFUSAL = `The slug "${asked}" is ambiguous: this brain stores two pages whose slugs read the same, "${nfd}" (decomposed, with capitals) and "${nfc}" (composed, with capitals), and "${asked}" is neither of them exactly.`;
 
-  test('a spelling that matches neither stored page is refused with both spellings named, on a page read and on a tag read', async () => {
-    await legacyPage('notes/ambig-seed', nfd, 'decomposed body');
-    await call('put_page', { slug: nfc, content: page('Composed twin', 'note', 'composed body') });
+  test('a spelling that matches neither stored page, lowercased or normalized, is refused with both spellings named', async () => {
+    await legacyPage('notes/ambig-seed-a', nfd, 'decomposed body');
+    await legacyPage('notes/ambig-seed-b', nfc, 'composed body');
     for (const op of ['get_page', 'get_tags', 'get_timeline']) {
       const err = await errorOf(op, { slug: asked }) as { code?: string; detail?: string; message?: string; suggestion?: string } | null;
       expect({ op, code: err?.code, detail: err?.detail, message: err?.message }).toEqual({ op, code: 'invalid_params', detail: 'ambiguous_slug', message: REFUSAL });
@@ -346,18 +346,38 @@ describe('two stored spellings of one slug (ambiguity refusal)', () => {
   });
 
   test('each exact stored spelling still reads its own page, so the refusal never hides a page', async () => {
-    expect((await call('get_page', { slug: nfd })).title).toBe('Legacy notes/ambig-seed');
-    expect((await call('get_page', { slug: nfc })).title).toBe('Composed twin');
-    expect((await call('get_page', { slug: 'NOTES/AMBIG-CAF\u00c9' })).title).toBe('Composed twin');
+    expect((await call('get_page', { slug: nfd })).title).toBe('Legacy notes/ambig-seed-a');
+    expect((await call('get_page', { slug: nfc })).title).toBe('Legacy notes/ambig-seed-b');
+  });
+
+  test('a read that found a page before still finds that page: the lowercased spelling wins over the normal form, so a capitalised decomposed read of two twins returns the decomposed page', async () => {
+    await legacyPage('notes/twin-seed-a', 'notes/twin-cafe\u0301', 'decomposed twin body');
+    await legacyPage('notes/twin-seed-b', 'notes/twin-caf\u00e9', 'composed twin body');
+    expect((await call('get_page', { slug: 'Notes/Twin-Cafe\u0301' })).title).toBe('Legacy notes/twin-seed-a');
+    expect(await call<unknown[]>('get_tags', { slug: 'NOTES/TWIN-CAFE\u0301' })).toEqual([]);
+  });
+
+  test('a capitalised composed spelling of two stored twins (composed and decomposed) returns the composed page, as before', async () => {
+    await legacyPage('notes/capc-seed-a', 'notes/capc-cafe\u0301', 'decomposed capc body');
+    await legacyPage('notes/capc-seed-b', 'notes/capc-caf\u00e9', 'composed capc body');
+    expect((await call('get_page', { slug: 'Notes/Capc-Caf\u00e9' })).title).toBe('Legacy notes/capc-seed-b');
+  });
+
+  test('one stored spelling that only normalizes to the asked slug is that page', async () => {
+    await legacyPage('notes/one-seed', 'Notes/One-Cafe\u0301', 'only one');
+    expect((await call('get_page', { slug: 'notes/one-cafe\u0301' })).title).toBe('Legacy notes/one-seed');
   });
 
   test('a twin the caller cannot read never makes a read ambiguous (no existence oracle)', async () => {
-    const stored = 'notes/hidden-cafe\u0301';
-    await legacyPage('notes/hidden-seed', stored, 'visible decomposed body');
-    await call('put_page', { slug: 'notes/hidden-caf\u00e9', content: `---\ntitle: Hidden twin\ntype: note\nvisibility: private\n---\nsecret\n` });
+    await legacyPage('notes/hidden-seed', 'Notes/Hidden-Cafe\u0301', 'visible decomposed body');
+    await legacyPage('notes/hidden-seed-b', 'Notes/Hidden-Caf\u00e9', 'private twin body');
+    await engine.executeRaw(`UPDATE pages SET frontmatter = jsonb_set(COALESCE(frontmatter, '{}'::jsonb), '{visibility}', '"private"') WHERE slug = 'Notes/Hidden-Caf\u00e9'`);
     const remote = { ...ctx(), remote: true } as OperationContext;
-    const err = await operationsByName.get_page!.handler(remote, { slug: 'Notes/Hidden-Cafe\u0301' }).then(() => null, (e: { detail?: string }) => e);
-    expect(err?.detail).not.toBe('ambiguous_slug');
+    const read = await operationsByName.get_page!.handler(remote, { slug: 'notes/hidden-cafe\u0301' }).then((r: any) => r, (e: { detail?: string }) => e);
+    expect((read as { detail?: string }).detail).not.toBe('ambiguous_slug');
+    expect((read as { title?: string }).title).toContain('Legacy notes/hidden-seed');
+    // The local owner reads both pages, so for the owner the same slug is ambiguous: the private flag is what keeps the remote caller out of it.
+    expect((await errorOf('get_page', { slug: 'notes/hidden-cafe\u0301' }))?.detail).toBe('ambiguous_slug');
   });
 });
 

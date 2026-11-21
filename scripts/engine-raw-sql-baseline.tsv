@@ -676,6 +676,7 @@ src/core/ops/links.ts	execute_raw	1
 src/core/ops/loops.ts	execute_raw	6
 src/core/ops/page-upload.ts	execute_raw	3
 src/core/ops/pages.ts	execute_raw	1
+src/core/ops/slug-params.ts	execute_raw	1	one bounded read for stored spellings of a slug that normalize to the asked one (slug_reads_normal_form); an engine without raw reads skips it; moves behind a typed engine member with the key migration
 src/core/ops/persistence.ts	execute_raw	4
 src/core/ops/put-page-revision-source.ts	execute_raw	1
 src/core/ops/qm-memory.ts	execute_raw	2

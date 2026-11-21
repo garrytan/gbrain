@@ -136,7 +136,7 @@ function scalarAt(params: Params, path: string): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
 
-/** Ops whose scalar slug param is a prefix, not a page: the stored form that has rows under it wins. */
+/** Ops whose scalar slug param is a prefix, not a page: every spelling of it that has rows is read (a union, see `legacySpellings`). */
 const PREFIX_READS: ReadonlySet<string> = new Set(['list_pages', 'search_exact', 'takes_scorecard', 'get_recent_salience']);
 
 type Ctx = Parameters<Operation['handler']>[0];
@@ -154,7 +154,13 @@ export function legacySpellings(slug: string): string[] {
 }
 
 const distinct = (values: readonly string[]): string[] => [...new Set(values)];
-const spellingKind = (s: string): string => (s === s.normalize('NFC') ? 'composed' : 'decomposed');
+const spellingKind = (s: string): string => `${s === s.normalize('NFC') ? 'composed' : 'decomposed'}${s === s.toLowerCase() ? '' : ', with capitals'}`;
+
+/** The other spellings of a prefix param that hold pages, as the engine option `key` (nothing when only one does). */
+export function alsoPrefixes<K extends string>(key: K, prefix: string): { [P in K]?: string[] } {
+  const [, ...also] = legacySpellings(prefix);
+  return (also.length > 0 ? { [key]: also } : {}) as { [P in K]?: string[] };
+}
 
 /** Two pages are stored under spellings that normalize to one slug and the caller sent neither: name both, never pick one. */
 function ambiguousSpelling(op: string, raw: string, a: string, b: string) {
@@ -183,21 +189,40 @@ async function chooseSpelling(ctx: Ctx, op: string, raw: string, normalized: str
     const scope = sourceScopeOpts(ctx);
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
     if (PREFIX_READS.has(op)) {
+      const held: string[] = [];
       for (const slugPrefix of order) {
-        if ((await ctx.engine.listPages({ slugPrefix, limit: 1, ...scope, excludePrivate })).length > 0) return { slug: slugPrefix, slugs: [slugPrefix] };
+        if ((await ctx.engine.listPages({ slugPrefix, limit: 1, ...scope, excludePrivate })).length > 0) held.push(slugPrefix);
       }
-      return { slug: normalized, slugs: [normalized] };
+      return held.length > 0 ? { slug: held[0]!, slugs: held } : { slug: normalized, slugs: [normalized] };
     }
     const pages = new Map(await Promise.all(order.map(async slug => [slug, await ctx.engine.getPage(slug, { ...scope, excludePrivate, includeDeleted: true })] as const)));
     const live = (slug: string) => {
       const page = pages.get(slug) ?? null;
       return page !== null && !page.deleted_at && !(excludePrivate && isPrivatePageForCaller(page));
     };
+    const visible = (slug: string) => {
+      const page = pages.get(slug) ?? null;
+      return page !== null && !(excludePrivate && isPrivatePageForCaller(page));
+    };
     const offered = (slug: string) => [slug, ...order.filter(other => other !== slug && !pages.get(other))];
-    if (live(raw)) return { slug: raw, slugs: offered(raw) };
-    if (live(lowered) && live(normalized) && lowered !== normalized) throw ambiguousSpelling(op, raw, lowered, normalized);
-    const found = order.find(live) ?? order.find(slug => pages.get(slug) && !(excludePrivate && isPrivatePageForCaller(pages.get(slug)!)));
-    if (found !== undefined) return { slug: found, slugs: offered(found) };
+    // (a) the caller's exact bytes, (b) the lowercased bytes, which is what a read looked up before slugs were composed,
+    // (c) the normal form: the first stored page wins, so a read that found a page before still finds that page.
+    const first = order.find(live);
+    if (first !== undefined) return { slug: first, slugs: offered(first) };
+    // (d) no page under any of those: the stored spellings that normalize to the same slug. One is the page; two or more are ambiguous.
+    const liveOthers: string[] = [];
+    try {
+      const others = (await ctx.engine.executeRaw<{ slug: string }>(
+        `SELECT DISTINCT slug FROM pages WHERE normalize(lower(slug), NFC) = $1 ORDER BY slug LIMIT 20`, [normalized])).map(r => r.slug).filter(slug => !order.includes(slug)).sort(); // code-unit order, so both engines name the same two
+      for (const slug of others) {
+        const page = await ctx.engine.getPage(slug, { ...scope, excludePrivate, includeDeleted: true });
+        if (page !== null && !page.deleted_at && !(excludePrivate && isPrivatePageForCaller(page))) liveOthers.push(slug);
+      }
+    } catch { /* an engine without raw reads: no other spelling is known */ }
+    if (liveOthers.length > 1) throw ambiguousSpelling(op, raw, liveOthers[0]!, liveOthers[1]!);
+    if (liveOthers.length === 1) return { slug: liveOthers[0]!, slugs: [liveOthers[0]!] };
+    const deleted = order.find(visible);
+    if (deleted !== undefined) return { slug: deleted, slugs: offered(deleted) };
   } catch (err) {
     if ((err as { detail?: unknown } | null)?.detail === 'ambiguous_slug') throw err;
   }
