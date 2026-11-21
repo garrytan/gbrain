@@ -213,7 +213,7 @@ listSupersessions	facts	yes	5	yes	yes	yes	serves
 countUnconsolidatedFacts	facts	yes	2	yes	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
-findTrajectory	facts	yes	3	yes	yes	yes	serves
+findTrajectory	facts	yes	4	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	6	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	5	no	yes	yes	serves
