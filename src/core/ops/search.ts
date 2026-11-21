@@ -733,7 +733,7 @@ const search: Operation = {
     const timings = new SearchTimings();
     const setup = <T>(work: () => Promise<T>) => timings.stage('setup', work);
     const queryText = p.query as string;
-    const limit = (p.limit as number) || 20;
+    const limit = (p.limit as number) > 0 ? p.limit as number : 20;
     // F2: match / cursor / offset cap / remote mode, refused before any search runs.
     const paging = parseSearchPaging(ctx, p);
     const offset = paging.offset;
