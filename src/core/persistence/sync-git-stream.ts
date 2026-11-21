@@ -242,13 +242,17 @@ export async function readRenameHints(gitRoot: string, from: string, to: string)
   return hints.sort((a, b) => (a.to < b.to ? -1 : a.to > b.to ? 1 : 0));
 }
 
+/** Ends a history walk early: every path of its group already holds `depth` blobs. */
+class HistoryRead extends Error {}
+
 /**
  * #7199, GST-2515: the blob ids each path held in the commits that changed it, from `commit` back, newest first, at most
  * `depth` each (a blob held again in the next older change counts once). GST-3328: read from the path's own history (one
  * filter-free `git log --raw` per group of paths, the HISTORY_LOG_OPTIONS shape), so an earlier version is found however many
  * commits to other paths came since; before, the read took `commit~k` for k < depth, and a page last imported more than
- * `depth` commits ago stayed held. `onPath` runs for each path as its group's read ends, and a throw from it (an abort)
- * rejects. A group whose read is incomplete leaves its paths out of the map; a path a pathspec cannot carry has no entry.
+ * `depth` commits ago stayed held. The walk stops once every path of the group holds `depth` blobs. `onPath` runs for each
+ * path as its group's read ends, and a throw from it (an abort) rejects. A group whose read is incomplete leaves its paths
+ * out of the map; a path a pathspec cannot carry has no entry.
  */
 export async function pathBlobHistories(gitRoot: string, commit: string, paths: readonly string[], depth: number,
   onPath?: (path: string) => void): Promise<Map<string, string[]>> {
@@ -259,7 +263,7 @@ export async function pathBlobHistories(gitRoot: string, commit: string, paths: 
     const group = carried.slice(start, start + HISTORY_GROUP_PATHS);
     const wanted = new Set(group), found = new Map<string, string[]>();
     const splitter = new NulRecordSplitter();
-    let raw: string | null = null;
+    let raw: string | null = null, full = 0;
     const result = await gitStream(gitRoot, ['log', ...HISTORY_LOG_OPTIONS, '--end-of-options', commit, '--', ...group.map(path => `:(literal)${path}`)], {
       timeoutMs: READ_TIMEOUT_MS, onChunk: chunk => {
         for (const record of splitter.push(chunk)) {
@@ -273,11 +277,13 @@ export async function pathBlobHistories(gitRoot: string, commit: string, paths: 
           raw = null;
           if (!wanted.has(path) || status === 'D' || !REGULAR_MODES.has(mode) || !OID.test(oid)) continue;
           const list = found.get(path) ?? [];
-          if (list.length < depth && list.at(-1) !== oid) list.push(oid);
+          if (list.length >= depth || list.at(-1) === oid) continue;
+          list.push(oid);
           found.set(path, list);
+          if (list.length === depth && ++full === group.length) throw new HistoryRead();
         }
-      } });
-    if (!hardenedStreamComplete(result) || !splitter.atRecordBoundary) continue;
+      } }).catch((error: unknown) => { if (error instanceof HistoryRead) return null; throw error; });
+    if (result !== null && (!hardenedStreamComplete(result) || !splitter.atRecordBoundary)) continue;
     for (const path of group) {
       histories.set(path, found.get(path) ?? []);
       onPath?.(path);

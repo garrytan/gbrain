@@ -81,6 +81,31 @@ for (const backend of testBackends()) {
     expect(await body(engine, 'notes/a')).toContain('A second Git edit of notes/a.');
   }, { databaseUrl, setup }), 240_000);
 
+  test(`[${backend}] the preview and sync compare the same earlier versions after a merge that kept one side`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await unrecorded(engine);
+    let at = 1_800_000_000;
+    const commit = (message: string) => execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', '-c', 'commit.gpgsign=false',
+      'commit', '-qam', message], { env: { ...process.env, GIT_AUTHOR_DATE: `${at} +0000`, GIT_COMMITTER_DATE: `${at++} +0000` } });
+    const main = git(root, 'rev-parse', '--abbrev-ref', 'HEAD');
+    edit(root, ['notes/a'], 'A main edit'); commit('main edit');
+    git(root, 'checkout', '-q', '-b', 'side', 'HEAD~1');
+    for (const n of [1, 2, 3]) { edit(root, ['notes/a'], `Side edit ${n}`); commit(`side ${n}`); }
+    git(root, 'checkout', '-q', main);
+    execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'merge', '-q', '-s', 'ours', '--no-edit', 'side'],
+      { env: { ...process.env, GIT_AUTHOR_DATE: `${at} +0000`, GIT_COMMITTER_DATE: `${at++} +0000` } });
+    edit(root, ['notes/a'], 'A last main edit'); commit('last main edit');
+    await coordinated(engine, "UPDATE sources SET last_commit='0123456789abcdef0123456789abcdef01234567' WHERE id='default'");
+    await performManagedSync(engine, OPTS);
+    const preview = await withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () =>
+      (await repairRunner(engine, { apply: false, logger })).run('file-drift', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', held: true, side: 'unknown' }));
+    const listed = preview.listing!.find(entry => entry.item === 'default:notes/a');
+    // The read follows every parent, so the three versions before HEAD are the side's, and neither sync nor the preview
+    // reaches the page's own (older) version: sync keeps the page held and the preview does not promise the retry route.
+    expect(await held(engine)).toEqual(['notes/a.md']);
+    expect(String(listed!.detail)).not.toContain('an earlier version');
+  }, { databaseUrl, setup }), 240_000);
+
   test(`[${backend}] a hold the current screen wrote is screened against earlier versions after retry-held, and the preview says so first`, () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     const original = await body(engine, 'notes/a');
