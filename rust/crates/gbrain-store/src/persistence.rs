@@ -57,6 +57,7 @@ mod projection_queue;
 mod topology;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
+pub(crate) use effects::{EffectRecord, all_effects, effect_by_id, request_effects, write_effect};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;

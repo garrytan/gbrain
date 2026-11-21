@@ -28,6 +28,7 @@
 //! - `F 0x0D page_id`: the `page_facts_reconcile` watermark (`facts/reconcile.rs`), read only.
 //! - `F 0x0F source visibility subject fact_hash`: the `fact_purges` ledger
 //!   (`facts/purge_ledger.rs`).
+//! - `F 0x10 source commit path`: the `reason_purge_tombstones` table (`facts/purge_journal.rs`).
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -62,6 +63,7 @@ mod page_purges;
 pub mod phantom;
 mod privacy;
 pub mod purge;
+pub mod purge_journal;
 pub mod purge_ledger;
 pub mod purge_receipt;
 pub mod quoted;
@@ -682,7 +684,8 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for row in source_rows(tx, source_id)? {
         delete_fact(tx, trust, &row)?;
     }
-    purge_ledger::remove_source_rows(tx, source_id)
+    purge_ledger::remove_source_rows(tx, source_id)?;
+    purge_journal::remove_source_rows(tx, source_id)
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -993,7 +993,8 @@ The statements `facts/gone-page-facts.ts`, `facts/purge-reasons.ts`, `facts/held
 `facts/purge-verify.ts` ran through `executeRaw` are 34 typed members, so the Rust arm answers each
 with the typed `raw_sql` refusal until the store holds what it reads. The ten held-move members are served by
 `facts/held_moves.rs` (see "Held moves" below), `expireFactsOfGonePages` by `facts/rest_sites.rs`, and ten
-purge receipt reads by `facts/purge_receipt.rs` (see "Purge receipt reads" below). The other 13 have no Rust
+purge receipt reads by `facts/purge_receipt.rs` (see "Purge receipt reads" below), and nine journal and
+change-reason statements by `facts/purge_journal.rs` (see "Purge journal statements" below). The other 4 have no Rust
 implementation yet, and `test/engine-parity/facts-purge-sites.test.ts` stops on that refusal for their cases. The Postgres text of each
 statement is pinned byte for byte by `test/facts-purge-sites-sql-pin.test.ts`.
 
@@ -1092,6 +1093,34 @@ Served on Rust: `readPurgeSourceLocalPath`, `readPurgeReceiptSourcePath` (both t
   `*`), with no active or expiry filter, as the SQL has none.
 - `vacuumPurgedTables` has nothing to compact and resolves once the store is open; `withQueryCache` changes nothing.
 - `listBeliefEventsForPurgeProbe` is not served: the store keeps no `belief_events`.
+
+### Purge journal statements (`facts/purge_journal.rs`, family `facts_purge_journal`)
+
+Served on Rust: `insertReasonPurgeTombstones`, `listGitEffectsCarryingReason`, `listPageGitEffectsForStrip`,
+`setPurgeEffectData`, `listPageChangeReasons`, `listRequestsRecordingReasons`, `countPagePurgeTombstones`,
+`readDeletePageRequest` and `listPurgeEffects`. They read the write journal's requests and effects
+(`persistence.rs`) and the `reason_purge_tombstones` rows, keyed `F 0x10 source commit path`.
+
+- `insertReasonPurgeTombstones` zips the two arrays as `unnest` does. Arrays of different lengths and a source
+  that does not exist refuse with `constraint_violation`, as the `NOT NULL` columns and the foreign key do. A
+  source delete removes its tombstones.
+- The Git effect reads take no row lock (`FOR UPDATE OF e`): a store write runs alone. Each row carries the
+  `request_id` of the request with the effect's journal id; an effect with no such request is left out, as the
+  inner join leaves it out.
+- `listPageGitEffectsForStrip` counts a `commit_line`, `commit_trailers` or `commit_trailer` key with a JSON null
+  value as present, as `data->'k' IS NOT NULL` does.
+- `setPurgeEffectData` refuses an `effectId` that is not a bigint, as `$1::bigint` does; an unknown id changes nothing.
+- `listPageChangeReasons` returns each reason once, null included, in byte order (null first). Postgres `UNION`
+  returns them in no stated order, so the parity case sorts them.
+- `readDeletePageRequest` and `listPurgeEffects` refuse a request id that is not a UUID with `invalid_argument`.
+  `listPurgeEffects` orders kinds in byte order; Postgres orders them by the database collation, which agrees for
+  the lower-case kinds the journal writes. A `parked` value that is not an array refuses, as
+  `jsonb_array_length` does.
+- The parity case for `countPagePurgeTombstones` and `readDeletePageRequest` still stops: its seed writes
+  `page_purges` through `executeRaw`, which the Rust arm refuses.
+
+Not served yet: `setPurgeProbeTimeout`, `probePurgeDerivations`, `listBeliefEventsForPurgeProbe` (the store keeps no
+`belief_events`) and `listNearestFactsForPurge` (a vector read).
 
 ### Claim conflicts, contested proposals, live entity page and gone-page expiry (`facts/rest_sites.rs`, family `facts_rest`)
 

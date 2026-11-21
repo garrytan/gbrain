@@ -62,6 +62,7 @@ mod facts_holding_purges;
 mod facts_loops;
 mod facts_phantom;
 mod facts_purge;
+mod facts_purge_journal;
 mod facts_purge_receipt;
 mod facts_quoted;
 mod facts_recall;
