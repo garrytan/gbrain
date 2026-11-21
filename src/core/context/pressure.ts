@@ -12,6 +12,7 @@ import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, re
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { resolveGbrainHome } from '../gbrain-home.ts';
+import { anthropic } from '../ai/recipes/anthropic.ts';
 
 export const PRESSURE_CONFIG_KEYS = {
   enabled: 'memory.pressure.enabled',
@@ -127,14 +128,24 @@ export function readTranscriptPressure(path: string): TranscriptPressure | null 
 
 /**
  * Context window for the session: explicit config wins; then a 1M marker on
- * the model id or the configured model; then an observed fill above the
- * default window (only a large window could hold it); else the default.
+ * the model id or the configured model; then the window the Anthropic recipe
+ * declares for that model (Claude Code records the bare API id, with no
+ * marker); then an observed fill above the default window (only a large
+ * window could hold it); else the default.
  */
 export function resolveContextWindow(opts: { configured: number | null; model: string | null; configuredModel?: string | null; maxSeen: number }): number {
   if (opts.configured) return opts.configured;
   const marker = /\[1m\]|-1m\b|1m-context/i;
   if ((opts.model && marker.test(opts.model)) || (opts.configuredModel && marker.test(opts.configuredModel))) return PRESSURE_LARGE_WINDOW;
+  const declared = declaredContextWindow(opts.model) ?? declaredContextWindow(opts.configuredModel);
+  if (declared) return declared;
   return opts.maxSeen > PRESSURE_DEFAULT_WINDOW ? PRESSURE_LARGE_WINDOW : PRESSURE_DEFAULT_WINDOW;
+}
+
+function declaredContextWindow(model: string | null | undefined): number | undefined {
+  if (!model) return undefined;
+  const id = model.replace(/^anthropic[:/]/, '');
+  return anthropic.touchpoints.chat?.model_context_tokens?.[anthropic.aliases?.[id] ?? id];
 }
 
 export function pressureNotice(percent: number): string {

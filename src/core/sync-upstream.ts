@@ -37,9 +37,13 @@ async function gitAsync(root: string, args: string[]): Promise<string | null> {
   return r.error ? null : r.stdout.trim() || null;
 }
 
+/** An empty file records nothing: a fetch that fails (remote gone) truncates FETCH_HEAD and leaves a fresh mtime (#9933). */
 function mtime(path: string | null): number {
   if (!path) return 0;
-  try { return statSync(path).mtimeMs; } catch { return 0; }
+  try {
+    const stat = statSync(path);
+    return stat.size > 0 ? stat.mtimeMs : 0;
+  } catch { return 0; }
 }
 
 /** Whether the checkout's branch tracks an upstream (a `git pull` would have something to refresh). */
