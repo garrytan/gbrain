@@ -255,6 +255,7 @@ test/engine-parity/repair-bookkeeping.test.ts
 test/engine-parity/repair-busy.test.ts
 test/engine-parity/repair-facts-previews-2.test.ts
 test/engine-parity/repair-facts-previews-3.test.ts
+test/engine-parity/repair-facts-previews-4.test.ts
 test/engine-parity/repair-facts-previews.test.ts
 test/engine-parity/repair-fence-scans.test.ts
 test/engine-parity/repair-owner-kinds.test.ts

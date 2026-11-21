@@ -111,13 +111,14 @@ test/engine-parity/repair-bookkeeping.test.ts	7	1
 test/engine-parity/repair-busy.test.ts	1	0
 test/engine-parity/repair-facts-previews-2.test.ts	4	4
 test/engine-parity/repair-facts-previews-3.test.ts	2	8
+test/engine-parity/repair-facts-previews-4.test.ts	1	8
 test/engine-parity/repair-facts-previews.test.ts	5	0
 test/engine-parity/repair-fence-scans.test.ts	2	1
 test/engine-parity/repair-owner-kinds.test.ts	4	1
 test/engine-parity/repair-page-reads.test.ts	3	0
 test/engine-parity/repair-page-scans.test.ts	4	0
 test/engine-parity/repair-plan-scans.test.ts	2	0
-test/engine-parity/repair-runner.test.ts	14	2
+test/engine-parity/repair-runner.test.ts	15	1
 test/engine-parity/repair-source-reads.test.ts	2	0
 test/engine-parity/request-tools-persist.test.ts	1	0
 test/engine-parity/resolve-reads.test.ts	7	0

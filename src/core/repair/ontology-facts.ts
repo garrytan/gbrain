@@ -44,6 +44,8 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { coordinatedDatabaseWrite } from '../persistence/database-write.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 
 export interface OntologyFactCandidate {
   id: number;
@@ -128,6 +130,8 @@ export const ontologyFactsRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { fact, hash, last } = entry as FactItem;
+    // The restore rewrites the fact row through raw SQL, so a Rust brain stops here by name, before its first write.
+    if (lacksRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'repair ontology-facts fact write');
     const restore = (tx: BrainEngine) => tx.executeRaw<{ id: number | string; expired: boolean }>(
       `UPDATE facts f SET row_num=NULL, source_markdown_slug=f.source, expired_at=NULL
         WHERE f.id=$1 AND f.source_id=$2 AND f.dimension IS NOT NULL AND ${NOT_CONVERSATION_SLOT_SQL}
