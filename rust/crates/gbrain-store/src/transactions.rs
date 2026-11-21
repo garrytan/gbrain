@@ -79,6 +79,11 @@ impl Env for TransactionClock {
         self.started_us
     }
 
+    /// The moment of the call, never before the transaction's start.
+    fn clock_micros(&self) -> i64 {
+        self.inner.clock_micros().max(self.started_us)
+    }
+
     fn new_uuid(&self) -> String {
         self.inner.new_uuid()
     }

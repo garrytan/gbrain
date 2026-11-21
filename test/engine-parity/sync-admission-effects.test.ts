@@ -46,15 +46,15 @@ async function pass(engine: BrainEngine, incarnation: string, token: string, sta
       outcome, stop_reason: null, candidates: 3, settled: 0, remaining: 3, counts: {}, duration_ms: null, timings_ms: {} } } }]);
 }
 
-/** One request of the source incarnation with intent kind `kind`, left queued. */
-async function request(engine: BrainEngine, n: number, kind: string, incarnation: string): Promise<void> {
+/** One request of the source incarnation with intent kind `kind`, in `state` (queued unless named). */
+async function request(engine: BrainEngine, n: number, kind: string, incarnation: string, state = 'queued'): Promise<void> {
   const keys = ['principal:local_cli:parity-admission', 'brain'];
   await engine.lockPersistenceCounters(keys);
   await engine.insertWriteRequest({
     principalKind: 'local_cli', principalId: 'parity-admission', requestId: rid(n), operation: 'submit_job', sourceId: 'default',
     sourceIncarnation: incarnation, pageId: null, slug: `notes/alice-example-${n}`, worktreeId: null, topologyGeneration: null, digest: 'd'.repeat(64),
     intent: { kind }, authority: { scopes: ['write'] }, intentBytes: 100, terminalReservation: 4096, targetKind: 'page', protocolVersion: 1,
-    admitterVersion: 'parity', admitterHostId: null, counterKeys: keys, clientRequestId: null, state: 'queued', deferredRefreshId: null,
+    admitterVersion: 'parity', admitterHostId: null, counterKeys: keys, clientRequestId: null, state, deferredRefreshId: null,
   });
 }
 
@@ -136,5 +136,36 @@ parityTest('readSyncAdmissionEffects: destructive only for an unpublished destru
   expect([notDestructive.destructive, admittedBefore.unset.destructive, admittedBefore.before.destructive, admittedBefore.otherKinds.destructive,
     admittedBefore.noKinds.destructive, admittedAfterOnly.destructive, out.upperIncarnation.destructive, out.otherIncarnation.destructive])
     .toEqual([false, true, true, false, false, false, true, false]);
+  return out;
+});
+
+parityTest('readSyncAdmissionEffects: a destructive request blocks its own source while queued, running or recovering, and not once it ends', {
+  methods: ['readSyncAdmissionEffects', 'insertWriteRequest', 'lockPersistenceCounters', 'readSourceMembership'],
+}, async (engine) => {
+  const incarnation = await incarnationOf(engine);
+  const states = ['queued', 'running', 'recovering', 'committed', 'conflict', 'failed', 'cancelled'];
+  // One request per state, each under its own kind, so asking for that kind sees that request alone.
+  for (const [i, state] of states.entries()) await request(engine, 10 + i, `delete-${state}`, incarnation, state);
+  const out: Record<string, boolean> = {};
+  for (const state of states) out[state] = (await effects(engine, incarnation, null, [`delete-${state}`])).destructive;
+  // The queued request of `default` does not block another source that reports the same incarnation.
+  out.otherSource = (await engine.readSyncAdmissionEffects({ lockId: syncLockId('default'), passOp: MANAGED_SYNC_PASS_OP,
+    passKey: passFingerprint('default', incarnation), setAt: null, sourceId: 'other-example', incarnation, kinds: ['delete-queued'] })).destructive;
+  expect(out).toEqual({ queued: true, running: true, recovering: true, committed: false, conflict: false, failed: false, cancelled: false, otherSource: false });
+  return out;
+});
+
+parityTest('readSyncAdmissionEffects: a stamp written later in the transaction that queued a destructive request still dates after it', {
+  methods: ['transaction', 'readSyncAdmissionEffects', 'writeSyncAdmissionStamp', 'insertWriteRequest', 'lockPersistenceCounters', 'readSourceMembership'],
+}, async (engine) => {
+  const incarnation = await incarnationOf(engine);
+  // A request's created_at is the transaction's start (`now()`); set_at is the moment of the stamp (`clock_timestamp()`).
+  const setAt = await engine.transaction(async (tx) => {
+    await request(tx, 40, 'managed_sync_delete', incarnation);
+    await Bun.sleep(5);
+    return stamp(tx, 'classify_only');
+  });
+  const out = { destructive: (await effects(engine, incarnation, setAt, ['managed_sync_delete'])).destructive };
+  expect(out).toEqual({ destructive: true });
   return out;
 });

@@ -172,7 +172,7 @@ impl Store {
     }
 
     /// `writeSyncAdmissionStamp(op, fingerprint, value)`: the checkpoint parent set to `[{value, set_at}]` with `set_at`
-    /// now; returns `set_at` as its jsonb text.
+    /// the moment of the write (`clock_timestamp()`); returns `set_at` as its jsonb text.
     pub fn write_sync_admission_stamp(
         &self,
         op: &str,
@@ -187,7 +187,9 @@ impl Store {
         let key = parent_key(op, fingerprint)?;
         self.write(|tx| {
             let now = self.env.now_micros();
-            let set_at = jsonb_timestamptz(now);
+            // `set_at` is `clock_timestamp()`, not the transaction's `now()`: a request queued earlier in the same
+            // transaction carries `now()` as its `created_at` and must date before the stamp.
+            let set_at = jsonb_timestamptz(self.env.clock_micros());
             put_json(
                 tx,
                 &key,
