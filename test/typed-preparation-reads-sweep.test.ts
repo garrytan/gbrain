@@ -100,6 +100,43 @@ describe('typed preparation reads keep the preparation deadline (Postgres)', () 
   }
 });
 
+describe('a store a preparer opens through its bounded view keeps the preparation deadline (Postgres)', () => {
+  // Page preparation asks whether an earlier write waits on an import through the publication journal store
+  // (persistence/page-prepare.ts compareFileTarget); the store's statement replaced a raw one the view bounded.
+  const mark = 'r.deferred_import_from IS NOT NULL';
+  const run = async (e: BrainEngine) => (await e.publicationJournalStore()).heldBehindImport('default', 'a', 2);
+
+  test('without a deadline the store sends its statement as before', async () => {
+    const fake = makeFakeSql();
+    await run(boundedReads(fakeEngine(fake), startClaimPhase())).catch(() => undefined);
+    expect(fake.statements().some(s => s.text.includes(mark))).toBe(true);
+  });
+
+  for (const [view, opts] of views) {
+    test(`${view}: the store's read past the budget is refused before its statement is sent`, async () => {
+      const fake = makeFakeSql();
+      const reads = boundedReads(fakeEngine(fake), startClaimPhase(Date.now() - 2_000, undefined, 1_000), opts);
+      const error = await run(reads).then(() => null, (e: unknown) => e);
+      expect(error).toBeInstanceOf(PreparationDeadlineError);
+      expect((error as PreparationDeadlineError).sqlstate).toBeNull();
+      expect(fake.statements().filter(s => s.text.includes(mark))).toEqual([]);
+    });
+
+    test(`${view}: the store's read stalled on its connection ends at the clock's abort`, async () => {
+      const fake = makeFakeSql(stmt => (stmt.text.includes(mark) ? never() : undefined));
+      const controller = new AbortController();
+      const reason = { code: 'preparation_deadline' };
+      const clock = startClaimPhase(Date.now(), controller.signal, 60_000);
+      const call = run(boundedReads(fakeEngine(fake), clock, opts));
+      setTimeout(() => controller.abort(reason), 20);
+      const outcome = await Promise.race([call.then(() => 'resolved', (error: unknown) => error), Bun.sleep(1_000).then(() => 'still pending')]);
+      // It ends as the raw statement did through the view's `executeRaw`: rejected at the abort, not left pending.
+      expect(outcome === reason || (outcome as Error).name === 'AbortError').toBe(true);
+      expect(clock.lastSql?.label).toContain('persistence_requests');
+    });
+  }
+});
+
 describe('searchKeyword under a preparation deadline: the keyword timeout config read', () => {
   test('a stalled read of the timeout ends at the clock\'s abort, the failure is not kept, and the timeout stays inside the time left', async () => {
     let stall = true;
