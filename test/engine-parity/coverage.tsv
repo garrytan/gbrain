@@ -103,7 +103,7 @@ getPage	pages	yes	141	yes	yes	yes	serves
 readPageSnapshot	pages	yes	35	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	9	no	yes	yes	serves
-putPage	pages	yes	648	yes	yes	yes	serves
+putPage	pages	yes	647	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	25	yes	yes	yes	serves
@@ -225,7 +225,7 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
 upsertChunks	chunks	yes	49	yes	yes	yes	serves
-sealChunks	chunks	yes	72	no	yes	yes	serves
+sealChunks	chunks	yes	71	no	yes	yes	serves
 getChunks	chunks	yes	52	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
@@ -537,9 +537,9 @@ requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves
 readHeldPageRows	persistence_journal	yes	2	no	yes	yes	serves
 readHeldCoverageRows	persistence_journal	yes	2	no	yes	yes	serves
-readGitHoldRecords	persistence_journal	yes	3	no	yes	yes	serves
-readGitHoldRetryRequest	persistence_journal	yes	2	no	yes	yes	serves
-readGitHoldReportInputs	persistence_journal	yes	3	no	yes	yes	serves
+readGitHoldRecords	persistence_journal	yes	2	no	yes	yes	serves
+readGitHoldRetryRequest	persistence_journal	yes	1	no	yes	yes	serves
+readGitHoldReportInputs	persistence_journal	yes	2	no	yes	yes	serves
 lockGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
 adjustGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
@@ -563,9 +563,9 @@ readOrphanedManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
 readSyncHeadRequestRow	persistence_journal	yes	1	no	yes	yes	serves
 readSyncRecoveryProbeRow	persistence_journal	yes	1	no	yes	yes	serves
 readIdentityDowngradeRows	persistence_journal	yes	1	no	yes	yes	serves
-readWriteWatermarkRow	persistence_journal	yes	2	no	yes	yes	serves
-readSourceCheckoutRoot	persistence_journal	yes	2	no	yes	yes	serves
-readUnembeddedPageSummary	persistence_journal	yes	2	no	yes	yes	serves
+readWriteWatermarkRow	persistence_journal	yes	1	no	yes	yes	serves
+readSourceCheckoutRoot	persistence_journal	yes	1	no	yes	yes	serves
+readUnembeddedPageSummary	persistence_journal	yes	1	no	yes	yes	serves
 listFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readSourcePurgeEpoch	persistence_journal	yes	3	no	yes	yes	serves
 readWriteRequest	persistence_journal	yes	9	no	yes	yes	serves
@@ -585,8 +585,8 @@ readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	6	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	50	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	56	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	49	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	55	no	yes	yes	serves
 insertWriteRequestGroup	persistence_journal	yes	2	no	yes	yes	serves
 readOwnerHostBinding	persistence_journal	yes	1	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	23	no	yes	yes	serves
@@ -595,7 +595,7 @@ completeWriteRow	persistence_journal	yes	18	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	9	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	4	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	63	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	61	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 listTopologyRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves

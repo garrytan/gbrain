@@ -368,6 +368,25 @@ impl Store {
     }
 }
 
+/// The `persistence_topology_changes` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(
+        json_rows::<TopologyChangeRecord>(read, &[keys::PERSISTENCE, super::TOPOLOGY])?
+            .into_iter()
+            .map(|r| ProbeRow {
+                cells: vec![
+                    ("recovery", ProbeCell::opt_jsonb(r.recovery.as_ref())),
+                    ("outcome", ProbeCell::opt_jsonb(r.outcome.as_ref())),
+                ],
+                source_id: Some(r.source_id),
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::worktree_rows::rows::put_worktree;
@@ -468,23 +487,4 @@ mod tests {
         let bad = s.list_topology_recoveries(HOST, None, 2.0).unwrap_err();
         assert_eq!(bad.message, "invalid input syntax for type uuid: \"w\"");
     }
-}
-
-/// The `persistence_topology_changes` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
-pub(crate) fn purge_probe_rows(
-    read: &dyn KvRead,
-) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
-    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
-    Ok(
-        json_rows::<TopologyChangeRecord>(read, &[keys::PERSISTENCE, super::TOPOLOGY])?
-            .into_iter()
-            .map(|r| ProbeRow {
-                cells: vec![
-                    ("recovery", ProbeCell::opt_jsonb(r.recovery.as_ref())),
-                    ("outcome", ProbeCell::opt_jsonb(r.outcome.as_ref())),
-                ],
-                source_id: Some(r.source_id),
-            })
-            .collect(),
-    )
 }
