@@ -13,6 +13,13 @@
 export const OWNER_IPC_LOCAL_ONLY_READS: ReadonlySet<string> = new Set([
   'readStoredBodyBytes', 'readPageBodySizes', 'readFieldUsageSamples', 'listFiles', 'getCodeTraversalCache',
   'listSegmentedPages', 'hasWithdrawnFenceClaim',
+  // The decide store: SELECTs only (getDecideProposal and getDecideReviewProposal may lock the row, released when
+  // the call ends).
+  'readDecideState', 'dailyDecideSpend', 'listDecideSpendBySlot', 'listDecideReceiptStats', 'decideSlotUsage',
+  'decideConflictNoEntityCounts', 'listDecideReplayReceipts', 'listDecideResolvedModels', 'listDecideMixedModelDecisions',
+  'listDecideCalibrations', 'getDecideCalibration', 'getDecideProposal', 'listDecideProposalIds', 'listDecideProposals',
+  'listDecideProposedPairs', 'listDecideReviewProposals', 'getDecideReviewProposal', 'listDecideReviewProposalIds',
+  'readProposalReviewRates', 'listDueDecideReviewQueue', 'listDueDecideSweepDeferred',
 ]);
 
 const page = 'getPage for that slug and source';
@@ -23,6 +30,8 @@ const timeline = 'getTimeline for that page';
 const takes = 'listTakes for that page';
 const configKey = 'getConfig for that key';
 const cycleLock = 'readCycleLocks for that lock id';
+const decideKey = 'readDecideState for that key';
+const calibration = 'getDecideCalibration for that id';
 
 export const OWNER_IPC_CONFIRMING_READS: Readonly<Record<string, string>> = {
   executeRaw: 'a SELECT of the rows the statement changes', executeRawDirect: 'a SELECT of the rows the statement changes',
@@ -78,4 +87,14 @@ export const OWNER_IPC_CONFIRMING_READS: Readonly<Record<string, string>> = {
   mergeOntologyFact: 'getOntology for that entity', insertLocalWriterRow: 'readLocalWriterRow for that writer',
   acquireCycleLock: cycleLock, refreshCycleLock: cycleLock, releaseCycleLock: cycleLock, deleteCycleLock: cycleLock,
   deleteCycleLockIfStale: cycleLock, invalidateWithdrawnPages: 'getPage for each slug in that source',
+  upsertDecideState: decideKey, deleteDecideState: decideKey, ensureDecideState: decideKey,
+  insertDecideSpend: 'nothing: a row whose request id is already stored is skipped, so running it again adds no row',
+  insertDecideReceipts: 'listDecideReplayReceipts for that slot (look for those decision ids)',
+  pruneDecideReceipts: 'nothing: a prune removes only rows past the retention, so running it again removes nothing more',
+  insertDecideCalibration: 'listDecideCalibrations for that slot', storeDecideQualification: calibration,
+  setDecideCalibrationRetired: calibration, insertDecideProposal: 'listDecideProposalIds for that sweep',
+  transitionDecideProposal: 'getDecideProposal for that id', insertDecideReviewProposal: 'listDecideReviewProposalIds for that sweep',
+  transitionDecideReviewProposal: 'getDecideReviewProposal for that id',
+  applyDecideReviewQueue: 'listDueDecideReviewQueue for that kind and source',
+  applyDecideSweepDeferred: 'listDueDecideSweepDeferred for that source',
 };
