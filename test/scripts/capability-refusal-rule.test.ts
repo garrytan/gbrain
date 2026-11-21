@@ -73,8 +73,25 @@ describe('capability-refusal rule', () => {
 
   test('ignores catches with no raw-SQL call of their own', () => {
     expect(flagged(`async function f(e) { try { return await e.getPage('a'); } catch { return null; } }`)).toBe(0);
-    // The call runs inside a callback, not inside the try.
+    // The call runs inside a callback that nothing awaits, so the try never sees its failure.
     expect(flagged(`function f(e) { try { schedule(() => e.executeRaw('x')); } catch { return null; } }`)).toBe(0);
+    expect(flagged(`async function f(e) { try { const g = async () => e.executeRaw('x'); return null; } catch { return null; } }`)).toBe(0);
+  });
+
+  test('flags a raw-SQL call inside a callback the try awaits', () => {
+    expect(flagged(`async function f(e) { try { await e.transaction(async tx => { await tx.executeRaw('x'); }); } catch { return []; } }`)).toBe(1);
+    expect(flagged(`async function f(e) { try { await Promise.all(ids.map(async id => e.executeRaw('x', [id]))); } catch { return []; } }`)).toBe(1);
+    expect(flagged(`async function f(e) { try { await e.transaction(async tx => { schedule(() => tx.executeRaw('x')); }); } catch { return []; } }`)).toBe(0);
+    expect(flagged(`async function f(e) { return await Promise.resolve().then(() => e.executeRaw('x')).catch(() => ({ mode: 'git' })); }`)).toBe(1);
+  });
+
+  test('flags a bare executeRawJsonb call and the direct raw-SQL method', () => {
+    expect(flagged(`async function f(e) { try { await executeRawJsonb(e, 'x', [{}]); } catch { return []; } }`)).toBe(1);
+    expect(flagged(`async function f(e) { try { await e.executeRawDirect('x'); } catch { return []; } }`)).toBe(1);
+  });
+
+  test('a switch before the rethrow can answer first, so it does not count', () => {
+    expect(flagged(`async function f(e) { try { await e.executeRaw('x'); } catch (err) { switch (err.code) { case '42P01': break; default: return []; } rethrowCapabilityRefusal(err); return []; } }`)).toBe(1);
   });
 
   test('ignores engine implementation files, which Rust never runs', () => {

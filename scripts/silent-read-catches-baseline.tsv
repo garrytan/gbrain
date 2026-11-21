@@ -25,6 +25,7 @@ src/cli/main.ts#printIdentityBannerBestEffort	catch_empty	1
 src/cli/migrations-notice.ts#pendingUpgradeMigrationsNotice	catch_empty	1
 src/cli/op-notices.ts#cliBrainKey	catch_empty	1
 src/commands/access-serves.ts#labelSeveral	capability_refusal_swallowed	1
+src/commands/agent-register.ts#runAgentRegister	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/apple-contacts.ts#runAppleContacts	promise_catch_empty	7
 src/commands/apply-migrations-schema.ts#schemaAheadRefusal	catch_empty	1
 src/commands/auth-client-rows.ts#listClientRows	capability_refusal_swallowed	5
@@ -39,6 +40,7 @@ src/commands/autopilot-fanout.ts#isSourceInCooldown	catch_empty	1
 src/commands/autopilot-fanout.ts#readRecentSourceFailures	capability_refusal_swallowed	1
 src/commands/autopilot-fanout.ts#readRecentSourceFailures	catch_empty	1
 src/commands/autopilot-fanout.ts#readSupervisorConcurrency	catch_empty	1
+src/commands/autopilot-health.ts#readTickHealth	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/autopilot-pause.ts#read	catch_empty	1
 src/commands/autopilot-probes.ts#runNightlyQualityProbeStep	catch_empty	1
 src/commands/autopilot-probes.ts#runParserProbeStep	catch_empty	1
@@ -63,8 +65,11 @@ src/commands/config.ts#runConfig	capability_refusal_swallowed	1
 src/commands/config.ts#runConfig	catch_empty	1
 src/commands/core.ts#runCore	capability_refusal_swallowed	1
 src/commands/db-repair.ts#acquireRepairLock	catch_empty	1
+src/commands/db-repair.ts#applyLadder	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/db-repair.ts#probeAccess	capability_refusal_swallowed	1
+src/commands/db-repair.ts#probeSchema	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/db-repair.ts#readUndoRecord	catch_empty	1
+src/commands/db-repair.ts#repairHost	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/db-repair.ts#repairHost	catch_empty	1
 src/commands/db-repair.ts#runDbRepair<anon@1>	catch_empty	1
 src/commands/diag.ts#readPool	capability_refusal_swallowed	1
@@ -253,6 +258,7 @@ src/commands/doctor/checks/persistence-compaction.ts#checkPersistenceCompaction	
 src/commands/doctor/checks/persistence-compaction.ts#checkPersistenceCounterDrift	capability_refusal_swallowed	1
 src/commands/doctor/checks/persistence-requests.ts#lostCallerWritesCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/persistence-requests.ts#requestGrowthCheck	capability_refusal_swallowed	1
+src/commands/doctor/checks/persistence-requests.ts#sessionTimeoutsCheck	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/doctor/checks/persistence-requests.ts#writeStallCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/pglite-worker.ts#computePoolReapHealthCheck	catch_empty	1
 src/commands/doctor/checks/pglite-worker.ts#computeWorkerOomLoopCheck	catch_empty	3
@@ -352,6 +358,7 @@ src/commands/doctor/skill-checks.ts#skillPreconditionsCheck>listSourceIds	catch_
 src/commands/doctor/skill-checks.ts#skillsManifestIntegrityCheck	catch_empty	1
 src/commands/edges-backfill.ts#runEdgesBackfill	capability_refusal_swallowed	1
 src/commands/embed.ts#embedAllStale	catch_empty	2
+src/commands/embed.ts#embedAllStale>embedOneKey	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/embed.ts#preflightDimMismatch	catch_empty	2
 src/commands/embed.ts#runEmbedCore	catch_empty	1
 src/commands/engine-status.ts#mountFor	catch_empty	1
@@ -363,11 +370,13 @@ src/commands/eval-longmemeval.ts#resolvePins	catch_empty	1
 src/commands/eval-replay.ts#runEvalReplay	catch_empty	1
 src/commands/eval-whoknows.ts#loadReplayRows	capability_refusal_swallowed	1
 src/commands/eval-whoknows.ts#loadReplayRows	catch_empty	1
+src/commands/export.ts#runExport	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/extract-explain.ts#runExtractExplain	capability_refusal_swallowed	1
 src/commands/extract-explain.ts#runExtractExplain	catch_empty	2
 src/commands/extract-mentions-explain.ts#pageNames	capability_refusal_swallowed	1
 src/commands/extract-mentions-explain.ts#pageNames	promise_catch_empty	1
 src/commands/extract-status.ts#runExtractStatus	capability_refusal_swallowed	1
+src/commands/extract.ts#extractMentionsFromDb	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/extract.ts#extractTimelineFromDir>onItem	catch_empty	1
 src/commands/extract.ts#loadSlugAliasTargets	capability_refusal_swallowed	1
 src/commands/features.ts#featuresTeaserForDoctor	catch_empty	1
@@ -380,6 +389,7 @@ src/commands/frontmatter-install-hook.ts#inspectFrontmatterHook	catch_empty	1
 src/commands/frontmatter-install-hook.ts#listSources	capability_refusal_swallowed	1
 src/commands/frontmatter.ts#runGenerate>processFile	catch_empty	1
 src/commands/git.ts#untrackPageVerdict	promise_catch_empty	1
+src/commands/google-attachments.ts#runGoogleAttachments	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/google.ts#readPending	catch_empty	1
 src/commands/google.ts#runGoogleStatus	capability_refusal_swallowed	1
 src/commands/google.ts#runGoogleStatus	catch_empty	1
@@ -414,6 +424,8 @@ src/commands/init-first-run.ts#firstRunBundle	promise_catch_empty	1
 src/commands/init-mode-picker.ts#resolveModePickerInputs	catch_empty	5
 src/commands/init-mode-picker.ts#resolveModePickerInputs>safeGet	catch_empty	1
 src/commands/init-mode-picker.ts#runModePicker	catch_empty	1
+src/commands/init-prefer-postgres.ts#classifyDbContent	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/commands/init-prefer-postgres.ts#runPreferPostgresLadder	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/init.ts#countMarkdownFiles	catch_empty	1
 src/commands/init.ts#reportModStatus	catch_empty	1
 src/commands/init.ts#resolveAIOptions	catch_empty	1
@@ -487,21 +499,28 @@ src/commands/serve-health.ts#readSelfExits	catch_empty	1
 src/commands/serve-health.ts#readServeTransport	capability_refusal_swallowed	1
 src/commands/serve-health.ts#readServeTransport	promise_catch_empty	1
 src/commands/serve-health.ts#recordServeTransport	catch_empty	1
+src/commands/serve-http-access.ts#audit	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/serve-http-admin-api.ts#mountAdminCalibrationApi<anon@1>	capability_refusal_swallowed	1
 src/commands/serve-http-admin-api.ts#mountAdminCalibrationApi<anon@3>	capability_refusal_swallowed	1
 src/commands/serve-http-admin-api.ts#mountAdminKeyApi<anon@1>	capability_refusal_swallowed	1
 src/commands/serve-http-api-keys.ts#mountAdminApiKeys<anon@1>	capability_refusal_swallowed	1
 src/commands/serve-http-clients.ts#mountAdminClients<anon@1>	capability_refusal_swallowed	1
+src/commands/serve-http-mcp.ts#callMcpTool	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/serve-http-mcp.ts#callMcpTool	catch_empty	1
+src/commands/serve-http-mcp.ts#listMcpTools	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/serve-http-mcp.ts#listMcpTools	catch_empty	1
 src/commands/serve-http-mcp.ts#mountMcp>handleMcpPost	promise_catch_empty	1
+src/commands/serve-http-mcp.ts#recordMcpToolResult	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/serve-http-mcp.ts#recordMcpToolResult	catch_empty	2
+src/commands/serve-http-mcp.ts#rejectInsufficientMcpScope	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/serve-http-mcp.ts#rejectInsufficientMcpScope	catch_empty	1
+src/commands/serve-http-mcp.ts#rejectUnknownMcpOperation	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/serve-http-mcp.ts#rejectUnknownMcpOperation	catch_empty	1
 src/commands/serve-http-metrics.ts#probeLiveness	capability_refusal_swallowed	1
 src/commands/serve-http-registration.ts#mountAdminRegistration<anon@1>	capability_refusal_swallowed	1
 src/commands/serve-http-webhooks.ts#githubKindCoversRepo	catch_empty	1
 src/commands/serve-http-webhooks.ts#handleGitHubItemEvent	capability_refusal_swallowed	2
+src/commands/serve-http-webhooks.ts#handleIngest	capability_refusal_swallowed	3	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/serve-http-webhooks.ts#handleIngest	catch_empty	1
 src/commands/serve-http-webhooks.ts#mountGitHubWebhook<anon@1>	capability_refusal_swallowed	1
 src/commands/serve-http.ts#logServeHttpStartup	catch_empty	2
@@ -535,6 +554,7 @@ src/commands/sources.ts#runTrackedBranch	capability_refusal_swallowed	1
 src/commands/status.ts#buildAutopilotStatus	catch_empty	1
 src/commands/status.ts#buildCycleSnapshot	capability_refusal_swallowed	2
 src/commands/status.ts#buildCycleSnapshot	catch_empty	2
+src/commands/status.ts#buildLocalReport	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/status.ts#buildLocks	capability_refusal_swallowed	1
 src/commands/status.ts#buildLocks	catch_empty	1
 src/commands/status.ts#buildQueueCounts	capability_refusal_swallowed	1
@@ -561,6 +581,7 @@ src/commands/sync/perform.ts#syncStartedAt	catch_empty	1
 src/commands/sync/preflight.ts#applyPersistedScopeConfig	catch_empty	2
 src/commands/sync/preflight.ts#resolveSyncRepo	catch_empty	1
 src/commands/sync/preflight.ts#resolveWorkingTreeScope	catch_empty	1
+src/commands/sync/rename-collision.ts#renamePageOntoSlug	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/sync/report.ts#maybeBackupCoverageRefresh	catch_empty	1
 src/commands/sync/run.ts#runSingleSourceSync	promise_catch_empty	1
 src/commands/sync/run.ts#runSyncAll	capability_refusal_swallowed	1
@@ -607,6 +628,7 @@ src/core/access/labelled-only.ts#anyLabelledOnlyMember	capability_refusal_swallo
 src/core/access/labelled-only.ts#labelledOnlyFor	capability_refusal_swallowed	1
 src/core/access/lineage.ts#membersReadLineageOn	catch_empty	1
 src/core/access/member-sources.ts#hiddenPersonalSources	capability_refusal_swallowed	1
+src/core/access/members.ts#addMember	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/access/members.ts#audienceMemberIds	capability_refusal_swallowed	1
 src/core/access/members.ts#audienceMemberIds	catch_empty	1
 src/core/access/members.ts#setMemberEmail	capability_refusal_swallowed	1
@@ -929,6 +951,7 @@ src/core/cycle/derived-write-through.ts#derivedFileTarget	catch_empty	1
 src/core/cycle/derived-write-through.ts#derivedWriteThroughEnabled	promise_catch_empty	1
 src/core/cycle/derived-write-through.ts#restoreDerived	capability_refusal_swallowed	1
 src/core/cycle/derived-write-through.ts#writeDreamFile	catch_empty	1
+src/core/cycle/dream-provenance.ts#stampDreamProvenance	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/cycle/extract-atoms-cost-gate.ts#readExtractAtomsNoPricing	catch_empty	1
 src/core/cycle/extract-atoms-cost-gate.ts#resolveEmbedModelForCostGate	catch_empty	1
 src/core/cycle/extract-atoms-input.ts#releasePartialDispositions	capability_refusal_swallowed	1
@@ -1010,6 +1033,7 @@ src/core/embed-concurrency.ts#resolveStaleEmbedConcurrency	catch_empty	1
 src/core/embed-consent.ts#embeddingProviderIsFree	catch_empty	1
 src/core/embed-consent.ts#estimateEmbedBackfillUsd	capability_refusal_swallowed	1
 src/core/embed-consent.ts#estimateEmbedBackfillUsd	catch_empty	1
+src/core/embed-facts.ts#embedStaleFacts	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/embed-stale-images.ts#embedStaleImages	promise_catch_empty	1
 src/core/embed-stale.ts#embedStalePages	capability_refusal_swallowed	1
 src/core/embedding-ann-build.ts#buildDeferredAnnIndexes<anon@2>	capability_refusal_swallowed	1
@@ -1019,6 +1043,7 @@ src/core/embedding-ann-build.ts#buildDeferredAnnIndexes<anon@2><anon@1>	promise_
 src/core/embedding-disabled.ts#embeddingsDisabled	catch_empty	1
 src/core/embedding-input-limit.ts#resolveMaxChunkTokens	catch_empty	1
 src/core/embedding-migration-retention.ts#assertRetainedEmbeddingRebuildability	capability_refusal_swallowed	1
+src/core/embedding-migration.ts#applyEmbeddingMigration	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/embedding-migration.ts#planEmbeddingMigration	capability_refusal_swallowed	2
 src/core/embedding-migration.ts#planEmbeddingMigration	catch_empty	3
 src/core/embedding-migration.ts#readDimPinnedWidths	capability_refusal_swallowed	1
@@ -1030,7 +1055,7 @@ src/core/embedding-migration.ts#runSchemaTransition	capability_refusal_swallowed
 src/core/embedding-migration.ts#runSchemaTransition	catch_empty	1
 src/core/embedding-migration.ts#verifyMigrationComplete	capability_refusal_swallowed	1
 src/core/embedding-migration.ts#verifyMigrationComplete	catch_empty	3
-src/core/embedding-migration.ts#verifySearchRoundTrip	capability_refusal_swallowed	1
+src/core/embedding-migration.ts#verifySearchRoundTrip	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/embedding-readiness.ts#prepareEmbeddingProjections	capability_refusal_swallowed	1
 src/core/embedding-restamp.ts#restampCurrentSpaceSignatures	capability_refusal_swallowed	1
 src/core/embedding-state.ts#keylessFix	catch_empty	1
@@ -1094,6 +1119,8 @@ src/core/facts/held-fact-move.ts#planningView>get<anon@1>	capability_refusal_swa
 src/core/facts/meta-hook.ts#getBrainHotMemoryMeta	promise_catch_empty	1
 src/core/facts/meta-hook.ts#readHotMemorySessionOnly	promise_catch_empty	1
 src/core/facts/notability-filter.ts#resolvePageWriteNotabilityFilter	promise_catch_empty	1
+src/core/facts/purge-verify.ts#boundedCount	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/facts/purge-verify.ts#derivationTextReport	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/facts/purge-verify.ts#onDiskReports>carrying	catch_empty	1
 src/core/facts/purge-verify.ts#vectorProbe	capability_refusal_swallowed	1
 src/core/facts/question-recall.ts#admissionRule	promise_catch_empty	1
@@ -1102,7 +1129,8 @@ src/core/facts/reconcile-watermark.ts#readFactsReconcileBacklog	capability_refus
 src/core/facts/reconcile-watermark.ts#readFactsReconcileBacklog	promise_catch_empty	1
 src/core/facts/supersession-threshold.ts#readSupersessionThreshold	promise_catch_empty	1
 src/core/facts/unfenced-facts.ts#fenceDatabaseOnlyPage	capability_refusal_swallowed	1
-src/core/facts/write-single.ts#expireSuperseded	capability_refusal_swallowed	1
+src/core/facts/unfenced-facts.ts#fenceFilePage>write<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/facts/write-single.ts#expireSuperseded	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/facts/writeback-audience.ts#classifyBrainAudience	capability_refusal_swallowed	2
 src/core/facts/writeback-audience.ts#classifyBrainAudience	catch_empty	1
 src/core/facts/writeback-audience.ts#classifyBrainAudience	promise_catch_empty	1
@@ -1117,9 +1145,11 @@ src/core/fence-repair/model.ts#resolveFenceRepairModelWithSource	promise_catch_e
 src/core/fence-repair/uncommitted.ts#uncommittedFenceRepairsBySource	promise_catch_empty	1
 src/core/filing-audit.ts#parseFrontmatter	catch_empty	1
 src/core/friction.ts#readTranscriptAt	catch_empty	1
+src/core/function-search-path.ts#pinTempLast	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/funnel.ts#recordFunnelEvent	catch_empty	1
 src/core/gbrain-env-file.ts#loadGbrainEnvFile	catch_empty	1
 src/core/generations/config.ts#readGenerationsConfig>read	promise_catch_empty	1
+src/core/generations/publish.ts#publishGeneration	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/git-first-commit.ts#gitFirstCommitDates	catch_empty	1
 src/core/git-remote.ts#gitStateExists	catch_empty	1
 src/core/git/background-publish.ts#backgroundPublish	catch_empty	1
@@ -1297,6 +1327,7 @@ src/core/minions/supervisor-pid.ts#readSupervisorBuild	catch_empty	1
 src/core/minions/supervisor.ts#MinionSupervisor.start<anon@1>	catch_empty	1
 src/core/minions/supervisor.ts#MinionSupervisor.tryAtomicCreate	catch_empty	1
 src/core/minions/sync-queue-wake.ts#startSyncQueueWake	capability_refusal_swallowed	1
+src/core/minions/terminal-hook.ts#terminalHookNotifier>onJobSettled	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/minions/watchdog-attribution.ts#markWatchdogSuspect	capability_refusal_swallowed	1
 src/core/minions/worker-registry.ts#registerWorker<anon@1>	catch_empty	1
 src/core/minions/worker.ts#MinionWorker.checkMemoryLimit	catch_empty	1
@@ -1329,6 +1360,7 @@ src/core/onboard/impact-capture.ts#writeImpactLogRow	capability_refusal_swallowe
 src/core/onboard/mcp-onboarding.ts#cachePath	catch_empty	1
 src/core/onboard/mcp-onboarding.ts#readPersisted	catch_empty	1
 src/core/onboard/writeback-nudge.ts#writebackAskApplies	catch_empty	2
+src/core/op-checkpoint.ts#appendCompletedOnce	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/op-checkpoint.ts#loadOpCheckpoint	capability_refusal_swallowed	1
 src/core/op-checkpoint.ts#purgeStaleCheckpoints	capability_refusal_swallowed	1
 src/core/ops/backlinks-paged.ts#withLinkPageStatus	promise_catch_empty	1
@@ -1336,6 +1368,7 @@ src/core/ops/chronicle.ts#chronicle_backfill.handler	catch_empty	1
 src/core/ops/facts.ts#context_pack.handler	promise_catch_empty	2
 src/core/ops/facts.ts#withProvenance	capability_refusal_swallowed	1
 src/core/ops/facts.ts#withProvenance	promise_catch_empty	1
+src/core/ops/files.ts#file_upload.handler	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/ops/get-page-body.ts#inlineBodyBytes	catch_empty	1
 src/core/ops/get-page-projection.ts#pageTrustForRead	promise_catch_empty	1	audit contract-10, pages-13: a failed trust lookup becomes unknown/unrecorded, or "not found" under a trust floor
 src/core/ops/graph-rank.ts#rank_entities.handler	capability_refusal_swallowed	1
@@ -1364,6 +1397,7 @@ src/core/ops/search.ts#emitFanoutNotices	promise_catch_empty	1
 src/core/ops/search.ts#evidenceOutput<anon@1>	promise_catch_empty	1	audit contract-10: the pageTrust lookup failure is dropped
 src/core/ops/search.ts#hasUnsealedPagesInScope	capability_refusal_swallowed	1
 src/core/ops/search.ts#hasUnsealedPagesInScope	catch_empty	1
+src/core/ops/search.ts#prepareExplainTarget	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/ops/search.ts#query.handler	catch_empty	1
 src/core/ops/search.ts#query.handler	promise_catch_empty	2
 src/core/ops/search.ts#resolveSnippetCap	catch_empty	1
@@ -1393,6 +1427,8 @@ src/core/pace-mode.ts#loadPaceModeConfig>safeGet	catch_empty	1
 src/core/page-body/projection.ts#projectSegmentedPage	capability_refusal_swallowed	1
 src/core/page-body/projection.ts#projectSegmentedPage	promise_catch_empty	1
 src/core/page-body/projection.ts#rebuildPendingSegmentedProjections	capability_refusal_swallowed	1
+src/core/page-body/segment-derive.ts#continueDerivationPurges	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/page-body/segment-derive.ts#continueDerivationPurges>finishParked	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/page-body/streamed-import.ts#importScanned	promise_catch_empty	1
 src/core/page-body/streamed-import.ts#importScanned>apply	promise_catch_empty	1
 src/core/page-embedding-budget.ts#resolvePageEmbedCapUsd	promise_catch_empty	1
@@ -1405,6 +1441,8 @@ src/core/page-state/projections.ts#continueDeferredProjection>release	capability
 src/core/page-state/projections.ts#continueDeferredProjection>release	promise_catch_empty	1
 src/core/page-state/projections.ts#embeddingWriteTarget	catch_empty	1
 src/core/page-state/projections.ts#rebuildPendingPageProjections>runJob	capability_refusal_swallowed	1
+src/core/page-state/rename-alias.ts#recordRenameAlias	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/page-state/rename-alias.ts#recordSlugLineAlias	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/page-state/revision-backfill-schema.ts#readState	catch_empty	1
 src/core/page-window/segmented.ts#writeDigest	capability_refusal_swallowed	1
 src/core/page-window/segmented.ts#writeDigest	catch_empty	1
@@ -1420,6 +1458,7 @@ src/core/persistence/checkpoint-validation.ts#findIncompleteSyncReceipt	capabili
 src/core/persistence/checkpoint-validation.ts#findOpenPassWork	capability_refusal_swallowed	1
 src/core/persistence/claim-phase.ts#readMaxClaimMs	promise_catch_empty	1
 src/core/persistence/connector-status.ts#readGitHoldStatuses	promise_catch_empty	1
+src/core/persistence/connector-sync.ts#ManagedConnectorSync.submit	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/connector-sync.ts#prepareConnectorMutation	promise_catch_empty	1
 src/core/persistence/consumer-diagnostics.ts#hostIdentityMismatches<anon@1>	catch_empty	1
 src/core/persistence/consumer-election.ts#WaiterOnlyConsumer.reportServeOverlap	catch_empty	1
@@ -1441,9 +1480,12 @@ src/core/persistence/effect-git.ts#restoreIndex	catch_empty	1
 src/core/persistence/effect-retry.ts#retryIndexLockParks	capability_refusal_swallowed	1
 src/core/persistence/effect-retry.ts#retryIndexLockParks	catch_empty	1
 src/core/persistence/effects.ts#claimAndRecoverEffect	capability_refusal_swallowed	1
-src/core/persistence/effects.ts#runEffectPass>recordGroup	capability_refusal_swallowed	1
+src/core/persistence/effects.ts#runEffectPass>commitGroup	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/persistence/effects.ts#runEffectPass>recordGroup	capability_refusal_swallowed	3	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/persistence/effects.ts#runEffectPass>run	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/effects.ts#runPersistenceEffects	promise_catch_empty	1
 src/core/persistence/engine-graduation.ts#existingRunError<anon@1>	catch_empty	1
+src/core/persistence/engine-graduation.ts#graduationStatus	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/engine-graduation.ts#graduationStatus	catch_empty	1
 src/core/persistence/engine-graduation.ts#quiesceFresh	capability_refusal_swallowed	1
 src/core/persistence/engine-graduation.ts#splitBrainSides	capability_refusal_swallowed	3
@@ -1456,6 +1498,7 @@ src/core/persistence/git-conversion.ts#strictPass	promise_catch_empty	1
 src/core/persistence/git-conversion.ts#withRecovery	capability_refusal_swallowed	1
 src/core/persistence/git-conversion.ts#withRecovery	promise_catch_empty	1
 src/core/persistence/git-door.ts#sweepIndexCopies	catch_empty	1
+src/core/persistence/graduation-copy.ts#detectTriggerBypass	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/graduation-custody.ts#graduationHandOffRequested	catch_empty	1
 src/core/persistence/graduation-custody.ts#readTombstone	catch_empty	1
 src/core/persistence/graduation-inventory.ts#schemaVersion	capability_refusal_swallowed	1
@@ -1463,11 +1506,14 @@ src/core/persistence/graduation-inventory.ts#schemaVersion	catch_empty	1
 src/core/persistence/graduation-schema.ts#readGraduationConnectRow	capability_refusal_swallowed	1
 src/core/persistence/graduation-serve-guard.ts#readGraduationManifestSummary	catch_empty	1
 src/core/persistence/graduation-target.ts#probeTarget<anon@1>	catch_empty	1
+src/core/persistence/graduation-verify.ts#replayProbe	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/persistence/group-publish.ts#publishGroup	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/group-publish.ts#publishGroup<anon@5>	promise_catch_empty	1
 src/core/persistence/head-blocker.ts#readHeadBlockers	promise_catch_empty	1
 src/core/persistence/head-blocker.ts#readQueuedHeadBlockers	promise_catch_empty	1
 src/core/persistence/held-reads.ts#stampHeldHits	capability_refusal_swallowed	1
 src/core/persistence/identity.ts#readMachineId	catch_empty	1
+src/core/persistence/identity.ts#rotateLocalWriter	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/import-mutations.ts#importPlanned	capability_refusal_swallowed	2
 src/core/persistence/import-mutations.ts#importPlanned	promise_catch_empty	1
 src/core/persistence/index-lock-reclaim.ts#owner	catch_empty	1
@@ -1506,6 +1552,7 @@ src/core/persistence/put-page-screen.ts#unchangedPutPage	capability_refusal_swal
 src/core/persistence/put-page-screen.ts#unchangedPutPage	catch_empty	1
 src/core/persistence/recovery-resolve.ts#scanStuckRecoveries	promise_catch_empty	1
 src/core/persistence/refresh-barrier.ts#deferredWaiting	capability_refusal_swallowed	1
+src/core/persistence/refresh-barrier.ts#expireDeferredWrites	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/refresh-retry-hint.ts#refreshRetryHint	capability_refusal_swallowed	1
 src/core/persistence/refresh-retry-hint.ts#refreshRetryHint	promise_catch_empty	1
 src/core/persistence/repair-busy.ts#loadRepairBusySet	capability_refusal_swallowed	1
@@ -1518,6 +1565,9 @@ src/core/persistence/segmented-mirror-gate.ts#resumeGatedMirrors	catch_empty	1
 src/core/persistence/service.ts#awaitWrite	promise_catch_empty	4
 src/core/persistence/soak-counters.ts#recordSoakEvent	capability_refusal_swallowed	1
 src/core/persistence/soak-counters.ts#recordSoakEvent	promise_catch_empty	1
+src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle<anon@3>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle<anon@3>>retireBatch	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-blobs.ts#pinnedWindow	catch_empty	1
 src/core/persistence/sync-blobs.ts#readPinnedBytes	catch_empty	1
 src/core/persistence/sync-discovery.ts#incomingId	catch_empty	1
@@ -1543,6 +1593,7 @@ src/core/persistence/sync-held-deletions.ts#proveHeldDeletions	promise_catch_emp
 src/core/persistence/sync-holds.ts#readSyncHoldPolicy	promise_catch_empty	1
 src/core/persistence/sync-lease.ts#readDrainLease	capability_refusal_swallowed	1
 src/core/persistence/sync-lease.ts#readDrainLease	promise_catch_empty	1
+src/core/persistence/sync-lease.ts#withDrainLease	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-lease.ts#withDrainLease	promise_catch_empty	2
 src/core/persistence/sync-lease.ts#withDrainLease<anon@1>	capability_refusal_swallowed	1
 src/core/persistence/sync-lease.ts#withDrainLease<anon@1>	promise_catch_empty	1
@@ -1566,6 +1617,7 @@ src/core/persistence/sync-prepare.ts#prepareSyncMutation	promise_catch_empty	2
 src/core/persistence/sync-prescreen.ts#prescreenSyncEntries	promise_catch_empty	1
 src/core/persistence/sync-prescreen.ts#releaseKeepDbDrift	catch_empty	1
 src/core/persistence/sync-reasons.ts#withManagedReasonNotices	promise_catch_empty	1
+src/core/persistence/sync-run.ts#admitWindowGroup	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-run.ts#admitWindowGroup	promise_catch_empty	1
 src/core/persistence/sync-run.ts#deferChangedEntry	catch_empty	1
 src/core/persistence/sync-run.ts#performLeasedPass<anon@3>	promise_catch_empty	1
@@ -1585,14 +1637,20 @@ src/core/persistence/sync-tail.ts#runSyncTail	capability_refusal_swallowed	2
 src/core/persistence/sync-tail.ts#runSyncTail	promise_catch_empty	1
 src/core/persistence/sync-tree-reuse.ts#readTreeLevelReusing	promise_catch_empty	1
 src/core/persistence/sync-waivers.ts#unchangedSyncImport	catch_empty	1
+src/core/persistence/sync-waivers.ts#waiveNoopRun	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/persistence/sync-waivers.ts#waivePrescreenedRun	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-waivers.ts#waivePrescreenedRun	promise_catch_empty	1
 src/core/persistence/sync-waivers.ts#waiverBatchEnabled	promise_catch_empty	1
 src/core/persistence/sync-write-diagnostic.ts#managedSyncWriteDiagnostic	catch_empty	1
 src/core/persistence/terminal-failures.ts#bounded	capability_refusal_swallowed	1
+src/core/persistence/topology-clone.ts#runManagedSourceClone<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/persistence/topology-recovery.ts#finishTopologyClone<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/persistence/topology-transaction.ts#topologyTransaction	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/unbound-pages.ts#entries	catch_empty	1
 src/core/persistence/unbound-source.ts#readDatabaseOnlyActivatedSources	catch_empty	1
 src/core/persistence/worktree-lease.ts#foreignWaiterAhead	catch_empty	1
 src/core/persistence/worktree-refresh.ts#boundedMemberSync>drain	promise_catch_empty	1
+src/core/persistence/worktree-refresh.ts#fenceAndMerge	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/worktree-refresh.ts#ownCommits	catch_empty	1
 src/core/persistence/worktree-refresh.ts#reachedTargetSince	catch_empty	1
 src/core/persistence/worktree-refresh.ts#underMemberLeases>held	promise_catch_empty	1
@@ -1667,6 +1725,7 @@ src/core/repair/fences.ts#tier3	promise_catch_empty	1
 src/core/repair/file-drift-class.ts#readManifest	catch_empty	1
 src/core/repair/file-drift.ts#fileDriftConsentText	catch_empty	1
 src/core/repair/label-write.ts#labelFileRefusal>read	catch_empty	1
+src/core/repair/missing-tables.ts#apply<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/repair/open-facts.ts#applyFence	capability_refusal_swallowed	1
 src/core/repair/open-facts.ts#countReasons	capability_refusal_swallowed	1
 src/core/repair/origin-twins-heal.ts#healOriginTwinsAfterManagedSync	capability_refusal_swallowed	1
@@ -1737,6 +1796,7 @@ src/core/search/collapse.ts#readPageFacts	catch_empty	1
 src/core/search/collapse.ts#readTarget	catch_empty	1
 src/core/search/collapse.ts#resolveBareTarget	catch_empty	1
 src/core/search/decide-stage.ts#calibrationState	promise_catch_empty	1
+src/core/search/dedup.ts#segmentRegions	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/search/dedup.ts#segmentRegions	catch_empty	1
 src/core/search/embedding-column.ts#getEmbeddingColumnRegistry	catch_empty	1
 src/core/search/embedding-column.ts#isCacheSafe	catch_empty	1
@@ -1794,7 +1854,10 @@ src/core/search/private-visibility.ts#remotePrivacyRelaxed	catch_empty	1
 src/core/search/projection-readiness.ts#probeUncached	capability_refusal_swallowed	1
 src/core/search/projection-readiness.ts#readinessGeneration	capability_refusal_swallowed	1
 src/core/search/projection-readiness.ts#readinessGeneration	catch_empty	1
+src/core/search/projection-statistics.ts#analyzeChunkColumns	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/search/projection-statistics.ts#chunkStatisticsStillCurrent	catch_empty	1
+src/core/search/projection-statistics.ts#refreshChunkStatistics	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/search/projection-statistics.ts#refreshProjectionStatistics	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/search/projection-statistics.ts#statisticsStillCurrent	promise_catch_empty	1
 src/core/search/provenance-demotion.ts#applyGeneratedDemotion	catch_empty	1
 src/core/search/provenance-demotion.ts#readGeneratedPages	promise_catch_empty	1
@@ -1850,6 +1913,7 @@ src/core/serve-service.ts#readExposeReceipt	catch_empty	1
 src/core/serve-service.ts#resolveServeGbrainCommand	catch_empty	1
 src/core/serve-service.ts#resolveServeGbrainCommand<anon@2>	catch_empty	1
 src/core/serve-service.ts#serveServiceRunsWrapper	catch_empty	1
+src/core/serve-sync-runner.ts#maybeDrainDeferredEmbeds	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/session-lane.ts#readSessionLane	capability_refusal_swallowed	1
 src/core/session-lane.ts#readSessionLane	promise_catch_empty	1
 src/core/setup/brain-first.ts#codexInstructionFile	catch_empty	1
@@ -1984,6 +2048,7 @@ src/core/storage-manifest/adopt.ts#indexShelfCommits	promise_catch_empty	1
 src/core/storage/s3.ts#S3Storage.getContentHash	catch_empty	1
 src/core/storage/s3.ts#S3Storage.uploadFile	promise_catch_empty	1
 src/core/stored-embedding-identity.ts#readStoredEmbeddingIdentity	promise_catch_empty	1
+src/core/surface-audit.ts#writeSurfaceChangeAudit	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/sweep.ts#bankSegmentLinks	catch_empty	2
 src/core/sweep.ts#corpusHasPendingFiles	promise_catch_empty	1
 src/core/sweep.ts#runMaintenanceSweep	capability_refusal_swallowed	2
@@ -2031,7 +2096,9 @@ src/core/take-proposals.ts#acceptProposal	catch_empty	1
 src/core/temporal-edges-upgrade-notice.ts#temporalEdgesUpgradeNotice	catch_empty	1
 src/core/think/decide.ts#startThinkDecide	promise_catch_empty	1
 src/core/think/pages-budget.ts#readThinkPagesBudget>read	promise_catch_empty	1
+src/core/think/persist-take.ts#persistTakeFromSynthesis	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/think/temporal-context.ts#resolveThinkTemporalContext	promise_catch_empty	1
+src/core/timeline-write-through.ts#writeTimelineEntryThrough	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/timeline-write-through.ts#writeTimelineEntryThrough<anon@2>	catch_empty	2
 src/core/token-mint.ts#readActiveTokenPrivatePages	capability_refusal_swallowed	1
 src/core/transcripts/archive-maintenance.ts#readArchiveMaintenance	promise_catch_empty	1

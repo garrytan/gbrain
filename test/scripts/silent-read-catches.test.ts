@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import ts from 'typescript';
 import { riseFix, scanFile, scanTree } from '../../scripts/check-silent-read-catches.ts';
-import { SILENT_READ_RULES, WRITE_ONLY_METHODS, handlerAnswersEmpty, isReadShaped, type SilentReadRule } from '../../scripts/silent-read-rules.ts';
+import { SILENT_READ_RULES, WRITE_ONLY_METHODS, isReadShaped, type SilentReadRule } from '../../scripts/silent-read-rules.ts';
 
 const REPO = resolve(import.meta.dir, '..', '..');
 const GUARD = join(REPO, 'scripts', 'check-silent-read-catches.ts');
@@ -271,7 +271,6 @@ describe('plug-in point', () => {
     ].join('\n');
     const withRule = [...scanFile(src, 'src/x.ts', [...SILENT_READ_RULES, rule]).counts].map(([k, n]) => `${k.replace('\t', ' ')} ${n}`).sort();
     expect(withRule).toEqual(['src/x.ts#a catch_no_rethrow 1']);
-    expect(handlerAnswersEmpty).toBeTypeOf('function');
   });
 });
 

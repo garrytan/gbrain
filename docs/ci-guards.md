@@ -185,14 +185,19 @@ header of the script lists the shapes it does not count.
 
 A third metric, `capability_refusal_swallowed` (rule in
 `scripts/capability-refusal-rule.ts`), counts a catch around a raw-SQL engine
-call (`executeRaw`, `executeRawJsonb`) whose handler can fall back before it
-lets a capability refusal through. A Rust brain refuses untyped SQL by name
+call (`executeRaw`, `executeRawDirect`, `executeRawJsonb`, including the bare
+`executeRawJsonb(engine, ...)` helper and a call inside a callback the try
+awaits) whose handler can fall back before it lets a capability refusal
+through. A Rust brain refuses untyped SQL by name
 (`engine_capability_missing`); such a catch turns that refusal into a quiet
 default. Fix: make `rethrowCapabilityRefusal(err)` the handler's first
 statement, or `if (isEngineCapabilityRefusal(err)) throw err`; where the
 fallback is right on every engine, write `// capability-refusal-ok: <reason>`.
 Engine implementation files (the engines, `engine-sql/`, migrations) are out of
-scope, because Rust never runs them.
+scope, because Rust never runs them. The rule sees `try`/`catch` and
+`.catch(fn)` with an inline function; a `.then(ok, onError)` second argument, a
+named `.catch(handler)` and a promise held in a variable before `.catch` are
+not counted.
 
 A new site fails with the file, function and fix. The three fixes:
 
@@ -209,7 +214,10 @@ Baseline `scripts/silent-read-catches-baseline.tsv`: rows
 `path#function<TAB>metric<TAB>count[<TAB>note]`, generated from the tree
 (`--print`; `--list` shows every site with its line). Class methods are
 `Class.method`, a nested function `outer>inner`, an anonymous callback
-`outer<anon@N>` by order, code outside a function `<module>`. Counts only
+`outer<anon@N>`, with N the order among all anonymous functions under `outer`
+(adding or removing an earlier one renumbers the rest: one stale row and one
+rise for unchanged code, fixed by renaming those rows in place, never by
+re-printing the whole file), code outside a function `<module>`. Counts only
 fall: a rise or a stale row fails, and `--prune` lowers stale rows. The note
 column names the behavior-audit finding that a fix deletes the row for.
 

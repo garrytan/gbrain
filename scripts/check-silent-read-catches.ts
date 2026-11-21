@@ -15,7 +15,7 @@
  *                        last statement returns / assigns / pushes an empty answer
  *   promise_catch_empty  the same for `.catch(fn)` handlers: `.catch(() => [])`, `.catch(() => {})`
  *   capability_refusal_swallowed  a catch or `.catch(fn)` around a raw-SQL engine call (executeRaw,
- *                        executeRawJsonb) whose handler can fall back before it rethrows a capability
+ *                        executeRawDirect, executeRawJsonb) whose handler can fall back before it rethrows a capability
  *                        refusal (scripts/capability-refusal-rule.ts; engine implementation files excluded)
  *   Read-shaped: the guarded code calls an engine/db receiver (engine, tx, exec, db, sql, store, ...)
  *   or a read-verb name (read, load, get, list, find, count, search, fetch, query, select, lookup,
