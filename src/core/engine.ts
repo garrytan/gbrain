@@ -1849,6 +1849,10 @@ export interface BrainEngine {
    * writes nothing.
    */
   bumpPageRetrievals(pageIds: number[]): Promise<void>;
+  /** repair atoms-restore: the restorable re-extraction retirements of the sources (or atom `atomId`), by id (engine-sql/atom-restore-reads.ts). */
+  listRestorableAtoms(sourceIds: readonly string[], atomId: number | null): Promise<import('./engine-sql/atom-restore-reads.ts').RestorableAtomRow[]>;
+  /** The re-extraction retirements of the sources the restore rule keeps, by reason. */
+  countKeptAtomRetirements(sourceIds: readonly string[]): Promise<{ origin_gone: number; replaced: number; older_generation: number }>;
 
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;

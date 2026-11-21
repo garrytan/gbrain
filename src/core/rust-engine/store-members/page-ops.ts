@@ -3,6 +3,7 @@
  *
  * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
  * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample, bumpPageRetrievals,
+ * the atoms-restore reads listRestorableAtoms and countKeptAtomRetirements (page_ops/atom_restore.rs),
  * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, readAdmittedPageRefs,
  * readPageSynopses, readSeedTitleSlugs, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
@@ -21,6 +22,7 @@ import type { PageSnapshot } from '../../page-state/types.ts';
 import { pickCanonicalOrigin } from '../../persistence/origin-guard.ts';
 import { segmentedRevertRefusal } from '../../page-state/versions.ts';
 import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadPolicy, PageReadScope } from '../../types.ts';
+import type { RestorableAtomRow } from '../../engine-sql/atom-restore-reads.ts';
 import type { PageRefRow, RelationalPageRow } from '../../engine-sql/relational-reads.ts';
 import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
@@ -338,4 +340,17 @@ export const revertToVersion: StoreMember<[slug: string, versionId: number, opts
     if (storeErrorCode(error) === 'page_body_segmented') throw segmentedRevertRefusal(slug, versionId);
     throw error;
   }
+};
+
+/** The restorable re-extraction retirements of the sources (or atom `atomId`), by id (page_ops/atom_restore.rs). */
+export const listRestorableAtoms: StoreMember<[sourceIds: readonly string[], atomId: number | null], RestorableAtomRow[]> = async (brain, sourceIds, atomId) => {
+  if (atomId !== null && !Number.isSafeInteger(atomId)) refuseMember('listRestorableAtoms', 'an atom id that is not an integer');
+  const rows: RestorableAtomRow[] = await storeCall({ member: 'listRestorableAtoms' }, () => brain.listRestorableAtoms([...sourceIds], atomId));
+  return rows.map(row => ({ ...row, id: Number(row.id), origin_page_id: row.origin_page_id == null ? null : Number(row.origin_page_id),
+    version_id: row.version_id == null ? null : Number(row.version_id) }));
+};
+
+export const countKeptAtomRetirements: StoreMember<[sourceIds: readonly string[]], { origin_gone: number; replaced: number; older_generation: number }> = async (brain, sourceIds) => {
+  const row: { origin_gone: number; replaced: number; older_generation: number } = await storeCall({ member: 'countKeptAtomRetirements' }, () => brain.countKeptAtomRetirements([...sourceIds]));
+  return { origin_gone: Number(row.origin_gone), replaced: Number(row.replaced), older_generation: Number(row.older_generation) };
 };

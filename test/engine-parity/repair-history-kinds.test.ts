@@ -15,6 +15,8 @@
  *    accepted-takes lists the take an accepted `forget` proposal's `takes_remove` request removed (the archived version
  *    holds the row, the live fence reserves its number) the same way on every arm; the restore is a page write on the
  *    SQL arms, and the Rust engine refuses it by name ("repair accepted-takes page write").
+ *    atoms-restore lists the restorable re-extraction retirements (and counts the kept ones by reason) the same way on
+ *    every arm, and its unmanaged apply restores the atom live without its retirement stamp on every arm.
  *  - Regression: these kinds read and rewrite `page_versions` through executeRaw, so a Rust brain failed on a generic
  *    executeRaw refusal that named no step.
  *  - Why existing coverage misses it: test/purged-change-reasons-repair-gst2886.test.ts,
@@ -209,6 +211,32 @@ async function seedAcceptedRemoval(engine: BrainEngine) {
   }, { requestId: r, principal: { kind: 'local_cli', id: 'history-writer' } }));
 }
 
+
+// ---- atoms-restore ----
+
+/**
+ * notes/origin is live. atoms/restorable (hash h1) is the latest retirement of its origin with an unstamped version at
+ * h1; atoms/older (hash h0, retired earlier) is an older generation; atoms/orphan names a gone origin; atoms/replaced
+ * shares an origin with the live atoms/live at another hash.
+ */
+async function seedRetiredAtoms(engine: BrainEngine) {
+  const put = (slug: string, type: string, frontmatter: Record<string, unknown>) =>
+    engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `${slug} body.`, timeline: '', frontmatter }, { sourceId: 'default' });
+  await put('notes/origin', 'note', {});
+  await put('notes/other-origin', 'note', {});
+  const retire = async (slug: string, origin: string, hash: string, at: string) => {
+    await put(slug, 'atom', { source_slug: origin, source_hash: hash });
+    await engine.createVersion(slug, { sourceId: 'default' });
+    await put(slug, 'atom', { source_slug: origin, source_hash: hash, retired_by: 'managed-reextract', retired_at: at });
+    await engine.softDeletePage(slug, { sourceId: 'default' });
+  };
+  await retire('atoms/older', 'notes/origin', 'h0', '2026-01-01T00:00:00.000Z');
+  await retire('atoms/restorable', 'notes/origin', 'pending:h1', '2026-02-01T00:00:00.000Z');
+  await retire('atoms/orphan', 'notes/gone', 'h2', '2026-02-01T00:00:00.000Z');
+  await retire('atoms/replaced', 'notes/other-origin', 'h3', '2026-02-01T00:00:00.000Z');
+  await put('atoms/live', 'atom', { source_slug: 'notes/other-origin', source_hash: 'h4' });
+}
+
 describe('engine parity: the history repair kinds of batch 6a', () => {
   parityTest('purged-change-reasons previews the leaked reasons and the apply purges the approved ones on every arm', {
     methods: ['putPage', 'createVersion', 'attachSourcePath', 'writeReasonPurgeTombstones', 'listVersionsByChangeReason', 'replaceVersionChangeReasons', 'getVersions'],
@@ -333,5 +361,22 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
     const pageId = Number((await engine.getPage('people/mina-example', { sourceId: 'default' }))!.id);
     expect(await engine.readTakeRowTier(pageId, 2)).not.toBeNull();
     return run;
+  }));
+  parityTest('atoms-restore previews the restorable atom and counts the kept ones the same way, and restores it on every arm', {
+    methods: ['putPage', 'createVersion', 'softDeletePage', 'listRestorableAtoms', 'countKeptAtomRetirements', 'lockPageKeys', 'restorePage', 'removePageFrontmatterKeys'],
+    timeout: 60_000,
+  }, async (engine, backend) => withDir(async () => {
+    await seedRetiredAtoms(engine);
+    const listed = (await engine.listRestorableAtoms(['default'], null)).map(({ id, origin_page_id, version_id, incarnation, revision, ...rest }) => {
+      void id; void origin_page_id; void incarnation; void revision;
+      return { ...rest, has_version: version_id !== null };
+    });
+    expect(listed.map(row => row.slug)).toEqual(['atoms/restorable']);
+    const kept = await engine.countKeptAtomRetirements(['default']);
+    const otherSource = await engine.listRestorableAtoms(['missing-source'], null);
+    const run = await previewThenApply(engine, backend, 'atoms-restore', null);
+    const restored = await engine.getPage('atoms/restorable', { sourceId: 'default' });
+    expect(restored?.frontmatter).toEqual({ source_slug: 'notes/origin', source_hash: 'pending:h1' });
+    return { listed, kept, otherSource, run, restored: { slug: restored?.slug, frontmatter: restored?.frontmatter } };
   }));
 });
