@@ -5,7 +5,7 @@ import { enterClaimStep, waitingOnWhile, type ClaimPhaseClock } from './claim-ph
 import { boundedReads } from './bounded-reads.ts';
 import { isQuarantined, quarantineOutcome } from '../quarantine.ts';
 import { closeSync, existsSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
-import { legacyWrittenValues, mayHoldLegacyTyped, restoreWrittenValues } from '../frontmatter-legacy.ts';
+import { legacyWrittenValues, mayHoldLegacyTyped, PARSED_FILE_TEXT, restoreWrittenValues } from '../frontmatter-legacy.ts';
 import { join, relative, sep } from 'node:path';
 import { isSyncMetafile, matchesAnyGlob } from '../sync.ts';
 import { syncExcludePatterns } from './sync-discovery.ts';
@@ -414,6 +414,8 @@ async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: By
       fence => fenceTooLargeError(slug, snapshot.page.source_id, fence), between)
       : file.digests;
     const parsed = { ...file.parsed, compiled_truth: fileDigests.truth, timeline: fileDigests.timeline };
+    // pages-03: the file's frontmatter head, so the alignment reads a value the old typing stored as stored (alignLegacyTyped).
+    Object.defineProperty(parsed, PARSED_FILE_TEXT, { value: Buffer.concat([reading.prefix, bytes.subarray(reading.skip, reading.skip + FRONTMATTER_HEAD_MAX_BYTES)]).toString('utf8') });
     const type = importedFileType(parsed, snapshot.page, inferred);
     stored ??= await storedBodyDigests(engine, Number(snapshot.page.id), ledger, between);
     return digest(canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type }, parsed.tags))

@@ -214,3 +214,26 @@ test('a file edited on disk still refuses soft delete, purge and restore as drif
     }
   }
 }), 900_000);
+
+test('a page over the ceiling stored under the old frontmatter typing is not drift: its file still deletes', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await managedSource(engine);
+    try {
+      const slug = 'notes/typed';
+      const file = join(f.root, `${slug}.md`);
+      writeFileSync(file, huge.replace('type: note\n', 'type: note\nzip: 02134\nversion: 1.10\n'));
+      await disposePersistenceConsumer(engine);
+      await ownerImportFile(engine, f.sourceId, file, `${slug}.md`);
+      const [row] = await engine.executeRaw<{ body_storage: string; frontmatter: Record<string, unknown> }>('SELECT body_storage, frontmatter FROM pages WHERE source_id=$1 AND slug=$2', [f.sourceId, slug]);
+      expect(row?.body_storage).toBe('segmented');
+      expect(row?.frontmatter).toMatchObject({ zip: '02134', version: '1.10' });
+      // What an older gbrain stored for the same file: the values typed as numbers.
+      await coordinated(engine, f.sourceId, tx => tx.executeRaw(
+        `UPDATE pages SET frontmatter = frontmatter || '{"zip":2134,"version":1.1}'::jsonb WHERE source_id=$1 AND slug=$2`, [f.sourceId, slug]));
+      expect(await submit(engine, f, 'delete_page', slug)).toMatchObject({ status: 'soft_deleted' });
+      expect(existsSync(file)).toBe(false);
+    } finally {
+      await disposePersistenceConsumer(engine);
+    }
+  }
+}), 900_000);
