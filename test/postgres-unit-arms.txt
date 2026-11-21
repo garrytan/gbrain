@@ -42,6 +42,7 @@ test/access-room.test.ts
 test/access-rule-hints-owner-gst2128.test.ts
 test/access-rule-owner-gst2698.test.ts
 test/access-token-grant-columns.test.ts
+test/access-unborn-head-gbra706.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-who-can-read-owner-only.test.ts
 test/access-writes.test.ts
