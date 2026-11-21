@@ -1,7 +1,7 @@
 //! Jobs: the `access_tokens` table, the columns the legacy-token mint and the read-floor command touch, as the members
 //! of `src/core/engine-sql/access-tokens.ts` run them (rust/docs/store/access-tokens.md).
 //!
-//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust. The credential binding members of
+//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust, and the token check of listAccessTokens. The credential binding members of
 //! `credential_binding.rs` read and write the member, may_act_for, attest and reads_unscoped columns of these records.
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2B (this file only):
@@ -201,6 +201,17 @@ impl Store {
             put_json(tx, &token_key(&record.id), &record)?;
             Ok(record.id)
         })
+    }
+
+    /// Whether any token row exists, revoked or not: `listAccessTokens` refuses on a brain that holds one, since the
+    /// store keeps only some of the columns its `SELECT *` returns (docs/designs/RUST_ENGINE.md row 32g).
+    pub fn access_tokens_present(&self) -> Result<bool> {
+        let mut any = false;
+        scan_prefix(&*self.read()?, &prefix(TOKEN), false, &mut |_, _| {
+            any = true;
+            false
+        })?;
+        Ok(any)
     }
 
     /// `findActiveAccessTokens(target)`: `[{ id, name, min_trust }]` of the tokens not revoked whose id or name is `target`,

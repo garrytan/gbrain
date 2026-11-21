@@ -680,7 +680,7 @@ readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	8	no	yes	yes	serves
 listOauthClients	minion_queue	yes	2	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
-insertAccessToken	minion_queue	yes	7	no	yes	yes	serves
+insertAccessToken	minion_queue	yes	8	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	2	no	yes	yes	serves
 setAccessTokenMinTrust	minion_queue	yes	2	no	yes	yes	serves
 insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
@@ -1128,7 +1128,7 @@ getWorktreeBinding	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves
 listActiveAccessMembers	write_misc	yes	4	no	yes	yes	serves
 hasLabelledOnlyMember	write_misc	yes	2	no	yes	yes	serves
-listAccessTokens	write_misc	yes	3	no	yes	yes	serves
+listAccessTokens	write_misc	yes	4	no	yes	yes	serves
 notifierCoverageRecorded	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointKeys	write_misc	yes	3	no	yes	yes	serves
 writeOpCheckpointKeys	write_misc	yes	2	no	yes	yes	serves

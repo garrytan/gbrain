@@ -151,7 +151,7 @@ test/engine-parity/withdrawal-fence.test.ts	2	0
 test/engine-parity/withdrawal-forget.test.ts	2	0
 test/engine-parity/write-attribution.test.ts	5	2
 test/engine-parity/write-guards.test.ts	10	0
-test/engine-parity/write-misc.test.ts	33	16
+test/engine-parity/write-misc.test.ts	33	17
 test/engine-parity/write-outcome-order.test.ts	1	0
 test/engine-parity/write-request-cancel.test.ts	2	0
 test/engine-parity/write-request-reads.test.ts	3	0

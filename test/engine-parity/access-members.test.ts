@@ -25,8 +25,8 @@
  *  - Why existing coverage misses it: test/access-members.test.ts runs the commands on PGLite only, and the write-misc
  *    parity cases seed members with raw SQL, which stops on the Rust arm.
  *  - Seam: none. Timestamps are reduced to their shape. Token rows are written through the typed insertAccessToken.
- *  - Known losses on Rust (docs/designs/RUST_ENGINE.md rows 32c to 32f): applyAttestSources, verifiedMember, the
- *    labelled-only page policy and the Wakeshift forget of member rm. The last describe pins each
+ *  - Known losses on Rust (docs/designs/RUST_ENGINE.md rows 32c to 32g): applyAttestSources, verifiedMember, the
+ *    labelled-only page policy, the Wakeshift forget of member rm and the token list (listAccessTokens). The last describe pins each
  *    refusal, so a pin fails when Rust stops refusing and its row must leave the table.
  */
 import { describe, expect, test } from 'bun:test';
@@ -45,6 +45,7 @@ import { ownerMemberId, setOwner } from '../../src/core/access/owner.ts';
 import { applyAttestSources } from '../../src/core/access/attest-sources.ts';
 import { remoteCallerAccess } from '../../src/core/access/caller.ts';
 import { servesStatus } from '../../src/commands/access-serves.ts';
+import { openPages } from '../../src/core/access/open-pages.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
@@ -425,7 +426,7 @@ describe('engine parity: access members', () => {
   });
 });
 
-describe('the Rust arm refuses what it does not serve yet (rows 32c to 32f), and writes nothing', () => {
+describe('the Rust arm refuses what it does not serve yet (rows 32c to 32g), and writes nothing', () => {
   // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine and pin each refusal: a pin
   // fails when Rust stops refusing, and its row must then leave docs/designs/RUST_ENGINE.md.
   const RAW_SQL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
@@ -465,6 +466,18 @@ describe('the Rust arm refuses what it does not serve yet (rows 32c to 32f), and
     expect(await refusal(() => removeMember(engine, 'alice-example')))
       .toEqual(stop("This brain's engine does not support removeMember (the Wakeshift forget of the member) yet (it needs the raw_sql capability), so nothing ran."));
     expect((await getMember(engine, 'alice-example'))!.status).toBe('enabled');
+  });
+
+  test('loss (32g): gbrain auth list and the open-page count refuse once a token exists, never an empty list', async () => {
+    const engine = await rustArm();
+    if (!engine) return;
+    expect(await engine.listAccessTokens()).toEqual([]);
+    await engine.insertAccessToken(tokenRow('laptop'));
+    await addMember(engine, 'alice-example', { bindToken: 'laptop' });
+    await addMember(engine, 'bob-example');
+    const missing = "This brain's engine does not support listAccessTokens (the token rows) yet (it needs the access_control capability), so nothing ran.";
+    expect(await refusal(() => engine.listAccessTokens())).toEqual(stop(missing));
+    expect(await refusal(() => openPages(engine))).toEqual(stop(missing));
   });
 
   test('loss: applyAttestSources and verifiedMember stop on the raw_sql refusal', async () => {

@@ -45,4 +45,10 @@ impl Brain {
             s.set_access_token_min_trust(&id, tier.as_deref())
         })
     }
+
+    /// Whether any token row exists (the check `listAccessTokens` refuses on).
+    #[napi]
+    pub fn access_tokens_present<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, |s| s.access_tokens_present())
+    }
 }

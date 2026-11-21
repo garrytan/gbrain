@@ -169,8 +169,17 @@ describe('engine parity: write misc', () => {
     return { tokens };
   });
 
-  // listAccessTokens is constant empty on Rust only because no Rust brain can hold a token: the token mint (raw SQL on
-  // access_tokens, token-mint.ts) must stop on the typed raw_sql refusal there and leave the list empty.
+  // Leak case (silent wrong answer): a Rust brain holds tokens (insertAccessToken is typed), so listAccessTokens must not
+  // answer [] while one exists. Rust arm: a known stop (row 32g): the store keeps only some of the columns `SELECT *`
+  // returns, so it refuses. Before row 32g it answered [] here.
+  parityTest('listAccessTokens never answers an empty list while a token exists', { methods: ['insertAccessToken', 'listAccessTokens'] }, async (engine) => {
+    await engine.insertAccessToken({ name: 'ci-token', token_hash: 'hash-ci', scopes: ['read'], permissions: {}, source_grant: null, source_id: null, federated_read: null, allowed_operations: null, takes_holders: null });
+    const names = (await engine.listAccessTokens()).map(r => r.name);
+    expect(names).toEqual(['ci-token']);
+    return names;
+  });
+
+  // The raw-SQL token seed stops on the Rust arm (the typed insert above runs there).
   parityTest('a minted token refuses on Rust and lists newest first on the SQL engines', { methods: ['listAccessTokens'] }, async (engine, backend) => {
     const mint = await engine.executeRaw(
       `INSERT INTO access_tokens (name, token_hash, scopes, created_at, revoked_at) VALUES
@@ -178,7 +187,6 @@ describe('engine parity: write misc', () => {
          ('new-client', 'hash-new', NULL, '2026-03-01T00:00:00Z', NULL)`).then(() => null, (e: unknown) => e);
     if (backend === 'rust') {
       expect(isCapabilityRefusal(mint, 'raw_sql')).toBe(true);
-      expect(await engine.listAccessTokens()).toEqual([]);
       throw mint;
     }
     expect(mint).toBeNull();
