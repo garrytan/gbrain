@@ -48,7 +48,9 @@ import {
   privateProvenanceFilterUnderPolicy,
   privateFactFilterForCaller,
   remoteProvenanceFloorSql,
+  remoteReadFloorSql,
 } from '../../search/private-visibility.ts';
+import type { ReflexPrivacy } from '../../engine-sql/reflex-reads.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
 import { ANY_OWNER_ONLY_SQL, ownerOnlyFactSql, ownerOnlyPageSql } from '../../access/owner-only.ts';
 import { refuseMember } from './common.ts';
@@ -319,4 +321,16 @@ function pagePolicyFlags(sql: string): StorePrivacyPolicy {
     entityPrivacy: sql.includes(privateSnapshotFilterFragment('p')),
     ownerOnly: ownerOnlyFormIn(sql, 'pages', 'p'),
   };
+}
+
+/**
+ * The store page policy of a reflex or brief page read (reflex-reads.ts, brief-reads.ts): none, the caller's page
+ * policy, or the remote read floor, each through storePageTextPolicy. It lives here, not in a member module, because
+ * the store-members index serves every export of a member module as a member.
+ */
+export function reflexPolicy(member: string, privacy: ReflexPrivacy): StorePrivacyPolicy | null {
+  if (privacy === 'none') return null;
+  if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
+  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true });
+  refuseMember(member, `privacy ${String(privacy)}`);
 }

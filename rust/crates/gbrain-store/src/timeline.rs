@@ -371,7 +371,7 @@ pub(crate) fn remove_page_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result
 /// `privateTimelineEventFilterForCaller(te)`: an entry with no event page passes. Otherwise its
 /// event page, read by id whatever its source or deleted state (the SQL is an `EXISTS` on the id
 /// alone), must exist and pass the page policy.
-fn event_visible(
+pub(crate) fn event_visible(
     read: &dyn KvRead,
     entry: &TimelineRecord,
     policy: &PrivacyPolicy,
@@ -634,7 +634,7 @@ impl Store {
 /// soft-deleted page, or a page whose frontmatter has a `quarantine` key (any value), hides all of its
 /// rows. The third clause hides rows listed in `needs_rederive`, which only a raw-SQL purge writes;
 /// this engine has no such rows.
-fn eligible_page(page: &PageRecord) -> bool {
+pub(crate) fn eligible_page(page: &PageRecord) -> bool {
     page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine")
 }
 

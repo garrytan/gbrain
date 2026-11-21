@@ -97,7 +97,6 @@ src/core/connectors/fence-carry.ts	carryStoredFences	field	INLINE	moved from goo
 src/core/content-repair/judgment.ts	judgmentParticipant	field	STREAM	
 src/core/content-sanity.ts	assessContentSanity	field	STREAM	
 src/core/context/proactive-brief.ts	editItem	field	INLINE	reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
-src/core/context/proactive-brief.ts	editItem	sql	INLINE	reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
 src/core/context/retrieval-reflex.ts	safeSynopsis	field	LEAD	bounded prefix rows
 src/core/conversation-parser/body.ts	readSummaryBody	field	STREAM	
 src/core/core-memory.ts	applyCoreSensitivity	field	INLINE	
@@ -181,6 +180,8 @@ src/core/embed-consent.ts	estimateEmbedBackfillUsd	sql	META
 src/core/embed-stale-images.ts	embedStaleImages	sql	INLINE	
 src/core/embedding-migration-worst-case.ts	REPROJECTED_PAGE	sql	META	
 src/core/embedding-readiness.ts	countArchivedEmbeddingWork	sql	META	
+src/core/engine-sql/brief-reads.ts	readBriefEditPage	sql	INLINE	moved from context/proactive-brief.ts editItem: reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
+src/core/engine-sql/brief-reads.ts	readBriefPageVersions	sql	INLINE	moved from context/proactive-brief.ts editItem: reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
 src/core/engine-sql/chunk-reads.ts	countOversizedEmbedSkips	sql	META	doctor content-quality's oversized embed-skip count, moved from runContentSanity: octet_length metadata
 src/core/engine-sql/chunks.ts	chunklessPagesWhere	sql	META	lane 1e file: body <> '' predicate
 src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships whole bodies per hit for inline pages; a segmented page ships none (NULL) and its chunks carry occurrence_id + span, read by search/segmented-evidence.ts

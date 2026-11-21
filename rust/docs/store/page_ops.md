@@ -45,6 +45,12 @@ with `callerReaders`; it refuses a caller whose policy the store does not model)
 | `brain.readReflexLiveKeys(sourceIds, slugs, policy)` | `[{ slug, source_id }]` for each live page whose source and slug are among the given ones and that the page policy (when not `null`) does not hide, in no set order (the retrieval reflex's live-page check) | `readReflexLiveKeys` |
 | `brain.readReflexPages(sourceIds, match, policy)` | `[{ slug, source_id, title, type, frontmatter, compiled_truth }]` for the live pages of the sources that the match picks and the page policy (when not `null`) does not hide; `compiled_truth` is the bounded 64K body prefix. `match.kind` is `names` (lowered title in `titlesLc`, slug in `exactSlugs`, slug `LIKE` a `slugSuffixes` pattern, or a person page whose lowered title is `LIKE` a `surnamePatterns` pattern; by page id), `slugs`, `cjkExact` (lowered title or slug in `norms`) or `titles` (lowered title in `titlesLc`); no set order except `names` | `readReflexPages` |
 | `brain.readBriefEntityPages(sourceId, slugs, policy, { min_trust, suppress_flagged })` | `[{ slug, title, type }]` for the live pages of the source at the slugs that the page policy (when not `null`) and the eligibility admit (a page with no stamped tier reads as `unknown`; an unknown tier name is refused) (the proactive brief's entity pages) | `readBriefEntityPages` |
+| `brain.readBriefMeetingPages(sourceIds, startFrom, startTo, policy, { minTrust, suppressFlagged })` | `[{ slug, source_id, start, attendees, account }]` for the live meeting pages of the sources whose frontmatter `start` text lies in `[startFrom, startTo]` and that the page policy (when not `null`; the member passes the remote read floor) and the eligibility admit; `start` and `account` read as `->>` text, `attendees` as `->` JSON, in store scan order (the SQL sets none) (the proactive brief's calendar) | `readBriefMeetingPages` |
+| `brain.readBriefEmailAliasPages(sourceId, emails, policy, { minTrust, suppressFlagged })` | `[{ alias_norm, slug, title, type }]`: one row per alias row of the source whose alias is among `emails` and whose live page the page policy and eligibility admit, in alias, then slug, then origin byte order (the SQL sets none) (the brief's counterparty match) | `readBriefEmailAliasPages` |
+| `brain.readBriefWorldFacts(factIds, policy, { minTrust, suppressFlagged })` | `[{ id, fact, trust_tier, write_origin }]` for each listed id, once, whose fact is active, `world`, not hidden by the fact policy (when not `null`), a deleted page or quarantine, and eligible, in id order (the brief's open loops) | `readBriefWorldFacts` |
+| `brain.readBriefEditPage(sourceId, slug, maxBytes, policy, { minTrust, suppressFlagged })` | `{ id, compiled_truth, timeline, trust_tier, write_origin }` of the live page at the slug in the source that the page policy (when not `null`) and the eligibility admit, else `null`; `compiled_truth` is `null` when its bytes plus the timeline's pass `maxBytes` (the brief's page edit) | `readBriefEditPage` |
+| `brain.readBriefTimelineEntry(pageId, since, policy, { minTrust, suppressFlagged })` | `{ id, date, summary, detail, created_at }` of the page's newest entry recorded at or after `since` and dated on or after its UTC date, under the event-page policy (when not `null`) and the projection eligibility, by `created_at`, then date, then id, else `null`. `created_at` is ISO with microseconds (the member returns a `Date`); a `since` that is not ISO UTC is refused | `readBriefTimelineEntry` |
+| `brain.readBriefPageVersions(pageId, since, maxBytes, limit)` | `[{ id, compiled_truth, timeline, snapshot_at, is_deleted }]` of the page's newest `limit` revisions snapshotted at or after `since`, by id descending; `compiled_truth` is `null` past `maxBytes` or on a segmented snapshot. `snapshot_at` is ISO with microseconds (the member returns a `Date`). The member refuses a `limit` that is not a positive integer with a `RangeError` before the call, as the SQL builder does | `readBriefPageVersions` |
 | `brain.readSeedTitleSlugs(sourceId, types, title)` | at most two slugs of live pages of the source whose type is listed, whose lowered title equals the lowered `title`, and which are not retired (`retiredPageSql`), in page-key order (the SQL sets none) | `readSeedTitleSlugs` |
 | `brain.revertToVersion(slug, versionId, { sourceId? }?)` | `null`. Copies the version's `compiled_truth` and `frontmatter` onto the page and sets `updated_at`; a missing page or version does nothing. When a page it would revert, or the version, is segmented, it refuses `page_body_segmented` and writes nothing; the TypeScript member throws PGLite's `segmentedRevertRefusal` | `revertToVersion` |
 
@@ -52,6 +58,16 @@ A domain-bank row is `{ slug, prefix, connection_count, representative_chunk_id,
 last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `null`.
 The entity card rows (`readEntityCardRows`, `cli_reads/entities.rs`) read the same record as
 `last_retrieved_at`, so `gbrain entity` shows `last_touched.last_retrieved_at` after a search.
+
+The proactive brief (`src/core/context/proactive-brief.ts`) reads only through the typed
+members above, `listAllSources`, `readEntityAliasRows` and `readLivePageFrontmatter`. Its
+catches pass a capability refusal on (`rethrowCapabilityRefusal`,
+`nullUnlessCapabilityRefusal`), so a member the store does not answer stops the whole
+brief (the outer `withBriefDeadline` catch is unchanged) instead of leaving a brief with an
+arm silently missing. Three hook catches stay fail-open on purpose, because
+the per-turn hook must never block a turn: the pointer block catch in
+`src/core/context/turn-context.ts` (`pointers = []`), and the volunteered-page catch and the
+outer catch of the retrieval reflex in `src/core/context/reflex.ts`.
 
 ## Retrieval records
 

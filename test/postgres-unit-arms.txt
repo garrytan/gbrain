@@ -134,6 +134,7 @@ test/engine-parity/access-tokens.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
+test/engine-parity/brief-reads.test.ts
 test/engine-parity/chunk-reads.test.ts
 test/engine-parity/chunks.test.ts
 test/engine-parity/cli-capabilities.test.ts

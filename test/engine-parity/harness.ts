@@ -252,6 +252,27 @@ export async function stampUpdatedAt(engine: BrainEngine, backend: ParityBackend
   }
 }
 
+/**
+ * Fixture: create a source whose last sync finished at `syncedAt` (ISO, ending in Z). BrainEngine has no typed write
+ * of a sync time, so the SQL arms insert it with harness-only SQL and the Rust arm passes it to the store's upsert.
+ */
+export async function createSyncedSource(engine: BrainEngine, backend: ParityBackend, id: string, config: Record<string, unknown>, syncedAt: string): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      await createRustSource(engine, id, config, undefined, syncedAt);
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, config, last_sync_at) VALUES ($1, $1, $2::text::jsonb, $3::text::timestamptz) ON CONFLICT (id) DO NOTHING`,
+        [id, JSON.stringify(config), syncedAt],
+      );
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
 /** Fixture: archive a source (BrainEngine has no typed "archive source"). Harness-only SQL, as in `createSource`. */
 export async function archiveSource(engine: BrainEngine, backend: ParityBackend, id: string): Promise<void> {
   switch (backend) {

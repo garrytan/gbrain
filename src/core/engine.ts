@@ -76,6 +76,7 @@ import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, LivePageTypeRow, ResolverPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
 import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from './engine-sql/reflex-reads.ts';
+import type * as BriefReadsSql from './engine-sql/brief-reads.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, PlainSyncSourceRow, SourceCheckRow, SourceInsert, SourceRoutingRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
@@ -4189,6 +4190,18 @@ export interface BrainEngine {
   readReflexPages(scope: ReflexScope, match: ReflexPageMatch): Promise<ReflexPageRow[]>;
   /** The proactive brief's live pages of the source at `slugs` that the privacy and the eligibility admit, in no set order. */
   readBriefEntityPages(sourceId: string, slugs: readonly string[], opts: BriefEntityPageOpts): Promise<BriefEntityPageRow[]>;
+  /** The brief's world-visible, eligible meeting pages of `sourceIds` whose `start` text lies in [startFrom, startTo] (engine-sql/brief-reads.ts). */
+  readBriefMeetingPages(sourceIds: readonly string[], startFrom: string, startTo: string, eligibility?: BriefReadsSql.BriefReadEligibility): Promise<BriefReadsSql.BriefMeetingPageRow[]>;
+  /** The brief's alias rows of the source at `emails`, each with its live page that the read floor and eligibility admit. */
+  readBriefEmailAliasPages(sourceId: string, emails: readonly string[], eligibility?: BriefReadsSql.BriefReadEligibility): Promise<BriefReadsSql.BriefEmailAliasPageRow[]>;
+  /** The brief's active, world-visible, eligible facts among `factIds` whose provenance the caller may read. */
+  readBriefWorldFacts(factIds: readonly number[], eligibility?: BriefReadsSql.BriefReadEligibility): Promise<BriefReadsSql.BriefWorldFactRow[]>;
+  /** The brief's counterparty page for the edit arm, or null; its body is null past `maxBytes`. */
+  readBriefEditPage(sourceId: string, slug: string, maxBytes: number, opts: BriefReadsSql.BriefEditReadOpts): Promise<BriefReadsSql.BriefEditPageRow | null>;
+  /** The brief's newest timeline entry of the page recorded and dated since `since`, or null. */
+  readBriefTimelineEntry(pageId: number, since: string, opts: BriefReadsSql.BriefEditReadOpts): Promise<BriefReadsSql.BriefTimelineEntryRow | null>;
+  /** The brief's newest `limit` revisions of the page snapshotted since `since`, newest first; a body is null past `maxBytes`. */
+  readBriefPageVersions(pageId: number, since: string, maxBytes: number, limit: number): Promise<BriefReadsSql.BriefPageVersionRow[]>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;

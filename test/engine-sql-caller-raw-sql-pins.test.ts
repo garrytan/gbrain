@@ -44,6 +44,7 @@ import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 import { pageReadFilter } from '../src/core/search/read-policy-sql.ts';
 import type { TrustTier } from '../src/core/trust/tier.ts';
 import { privateFactFilterForReader } from '../src/core/search/private-visibility.ts';
+import { privateFactFilterForCaller, privateTimelineEventFilterForCaller, privateTimelineEventFilterFragment } from '../src/core/search/private-visibility.ts';
 import { projectionEligibleSql } from '../src/core/eligibility/sql.ts';
 import { SAVED_FACT_COLLAPSE_COLUMNS } from '../src/core/search/saved-fact-collapse.ts';
 import { PINNED_QUESTION_MARKER } from '../src/core/questions/identity.ts';
@@ -1743,6 +1744,7 @@ const PINS: Pin[] = [
     texts: () => [pinnedLongPageSizes({ sourceIds: ['default', 'wiki'], excludePrivate: true, minTrust: 'operator_curated' }, false)],
   },
   ...reflexPins(),
+  ...briefPins(),
 ];
 
 type PinPrivacy = 'none' | 'caller' | 'floor';
@@ -1811,6 +1813,65 @@ function reflexPins(): Pin[] {
         AND ${pageEligibleSql('p', { floor: 'operator_curated', suppressFlagged: true })}`] },
     ];
   });
+}
+
+/**
+ * The proactive brief's meeting, alias, world-fact, edit-page, timeline and revision statements at 0ea77f47bd.
+ * The meeting, alias and world-fact texts are verbatim. The edit-page, timeline and revision texts are equivalent
+ * statements, not byte for byte: master bound `[source, slug, maxBytes]` and `[pageId, since(, maxBytes)]` and used
+ * `$3` before `$1`, and the timeline read used `$2` twice; engine-sql numbers placeholders in the order they appear
+ * (renderFragment), so the byte ceiling binds first and `since` binds twice. The same values reach the same places,
+ * so the same rows come back in the same order. The rest of each text is verbatim; the parameter test below pins
+ * the new order.
+ */
+function briefPins(): Pin[] {
+  const at = (line: string) => `src/core/context/proactive-brief.ts:${line} at 0ea77f47bd`;
+  const elig = { floor: 'operator_curated' as const, suppressFlagged: true };
+  const fixed: Pin[] = [
+    { from: `${at('276')} upcomingMeetings (a trust floor)`,
+      case: { method: 'readBriefMeetingPages', variant: 'floor', run: e => e.readBriefMeetingPages(['g1'], '2026-11-20', '2026-11-21~', elig) },
+      texts: () => [`SELECT p.slug, p.source_id, p.frontmatter->>'start' AS start, p.frontmatter->'attendees' AS attendees, p.frontmatter->>'account' AS account
+       FROM pages p
+      WHERE p.deleted_at IS NULL AND p.type = 'meeting' AND p.source_id = ANY($1::text[])
+        AND p.frontmatter->>'start' >= $2 AND p.frontmatter->>'start' <= $3
+        AND ${remoteReadFloorSql('p')} AND ${pageEligibleSql('p', elig)}`] },
+    { from: `${at('338')} meetingCounterparties (a trust floor)`,
+      case: { method: 'readBriefEmailAliasPages', variant: 'floor', run: e => e.readBriefEmailAliasPages('default', ['alice@example.com'], elig) },
+      texts: () => [`SELECT a.alias_norm, p.slug, p.title, p.type FROM page_aliases a
+       JOIN pages p ON p.source_id = a.source_id AND p.slug = a.slug AND p.deleted_at IS NULL
+      WHERE a.source_id = $1 AND a.alias_norm = ANY($2::text[])
+        AND ${remoteReadFloorSql('p')} AND ${pageEligibleSql('p', elig)}`] },
+    { from: `${at('421')} loopItems worldProjections (a trust floor)`,
+      case: { method: 'readBriefWorldFacts', variant: 'floor', run: e => e.readBriefWorldFacts([7], elig) },
+      texts: () => [`SELECT facts.id, facts.fact, facts.trust_tier, facts.write_origin FROM facts
+        WHERE facts.id = ANY($1::bigint[]) AND facts.expired_at IS NULL AND facts.visibility = 'world'
+          AND ${privateFactFilterForCaller('facts')}
+          AND ${projectionEligibleSql('facts', 'facts', elig)}`] },
+    { from: `${at('499')} editItem revisions (renumbered: maxBytes $1, pageId $2, since $3)`,
+      case: { method: 'readBriefPageVersions', variant: 'default', run: e => e.readBriefPageVersions(5, '2026-11-01T00:00:00.000Z', 65536, 5) },
+      texts: [`SELECT v.id, CASE WHEN octet_length(v.compiled_truth) + octet_length(COALESCE(v.timeline, '')) <= $1 THEN v.compiled_truth END AS compiled_truth,
+              v.timeline, v.snapshot_at, v.is_deleted
+         FROM page_versions v WHERE v.page_id = $2 AND v.snapshot_at >= $3::timestamptz
+        ORDER BY v.id DESC LIMIT 5`] },
+  ];
+  const byPrivacy = (['none', 'caller', 'floor'] as const).flatMap((privacy): Pin[] => [
+    { from: `${at('479')} editItem page (${privacy}, a trust floor; renumbered: maxBytes $1, source $2, slug $3)`,
+      case: { method: 'readBriefEditPage', variant: privacy, run: e => e.readBriefEditPage('default', 'people/alice-example', 65536, { privacy, eligibility: elig }) },
+      texts: () => [`SELECT p.id, CASE WHEN octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) <= $1 THEN p.compiled_truth END AS compiled_truth,
+            p.timeline, p.trust_tier, p.write_origin
+       FROM pages p
+      WHERE p.source_id = $2 AND p.slug = $3 AND p.deleted_at IS NULL
+        AND ${privacy === 'none' ? 'TRUE' : privacy === 'caller' ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}
+        AND ${pageEligibleSql('p', elig)}`] },
+    { from: `${at('491')} editItem timeline entry (${privacy}, a trust floor; renumbered: since $2 and $3)`,
+      case: { method: 'readBriefTimelineEntry', variant: privacy, run: e => e.readBriefTimelineEntry(5, '2026-11-01T00:00:00.000Z', { privacy, eligibility: elig }) },
+      texts: () => [`SELECT te.id, te.date::text AS date, te.summary, te.detail, te.created_at FROM timeline_entries te
+        WHERE te.page_id = $1 AND te.created_at >= $2::timestamptz AND te.date >= $3::timestamptz::date
+          AND ${privacy === 'none' ? 'TRUE' : privacy === 'caller' ? privateTimelineEventFilterForCaller('te') : privateTimelineEventFilterFragment('te')}
+          AND ${projectionEligibleSql('timeline_entries', 'te', elig)}
+        ORDER BY te.created_at DESC, te.date DESC, te.id DESC LIMIT 1`] },
+  ]);
+  return [...fixed, ...byPrivacy];
 }
 
 /** search/entity-facts.ts newestFacts's statement at efeb078093, verbatim (`worldOnly` stands for `worldOnlyFacts(opts.remote)`). */
@@ -1895,14 +1956,20 @@ describe('caller raw SQL moved into typed members keeps its Postgres text byte f
   }
 });
 
-describe('the reflex members keep the request-abort check of executeRaw', () => {
+describe('the reflex and brief members keep the request-abort check of executeRaw', () => {
   // The warm CLI socket and the Rust owner IPC server abort a request whose client left; the Postgres engine then
-  // refuses every later statement of it. The reflex members delegate through executeRaw so that check stays.
+  // refuses every later statement of it. The reflex and brief members delegate through executeRaw so that check stays.
   const scope = { sourceIds: ['default'], privacy: 'floor' as const };
   const calls: Array<[string, (e: any) => Promise<unknown>]> = [
     ['readReflexPages', e => e.readReflexPages(scope, { kind: 'slugs', slugs: ['people/alice-example'] })],
     ['readReflexLiveKeys', e => e.readReflexLiveKeys(scope, ['people/alice-example'])],
     ['readBriefEntityPages', e => e.readBriefEntityPages('default', ['people/alice-example'], { privacy: 'floor' })],
+    ['readBriefMeetingPages', e => e.readBriefMeetingPages(['g1'], '2026-11-20', '2026-11-21~')],
+    ['readBriefEmailAliasPages', e => e.readBriefEmailAliasPages('default', ['alice@example.com'])],
+    ['readBriefWorldFacts', e => e.readBriefWorldFacts([7])],
+    ['readBriefEditPage', e => e.readBriefEditPage('default', 'people/alice-example', 65536, { privacy: 'floor' })],
+    ['readBriefTimelineEntry', e => e.readBriefTimelineEntry(5, '2026-11-01T00:00:00.000Z', { privacy: 'floor' })],
+    ['readBriefPageVersions', e => e.readBriefPageVersions(5, '2026-11-01T00:00:00.000Z', 65536, 5)],
   ];
   for (const [method, call] of calls) {
     test(`${method} throws AbortError and sends no statement on an aborted request`, async () => {
@@ -1914,6 +1981,29 @@ describe('the reflex members keep the request-abort check of executeRaw', () => 
       expect(fake.trace.filter(s => s.kind === 'query')).toEqual([]);
     });
   }
+});
+
+describe('the renumbered brief statements bind the same values in placeholder order', () => {
+  const since = '2026-11-01T00:00:00.000Z';
+  const cases: Array<[string, (e: any) => Promise<unknown>, unknown[]]> = [
+    ['readBriefEditPage', e => e.readBriefEditPage('default', 'people/alice-example', 65536, { privacy: 'none' }), [65536, 'default', 'people/alice-example']],
+    ['readBriefTimelineEntry', e => e.readBriefTimelineEntry(5, since, { privacy: 'none' }), [5, since, since]],
+    ['readBriefPageVersions', e => e.readBriefPageVersions(5, since, 65536, 5), [65536, 5, since]],
+  ];
+  for (const [method, run, expected] of cases) {
+    test(`${method} parameters`, async () => {
+      const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method, variant: 'params', run }));
+      expect(capture.error).toBeUndefined();
+      expect(capture.trace.filter(s => s.kind === 'query').map(s => s.params)).toEqual([expected]);
+    });
+  }
+  test('readBriefPageVersions refuses a limit that is not a positive integer and sends no statement', async () => {
+    for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'readBriefPageVersions', variant: 'bad-limit', run: e => e.readBriefPageVersions(5, since, 65536, limit) }));
+      expect(capture.error).toStartWith('RangeError: readBriefPageVersions: limit must be a positive integer');
+      expect(capture.trace.filter(s => s.kind === 'query')).toEqual([]);
+    }
+  });
 });
 
 describe('insertOauthClientGrant sends what insertClientGrant sends', () => {

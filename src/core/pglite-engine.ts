@@ -204,6 +204,7 @@ import type { TrustTable } from './trust/schema.ts';
 import * as trustProposalsImpl from './engine-sql/trust-proposals.ts';
 import * as cliReadsOpsImpl from './engine-sql/cli-reads-ops.ts';
 import * as reflexReadsImpl from './engine-sql/reflex-reads.ts';
+import * as briefReadsImpl from './engine-sql/brief-reads.ts';
 import * as factsDoctorImpl from './engine-sql/facts-doctor.ts';
 import * as embeddingCatalogImpl from './engine-sql/embedding-catalog.ts';
 import * as factRelinkImpl from './engine-sql/fact-relink-attempts.ts';
@@ -1535,6 +1536,12 @@ export class PGLiteEngine implements BrainEngine {
   readReflexLiveKeys(scope: reflexReadsImpl.ReflexScope, slugs: readonly string[]) { return reflexReadsImpl.readReflexLiveKeys(this.rawRead, scope, slugs); }
   readReflexPages(scope: reflexReadsImpl.ReflexScope, match: reflexReadsImpl.ReflexPageMatch) { return reflexReadsImpl.readReflexPages(this.rawRead, scope, match); }
   readBriefEntityPages(sourceId: string, slugs: readonly string[], opts: reflexReadsImpl.BriefEntityPageOpts) { return reflexReadsImpl.readBriefEntityPages(this.rawRead, sourceId, slugs, opts); }
+  readBriefMeetingPages(sourceIds: readonly string[], startFrom: string, startTo: string, eligibility?: briefReadsImpl.BriefReadEligibility) { return briefReadsImpl.readBriefMeetingPages(this.rawRead, sourceIds, startFrom, startTo, eligibility); }
+  readBriefEmailAliasPages(sourceId: string, emails: readonly string[], eligibility?: briefReadsImpl.BriefReadEligibility) { return briefReadsImpl.readBriefEmailAliasPages(this.rawRead, sourceId, emails, eligibility); }
+  readBriefWorldFacts(factIds: readonly number[], eligibility?: briefReadsImpl.BriefReadEligibility) { return briefReadsImpl.readBriefWorldFacts(this.rawRead, factIds, eligibility); }
+  readBriefEditPage(sourceId: string, slug: string, maxBytes: number, opts: briefReadsImpl.BriefEditReadOpts) { return briefReadsImpl.readBriefEditPage(this.rawRead, sourceId, slug, maxBytes, opts); }
+  readBriefTimelineEntry(pageId: number, since: string, opts: briefReadsImpl.BriefEditReadOpts) { return briefReadsImpl.readBriefTimelineEntry(this.rawRead, pageId, since, opts); }
+  readBriefPageVersions(pageId: number, since: string, maxBytes: number, limit: number) { return briefReadsImpl.readBriefPageVersions(this.rawRead, pageId, since, maxBytes, limit); }
   listExactIdentityCandidates(opts: ExactIdentityStatementOpts) { return cliReadsOpsImpl.listExactIdentityCandidates(this.rawRead, opts); }
   rankEntities(opts: RankEntitiesStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.rankEntities(this.rawRead, opts, timeoutMs); }
   readRankCoverage(opts: RankCoverageStatementOpts, timeoutMs: number) { return cliReadsOpsImpl.readRankCoverage(this.rawRead, opts, timeoutMs); }

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 960/963
+# covered: 966/969
 # lifecycle: 9/9
 # pages: 46/46
 # search: 7/7
@@ -43,6 +43,7 @@
 # minion_subagent: 17/17
 # cli_reads_ops: 14/14
 # reflex_reads: 3/3
+# brief_reads: 6/6
 # facts_doctor: 11/11
 # embedding_catalog: 5/5
 # fact_relink_attempts: 3/3
@@ -86,11 +87,11 @@ transaction	lifecycle	yes	97	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	117	yes	yes	yes	serves
+getPage	pages	yes	118	yes	yes	yes	serves
 readPageSnapshot	pages	yes	34	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	2	no	yes	yes	serves
-putPage	pages	yes	546	yes	yes	yes	serves
+putPage	pages	yes	552	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	8	yes	yes	yes	serves
@@ -283,7 +284,7 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	41	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	43	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	25	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves
@@ -337,11 +338,11 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	58	yes	yes	yes	serves
+insertFact	facts	yes	62	yes	yes	yes	serves
 insertFacts	facts	yes	85	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	29	no	yes	yes	serves
-listFactsByEntity	facts	yes	31	yes	yes	yes	serves
+listFactsByEntity	facts	yes	32	yes	yes	yes	serves
 listFactsSince	facts	yes	25	yes	yes	yes	serves
 listFactsKeyset	facts	yes	10	no	yes	yes	serves
 listFactsBySession	facts	yes	12	yes	yes	yes	serves
@@ -368,7 +369,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	21	no	yes	yes	serves
+createVersion	versions	yes	23	no	yes	yes	serves
 getVersions	versions	yes	10	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
@@ -383,7 +384,7 @@ rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	13	no	yes	yes	serves
-setPageAliases	sync_aliases	yes	29	no	yes	yes	serves
+setPageAliases	sync_aliases	yes	35	no	yes	yes	serves
 replaceDerivedAliases	sync_aliases	yes	13	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
@@ -728,6 +729,12 @@ listWantedPages	cli_reads_ops	yes	8	no	yes	yes	serves
 readReflexLiveKeys	reflex_reads	yes	2	no	yes	yes	serves
 readReflexPages	reflex_reads	yes	4	no	yes	yes	serves
 readBriefEntityPages	reflex_reads	yes	2	no	yes	yes	serves
+readBriefMeetingPages	brief_reads	yes	1	no	yes	yes	serves
+readBriefEmailAliasPages	brief_reads	yes	1	no	yes	yes	serves
+readBriefWorldFacts	brief_reads	yes	1	no	yes	yes	serves
+readBriefEditPage	brief_reads	yes	1	no	yes	yes	serves
+readBriefTimelineEntry	brief_reads	yes	1	no	yes	yes	serves
+readBriefPageVersions	brief_reads	yes	1	no	yes	yes	serves
 listConversationFactRows	facts_doctor	yes	1	no	yes	yes	serves
 countRedactedFacts	facts_doctor	yes	1	no	yes	yes	serves
 listOutsideContentFenceCounts	facts_doctor	yes	2	no	yes	yes	serves
@@ -864,9 +871,9 @@ listWriteGateHoldRows	trust	yes	1	no	yes	yes	serves
 listTrustAllowRuleRows	trust	yes	2	no	yes	yes	serves
 getWriteGateHoldRow	trust	yes	1	no	yes	yes	serves
 decideWriteGateHold	trust	yes	5	no	yes	yes	serves
-upsertOpenLoop	open_loops	yes	9	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	10	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	7	no	yes	yes	serves
-listOpenLoops	open_loops	yes	3	no	yes	yes	serves
+listOpenLoops	open_loops	yes	4	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	2	no	yes	yes	serves
 linkEntityIdentityRow	entity_identities	yes	9	no	yes	yes	serves
 unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves

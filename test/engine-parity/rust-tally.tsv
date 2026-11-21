@@ -9,6 +9,7 @@ test/engine-parity/access-tokens.test.ts	17	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
+test/engine-parity/brief-reads.test.ts	6	0
 test/engine-parity/chunk-reads.test.ts	12	0
 test/engine-parity/chunks.test.ts	15	1
 test/engine-parity/cli-capabilities.test.ts	2	0
@@ -45,8 +46,8 @@ test/engine-parity/facts.test.ts	36	0
 test/engine-parity/fence-overlay.test.ts	2	0
 test/engine-parity/field-usage.test.ts	3	0
 test/engine-parity/held-fence-cells.test.ts	5	0
-test/engine-parity/hidden-refusals.test.ts	4	1	the Rust store stems in English only (the non-English saved-facts case refuses by design)
 test/engine-parity/hidden-refusals-2.test.ts	12	0
+test/engine-parity/hidden-refusals.test.ts	4	1	the Rust store stems in English only (the non-English saved-facts case refuses by design)
 test/engine-parity/hot-memory-meta.test.ts	6	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
 test/engine-parity/import-members.test.ts	9	0

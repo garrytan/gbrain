@@ -6,17 +6,9 @@
  * `caller` and `floor` go through storePageTextPolicy, which refuses a caller whose members, grants or lineage widen
  * the policy. The eligibility maps to the store's trust floor and activation flag.
  */
-import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexPrivacy, ReflexScope } from '../../engine-sql/reflex-reads.ts';
-import { privatePagesFilterForCaller, remoteReadFloorSql } from '../../search/private-visibility.ts';
+import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from '../../engine-sql/reflex-reads.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
-
-function reflexPolicy(member: string, privacy: ReflexPrivacy): StorePrivacyPolicy | null {
-  if (privacy === 'none') return null;
-  if (privacy === 'caller') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
-  if (privacy === 'floor') return storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true });
-  refuseMember(member, `privacy ${String(privacy)}`);
-}
+import { reflexPolicy } from './private-provenance.ts';
 
 function storeMatch(member: string, match: ReflexPageMatch): Record<string, unknown> {
   switch (match?.kind) {

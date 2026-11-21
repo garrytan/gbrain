@@ -165,6 +165,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'probePageTypes', 'readLongPageSizes'],
   // reflex_reads: the retrieval reflex's page reads and the brief's entity pages (engine-sql/reflex-reads.ts)
   reflex_reads: ['readReflexLiveKeys', 'readReflexPages', 'readBriefEntityPages'],
+  // brief_reads: the proactive brief's meeting, loop and edit reads (engine-sql/brief-reads.ts)
+  brief_reads: ['readBriefMeetingPages', 'readBriefEmailAliasPages', 'readBriefWorldFacts', 'readBriefEditPage', 'readBriefTimelineEntry', 'readBriefPageVersions'],
   // facts_doctor: doctor checks
   facts_doctor: ['listConversationFactRows', 'countRedactedFacts', 'listOutsideContentFenceCounts', 'countAtomFacts', 'listUnpreviewedTrustFacts',
     'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes', 'listUnlinkedConversationSlugs', 'countFactEmbeddingCoverage',

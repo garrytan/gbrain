@@ -4,6 +4,7 @@
 
 mod access_members;
 mod access_rules;
+mod brief_reads;
 mod chunks;
 mod cli_entities;
 mod cli_reads_import;
