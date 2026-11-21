@@ -51,6 +51,19 @@ export interface RustStore {
   ): Promise<SeedFollowResult>;
   /** The entry count and digest of the digest entries with a sort key in `[lo, hi)` (hex; null is unbounded). */
   relationDigest(seedId: string, relation: string, lo: string | null, hi: string | null): Promise<SeedIntervalDigest>;
+  /**
+   * The digest entries with a sort key in `[lo, hi)` (hex; null is unbounded), in sort order, at most `limit`
+   * (1 to 5000; anything else is `invalid_argument`).
+   */
+  relationEntries(
+    seedId: string, relation: string, lo: string | null, hi: string | null, limit: number,
+  ): Promise<SeedEntry[]>;
+  /**
+   * For every relation whose import raises an id counter: the store's next id against `primaryMax[relation]`, the
+   * primary's highest integer id as text (null or absent when its table is empty). A relation with no counter is
+   * not reported; an unknown relation in `primaryMax` is `invalid_argument`.
+   */
+  allocatorCheck(seedId: string, primaryMax: Record<string, string | null>): Promise<SeedAllocatorCheck[]>;
   /** The store's fact fingerprints of `texts`: the normalized one and the earlier raw-text one. */
   factFingerprints(texts: string[]): Promise<FactFingerprints[]>;
   /**
@@ -100,6 +113,25 @@ export interface SeedIntervalDigest {
   rows: number;
   /** Lowercase hex sha256. */
   digest: string;
+}
+
+export interface SeedEntry {
+  /** Lowercase hex of the sort key. */
+  sort: string;
+  /** Lowercase hex of the 32-byte row digest. */
+  digest: string;
+  /** The generation of the call that last wrote the entry (0: the import). */
+  generation: number;
+}
+
+export interface SeedAllocatorCheck {
+  relation: string;
+  /** The id the store hands out next, as text. */
+  counter: string;
+  /** The primary's highest id, as text; null when its table is empty. */
+  primary_max: string | null;
+  /** The counter is above the primary's highest id (true when the table is empty). */
+  ok: boolean;
 }
 
 export interface FactFingerprints {
@@ -179,6 +211,20 @@ export async function openRustStore(addon: object, databasePath: string): Promis
         return await brain.relationDigest(seedId, relation, lo, hi) as SeedIntervalDigest;
       } catch (error) {
         throw mapStoreError(error, { member: 'relationDigest' });
+      }
+    },
+    async relationEntries(seedId, relation, lo, hi, limit) {
+      try {
+        return await brain.relationEntries(seedId, relation, lo, hi, limit) as SeedEntry[];
+      } catch (error) {
+        throw mapStoreError(error, { member: 'relationEntries' });
+      }
+    },
+    async allocatorCheck(seedId, primaryMax) {
+      try {
+        return await brain.allocatorCheck(seedId, primaryMax) as SeedAllocatorCheck[];
+      } catch (error) {
+        throw mapStoreError(error, { member: 'allocatorCheck' });
       }
     },
     async factFingerprints(texts) {
