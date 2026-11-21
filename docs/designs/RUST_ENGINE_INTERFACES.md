@@ -1975,6 +1975,16 @@ Counts that look like probes but read a family's rows go to that family, not her
   capability answer matches the table above on the Rust arm, and that every doctor check that probes Postgres
   internals reports "skipped" on Rust, not a pass.
 
+### Frozen member names (not built yet)
+
+A name here is frozen in this contract before its member exists, so two branches never add the same read under two
+names. Each runs on PGLite and Postgres the statement named, byte for byte. On Rust it refuses with
+`engine_capability_missing` until it is served, and a loss row in `docs/designs/RUST_ENGINE.md` names the owner.
+
+| Member | Caller | Statement on PGLite and Postgres | Added by | Rust |
+|---|---|---|---|---|
+| `readRetainedSources` | `src/core/connector-status.ts` | master's `RETAINED_SQL`, exactly (master ddfde58da1) | the trunk, in sync 9 | refuses until served; the trunk's loss row names the owner |
+
 ## Cases that need more than one family
 
 These parity cases call members of several families. Each turns green only when every family it names is built;
