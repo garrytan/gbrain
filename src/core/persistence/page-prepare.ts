@@ -76,6 +76,7 @@ import { preserveProtectedTakes } from './protected-takes.ts';
 import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } from './visibility-request.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
+import { assertReadersBlockRead } from './unread-readers.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { preparePageAdvisories, privateRowsKeptAdvisory, remoteLinkHint, pageNoopAdvisories, timelineRowsRemovedAdvisory } from './page-advisories.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
@@ -1098,6 +1099,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   let content = edited?.content ?? preparedIntent?.content ?? p.content as string;
   const privateRequest = privateRequestGuarded(row.operation, p.kind) && typeof content === 'string' ? readPrivateRequest(content, () => parseMarkdown(content as string, row.slug, { activePack }).frontmatter) : null;
   if (privateRequest) assertPrivateRequestAllowed(row, content as string, privateRequest.frontmatter);
+  if (privateRequestGuarded(row.operation, p.kind) && typeof content === 'string') assertReadersBlockRead(row, content, row.authority.remote); // unread-readers.ts: refused on the page the write would store (an edit's result included)
   let versionTags: string[] | undefined = replacesTombstone && typeof content === 'string' ? parseMarkdown(content, row.slug, { activePack }).tags : preparedIntent?.tags;
   // A replacement/restore publishes a live page. Only a recorded version may
   // explicitly restore a tombstone; legacy versions leave this state unchanged.

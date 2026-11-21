@@ -16,6 +16,7 @@ import { opError, type OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { ContentRefusal } from '../import-screen.ts';
 import type { WriteRequest } from './model.ts';
+import { unreadReadersHold } from './unread-readers.ts';
 
 /** The values the content's frontmatter gives `visibility` (top-level key, any case), lowercased; empty without a closed block. */
 export function declaredVisibilities(content: string): string[] {
@@ -69,9 +70,12 @@ export function noncanonicalPrivateRequest(content: string, frontmatter: Record<
   return readPrivateRequest(content, () => frontmatter) !== null && !keptPrivate(frontmatter);
 }
 
-/** #7848: the `visibility_noncanonical` hold a file earns on sync and import, or null when `noncanonicalPrivateRequest` is false. */
+/**
+ * #7848: the `visibility_noncanonical` hold a file earns on sync and import, or null when `noncanonicalPrivateRequest` is false.
+ * A file that opens with a frontmatter block the parser does not read and names its readers there is held `invalid_frontmatter` instead (unread-readers.ts).
+ */
 export function noncanonicalPrivateHold(content: string, frontmatter: Record<string, unknown> | null | undefined): ContentRefusal | null {
-  if (!noncanonicalPrivateRequest(content, frontmatter)) return null;
+  if (!noncanonicalPrivateRequest(content, frontmatter)) return unreadReadersHold(content);
   return { code: 'visibility_noncanonical', message: 'The frontmatter asks for visibility: private in a spelling page privacy does not read (another case, a block scalar, a list, '
     + 'a flow mapping or a merge key), so the page would be world-readable; it was not imported. Write visibility: private on its own frontmatter line, lowercase, then sync or import the file again.' };
 }

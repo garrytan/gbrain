@@ -50,6 +50,7 @@ import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { classifyImportHold, resolveParsedSubtype, type ParsedMarkdown } from '../markdown.ts';
 import { noncanonicalPrivateHold } from '../persistence/visibility-request.ts';
 import { loadImportSanityConfig, settleContentDisposition, stripGateOwnedMarkers } from '../import-screen.ts';
+import { unreadReadersFileHold } from '../persistence/unread-readers.ts';
 import { JUNK_SAMPLE_CHARS } from '../content-sanity.ts';
 import { QUARANTINE_OVERRIDE_KEY } from '../quarantine-override.ts';
 import { hasGuardrails } from '../guardrails.ts';
@@ -350,6 +351,9 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   // #7848: a private request page privacy would not read is held; only an upload session (`content` plus `coordinated`) refuses it at its own guard.
   const privateHold = opts.content && opts.coordinated ? null : noncanonicalPrivateHold('', parsed.frontmatter);
   if (privateHold) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: privateHold.message, refusal: privateHold, skip_reason: privateHold.code };
+  // A leading block the parser does not read that names readers (read from the file's own head, which the parse dropped) is held on every route, an upload session's included.
+  const unreadReaders = await unreadReadersFileHold(file, size);
+  if (unreadReaders) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: unreadReaders.message, refusal: unreadReaders, skip_reason: unreadReaders.code };
   let slug = expectedSlug;
   if (!expectedSlug || parsed.slug !== expectedSlug) {
     if (!expectedSlug ? !parsed.slug : slugifyPath(parsed.slug) !== expectedSlug) {

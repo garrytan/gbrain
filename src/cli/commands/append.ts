@@ -522,6 +522,8 @@ export async function streamLocalCapture(path: string, input: CaptureUploadInput
   }
   const contentHash = await normalizedFileHash(path);
   if (!contentHash) throw opError('invalid_params', 'Capture requires nonempty text.', `${path} is empty or whitespace, so nothing was captured.`);
+  // The merge below wraps a block the parser does not read into the page body; refuse the original head first (a local capture: no remote caller).
+  (await import('../../core/persistence/unread-readers.ts')).assertCaptureBlockRead(headText, false);
   const { explicitCaptureType, mergeCaptureFrontmatter, slugPrefixForType } = await import('../../core/capture-content.ts');
   const type = explicitCaptureType(headText, input.type) ?? 'note';
   const capturedAt = new Date().toISOString();
@@ -552,6 +554,8 @@ export async function uploadCapture(rawBody: string, input: CaptureUploadInput, 
     throw usageError('--force applies only to a capture that fits one request.',
       'This capture is larger than one request, so it goes through an upload session, which replaces a page only with --expected-revision. Read the page revision with gbrain get --json and pass it.');
   }
+  // The merge below wraps a block the parser does not read into the page body; refuse the original first (the message names only the canonical key).
+  (await import('../../core/persistence/unread-readers.ts')).assertCaptureBlockRead(rawBody, false);
   const caller = pageWriteCaller(connect, input.source ?? null, { teardown: false });
   const { defaultSlug, explicitCaptureType, mergeCaptureFrontmatter, normalizeForHash } = await import('../../core/capture-content.ts');
   const type = explicitCaptureType(rawBody, input.type) ?? 'note';

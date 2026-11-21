@@ -14,6 +14,7 @@ import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, isLegacyStoredPageSlug, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
 import { suffixedSlugAdmission } from './suffixed-slug.ts';
+import { assertCaptureBlockRead } from './unread-readers.ts';
 import { defaultSlug, detectBinaryNullByte, explicitCaptureType, mergeCaptureFrontmatter, normalizeForHash } from '../capture-content.ts';
 import { computeContentHash } from '../ingestion/types.ts';
 import { resolveSlugForPath } from '../sync.ts';
@@ -495,6 +496,8 @@ export async function preparePageAdmission(ctx: OperationContext,
       slug = defaultSlug(normalizeForHash(p.content), new Date(), type);
       if (ctx.auth?.boundSlugPrefixes?.length) slug = `${normalizeSlugPrefix(ctx.auth.boundSlugPrefixes[0]).replace(/\/$/, '')}/${slug}`;
     }
+    // The capture's own input is checked here: the merge below wraps an unread block into the page body, past the page-prepare guard.
+    assertCaptureBlockRead(p.content, ctx.remote !== false);
     intent.content = mergeCaptureFrontmatter(p.content, { type, capturedVia: ctx.remote === false ? 'capture-cli' : 'capture-mcp',
       ...Object.fromEntries(['who','what','where','kind','depth'].filter(key => typeof p[key] === 'string').map(key => [key, p[key]])) });
     intent.capture_hash = computeContentHash(normalizeForHash(p.content));
