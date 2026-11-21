@@ -201,7 +201,8 @@ the engine or the source host changes.
 
 The brain has folder rules (`.gbrain/access.yml` in a source, or access rule rows). The Rust engine cannot edit them
 yet (`gbrain access rule add`, `rm`, `revert` and `import` refuse on Rust), so a swapped brain could not change who
-reads its folders. Not retried until a release serves those edits on Rust.
+reads its folders. It lifts by itself in a build whose Rust engine reports the `access_control` capability (every
+access-control member served, rule edits included); `gbrain engine swap --to rust --plan` then lists no folder-rule blocker.
 
 <a id="remote_access_unserved"></a>
 ### `remote_access_unserved`

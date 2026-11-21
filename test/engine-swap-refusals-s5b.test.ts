@@ -106,6 +106,16 @@ describe('engine swap run refusals (before any write)', () => {
     await nothingWritten();
   });
 
+  test('folder rules stop blocking once the Rust engine serves access_control (the access-serves-rust member table)', async () => {
+    await engine.executeRaw(`INSERT INTO access_policy_state (source_id) VALUES ('default') ON CONFLICT DO NOTHING`);
+    await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES ('default', 'r1', 'team/', ARRAY['alice-example'], 1)`);
+    const blocked = JSON.parse((await run(['--to', 'rust', '--plan', '--json'])).stdout);
+    expect(blocked.blockers.map((b: { reason: string }) => b.reason)).toEqual(['folder_rules_unserved']);
+    const served = JSON.parse((await run(['--to', 'rust', '--plan', '--json'], { rustServes: new Set(['access_control']) as never })).stdout);
+    expect(served.blockers).toEqual([]);
+    expect(served.plan_hash).not.toBe(blocked.plan_hash);
+  });
+
   test('an access token, an OAuth client or remote MCP refuses with remote_access_unserved', async () => {
     await engine.executeRaw(`INSERT INTO access_tokens (name, token_hash) VALUES ('laptop', 'hash-not-a-secret')`);
     const r = await run(['--to', 'rust', '--yes', '--expect', await planHash(), '--json']);
