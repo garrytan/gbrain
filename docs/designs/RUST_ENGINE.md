@@ -622,6 +622,7 @@ The shadow lives on one host, the **shadow host**: the machine that would own th
 `READY` needs every criterion below, from evidence in the current epoch (thresholds proposed in D14 and fixed before any candidate result is collected):
 
 1. At least 14 days of shadowing in the epoch; follower lag p99 under 60 s; three consecutive nightly reconcile passes that repaired nothing.
+   Pending: a duration override for criterion 1 is with the maintainer (asked 2026-11-21); until he rules, 14 days stands.
 2. Every operation class used in the window meets its minimum of successful comparisons (at least 10,000 reads in total). An errored, stale, inconclusive or dropped attempt is not successful coverage and never counts as a match. Missing evidence is `NOT READY`, never an omitted row. None was `capability_missing` in the last 7 days.
 3. Zero unresolved `rust_error` and zero unexplained `diverged` results on deterministic operations in the last 7 days.
 4. The trigram arm agrees exactly on every comparable sample. Keyword and title arms agree exactly when Rust runs the `ts_rank` compatibility ranker; with a better default ranker (D5), the release carries E1 and E2 results at least equal to both the PGLite and the Postgres values instead. The vector arm's recall@10 against exact is at least 0.98 and at least the primary's recall@10 against the same exact scan. Overlap@10 with the primary, for the vector arm and the fused top 10, is reported and not gated (D17).
