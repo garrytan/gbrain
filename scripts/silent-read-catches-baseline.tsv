@@ -545,6 +545,7 @@ src/commands/sources.ts#maybeAnnounceBrainPack	catch_empty	3
 src/commands/sources.ts#runAdd	capability_refusal_swallowed	1
 src/commands/sources.ts#runAdd	catch_empty	1
 src/commands/sources.ts#runAudit>walk	catch_empty	1
+src/commands/sources.ts#runRemove	capability_refusal_swallowed	1	known debt found by the fixed capability-refusal rule (a callback's returned promise, or a fallback returned from a loop or block ahead of the refusal check); fix by rethrowCapabilityRefusal(err)
 src/commands/sources.ts#runStatus	promise_catch_empty	3
 src/commands/sources.ts#runStatus<anon@11>	promise_catch_empty	1
 src/commands/sources.ts#runStatus<anon@18>	promise_catch_empty	1
@@ -1431,6 +1432,7 @@ src/core/pace-mode.ts#loadPaceModeConfig>safeGet	catch_empty	1
 src/core/page-body/projection.ts#projectSegmentedPage	capability_refusal_swallowed	1
 src/core/page-body/projection.ts#projectSegmentedPage	promise_catch_empty	1
 src/core/page-body/projection.ts#rebuildPendingSegmentedProjections	capability_refusal_swallowed	1
+src/core/page-body/rechunk.ts#rechunkPage	capability_refusal_swallowed	1	known debt found by the fixed capability-refusal rule (a callback's returned promise, or a fallback returned from a loop or block ahead of the refusal check); fix by rethrowCapabilityRefusal(err)
 src/core/page-body/segment-derive.ts#continueDerivationPurges	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/page-body/segment-derive.ts#continueDerivationPurges>finishParked	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/page-body/streamed-import.ts#importScanned	promise_catch_empty	1
@@ -1552,6 +1554,7 @@ src/core/persistence/physical-root-record.ts#openOwnershipRecord	catch_empty	1
 src/core/persistence/preparation-budget.ts#readPreparationConfigValues	capability_refusal_swallowed	1
 src/core/persistence/preparation-budget.ts#readPreparationConfigValues	promise_catch_empty	1
 src/core/persistence/publication-deadline.ts#readPublicationCeilingMs	promise_catch_empty	1
+src/core/persistence/purge-deleted.ts#expireRecordedTombstones	capability_refusal_swallowed	1	known debt found by the fixed capability-refusal rule (a callback's returned promise, or a fallback returned from a loop or block ahead of the refusal check); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/put-page-screen.ts#unchangedPutPage	capability_refusal_swallowed	1
 src/core/persistence/put-page-screen.ts#unchangedPutPage	catch_empty	1
 src/core/persistence/recovery-resolve.ts#scanStuckRecoveries	promise_catch_empty	1
@@ -1591,13 +1594,13 @@ src/core/persistence/sync-ghosts.ts#startScan<anon@2>	capability_refusal_swallow
 src/core/persistence/sync-git-stream.ts#loadCleanProbes	catch_empty	1
 src/core/persistence/sync-git-stream.ts#probeDirtiness	catch_empty	1
 src/core/persistence/sync-git-stream.ts#racyFloor	catch_empty	1
+src/core/persistence/sync-group.ts#admitGroup	capability_refusal_swallowed	1	known debt found by the fixed capability-refusal rule (a callback's returned promise, or a fallback returned from a loop or block ahead of the refusal check); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-group.ts#resolveGrouping	promise_catch_empty	1
 src/core/persistence/sync-group.ts#whole	promise_catch_empty	1
 src/core/persistence/sync-held-deletions.ts#proveHeldDeletions	promise_catch_empty	2
 src/core/persistence/sync-holds.ts#readSyncHoldPolicy	promise_catch_empty	1
 src/core/persistence/sync-lease.ts#readDrainLease	capability_refusal_swallowed	1
 src/core/persistence/sync-lease.ts#readDrainLease	promise_catch_empty	1
-src/core/persistence/sync-lease.ts#withDrainLease	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-lease.ts#withDrainLease	promise_catch_empty	2
 src/core/persistence/sync-lease.ts#withDrainLease<anon@1>	capability_refusal_swallowed	1
 src/core/persistence/sync-lease.ts#withDrainLease<anon@1>	promise_catch_empty	1
@@ -1621,10 +1624,12 @@ src/core/persistence/sync-prepare.ts#prepareSyncMutation	promise_catch_empty	2
 src/core/persistence/sync-prescreen.ts#prescreenSyncEntries	promise_catch_empty	1
 src/core/persistence/sync-prescreen.ts#releaseKeepDbDrift	catch_empty	1
 src/core/persistence/sync-reasons.ts#withManagedReasonNotices	promise_catch_empty	1
+src/core/persistence/sync-run.ts#admitPendingWrite	capability_refusal_swallowed	1	known debt found by the fixed capability-refusal rule (a callback's returned promise, or a fallback returned from a loop or block ahead of the refusal check); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-run.ts#admitWindowGroup	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-run.ts#admitWindowGroup	promise_catch_empty	1
 src/core/persistence/sync-run.ts#deferChangedEntry	catch_empty	1
 src/core/persistence/sync-run.ts#performLeasedPass<anon@3>	promise_catch_empty	1
+src/core/persistence/sync-run.ts#runManagedSync	capability_refusal_swallowed	1	known debt found by the fixed capability-refusal rule (a callback's returned promise, or a fallback returned from a loop or block ahead of the refusal check); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-run.ts#runManagedSync	promise_catch_empty	1
 src/core/persistence/sync-screen.ts#driftBaselineContent	catch_empty	1
 src/core/persistence/sync-screen.ts#loadSyncScreenRun	promise_catch_empty	1
@@ -1656,6 +1661,7 @@ src/core/persistence/unsourced-put-fork.ts#noteSuppressedSourceFlip	catch_empty	
 src/core/persistence/worktree-lease.ts#foreignWaiterAhead	catch_empty	1
 src/core/persistence/worktree-refresh.ts#boundedMemberSync>drain	promise_catch_empty	1
 src/core/persistence/worktree-refresh.ts#fenceAndMerge	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/persistence/worktree-refresh.ts#fenceDraining	capability_refusal_swallowed	1	known debt found by the fixed capability-refusal rule (a callback's returned promise, or a fallback returned from a loop or block ahead of the refusal check); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/worktree-refresh.ts#ownCommits	catch_empty	1
 src/core/persistence/worktree-refresh.ts#reachedTargetSince	catch_empty	1
 src/core/persistence/worktree-refresh.ts#underMemberLeases>held	promise_catch_empty	1
