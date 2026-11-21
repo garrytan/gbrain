@@ -66,7 +66,11 @@ async function cancelSpendGroup({ args, engine, queue }: JobsCommandContext, gro
     if (['completed', 'failed', 'dead', 'cancelled'].includes(job.status)) continue;
     if (await queue.cancelJob(job.id)) cancelled.push(job.id);
   }
+  if (!jobs.length) {
+    if (args.includes('--json')) console.log(JSON.stringify({ error: 'empty_spend_group', group_id: groupId, cancelled_ids: cancelled, jobs: 0 }, null, 2));
+    console.error(`No jobs in spend group ${groupId}; check the id with: gbrain jobs list --group ${groupId} --json`);
+    process.exit(1);
+  }
   if (args.includes('--json')) { console.log(JSON.stringify({ group_id: groupId, cancelled_ids: cancelled, jobs: jobs.length }, null, 2)); return; }
-  if (!jobs.length) { console.error(`No jobs in spend group ${groupId}; check the id with: gbrain jobs list --group ${groupId} --json`); process.exit(1); }
   console.log(`Cancelled ${cancelled.length} unfinished job(s) of spend group ${groupId}${cancelled.length ? `: ${cancelled.join(', ')}` : ''}.`);
 }
