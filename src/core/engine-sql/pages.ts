@@ -21,6 +21,7 @@ import type { PageWriteOptions } from '../page-state/types.ts';
 import { moveSlugBindings, recordRenameAlias } from '../page-state/rename-alias.ts';
 import { segmentedRevertRefusal } from '../page-state/versions.ts';
 import { sanitizeText } from '../batch-rows.ts';
+import { assertPurgeAge } from '../engine-errors.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion } from '../search/safe-chunks.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privatePagesFilterForCaller, privacyForCaller, callerReadersAllowedSql, currentCallerAccess } from '../search/private-visibility.ts';
 import { validDateSql } from '../valid-time.ts';
@@ -335,9 +336,12 @@ export async function purgeDeletedPages(
   olderThanHours: number,
   opts?: { dryRun?: boolean; excludeIds?: number[]; onlyIds?: number[] },
 ): Promise<{ slugs: string[]; count: number; pages?: { slug: string; source_id: string; deleted_at: Date }[] }> {
-    // Clamp to non-negative integer; runaway purge protection. The DELETE
-    // cascades through content_chunks, page_links, chunk_relations via FKs.
-    const hours = Math.max(0, Math.floor(olderThanHours));
+    // Refuse an age that is not a finite number of hours, 0 or more, before any statement runs: NaN, a negative
+    // number or ±Infinity used to clamp (or turn) into 0 hours and purge every tombstone. Every engine refuses the
+    // same inputs (engine-errors.ts PurgeAgeError). The DELETE cascades through content_chunks, page_links,
+    // chunk_relations via FKs.
+    assertPurgeAge(olderThanHours);
+    const hours = Math.floor(olderThanHours);
     // GBRA-130 A-49: tombstones the unmanaged belief-ledger expiry could not delete (or parked) stay for their own retry.
     // #9653: `onlyIds` narrows the same statements to those pages (a concept rebuild's one tombstone).
     const only = opts?.onlyIds ? sqlFragment` AND pages.id = ANY(${opts.onlyIds}::bigint[])` : sqlFragment``;

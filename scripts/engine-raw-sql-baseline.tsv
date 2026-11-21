@@ -60,7 +60,7 @@ src/commands/doctor/checks/frontmatter-hook.ts	execute_raw	1
 src/commands/doctor/checks/function-search-path.ts	execute_raw	1
 src/commands/doctor/checks/generations.ts	execute_raw	2
 src/commands/doctor/checks/git-convergence.ts	execute_raw	3
-src/commands/doctor/checks/git-holds.ts	execute_raw	4
+src/commands/doctor/checks/git-holds.ts	execute_raw	6	readNoncanonicalReaders: the read-only misspelled readers key count, the same shape as readNoncanonicalPrivate
 src/commands/doctor/checks/git-index-lag.ts	execute_raw	1
 src/commands/doctor/checks/google-api-access.ts	execute_raw	1
 src/commands/doctor/checks/google-calendar.ts	execute_raw	1

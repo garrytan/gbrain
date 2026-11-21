@@ -74,6 +74,7 @@ import { materializeTimeline, prepareCanonicalProjections, type TimelineRowsRemo
 import { assertTimelineNotOmitted, timelineWritePolicy } from './timeline-omission.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } from './visibility-request.ts';
+import { assertReadersKeyCanonical } from './readers-request.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
@@ -1021,6 +1022,18 @@ const frontmatterRefusalError = (refusal: ContentRefusal) => contentRefusalError
   `Correct ${refusal.line !== undefined ? `frontmatter line ${refusal.line}${refusal.key ? ` (key "${refusal.key}")` : ''}` : 'the frontmatter'}: one line per key with its whole value quoted, then submit the corrected content with a new request_id.`,
   { legacy_error: 'invalid_params' });
 
+/**
+ * The private request an authored put, edit or capture carries (null for a derived write). A readers key spelled any way but
+ * `readable_by` is ignored by page access, so it refuses here rather than publish the page to every member.
+ */
+function authoredRequests(row: WriteRequest, kind: unknown, content: unknown, activePack: ParseOpts['activePack']): ReturnType<typeof readPrivateRequest> {
+  if (!privateRequestGuarded(row.operation, kind) || typeof content !== 'string') return null;
+  const parse = () => parseMarkdown(content, row.slug, { activePack }).frontmatter;
+  const request = readPrivateRequest(content, parse);
+  assertReadersKeyCanonical(row, content, request ? request.frontmatter : parse(), !row.authority.remote);
+  return request;
+}
+
 /** A private request the importer would hold keeps the importer's typed refusal; any other must be kept as written. */
 function assertPrivateRequestAllowed(row: WriteRequest, content: string, frontmatter: Record<string, unknown> | null | undefined): void {
   const hold = classifyImportHold(parseMarkdown(content, row.slug, { validate: true }));
@@ -1096,7 +1109,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   // #5616: edits apply to the caller's view of the locked snapshot (revision checked above).
   const edited = row.operation === 'edit_page' ? await editLockedPage(engine, row, snapshot) : undefined;
   let content = edited?.content ?? preparedIntent?.content ?? p.content as string;
-  const privateRequest = privateRequestGuarded(row.operation, p.kind) && typeof content === 'string' ? readPrivateRequest(content, () => parseMarkdown(content as string, row.slug, { activePack }).frontmatter) : null;
+  const privateRequest = authoredRequests(row, p.kind, content, activePack);
   if (privateRequest) assertPrivateRequestAllowed(row, content as string, privateRequest.frontmatter);
   let versionTags: string[] | undefined = replacesTombstone && typeof content === 'string' ? parseMarkdown(content, row.slug, { activePack }).tags : preparedIntent?.tags;
   // A replacement/restore publishes a live page. Only a recorded version may
