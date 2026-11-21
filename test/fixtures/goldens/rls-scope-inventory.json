@@ -3440,6 +3440,17 @@
         ],
         "flagOnScopes": []
       },
+      "markSourceSynced#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "mergeOntologyFact#corroborate": {
         "flagOffLanes": [
           "pool"
@@ -5831,6 +5842,7 @@
         "decideSlotUsage": "none",
         "decideWriteGateHold": "none",
         "declarePersistence": "none",
+        "declareSyncImportPageCursor": "none",
         "delayActiveJob": "none",
         "deleteChunks": "none",
         "deleteChunksExcept": "none",
@@ -5911,6 +5923,7 @@
         "failJob": "none",
         "failParentJob": "none",
         "failSubagentToolExecution": "none",
+        "fetchSyncImportPageCursor": "none",
         "filterPagesAtRevision": "none",
         "findActiveAccessTokens": "none",
         "findActiveSingleFact": "none",
@@ -6407,6 +6420,7 @@
         "markPagesExtractedBatch": "none",
         "markProjectionRebuildFailed": "none",
         "markRevertedEdgeProposals": "none",
+        "markSourceSynced": "none",
         "markSpendUsageUnknown": "none",
         "matchSavedFacts": "none",
         "matchTakeRows": "none",
@@ -6474,6 +6488,7 @@
         "readAccessTokenWriteGrant": "none",
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
+        "readAdmittedWriteRequests": "none",
         "readAgentClientSpend": "none",
         "readAudiencePrincipals": "none",
         "readBeliefHistoryRows": "none",
@@ -6599,6 +6614,7 @@
         "readOldestVersionAttribution": "none",
         "readOldestWaitingAge": "none",
         "readOpCheckpointKeys": "none",
+        "readOpCheckpointRecords": "none",
         "readOwnerOnlySourceConfig": "none",
         "readOwnerOnlySourcesPresent": "none",
         "readPageAliasRows": "none",
@@ -6610,6 +6626,7 @@
         "readPageIndexingState": "none",
         "readPageOrigin": "none",
         "readPageRevisionAttribution": "none",
+        "readPageRevisionWriter": "none",
         "readPageRevisions": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
@@ -6649,6 +6666,7 @@
         "readRequestEffects": "none",
         "readRetirementHop": "none",
         "readReviewAcceptedMark": "none",
+        "readRevisionWriterRequest": "none",
         "readRowAttribution": "none",
         "readRowTrustRows": "none",
         "readSearchStats": "none",
@@ -6669,9 +6687,12 @@
         "readSourceState": "none",
         "readSourceWriteRow": "none",
         "readStoredBodyBytes": "none",
+        "readStoredConfigValue": "none",
         "readStoredConversationEntry": "none",
         "readStoredPageTier": "none",
         "readSupersessionReplacement": "none",
+        "readSyncAdmissionEffects": "none",
+        "readSyncImportPageRows": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",
@@ -6899,6 +6920,8 @@
         "writeMiscRead": "none",
         "writeMiscReads": "none",
         "writeOpCheckpointKeys": "none",
+        "writeOpCheckpointRecords": "none",
+        "writeSyncAdmissionStamp": "none",
         "writeTextProjectionSeal": "none"
       }
     }

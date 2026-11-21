@@ -140,7 +140,7 @@ src/commands/google-setup-tail.ts	execute_raw	1
 src/commands/google.ts	execute_raw	1
 src/commands/guests.ts	execute_raw	1
 src/commands/import-calls.ts	execute_raw	3	GST-2904 (open before #9641): reads the committed call page's id, frontmatter readers and whether a page_label_guards row exists, locked FOR UPDATE inside the maintenance transaction that raises the guard; no typed engine method exists yet
-src/commands/import.ts	execute_raw	5
+src/commands/import.ts	execute_raw	3
 src/commands/init-prefer-postgres.ts	execute_raw	5
 src/commands/init.ts	sql_template	2
 src/commands/integrity.ts	execute_raw	1
@@ -701,12 +701,9 @@ src/core/persistence/skill-activation.ts	execute_raw	12
 src/core/persistence/soak-counters.ts	execute_raw	4
 src/core/persistence/source-lifecycle.ts	execute_raw	33
 src/core/persistence/staging.ts	execute_raw	4
-src/core/persistence/sync-administration.ts	execute_raw	1
-src/core/persistence/sync-admission.ts	execute_raw	4
-src/core/persistence/sync-admitted.ts	execute_raw	1
+src/core/persistence/sync-admission.ts	execute_raw	1
 src/core/persistence/sync-authority.ts	execute_raw	1
 src/core/persistence/sync-blocked.ts	execute_raw	2
-src/core/persistence/sync-concurrent-write.ts	execute_raw	2
 src/core/persistence/sync-cursor-key.ts	execute_raw	7
 src/core/persistence/sync-delete-tombstones.ts	execute_raw	2
 src/core/persistence/sync-discovery.ts	execute_raw	6
@@ -718,7 +715,7 @@ src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
 src/core/persistence/sync-holds-carried.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	31
+src/core/persistence/sync-holds.ts	execute_raw	27
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-lease.ts	execute_raw	5
@@ -736,7 +733,7 @@ src/core/persistence/sync-pass-readers.ts	execute_raw	1
 src/core/persistence/sync-pass-row.ts	execute_raw	4
 src/core/persistence/sync-pass-run.ts	execute_raw	14
 src/core/persistence/sync-pass-status.ts	execute_raw	3
-src/core/persistence/sync-pass.ts	execute_raw	14
+src/core/persistence/sync-pass.ts	execute_raw	9
 src/core/persistence/sync-prepare.ts	execute_raw	17	#9646: the stamp fence-trend pre-read runs outside the 5 s publication (newest sequence, open-import probe); moves with the persistence engine-sql conversion
 src/core/persistence/sync-prescreen.ts	execute_raw	2
 src/core/persistence/sync-run.ts	execute_raw	28

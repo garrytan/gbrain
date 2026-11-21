@@ -130,7 +130,7 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
  * `sync.admission` at preparation and inside the publication transaction; when it is not `normal` the request completes
  * `cancelled` with `admission_paused` (coordinator.ts) and nothing is written. The path is a candidate again on the next pass.
  */
-async function assertKeepDbAdmission(engine: Pick<BrainEngine, 'executeRaw'>, row: WriteRequest): Promise<void> {
+async function assertKeepDbAdmission(engine: Pick<BrainEngine, 'readStoredConfigValue'>, row: WriteRequest): Promise<void> {
   if (!row.intent?.keepDb) return;
   const admission = await readSyncAdmission(engine);
   if (admissionAllows(admission, 'destructive')) return;

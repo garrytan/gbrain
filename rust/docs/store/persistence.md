@@ -156,6 +156,8 @@ their parent's op and fingerprint, so deleting a parent deletes its paths in the
 | `brain.appendOpCheckpointPaths(op, fingerprint, paths)` | the parent created with no keys or stamped now, then each path not yet stored added | `appendOpCheckpointPaths` (`appendCompleted`, `appendCompletedOnce`) |
 | `brain.deleteOpCheckpoint(op, fingerprint)` | the parent and its paths deleted; a missing parent is a no-op | `deleteOpCheckpoint` (`clearOpCheckpoint`) |
 | `brain.deleteOpCheckpointPaths(op, fingerprint)` | the paths deleted, the parent kept | `deleteOpCheckpointPaths` (`clearOpCheckpoint`) |
+| `brain.readOpCheckpointRecords(op, fingerprints)` | each found parent's first completed key (`completed_keys->0`), null for an empty array, in the order named; a fingerprint with no parent adds nothing, and one named twice is read once | `readOpCheckpointRecords` (`readSyncImportProvenances`) |
+| `brain.writeOpCheckpointRecords(op, rows)` | each row's parent set to `[record]`, stamped now; the paths stay. A record with a NUL in a string or object key refuses the whole batch with `invalid_input`, writing nothing | `writeOpCheckpointRecords` (`recordSyncImportProvenances`) |
 
 Differences from the SQL engines:
 
@@ -163,8 +165,56 @@ Differences from the SQL engines:
   use the keys as a set.
 - `purgeStaleCheckpoints` (the cycle's 7-day purge) is still raw SQL, which this engine refuses, so a
   checkpoint that no run clears stays until an op clears it.
-- The other `op_checkpoints` writers (sync identity downgrades, sync holds, fence repair, the
+- The SQL record read names no order; the store answers in the order the fingerprints are named. The
+  caller keys the records by page.
+- The sync import provenance records (op `sync-import-provenance`, one per page) go through the two record
+  members. The other `op_checkpoints` writers (sync identity downgrades, sync holds, fence repair, the
   persistence receipts) are still raw SQL. Their rows are not in this store.
+
+## Sync pass pages
+
+A managed sync pass's `I⋈P` read (`src/core/engine-sql/sync-pass-pages.ts`): the source's pages with a
+`source_path`, each with the fields of its `sync-import-provenance` record (fingerprint
+`<source>:<incarnation>:<page id>`), in page id order. It reads the pages, their body state and
+contextual retrieval mode, the records, and for a deleted page the `sync-delete-tombstone` record and the
+committed `managed_sync_delete` requests.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readSyncImportPageRows(query, window)` | the rows for `window` `{ ids }` or `{ after, limit }`; `query` carries the Markdown chunker version the SQL statement embeds | `readSyncImportPageRows` |
+
+Differences from the SQL engines:
+
+- Postgres's whole-source cursor (`declareSyncImportPageCursor`, `fetchSyncImportPageCursor`) has no store
+  form; both refuse with `raw_sql`. A Rust sync pass stops before them, at the round snapshot.
+- A bad id in `{ ids }` refuses with `invalid_input`, as the `::bigint[]` cast refuses.
+
+## Sync run reads
+
+A managed sync run's journal reads (`src/core/engine-sql/sync-run-reads.ts`) and the `sync.admission`
+statements (`src/core/engine-sql/sync-admission.ts`): the requests a principal admitted, the two reads of the
+`concurrent_write` proof, the row that dates a local `config set sync.admission`, and `sync status`'s two
+`effective` probes of a restricted value. A parameter the SQL casts to `uuid` that is not a UUID refuses with
+`invalid_input`.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readAdmittedWriteRequests(kind, id, requestIds, committedOnly)` | the principal's request rows whose `request_id` is listed, each at most once; only `committed` ones when `committedOnly` | `readAdmittedWriteRequests` |
+| `brain.readPageRevisionWriter(pageId, sourceId)` | `{ revision, writer }` (the live `knowledge_revision` as text, the request row id that wrote it), `null` for no page of that source | `readPageRevisionWriter` |
+| `brain.readRevisionWriterRequest(id)` | the request row `id` as `{ request_id, operation, kind, state, incarnation, page_id }`, `null` when absent | `readRevisionWriterRequest` |
+| `brain.writeSyncAdmissionStamp(op, fingerprint, value)` | sets the checkpoint parent to `[{ value, set_at }]` in one write and resolves `set_at` as jsonb text | `writeSyncAdmissionStamp` |
+| `brain.readSyncAdmissionEffects(input)` | `{ pinned, destructive }`: the pass row is `open` and its `lease_token` holds the live drain lease, and a destructive request of the incarnation is queued, running or recovering; each before `setAt` when set | `readSyncAdmissionEffects` |
+
+Differences from the SQL engines:
+
+- `set_at` is the store clock at the moment of the write (`Env::clock_micros`), as `clock_timestamp()` is, not the
+  transaction's start (`now_micros`, as `now()`). A request queued earlier in the same transaction carries the start
+  as its `created_at`, which the stamp never dates before.
+- An unparsable `setAt`, or a pinned pass whose `started_at` does not parse, refuses with `invalid_input`, as the
+  `::timestamptz` casts refuse.
+- `syncAdmissionStatus` reads the setting itself with raw SQL first, so `sync status` still refuses on this engine
+  until that read is a member.
+
 ## Writer versions
 
 Which binaries admitted and published the retained requests (`writer-versions.ts`), from the

@@ -6,6 +6,9 @@ import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
 import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.ts';
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
 import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
+import type { SyncImportPageQuery, SyncImportPageRow, SyncImportPageWindow } from './engine-sql/sync-pass-pages.ts';
+import type { PageRevisionWriter, RevisionWriterRequest } from './engine-sql/sync-run-reads.ts';
+import type { SyncAdmissionEffectsInput } from './engine-sql/sync-admission.ts';
 import type * as EntityIdentitiesSql from './engine-sql/entity-identities.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
@@ -1446,6 +1449,8 @@ export interface BrainEngine {
   readSourceChunkerVersion(sourceId: string): Promise<string | null>;
   /** Stamps the source's chunker version; an unknown source changes nothing (engine-sql/sources.ts). */
   setSourceChunkerVersion(sourceId: string, version: string): Promise<void>;
+  /** Sets the source's last sync time to now; false for an unknown source, which changes nothing (engine-sql/sources.ts). */
+  markSourceSynced(sourceId: string): Promise<boolean>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
@@ -1500,6 +1505,33 @@ export interface BrainEngine {
   deleteOpCheckpoint(op: string, fingerprint: string): Promise<void>;
   /** The checkpoint's paths deleted, its parent kept (op-checkpoint.ts clearOpCheckpoint's second sweep). */
   deleteOpCheckpointPaths(op: string, fingerprint: string): Promise<void>;
+  /**
+   * The first completed key of each named checkpoint parent (`completed_keys->0`; null for an empty array), one entry
+   * per parent found, in no stated order (engine-sql/op-checkpoint.ts). The sync import provenance records
+   * (persistence/sync-holds.ts) are read this way; inside `transaction()` the read sees the transaction's writes.
+   */
+  readOpCheckpointRecords(op: string, fingerprints: readonly string[]): Promise<unknown[]>;
+  /** Each row's checkpoint parent set to the one-element array `[record]`, stamped now; each fingerprint at most once (sync-holds.ts recordSyncImportProvenances). */
+  writeOpCheckpointRecords(op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>): Promise<void>;
+  /**
+   * A sync pass's `I⋈P` (engine-sql/sync-pass-pages.ts): the source's pages with a recorded origin and the fields of their
+   * import records, for the named page ids or the keyset page after `after`, in page id order.
+   */
+  readSyncImportPageRows(q: SyncImportPageQuery, window: SyncImportPageWindow): Promise<SyncImportPageRow[]>;
+  /** Opens the transaction's whole-source `I⋈P` cursor (Postgres's full read); read it with `fetchSyncImportPageCursor`. */
+  declareSyncImportPageCursor(q: SyncImportPageQuery): Promise<void>;
+  /** The open `I⋈P` cursor's next `rows` rows; fewer means it is done. */
+  fetchSyncImportPageCursor(rows: number): Promise<SyncImportPageRow[]>;
+  /** The principal's request rows under `requestIds`, only committed ones when `committedOnly` (engine-sql/sync-run-reads.ts; sync-admitted.ts readAdmitted). */
+  readAdmittedWriteRequests(principalKind: string, principalId: string, requestIds: readonly string[], committedOnly: boolean): Promise<WriteRequest[]>;
+  /** Page `pageId` of `sourceId`: its live revision and the request row id that wrote it; null for no page (sync-concurrent-write.ts). */
+  readPageRevisionWriter(pageId: number, sourceId: string): Promise<PageRevisionWriter | null>;
+  /** The journal request with row id `id`, projected to the `concurrent_write` proof's columns; null when absent. */
+  readRevisionWriterRequest(id: string): Promise<RevisionWriterRequest | null>;
+  /** The `sync.admission` dating row `[{value, set_at}]` written with the database clock; returns `set_at` as stored (sync-admission.ts writeSyncAdmission). */
+  writeSyncAdmissionStamp(op: string, fingerprint: string, value: string): Promise<string>;
+  /** `sync status`'s two `effective` probes of a restricted `sync.admission` (engine-sql/sync-admission.ts; sync-admission.ts syncAdmissionStatus). */
+  readSyncAdmissionEffects(input: SyncAdmissionEffectsInput): Promise<{ pinned: boolean; destructive: boolean }>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */
@@ -3546,6 +3578,12 @@ export interface BrainEngine {
    * absent. Reads the table itself, not the request config snapshot (`getConfig` / `getAllConfig` honor that).
    */
   getConfigValues(keys: readonly string[]): Promise<Array<{ key: string; value: string }>>;
+  /**
+   * One config key's stored value (null without a row), never from the request snapshot: inside `transaction()` on its
+   * connection, so a value read twice in one transaction is the same (persistence/sync-admission.ts readSyncAdmission);
+   * outside one, under a preparer's read deadline, it ends there as the raw statement did (bounded-reads.ts).
+   */
+  readStoredConfigValue(key: string): Promise<string | null>;
 
   /**
    * The `enabled` value of every `persistence_brain` singleton row, as stored (a healthy brain has exactly one boolean).

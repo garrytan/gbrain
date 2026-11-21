@@ -63,7 +63,8 @@ import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
 export { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP };
 export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
-export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
+import { SYNC_IMPORT_PROVENANCE_OP } from './sync-pass-pages-sql.ts';
+export { SYNC_IMPORT_PROVENANCE_OP };
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
 export const SYNC_CONVERSION_OP = 'sync-conversions';
 /** How many conversions the log keeps per source. */
@@ -1345,36 +1346,32 @@ export function syncImportParsers(schemaPack: string | null): (path: string) => 
 
 const provenanceFingerprint = (sourceId: string, incarnation: string, pageId: number) => `${sourceId}:${incarnation}:${pageId}`;
 
-export async function recordSyncImportProvenance(tx: Exec, value: Omit<SyncImportProvenance, 'recorded_at' | 'validated'>): Promise<void> {
+/** The engine members the provenance records go through (engine-sql/op-checkpoint.ts), so a Rust brain serves them from its store. */
+type ProvenanceExec = Pick<BrainEngine, 'readOpCheckpointRecords' | 'writeOpCheckpointRecords'>;
+
+export async function recordSyncImportProvenance(tx: ProvenanceExec, value: Omit<SyncImportProvenance, 'recorded_at' | 'validated'>): Promise<void> {
   const record: SyncImportProvenance = { ...value, validated: true, recorded_at: new Date().toISOString() };
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(value.source_id, value.incarnation, value.page_id), JSON.stringify([record])]);
+  await tx.writeOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [{ fingerprint: provenanceFingerprint(value.source_id, value.incarnation, value.page_id), record }]);
 }
 
 /** Several pages' provenance in one statement (a waiver run); the last value for a page wins. */
-export async function recordSyncImportProvenances(tx: Exec, values: ReadonlyArray<Omit<SyncImportProvenance, 'recorded_at' | 'validated'>>): Promise<void> {
+export async function recordSyncImportProvenances(tx: ProvenanceExec, values: ReadonlyArray<Omit<SyncImportProvenance, 'recorded_at' | 'validated'>>): Promise<void> {
   if (!values.length) return;
   const recorded_at = new Date().toISOString();
   const rows = new Map(values.map(value => [provenanceFingerprint(value.source_id, value.incarnation, value.page_id), { ...value, validated: true, recorded_at }]));
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-    SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [SYNC_IMPORT_PROVENANCE_OP, JSON.stringify([...rows].map(([fingerprint, record]) => ({ fingerprint, record })))]);
+  await tx.writeOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [...rows].map(([fingerprint, record]) => ({ fingerprint, record })));
 }
 
 /** The provenance of several pages in one statement, keyed by page id; pages without a record are absent. */
-export async function readSyncImportProvenances(engine: Exec, sourceId: string, incarnation: string, pageIds: readonly number[]): Promise<Map<number, SyncImportProvenance>> {
+export async function readSyncImportProvenances(engine: ProvenanceExec, sourceId: string, incarnation: string, pageIds: readonly number[]): Promise<Map<number, SyncImportProvenance>> {
   if (!pageIds.length) return new Map();
-  const rows = await engine.executeRaw<{ record: SyncImportProvenance }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])',
-    [SYNC_IMPORT_PROVENANCE_OP, pageIds.map(id => provenanceFingerprint(sourceId, incarnation, id))]);
-  return new Map(rows.map(row => [Number(row.record.page_id), row.record]));
+  const records = await engine.readOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, pageIds.map(id => provenanceFingerprint(sourceId, incarnation, id))) as SyncImportProvenance[];
+  return new Map(records.map(record => [Number(record.page_id), record]));
 }
 
-export async function readSyncImportProvenance(engine: Exec, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
-  const [row] = await engine.executeRaw<{ record: SyncImportProvenance }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(sourceId, incarnation, pageId)]);
-  return row?.record ?? null;
+export async function readSyncImportProvenance(engine: ProvenanceExec, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
+  const [record] = await engine.readOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [provenanceFingerprint(sourceId, incarnation, pageId)]) as Array<SyncImportProvenance | null>;
+  return record ?? null;
 }
 
 export interface RecoveredFrontmatter {

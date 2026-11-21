@@ -175,7 +175,7 @@ src/core/persistence/publication-deadline.ts	kind_compare	2
 src/core/persistence/service.ts	kind_compare	3
 src/core/persistence/sync-group.ts	kind_compare	1
 src/core/persistence/sync-pass-fold.ts	kind_compare	1
-src/core/persistence/sync-pass.ts	kind_compare	8
+src/core/persistence/sync-pass.ts	kind_compare	7
 src/core/persistence/sync-run.ts	kind_compare	1
 src/core/persistence/unbound-source.ts	kind_compare	1
 src/core/persistence/worktree-refresh.ts	kind_compare	1

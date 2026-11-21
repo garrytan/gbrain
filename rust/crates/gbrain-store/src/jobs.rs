@@ -251,6 +251,15 @@ fn lock_key(id: &str) -> Vec<u8> {
     k
 }
 
+/// The acquisition token of cycle lock `id` while its lease is live (`ttl_expires_at > now`), as
+/// `gbrain_cycle_locks.acquisition_token::text`: what `sync status`'s pinned-pass probe joins
+/// (persistence/sync-admission-sql.ts `effectProbes`).
+pub(crate) fn live_lock_token(read: &dyn KvRead, id: &str, now: i64) -> Result<Option<String>> {
+    Ok(get_json::<LockRecord>(read, &lock_key(id))?
+        .filter(|l| l.ttl_expires_at > now)
+        .map(|l| l.acquisition_token))
+}
+
 fn last_id(key: &[u8]) -> Option<i64> {
     let tail: [u8; 8] = key.get(key.len().checked_sub(8)?..)?.try_into().ok()?;
     Some((u64::from_be_bytes(tail) ^ (1 << 63)) as i64)

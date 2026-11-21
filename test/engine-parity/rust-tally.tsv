@@ -65,6 +65,7 @@ test/engine-parity/harness-consumer-stop.test.ts	2	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/holding-page-purges.test.ts	2	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
+test/engine-parity/import-folder-stamp.test.ts	3	0
 test/engine-parity/import-members.test.ts	9	0
 test/engine-parity/import-path.test.ts	5	3
 test/engine-parity/import-writes.test.ts	11	0
@@ -125,7 +126,12 @@ test/engine-parity/source-verify-reads.test.ts	2	0
 test/engine-parity/spend-log.test.ts	11	0
 test/engine-parity/stats-vectors.test.ts	3	0
 test/engine-parity/stats.test.ts	7	0
+test/engine-parity/sync-admission-effects.test.ts	7	0
+test/engine-parity/sync-admission.test.ts	3	0
 test/engine-parity/sync-aliases.test.ts	10	0
+test/engine-parity/sync-import-provenance.test.ts	4	0
+test/engine-parity/sync-pass-pages.test.ts	3	1
+test/engine-parity/sync-run-reads.test.ts	3	0
 test/engine-parity/takes.test.ts	28	0
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/timeline-reads.test.ts	4	0

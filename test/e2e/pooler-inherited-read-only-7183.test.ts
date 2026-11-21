@@ -81,6 +81,13 @@ describeDb(`writes on read-only-default server connections (${pooled ? 'pgbounce
     expect(await engine!.executeRaw('SELECT 1 FROM sources WHERE id = $1', [id])).toHaveLength(1);
   });
 
+  test('the folder-source sync stamp writes outside any transaction', async () => {
+    const id = `ro-${randomUUID().slice(0, 8)}`;
+    await engine!.executeRaw('INSERT INTO sources(id, name) VALUES ($1, $1)', [id]);
+    expect(await engine!.markSourceSynced(id)).toBe(true);
+    expect((await engine!.getSource(id))?.last_sync_at).toBeInstanceOf(Date);
+  });
+
   test('typed autocommit writes outside any transaction write: writer registration and page upkeep', async () => {
     const id = randomUUID();
     const grant = { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null };

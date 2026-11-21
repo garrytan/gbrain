@@ -122,6 +122,15 @@ export async function setSourceChunkerVersion(exec: SqlExecutor, sourceId: strin
 }
 
 /**
+ * Sets the source's last sync time to the database clock (`now()`): the stamp a clean `gbrain import` of a folder
+ * source makes (#1691). Returns whether the source exists; an unknown source changes nothing.
+ */
+export async function markSourceSynced(exec: SqlExecutor, sourceId: string): Promise<boolean> {
+  const rows = await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id', [sourceId]);
+  return rows.length > 0;
+}
+
+/**
  * Ids of live sources whose last sync is more than seven days old by the database clock (`now()`), by id: the
  * advisor's stale-sync read. Unscoped on master. Throws on a schema without `last_sync_at` or `archived`.
  */
