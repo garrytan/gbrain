@@ -83,6 +83,7 @@ for (const kind of testBackends()) {
     });
 
     test('an activation row on a text page is a running rebuild, counted over the pages in scope', async () => {
+      await queueActivation('media/frame-example', true);
       await queueActivation('notes/alpha-example');
       const rebuild = await progress();
       expect(rebuild).not.toBeNull();
