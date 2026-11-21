@@ -4,7 +4,6 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/google-source.ts';
 import { parseGitHubSourceConfig, runGitHubSync } from '../src/core/github-source.ts';
-import { beginConnectorSync } from '../src/core/persistence/connector-sync.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { readManagedConnectorState, writeManagedConnectorState, type ConnectorRunFailure } from '../src/core/persistence/connector-state.ts';
@@ -174,20 +173,19 @@ test('#9968: sources status and sync status do not report a recovery_required st
 
 test('#9968: a --full sweep stopped at its deadline keeps unreached retries, its recorded failure and the re-walk', async () => withEnv(env, async () => {
   for (const engine of engines) {
-    const f = await boundSource(engine, githubConfig);
-    const cfg = parseGitHubSourceConfig(githubConfig, f.dir);
-    await runGitHubSync(engine, f.id, cfg, options, githubFetch());
-    await settleConnectorWrites(engine, f.id);
+    const { f, cfg } = await seedFrozenFloor(engine);
     const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [f.id]);
+    // A failed item carried from an earlier run that this run never reaches, an earlier failure and an open upgrade re-walk.
+    const unreached = { itemRef: 'mail/unreached-example', requestId: randomUUID(), baseRequestId: randomUUID(), admittedAt: new Date().toISOString() };
     const failure = { code: 'storage_error', message: 'Synthetic earlier failure.', slug: null, request_id: null, at: new Date(Date.now() - DAY).toISOString(), consecutive: 1 };
+    const before = await readManagedConnectorState(engine, f.id, source.incarnation);
     await writeManagedConnectorState(engine, f.id, source.incarnation,
-      { ...await readManagedConnectorState(engine, f.id, source.incarnation), last_failure: failure, upgrade_recovery: 'rewalking_once' });
-    const session = (await beginConnectorSync(engine, f.id, 'github', cfg, { ...options, full: true }))!;
-    // The run banked its cursor, then the deadline stopped it before it reached a failed item carried from an earlier run.
-    const unreached = { itemRef: 'gh/acme-example/app/9', requestId: randomUUID(), baseRequestId: randomUUID(), admittedAt: new Date().toISOString() };
-    Object.assign(session as unknown as Record<string, unknown>, { carried: [unreached], lastSaveCommitted: true });
-    session.stoppedAtDeadline = true;
-    await session.finish();
+      { ...before, pending: [...before.pending, unreached], last_failure: failure, upgrade_recovery: 'rewalking_once' });
+    // Batch one of the re-walk banks its cursor; from batch two the provider is slow and the deadline stops the sweep.
+    const sweep = gmail(cfg.account, { slowFrom: 26, slowMs: 120_000 });
+    const result = await runGoogleSync(engine, f.id, cfg, { ...options, full: true, deadlineAtMs: Date.now() + 15_000 }, sweep.fetcher);
+    expect(result).toMatchObject({ status: 'partial', reason: 'timeout' });
+    await settleConnectorWrites(engine, f.id);
     await disposePersistenceConsumer(engine);
     const state = await connectorState(engine, f.id);
     expect(state.pending.map(entry => entry.requestId)).toContain(unreached.requestId);
@@ -195,7 +193,7 @@ test('#9968: a --full sweep stopped at its deadline keeps unreached retries, its
     expect(state.last_failure?.code).toBe('storage_error');
     expect(state.upgrade_recovery).toBe('rewalking_once');
   }
-}), 120_000);
+}), 300_000);
 
 test('#9968: a real retained publication keeps the stop, and the sync refuses within its deadline naming the receipt to read', async () => withEnv({ ...env, GBRAIN_WRITE_WAIT_MS: '30000' }, async () => {
   for (const engine of engines) {
