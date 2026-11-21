@@ -14,7 +14,7 @@ import type { ResolvedPack } from '../schema-pack/registry.ts';
 import type { CompanyBrainPlan, InspectionEntry } from './types.ts';
 import type { SourceIngestionCheckpoint } from './receipts.ts';
 import { companyBrainProfile, companyBrainPolicyFingerprint, type CompanyBrainProfile } from './policy.ts';
-import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { keepTierTransaction } from '../persistence/attribution.ts';
 import { syncDispatchRow } from '../sync-dispatch-read.ts';
 export { companyBrainProfile, type CompanyBrainProfile } from './policy.ts';
 
@@ -80,7 +80,7 @@ export async function withCompanyBrainSource<T>(engine: BrainEngine, sourceId: s
 }
 
 export function softDeleteSyncPages(engine: BrainEngine, slugs: string[], opts: { sourceId: string }): Promise<string[]> {
-  return withCompanyBrainSource(engine, opts.sourceId, tx => maintenanceTransaction(tx, inner => inner.softDeletePages(slugs, opts)));
+  return withCompanyBrainSource(engine, opts.sourceId, tx => keepTierTransaction(tx, inner => inner.softDeletePages(slugs, opts)));
 }
 
 export async function readCompanyBrainPlan(engine: BrainEngine, receiptId: string): Promise<CompanyBrainPlan> {

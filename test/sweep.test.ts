@@ -683,15 +683,16 @@ describe('runMaintenanceSweep — bounded link resolution (no listAllPageRefs)',
     }));
     expect(r.timelineExtracted).toBe(1);
     expect(log).not.toContain('listAllPageRefs');
-    // Exactly four reads: the pass-1 fence scan, the pass-2 recency
+    // Exactly five reads: the pass-1 fence scan, the pass-2 recency
     // scan, the managed-brain check that picks the timeline write path (a
-    // managed brain publishes per page through the coordinator) and the
+    // managed brain publishes per page through the coordinator), the tier
+    // lookup that lets the timeline rows carry their page's tier, and the
     // maintenance principal's brain_id lookup the attributed timeline batch
     // makes (an installation with a CLI registration adds one query that
     // verifies it, once per engine). The two persistence reads are typed
     // engine methods; the rest are raw. No candidates ⇒ no ref-lookup query.
     const reads = ['executeRaw', 'readManagedModeRows', 'readPersistenceBrainId'];
-    expect(log.filter((m) => reads.includes(m)).length).toBe(4);
+    expect(log.filter((m) => reads.includes(m)).length).toBe(5);
   });
 });
 

@@ -106,6 +106,20 @@ export function requestChannelTrust(row: Pick<WriteRequest, 'id' | 'operation' |
   return undefined;
 }
 
+/**
+ * The tier a local gbrain verb run by the owner's agent earns for text the agent wrote (`cli:put_page` and its kin in
+ * AGENT_WRITE_OPERATIONS): agent_written. A direct (unjournaled) write by such a verb declares it with this, as a
+ * journaled one gets it from `requestChannelTrust`.
+ */
+export function agentVerbTrust(channel: string): WriteTrust {
+  return effectiveWriteTrust({ channel: 'agent_written', origin: { channel } });
+}
+
+/** The tier a connector, webhook or other third-party feed earns for what it fetched: external_untrusted. */
+export function externalFeedTrust(channel: string): WriteTrust {
+  return effectiveWriteTrust({ channel: 'external_untrusted', origin: { channel } });
+}
+
 const str = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 
 /**

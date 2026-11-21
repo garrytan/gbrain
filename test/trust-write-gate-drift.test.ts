@@ -82,7 +82,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/schema-pack/page-to-link.ts': 'schema-pack retype of existing pages',
   'src/core/schema-pack/retype.ts': 'schema-pack retype of existing pages',
   'src/core/schema-pack/sync.ts': 'schema-pack sync of existing pages',
-  'src/core/sweep.ts': 're-derives links and timeline rows from stored page text',
   'src/core/takes-write.ts': 'shared fence helpers; the takes_* verbs gate in takes-prepare.ts',
   'src/core/timeline-dedup-repair.ts': 'owner repair deduplicating existing timeline rows',
   'src/core/timeline-write-through.ts': 'rendering helpers for add_timeline_entry, which gates the row in semantic-pages.ts',

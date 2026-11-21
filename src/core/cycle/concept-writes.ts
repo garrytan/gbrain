@@ -84,8 +84,8 @@ export function conceptWriter(deps: ConceptWriterDeps) {
       // #9653: a rebuild imports inside its locked transaction, so its chunks wait for the embedding backlog instead.
       const rebuild = write.rebuild && 'page_id' in write.rebuild ? write.rebuild : undefined;
       write.baseline = await publishClassicConcept(engine, write.conceptSlug, src, write.synthesized(pageVisibility), write.narrative,
-        write.baseline, { writeThrough: deps.writeThrough, members: write.atomSlugs, rebuild, importPage: (markdown, tx) => importFromContent(tx ?? engine, write.conceptSlug, markdown, {
-          noEmbed: !!rebuild || !isAvailable('embedding'), sourceId: deps.importSourceId, preserveGateMarkers: true,
+        write.baseline, { writeThrough: deps.writeThrough, members: write.atomSlugs, rebuild, importPage: (markdown, tx, writeTrust) => importFromContent(tx ?? engine, write.conceptSlug, markdown, {
+          noEmbed: !!rebuild || !isAvailable('embedding'), sourceId: deps.importSourceId, preserveGateMarkers: true, writeTrust,
         }) });
       if (write.rebuild) { write.rebuilt = true; write.rebuild = undefined; }
       return true;

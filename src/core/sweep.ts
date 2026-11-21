@@ -53,7 +53,7 @@ import type { CorpusFactTime } from './context/corpus-windows.ts';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from './engine.ts';
 import type { FactsBackstopCtx } from './facts/backstop.ts';
 import type { CapabilityReport } from './capability.ts';
-import { maintenanceTransaction } from './persistence/attribution.ts';
+import { addProjectedTimelineBatch } from './trust/timeline-projection.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
 import { isSegmentedPage } from './page-body/page-shape.ts';
 import { speakerOf } from './context/session-speaker.ts';
@@ -585,7 +585,7 @@ async function runLinksTimelinePass(
         }
       }
     } else if (tlBatch.length > 0) {
-      report.timelineExtracted += await maintenanceTransaction(engine, tx => tx.addTimelineEntriesBatch(tlBatch)); // gbrain-allow-direct-insert: same extract-path rationale as addLinksBatch above [CX-P0.3]
+      report.timelineExtracted += await addProjectedTimelineBatch(engine, tlBatch); // gbrain-allow-direct-insert: same extract-path rationale as addLinksBatch above [CX-P0.3]; rows carry their page's tier
     }
 
     // #4196: reconcile removals. The sweep is the ONLY link extraction remote

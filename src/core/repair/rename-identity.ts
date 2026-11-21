@@ -37,6 +37,7 @@ import { parseFactsFence } from '../facts-fence.ts';
 import { importFile } from '../import-file.ts';
 import { movePageIdReferences } from '../page-state/rename-alias.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { lockedBeliefBatch } from '../belief/writers.ts';
@@ -246,7 +247,8 @@ async function carryIdentity(engine: BrainEngine, record: IdentityDowngrade, has
     if (checks.some(collides)) throw factRowsCollide(record, checks);
     const oldId = live.old.page_id, provisionalId = live.new.page_id, retired = purgedSlug(newSlug, provisionalId);
     const merged = checks.filter(check => check.new_id !== null);
-    await lockedBeliefBatch(tx, { sourceId, slugs: [oldSlug, newSlug], publicationId, op: 'rename_identity', remote: false, report }, async () => {
+    // Moving rows between two pages authors nothing: the pages and facts keep their tiers (the file import below declares its own).
+    await lockedBeliefBatch(tx, { sourceId, slugs: [oldSlug, newSlug], publicationId, op: 'rename_identity', remote: false, report }, () => withTrustKeep(tx, ['pages', 'facts'], async () => {
       for (const check of merged) {
         await tx.executeRaw('UPDATE facts SET superseded_by = $1 WHERE superseded_by = $2', [check.old_id, check.new_id]);
         await tx.executeRaw(`UPDATE facts o SET kind = n.kind, visibility = n.visibility, notability = n.notability, context = n.context,
@@ -260,7 +262,7 @@ async function carryIdentity(engine: BrainEngine, record: IdentityDowngrade, has
       // origin-guard-ok: assertOriginUnclaimed above revives and assigns in the same transaction
       await tx.executeRaw('UPDATE pages SET deleted_at = NULL, source_path = $1, updated_at = now() WHERE id = $2', [record.to, oldId]);
       await movePageIdReferences(tx, provisionalId, oldId);
-    });
+    }));
     const imported = await importFile(tx, file.path, record.to, { noEmbed: true, sourceId });
     if (imported.slug !== newSlug || imported.error) throw changedSincePreview(record, `the new file did not import onto ${newSlug} (${imported.error ?? imported.slug})`);
     if (!await settleIdentityDowngrade(tx, oldId, 'remedied')) throw changedSincePreview(record, 'its record was settled since the preview');

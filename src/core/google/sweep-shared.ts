@@ -11,6 +11,7 @@ import type { SyncOpts } from '../../commands/sync.ts';
 import type { CredentialEntry } from '../creds/vault.ts';
 import type { ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { connectorRender } from '../connectors/connector-text.ts';
+import { externalFeedTrust } from '../trust/channel.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { mkdirPrivate } from '../atomic-write.ts';
 import { replaceableFile, type StoredBody } from '../facts/file-body-guard.ts';
@@ -191,7 +192,9 @@ export async function importRendered(
       ...(activePack ? { activePack } : {}),
     };
     const result = databaseOnly
-      ? await importFromContent(deps.engine, slug, markdown, { ...opts, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true })
+      ? await importFromContent(deps.engine, slug, markdown, { ...opts, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true,
+        // Fetched from Google: a third-party feed, as the managed connector sync declares it.
+        writeTrust: externalFeedTrust('connector:google') })
       : await importFile(deps.engine, tmpPath, relPath, opts);
     if (result.status === 'error' || result.error) {
       throw new Error(result.error ?? `Import failed for ${relPath}`);

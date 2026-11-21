@@ -5378,7 +5378,8 @@
           "noEmbed?: boolean | undefined",
           "ocrConcurrency?: number | undefined",
           "prepare?: ((prepared: Omit<PreparedContentImport, \"parsedPage\">) => Promise<ImportResult>) | undefined",
-          "sourceId?: string | undefined"
+          "sourceId?: string | undefined",
+          "writeTrust?: WriteTrust | undefined"
         ],
         "name": "ImportImageOptions"
       },
@@ -5423,7 +5424,8 @@
           "page: PageInput",
           "safeChunks?: boolean | undefined",
           "slug: string",
-          "sourceId?: string | undefined"
+          "sourceId?: string | undefined",
+          "writeTrust?: WriteTrust | undefined"
         ],
         "name": "ImportTransactionSpec"
       },
@@ -5478,7 +5480,7 @@
         "kind": "function",
         "name": "importCodeFile",
         "signature": [
-          "(engine: BrainEngine, relativePath: string, content: string, opts?: { noEmbed?: boolean; force?: boolean; sourceId?: string; history?: VersionHistory; prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; }) => Promise<ImportResult>"
+          "(engine: BrainEngine, relativePath: string, content: string, opts?: { noEmbed?: boolean; force?: boolean; sourceId?: string; history?: VersionHistory; writeTrust?: WriteTrust; prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; }) => Promise<ImportResult>"
         ]
       },
       {
@@ -5492,7 +5494,7 @@
         "kind": "function",
         "name": "importFromContent",
         "signature": [
-          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; history?: VersionHistory; coordinated?: boolean; boundedChunkWrites?: true; existingSnapshot?: PageSnapshot | null; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; segmentedOwner?: SegmentedStagingOwner; reuseSegments?: SegmentedImport; remote?: boolean; restoreHeldRows?: boolean; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; overrideTier?: unknown; writeGate?: WriteGateInput; holdNoncanonicalPrivate?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; expectedBaseRevision?: string | null; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
+          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; history?: VersionHistory; coordinated?: boolean; boundedChunkWrites?: true; existingSnapshot?: PageSnapshot | null; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; segmentedOwner?: SegmentedStagingOwner; reuseSegments?: SegmentedImport; remote?: boolean; restoreHeldRows?: boolean; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; overrideTier?: unknown; writeGate?: WriteGateInput; writeTrust?: WriteTrust; keepTier?: boolean; holdNoncanonicalPrivate?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; expectedBaseRevision?: string | null; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
         ]
       },
       {
@@ -5521,6 +5523,13 @@
         "name": "loadBrainTimeZone",
         "signature": [
           "(engine: BrainEngine) => Promise<string | undefined>"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "ownerFileTrust",
+        "signature": [
+          "(engine: Pick<BrainEngine, \"executeRaw\">, sourceId: string, frontmatter?: Record<string, unknown> | null, sourceUri?: string | null) => Promise<WriteTrust>"
         ]
       },
       {

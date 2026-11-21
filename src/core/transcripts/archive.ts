@@ -43,6 +43,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { importFromContent } from '../import-file.ts';
+import { agentVerbTrust } from '../trust/channel.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { isTerminalWriteState, type WriteRequestState } from '../persistence/types.ts';
@@ -1059,7 +1060,9 @@ async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { 
             }));
             continue;
           }
-          const r = await importFromContent(engine, part.slug, part.content, { sourceId, noEmbed: true, ...provenance(w.harness) });
+          const r = await importFromContent(engine, part.slug, part.content, { sourceId, noEmbed: true, ...provenance(w.harness),
+            // Relayed session text, as the coordinated path (a CLI put_page) declares it.
+            writeTrust: agentVerbTrust('cli:transcripts-archive') });
           if (r.status === 'error') throw new Error('the page write for ' + part.slug + ' returned an error');
         }
         for (const stale of w.staleSlugs) {

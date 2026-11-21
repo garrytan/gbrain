@@ -129,7 +129,7 @@ async function rewritePage(engine: BrainEngine, page: Candidate, snapshot: NonNu
     type: (snapshot.page.type as PageType) ?? 'note', title: snapshot.page.title ?? '', tags: snapshot.tags,
   });
   if (!managed) {
-    await importFromContent(engine, page.slug, markdown, { sourceId: page.source_id, noEmbed: true, forceRechunk: true, preserveGateMarkers: true });
+    await importFromContent(engine, page.slug, markdown, { sourceId: page.source_id, noEmbed: true, forceRechunk: true, preserveGateMarkers: true, keepTier: true });
     return;
   }
   const config = loadConfig() ?? { engine: engine.kind };

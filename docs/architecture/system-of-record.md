@@ -235,7 +235,7 @@ Attributed (inside a request, a coordinated scope or `maintenanceTransaction`,
 or a physical projection that leaves attribution untouched):
 
 <!-- write-attribution-covered:start -->
-- `src/commands/extract-timeline-db.ts` (2): `gbrain extract timeline --source db` commits one `maintenanceTransaction` per 100-row batch on unmanaged brains; managed brains publish per page through a maintenance request.
+- `src/commands/extract-timeline-db.ts` (1): `gbrain extract timeline --source db` flushes each 100-row batch on unmanaged brains through `addProjectedTimelineBatch` (one `maintenanceTransaction` per page tier, `src/core/trust/timeline-projection.ts`); managed brains publish per page through a maintenance request, whose preparer writes the page's rows under `projectedTimelineTrust`.
 - `src/commands/migrate-engine.ts` (5): engine copy keeps the source rows' attribution values verbatim.
 - `src/commands/sync/holds.ts` (1): a full sync's move of a held rename (`updateSlug` and its `source_path`) runs in one `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
 - `src/commands/sync/rename-collision.ts` (2): the legacy sync rename (`updateSlug`, and the tombstone re-key when the destination slug is a soft-deleted row, #5431) runs with its `source_path` repair in one `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
@@ -269,7 +269,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/facts/unfenced-facts.ts` (1): the cycle and v0.32.2 fence of `row_num`-NULL facts: a maintenance request on managed brains; the unmanaged row-number stamp runs in `maintenanceTransaction` (the body mirror goes through `facts/file-body-guard.ts`).
 - `src/core/facts/withdrawal.ts` (1): runs inside the `forget` request's coordinated write.
 - `src/core/persistence/twin-merge.ts` (5): the #6948 twin merge runs in the `managed_maintenance_resolve_origin_twin` preparer's coordinated transaction on managed brains and in one `maintenanceTransaction` on unmanaged brains (`gbrain repair origin-twins` and the post-sync heal); `gbrain repair legacy-twins` calls it from a receipted `managed_maintenance_merge_legacy_twin` request on managed brains and from one `maintenanceTransaction` under both page locks on unmanaged brains.
-- `src/core/trust/timeline-projection.ts` (2): `gbrain extract` timeline walks (file, incremental, stale) and the per-entry fallback write through it: one `maintenanceTransaction` per page tier.
+- `src/core/trust/timeline-projection.ts` (2): `gbrain extract` timeline walks (file, incremental, stale), the database extract's unmanaged flush, the maintenance sweep's bounded timeline batch and the per-entry fallback write through it: one `maintenanceTransaction` per page tier.
 - `src/core/facts/write-single.ts` (2): the legacy single-fact insert and its supersession link each run in `maintenanceTransaction`; managed brains publish through the fact request.
 - `src/core/generations/adapters/atoms.ts` (1): the unmanaged atom completion stamp (`source_hash`) runs inside the generation activation's `maintenanceTransaction` (`publish.ts`, GBRA-161).
 - `src/core/generations/adapters/chronicle-events.ts` (3): Life Chronicle event writes, their timeline projection rows and the retirement of dropped events run inside the generation activation's `maintenanceTransaction` (`publish.ts`) on unmanaged brains and inside the coordinated `managed_generation_activate` / `managed_generation_restore` requests on managed brains (GBRA-161 PR 3); a restore runs in the restore runner's (`repair.ts`).
@@ -336,7 +336,6 @@ or a physical projection that leaves attribution untouched):
 - `src/core/schema-pack/page-to-link.ts` (1): the page-to-link conversion soft-deletes each converted page in `maintenanceTransaction`.
 - `src/core/schema-pack/retype.ts` (1): each bounded retype batch runs in `maintenanceTransaction`.
 - `src/core/schema-pack/sync.ts` (1): each bounded pack type sync batch runs in `maintenanceTransaction`.
-- `src/core/sweep.ts` (1): the maintenance sweep's bounded timeline batch runs in `maintenanceTransaction`.
 - `src/core/takes-write.ts` (7): the takes file helpers' DB mirror (add, append, update, supersede, resolve and its self-heal) runs in `maintenanceTransaction`; managed brains publish through the takes request preparer.
 - `src/core/timeline-dedup-repair.ts` (1): runs only from schema migration v139, before migration v193 adds the attribution columns, so it has no actor to record.
 - `src/core/timeline-write-through.ts` (2): the timeline write-through's page row splice and entry insert run in one `maintenanceTransaction`.

@@ -1,5 +1,5 @@
 import { PGLiteEngine } from '../pglite-engine.ts';
-import { importFromContent } from '../import-file.ts';
+import { importFromContent, ownerFileTrust } from '../import-file.ts';
 import { loadResolvedPackByName } from '../schema-pack/load-active.ts';
 import { reconcileSourceLinks } from '../link-reconciliation.ts';
 import type { RegistryCode } from '../error-registry.ts';
@@ -34,6 +34,7 @@ export async function runCompanyBrainDemo(): Promise<CompanyBrainDemoResult> {
       const imported = await importFromContent(engine, page.slug, page.content, {
         sourceId, noEmbed: true, remote: false, activePack: pack.manifest,
         sourcePath: `${page.slug}.md`, ingested_via: 'company-brain-demo',
+        writeTrust: await ownerFileTrust(engine, sourceId),
       });
       if (!['imported', 'skipped'].includes(imported.status)) throw demoFailure('demo_import_failed', 'The fictional page did not import successfully.');
     }

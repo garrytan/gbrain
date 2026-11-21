@@ -24,7 +24,8 @@ import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { acquirePageLock } from '../page-lock.ts';
 import { derivedFileTarget, writeDerivedPageThrough } from './derived-write-through.ts';
 import { fileDatabaseDriftToken, replaceableFile } from '../facts/file-body-guard.ts';
-import { declareDerivation, deriveTrust, lowerDerivedPage, lowerDerivedPageIn } from '../trust/taint.ts';
+import { declareDerivation, derivedWriteTrust, deriveTrust, lowerDerivedPage, lowerDerivedPageIn } from '../trust/taint.ts';
+import type { WriteTrust } from '../trust/tier.ts';
 import { rebuildHeldConcept, type ConceptRebuild } from '../persistence/concept-rebuild.ts';
 
 /** #5575 I2: the narrative carries the tier of the member atoms its prompt was built from (capped at agent_written). */
@@ -265,7 +266,7 @@ export function stripFenceSections(body: string): string {
  */
 export async function publishClassicConcept(engine: BrainEngine, slug: string, sourceId: string,
   synthesized: Record<string, unknown>, narrative: string, baseline: string,
-  opts: { writeThrough: boolean; importPage: (markdown: string, tx?: BrainEngine) => Promise<unknown>; members?: readonly string[]; rebuild?: ConceptRebuild }): Promise<string> {
+  opts: { writeThrough: boolean; importPage: (markdown: string, tx: BrainEngine | undefined, trust: WriteTrust) => Promise<unknown>; members?: readonly string[]; rebuild?: ConceptRebuild }): Promise<string> {
   const lock = await acquirePageLock(slug, { timeoutMs: 5_000 });
   if (!lock) throw Object.assign(new Error('The concept page is locked by another writer.'), { code: 'revision_conflict' });
   try {
@@ -289,14 +290,16 @@ export async function publishClassicConcept(engine: BrainEngine, slug: string, s
     // The import stamps the page by its own channel; the derivation lowers it to the members' taint and records the edges,
     // for a rebuild in its transaction, so a member purged after it commits finds the fresh page (GST-3179).
     const derivation = opts.members ? await conceptDerivation(engine, sourceId, opts.members) : null;
+    // The import declares it: the members' derivation, or a model-written concept's agent_written when no members are named.
+    const trust = derivation?.trust ?? derivedWriteTrust({ channel: 'derive:concepts', inputs: [] });
     if (rebuild) {
       const attribution = derivation ? { ...await maintenanceAttribution(engine), trust: derivation.trust } : null;
       await rebuildHeldConcept(engine, sourceId, slug, rebuild, async tx => {
-        await opts.importPage(markdown, tx);
+        await opts.importPage(markdown, tx, trust);
         if (derivation && attribution) await withWriteAttribution(tx, attribution, () => lowerDerivedPageIn(tx, derivation, sourceId, slug));
       });
     } else {
-      await opts.importPage(markdown);
+      await opts.importPage(markdown, undefined, trust);
       if (derivation) await lowerDerivedPage(engine, derivation, sourceId, slug);
     }
     if (file && (file.expectedFileBytes !== null || opts.writeThrough)) {

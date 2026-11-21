@@ -1,7 +1,7 @@
 import { currentVerifiedLocalWriter, existingHostIdFor, readLocalWriter, type LocalWriterEngine } from './identity.ts';
 import type { Principal, SqlEngine, WriteRequest } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
-import { withWriteAttribution } from './context.ts';
+import { withTrustKeep, withWriteAttribution } from './context.ts';
 import type { WriteTrust } from '../trust/tier.ts';
 import { requestChannelTrust } from '../trust/channel.ts';
 export { ownerSourceGateInput, suppliedTrustMarkerView, trustMarkerChanged, writeTrustOfGate } from '../trust/channel.ts';
@@ -87,4 +87,13 @@ const installationRegistration = new WeakMap<object, Promise<string>>();
 export async function maintenanceTransaction<T>(engine: BrainEngine, fn: (tx: BrainEngine) => Promise<T>, trust?: WriteTrust): Promise<T> {
   const attribution = await maintenanceAttribution(engine);
   return engine.transaction(tx => withWriteAttribution(tx, trust ? { ...attribution, trust } : attribution, () => fn(tx)));
+}
+
+/**
+ * `maintenanceTransaction` for a write that moves or retires stored pages without authoring them (a soft delete, a
+ * type column fix): the pages keep the tier they hold, as a fence edit that authors nothing does (`withTrustKeep`).
+ * A write that authors content declares its tier through `maintenanceTransaction`'s `trust` instead.
+ */
+export function keepTierTransaction<T>(engine: BrainEngine, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  return maintenanceTransaction(engine, tx => withTrustKeep(tx, ['pages'], () => fn(tx)));
 }

@@ -47,6 +47,7 @@ import { assertSourceFilesystemActive, withSourceFilesystemLock } from '../minio
 import { OperationError } from '../ops/contract.ts';
 import { withPageLock } from '../page-lock.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { agentVerbTrust } from '../trust/channel.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet, type ApprovedSetKey } from '../persistence/preview-approval.ts';
 import { resolveSlugForPath } from '../sync.ts';
@@ -179,7 +180,8 @@ async function keepRowsDatabaseOnly(engine: BrainEngine, file: ClonedFile, added
       inserted++;
     }
     return { moved, inserted };
-  });
+    // The rows are ones gbrain's own fact writer appended to the file: they are re-stored as the agent-written rows they were.
+  }, agentVerbTrust('repair:url-clone-fences'));
 }
 
 async function restoreFile(engine: BrainEngine, file: ClonedFile, runId: string): Promise<RepairItemOutcome> {
@@ -199,7 +201,9 @@ async function restoreFile(engine: BrainEngine, file: ClonedFile, runId: string)
   const backup = createFrontmatterBackup(abs, { sourcePath: file.root, backupRoot: gbrainPath('backups', 'url-clone-fences', runId) });
   const { moved, inserted } = await keepRowsDatabaseOnly(engine, file, proof.added);
   const hold = headHold(head!, file.slug)
-    ?? (await importFromContent(engine, file.slug, head!, { sourceId: file.source_id, sourcePath: file.path, sourceRoot: file.root, noEmbed: true, holdNoncanonicalPrivate: true })).refusal;
+    ?? (await importFromContent(engine, file.slug, head!, { sourceId: file.source_id, sourcePath: file.path, sourceRoot: file.root, noEmbed: true, holdNoncanonicalPrivate: true,
+      // Restoring the file's committed head authors nothing new: the page keeps its tier.
+      keepTier: true })).refusal;
   assertSourceFilesystemActive();
   atomicWriteFileSync(abs, head!);
   const detail = { path: file.path, slug: file.slug, backup, rows_moved: moved, rows_inserted: inserted };

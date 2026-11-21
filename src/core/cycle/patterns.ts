@@ -961,7 +961,9 @@ async function writeGroundedPage(engine: BrainEngine, maintenance: MaintenanceAu
   const [{ importFromContent }, { isAvailable }] = await Promise.all([import('../import-file.ts'), import('../ai/gateway.ts')]);
   // A managed publish projects timeline rows from the Markdown; an import does not, so a removed entry's row goes here.
   const write = async (tx: BrainEngine) => {
-    const result = await importFromContent(tx, slug, content, { noEmbed: !isAvailable('embedding'), sourceId, preserveGateMarkers: true });
+    const result = await importFromContent(tx, slug, content, { noEmbed: !isAvailable('embedding'), sourceId, preserveGateMarkers: true,
+      // Without a derivation this verifies a stored page's quotes and authors nothing new: it keeps its tier (a derived write declares its own).
+      ...(derived ? {} : { keepTier: true }) });
     for (const e of removedEntries) {
       await tx.executeRaw('DELETE FROM timeline_entries WHERE page_id = $1 AND event_page_id IS NULL AND date = $2::date AND source = $3 AND summary = $4',
         [snapshot.page.id, e.date, e.source, e.summary]);

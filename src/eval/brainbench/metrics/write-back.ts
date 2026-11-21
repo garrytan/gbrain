@@ -28,7 +28,7 @@ import {
   TERMINAL_AUDIT_SOURCE,
   runExtractConversationFactsCore,
 } from '../../../commands/extract-conversation-facts.ts';
-import { importFromContent } from '../../../core/import-file.ts';
+import { importFromContent, ownerFileTrust } from '../../../core/import-file.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { BrainBenchFixture, FixtureGold, GoldFactSpec } from '../types.ts';
 import { SeedError } from '../seed.ts';
@@ -154,7 +154,7 @@ export async function runWriteBack(
   const slug = conversationSlug(fixture.fixture_id);
 
   const body = renderConversationPage(fixture);
-  const imported = await importFromContent(engine, slug, body, { noEmbed: true, sourceId });
+  const imported = await importFromContent(engine, slug, body, { noEmbed: true, sourceId, writeTrust: await ownerFileTrust(engine, sourceId) });
   if (imported.status !== 'imported') {
     throw new SeedError(
       fixture.fixture_id,

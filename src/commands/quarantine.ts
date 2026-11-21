@@ -279,7 +279,7 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
     flagReason = getContentFlag(after)?.reason;
     flagged = !!flagReason;
   } else {
-    const result = await importFromContent(engine, slug, markdown, { sourceId: page.source_id, noEmbed, forceRechunk: true, preserveGateMarkers: true });
+    const result = await importFromContent(engine, slug, markdown, { sourceId: page.source_id, noEmbed, forceRechunk: true, preserveGateMarkers: true, keepTier: true });
     reQuarantined = result.quarantined === true;
     flagged = result.flagged ?? false;
     flagReason = result.flag_reason;
@@ -398,6 +398,8 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
       sourceId: ref.source_id, preserveGateMarkers: true,
       noEmbed,
       forceRechunk: true,
+      // The scan re-screens the stored page and authors nothing: the page keeps its tier.
+      keepTier: true,
     });
     if (result.quarantined) {
       quarantined++;

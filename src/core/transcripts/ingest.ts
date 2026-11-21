@@ -42,6 +42,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { randomUUID } from 'node:crypto';
 import { importFromContent } from '../import-file.ts';
+import { agentVerbTrust } from '../trust/channel.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { initializeLocalPersistence, pendingAwareResponse, requestPrincipalForContext, submitPageMutation } from '../persistence/page-mutations.ts';
@@ -444,6 +445,8 @@ async function importSession(engine: BrainEngine, opts: TranscriptsIngestOpts, r
           sourceId: opts.sourceId,
           activePack: opts.activePack,
           ...provenance,
+          // Relayed session text, as the coordinated path (a CLI put_page) declares it.
+          writeTrust: agentVerbTrust('cli:transcripts-ingest'),
         });
     } catch (err) {
       if (classifyItemFailure(err).scope !== 'pending') throw err;

@@ -38,7 +38,7 @@ import type { BrainEngine } from '../../engine.ts';
 import type { IngestionEvent } from '../../ingestion/types.ts';
 import { validateIngestionEvent } from '../../ingestion/types.ts';
 import { importFromContent } from '../../import-file.ts';
-import { maintenanceTransaction } from '../../persistence/attribution.ts';
+import { keepTierTransaction } from '../../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
 import { privateRequestRefusal } from '../../persistence/visibility-request.ts';
 import { parseMarkdown } from '../../markdown.ts';
@@ -316,7 +316,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     // already-deleted page reports 'skipped'.
     if (isTombstone) {
       const deleted = managed ? await managedTombstone(engine, slug, sourceId ?? 'default', door)
-        : await maintenanceTransaction(engine, tx => tx.softDeletePage(slug, { sourceId: sourceId ?? 'default' }));
+        : await keepTierTransaction(engine, tx => tx.softDeletePage(slug, { sourceId: sourceId ?? 'default' }));
       if (sourceFallback) {
         console.error(
           `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +

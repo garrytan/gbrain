@@ -64,7 +64,7 @@ import { withHeldFactsFence } from '../facts/unfenced-facts.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { fileBodyMatchesStored, fileDatabaseDriftToken, mirrorFileBody, readStoredBody, replaceStoredBody, replaceableFile } from '../facts/file-body-guard.ts';
 import { recordRenameAlias } from '../page-state/rename-alias.ts';
-import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { keepTierTransaction, maintenanceTransaction } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { ItemRun } from '../item-failure.ts';
 import { rotationAfter, saveRotation } from '../repair/rotation.ts';
@@ -702,7 +702,7 @@ export async function tryRedirectPhantom(
   // so a concurrent sync that observes the phantom .md gone treats it as
   // a normal deletion (not a regression). The file is re-read right before
   // the unlink: one that changed since it was compared is kept and reported.
-  await maintenanceTransaction(engine, tx => tx.softDeletePage(page.slug, { sourceId }));
+  await keepTierTransaction(engine, tx => tx.softDeletePage(page.slug, { sourceId }));
   let held: string | undefined;
   if (phantomFile && fs.existsSync(phantomPath)) {
     let current: string | null = null;

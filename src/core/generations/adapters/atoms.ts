@@ -18,6 +18,7 @@ import type { BrainEngine, LinkBatchInput } from '../../engine.ts';
 import { sha256 } from '../../persistence/digest.ts';
 import { ATOM_RETIRED_BY_EXTRACT, retireDerivedPagesInTransaction } from '../../persistence/derived-retirement-hold.ts';
 import { deriveTrust, lowerDerivedPageIn } from '../../trust/taint.ts';
+import { withTrustKeep } from '../../persistence/context.ts';
 import { derivedGateInput } from '../../trust/derived-gate.ts';
 import type { GenerationAdapter, GenerationKey, InputState } from '../contract.ts';
 import { importPageItem, markdownItem, pageItemRow, pageVersionEvidence, preimageIdentity, preimageMarkdown, readPageRows } from './page.ts';
@@ -111,11 +112,12 @@ export const atomGenerationAdapter: GenerationAdapter<AtomGenerationContext> = {
   async completeItems(tx, key, itemKeys, context) {
     const input = await atomGenerationAdapter.readInput(tx, key, context);
     if (!input || !itemKeys.length) return;
-    await tx.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
-      WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`, [input.pin.slice(0, 16), key.sourceId, [...itemKeys]]);
+    // The completion stamp is bookkeeping on atoms already written: it authors nothing, so each keeps its tier.
+    await withTrustKeep(tx, ['pages'], () => tx.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
+      WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`, [input.pin.slice(0, 16), key.sourceId, [...itemKeys]]));
   },
   retireItems: (tx, key, itemKeys, retiredBy) => retireDerivedPagesInTransaction(tx, key.sourceId, itemKeys, retiredBy),
-  restoreItem: (tx, key, itemKey, preimage) => importPageItem(tx, key.sourceId, itemKey, preimageMarkdown(preimage)),
+  restoreItem: (tx, key, itemKey, preimage) => importPageItem(tx, key.sourceId, itemKey, preimageMarkdown(preimage), { keepTier: true }),
   preimageIdentity,
 };
 

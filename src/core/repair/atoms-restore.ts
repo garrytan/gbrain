@@ -26,7 +26,7 @@ import { opError, OperationError, type OperationContext } from '../ops/contract.
 import { readFix } from '../ops/op-fix.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { keepTierTransaction } from '../persistence/attribution.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
 import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { atomOriginScopeSql, atomRetirementsSql, ATOM_REEXTRACT_RETIRED_BY } from '../persistence/atom-retirement-hold.ts';
@@ -159,7 +159,7 @@ async function restoreAtom(ctx: OperationContext, atom: RestorableAtom): Promise
     }
     return { applied: true, outcome: 'restored', detail: { request_id: requestId } };
   }
-  const restored = await maintenanceTransaction(engine, async tx => {
+  const restored = await keepTierTransaction(engine, async tx => {
     await tx.lockPageKeys([{ sourceId: atom.source_id, slug: atom.slug }, ...(atom.origin_kind === 'page' ? [{ sourceId: atom.source_id, slug: atom.origin }] : [])]);
     if (!sameAtom((await restorableAtoms(tx, [atom.source_id], atom.id))[0], atom)) return false;
     await tx.createVersion(atom.slug, { sourceId: atom.source_id });
