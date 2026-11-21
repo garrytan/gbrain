@@ -73,6 +73,15 @@ describe('what counts', () => {
     expect(scan('export async function f(engine: any) { try { return await engine.getPage("a"); } catch (e) { rethrowCapabilityRefusal(e); return null; } }')).toEqual(['src/x.ts#f catch_empty 1']);
   });
 
+  test('an inline catch whose body is only the conditional rethrow helper counts, like its braced form', () => {
+    // The helper rethrows a capability refusal and returns undefined for any other failure, so the caller gets an empty answer.
+    expect(scan('export function f(engine: any) { return engine.listPages().catch(err => rethrowCapabilityRefusal(err)); }')).toEqual(['src/x.ts#f promise_catch_empty 1']);
+    expect(scan('export function f(engine: any) { return engine.listPages().catch(err => { rethrowCapabilityRefusal(err); }); }')).toEqual(['src/x.ts#f promise_catch_empty 1']);
+    expect(scan('export function f(engine: any) { return engine.listPages().catch(err => { return rethrowCapabilityRefusal(err); }); }')).toEqual(['src/x.ts#f promise_catch_empty 1']);
+    // A call that is not a rethrow helper is not an empty answer.
+    expect(scan('export function f(engine: any) { return engine.listPages().catch(err => report(err)); }')).toEqual([]);
+  });
+
   test('an assignment of an empty answer counts; a doctor-style ok result counts', () => {
     expect(scan('export async function f(engine: any) { let n: any = 1; try { n = await engine.getCount(); } catch { n = 0; } return n; }')).toEqual(['src/x.ts#f catch_empty 1']);
     expect(scan("export async function check(engine: any, checks: any[]) { try { await engine.executeRaw('select 1'); } catch (err) { const msg = String(err); checks.push({ name: 'x', status: 'ok', message: `Skipped (${msg})` }); } }")).toEqual(['src/x.ts#check capability_refusal_swallowed 1', 'src/x.ts#check catch_empty 1']);

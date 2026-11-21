@@ -274,9 +274,11 @@ function isLocalEmptyFallback(name: string, site: SiteContext): boolean {
   return isEmptyAnswer(init, site);
 }
 
+/** `rethrowX(err);` or `return rethrowX(err);` (an inline `.catch(err => rethrowX(err))` body is the second form): the helper rethrows a typed refusal and returns undefined for any other failure. */
 function isRethrowCall(st: ts.Statement): boolean {
-  if (!ts.isExpressionStatement(st)) return false;
-  const e = unwrap(st.expression);
+  const expr = ts.isReturnStatement(st) ? st.expression : ts.isExpressionStatement(st) ? st.expression : undefined;
+  if (!expr) return false;
+  const e = unwrap(expr);
   return ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text.startsWith('rethrow');
 }
 
