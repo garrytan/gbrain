@@ -42,8 +42,9 @@ impl Brain {
         })
     }
 
-    /// `resolveAliases(aliasNorms, { sourceId?, sourceIds? }?)`: resolves `[aliasNorm, [{ slug,
-    /// source_id }]]` pairs, aliases in order.
+    /// `resolveAliases(aliasNorms, { sourceId?, sourceIds?, excludePrivate?, minTrust?,
+    /// suppressFlagged? }?)` (`AliasScope`): resolves `[aliasNorm, [{ slug, source_id }]]` pairs,
+    /// aliases in order.
     #[napi]
     pub fn resolve_aliases<'env>(
         &self,
@@ -105,6 +106,23 @@ impl Brain {
                 &mode,
                 corpus_generation.as_deref(),
             )
+        })
+    }
+
+    /// `replaceDerivedAliases(slug, sourceId, aliases)`: replaces the page's declared and subject
+    /// alias rows with `aliases` (`[{ alias_norm, origin, case_sensitive, alias_text }]`).
+    #[napi]
+    pub fn replace_derived_aliases<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        source_id: String,
+        aliases: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let aliases: Vec<gbrain_store::aliases::DerivedAliasRow> =
+                required(aliases, "replaceDerivedAliases aliases")?;
+            s.replace_derived_aliases(&slug, &source_id, &aliases)
         })
     }
 }

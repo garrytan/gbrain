@@ -93,6 +93,43 @@ impl Brain {
         self.run(env, move |s| s.read_live_page_body(&slug, &source_id))
     }
 
+    /// `readPageIndexingState(pageId)`: `{ chunker_version, corpus_generation, page_kind }` or `null`.
+    #[napi]
+    pub fn read_page_indexing_state<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let page_id: u64 = required(page_id, "readPageIndexingState pageId")?;
+            s.read_page_indexing_state(page_id)
+        })
+    }
+
+    /// `readInlinePageRegions(pageId)`: `{ compiled_truth, timeline }` of the page, or `null`.
+    #[napi]
+    pub fn read_inline_page_regions<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let page_id: u64 = required(page_id, "readInlinePageRegions pageId")?;
+            s.read_inline_page_regions(page_id)
+        })
+    }
+
+    /// `readStoredPageTier(sourceId, slug)`: the page's stored `trust_tier`, or `null`.
+    #[napi]
+    pub fn read_stored_page_tier<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_stored_page_tier(&source_id, &slug))
+    }
+
     /// `hasSegmentStorage()`: whether any segment text or body staging is stored.
     #[napi]
     pub fn has_segment_storage<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

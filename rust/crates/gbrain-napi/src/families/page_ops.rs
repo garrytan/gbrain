@@ -180,6 +180,16 @@ impl Brain {
         })
     }
 
+    /// `bumpPageRetrievals(ids)`: resolves the number of retrieval records written.
+    #[napi]
+    pub fn bump_page_retrievals<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.bump_page_retrievals(&ids))
+    }
+
     /// `getContentFlagsByPageIds(ids, { sourceId?, sourceIds?, live? }?)`: `[{ id, reason, detail }]`.
     #[napi]
     pub fn get_content_flags_by_page_ids<'env>(

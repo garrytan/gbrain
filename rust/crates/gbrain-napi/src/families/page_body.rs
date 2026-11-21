@@ -71,6 +71,19 @@ impl Brain {
         })
     }
 
+    /// `readSegmentedEmbedPage({ id } | { sourceId, slug })`: the sealed live segmented page's embed
+    /// fields, or `null`.
+    #[napi]
+    pub fn read_segmented_embed_page<'env>(
+        &self,
+        env: &'env Env,
+        reference: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_segmented_embed_page(&required(reference, "readSegmentedEmbedPage ref")?)
+        })
+    }
+
     /// `readManifest(pageId, { generation?, stagingId?, region?, lastN? }?)`: rows by seq.
     #[napi]
     pub fn read_manifest<'env>(
@@ -195,6 +208,20 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.set_body_staging_state(&id, &state, &arg(options, "setBodyStagingState options")?)
+        })
+    }
+
+    /// `sweepSegments({ sourceId?, pageId?, graceMs?, expireStagings?, now? }?)`: the segment
+    /// garbage collection, `now` as an ISO string; `{ retiredChunksDeleted, manifestRowsDeleted,
+    /// textsDeleted, stagingsExpired }`.
+    #[napi]
+    pub fn sweep_segments<'env>(
+        &self,
+        env: &'env Env,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.sweep_segments(&arg(options, "sweepSegments options")?)
         })
     }
 
