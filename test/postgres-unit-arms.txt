@@ -275,6 +275,7 @@ test/engine-parity/private-page-reads.test.ts
 test/engine-parity/publication-source-lock.test.ts
 test/engine-parity/purge-dry-run.test.ts
 test/engine-parity/purge-plan.test.ts
+test/engine-parity/purge-receipt-members.test.ts
 test/engine-parity/purge-slug-stores.test.ts
 test/engine-parity/purge-verify.test.ts
 test/engine-parity/raw-sql.test.ts
