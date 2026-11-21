@@ -990,12 +990,14 @@ export const fileDriftRepair: RepairHandler = {
           await authorizeReconcile(engine, sourceId, slug);
           const found = await heldLiveDrift(engine, sourceId, slug, { hold: target?.hold, mirror: mirrorFile });
           const live = opts.slugs?.length && found.reason === 'database_only' ? await unboundCollisionDrift(engine, sourceId, slug) ?? found : found;
-          if (target && (target.state === 'file_gone') !== (live.reason === 'canonical_file_missing')) {
+          // A stale mirror page reads a missing file as `database_only` (still_present false); for a held file_gone page that is the same fact.
+          const fileGone = live.reason === 'canonical_file_missing' || (target?.state === 'file_gone' && live.reason === 'database_only' && live.still_present === false);
+          if (target && (target.state === 'file_gone') !== fileGone) {
             count('side_changed');
-            listing.push({ item: `${sourceId}:${slug}`, class: 'side_changed', detail: `its file is ${live.reason === 'canonical_file_missing' ? 'gone' : 'present'} now; gbrain sources status ${sourceId} --json shows its current Decision after the next sync` });
+            listing.push({ item: `${sourceId}:${slug}`, class: 'side_changed', detail: `its file is ${fileGone ? 'gone' : 'present'} now; gbrain sources status ${sourceId} --json shows its current Decision after the next sync` });
             continue;
           }
-          if (live.reason === 'canonical_file_missing') {
+          if (fileGone) {
             const gone = await fileGonePage(engine, sourceId, slug, opts, assessmentAt, target);
             if ('skip' in gone) {
               count(gone.skip);
