@@ -217,6 +217,10 @@ export const RUST_ENGINE_MEMBERS = {
   // The head-blocker probe (engine-sql/head-blocker.ts).
   readHeadBlockerRows: 'persistence_journal',
   readRecoveringHeadRow: 'persistence_journal',
+  // The managed sync checkpoint's validation reads (engine-sql/checkpoint-validation.ts).
+  readIncompleteSyncReceipt: 'persistence_journal',
+  readOpenPassWork: 'persistence_journal',
+  readIncompleteSyncReceiptRows: 'persistence_journal',
   // delete_page's derived-origin carry and the label door (engine-sql/label-door.ts).
   readPrivacyOrigin: 'pages',
   listOriginDependents: 'pages',

@@ -416,6 +416,28 @@ decides only worktree ownership, so the store does not take it. An id that is no
 the uuid cast message. `readRecoveringHeadRow` needs a worktree too, so the TypeScript member answers
 `null` without a store call.
 
+## Checkpoint validation
+
+The managed sync checkpoint's three reads (`engine-sql/checkpoint-validation.ts`), over the request
+records. `brain.readIncompleteSyncReceipt({ worktreeId, runId, superseded, ranges })` answers the
+request id of the receipt that blocks the run's checkpoint, or `null`: a request with a recovery
+record, else an open (`queued`, `running`, `recovering`) page receipt of the run (`managed_sync_import`
+or `managed_sync_delete`), else a non-committed page receipt of the run with no committed receipt of
+the same source and run at the same index, that is not in `superseded` and, when it is `failed`,
+`cancelled` or `conflict` with no recovery record, is not inside a settled `ranges` pair (inclusive).
+`brain.readIncompleteSyncReceiptRows(spec)` takes the same spec and answers up to 20 blocking
+receipts by sequence as `{ request_id, slug, state, code, index, recovery }`.
+`brain.readOpenPassWork({ worktreeId, selfRequestId, ownRecovery })` answers the first request with
+a recovery record (not the stamp's own when `ownRecovery`), else the first other open
+`managed_sync_import`, `managed_sync_delete` or `managed_sync_checkpoint` request, or `null`. A
+request matches the worktree through the `worktree_id` the TypeScript journal members store beside
+the record, and a Rust brain stores none (an insert that names a worktree refuses), so on a brain
+that admitted its writes natively every read answers `null` or an empty list, as Postgres answers a
+worktree with no rows. The statements fix no order inside a probe; the store answers in sequence
+order. A worktree or own-request id that is not a uuid refuses with the uuid cast message, and a stored
+index that is not an integer refuses with the integer cast message. The caller maps a statement
+timeout to `checkpoint_validation_timeout`; the store has none.
+
 ## No-op embedding settle
 
 `settleNoopEmbeddingEffects` (`persistence/embedding-noop-settle.ts`) settles, in bulk, queued page

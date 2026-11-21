@@ -524,7 +524,7 @@ src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/canonical-projections.ts	execute_raw	10
 src/core/persistence/capacity-view.ts	execute_raw	1
 src/core/persistence/change-reason.ts	execute_raw	2
-src/core/persistence/checkpoint-validation.ts	execute_raw	5
+src/core/persistence/checkpoint-validation.ts	execute_raw	2
 src/core/persistence/compaction-pass.ts	execute_raw	1
 src/core/persistence/concept-rebuild.ts	execute_raw	3	#9653: the held-concept rebuild's hold, member and stated-row checks run in its purge transaction, next to the engine purge it calls
 src/core/persistence/config-snapshot.ts	execute_raw	2

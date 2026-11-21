@@ -111,6 +111,7 @@ import type * as PurgeStoresSql from './engine-sql/purge-stores.ts';
 import type * as OriginHoldsSql from './engine-sql/origin-holds.ts';
 import type { DerivedOriginPark } from './persistence/derived-origin-hold.ts';
 import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from './engine-sql/head-blocker.ts';
+import type { IncompleteSyncReceiptRow, IncompleteSyncReceiptSpec, OpenPassWorkSpec } from './engine-sql/checkpoint-validation.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
   WriteAttributionNameIds, WriteAttributionNames,
@@ -4621,6 +4622,12 @@ export interface BrainEngine {
   readHeadBlockerRows(ids: readonly string[], hostId: string | null, opts?: HeadBlockerReadOpts): Promise<HeadBlockerRow[]>;
   /** A recovering head's recovery record and its worktree's owner host, or null when it has no recovery record or no worktree. */
   readRecoveringHeadRow(id: string, opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<RecoveringHeadRow | null>;
+  /** The request id of a receipt that blocks a managed sync run's checkpoint on a worktree, or null (engine-sql/checkpoint-validation.ts); the 57014 timeout stays with the caller. */
+  readIncompleteSyncReceipt(spec: IncompleteSyncReceiptSpec): Promise<string | null>;
+  /** The request id of the work that blocks a pass stamp on a worktree (a recovery row, or another open managed-sync request), or null. */
+  readOpenPassWork(spec: OpenPassWorkSpec): Promise<string | null>;
+  /** Every receipt (up to 20, in sequence order) that would block the run's checkpoint now, with what `sync status` shows. */
+  readIncompleteSyncReceiptRows(spec: IncompleteSyncReceiptSpec): Promise<IncompleteSyncReceiptRow[]>;
   /** The request a FIFO claim takes next, locked FOR UPDATE SKIP LOCKED until the transaction ends, or null (journal.ts `claimNextWrite`). */
   selectClaimableWrite<R = Record<string, unknown>>(spec: ClaimHeadSpec): Promise<R | null>;
   /** Consumer rows (persistence/consumer-heartbeat.ts): the host's rows oldest first, and its live full rows other than the caller's. `direct`: the Postgres direct pool. */

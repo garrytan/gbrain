@@ -13,7 +13,7 @@ import { readPassRow } from '../src/core/persistence/sync-pass-row.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
-import { INCOMPLETE_SYNC_RECEIPT_SQL, OPEN_PASS_WORK_SQL, checkpointRetryCommand, findIncompleteSyncReceipt, formatCheckpointTimeoutHint, readRequestIndexStates } from '../src/core/persistence/checkpoint-validation.ts';
+import { INCOMPLETE_SYNC_RECEIPT_SQL, checkpointRetryCommand, findIncompleteSyncReceipt, formatCheckpointTimeoutHint, readRequestIndexStates } from '../src/core/persistence/checkpoint-validation.ts';
 import { persistenceOperations } from '../src/core/ops/persistence.ts';
 import { printManagedSyncDiagnostic } from '../src/commands/sync-diagnostics.ts';
 import { WRITE_ERROR_CODES } from '../src/core/persistence/types.ts';
@@ -99,8 +99,9 @@ function failValidation(engine: BrainEngine, failure: 'timeout' | 'lock'): () =>
   const transaction = engine.transaction;
   engine.transaction = async function<T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
     return transaction.call(this, tx => run(new Proxy(tx, { get(target, property) {
-      if (property === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-        if (sql !== OPEN_PASS_WORK_SQL) return target.executeRaw(sql, params);
+      if (property === 'readOpenPassWork') return async (spec: Parameters<BrainEngine['readOpenPassWork']>[0]) => {
+        // The folded stamp's own-recovery variant is a different statement and is not failed.
+        if (spec.ownRecovery) return target.readOpenPassWork(spec);
         // Postgres raises a real statement timeout under the coordinator's own 5 s budget; PGLite has none, so the error is injected.
         if (failure === 'timeout' && engine.kind === 'postgres') return target.executeRaw('SELECT pg_sleep(8)::text AS request_id');
         throw Object.assign(new Error(failure === 'timeout' ? 'canceling statement due to statement timeout' : 'canceling statement due to lock timeout'),

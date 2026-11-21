@@ -61,6 +61,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 mod checkpoint_rows;
+mod checkpoint_validation;
 mod effect_scans;
 mod effect_worker;
 mod effects;
@@ -82,6 +83,7 @@ pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod worktrees;
 mod writer_status;
 mod writer_versions;
+pub use checkpoint_validation::{IncompleteSyncReceiptSpec, OpenPassWorkSpec};
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use head_blocker::HeadBlockerSpec;

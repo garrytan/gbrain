@@ -88,11 +88,10 @@ async function answers(engine: BrainEngine, worktreeId: string, runId: string, o
 }
 
 const incarnationOf = async (engine: BrainEngine) => (await engine.readSourceMembership('default'))!.incarnation;
-const SEEDING: Array<'readSourceMembership' | 'lockPersistenceCounters' | 'insertWriteRequest'> = ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'];
 
 describe('engine parity: sync checkpoint validation', () => {
   parityTest('a worktree no receipt names blocks nothing, whatever the run, the superseded list and the settled ranges', {
-    methods: SEEDING,
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest'],
     timeout: 60_000,
   }, async (engine) => {
     const incarnation = await incarnationOf(engine);
@@ -113,8 +112,29 @@ describe('engine parity: sync checkpoint validation', () => {
     return { out, refused, refusedPass };
   });
 
+  parityTest('the three members, called directly: empty and non-empty lists, an upper-case worktree and a refused argument', {
+    methods: ['readIncompleteSyncReceipt', 'readOpenPassWork', 'readIncompleteSyncReceiptRows'],
+    timeout: 60_000,
+  }, async (engine) => {
+    const spec = { worktreeId: worktree(7), runId: RUN, superseded: [] as string[], ranges: [] as Array<[number, number]> };
+    const wide = { ...spec, superseded: [request(1), request(2)], ranges: [[0, 3], [5, 9]] as Array<[number, number]> };
+    const out = {
+      receipt: [await engine.readIncompleteSyncReceipt(spec), await engine.readIncompleteSyncReceipt(wide), await engine.readIncompleteSyncReceipt({ ...spec, worktreeId: worktree(7).toUpperCase() })],
+      pass: [await engine.readOpenPassWork({ worktreeId: worktree(7), selfRequestId: SELF, ownRecovery: false }), await engine.readOpenPassWork({ worktreeId: worktree(7), selfRequestId: SELF.toUpperCase(), ownRecovery: true })],
+      rows: [await engine.readIncompleteSyncReceiptRows(spec), await engine.readIncompleteSyncReceiptRows(wide)],
+    };
+    expect(out).toEqual({ receipt: [null, null, null], pass: [null, null], rows: [[], []] });
+    const refusals = {
+      receipt: await engine.readIncompleteSyncReceipt({ ...spec, worktreeId: 'nope' }).then(() => null, (e: Error) => e.message),
+      pass: await engine.readOpenPassWork({ worktreeId: worktree(7), selfRequestId: 'nope', ownRecovery: false }).then(() => null, (e: Error) => e.message),
+      rows: await engine.readIncompleteSyncReceiptRows({ ...spec, worktreeId: 'nope' }).then(() => null, (e: Error) => e.message),
+    };
+    expect(refusals).toEqual({ receipt: 'invalid input syntax for type uuid: "nope"', pass: 'invalid input syntax for type uuid: "nope"', rows: 'invalid input syntax for type uuid: "nope"' });
+    return { out, refusals };
+  });
+
   parityTest('a blocking page receipt, a superseded one, one the settled ranges cover and a committed sibling at its index', {
-    methods: [...SEEDING, 'worktreeClaimStore', 'transaction'],
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'worktreeClaimStore', 'transaction'],
     requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine) => {
@@ -174,7 +194,7 @@ describe('engine parity: sync checkpoint validation', () => {
   });
 
   parityTest('a recovery row blocks the checkpoint and the stamp (the stamp\'s own recovery only when it is not folded), and another open managed-sync request blocks the stamp', {
-    methods: [...SEEDING, 'worktreeClaimStore', 'transaction'],
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'worktreeClaimStore', 'transaction'],
     requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine) => {
@@ -216,7 +236,7 @@ describe('engine parity: sync checkpoint validation', () => {
   });
 
   parityTest('more than 20 blocking receipts: the checkpoint names the first, the status list is capped at 20 in sequence order', {
-    methods: [...SEEDING, 'worktreeClaimStore', 'transaction'],
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'worktreeClaimStore', 'transaction'],
     requires: 'managed_persistence',
     timeout: 120_000,
   }, async (engine) => {

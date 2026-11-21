@@ -67,6 +67,7 @@ import * as factsTrustReads from './facts-trust-reads.ts';
 import * as factsTrustOwner from './facts-trust-owner.ts';
 import * as trustTierReads from './trust-tier-reads.ts';
 import * as headBlocker from './head-blocker.ts';
+import * as checkpointValidation from './checkpoint-validation.ts';
 import * as labelDoor from './label-door.ts';
 import * as pagePurge from './page-purge.ts';
 import * as pagePurgeHolds from './page-purge-holds.ts';
@@ -148,6 +149,7 @@ export const STORE_MEMBERS = {
   ...beliefLedger,
   // The reads remember and forget make before admission (rust/docs/store/memory_mutation_reads.md).
   ...headBlocker,
+  ...checkpointValidation,
   ...labelDoor,
   // The reads and tombstone edits of a page purge (rust/docs/store/facts.md).
   ...pagePurge,

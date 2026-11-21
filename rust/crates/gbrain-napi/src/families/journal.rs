@@ -585,6 +585,46 @@ impl Brain {
         })
     }
 
+    /// `readIncompleteSyncReceipt(spec)`: the request id of a receipt that blocks a managed sync
+    /// run's checkpoint, or null (`src/core/engine-sql/checkpoint-validation.ts`).
+    #[napi]
+    pub fn read_incomplete_sync_receipt<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_incomplete_sync_receipt(&required(spec, "readIncompleteSyncReceipt spec")?)
+        })
+    }
+
+    /// `readOpenPassWork(spec)`: the request id of the work that blocks a pass stamp, or null.
+    #[napi]
+    pub fn read_open_pass_work<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_open_pass_work(&required(spec, "readOpenPassWork spec")?)
+        })
+    }
+
+    /// `readIncompleteSyncReceiptRows(spec)`: up to 20 receipts that block the run's checkpoint.
+    #[napi]
+    pub fn read_incomplete_sync_receipt_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_incomplete_sync_receipt_rows(&required(
+                spec,
+                "readIncompleteSyncReceiptRows spec",
+            )?)
+        })
+    }
+
     /// `probeIdleWork(spec)`: whether any worker of this host has work, and where the resident
     /// projection window stands (`{ work, projection_work, projection_last, high_water }`).
     #[napi]
