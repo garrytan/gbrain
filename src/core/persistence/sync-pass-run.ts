@@ -64,6 +64,7 @@ import { passResumeArgs } from './sync-pass-readers.ts';
 import { applyPassRound, sweepLegacy, finishPassApply, holdPassIdentities, newPassApplyState, passApplyCounts, remoteReconcile } from './sync-pass-apply.ts';
 import { passClosureMemo, passCostDecision, type passEpisodeClosure, readReservedUsd, registerPassCost, unregisterPassCost } from './sync-pass-episode.ts';
 import { currentEmbeddingPricePerMTok } from '../embedding.ts';
+import { unbornHead } from '../hardened-git.ts';
 import { SIZE_STATE_SAMPLE, type SyncSizeStates } from '../page-embedding-budget.ts';
 import { massReconcileAllowed } from '../sync-reconcile.ts';
 import { keepDbHeadroom } from '../repair/keep-db-policy.ts';
@@ -419,7 +420,15 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   if (handover.hostRequired) return { ended: empty('blocked_by_failures', 'reconcile_host_required') };
   const [prior, admission, configuredWorking, patterns, loadedPack, tail, retry, sourceHolds, rowProbe, failed, idleFacts] = await pin;
   assertActive();
-  const [headLine, refLine] = syncGit(context.gitRoot, ['rev-parse', 'HEAD', '--abbrev-ref', 'HEAD']).split('\n');
+  let headRef: string;
+  try {
+    headRef = syncGit(context.gitRoot, ['rev-parse', 'HEAD', '--abbrev-ref', 'HEAD']);
+  } catch (error) {
+    // GBRA-706: a branch with no commit yet (a fresh `init --git`) has nothing committed to sync; the pass ends up to date.
+    if (unbornHead(context.gitRoot)) return { ended: empty('up_to_date') };
+    throw error;
+  }
+  const [headLine, refLine] = headRef.split('\n');
   const head = headLine!.trim();
   const detached = refLine?.trim() === 'HEAD';
   // G3: a strict source's pass reads its commit alone, a detached HEAD's too (sync-pass.ts).

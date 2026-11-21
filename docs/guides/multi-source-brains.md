@@ -98,8 +98,25 @@ first):
 
 So inside `~/.gstack/plans/` on a brain that pinned `gstack` to
 `~/.gstack` via `.gbrain-source`, `gbrain put` implicitly writes to
-the `gstack` source. Outside any registered directory with no env/dotfile
-set, it writes to the default.
+the `gstack` source. Otherwise, a put uses the source selected by routing.
+A put run from inside a source's checkout counts as naming that source, the
+same way a flag, `GBRAIN_SOURCE` or a `.gbrain-source` file does: it writes
+there and is never refused for it. If nothing named or implied a source (no
+flag, env, dotfile or checkout) and the put goes to the brain default or to
+the only git source, then a trusted local put whose target has no row for the
+slug, while exactly one other source readable by the local writer holds it
+live, is refused with `invalid_params` (`detail: slug_in_other_source`),
+including with `--force`. Repeat the same put with `--source-id <holder>`
+to target the existing page, or name the intended target explicitly to
+create a separate copy. `gbrain put-pages` applies the same check to each
+page (a refused page is reported in the receipt and the other pages are
+still written), and `begin_page_upload` with mode `create` and
+`commit_page_upload` apply it to a new page. `commit_page_upload` takes no
+source of its own, so to commit a deliberate separate copy name the source
+again with the global `--source <id>` flag. A commit writes to the source
+fixed when the upload began, so running it from inside a source's checkout
+does not count as naming a source; only the flag, `GBRAIN_SOURCE` or a
+`.gbrain-source` file does.
 
 ## Federation flag
 
