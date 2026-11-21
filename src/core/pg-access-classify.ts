@@ -69,6 +69,7 @@ export type PgAccessReason =
   | 'schema_missing'      // 42P01 / 42703 missing relation or column
   | 'pgvector_missing'    // vector extension absent
   | 'storage_corrupt'     // XX000/XX001/XX002: torn TOAST value, catalog/tuple damage (#5216, #4738)
+  | 'storage_io_interrupted' // 58030: the OS interrupted a relation-file open/read (EINTR); not data damage
   | 'tls_required_default' // postgres_tls_required: gbrain's TLS default met a non-local server without TLS
   | 'unknown';
 
@@ -186,6 +187,15 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     reason: 'tls_required_default',
     transient: false,
     codes: ['postgres_tls_required'],
+  },
+  {
+    // Before storage_corrupt: "could not read block" with an interrupted-syscall tail is the OS, not damaged data.
+    reason: 'storage_io_interrupted',
+    transient: false,
+    patterns: [/could not (?:open file|read block \d+ in file) .*Interrupted system call/i],
+    remediation: 'PostgreSQL could not read a data file because the operating system interrupted the call (SQLSTATE 58030). This is a database-host storage problem, not damaged data: check the host disk, mount and kernel logs. '
+      + 'Before resubmitting, check the original job or write receipt to see whether the write already landed.',
+    fix: { kind: 'manual', recipe: 'Check database-host storage (disk, mount, kernel logs), then the original job or write receipt before resubmitting.' },
   },
   {
     reason: 'storage_corrupt',
