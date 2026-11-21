@@ -195,6 +195,7 @@ test/engine-parity/field-usage.test.ts
 test/engine-parity/forget-commit.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-remember.test.ts
+test/engine-parity/git-canonical-fence.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/hot-memory-watermark.test.ts
 test/engine-parity/import-members.test.ts

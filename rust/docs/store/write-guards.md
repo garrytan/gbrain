@@ -36,6 +36,14 @@ keys.
   keeps no such field, so there is nothing to clear.
 - **Times.** The store keeps microseconds. The TypeScript member sends `ingestedAt` as a millisecond ISO time,
   as PGLite's `timestamptz` parameter receives a `Date`, and returns `deleted_at` as a `Date`.
+- **The git-canonical fence.** PGLite and Postgres refuse `git_protocol_required` (SQLSTATE `P0001`, constraint
+  `git_canonical_fence:mutation`) for a write to a source whose `config.canonical` is `git` from a writer that
+  does not declare `gbrain.git_protocol`. The fence is one branch of the managed writer guard
+  (`gbrain_require_managed_writer`, `src/core/persistence/writer-guard-schema.ts`), which admits every write on a
+  brain that is not managed. The store keeps one unmanaged brain (`readManagedModeRows` answers `enabled: false`),
+  so every arm admits such a write and the store has no fence. The fence arrives with `managed_persistence`.
+  `test/engine-parity/git-canonical-fence.test.ts` pins both: the unmanaged admission on every arm, and the managed
+  refusal, with its code and detail, on the SQL arms.
 
 ## TypeScript members
 
