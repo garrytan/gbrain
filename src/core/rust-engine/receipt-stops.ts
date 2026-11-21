@@ -10,13 +10,14 @@
  * already names for `listSlotRows`.
  *
  * Not here: the page purge's own stops (the request index read, the origin-twin read, the publication stamp, the generation-ledger
- * scrub) are listed with their owners in persistence/purge-path-members.ts and carry no due date anywhere in the tree.
+ * scrub) are listed with their owners and due dates (5 PM PST Nov 25) in persistence/purge-path-members.ts, whose pre-write
+ * check names them. The dates of both lists come from its `PURGE_DUE`.
  */
-import { PURGE_OWNERS } from '../persistence/purge-path-members.ts';
+import { PURGE_DUE, PURGE_OWNERS } from '../persistence/purge-path-members.ts';
 import type { KnownStop } from './errors.ts';
 
-const NOV_24 = '5 PM PST Nov 24';
-const NOV_25 = '5 PM PST Nov 25';
+const NOV_24 = PURGE_DUE.nov24;
+const NOV_25 = PURGE_DUE.nov25;
 
 export const RECEIPT_STOP_OWNERS: Readonly<Record<string, KnownStop>> = {
   // The recorded values of the belief ledger (the fact purge receipt's ledger report).

@@ -48,9 +48,18 @@ export const PURGE_OWNERS = {
   requestIndexes: 'lane 14 (doctor-checks-3 8d4d809039)',
 } as const;
 
+/**
+ * When another lane's stop is due to lift: the date its serving head reaches this branch's base. Ember's rulings, Nov 21:
+ * the fact purge receipt's ledger reads are due Nov 24; the page receipt reads, the slot-end read and the four page purge
+ * stops served on other branches (request index, origin twin, publication stamp, generation-ledger scrub) are due Nov 25,
+ * the last landing date.
+ */
+export const PURGE_DUE = { nov24: '5 PM PST Nov 24', nov25: '5 PM PST Nov 25' } as const;
+
 export type PurgeEntryPoint = 'delete_page' | 'retention';
 
-interface Base { owner: string; entry?: 'retention' }
+/** `due`: when the owning lane lifts the stop. Every stop another lane owns carries one (test/page-purge-path-members.test.ts). */
+interface Base { owner: string; entry?: 'retention'; due?: string }
 /** A BrainEngine member the purge calls. `stop`: not served on Rust (must match the classification). `refuses`: served, but refuses the purge's arguments. */
 export interface PurgePathMember extends Base { member: keyof BrainEngine & string; stop?: string; refuses?: string }
 /** A raw-SQL site, named `function (file under src/core)` as the recording test attributes it. */
@@ -58,6 +67,7 @@ export interface PurgePathSite extends Base { site: string; guarded?: string; st
 export type PurgePathEntry = PurgePathMember | PurgePathSite;
 
 const { ours, receiptReads, publicationStamp, ledgerScrub, beliefProbe, factContextProbe, repairOriginTwin, requestIndexes } = PURGE_OWNERS;
+const { nov24, nov25 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
 /** Retention-only raw sites: the carry's parks and the candidate selection of purgeDeletedPagesCoordinated. */
@@ -120,22 +130,22 @@ const GUARDED_SITES: PurgePathSite[] = [
 export const PURGE_PATH: readonly PurgePathEntry[] = [
   ...RETENTION_STOPS,
   // preparePagePurge: the request-index state read, then the origin-twin read.
-  { site: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: requestIndexes, stop: 'the online-built request index read runs through raw SQL' },
-  { site: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: repairOriginTwin, stop: 'the origin-twin read (page-prepare isOriginTwinPage, also :461 and :676) runs through raw SQL; member readPageDatabaseOnlyReason' },
+  { site: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: requestIndexes, due: nov25, stop: 'the online-built request index read runs through raw SQL' },
+  { site: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: repairOriginTwin, due: nov25, stop: 'the origin-twin read (page-prepare isOriginTwinPage, also :461 and :676) runs through raw SQL; member readPageDatabaseOnlyReason' },
   // The publication transaction of a recovered journaled purge: the `publication_started` stamp (the exclusive source lock
   // before it is the typed member `lockSourceForUpdate`).
-  { site: '<anonymous> (persistence/coordinator.ts)', owner: publicationStamp, stop: 'the publication transaction of a recovered purge stamps publication_started through raw SQL (UPDATE persistence_requests ... RETURNING *)' },
+  { site: '<anonymous> (persistence/coordinator.ts)', owner: publicationStamp, due: nov25, stop: 'the publication transaction of a recovered purge stamps publication_started through raw SQL (UPDATE persistence_requests ... RETURNING *)' },
   // sweepPurgedPage: the generation-ledger scrub.
-  { site: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: ledgerScrub, stop: 'the generation-ledger scrub runs through raw SQL' },
+  { site: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: ledgerScrub, due: nov25, stop: 'the generation-ledger scrub runs through raw SQL' },
   // verifyPagePurge: the receipt. Its store probes (`countPurgeProbe`) are served, the fact purge's `fingerprint` and
   // `claim_text` probes included.
   // ledgerReports: runs for every purge whose page has fact claims, belief ledger or not.
-  { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
-  { member: 'listFactContextsForPurgeProbe', owner: factContextProbe, stop: 'the receipt pages the live fact contexts that quote the purged claims; not served' },
-  { member: 'listPageProseHits', owner: receiptReads, stop: 'the source-prose scan of the receipt is not served' },
-  { member: 'readPurgeReceiptSourcePath', owner: receiptReads, stop: 'the receipt source path read is not served' },
-  { member: 'readDeletePageRequest', owner: receiptReads, stop: 'the purge request read of the receipt is not served' },
-  { member: 'listPurgeEffects', owner: receiptReads, stop: 'the purge effect read of the completion is not served' },
+  { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, due: nov24, stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
+  { member: 'listFactContextsForPurgeProbe', owner: factContextProbe, due: nov24, stop: 'the receipt pages the live fact contexts that quote the purged claims; not served' },
+  { member: 'listPageProseHits', owner: receiptReads, due: nov25, stop: 'the source-prose scan of the receipt is not served' },
+  { member: 'readPurgeReceiptSourcePath', owner: receiptReads, due: nov25, stop: 'the receipt source path read is not served' },
+  { member: 'readDeletePageRequest', owner: receiptReads, due: nov25, stop: 'the purge request read of the receipt is not served' },
+  { member: 'listPurgeEffects', owner: receiptReads, due: nov25, stop: 'the purge effect read of the completion is not served' },
   // The members the purge calls and the Rust engine serves.
   ...served(ours,
     // the purge itself
@@ -180,7 +190,7 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
 /** An entry's name, as the refusal and the tests print it. */
 export const purgeEntryName = (entry: PurgePathEntry): string => ('member' in entry ? entry.member : entry.site);
 
-export interface PurgePathStop { entry: PurgePathEntry; name: string; owner: string; capability: Capability; why: string }
+export interface PurgePathStop { entry: PurgePathEntry; name: string; owner: string; due?: string; capability: Capability; why: string }
 
 /**
  * Every listed entry that stops a purge on `engine` from `entryPoint`, in list order. An engine that is not the Rust
@@ -196,12 +206,12 @@ export async function purgePathStops(engine: object, entryPoint: PurgeEntryPoint
     if (entry.entry === 'retention' && entryPoint !== 'retention') continue;
     const name = purgeEntryName(entry);
     if ('site' in entry) {
-      if (entry.stop) stops.push({ entry, name, owner: entry.owner, capability: 'raw_sql', why: entry.stop });
+      if (entry.stop) stops.push({ entry, name, owner: entry.owner, due: entry.due, capability: 'raw_sql', why: entry.stop });
       continue;
     }
     const capability = rustMemberCapability(entry.member);
-    if (capability) stops.push({ entry, name, owner: entry.owner, capability, why: entry.stop ?? 'not served by the Rust engine' });
-    else if (entry.refuses) stops.push({ entry, name, owner: entry.owner, capability: (RUST_ENGINE_MEMBERS as unknown as Record<string, Capability>)[entry.member]!, why: entry.refuses });
+    if (capability) stops.push({ entry, name, owner: entry.owner, due: entry.due, capability, why: entry.stop ?? 'not served by the Rust engine' });
+    else if (entry.refuses) stops.push({ entry, name, owner: entry.owner, due: entry.due, capability: (RUST_ENGINE_MEMBERS as unknown as Record<string, Capability>)[entry.member]!, why: entry.refuses });
   }
   return stops;
 }
@@ -214,5 +224,8 @@ export async function purgePathStops(engine: object, entryPoint: PurgeEntryPoint
 export async function requirePurgePathServed(engine: object, entryPoint: PurgeEntryPoint = 'delete_page'): Promise<void> {
   const [first] = await purgePathStops(engine, entryPoint);
   if (!first) return;
-  throw capabilityMissing(first.capability, `${entryPoint === 'retention' ? 'the retention purge' : 'delete_page --purge'}, which needs ${first.name} (owner ${first.owner}: ${first.why})`);
+  const what = entryPoint === 'retention' ? 'the retention purge' : 'delete_page --purge';
+  // A stop with a due date names owner and date in the message and the detail (errors.ts); one without (this lane's own) names its owner.
+  if (first.due) throw capabilityMissing(first.capability, `${what}, which needs ${first.name}: ${first.why}`, 'none', { owner: first.owner, due: first.due });
+  throw capabilityMissing(first.capability, `${what}, which needs ${first.name} (owner ${first.owner}: ${first.why})`);
 }
