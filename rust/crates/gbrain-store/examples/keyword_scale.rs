@@ -25,7 +25,6 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -72,10 +71,10 @@ impl FileBackend for NoSyncFile {
         Ok(self.0.metadata()?.len())
     }
     fn read_at(&self, offset: u64, out: &mut [u8]) -> std::io::Result<()> {
-        self.0.read_exact_at(out, offset)
+        read_exact_at(&self.0, out, offset)
     }
     fn write_at(&self, offset: u64, data: &[u8]) -> std::io::Result<()> {
-        self.0.write_all_at(data, offset)
+        write_all_at(&self.0, data, offset)
     }
     fn set_len(&self, len: u64) -> std::io::Result<()> {
         self.0.set_len(len)
@@ -83,6 +82,45 @@ impl FileBackend for NoSyncFile {
     fn sync(&self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+#[cfg(unix)]
+fn read_exact_at(file: &File, out: &mut [u8], offset: u64) -> std::io::Result<()> {
+    std::os::unix::fs::FileExt::read_exact_at(file, out, offset)
+}
+
+#[cfg(unix)]
+fn write_all_at(file: &File, data: &[u8], offset: u64) -> std::io::Result<()> {
+    std::os::unix::fs::FileExt::write_all_at(file, data, offset)
+}
+
+// Windows has no `read_exact_at`; `seek_read` and `seek_write` may transfer less than asked, so loop.
+#[cfg(windows)]
+fn read_exact_at(file: &File, mut out: &mut [u8], mut offset: u64) -> std::io::Result<()> {
+    while !out.is_empty() {
+        match std::os::windows::fs::FileExt::seek_read(file, out, offset)? {
+            0 => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+            n => {
+                out = &mut out[n..];
+                offset += n as u64;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn write_all_at(file: &File, mut data: &[u8], mut offset: u64) -> std::io::Result<()> {
+    while !data.is_empty() {
+        match std::os::windows::fs::FileExt::seek_write(file, data, offset)? {
+            0 => return Err(std::io::ErrorKind::WriteZero.into()),
+            n => {
+                data = &data[n..];
+                offset += n as u64;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn load(corpus: &Path, dir: &Path, nosync: bool) {
