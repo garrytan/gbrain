@@ -397,6 +397,29 @@ describe('engine parity: write journal', () => {
     return result;
   });
 
+  parityTest('the managed-worktree admission reads answer no worktree, no refresh and no held write on a brain with none', {
+    methods: ['readWorktreeAdmission', 'completeSyncedRefresh', 'hasDeferralRoom', 'readRefreshTiming', 'countHeldBehindImport'],
+  }, async (engine) => {
+    const worktreeId = 'f0000000-0000-4000-8000-0000000000a1';
+    const refreshId = 'f0000000-0000-4000-8000-0000000000a2';
+    const source = await engine.readSourceMembership('default');
+    const key = { worktreeId, sourceId: 'default', sourceIncarnation: source!.incarnation, topologyGeneration: 0 };
+    const result = {
+      admission: await engine.readWorktreeAdmission(key),
+      barrier: await engine.readWorktreeAdmission(key, { lockRefresh: true }),
+      completed: await engine.completeSyncedRefresh(refreshId),
+      room: await engine.hasDeferralRoom(worktreeId, 'import_deferral', 30_000),
+      timing: await engine.readRefreshTiming(refreshId),
+      held: await engine.countHeldBehindImport('default', null),
+      heldByWriter: await engine.countHeldBehindImport('default', PRINCIPAL),
+    };
+    expect(result).toEqual({
+      admission: { worktree: null, refresh: null, bound: false }, barrier: { worktree: null, refresh: null, bound: false },
+      completed: false, room: true, timing: null, held: { count: 0, bytes: 0 }, heldByWriter: { count: 0, bytes: 0 },
+    });
+    return result;
+  });
+
   parityTest('readCounterRows reads the existing counter rows in key byte order without creating or locking any', {
     methods: ['readCounterRows', 'lockPersistenceCounters', 'insertWriteRequest'],
   }, async (engine) => {

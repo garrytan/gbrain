@@ -10239,7 +10239,3 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   ChatGPT/Claude harness. Injected platform tests and SDK/HTTP tests do not prove
   those native integrations. Live provider checks require separate consent and
   configured credentials.
-
-## Rust engine write-attribution merge follow-ups (filed 2026-11-19, vorflux/intake-1)
-
-- [ ] **P3 — rust-synopsis-tier-config (owner: lane 9, write misc): `readSynopsisTierConfig` still sends raw SQL.** **What:** master #9683 made `readSynopsisTierConfig` (`src/core/synopsis-sweep.ts`) read the synopsis sources and a frontmatter-override probe in one `executeRaw` statement. Lane 9's typed `listSynopsisSourceIds` (`src/core/engine-sql/write-misc.ts`) answers the source rows only, so the sweep keeps the raw statement and a Rust brain refuses it with `raw_sql`. **Fix:** a typed member that takes the kill-switch and tier flags and returns the source ids and whether any page frontmatter picks the synopsis tier, then call it from the sweep and delete the ratchet row. **Effort:** S. **Priority:** P3.

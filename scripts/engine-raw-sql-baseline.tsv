@@ -198,7 +198,7 @@ src/commands/sources-strategy.ts	execute_raw	3
 src/commands/sources-sync-enabled.ts	execute_raw	1
 src/commands/sources-trust.ts	execute_raw	2
 src/commands/sources-writers.ts	execute_raw	1
-src/commands/sources.ts	execute_raw	13
+src/commands/sources.ts	execute_raw	11
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	2
 src/commands/sync/holds.ts	execute_raw	3
@@ -223,7 +223,7 @@ src/core/access/members.ts	sql_template	1
 src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/access/open-twins.ts	execute_raw	1
 src/core/access/owner.ts	execute_raw	1
-src/core/access/requester-scope.ts	execute_raw	3
+src/core/access/requester-scope.ts	execute_raw	2
 src/core/access/room.ts	execute_raw	2
 src/core/access/token-member-status.ts	sql_template	1
 src/core/advisor/collect-chronicle.ts	execute_raw	1
@@ -610,7 +610,7 @@ src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
-src/core/persistence/journal.ts	execute_raw	34
+src/core/persistence/journal.ts	execute_raw	26
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
 src/core/persistence/limits.ts	execute_raw	1
@@ -637,7 +637,6 @@ src/core/persistence/overwritten-edits.ts	execute_raw	3
 src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	2
-src/core/persistence/page-batch.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	5
 src/core/persistence/page-prepare.ts	execute_raw	9
 src/core/persistence/page-purge.ts	execute_raw	30
@@ -666,7 +665,6 @@ src/core/persistence/reconcile-state.ts	execute_raw	5
 src/core/persistence/reconcile.ts	execute_raw	3
 src/core/persistence/recovery-resolve.ts	execute_raw	10
 src/core/persistence/refresh-barrier.ts	execute_raw	4
-src/core/persistence/refresh-retry-hint.ts	execute_raw	1
 src/core/persistence/refusal-breaker.ts	execute_raw	2
 src/core/persistence/repair-busy.ts	execute_raw	4
 src/core/persistence/resolve-paths.ts	execute_raw	5
@@ -729,7 +727,7 @@ src/core/persistence/terminal-failures.ts	execute_raw	4
 src/core/persistence/topology-clone.ts	execute_raw	19
 src/core/persistence/topology-locks.ts	execute_raw	19
 src/core/persistence/topology-receipts.ts	execute_raw	9
-src/core/persistence/topology-recovery.ts	execute_raw	17
+src/core/persistence/topology-recovery.ts	execute_raw	16
 src/core/persistence/topology-transaction.ts	execute_raw	1
 src/core/persistence/transient-retry.ts	execute_raw	1
 src/core/persistence/twin-merge.ts	execute_raw	16
@@ -739,7 +737,6 @@ src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1
 src/core/persistence/worktree-refresh.ts	execute_raw	29
 src/core/persistence/write-applied.ts	execute_raw	1
-src/core/persistence/writer-versions.ts	execute_raw	1
 src/core/pglite-statements.ts	driver_call	1
 src/core/planner-stats.ts	execute_raw	14
 src/core/post-upgrade-reembed.ts	execute_raw	1
@@ -912,7 +909,7 @@ src/core/sync-policy.ts	execute_raw	1
 src/core/sync-rename-identity.ts	execute_raw	1
 src/core/sync-status-report.ts	execute_raw	1
 src/core/sync-upstream.ts	execute_raw	1
-src/core/synopsis-sweep.ts	execute_raw	4	master #9683: readSynopsisTierConfig reads the source rows and the frontmatter-override probe in one statement; rust-engine/write-attribution-reads' typed listSynopsisSourceIds answers the source rows only, so the sweep keeps this statement until a typed member returns both (TODOS.md rust-synopsis-tier-config)
+src/core/synopsis-sweep.ts	execute_raw	3
 src/core/take-proposals.ts	execute_raw	8
 src/core/takes-horizon.ts	execute_raw	5
 src/core/takes-quality-eval/receipt-write.ts	execute_raw	1

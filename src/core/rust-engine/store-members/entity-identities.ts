@@ -8,21 +8,19 @@
  * lineage, an owner read) refuses. The store does not read owner-only sources yet, so a policy read refuses while
  * the brain has one, rather than show its pages.
  *
- * Identity decisions (listIdentityDecisions): the store keeps none, and applyIdentityDecisions refuses, so no decision
- * can exist on this engine; the read is the empty read the SQL engines return for a brain with no decisions. Sync's
- * identity hook (entities/identity-decisions.ts syncIdentityDecisions) reads it after every sync. The answer is true
- * only while the write refuses: test/rust-identity-decisions-pin.test.ts fails when applyIdentityDecisions is served,
- * and the lane that types the write must type this read from the stored rows too.
+ * Identity decisions (listEntityKeyRows, listIdentityDecisions, listRestrictedIdentityMembers, applyIdentityDecisions;
+ * SQL in engine-sql/entity-keys.ts and engine-sql/identity-decisions.ts) live in gbrain-store `identity_reviews`.
  */
 import { identityPageNotFound, type CanonicalTwinRow, type EntityIdentityFilter, type EntityIdentityLinkInput, type EntityIdentityPageRow, type EntityIdentityRow, type EntityIdentityUnlinkInput } from '../../engine-sql/entity-identities.ts';
 import type { SourceRoutingRow } from '../../engine-sql/sources.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { storePagePolicy } from './private-provenance.ts';
-import type { IdentityDecisionsRead } from '../../engine-sql/identity-decisions.ts';
-
-/** No decisions and nothing pending: the store keeps no identity decisions (see the header). */
-export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = async () => ({ decisions: [], pending: [], revision: '' });
+import type { EntityKeyRow, EntityKeyRowsOpts } from '../../engine-sql/entity-keys.ts';
+import type {
+  ApplyIdentityDecisionsInput, ApplyIdentityDecisionsResult, IdentityDecisionsRead, IdentityMemberRef,
+} from '../../engine-sql/identity-decisions.ts';
+import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
+import { pagePolicyFlags, storePagePolicy } from './private-provenance.ts';
 
 /** Links the live page into the group; the identity page-not-found error with no live page. */
 export const linkEntityIdentityRow: StoreMember<[input: EntityIdentityLinkInput], void> = async (brain, input) => {
@@ -68,3 +66,47 @@ export const readEntityIdentityIdsForPages: StoreMember<[pages: ReadonlyArray<{ 
 /** The live canonical members of the page's group in another source, at most two. */
 export const readCanonicalTwin: StoreMember<[sourceId: string, slug: string], CanonicalTwinRow[]> = (brain, sourceId, slug) =>
   storeCall({ member: 'readCanonicalTwin', slug, sourceId }, () => brain.readCanonicalTwin(sourceId, slug)) as Promise<CanonicalTwinRow[]>;
+
+/**
+ * Duplicate finder read: live, unretired pages of the types in unarchived sources, the named keys only, keyset-paged,
+ * narrowed to `members` and to pages with a `tokens` value. A row's `generation` is an equality token the store derives
+ * from the page's knowledge revision (rust/docs/store/entity_identities.md): it changes when the page does, but does not grow.
+ */
+export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKeyRow[]> = (brain, opts) =>
+  storeCall({ member: 'listEntityKeyRows' }, () => brain.listEntityKeyRows({
+    types: [...opts.types], keys: [...opts.keys], after: opts.after ? { source_id: opts.after.source_id, slug: opts.after.slug } : null,
+    limit: opts.limit,
+    members: opts.members ? opts.members.map(m => ({ source_id: m.source_id, slug: m.slug })) : null,
+    tokens: opts.tokens ? { values: [...opts.tokens.values], fields: [...opts.tokens.fields] } : null,
+  }));
+
+/** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. */
+export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = (brain) =>
+  storeCall({ member: 'listIdentityDecisions' }, () => brain.listIdentityDecisions());
+
+/** The members whose page the no-caller page policy (`privatePagesFilterFragment`) hides. */
+export const listRestrictedIdentityMembers: StoreMember<[members: ReadonlyArray<IdentityMemberRef>], IdentityMemberRef[]> = async (brain, members) => {
+  if (!members.length) return [];
+  return storeCall({ member: 'listRestrictedIdentityMembers' }, () => brain.listRestrictedIdentityMembers(
+    members.map(m => ({ source_id: m.source_id, slug: m.slug })), pagePolicyFlags(privatePagesFilterFragment('p'))));
+};
+
+/** Writes and removes decisions and reconciles the 'dedupe:auto' and 'dedupe:confirm' identity rows in one store write. */
+export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsInput], ApplyIdentityDecisionsResult> = (brain, input) =>
+  storeCall({ member: 'applyIdentityDecisions' }, () => brain.applyIdentityDecisions({
+    upsert: (input.upsert ?? []).map(d => ({
+      decision_id: d.decision_id, verdict: d.verdict, members: d.members, group_id: d.group_id ?? null, entity_id: d.entity_id ?? null,
+      canonical: d.canonical ? { source_id: d.canonical.source_id, slug: d.canonical.slug } : null, decided_by: d.decided_by,
+      decided_at: d.decided_at ?? null, origin: d.origin, home_source_id: d.home_source_id ?? null, git_blob: d.git_blob ?? null,
+      evidence: d.evidence ? [...d.evidence] : null,
+    })),
+    remove: [...(input.remove ?? [])],
+    expect_revision: input.expectRevision ?? null,
+    auto: input.auto ? {
+      link: input.auto.link.map(g => ({
+        entity_id: g.entity_id, canonical_page_id: g.canonical_page_id,
+        members: g.members.map(m => ({ source_id: m.source_id, page_id: m.page_id, generation: m.generation })),
+      })),
+      unlink: [...input.auto.unlink],
+    } : null,
+  }));

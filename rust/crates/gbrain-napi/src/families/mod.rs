@@ -92,3 +92,5 @@ mod withdrawal_fence;
 mod withdrawal_pages;
 // Group C: decide proposals and review proposals (rust/docs/store/decide-proposals.md).
 mod decide_proposals;
+mod source_cr_mode;
+mod synopsis_tier;

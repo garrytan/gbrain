@@ -1,4 +1,4 @@
-//! Jobs: `access_tokens` (the mint insert, the active-token find, the read floor) (rust/docs/store/access-tokens.md).
+//! Jobs: `access_tokens` (the mint insert, the active-token find, the write grant read, the live-token scope read, the read floor) (rust/docs/store/access-tokens.md).
 
 use gbrain_store::jobs::TokenInsert;
 use napi::Env;
@@ -31,6 +31,36 @@ impl Brain {
         target: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.find_active_access_tokens(&target))
+    }
+
+    /// `readAccessTokenNames(ids)`: `[{ id, name }]` of the tokens with those ids, revoked ones included, by id.
+    #[napi]
+    pub fn read_access_token_names<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_access_token_names(&ids))
+    }
+
+    /// `readAccessTokenWriteGrant(id)`: the token's write grant columns, or null for an id no token has.
+    #[napi]
+    pub fn read_access_token_write_grant<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_access_token_write_grant(&id))
+    }
+
+    /// `readLiveAccessTokenScope(id)`: a live token's `{ reads_unscoped, created_at }`, or null.
+    #[napi]
+    pub fn read_live_access_token_scope<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_live_access_token_scope(&id))
     }
 
     /// `setAccessTokenMinTrust(id, tier)`: whether a token had the id.

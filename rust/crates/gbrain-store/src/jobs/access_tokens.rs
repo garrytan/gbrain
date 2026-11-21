@@ -1,12 +1,13 @@
 //! Jobs: the `access_tokens` table, the columns the legacy-token mint and the read-floor command touch, as the members
 //! of `src/core/engine-sql/access-tokens.ts` run them (rust/docs/store/access-tokens.md).
 //!
-//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust.
+//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust, readAccessTokenWriteGrant,
+//! readLiveAccessTokenScope, and the name read of readWriteAttributionNames (`read_access_token_names`).
 //!
 //! Keys, all under `keys::JOBS` (`m`), sub-tag 0x2B (this file only):
 //! - `m 0x2B id -> TokenRecord`: one token row, keyed by its generated UUID.
 //!
-//! Kept: the columns those three members read or write (id, name, token_hash, scopes, permissions, the five grant
+//! Kept: the columns those members read or write (id, name, token_hash, scopes, permissions, the five grant
 //! columns, grant_revision, min_trust, revoked_at, created_at) and the table's constraints on them: the unique
 //! `token_hash` (`access_tokens_token_hash_key`, found by scanning the table, as the secondary indexes are not kept), the
 //! `source_grant` list and the `min_trust` list. A refusal is `constraint_violation` with the Postgres message.
@@ -15,7 +16,7 @@
 //! caller here always passes the id `findActiveAccessTokens` returned).
 
 use super::*;
-use crate::env::parse_iso;
+use crate::env::{iso, parse_iso};
 
 const TOKEN: u8 = 0x2B;
 const TABLE: &str = "access_tokens";
@@ -193,6 +194,59 @@ impl Store {
                 .map(|t| json!({ "id": t.id, "name": t.name, "min_trust": t.min_trust }))
                 .collect(),
         ))
+    }
+
+    /// `readAccessTokenNames(ids)`: `[{ id, name }]` of the tokens whose id is one of `ids`, revoked ones included, by id;
+    /// an id no token has is left out. The names `get_write_attribution` shows for a legacy token.
+    pub fn read_access_token_names(&self, ids: &[String]) -> Result<Value> {
+        let read = self.read()?;
+        let mut wanted: Vec<&String> = ids.iter().collect();
+        wanted.sort();
+        wanted.dedup();
+        let mut rows = Vec::new();
+        for id in wanted {
+            if let Some(t) = get_json::<TokenRecord>(&*read, &token_key(id))? {
+                rows.push(json!({ "id": t.id, "name": t.name }));
+            }
+        }
+        Ok(Value::Array(rows))
+    }
+
+    /// `readAccessTokenWriteGrant(id)`: the grant columns of the token `authorizeWrite` re-checks (`id`, `scopes`,
+    /// `permissions`, the five grant columns, `grant_revision`, `read_shared_revision`, `revoked_at` as ISO text or
+    /// null), revoked ones included; null for an id no token has. `private_pages` and `private_facts` are not kept, so they
+    /// are left out, as on a brain whose table lacks them.
+    pub fn read_access_token_write_grant(&self, id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let Some(t) = get_json::<TokenRecord>(&*read, &token_key(id))? else {
+            return Ok(Value::Null);
+        };
+        Ok(json!({
+            "id": t.id,
+            "scopes": t.scopes,
+            "permissions": t.permissions,
+            "source_grant": t.source_grant,
+            "source_id": t.source_id,
+            "federated_read": t.federated_read,
+            "allowed_operations": t.allowed_operations,
+            "takes_holders": t.takes_holders,
+            "grant_revision": t.grant_revision,
+            "read_shared_revision": t.read_shared_revision,
+            "revoked_at": t.revoked_at.map(iso),
+        }))
+    }
+
+    /// `readLiveAccessTokenScope(id)`: `{ reads_unscoped, created_at }` of the token `id` names when it is not revoked,
+    /// or null. `reads_unscoped` is always null: the column is not kept, and no token this store mints opts out.
+    pub fn read_live_access_token_scope(&self, id: &str) -> Result<Value> {
+        let read = self.read()?;
+        match get_json::<TokenRecord>(&*read, &token_key(id))? {
+            Some(t) if t.revoked_at.is_none() => Ok(json!({
+                "reads_unscoped": Value::Null,
+                "created_at": iso(t.created_at),
+            })),
+            _ => Ok(Value::Null),
+        }
     }
 
     /// `setAccessTokenMinTrust(id, tier)`: sets (or clears, with None) one token's floor; whether a token had the id.

@@ -12,20 +12,23 @@ import { STORE_MEMBERS } from './store-members/index.ts';
 
 /**
  * Capabilities held back even when every member is served, each with the callers that still run raw SQL outside the
- * member table. Reporting `persistence_journal` would start a persistence listener and route CLI writes to an owner that
- * refuses them partway with owner_unavailable (rust-engine/owner-ipc/client.ts `rustOwnerServesPersistence`). A
- * capability leaves this table when its last blocking caller is typed.
+ * member table. A held `persistence_journal` would start no persistence listener (rust-engine/owner-ipc/client.ts
+ * `rustOwnerServesPersistence`). A capability leaves this table when its last blocking caller is typed.
+ *
+ * Nothing is held. `managed_persistence` is reported: a worktree-bound write (a source with a claimed checkout) is
+ * admitted, prepared, published and recovered through typed members. A topology change of a managed source (move,
+ * clone, and the recovery of an interrupted one) still takes its locks through raw SQL (persistence/topology-locks.ts
+ * `withTopologyLocks`), so it refuses `raw_sql` at its first statement, before it writes anything. A remote write that
+ * would queue a mention-links effect still refuses `raw_sql` at admission (rust-engine/errors.ts
+ * `requireRawSqlPublication`): its publication reads through raw SQL (persistence/effect-links.ts).
  */
-export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {
-  persistence_journal: [
-    'segmentedGateEvidence (persistence/writer-versions.ts): the segmented-storage gate evidence answers no writer here',
-    'queuePublicationEffects (persistence/effect-journal.ts): the publication effects insert, where a forwarded put stops',
-  ],
-};
+export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {};
 
 /** Capabilities withheld until every capability they need is reported. */
 export const CAPABILITY_REQUIRES: Partial<Record<Capability, readonly Capability[]>> = {
   persistence_journal: ['transactions'],
+  // A managed worktree's writes go through the write journal; without it a worktree could be claimed but never written.
+  managed_persistence: ['persistence_journal', 'transactions'],
 };
 
 export function servedCapabilities(): EngineCapabilities {

@@ -200,6 +200,54 @@ fn an_inserted_request_has_every_column_and_charges_only_existing_counters() {
 }
 
 #[test]
+fn a_group_insert_is_one_write_and_a_later_refusal_keeps_no_row_or_charge() {
+    let dir = TempDir::new("persist-insert-group");
+    let store = open(&dir);
+    store.lock_persistence_counters(&["brain".into()]).unwrap();
+    let rows = store
+        .insert_write_request_group(&[
+            insert_input(&store, REQ_1, "notes/a", json!({"kind": "put_page"})),
+            insert_input(&store, REQ_2, "notes/b", json!({"kind": "put_page"})),
+        ])
+        .unwrap();
+    let sequences: Vec<_> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["sequence"].clone())
+        .collect();
+    assert_eq!(
+        sequences,
+        vec![json!(1), json!(2)],
+        "one row per item, in item order"
+    );
+    let charged = counter(&store, "brain");
+    assert_eq!(charged["outstanding_count"], 2);
+    // The second item repeats an admitted request id: the store refuses it, and the new first item is not kept.
+    const REQ_3: &str = "b0000000-0000-4000-8000-0000000000b3";
+    let refused = store
+        .insert_write_request_group(&[
+            insert_input(&store, REQ_3, "notes/c", json!({"kind": "put_page"})),
+            insert_input(&store, REQ_1, "notes/a", json!({"kind": "put_page"})),
+        ])
+        .unwrap_err();
+    assert_eq!(refused.code, CONSTRAINT_VIOLATION, "{refused:?}");
+    assert!(
+        store
+            .read_write_request(&principal(), REQ_3)
+            .unwrap()
+            .is_none(),
+        "the first item is dropped with the write"
+    );
+    assert_eq!(
+        counter(&store, "brain"),
+        charged,
+        "no counter charge is kept"
+    );
+    assert_eq!(store.insert_write_request_group(&[]).unwrap(), json!([]));
+}
+
+#[test]
 fn an_insert_refuses_what_the_table_constraints_refuse() {
     let dir = TempDir::new("persist-insert-refuse");
     let store = open(&dir);

@@ -3,7 +3,8 @@
  * binding as ISO text. The store refuses a write that breaks a constraint of the table with `constraint_violation`;
  * `refusing` gives it the SQLSTATE and constraint name PGLite and Postgres raise, so a caller branches on one error shape.
  */
-import type { AccessTokenInsert, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
+import type { AccessTokenInsert, AccessTokenScopeRow, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
+import { withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
 
@@ -15,4 +16,14 @@ export const findActiveAccessTokens: StoreMember<[target: string], ActiveAccessT
 
 export const setAccessTokenMinTrust: StoreMember<[id: string, tier: string | null], void> = async (brain, id, tier) => {
   await refusing('setAccessTokenMinTrust', () => brain.setAccessTokenMinTrust(id, tier));
+};
+
+/**
+ * A live token's requester-scope fields. The store keeps no `reads_unscoped` column and mints no token that opts out, so
+ * it answers null there (read as not opted out); `created_at` crosses as ISO text and is returned as a Date, as the SQL
+ * engines return it.
+ */
+export const readLiveAccessTokenScope: StoreMember<[id: string], AccessTokenScopeRow | null> = async (brain, id) => {
+  const row = await storeCall({ member: 'readLiveAccessTokenScope' }, () => brain.readLiveAccessTokenScope(id)) as AccessTokenScopeRow | null;
+  return row ? withDates(row, ['created_at']) : null;
 };

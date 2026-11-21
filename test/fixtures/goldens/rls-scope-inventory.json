@@ -2364,6 +2364,17 @@
         ],
         "flagOnScopes": []
       },
+      "insertWriteRequestGroup#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "invalidateContentDriftEmbeddings#default": {
         "flagOffLanes": [
           "pool",
@@ -3594,6 +3605,28 @@
         ],
         "flagOnScopes": []
       },
+      "listTopologyRecoveries#after": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listTopologyRecoveries#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listTrueUpRequests#default": {
         "flagOffLanes": [
           "pool"
@@ -4761,6 +4794,17 @@
         ],
         "flagOnScopes": []
       },
+      "readOwnerHostBinding#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readOwnerOnlySourceConfig#default": {
         "flagOffLanes": [
           "pool"
@@ -4998,6 +5042,17 @@
         ],
         "flagOnScopes": []
       },
+      "readSegmentedGateEvidence#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readSourceChunkerVersion#default": {
         "flagOffLanes": [
           "pool"
@@ -5109,6 +5164,17 @@
         "flagOnScopes": []
       },
       "readWriteRequestById#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readWriteRequestsByRequestIds#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -6604,6 +6670,7 @@
         "completeHousekeepingTurn": "none",
         "completeJob": "none",
         "completeSubagentToolExecution": "none",
+        "completeSyncedRefresh": "none",
         "completeWriteRow": "none",
         "computeFactFingerprints": "none",
         "configRead": "none",
@@ -6638,6 +6705,7 @@
         "countFilesRegisteredElsewhere": "none",
         "countForeignEdges": "none",
         "countGitHolds": "none",
+        "countHeldBehindImport": "none",
         "countInboundLinks": "none",
         "countJobsByStatus": "none",
         "countKeywordPages": "direct",
@@ -6882,6 +6950,7 @@
         "hasCodeEdgesSymbol": "none",
         "hasCompanyBrainReceipt": "none",
         "hasCoveringFactWithdrawal": "none",
+        "hasDeferralRoom": "none",
         "hasExtractedEvents": "none",
         "hasFactWithdrawalForSubject": "none",
         "hasFileWithHash": "none",
@@ -6940,6 +7009,7 @@
         "insertTrustProposal": "none",
         "insertWithdrawalEffects": "none",
         "insertWriteRequest": "none",
+        "insertWriteRequestGroup": "none",
         "installChunkEmbeddings": "none",
         "invalidateContentDriftEmbeddings": "none",
         "invalidateStaleSignatureEmbeddings": "none",
@@ -7240,6 +7310,7 @@
         "listTakeSupersessionCandidates": "none",
         "listTakes": "none",
         "listTimelineOrphanPages": "none",
+        "listTopologyRecoveries": "none",
         "listTrueUpRequests": "none",
         "listTrustAllowRuleRows": "none",
         "listTrustProposals": "none",
@@ -7498,6 +7569,7 @@
         "readLinkRelationshipEvidence": "none",
         "readLinkedFactCopies": "none",
         "readLiveAccessToken": "none",
+        "readLiveAccessTokenScope": "none",
         "readLiveFactEntityPage": "none",
         "readLiveIdentityHolders": "none",
         "readLiveMember": "none",
@@ -7534,6 +7606,7 @@
         "readOldestWaitingAge": "none",
         "readOpCheckpointKeys": "none",
         "readOrphanedManagedSyncFailureRows": "none",
+        "readOwnerHostBinding": "none",
         "readOwnerOnlySourceConfig": "none",
         "readOwnerOnlySourcesPresent": "none",
         "readPageAliasRows": "none",
@@ -7583,6 +7656,7 @@
         "readReasonPurgeTombstones": "none",
         "readReceiptBudget": "none",
         "readReextractOutcomeRow": "none",
+        "readRefreshTiming": "none",
         "readRelinkSource": "none",
         "readRemoteForgetTier": "none",
         "readRenameIdentityRows": "none",
@@ -7599,6 +7673,7 @@
         "readSegmentDerivations": "none",
         "readSegmentTexts": "none",
         "readSegmentedEmbedPage": "none",
+        "readSegmentedGateEvidence": "none",
         "readSegmentedPageHead": "none",
         "readSegmentedVersionBodyBytes": "none",
         "readSourceCheckoutPath": "none",
@@ -7624,6 +7699,7 @@
         "readSyncRecoveryProbeRow": "none",
         "readSyncStatusCommittedRow": "none",
         "readSyncStatusSourceRow": "none",
+        "readSynopsisTierSources": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",
         "readTransactionSettings": "none",
@@ -7640,11 +7716,13 @@
         "readWedgeSignals": "none",
         "readWithdrawalAnchor": "none",
         "readWithdrawalDiscovery": "none",
+        "readWorktreeAdmission": "none",
         "readWorktreeManifest": "none",
         "readWriteAttributionNames": "none",
         "readWriteRequest": "none",
         "readWriteRequestById": "none",
         "readWriteRequestProgress": "none",
+        "readWriteRequestsByRequestIds": "none",
         "readWriteVisibilityProbe": "none",
         "readWriteWatermarkRow": "none",
         "readWriterAdminState": "none",
@@ -7776,6 +7854,7 @@
         "setPurgeProbeTimeout": "none",
         "setPurgeVersionBody": "none",
         "setSourceChunkerVersion": "none",
+        "setSourceContextualMode": "none",
         "setWriteContext": "none",
         "settleFactsReconcile": "none",
         "settleFreshnessMarker": "none",

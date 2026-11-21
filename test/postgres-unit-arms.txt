@@ -167,6 +167,7 @@ test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/core-page-member-reads.test.ts
+test/engine-parity/credential-grant-writes.test.ts
 test/engine-parity/cycle-locks.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
@@ -228,6 +229,7 @@ test/engine-parity/jobs-status.test.ts
 test/engine-parity/jobs-subagent.test.ts
 test/engine-parity/jobs-wake.test.ts
 test/engine-parity/jobs.test.ts
+test/engine-parity/journal-typed-sites.test.ts
 test/engine-parity/keyword-visibility.test.ts
 test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
@@ -272,6 +274,7 @@ test/engine-parity/search-privacy.test.ts
 test/engine-parity/search-private-fence.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
+test/engine-parity/segment-regions.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/source-verify-reads.test.ts
@@ -287,6 +290,7 @@ test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
+test/engine-parity/topology-named-stop.test.ts
 test/engine-parity/transaction-settings.test.ts
 test/engine-parity/traversal-cache.test.ts
 test/engine-parity/trust-fence.test.ts

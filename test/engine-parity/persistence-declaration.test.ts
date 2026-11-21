@@ -181,9 +181,8 @@ describe('engine parity: persistence declaration', () => {
     return out;
   });
 
-  parityTest('a write to a managed worktree refuses on an engine without managed persistence, naming that capability', {
+  parityTest('a write to a managed worktree that is not bound to its source is refused source_changed', {
     methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
-    requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine) => {
     await registerLocalWriter(engine, 'cli');
@@ -194,19 +193,13 @@ describe('engine parity: persistence declaration', () => {
     const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default',
       sourceIncarnation: source!.incarnation, slug: 'notes/parity-worktree', requestId: REQUESTS[0]!, worktreeId: WORKTREE, topologyGeneration: 1,
       callerIntent: { body: 'x' }, intent: { body: 'x' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
-    // An engine without the capability stops here, before any worktree read: the refusal names it, not raw SQL.
-    if (refusal?.code === 'engine_capability_missing') {
-      expect({ reason: refusal.reason, step: refusal.message?.includes('admitWrite') }).toEqual({ reason: 'managed_persistence', step: true });
-      throw refusal;
-    }
-    // An engine with it reads the worktree binding; this worktree is not bound to the source, so nothing is accepted.
+    // The admission reads the worktree binding; this worktree is not bound to the source, so nothing is accepted.
     expect(refusal?.code).toBe('source_changed');
     return { managed: engine.capabilities.has('managed_persistence'), code: refusal?.code, reason: refusal?.reason ?? null };
   });
 
-  parityTest('a skill bundle write refuses on an engine without managed persistence, naming that capability', {
+  parityTest('a skill bundle write with no activated shared-skill owner is refused writer_not_quiesced', {
     methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
-    requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine) => {
     await registerLocalWriter(engine, 'cli');
@@ -217,18 +210,12 @@ describe('engine parity: persistence declaration', () => {
     const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_skill', sourceId: 'default',
       sourceIncarnation: source!.incarnation, slug: 'skills/parity-pack/parity-skill', requestId: REQUESTS[1]!, targetKind: 'skill_bundle', protocolVersion: 2,
       callerIntent: { name: 'parity-skill' }, intent: { name: 'parity-skill' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
-    // An engine without the capability refuses the bundle by name, not as a shared-skill owner that is not yet activated.
-    if (!engine.capabilities.has('managed_persistence')) {
-      expect({ code: refusal?.code, reason: refusal?.reason }).toEqual({ code: 'engine_capability_missing', reason: 'managed_persistence' });
-      throw refusal;
-    }
-    // An engine with it checks the shared-skill owner; none was activated, so nothing is accepted.
+    // The admission checks the shared-skill owner; none was activated, so nothing is accepted.
     expect(refusal?.code).toBe('writer_not_quiesced');
     return { code: refusal?.code, message: refusal?.message };
   });
 
   parityTest('every admission branch a plain write reaches ends typed: admit, replay, changed replay, background pause, and a managed sync job past the cap', {
-    requires: 'managed_persistence',
     methods: ['declarePersistence', 'transaction', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequest', 'readAdmissionRate', 'getConfigValues'],
     timeout: 60_000,
   }, async (engine) => {
@@ -247,10 +234,6 @@ describe('engine parity: persistence declaration', () => {
     await engine.setConfig('persistence.limits.principal_outstanding', '1');
     const sync = await admitPut(engine, 'jobs/parity-sync', 'b0000000-0000-4000-8000-0000000000b5', 'default', 'submit_job', { kind: 'managed_sync_import' })
       .then(() => null, (e: { code?: string; reason?: string }) => e);
-    if (!engine.capabilities.has('managed_persistence')) {
-      expect(sync).toMatchObject({ code: 'engine_capability_missing', reason: 'managed_persistence' });
-      throw sync;
-    }
     return { replayed: true, state: replay.state, changed, paused, sync: sync?.code };
   });
 });

@@ -109,6 +109,8 @@ import * as writeContext from './write-context.ts';
 // The store creates its tables when it opens; initSchema seeds the embedding config rows PGLite's schema text seeds.
 import { initSchema } from './init-schema.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
+import * as synopsisTier from './synopsis-tier.ts';
+import * as sourceCrMode from './source-cr-mode.ts';
 
 const { readBrainMode: _brainModeHelper, ...writerReleaseMembers } = writerRelease;
 
@@ -199,6 +201,10 @@ export const STORE_MEMBERS = {
   ...fieldUsage,
   // Group A: the decide store (rust/docs/store/decide-store.md).
   ...decideStore,
+  // The synopsis tier's configuration read (rust/docs/store/synopsis-tier.md).
+  ...synopsisTier,
+  // A source's own contextual-retrieval mode (rust/docs/store/source-cr-mode.md).
+  ...sourceCrMode,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

@@ -1,7 +1,8 @@
 /**
- * BrainEngine parity: the `access_tokens` members the legacy-token mint and the read-floor command use
- * (engine-sql/access-tokens.ts): `insertAccessToken`, `findActiveAccessTokens`, `setAccessTokenMinTrust`, driven through
- * `mintLegacyToken` and `setMinTrust` (src/core/token-mint.ts, src/core/trust/min-trust.ts).
+ * BrainEngine parity: the `access_tokens` members the legacy-token mint, the read-floor command and the requester-scope
+ * gate use (engine-sql/access-tokens.ts): `insertAccessToken`, `findActiveAccessTokens`, `setAccessTokenMinTrust`,
+ * `readLiveAccessTokenScope`, driven through `mintLegacyToken`, `setMinTrust` and `credentialScopeFor`
+ * (src/core/token-mint.ts, src/core/trust/min-trust.ts, src/core/access/requester-scope.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `setMinTrust` on a name or id that is not an OAuth client finds the one ACTIVE token it names, changes its
@@ -9,17 +10,22 @@
  *    are refused `invalid_params` and neither changes; a revoked token, and a name nobody has, are `not_found`; a tier
  *    outside the six is refused 23514 (`access_tokens_min_trust_check`) with the floor unchanged. The mint inserts a token at
  *    grant revision 1 and returns its id; a repeated token hash is 23505 (`access_tokens_token_hash_key`) and a
- *    `source_grant` outside the list is 23514 (`access_tokens_source_grant_check`), each leaving no row. The same answers
+ *    `source_grant` outside the list is 23514 (`access_tokens_source_grant_check`), each leaving no row.
+ *    `credentialScopeFor` on an agent job's legacy token reads the live token's creation time and its opt-out (a minted
+ *    token has none); a revoked token and an id no token has read as not opted out, creation unknown. The same answers
  *    on every engine arm.
  *  - Regression: a store that finds a revoked token, ignores the id-or-name pair, matches a name partly, lets two tokens
  *    share a hash, takes a tier it should refuse, or returns the ambiguity as a pick of the first row: a floor set on the
- *    wrong credential, which widens or narrows what an agent can read.
+ *    wrong credential, which widens or narrows what an agent can read. A store whose scope read fails, which
+ *    credentialScopeFor swallows: a token minted after the brain began to serve several people reads as created at an
+ *    unknown time, so its unbound reads get the grace instead of the refusal.
  *  - Why existing coverage misses it: test/trust-*.test.ts and test/auth-mint*.test.ts run on PGLite with raw SQL.
  *  - Seam: none. Real engines, typed members only. Ids are generated per engine, so each is reported as the name of the
  *    row it belongs to.
  */
 import { describe } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { credentialScopeFor } from '../../src/core/access/requester-scope.ts';
 import { setMinTrust } from '../../src/core/trust/min-trust.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
 import { hashToken } from '../../src/core/utils.ts';
@@ -103,5 +109,25 @@ describe('engine parity: access_tokens members', () => {
         left: { again: (await engine.findActiveAccessTokens('dupe-again')).length, grant: (await engine.findActiveAccessTokens('bad-grant')).length,
           tier: (await engine.findActiveAccessTokens('bad-tier')).length, harness: (await engine.findActiveAccessTokens('harness')).length },
       };
+    });
+
+  parityTest('the requester-scope read of a legacy token reads a live token\'s creation time, and nothing for a revoked or missing one',
+    { methods: ['insertAccessToken', 'readLiveAccessTokenScope'] }, async (engine) => {
+      const before = Date.now() / 1000 - 5;
+      const live = await mintLegacyToken(engine, { name: 'scoped', scopes: ['read'], takesHolders: ['world'] });
+      const after = Date.now() / 1000 + 5;
+      const revoked = await insert(engine, 'scoped-revoked', 'h-scoped-revoked', { revoked_at: new Date('2026-01-01T00:00:00Z') });
+      const scope = async (id: string) => {
+        const auth = await credentialScopeFor(engine, { clientName: 'agent', scopes: ['read'], principal: { kind: 'legacy_token', id } } as never) as
+          { readsUnscoped: boolean; createdAt: number | null };
+        const at = auth.createdAt;
+        return { readsUnscoped: auth.readsUnscoped, createdAt: at === null ? null : at >= before && at <= after ? 'during the run' : at };
+      };
+      const row = await engine.readLiveAccessTokenScope(live.id);
+      const member = {
+        live: row === null ? null : { readsUnscoped: row.reads_unscoped, createdAtIsDate: row.created_at instanceof Date },
+        revoked: await engine.readLiveAccessTokenScope(revoked.id),
+      };
+      return { member, live: await scope(live.id), revoked: await scope(revoked.id), missing: await scope('00000000-0000-4000-8000-000000000000') };
     });
 });

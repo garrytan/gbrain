@@ -49,9 +49,9 @@ Each returns what PGLite returns for a brain with the same contents.
 | `readHeldPageRows(pageIds)`, `readHeldCoverageRows(sourceIds)`, `readGitHoldRecords(opts)` | `[]` | The store holds no files from a sync, so nothing is held. `readGitHoldRecords` is the git sync hold read of `persistence/sync-holds.ts` `readGitSourceHolds`; its SQL lives in `src/core/engine-sql/sync-hold-reads.ts`. |
 | `listFenceHoldRows(sourceIds, kinds, ownerKey?)` (`src/core/rust-engine/store-members/fence-holds.ts`) | `[]` | Only a facts or takes fence publish holds a fence result, and it writes `derived_generations` through `executeRaw`, which this engine refuses. A family that lets the store publish fence generations must read its held rows here. |
 | `ownsSchemaTables()` | `true` | The process that opens the store owns all of it, so the schema owner of a schema-behind refusal is this caller (fix actor `agent`). |
-| `readOAuthClientWriteGrant(clientId, opts?)` | `null` | The store keeps no OAuth clients (its writers are `local_cli` and `local_stdio`), so a write owned by one finds no live grant and `authorizeWrite` refuses `permission_denied`, as a Postgres or PGLite brain without that client does. |
-| `readAccessTokenWriteGrant(tokenId, opts?)` | `null`, or a typed refusal | A token with no live row (`findActiveAccessTokens`) answers `null`, with the same refusal as above. The store keeps a minted token but not every grant column (see [access-tokens.md](access-tokens.md)), so a live token refuses `engine_capability_missing` rather than read as revoked. |
-| `shareLockWriteCredential(kind, id)` | no-op | No credential row exists to hold; a missing row locks nothing on Postgres either. |
+| `readOAuthClientWriteGrant(clientId, opts?)` | the grant columns, or `null` | Projected from the client's whole row (`readOauthClient`, [oauth-clients.md](oauth-clients.md)): `deleted_at`, `scope`, `source_id`, `source_grant`, `allowed_operations`, `bound_slug_prefixes`, `bound_tools`, `delegated_namespace`, `delegated_slug_prefixes`. A client the store does not have answers `null`, and `authorizeWrite` refuses `permission_denied`. `lock` holds nothing: one process owns the store. |
+| `readAccessTokenWriteGrant(tokenId, opts?)` | the grant columns, or `null` | Read from the token's stored row ([access-tokens.md](access-tokens.md)): `id`, `scopes`, `permissions`, the five grant columns, `grant_revision`, `read_shared_revision` and `revoked_at`. `private_pages` and `private_facts` are not kept, so they are left out, as on a brain whose table lacks them; `authorizeWrite` does not read them. A token the store does not have answers `null`, and `authorizeWrite` refuses `permission_denied`. |
+| `shareLockWriteCredential(kind, id)` | no-op | One process owns the store, so no other write can remove the credential between the lock and the read; a missing row locks nothing on Postgres either. |
 
 `src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way
 (SQL for PGLite and Postgres in `src/core/engine-sql/connect-gate.ts`):
@@ -74,20 +74,29 @@ does not serve these members now stops at connect. Refusing is the safer answer:
 connect during a graduation.
 
 `src/core/rust-engine/store-members/sync-status-reads.ts` answers the reads of `gbrain sync status` (SQL for PGLite
-and Postgres in `src/core/engine-sql/sync-status-reads.ts`). The store keeps no managed write request, effect,
-worktree refresh or derived generation, so each part of a read that joins those tables gives its empty answer:
+and Postgres in `src/core/engine-sql/sync-status-reads.ts`). The store keeps write request, effect, worktree,
+source binding, worktree refresh and derived generation rows, but nothing on this engine yet writes the ones these reads
+join. The engine reports `managed_persistence`, so a write to a bound worktree is admitted and writes a request row,
+but no refresh, request-recovery or derived-generation writer runs (`gbrain sources refresh` refuses `raw_sql`), and
+these reads do not yet see a worktree-bound request (an open item below). A remote write that would queue a mention-links effect refuses
+`raw_sql` at admission too (`requireRawSqlPublication`): the links effect and a finished batch's re-arm still read
+through raw SQL. Each part of a
+read that joins those rows still gives its empty answer below; a read that must see a worktree-bound request is an
+open item of the capability flip, not served yet:
 
 | Member | Answer | Why |
 | --- | --- | --- |
-| `readSyncStatusSourceRow(sourceId)` | the source's incarnation, last commit and sync time, whether the drain lock row exists, the pass and withheld-delete rows, and the admission setting; `null` for an archived or missing source | While the stored admission reads as normal the two probes are `null`. Otherwise `admission_pinned` is whether the pass row is `open`, carries the live drain lease's token and started before the dated `set_at`, and `admission_destructive` is `false`. `writeback_failed` and `refresh` are `null`. |
-| `readSyncStatusCommittedRow(sourceId)` | `{ n: 0, git_push_held: false, fence_held: false, last_committed_at: null }` | No managed write committed, and no effect or fence generation is held. |
+| `readSyncStatusSourceRow(sourceId)` | the source's incarnation, last commit and sync time, whether the drain lock row exists, the pass and withheld-delete rows, and the admission setting; `null` for an archived or missing source | While the stored admission reads as normal the two probes are `null`. Otherwise `admission_pinned` is whether the pass row is `open`, carries the live drain lease's token and started before the dated `set_at`, and `admission_destructive` is `false` (no managed delete or keep_db reconcile is admitted: a managed sync stops on `raw_sql` at `assertManagedSyncAllowed`, worktree-refresh.ts). `writeback_failed` and `refresh` are `null`: no managed Git effect and no refresh row is written. |
+| `readSyncStatusCommittedRow(sourceId)` | `{ n: 0, git_push_held: false, fence_held: false, last_committed_at: null }` | No managed-sync request commits (a managed sync stops on `raw_sql` before it admits one), and no fence generation is written. A Git effect of a worktree-bound page write is not read here yet: an open item of the capability flip. |
 | `readManagedSyncCursorHeader`, `readRetiredManagedSyncCursor` | the `managed-sync` checkpoint rows, read as the SQL reads them | The store keeps op checkpoint rows. |
-| `readManagedSyncFailureRows`, `readOrphanedManagedSyncFailureRows` | the unfinished cursors (or cursorless failures) of live source incarnations, with failure row and manifest path; `receipt` is `null` | No write request exists to give a receipt. |
-| `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No managed write request exists. |
+| `readManagedSyncFailureRows`, `readOrphanedManagedSyncFailureRows` | the unfinished cursors (or cursorless failures) of live source incarnations, with failure row and manifest path; `receipt` is `null` | No managed-sync request is admitted to give a receipt: a managed sync stops on `raw_sql` before it admits one. |
+| `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No request-recovery writer has landed. A worktree-bound page write now writes a request row, which this read does not see yet: an open item of the capability flip. |
 | `readIdentityDowngradeRows(sourceIds)` | `[]`, or a refusal when a downgrade record exists | A record joins the pages it names, which this member does not serve. Records are written only through `executeRaw`, which this engine refuses, so none exists. |
 
-The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteRequestProgress`, `countOutstandingBySource`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
-`insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`), the claim upkeep
+The request members (`readWriteRequest`, `readWriteRequestById`, `readWriteRequestProgress`, `countOutstandingBySource`, `readWorktreeAdmission`, `completeSyncedRefresh`, `hasDeferralRoom`, `readRefreshTiming`, `countHeldBehindImport`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
+`insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`, the grouped admission
+`insertWriteRequestGroup` (one `brain.insertWriteRequestGroup` store write, in item order; a refusal keeps no row) and its
+replay read `readWriteRequestsByRequestIds` (one `brain.readWriteRequest` per distinct id, letter case folded)), the claim upkeep
 (`renewWriteClaim`, `releaseUnpublishedClaim`, `expireStaleWriteClaims`, `hasClaimableWrite`, the FIFO head read `selectClaimableWrite`) and the admission reads
 (`readSourceMembership`, `findTopologyChanges`, `readLedgerSource`) are served from the persistence
 rows in [persistence.md](persistence.md). The journal calls most of them inside `transaction`. The consumer row

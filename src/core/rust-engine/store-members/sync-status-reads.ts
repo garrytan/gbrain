@@ -2,12 +2,16 @@
  * The row reads `gbrain sync status` makes (engine-sql/sync-status-reads.ts), answered from the store's sources, cycle
  * locks, config and op checkpoint rows (rust/docs/store/journal.md, "TypeScript journal members").
  *
- * The store keeps the persistence state of one unmanaged brain (readManagedModeRows answers `enabled: false`): no write
- * request, effect, source binding, worktree refresh or derived generation row exists. So every part of these reads that
- * joins those tables answers its empty state: no failed writeback, no open refresh, no committed managed-sync page, no
- * held push or fence, no head request, no recovery record, and no receipt beside a cursor. The parts the store does keep
- * are read as the SQL reads them: the source row, the drain lock, the pass and withheld-delete rows, the admission
- * setting and its pinned probe, and the managed-sync cursor, failure and manifest checkpoint rows.
+ * The store keeps write request, effect, worktree, source binding, worktree refresh and derived generation rows, but on
+ * this engine nothing yet writes the ones these reads join (readManagedModeRows answers `enabled: false`): managed
+ * writes (the worktree-bound and managed-sync requests and their Git effects) are held until the managed-persistence
+ * capability flip, and no refresh, request-recovery or derived-generation writer has landed. A source binding can
+ * exist (a writer claim stores one), but no unfinished request names its worktree. So every part of these reads that
+ * joins those rows answers its empty state: no failed writeback, no open refresh, no committed managed-sync page, no
+ * held push or fence, no head request, no recovery record, and no receipt beside a cursor. These parts must become real
+ * reads at the capability flip. The parts the store does keep are read as the SQL reads them: the source row, the drain
+ * lock, the pass and withheld-delete rows, the admission setting and its pinned probe, and the managed-sync cursor,
+ * failure and manifest checkpoint rows.
  *
  * An identity-downgrade record joins the pages it names, which the store does not join here; such a record is only
  * written through `executeRaw`, which this engine refuses, so none exists, and a record found refuses the read.
@@ -77,7 +81,8 @@ const restricted = (stored: string | null): boolean => !['', 'normal'].includes(
 /**
  * The source row. The admission probes run as the SQL's do: null while the stored value reads as normal; otherwise
  * `pinned` is whether the pass row is `open`, holds the live drain lease's token and started before `set_at` (when
- * the dating row matches the stored value), and `destructive` is false (no write request exists).
+ * the dating row matches the stored value), and `destructive` is false (no managed delete or keep_db reconcile request
+ * is admitted while managed writes are held).
  */
 export const readSyncStatusSourceRow: StoreMember<[sourceId: string], SyncStatusSourceRow<never, never, never> | null> = async (brain, sourceId) => {
   const member = 'readSyncStatusSourceRow';
@@ -115,7 +120,7 @@ export const readSyncStatusSourceRow: StoreMember<[sourceId: string], SyncStatus
   };
 };
 
-/** No write request, effect or derived generation exists, so nothing committed and nothing is held. */
+/** No managed-sync request commits, and no Git effect or fence generation is written, while managed writes are held. */
 export const readSyncStatusCommittedRow: StoreMember<[sourceId: string], SyncStatusCommittedRow> = async () =>
   ({ n: 0, git_push_held: false, fence_held: false, last_committed_at: null });
 
@@ -194,13 +199,13 @@ export const readOrphanedManagedSyncFailureRows: StoreMember<[sourceIds: readonl
   return out;
 };
 
-/** No source binding exists, so there is no head request. */
+/** No unfinished request names a bound worktree while managed writes are held, so there is no head request. */
 export const readSyncHeadRequestRow: StoreMember<[sourceId: string, opts?: SyncStatusProbeOptions], SyncHeadRequestRow | null> = async (_brain, _sourceId, opts) => {
   opts?.signal?.throwIfAborted();
   return null;
 };
 
-/** No write request exists, so none holds a recovery record. */
+/** No request-recovery writer has landed, so no request holds a recovery record. */
 export const readSyncRecoveryProbeRow: StoreMember<[sourceId: string, opts?: SyncStatusProbeOptions], SyncRecoveryProbeRow> = async (_brain, _sourceId, opts) => {
   opts?.signal?.throwIfAborted();
   return { n: 0, request_id: null, slug: null, blocked: null };

@@ -9,7 +9,6 @@
 import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-state/version-types.ts';
 import type { VersionHistory } from '../../page-state/versions.ts';
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
-import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
@@ -28,10 +27,7 @@ function requireInteger(member: string, name: string, value: number): void {
 export const createVersion: StoreMember<[slug: string, opts?: { sourceId?: string } & VersionHistory], PageVersion> = async (brain, slug, opts) => {
   const scope = takeOptions('createVersion', opts && opts.reason === null ? { ...opts, reason: undefined } : opts, ['sourceId', 'reason', 'reasonSource', 'historyGap']);
   return toCreatedVersion(await storeCall({ member: 'createVersion', slug, sourceId: scope.sourceId as string | undefined },
-    () => brain.createVersion(slug, scope).catch((error: unknown) => {
-      if (storeErrorCode(error) === 'invalid_state') refuseMember('createVersion', 'a segmented page');
-      throw error;
-    })));
+    () => brain.createVersion(slug, scope)));
 };
 
 export const getVersions: StoreMember<[slug: string, opts?: GetVersionsOpts<boolean>], PageVersionRows<boolean>> = async (brain, slug, opts) => {

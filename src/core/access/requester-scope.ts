@@ -196,14 +196,15 @@ function requesterScopeRequired(op: string, c: Connection, serves: ServesPolicy,
 
 /**
  * readsUnscoped and createdAt for `auth`: the verifier's values when it set them (no query), else a live lookup from
- * the stored principal (an agent job's delegated credential). Unreadable or unknown: not opted out, creation unknown.
+ * the stored principal (an agent job's delegated credential), through typed engine members, so every engine answers.
+ * Unreadable or unknown: not opted out, creation unknown.
  */
-export async function credentialScopeFor<T extends ScopeAuth>(engine: Pick<BrainEngine, 'executeRaw' | 'readOauthClient'>, auth: T): Promise<T> {
+export async function credentialScopeFor<T extends ScopeAuth>(engine: Pick<BrainEngine, 'readLiveAccessTokenScope' | 'readOauthClient'>, auth: T): Promise<T> {
   if (auth.readsUnscoped !== undefined) return auth;
   const principal = auth.principal;
   try {
     if (principal?.kind === 'legacy_token') {
-      const [row] = await engine.executeRaw<{ reads_unscoped: unknown; created_at: unknown }>('SELECT reads_unscoped, created_at FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL', [principal.id]);
+      const row = await engine.readLiveAccessTokenScope(principal.id);
       return { ...auth, ...credentialScopeFields(row?.reads_unscoped, row?.created_at) };
     }
     if (principal?.kind === 'oauth_client') {
@@ -239,7 +240,7 @@ export async function assertCredentialScoped(engine: Pick<BrainEngine, 'executeR
  * when whom the brain serves could not be read (even after one re-read), or the
  * state a read would get, with the command that binds the connection.
  */
-export async function requesterScopeView(engine: Pick<BrainEngine, 'executeRaw' | 'readOauthClient'>, access: Partial<CallerAccess>, auth: ScopeAuth | undefined, transport: string | undefined): Promise<{ state: string; refuses_at?: string | null; reason?: string; argv?: string[] }> {
+export async function requesterScopeView(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveAccessTokenScope' | 'readOauthClient'>, access: Partial<CallerAccess>, auth: ScopeAuth | undefined, transport: string | undefined): Promise<{ state: string; refuses_at?: string | null; reason?: string; argv?: string[] }> {
   const policy = access.remotePolicy;
   if (!policy?.serves?.several && !policy?.servesUnknown) return { state: 'not_required' };
   if (boundToSomeone(access)) return { state: 'scoped' };
