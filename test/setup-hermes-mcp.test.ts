@@ -38,7 +38,7 @@ if (argv[0] === 'config' && argv[1] === 'set') {
   if (servers[name] && answers.shift() !== 'y') process.exit(0);
   const env = {}; let i = 3; const entry = {};
   for (; i < argv.length; i++) {
-    if (argv[i] === '--env') { const [k, ...v] = argv[++i].split('='); env[k] = v.join('='); }
+    if (argv[i] === '--env') { while (argv[i + 1] && !argv[i + 1].startsWith('--')) { const [k, ...v] = argv[++i].split('='); env[k] = v.join('='); } }
     else if (argv[i] === '--connect-timeout') entry.connect_timeout = Number(argv[++i]);
     else if (argv[i] === '--command') entry.command = argv[++i];
     else if (argv[i] === '--args') { entry.args = argv.slice(i + 1); break; }
@@ -161,7 +161,7 @@ describe('gbrain setup hermes registers MCP through hermes mcp add', () => {
     const r = await setup(b, []);
     expect(r.exitCode).toBe(1);
     expect(r.doc.mcp.setup).toBe('error');
-    expect(r.doc.mcp.detail).toContain('did not save an enabled gbrain entry');
+    expect(r.doc.mcp.detail).toContain('did not save the requested gbrain entry');
     expect((load(config(b)) as any).mcp_servers).toBeUndefined();
   });
 
@@ -224,5 +224,41 @@ describe('gbrain setup hermes registers MCP through hermes mcp add', () => {
     expect(r.doc.mcp.setup).toBe('unchanged');
     expect(calls(b)).toHaveLength(0);
     expect((load(config(b)) as any).mcp_servers).toBeUndefined();
+  });
+  test('an update keeps the entry\'s own environment and member binding', async () => {
+    const b = box({ hermes: true });
+    await setup(b, []);
+    const doc = load(config(b)) as any;
+    doc.mcp_servers.gbrain.env.GBRAIN_DATABASE_URL = 'postgresql://brain.example/db';
+    doc.mcp_servers.gbrain.args.push('--stdio-member', 'alice-example');
+    writeFileSync(join(b.home, '.hermes', 'config.yaml'), dump(doc));
+    const r = await setup(b, ['--surface', 'full']);
+    expect(r.doc.mcp.setup).toBe('write');
+    const entry = (load(config(b)) as any).mcp_servers.gbrain;
+    expect(entry.args).toEqual([b.bin, 'serve', '--surface', 'full', '--stdio-member', 'alice-example']);
+    expect(entry.env).toEqual({ GBRAIN_HOME: b.home, GBRAIN_DATABASE_URL: 'postgresql://brain.example/db' });
+  });
+
+  test('an entry with settings hermes mcp add would drop is left alone', async () => {
+    const b = box({ hermes: true });
+    await setup(b, []);
+    const doc = load(config(b)) as any;
+    doc.mcp_servers.gbrain.tools = { include: ['recall'] };
+    writeFileSync(join(b.home, '.hermes', 'config.yaml'), dump(doc));
+    const r = await setup(b, ['--surface', 'full']);
+    expect(r.doc.mcp.setup).toBe('skip');
+    expect(r.doc.mcp.detail).toContain('tools');
+    expect(calls(b).filter((c) => c.argv[1] === 'add')).toHaveLength(1);
+    expect((load(config(b)) as any).mcp_servers.gbrain.tools).toEqual({ include: ['recall'] });
+  });
+
+  test('an update that Hermes does not save is an error, not a success', async () => {
+    const b = box({ hermes: true });
+    await setup(b, []);
+    b.env.FAKE_HERMES_MODE = 'save-nothing';
+    const r = await setup(b, ['--surface', 'full']);
+    expect(r.exitCode).toBe(1);
+    expect(r.doc.mcp.setup).toBe('error');
+    expect((load(config(b)) as any).mcp_servers.gbrain.args).toEqual([b.bin, 'serve', '--surface', 'starter', '--advertise', 'verbs']);
   });
 });

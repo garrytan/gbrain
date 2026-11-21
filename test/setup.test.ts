@@ -21,7 +21,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { createServer, type Server } from 'node:net';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { runCli, type CliResult } from './helpers/cli-spawn.ts';
 import { hookEntryHash, removeClaudeHooksAt, writeClaudeHooksAt } from '../src/core/bootstrap/hooks.ts';
 import { GBRAIN_HOOK_MARKER_VALUE } from '../src/core/bootstrap/host-specs.ts';
@@ -488,7 +488,9 @@ describe('gbrain setup: consent and refusals', () => {
         mkdirSync(join(b.home, '.hermes'), { recursive: true });
         writeFileSync(join(b.home, '.hermes', 'SOUL.md'), 'You are Hermes.\n');
       }
-      const r = await setup(b, [harness, '--json'], { OPENCLAW_STATE_DIR: undefined, OPENCLAW_WORKSPACE_DIR: undefined, OPENCLAW_PROFILE: undefined, HERMES_HOME: undefined });
+      const r = await setup(b, [harness, '--json'], { OPENCLAW_STATE_DIR: undefined, OPENCLAW_WORKSPACE_DIR: undefined, OPENCLAW_PROFILE: undefined, HERMES_HOME: undefined,
+        // No host hermes on PATH, so the MCP step's outcome does not depend on the machine.
+        PATH: [dirname(process.execPath), '/usr/bin', '/bin'].join(':') });
       expect(r.exitCode).toBe(0);
       // Hermes's MCP step runs through its own CLI (test/setup-hermes-mcp.test.ts); with no hermes here it prints the command.
       expect(r.doc).toMatchObject({ harness, instructions_only: true, mcp: { setup: harness === 'hermes' ? 'print' : 'manual', docs: guide }, instructions: { action: 'write' } });
