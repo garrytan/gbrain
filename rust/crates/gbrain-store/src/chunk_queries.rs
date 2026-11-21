@@ -35,11 +35,11 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
 mod site_reads;
-pub(crate) use site_reads::Policy as PageReadPolicy;
 pub use site_reads::{
     ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,
     FrozenHitsInput, QualifiedNamesInput, WithdrawalChunksInput, WithdrawalKey,
 };
+pub(crate) use site_reads::{Policy as PageReadPolicy, served};
 
 /// `listChunklessPagesWithContent`'s default batch size.
 const DEFAULT_CHUNKLESS_BATCH: u64 = 50;

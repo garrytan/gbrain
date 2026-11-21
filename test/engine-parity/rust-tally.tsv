@@ -44,7 +44,7 @@ test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	10	0
 test/engine-parity/facts-unique-violation.test.ts	2	1
 test/engine-parity/facts.test.ts	36	0
-test/engine-parity/family-tail-sites.test.ts	6	6
+test/engine-parity/family-tail-sites.test.ts	9	3
 test/engine-parity/fence-overlay.test.ts	2	0
 test/engine-parity/field-usage.test.ts	3	0
 test/engine-parity/files-ops-sites.test.ts	8	0

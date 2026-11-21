@@ -69,6 +69,7 @@ pub mod relations;
 pub mod salience;
 pub mod schema_detect;
 pub mod stats;
+pub mod tail_reads;
 pub mod takes;
 pub mod telemetry;
 pub mod timeline_queries;

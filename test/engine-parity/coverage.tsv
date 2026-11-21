@@ -409,10 +409,10 @@ listAppliedEdgeProposalIds	contradictions	yes	1	no	yes	yes	serves
 deleteEdgeProposalError	contradictions	yes	1	no	yes	yes	serves
 readEdgeProposalSourceId	contradictions	yes	1	no	yes	yes	serves
 markEdgeProposalDated	contradictions	yes	1	no	yes	yes	serves
-listLiveChunksByIds	contradictions	yes	1	no	yes	yes	refuses:chunks
-listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
+listLiveChunksByIds	contradictions	yes	1	no	yes	yes	serves
+listLiveTakesByIds	contradictions	yes	1	no	yes	yes	serves
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	serves
-listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
+listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	serves
 insertFact	facts	yes	115	yes	yes	yes	serves
 insertFacts	facts	yes	140	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
@@ -458,7 +458,7 @@ countOnboardSignal	stats_ingest	yes	2	no	yes	yes	serves
 getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 listVisiblePageSlugs	stats_ingest	yes	1	no	yes	yes	refuses:pages
-readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	refuses:pages
+readPagesForVersionHistory	stats_ingest	yes	1	no	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
 updateSlug	sync_aliases	yes	18	no	yes	yes	serves

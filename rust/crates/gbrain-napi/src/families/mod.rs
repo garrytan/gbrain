@@ -94,6 +94,7 @@ mod relations;
 mod salience;
 mod schema_detect;
 mod stats;
+mod tail_reads;
 mod takes;
 mod telemetry;
 mod timeline_queries;
