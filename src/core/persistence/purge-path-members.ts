@@ -32,6 +32,10 @@ export const PURGE_OWNERS = {
   ours: 'lane 13',
   /** The receipt reads and probes of the purge verification (facts/purge-verify.ts). */
   receipts: 'lane 13 step 3',
+  /** The receipt's four reads (source-prose scan, source path, purge request, purge effects): rust-engine/rust-5a 90e7bea933 (not merged here). */
+  receiptReads: 'lane 4 (rust-5a 90e7bea933)',
+  /** The `publication_started` stamp of a recovered purge's publication transaction: rust-engine/bound-write-rust 075a30ef45 (journal.markPublicationStarted; not merged here). */
+  publicationStamp: 'lane 5 (bound-write-rust 075a30ef45)',
   /** The generation-ledger scrub (generations/ledger-scrub.ts): typed members, rust-engine commit 61b18fbbc. */
   ledgerScrub: 'lane 4 (61b18fbbc)',
   /** The recorded-value probe of the receipt's ledger report: rust-engine/rust-belief-purge e211982aba serves it (not merged here). */
@@ -53,7 +57,7 @@ export interface PurgePathMember extends Base { member: keyof BrainEngine & stri
 export interface PurgePathSite extends Base { site: string; guarded?: string; stop?: string }
 export type PurgePathEntry = PurgePathMember | PurgePathSite;
 
-const { ours, receipts, ledgerScrub, beliefProbe, factContextProbe, repairOriginTwin, requestIndexes } = PURGE_OWNERS;
+const { ours, receipts, receiptReads, publicationStamp, ledgerScrub, beliefProbe, factContextProbe, repairOriginTwin, requestIndexes } = PURGE_OWNERS;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
 /** Retention-only raw sites: the carry's parks and the candidate selection of purgeDeletedPagesCoordinated. */
@@ -120,7 +124,7 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   { site: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: repairOriginTwin, stop: 'the origin-twin read (page-prepare isOriginTwinPage, also :461 and :676) runs through raw SQL; member readPageDatabaseOnlyReason' },
   // The publication transaction of a recovered journaled purge: the `publication_started` stamp (the exclusive source lock
   // before it is the typed member `lockSourceForUpdate`).
-  { site: '<anonymous> (persistence/coordinator.ts)', owner: ours, stop: 'the publication transaction of a recovered purge stamps publication_started through raw SQL (UPDATE persistence_requests ... RETURNING *)' },
+  { site: '<anonymous> (persistence/coordinator.ts)', owner: publicationStamp, stop: 'the publication transaction of a recovered purge stamps publication_started through raw SQL (UPDATE persistence_requests ... RETURNING *)' },
   // sweepPurgedPage: the generation-ledger scrub.
   { site: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: ledgerScrub, stop: 'the generation-ledger scrub runs through raw SQL' },
   // verifyPagePurge: the receipt.
@@ -129,10 +133,10 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   // ledgerReports: runs for every purge whose page has fact claims, belief ledger or not.
   { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
   { member: 'listFactContextsForPurgeProbe', owner: factContextProbe, stop: 'the receipt pages the live fact contexts that quote the purged claims; not served' },
-  { member: 'listPageProseHits', owner: receipts, stop: 'the source-prose scan of the receipt is not served' },
-  { member: 'readPurgeReceiptSourcePath', owner: receipts, stop: 'the receipt source path read is not served' },
-  { member: 'readDeletePageRequest', owner: receipts, stop: 'the purge request read of the receipt is not served' },
-  { member: 'listPurgeEffects', owner: receipts, stop: 'the purge effect read of the completion is not served' },
+  { member: 'listPageProseHits', owner: receiptReads, stop: 'the source-prose scan of the receipt is not served' },
+  { member: 'readPurgeReceiptSourcePath', owner: receiptReads, stop: 'the receipt source path read is not served' },
+  { member: 'readDeletePageRequest', owner: receiptReads, stop: 'the purge request read of the receipt is not served' },
+  { member: 'listPurgeEffects', owner: receiptReads, stop: 'the purge effect read of the completion is not served' },
   { site: 'derivationPurgeState (page-body/segment-derive.ts)', owner: receipts, stop: 'the derivation sweep state of the completion runs through raw SQL' },
   // The members the purge calls and the Rust engine serves.
   ...served(ours,

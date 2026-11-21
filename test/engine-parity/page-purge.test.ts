@@ -16,9 +16,11 @@
  *    fails as soon as an entry is served, so RUST_KNOWN_STOP must shrink with the lane that serves it:
  *      readRequestIndexStates                       lane 14, rust-engine/doctor-checks-3 8d4d809039
  *      isOriginTwinPage                             lane 10, rust-engine/repair-rust b5945d814f (readPageDatabaseOnlyReason)
- *      the exclusive source lock in the publication  lane 13 (this port, not yet served)
+ *      the publication_started stamp                 lane 5, rust-engine/bound-write-rust 075a30ef45 (journal.markPublicationStarted)
  *      scrubGenerationLedger                         lane 4, 61b18fbbc (scrubGenerationPageRows, scrubGenerationTextRows)
- *      the receipt reads, probes and sweep state     lane 13 step 3 (its commit lifts them)
+ *      listPageProseHits, readPurgeReceiptSourcePath,
+ *      readDeletePageRequest, listPurgeEffects       lane 4, rust-engine/rust-5a 90e7bea933
+ *      the receipt probes and sweep state            lane 13 step 3 (its commit lifts them)
  *      the receipt's recorded-value probe            lane 3, rust-engine/rust-belief-purge e211982aba (once merged)
  *      the receipt's fact-context probe              lane 4
  *  - Why existing coverage misses it: delete-page.test.ts pins only the refusal on Rust; the page purge suites
@@ -51,16 +53,16 @@ type R = Record<string, unknown>;
 const RUST_KNOWN_STOP = [
   { name: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: 'lane 14 (doctor-checks-3 8d4d809039)' },
   { name: 'isOriginTwinPage (persistence/origin-twins.ts)', owner: 'lane 10 (repair-rust b5945d814f)' },
-  { name: '<anonymous> (persistence/coordinator.ts)', owner: 'lane 13' },
+  { name: '<anonymous> (persistence/coordinator.ts)', owner: 'lane 5 (bound-write-rust 075a30ef45)' },
   { name: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: 'lane 4 (61b18fbbc)' },
   { name: 'relationExists (persistence/rebuildable-cache.ts)', owner: 'lane 13 step 3' },
   { name: 'countPurgeProbe', owner: 'lane 13 step 3' },
   { name: 'listBeliefEventsForPurgeProbe', owner: 'lane 3 (rust-belief-purge e211982aba)' },
   { name: 'listFactContextsForPurgeProbe', owner: 'lane 4' },
-  { name: 'listPageProseHits', owner: 'lane 13 step 3' },
-  { name: 'readPurgeReceiptSourcePath', owner: 'lane 13 step 3' },
-  { name: 'readDeletePageRequest', owner: 'lane 13 step 3' },
-  { name: 'listPurgeEffects', owner: 'lane 13 step 3' },
+  { name: 'listPageProseHits', owner: 'lane 4 (rust-5a 90e7bea933)' },
+  { name: 'readPurgeReceiptSourcePath', owner: 'lane 4 (rust-5a 90e7bea933)' },
+  { name: 'readDeletePageRequest', owner: 'lane 4 (rust-5a 90e7bea933)' },
+  { name: 'listPurgeEffects', owner: 'lane 4 (rust-5a 90e7bea933)' },
   { name: 'derivationPurgeState (page-body/segment-derive.ts)', owner: 'lane 13 step 3' },
 ];
 
