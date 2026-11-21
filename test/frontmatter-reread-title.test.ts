@@ -140,6 +140,56 @@ describe('pages-03: the upgrade re-read of a page whose title the old typing cha
     });
   }, { setup }), 240_000);
 
+  test('an older page with no import record is scanned once more on the re-read, then keeps its scan state', () => managedBrain(async ({ engine, root }) => {
+    await withStubEmbeddings(async () => {
+      const opts = { sourceId: 'default', noPull: true };
+      const slug = PAGES.titleAndValues;
+      expect((await performManagedSync(engine, opts)).status).toBe('first_sync');
+      await drainEffects(engine);
+      // What an older gbrain left, with no import record (a page written before the record existed, or by put_page):
+      // the old typing of its values, the hash over them and a finished atom scan at that hash.
+      let oldHash = '';
+      await withManagedFixtureWrite(engine, ['default'], async tx => {
+        const row = await pageRow(tx, slug);
+        const legacy = { ...row.frontmatter, ...legacyTypedFrontmatter(file(slug)) };
+        delete legacy.title; delete legacy.type;
+        oldHash = hashOf(row, '1.1', legacy);
+        await tx.executeRaw('UPDATE pages SET title=$1, frontmatter=$2::text::jsonb, content_hash=$3 WHERE slug=$4', ['1.1', JSON.stringify(legacy), oldHash, slug]);
+      });
+      const { id } = await pageRow(engine, slug);
+      await scannedAt(engine, id, oldHash);
+      await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint LIKE '%:' || $2`, [SYNC_IMPORT_PROVENANCE_OP, String(id)]);
+      const forceReread = async () => {
+        await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged,parser_fp}','\"an-older-parser\"'::jsonb) WHERE op='managed-sync-pass'");
+        rewriteHistory(root);
+        expect((await performManagedSync(engine, opts)).status).toBe('synced');
+      };
+
+      // The re-read: the page is not proven old, so its scan state stays at the old hash and the page is scanned once more.
+      await forceReread();
+      const reread = await pageRow(engine, slug);
+      expect(reread.frontmatter).toMatchObject({ date: '2024-03-01', room: '0101' });
+      expect(reread.content_hash).not.toBe(oldHash);
+      expect(await scanStateAt(engine, id, oldHash)).toEqual([{ n: 1 }]);
+      expect(await scanStateAt(engine, id, reread.content_hash)).toEqual([{ n: 0 }]);
+      expect((await discoverExtractablePages(engine, 'default', [slug])).map(page => page.slug)).toEqual([slug]);
+      // The re-read left today's import record at the page's revision, so the page is known from now on.
+      const [record] = await engine.executeRaw<{ parser: string | null; revision: string }>(
+        `SELECT completed_keys->0->'parser'->>'parser_version' AS parser, completed_keys->0->>'revision' AS revision
+           FROM op_checkpoints WHERE op=$1 AND fingerprint LIKE '%:' || $2`, [SYNC_IMPORT_PROVENANCE_OP, String(id)]);
+      expect(record?.revision).toBe(await revisionOf(engine, slug));
+      expect(record?.parser ?? '').not.toMatch(/^import=1;/);
+
+      // That one scan finishes; a later full re-read changes nothing it means, so the page keeps its state and is not scanned again.
+      await scannedAt(engine, id, reread.content_hash);
+      await forceReread();
+      const later = await pageRow(engine, slug);
+      expect(later.content_hash).toBe(reread.content_hash);
+      expect(await scanStateAt(engine, id, later.content_hash)).toEqual([{ n: 1 }]);
+      expect(await discoverExtractablePages(engine, 'default', [slug])).toEqual([]);
+    });
+  }, { setup }), 240_000);
+
   test('on a page today\'s parser stored, a title edited from 1.1 to 1.10 is scanned again', () => managedBrain(async ({ engine, root }) => {
     await withStubEmbeddings(async () => {
       const opts = { sourceId: 'default', noPull: true };
