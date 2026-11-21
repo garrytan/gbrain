@@ -22,7 +22,7 @@ const OLD_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 /** Whether stored frontmatter can hold an old-typed value at all (a number or an old timestamp text, at any depth). */
 export function mayHoldLegacyTyped(value: unknown): boolean {
-  if (typeof value === 'number') return true;
+  if (typeof value === 'number' || value === null) return true; // null: the old typing's .inf / .nan, as JSON stores them
   if (typeof value === 'string') return OLD_TIMESTAMP.test(value);
   if (Array.isArray(value)) return value.some(mayHoldLegacyTyped);
   return !!value && typeof value === 'object' && Object.values(value).some(mayHoldLegacyTyped);

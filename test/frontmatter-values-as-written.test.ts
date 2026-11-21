@@ -242,6 +242,27 @@ describe('pages-03: frontmatter values as written', () => {
     for (const line of WRITTEN_BACK.filter(line => !/^(zip|born):/.test(line))) expect(file.split('\n')).toContain(line);
   }, { setup: userFileSetup }), 120_000);
 
+  /** A note the user committed; each test then gives the database what an older gbrain stored for it. */
+  const noteSetup = (text: string) => ({ root }: { root: string }) => {
+    mkdirSync(join(root, 'notes'), { recursive: true }); writeFileSync(join(root, 'notes/p.md'), text);
+    writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore', 'notes/p.md']);
+  };
+  const editBody = async (engine: BrainEngine, ctx: OperationContext) => {
+    const rev = (await engine.readPageSnapshot('notes/p', { sourceId: 'default' }))!.revision;
+    await call(ctx, 'edit_page', { slug: 'notes/p', expected_revision: rev, edits: [{ old_text: 'Body text', new_text: 'Body words' }] });
+    await settleManagedGitEffects(engine);
+  };
+
+  test('an older page whose only old-typed value is .inf (stored as null) takes a body edit before the upgrade sync', () => managedBrain(async ({ engine, ctx, root }) => {
+    expect((await performManagedSync(engine, { sourceId: 'default', noPull: true })).status).toBe('first_sync');
+    // The old typing read `.inf` as Infinity, which JSON stores as null.
+    await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw("UPDATE pages SET frontmatter = frontmatter || '{\"limit\":null}'::jsonb WHERE slug='notes/p'"));
+    await editBody(engine, ctx);
+    const file = readFileSync(join(root, 'notes/p.md'), 'utf8');
+    expect(file).toContain('Body words.');
+    expect(file.split('\n')).toContain("limit: '.inf'");
+  }, { setup: noteSetup('---\ntitle: Limits\ntype: note\nlimit: .inf\n---\n# Limits\n\nBody text.\n') }), 120_000);
+
   const ITEM = '---\ntitle: Item\ntype: note\nid: 007\n---\n# Item\n\nBody text.\n';
   test('the rename identity reader reads an id as the page stores it (id: 007 is "007")', () => {
     expect(frontmatterIdentity(ITEM).id).toBe('007');
