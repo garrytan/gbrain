@@ -29,7 +29,7 @@ const tmp = (): string => { const d = mkdtempSync(join(tmpdir(), 'gbrain-follow-
 
 const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {} } as unknown as SeedRecord;
 const STATE = { version: SHADOW_STATE_VERSION, enabled: true, started_at: 'x', sample_rate: 0.1, queue_bound: 1, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' } as ShadowState;
-const RESULT = { upserted: 1, deleted: 0, skipped_older: 0, dropped: 0, unmapped_columns: [], losses: {} };
+const RESULT = { upserted: 1, deleted: 0, skipped_older: 0, displaced: 0, dropped: 0, unmapped_columns: [], losses: {} };
 
 function fakeStore(over: Partial<FollowStore> = {}): FollowStore {
   return {

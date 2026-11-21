@@ -1,14 +1,24 @@
 //! The follow spec of the history relations.
 
 use super::remove_core::need;
-use super::{Follow, Identity, Mode, Replace, number, text};
+use super::{Custom, Follow, Identity, Mode, Replace, number, text};
 use crate::error::Result;
 use crate::keys;
 use crate::kv::KvWrite;
 
 const fn follow(identity: &'static [&'static str], remove: super::Remover) -> Follow {
+    keyed(identity, &[], remove)
+}
+
+/// A relation with unique natural keys besides its primary key: `unique` names the column sets.
+const fn keyed(
+    identity: &'static [&'static str],
+    unique: &'static [&'static [&'static str]],
+    remove: super::Remover,
+) -> Follow {
     Follow {
         identity,
+        unique,
         remove: Some(remove),
         replace: Replace::ByRemove,
     }
@@ -18,18 +28,55 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
     ("page_versions", follow(&["id", "page_id"], remove_version)),
     (
         "files",
-        follow(&["id", "storage_path", "page_id"], remove_file),
+        keyed(
+            &["id", "storage_path", "page_id"],
+            &[&["storage_path"]],
+            remove_file,
+        ),
     ),
-    ("raw_data", follow(&["id", "page_id", "source"], remove_raw)),
+    (
+        "raw_data",
+        keyed(
+            &["id", "page_id", "source"],
+            &[&["page_id", "source"]],
+            remove_raw,
+        ),
+    ),
     (
         "code_edges_chunk",
-        follow(&["id", "from_chunk_id", "to_chunk_id"], remove_chunk_edge),
+        keyed(
+            &[
+                "id",
+                "from_chunk_id",
+                "to_chunk_id",
+                "to_symbol_qualified",
+                "edge_type",
+            ],
+            &[&[
+                "from_chunk_id",
+                "to_chunk_id",
+                "to_symbol_qualified",
+                "edge_type",
+            ]],
+            remove_chunk_edge,
+        ),
     ),
     (
         "code_edges_symbol",
-        follow(&["id", "from_chunk_id"], remove_symbol_edge),
+        keyed(
+            &["id", "from_chunk_id", "to_symbol_qualified", "edge_type"],
+            &[&["from_chunk_id", "to_symbol_qualified", "edge_type"]],
+            remove_symbol_edge,
+        ),
     ),
-    ("open_loops", follow(&["id"], remove_loop)),
+    (
+        "open_loops",
+        keyed(
+            &["id", "source_id", "dedup_key"],
+            &[&["source_id", "dedup_key"]],
+            remove_loop,
+        ),
+    ),
     (
         "synthesis_evidence",
         follow(
@@ -37,10 +84,51 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
             remove_evidence,
         ),
     ),
-    ("trust_proposals", follow(&["id"], remove_proposal)),
+    (
+        "trust_proposals",
+        keyed(
+            &[
+                "id",
+                "action",
+                "target_table",
+                "target_id",
+                "related_table",
+                "related_id",
+                "status",
+            ],
+            &[&[
+                "action",
+                "target_table",
+                "target_id",
+                "related_table",
+                "related_id",
+                "status",
+            ]],
+            remove_proposal,
+        ),
+    ),
     (
         "wanted_links",
-        follow(&["id", "origin_page_id", "source_id"], remove_wanted),
+        keyed(
+            &[
+                "id",
+                "origin_page_id",
+                "source_id",
+                "producer",
+                "ref_kind",
+                "target_source_id",
+                "target_ref",
+            ],
+            &[&[
+                "source_id",
+                "origin_page_id",
+                "producer",
+                "ref_kind",
+                "target_source_id",
+                "target_ref",
+            ]],
+            remove_wanted,
+        ),
     ),
     (
         "page_facts_reconcile",
@@ -54,8 +142,12 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
         "derived_generations",
         Follow {
             identity: &["id"],
+            unique: &[],
             remove: Some(remove_generation),
-            replace: Replace::Custom(replace_generation),
+            replace: Replace::Custom(Custom {
+                release: release_generation,
+                store: store_generation,
+            }),
         },
     ),
     (
@@ -127,12 +219,17 @@ fn remove_generation(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<boo
     crate::facts::generations::remove_generation(tx, need!(id, "id", u64))
 }
 
-/// A changed generation keeps its items, which are rows of their own.
-fn replace_generation(
+/// A changed generation keeps its items, which are rows of their own: it is replaced in place.
+fn release_generation(_: &mut dyn KvWrite, _: &super::Row) -> Result<Option<serde_json::Value>> {
+    Ok(None)
+}
+
+fn store_generation(
     tx: &mut dyn KvWrite,
     row: &super::Row,
     _: &mut super::super::Losses,
     _: super::super::Importer,
+    _: Option<&serde_json::Value>,
 ) -> Result<super::super::Outcome> {
     let (id, record) = super::super::history::generation_record(&*tx, row)?;
     crate::facts::generations::replace_generation(tx, id, record)?;
