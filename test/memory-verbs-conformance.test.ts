@@ -793,6 +793,23 @@ describe('conformance runner — negative self-test [F3]', () => {
     );
     const failures = honest.results.filter(r => r.status === 'fail');
     expect(failures).toEqual([]);
+  }, 20_000);
+
+  it('removes what it seeded: the conformance page is soft-deleted and its world fact forgotten', async () => {
+    const report = await withNoEmbeddingProvider(() =>
+      runConformance(lyingClient((_v, b) => b), { marker: 'cleanup1' }),
+    );
+    expect(report.results.filter(r => r.status === 'fail')).toEqual([]);
+    expect(report.cleanup.page).toBe('deleted');
+    expect(report.cleanup.facts_forgotten).toBe(1);
+    const live = await dispatchToolCall(engine, 'get_page', { slug: 'people/conformance-cleanup1' }, {
+      remote: true, takesHoldersAllowList: ['world'], sourceId: 'default',
+    });
+    expect(live.isError).toBe(true);
+    const recall = await dispatchToolCall(engine, 'recall', { entity: 'people/conformance-cleanup1' }, {
+      remote: true, takesHoldersAllowList: ['world'], sourceId: 'default',
+    });
+    expect(JSON.parse(recall.content[0].text).total).toBe(0);
   }, 20_000); // v0.45.7: two full runConformance passes now exercise 7 verbs;
   // the default 5s budget flakes under the parallel shard runner (red-team F6).
 

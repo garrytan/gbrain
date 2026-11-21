@@ -36,6 +36,13 @@ export interface ConformanceReport {
   failed: number;
   skipped: number;
   ok: boolean;
+  /**
+   * What the run left behind. The runner seeds `people/conformance-<marker>`
+   * and writes facts against it; without cleanup every run leaves a synthetic
+   * person page in the target brain (it then tops salience). Cleanup never
+   * affects `ok`: a target that refuses delete_page still certifies.
+   */
+  cleanup: { page: 'deleted' | 'not_seeded' | 'failed'; facts_forgotten: number; detail: string };
 }
 
 /**
@@ -158,14 +165,16 @@ export async function runConformance(
   // surface). entity() resolves pages; verbs-only targets with no seeding
   // path skip the entity-hit cases honestly (requiresSeededEntity).
   let seededEntity = false;
+  let seedRevision: string | undefined;
   try {
     const seed = await client.callTool('put_page', {
       request_id: randomUUID(),
       slug: `people/conformance-${marker}`,
       content: `---\ntitle: Conformance ${marker}\ntype: person\n---\n\n# Conformance ${marker}\n\nSynthetic entity for a MEMORY_VERBS conformance run.\n`,
     });
-    const result = JSON.parse(seed.text) as { state?: string };
+    const result = JSON.parse(seed.text) as { state?: string; revision?: string };
     seededEntity = !seed.isError && (result.state === undefined || result.state === 'committed');
+    if (seededEntity && typeof result.revision === 'string') seedRevision = result.revision;
   } catch {
     seededEntity = false;
   }
@@ -281,8 +290,62 @@ export async function runConformance(
     );
   }
 
+  const cleanup = await cleanUpRun(client, marker, ids, seededEntity, seedRevision);
+
   const passed = results.filter(r => r.status === 'pass').length;
   const failed = results.filter(r => r.status === 'fail').length;
   const skipped = results.filter(r => r.status === 'skip').length;
-  return { protocol_version: MEMORY_VERBS_VERSION, results, passed, failed, skipped, ok: failed === 0 };
+  return { protocol_version: MEMORY_VERBS_VERSION, results, passed, failed, skipped, ok: failed === 0, cleanup };
+}
+
+/**
+ * Best-effort teardown: forget the world fact the run still holds, then soft-delete
+ * the seeded entity page (restorable for the usual recovery window; the purge
+ * phase removes it after). Errors are reported, never thrown.
+ */
+async function cleanUpRun(
+  client: ConformanceClient,
+  marker: string,
+  ids: Map<string, string>,
+  seededEntity: boolean,
+  seedRevision: string | undefined,
+): Promise<ConformanceReport['cleanup']> {
+  let factsForgotten = 0;
+  // fact2 was forgotten by the forget cases. The private fence-test fact is
+  // left: a remote caller may not forget a private fact (world-only), and it
+  // stays hidden from remote readers anyway.
+  for (const key of ['fact1']) {
+    const id = ids.get(key);
+    if (!id) continue;
+    try {
+      const res = await client.callTool('forget', { id, reason: 'conformance cleanup', ...(isPersistenceIpcMutation('forget') ? { request_id: randomUUID() } : {}) });
+      if (!res.isError) factsForgotten++;
+    } catch {
+      // best-effort
+    }
+  }
+  if (!seededEntity) return { page: 'not_seeded', facts_forgotten: factsForgotten, detail: '' };
+  const slug = `people/conformance-${marker}`;
+  try {
+    // The page may have moved on since the seed (facts written against it), so
+    // read the current revision first and fall back to the seed's.
+    let revision = seedRevision;
+    try {
+      const got = await client.callTool('get_page', { slug });
+      const page = JSON.parse(got.text) as { revision?: string };
+      if (!got.isError && typeof page.revision === 'string') revision = page.revision;
+    } catch {
+      // keep the seed revision
+    }
+    const res = await client.callTool('delete_page', {
+      request_id: randomUUID(),
+      slug,
+      ...(revision ? { expected_revision: revision } : {}),
+    });
+    return res.isError
+      ? { page: 'failed', facts_forgotten: factsForgotten, detail: res.text.slice(0, 160) }
+      : { page: 'deleted', facts_forgotten: factsForgotten, detail: '' };
+  } catch (e) {
+    return { page: 'failed', facts_forgotten: factsForgotten, detail: e instanceof Error ? e.message : String(e) };
+  }
 }
