@@ -110,7 +110,7 @@ test/engine-parity/owner-only-marks.test.ts	0	2
 test/engine-parity/owner-only-reads.test.ts	3	0
 test/engine-parity/owner-recovery-scans.test.ts	5	0
 test/engine-parity/page-embedding-budget.test.ts	4	0
-test/engine-parity/page-purge-journal.test.ts	0	5
+test/engine-parity/page-purge-journal.test.ts	6	0
 test/engine-parity/page-purge-reads.test.ts	10	0
 test/engine-parity/page-purge-stores.test.ts	3	0
 test/engine-parity/page-purge-sweep.test.ts	5	1

@@ -69,6 +69,7 @@ import * as trustTierReads from './trust-tier-reads.ts';
 import * as headBlocker from './head-blocker.ts';
 import * as labelDoor from './label-door.ts';
 import * as pagePurge from './page-purge.ts';
+import * as pagePurgeJournal from './page-purge-journal.ts';
 import * as pagePurgeSweep from './page-purge-sweep.ts';
 import * as memoryMutationReads from './memory-mutation-reads.ts';
 import * as withdrawalCommit from './withdrawal-commit.ts';
@@ -150,6 +151,8 @@ export const STORE_MEMBERS = {
   ...pagePurge,
   // The deletes and reads of a page purge's sweep, its segment storage and its slug stores (rust/docs/store/facts.md).
   ...pagePurgeSweep,
+  // The journal statements of a page purge's sweep and intent redaction (rust/docs/store/persistence.md).
+  ...pagePurgeJournal,
   ...memoryMutationReads,
   // The statements a forget's withdrawal commits and the fact_withdrawn refusal reads (rust/docs/store/trust.md).
   ...withdrawalCommit,

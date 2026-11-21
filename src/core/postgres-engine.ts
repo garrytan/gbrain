@@ -178,6 +178,7 @@ import * as writerStatusImpl from './engine-sql/writer-status.ts';
 import * as labelDoorImpl from './engine-sql/label-door.ts';
 import * as pagePurgeImpl from './engine-sql/page-purge.ts';
 import * as pagePurgeSweepImpl from './engine-sql/page-purge-sweep.ts';
+import * as pagePurgeJournalImpl from './engine-sql/page-purge-journal.ts';
 import * as headBlockerImpl from './engine-sql/head-blocker.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
@@ -1455,6 +1456,14 @@ export class PostgresEngine implements BrainEngine {
   deletePageStagings(sourceId: string, slug: string, pageId: number) { return pagePurgeSweepImpl.deletePageStagings(this, sourceId, slug, pageId); }
   deletePageSegmentTexts(sourceId: string, shas: readonly string[]) { return pagePurgeSweepImpl.deletePageSegmentTexts(this, sourceId, shas); }
   sweepPageTextsForClaims(sourceId: string, cursor: string, forms: readonly string[], chunkBytes: number) { return pagePurgeSweepImpl.sweepPageTextsForClaims(this, sourceId, cursor, forms, chunkBytes); }
+  listRequestsForSlugs(sourceId: string, slugs: readonly string[], limit: number, after: string) { return pagePurgeJournalImpl.listRequestsForSlugs(this, sourceId, slugs, limit, after); }
+  /** The journal sweep's two reads run in write preparation under the claim's deadline (TYPED_PREPARATION_READS): `ownRawRead` ends them on the server at the bound, as the bounded view ended their raw statements. */
+  readJournalCeiling(sourceId: string) { return this.ownRawRead(exec => pagePurgeJournalImpl.readJournalCeiling(exec, sourceId)); }
+  sweepJournalChunk(q: pagePurgeJournalImpl.JournalChunkQuery) { return this.ownRawRead(exec => pagePurgeJournalImpl.sweepJournalChunk(exec, q)); }
+  lockWriteRequests(ids: readonly string[]) { return pagePurgeJournalImpl.lockWriteRequests(this, ids); }
+  readEffectBytes(requestId: string) { return pagePurgeJournalImpl.readEffectBytes(this, requestId); }
+  redactWriteRequestRow(redaction: pagePurgeJournalImpl.RequestRedaction) { return pagePurgeJournalImpl.redactWriteRequestRow(this, redaction); }
+  releaseTerminalBytes(key: string, bytes: number) { return pagePurgeJournalImpl.releaseTerminalBytes(this, key, bytes); }
   readDeletePageRequest(sourceId: string, requestId: string) { return factsPurgeImpl.readDeletePageRequest(this.executeRaw.bind(this), sourceId, requestId); }
   listPurgeEffects(requestId: string) { return factsPurgeImpl.listPurgeEffects(this.executeRaw.bind(this), requestId); }
   countPurgeFingerprintResidue(sourceId: string, factHash: string, subject: string) { return factsPurgeImpl.countPurgeFingerprintResidue(this.executeRaw.bind(this), sourceId, factHash, subject); }

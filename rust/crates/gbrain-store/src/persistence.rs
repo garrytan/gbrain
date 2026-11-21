@@ -67,6 +67,7 @@ mod effects;
 mod head_blocker;
 mod housekeeping;
 mod idle_probe;
+mod journal_redaction;
 mod noop_settle;
 mod notifier;
 mod op_checkpoint;
@@ -85,6 +86,7 @@ pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use head_blocker::HeadBlockerSpec;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub use idle_probe::IdleProbeSpec;
+pub use journal_redaction::{RedactRequestArgs, SweepChunkArgs};
 pub use noop_settle::NoopSettleCandidateSpec;
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{

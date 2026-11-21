@@ -106,6 +106,7 @@ import type { ActiveWorktreeRefreshRow, BlockingEffectRow, OnboardingSourceRow, 
 import type { CheckoutFileRow, OriginDependentRow, OriginRefInput, PageLabelRow, PrivacyOriginRow } from './engine-sql/label-door.ts';
 import type * as PagePurgeSql from './engine-sql/page-purge.ts';
 import type * as PagePurgeSweepSql from './engine-sql/page-purge-sweep.ts';
+import type * as PagePurgeJournalSql from './engine-sql/page-purge-journal.ts';
 import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from './engine-sql/head-blocker.ts';
 import type {
   ActorAttributionRow, PageRevisionAttributionRow, RowAttributionRow, RowAttributionTarget, VersionAttributionRow, VersionRef,
@@ -4113,6 +4114,21 @@ export interface BrainEngine {
   deletePageSegmentTexts(sourceId: string, shas: readonly string[]): Promise<number>;
   /** One claim-sweep statement (#9743): the unreferenced texts of the source after `cursor` (a sha256 as hex) in sha order, `chunkBytes` of them at most, and those that hold a claim form deleted. Writes page_segment_texts; run it in the purge transaction. */
   sweepPageTextsForClaims(sourceId: string, cursor: string, forms: readonly string[], chunkBytes: number): Promise<PagePurgeSweepSql.ClaimTextSweep>;
+  // The journal statements of a page purge's sweep and intent redaction (engine-sql/page-purge-journal.ts; persistence/intent-redaction.ts).
+  /** The source's requests under one of the slugs that are not compacted and still hold an intent, with a sequence past `after`, in sequence order, up to `limit`. Reads persistence_requests. */
+  listRequestsForSlugs(sourceId: string, slugs: readonly string[], limit: number, after: string): Promise<PagePurgeJournalSql.SlugRequestRow[]>;
+  /** The source's highest request sequence as text; null when it has no request. Reads persistence_requests. */
+  readJournalCeiling(sourceId: string): Promise<string | null>;
+  /** One chunk of the journal sweep: the source's requests in a sequence range, of which the ones that carry a needle (lowercased intent, outcome, error detail or error message) or are still pending come back. Reads persistence_requests. */
+  sweepJournalChunk(q: PagePurgeJournalSql.JournalChunkQuery): Promise<PagePurgeJournalSql.JournalSweepChunk>;
+  /** The requests with these ids, each once, in id order, locked until the transaction ends. Run it in the purge transaction. */
+  lockWriteRequests(ids: readonly string[]): Promise<WriteRequest[]>;
+  /** The bytes a request's effect rows hold on its receipt; 0 when it has none. Reads persistence_effects. */
+  readEffectBytes(requestId: string): Promise<number>;
+  /** Redacts one request row: intent and error message removed, marked compacted, its terminal reservation, outcome and error detail replaced. Writes persistence_requests; run it in the purge transaction. */
+  redactWriteRequestRow(redaction: PagePurgeJournalSql.RequestRedaction): Promise<void>;
+  /** Lowers a counter's terminal bytes by `bytes`, never below zero. Writes persistence_counters; run it in the purge transaction. */
+  releaseTerminalBytes(key: string, bytes: number): Promise<void>;
   /** The newest delete_page request of the source with this request id, null for none. Reads persistence_requests. */
   readDeletePageRequest(sourceId: string, requestId: string): Promise<FactsPurgeSql.DeletePageRequestRow | null>;
   /** The request's effects in kind order, each with whether any target is parked. Reads persistence_effects. */
