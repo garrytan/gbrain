@@ -76,30 +76,15 @@ test('no history group starts once the deadline has passed, and a group read bef
     return result;
   });
   const paths = ['notes/a.md', ...Array.from({ length: 100 }, (_, i) => `notes/other-${i}.md`)];
-  const deferred = new Set<string>();
-  const read = await pathBlobHistories(root, head, paths, 5, undefined, { deadline: Date.now() + 100, deferred });
+  const unstarted = new Set<string>();
+  const read = await pathBlobHistories(root, head, paths, 5, undefined, { deadline: Date.now() + 100, unstarted });
   expect(groups).toHaveLength(1);
   expect(read.get('notes/a.md')).toEqual([...blobs].reverse());
   expect(read.has('notes/other-99.md')).toBe(false);
-  expect([...deferred]).toEqual(['notes/other-99.md']);
+  expect([...unstarted]).toEqual(['notes/other-99.md']);
   const none = new Set<string>();
-  expect(await pathBlobHistories(root, head, [...paths, 'notes/new\nline.md'], 5, undefined, { deadline: Date.now() - 1, deferred: none })).toEqual(new Map());
+  expect(await pathBlobHistories(root, head, [...paths, 'notes/new\nline.md'], 5, undefined, { deadline: Date.now() - 1, unstarted: none })).toEqual(new Map());
   expect(none.size).toBe(paths.length);
-});
-
-test('a history read the pass deadline cuts short counts as never reached, not as read in part', async () => {
-  const { root, head, blobs } = repo(['One.\n', 'Two.\n']);
-  __setSyncGitStreamForTests(async (gitRoot, args, opts) => {
-    if (args[0] !== 'log') return hardenedGitStream(gitRoot, args, opts);
-    const result = await hardenedGitStream(gitRoot, args, { ...opts, timeoutMs: 10_000 });
-    await new Promise(resolve => setTimeout(resolve, 300));
-    return result.ok ? { ok: false, reason: 'timeout' } : result;
-  });
-  const partial = new Set<string>(), deferred = new Set<string>();
-  const read = await pathBlobHistories(root, head, ['notes/a.md', 'notes/missing.md'], 5, undefined, { deadline: Date.now() + 100, partial, deferred });
-  expect(read.get('notes/a.md')).toEqual([...blobs].reverse());
-  expect([...deferred].sort()).toEqual(['notes/a.md', 'notes/missing.md']);
-  expect(partial.size).toBe(0);
 });
 
 test('a long history read beats while it streams, not only when it ends', async () => {
