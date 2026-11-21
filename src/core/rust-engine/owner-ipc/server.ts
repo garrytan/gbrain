@@ -32,8 +32,9 @@
  * - `close()` aborts every call and resolves only after all engine work that started has settled, so the owner lock
  *   (released by RustEngine.disconnect after close) never frees while the old owner still runs a call. An owner that
  *   exits therefore never leaves a started write running behind a new owner: `ownerGone` after the send stays final.
- * - Orphans: a write the owner started whose caller stopped waiting (deadline, cancel, closed connection) keeps running
- *   and can still commit. Until it settles, the owner holds back every call to a member that would confirm it
+ * - Started writes: a write the owner started keeps running after its caller stops waiting (deadline, cancel, closed
+ *   connection) and can still commit, and the owner may learn of the cancel after a read on another connection
+ *   arrives. So until any started write settles, whether or not its caller still waits, the owner holds back every call to a member that would confirm it
  *   (confirming-reads.ts, membersWaitingFor: the members its confirming read names, or the write's own member when
  *   that read goes through it, as for executeRaw). The hold is by member, not by key, so an unrelated read of the same
  *   member waits too; other members run as before. A held call that reaches its deadline ends `owner_unavailable`,
@@ -163,14 +164,16 @@ function expire(call: PendingCall, queued: boolean): void {
 }
 
 /**
- * An orphan is a write the owner started whose caller stopped waiting (its deadline, a cancel, a closed connection)
- * and whose engine call has not settled: it can still commit. A call that would read its outcome waits until it has
- * settled, so a confirming read never answers "not there" for a write that is about to commit (routes.ts,
- * confirmingReadAdvice). Returns the orphan's member, or undefined when nothing holds `call` back.
+ * A write the owner started whose engine call has not settled can still commit, even after its caller stopped waiting
+ * (its deadline, a cancel, a closed connection). The owner may learn of that stop late: the client gives up as soon
+ * as it sends its cancel, and a read on another connection can arrive first. So a call that would read the outcome
+ * of any started write waits until that write has settled, and a confirming read never answers "not there" for a
+ * write that is about to commit (routes.ts, confirmingReadAdvice). Returns the earlier write's member, or undefined
+ * when nothing holds `call` back.
  */
 function orphanAhead(started: ReadonlySet<PendingCall>, call: PendingCall): string | undefined {
   for (const other of started) {
-    if (other.write && other.done && !other.settled && membersWaitingFor(other.member).has(call.member)) return other.member;
+    if (other.write && !other.settled && membersWaitingFor(other.member).has(call.member)) return other.member;
   }
   return undefined;
 }

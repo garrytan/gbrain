@@ -124,14 +124,14 @@ export function confirmingReadAdvice(member: string): string {
 }
 
 /**
- * A call that waited behind an earlier write the owner still runs after that write's caller stopped waiting (a
- * timeout, a cancel or a closed connection), and reached its own deadline there. It never ran. It is the read that
+ * A call that waited behind an earlier write the owner still runs (its caller may have timed out, cancelled or
+ * closed its connection), and reached its own deadline there. It never ran. It is the read that
  * would confirm the earlier write, so until that write ends whether it committed is not known: this is not `not_sent`
  * and not a reason to rerun the write.
  */
 export function ownerEarlierCallRunning(member: string, earlier: string, ms: number): OperationError {
   return opError('owner_unavailable',
-    `${member} did not run within ${ms} ms: the brain's owner holds it back while an earlier ${earlier} call still runs after its caller stopped waiting. Until that call ends, whether it committed is not known.`,
+    `${member} did not run within ${ms} ms: the brain's owner holds it back while an earlier ${earlier} call still runs. Until that call ends, whether it committed is not known.`,
     `Wait for the earlier ${earlier} call to end, then run ${member} again; its answer is final then. Do not rerun ${earlier} before that read answers. If it never ends, check the owner process log.`,
     { reason: 'earlier_call_running', retryable: false,
       detail: `member=${member} via=owner_ipc earlier=${earlier} deadline_ms=${ms} sent=true ran=false`,

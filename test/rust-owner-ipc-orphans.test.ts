@@ -151,6 +151,29 @@ describe('a write whose caller stopped waiting while the owner still runs it', (
     expect(owner.facts).toEqual([fact]);
   });
 
+  // Value: protects=a confirming read on another connection cannot overtake a cancel the owner has not read yet;
+  // fails_when=the hold covers only writes the owner already knows were abandoned, so the read answers empty while
+  // the write still runs and the advice leads to a second insert; why_new=fix-check finding: the client gives up as
+  // soon as it sends its cancel; seam=none (a write whose caller still waits stands in for an unread cancel);
+  // no_claim=socket delivery order
+  test('a read on another connection waits for a started write even before the owner sees its cancel', async () => {
+    const owner = await gatedFactsOwner();
+    const writer = await clientOf(owner.server.socketPath);
+    const reader = await clientOf(owner.server.socketPath);
+    const write = writer.insertFact(fact);
+    await until(() => owner.server.stats().active === 1);
+    let answered = false;
+    const read = reader.listFactsByEntity(fact.entity_slug).then(rows => { answered = true; return rows; });
+    await until(() => owner.server.stats().queued === 1);
+    await Bun.sleep(100);
+    expect(answered).toBe(false);
+    expect(owner.server.stats()).toMatchObject({ active: 1, queued: 1 });
+    owner.open();
+    expect(await read).toEqual([fact]);
+    await write;
+    expect(owner.facts).toEqual([fact]);
+  });
+
   // Value: protects=a write whose connection closed is held the same way; fails_when=a closed connection's started
   // write is forgotten and the read runs at once; why_new=the hold is new; seam=raw frames for the closed connection;
   // no_claim=none

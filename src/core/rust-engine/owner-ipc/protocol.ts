@@ -8,8 +8,8 @@
  *
  * `deadline_at` (epoch ms) is the caller's deadline: the owner ends the call with `timeout` there, queued or running;
  * a running call is not interrupted, so that timeout's outcome is unknown.
- * A call that keeps running after its caller stopped waiting (an orphan) holds back, on every connection, the later
- * calls of the members that confirm it (confirming-reads.ts `membersWaitingFor`) until it ends, so a confirming read
+ * A started write holds back, on every connection, the later calls of the members that confirm it (also after its
+ * caller stopped waiting, which the owner may learn late) (confirming-reads.ts `membersWaitingFor`) until it ends, so a confirming read
  * answers with the final state; a held call that reaches its deadline ends `owner_unavailable` (`earlier_call_running`).
  * `read_deadline_at` is the caller's read deadline (read-deadline.ts), restored around the call in the owner.
  * `access` is the caller's access record (search/private-visibility.ts CallerAccess), absent when it had none; the owner

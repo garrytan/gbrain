@@ -122,8 +122,8 @@ export const OWNER_IPC_CONFIRMING_NOTES: Readonly<Record<string, string>> = {
 const MEMBER_TOKEN = /\b[a-z]+[A-Z]\w*\b/g;
 
 /**
- * The members the owner holds back while a `write` it started still runs after its caller stopped waiting (an orphan,
- * server.ts): the reads its confirming read names, or the write itself when that read goes through the same member
+ * The members the owner holds back while a `write` it started still runs, whether or not its caller still waits
+ * (server.ts, orphanAhead): the reads its confirming read names, or the write itself when that read goes through the same member
  * (executeRaw's SELECT). A write whose rerun repeats nothing (`nothing:`) holds nothing back.
  */
 export function membersWaitingFor(write: string): ReadonlySet<string> {
