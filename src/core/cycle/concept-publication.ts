@@ -125,10 +125,15 @@ export async function replaceConceptProvenanceLinks(engine: BrainEngine, sourceI
     if (!current || current.revision !== expectedRevision) return 'moved' as const;
     const stale = await tx.executeRaw<{ from_slug: string; to_slug: string; link_type: string; from_source_id: string; to_source_id: string }>(
       `SELECT f.slug AS from_slug, t.slug AS to_slug, l.link_type, f.source_id AS from_source_id, t.source_id AS to_source_id
-         FROM links l JOIN pages f ON f.id = l.from_page_id JOIN pages t ON t.id = l.to_page_id
+         FROM pages f JOIN links l ON l.from_page_id = f.id JOIN pages t ON t.id = l.to_page_id
         WHERE l.link_source = 'concept-provenance'
-          AND ((f.source_id = $1 AND f.slug = $2 AND NOT (t.source_id = $1 AND t.slug = ANY($3::text[])))
-            OR (t.source_id = $1 AND t.slug = $2 AND NOT (f.source_id = $1 AND f.slug = ANY($3::text[]))))`, [sourceId, conceptSlug, members]);
+          AND f.source_id = $1 AND f.slug = $2 AND NOT (t.source_id = $1 AND t.slug = ANY($3::text[]))
+       UNION ALL
+       SELECT f.slug, t.slug, l.link_type, f.source_id, t.source_id
+         FROM pages t JOIN links l ON l.to_page_id = t.id JOIN pages f ON f.id = l.from_page_id
+        WHERE l.link_source = 'concept-provenance'
+          AND t.source_id = $1 AND t.slug = $2 AND NOT (f.source_id = $1 AND f.slug = ANY($3::text[]))
+          AND NOT (f.source_id = $1 AND f.slug = $2)`, [sourceId, conceptSlug, members]);
     let retired = 0;
     for (const edge of stale) {
       retired += await tx.removeLink(edge.from_slug, edge.to_slug, edge.link_type, 'concept-provenance', { fromSourceId: edge.from_source_id, toSourceId: edge.to_source_id });
