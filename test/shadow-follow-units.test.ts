@@ -8,7 +8,7 @@
  * Regression it catches: a watermark that claims coverage after a lost write, a status that calls a dead follower
  * "following", an rpc that hangs when the child exits. Real-store scenarios: test/shadow-follow.test.ts.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, jest, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,6 +18,7 @@ import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { countFingerprintMismatches, probeRecord, PROBE_CORPUS } from '../src/shadow/fingerprints.ts';
 import { FollowChild, type FollowStore } from '../src/shadow/follow-child.ts';
 import { appendPass, buildFollowStatus, lagBucket, lagP99, readFollowerFile, type FollowStatus } from '../src/shadow/follow-status.ts';
+import { Reconciler } from '../src/shadow/reconcile.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { SHADOW_STATE_VERSION, shadowBrainKey, shadowDirFor, writeShadowState, type ShadowState } from '../src/shadow/state.ts';
 import { ShadowSupervisor } from '../src/shadow/supervisor.ts';
@@ -174,6 +175,32 @@ describe('follow child', () => {
   });
 });
 
+describe('reconciler schedule', () => {
+  test('a process that stays up checks the watermark a minute after start and runs a full pass only if it is invalid', async () => {
+    jest.useFakeTimers();
+    try {
+      for (const valid of [false, true]) {
+        const calls: string[] = [];
+        const rpc = (async (method: string) => {
+          calls.push(method);
+          if (method === 'state') return { valid, through: null, invalidated_reason: null };
+          throw Object.assign(new Error('stop here'), { code: 'stopped' });
+        }) as never;
+        const reconciler = new Reconciler({ dir: tmp(), rpc, reads: { pauseMs: 0, read: async () => { throw new Error('no reads'); }, close: async () => undefined } });
+        reconciler.startNightly();
+        jest.advanceTimersByTime(59_000);
+        await Promise.resolve();
+        expect(calls).toEqual([]);
+        jest.advanceTimersByTime(2_000);
+        for (let i = 0; i < 20; i++) await Promise.resolve();
+        // 'state' answers the check; a full pass then starts with 'state' again (its barrier) and stops at seedPlan.
+        expect(calls.includes('seedPlan')).toBe(!valid);
+        reconciler.stop();
+      }
+    } finally { jest.useRealTimers(); }
+  });
+});
+
 describe('probe record', () => {
   test('passes when both sides agree and fails with the mismatch count', () => {
     const sql = PROBE_CORPUS.map((): [string, string] => ['a', 'b']);
@@ -192,10 +219,22 @@ describe('follow status', () => {
       version: 1, epoch_id: 'seed-1', epoch_started_at: SEED.finished_at, updated_at: NOW.toISOString(), applied_rows: 3, queue_depth: 0, lag_ms: 0, last_seq: 1,
       watermark: { valid: true, through: NOW.toISOString(), invalidated_reason: null }, lag: { epoch: [], hours: {} },
       fingerprints: { checked_rows: 0, mismatches: 0 }, probe: { state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0 },
-      allocators: { verified: false, checked_at: null }, clean_stop: false, ...over,
+      allocators: { verified: false, checked_at: null }, ...over,
     };
     writeFileSync(join(dir, 'follower.json'), JSON.stringify(file));
   }
+
+  test('the 24 hour p99 counts every hour in full, whatever the length of its histogram', () => {
+    const dir = tmp();
+    const hour = Math.floor(NOW.getTime() / 3_600_000);
+    const slow: number[] = [];
+    slow[lagBucket(1000)] = 100;
+    const fast = [5]; // the current hour has only the first bucket
+    for (const hours of [{ [hour - 3]: slow, [hour]: fast }, { [hour]: fast, [hour - 3]: slow }]) {
+      withFile(dir, { lag: { epoch: [], hours } });
+      expect(buildFollowStatus(dir, STATE, NOW).follower.lag_ms_p99_24h).toBe(1024);
+    }
+  });
 
   test('each follower state word', () => {
     const none = tmp();

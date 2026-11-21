@@ -9,6 +9,8 @@ import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
 import { buildFollowStatus, readPasses } from '../../src/shadow/follow-status.ts';
 import { rowDigest, sortKey } from '../../src/shadow/follow-digest.ts';
 import type { ShadowState } from '../../src/shadow/state.ts';
+import { openReadSource } from '../../src/shadow/read-pool.ts';
+import { Reconciler } from '../../src/shadow/reconcile.ts';
 import { openFollowRig, type FollowRig } from './follow-rig.ts';
 import { fillSeedFixture } from './shadow-seed-fixture.ts';
 
@@ -130,6 +132,26 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect((await r.reconciler.run('full')).repaired_rows).toBe(0);
         expect(status(r).reconcile.consecutive_clean_full_passes).toBe(2);
       } finally { await r.close(); }
+    }, 90_000);
+
+    test('each interval is its own short read, and nothing talks to the store while a read is open', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      let open = 0;
+      let pageIntervals = 0;
+      let rpcsInsideReads = 0;
+      const reads$ = { pauseMs: 0, close: () => base.close(), read: <T>(fn: Parameters<typeof base.read<T>>[0]) => base.read(async (tx, query) => { open++; try { return await fn(tx, query); } finally { open--; } }) };
+      const rpc = <T>(method: string, args?: Record<string, unknown>): Promise<T> => { if (open > 0) rpcsInsideReads++; if (method === 'relationDigest' && args?.relation === 'pages') pageIntervals++; return r.rpc<T>(method, args); };
+      try {
+        await ctx.primary().executeRaw(`UPDATE pages SET title = 'Changed Behind The Back' WHERE slug = 'people/alice-example'`);
+        const small = new Reconciler({ dir: r.dir, reads: reads$, rpc, follower: r.follower, intervalRows: 2 });
+        const pass = await small.run('full');
+        expect(pass.error).toBeUndefined();
+        expect(pass.repaired_by_relation).toEqual({ pages: 1 });
+        expect(pageIntervals).toBeGreaterThan(1); // the fixture's pages do not fit two rows
+        expect(rpcsInsideReads).toBe(0);
+        expect((await small.run('full')).repaired_rows).toBe(0);
+      } finally { await base.close(); await r.close(); }
     }, 90_000);
 
     test('it repairs a missing row and an extra row', async () => {
