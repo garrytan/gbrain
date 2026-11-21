@@ -23,6 +23,7 @@ mod page_visibility;
 mod pages;
 mod search;
 mod sources;
+mod sync_run_reads;
 mod tags;
 mod timeline;
 mod trust;

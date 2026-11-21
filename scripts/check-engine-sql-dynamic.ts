@@ -171,6 +171,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   chunkGenerationFilter: 'src/core/search/safe-chunks.ts: constant live body generation predicate over caller page/chunk aliases (Wave B)',
   chunkManifestJoin: 'src/core/search/safe-chunks.ts: constant LEFT JOIN onto the live page_body_manifest row over caller aliases (Wave B)',
   chunkDocumentOrder: 'src/core/search/safe-chunks.ts: constant ORDER BY column list over caller chunk/manifest aliases (Wave B)',
+  syncImportPagesSql: 'src/core/persistence/sync-pass-pages-sql.ts: the constant sync pass I⋈P statement (module constants MARKDOWN_CHUNKER_VERSION and syncDeleteOrigin(\'p\') only), its placeholders $1..$5 bound by the caller; the keyset LIMIT is a Number.isSafeInteger-checked integer',
+  syncAdmissionEffectsSql: 'src/core/persistence/sync-admission-sql.ts: the constant sync.admission effective-probe statement (effectProbes over literal $1..$7 placeholders only), every value bound by the caller',
   quoteIdentifier: 'src/core/search/embedding-column.ts: double-quoted identifier (embedded quotes doubled); callers pass registry-resolved or COLUMN_NAME_REGEX-checked embedding column names',
   vectorCastSuffix: 'src/core/search/embedding-column.ts: constant ::vector / ::halfvec cast suffix from the resolved column type',
   safeChunksFilter: 'src/core/search/safe-chunks.ts: constant safe-chunk predicate over a caller alias',

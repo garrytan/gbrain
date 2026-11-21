@@ -241,7 +241,7 @@ export async function pageMovedSinceAdmission(engine: Pick<BrainEngine, 'execute
  * really moved (`concurrent_write` by revision), or a `pinned_git_worktree_conflict` (`worktree_dirty`). Shared by the
  * run's receipt branch and the start-of-run conversion of an older release's blocked cursor.
  */
-export async function receiptPageFaultHold(engine: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; incarnation: string; entry: HoldEntry;
+export async function receiptPageFaultHold(engine: Pick<BrainEngine, 'executeRaw' | 'readPageRevisionWriter' | 'readRevisionWriterRequest'>, input: { sourceId: string; incarnation: string; entry: HoldEntry;
   pending: { slug: string; pageId: number | null; intent: SyncIntent }; done: Pick<WriteRequest, 'request_id' | 'state' | 'error_code' | 'error_message' | 'error_detail'> }): Promise<HeldEntry | null> {
   const { entry, pending, done } = input;
   const repeated = await repeatedWriteFailure(engine, input.sourceId, input.incarnation, pending.slug, done);

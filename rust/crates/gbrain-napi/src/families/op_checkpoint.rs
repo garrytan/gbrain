@@ -4,9 +4,19 @@
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
+use gbrain_store::persistence::{SyncImportPageQuery, SyncImportPageWindow};
+
+/// One row of `writeOpCheckpointRecords(op, rows)`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordRow {
+    fingerprint: String,
+    record: Value,
+}
 
 #[napi]
 impl Brain {
@@ -72,6 +82,54 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.delete_op_checkpoint_paths(&op, &fingerprint)
+        })
+    }
+
+    /// `readOpCheckpointRecords(op, fingerprints)`: each found parent's first completed key.
+    #[napi]
+    pub fn read_op_checkpoint_records<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprints: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let fingerprints: Vec<String> =
+                required(fingerprints, "readOpCheckpointRecords fingerprints")?;
+            s.read_op_checkpoint_records(&op, &fingerprints)
+        })
+    }
+
+    /// `writeOpCheckpointRecords(op, rows)`: each parent set to `[record]`.
+    #[napi]
+    pub fn write_op_checkpoint_records<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<RecordRow> = required(rows, "writeOpCheckpointRecords rows")?;
+            let rows: Vec<(String, Value)> = rows
+                .into_iter()
+                .map(|row| (row.fingerprint, row.record))
+                .collect();
+            s.write_op_checkpoint_records(&op, &rows)
+        })
+    }
+
+    /// `readSyncImportPageRows(q, window)`: a sync pass's `I⋈P` rows for a window of page ids or a keyset page.
+    #[napi]
+    pub fn read_sync_import_page_rows<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+        window: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let query: SyncImportPageQuery = required(query, "readSyncImportPageRows query")?;
+            let window: SyncImportPageWindow = required(window, "readSyncImportPageRows window")?;
+            s.read_sync_import_page_rows(&query, &window)
         })
     }
 }

@@ -34,7 +34,7 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/persistence/refresh-barrier.ts': { count: 1, why: 'the downgrade backlog names deferred ahead of the open states: a released deferred row that is still queued or running has not published' },
   'src/core/persistence/page-batch.ts': { count: 1, why: 'batches are never deferred' },
   'src/core/persistence/schema.ts': { count: 3, why: 'the original state CHECK and partial indexes; deferred rows have their own index' },
-  'src/core/persistence/sync-admission.ts': { count: 1, why: 'managed sync' },
+  'src/core/persistence/sync-admission-sql.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/sync-cursor-key.ts': { count: 2, why: 'managed sync' },
   'src/core/persistence/sync-drain.ts': { count: 2, why: 'managed sync' },
   'src/core/persistence/sync-dry-run-writer.ts': { count: 1, why: 'managed sync' },
