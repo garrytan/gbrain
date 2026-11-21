@@ -20,6 +20,49 @@ export const OWNER_IPC_LOCAL_ONLY_READS: ReadonlySet<string> = new Set([
   'listDecideCalibrations', 'getDecideCalibration', 'getDecideProposal', 'listDecideProposalIds', 'listDecideProposals',
   'listDecideProposedPairs', 'listDecideReviewProposals', 'getDecideReviewProposal', 'listDecideReviewProposalIds',
   'readProposalReviewRates', 'listDueDecideReviewQueue', 'listDueDecideSweepDeferred',
+  // The typed reads the engine-member moves added (SELECT only; none is open to a remote caller). selectClaimableEffect,
+  // lockOverdueHold and lockEffectGuard take row locks that end with the caller's transaction and write nothing.
+  'inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges',
+  'listLivePageSummaries', 'countInboundLinks', 'readEntityInboundEdges', 'listLinkEndpointPages',
+  'listPagesTitledIn', 'wordLexemes', 'readLinkContextMatches', 'readLinkContextOriginPages',
+  'listConversationFactRows', 'countRedactedFacts', 'listOutsideContentFenceCounts', 'countAtomFacts',
+  'listUnpreviewedTrustFacts', 'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes',
+  'listUnlinkedConversationSlugs', 'countFactEmbeddingCoverage', 'countStaleFactEmbeddings',
+  'countSegmentedCensusPages', 'listFactsPageBodies', 'readFactTableCatalog', 'listSourceRecords',
+  'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readDatabaseClock', 'listLinkPageMetadata',
+  'listStoredTimelineRows', 'filterPagesAtRevision', 'nextLivePageAfter', 'readMentionLastPass',
+  'findExactBasenameCandidates', 'readJobInsight', 'readLastAutopilotCycles', 'countJobsByStatus',
+  'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName', 'readWaitingScopeState',
+  'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
+  'readEmbedBackfillBySource', 'readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores',
+  'hasStoredVectors', 'countChunkVectorCoverage', 'listFenceHoldRows', 'readWriterVersionCutoff',
+  'listWriterVersions', 'recentWriterVersions', 'readEntityAliasRows', 'readPageAliasRows', 'readPageTitle',
+  'resolveCaseSensitiveAliases', 'listAccessPolicySourceIds', 'listExportPageKeys', 'listExportWithdrawals',
+  'listForcedCutSeqs', 'normalizeFenceLines', 'readBodyManifestMeta', 'readBodyManifestOutline',
+  'readBodyManifestRows', 'readExportPageRows', 'readExportWithdrawalLedgerBytes', 'readSegmentedPageHead',
+  'readSegmentedVersionBodyBytes', 'listPageTypesByIds', 'listVersionReasonWriters', 'listVersionTrustTiers',
+  'readWithdrawalDiscovery', 'listCoveredSources', 'countSearchVectorRows', 'listPrivateQueueHealth',
+  'listQueueWedgeCounts', 'listStuckActiveJobsByName', 'listWaitingByQueue', 'readOldestWaitingAge',
+  'readQueueDivergence', 'readQueueHealthSignals', 'readWedgeSignals', 'countSegmentedTimelinePages',
+  'countTimelineCommentMarkupRows', 'getWorktreeBinding', 'hasExtractedEvents', 'hasLabelledOnlyMember',
+  'listAccessTokens', 'listActiveAccessMembers', 'listAwaitingMemoryProposals', 'listMemoryProposalRows',
+  'listOpenLoops', 'listOwnerProposalRows', 'listSharedSkillPackRoots', 'listStoredTimelineRowsOrdered',
+  'listSynopsisSourceIds', 'listTimelineOrphanPages', 'notifierCoverageRecorded', 'readAdmissionSource',
+  'readEntityOpenLoops', 'readHealthMemoClock', 'readMaxTimelineEntryId', 'readMemoryProposal',
+  'readOpCheckpointKeys', 'readPendingProposalSummary', 'readSourceState', 'sampleEffectiveDateSources',
+  'sampleEffectiveDates', 'sharedSkillPackTablePresent', 'storedTimelineRowsByPageIds', 'readSourceWriteRow',
+  'readSourceLocalPath', 'readFactEntitySlug', 'hasLiveFileBackedPage', 'factReadableUnder', 'readRemoteForgetTier',
+  'readForgetTarget', 'isFactEntityUnbacked', 'readLinkedFactCopies', 'hasHiddenFactCopy', 'ownerReachesFact',
+  'readFactWithdrawalClaim', 'readMirrorGateRows', 'lockEffectGuard', 'hasRearmableTargets',
+  'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'readRequestEffects',
+  'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads', 'listResumableRefreshes',
+  'listSourceLastCommits', 'hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow',
+  'listRetiredDeactivations', 'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks',
+  'countOversizedEmbedSkips', 'countOrphanChunks', 'countCodeChunkPages', 'codeChunksExist', 'hasUnsealedPages',
+  'currentCodeChunksExist', 'listQualifiedSymbolNames', 'listWithdrawalChunks', 'listContextualModeCandidates',
+  'resolveFrozenHits', 'readChatUsage', 'readSegmentedEmbedPage', 'readLatestVersionId', 'readLatestVersionIdAtTier',
+  'readOauthClient', 'listOauthClients', 'listWriteGateReceiptsFor', 'listWriteGateHoldRows',
+  'listTrustAllowRuleRows', 'getWriteGateHoldRow',
 ]);
 
 const page = 'getPage for that slug and source';
@@ -32,6 +75,9 @@ const configKey = 'getConfig for that key';
 const cycleLock = 'readCycleLocks for that lock id';
 const decideKey = 'readDecideState for that key';
 const calibration = 'getDecideCalibration for that id';
+const effectState = 'readRequestEffects for the request the effect belongs to';
+const receipts = 'listWriteGateReceiptsFor the row the receipt names';
+const holdRead = 'getWriteGateHoldRow for that hold (listWriteGateHoldRows lists them by id)';
 
 export const OWNER_IPC_CONFIRMING_READS: Readonly<Record<string, string>> = {
   executeRaw: 'a SELECT of the rows the statement changes', executeRawDirect: 'a SELECT of the rows the statement changes',
@@ -96,7 +142,16 @@ export const OWNER_IPC_CONFIRMING_READS: Readonly<Record<string, string>> = {
   transitionDecideProposal: 'getDecideProposal for that id', insertDecideReviewProposal: 'listDecideReviewProposalIds for that sweep',
   transitionDecideReviewProposal: 'getDecideReviewProposal for that id',
   applyDecideReviewQueue: 'listDueDecideReviewQueue for that kind and source',
-  applyDecideSweepDeferred: 'listDueDecideSweepDeferred for that source',
+  applyDecideSweepDeferred: 'listDueDecideSweepDeferred for that source',  // The writes the engine-member moves added; each names the read that shows whether it committed.
+  attachSourcePath: 'getSource for that source', upsertOpenLoop: 'listOpenLoops for that source', closeOpenLoop: 'listOpenLoops for that source',
+  deleteTimelineRows: timeline, insertCanonicalTimelineRows: timeline, deleteChunksForPages: chunks,
+  expireMemoryProposals: 'listMemoryProposalRows for that source', purgeMemoryProposals: 'listMemoryProposalRows for that source',
+  stampEffectClaim: effectState, renewEffectClaim: effectState, advanceEffectRow: effectState, completeEffectRow: effectState,
+  retryEffectRow: effectState, retryBusyEffectRow: effectState, requeueEffectRow: effectState, parkEffectRow: effectState,
+  failEffectRow: effectState, logChatUsage: 'readChatUsage for the window that holds the call', stampVersionChangeReason: 'getVersions for that page',
+  patchOauthClient: 'readOauthClient for that client',
+  upsertWriteGateReceipt: receipts, upsertPageWriteGateReceipt: receipts, deleteStalePageWriteGateReceipts: receipts, deleteStaleWriteGateReceipts: receipts,
+  upsertWriteGateHold: holdRead, decideWriteGateHold: holdRead,
 };
 
 /**
