@@ -93,7 +93,7 @@ getPage	pages	yes	126	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	541	yes	yes	yes	serves
+putPage	pages	yes	542	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -366,7 +366,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	27	no	yes	yes	serves
+createVersion	versions	yes	28	no	yes	yes	serves
 getVersions	versions	yes	16	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
@@ -401,7 +401,7 @@ readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	68	no	yes	yes	serves
-beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
+beginSnapshotRead	import_guards	yes	4	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
 readLedgerSource	import_guards	yes	9	no	yes	yes	serves
@@ -738,12 +738,12 @@ listVisibleBeliefLifetimes	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
 listPageRefsByIds	trust_tier_reads	yes	1	no	yes	yes	serves
-listValidTimeIdentities	trust_tier_reads	yes	4	no	yes	yes	serves
-pickValidTimeEdition	trust_tier_reads	yes	9	no	yes	yes	serves
+listValidTimeIdentities	trust_tier_reads	yes	5	no	yes	yes	serves
+pickValidTimeEdition	trust_tier_reads	yes	10	no	yes	yes	serves
 listAmendmentsNotApplied	trust_tier_reads	yes	3	no	yes	yes	serves
-readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
+readPageVersionEdition	trust_tier_reads	yes	4	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
-pageAwaitsRederive	trust_tier_reads	yes	3	no	yes	yes	serves
+pageAwaitsRederive	trust_tier_reads	yes	4	no	yes	yes	serves
 readSourceWriteRow	memory_mutation_reads	yes	1	no	yes	yes	serves
 readSourceLocalPath	memory_mutation_reads	yes	1	no	yes	yes	serves
 readFactEntitySlug	memory_mutation_reads	yes	1	no	yes	yes	serves
