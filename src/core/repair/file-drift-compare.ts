@@ -176,7 +176,7 @@ export async function heldLiveDrift(engine: BrainEngine, sourceId: string, slug:
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;
     if (error.detail === 'canonical_file_missing') return live;
-    return { still_present: null, reason: typeof error.detail === 'string' ? error.detail : error.code };
+    return typeof error.detail === 'string' ? { still_present: null, reason: error.detail } : { still_present: null, reason: error.code, message: error.message };
   }
 }
 
@@ -210,7 +210,7 @@ export async function comparePage(engine: BrainEngine, sourceId: string, target:
     const earlier = side === 'unknown' ? await earlierVersionHeld(engine, sourceId, slug) : null;
     if (earlier) return { ...base, would: 'prefer_file', why: `page ${slug} equals ${path} as committed in ${earlier.slice(0, 12)}, an earlier version, so only the file moved since (Git is the parent): `
       + `gbrain sources retry-held ${sourceId} re-screens it and the next gbrain sync --source ${sourceId} --no-pull imports the file, with no repair`
-      + (evidence.file_uncommitted ? `; ${path} also has uncommitted bytes, which a working-tree sync imports and a committed sync leaves in the checkout` : '') };
+      + (evidence.file_uncommitted ? `; ${path} also has uncommitted bytes, so sync holds it worktree_dirty until they are committed or restored` : '') };
     if (evidence.newer === 'file') return { ...base, would: 'prefer_file', why: mirrorHeld ? `${path} was committed after the page last changed, so the file wins (Git is the parent); ${mirrorDriftRoute(sourceId, side)}`
       : `${path} was committed after the page last changed, so the file wins (Git is the parent): gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file` };
     if (evidence.newer === 'database') return { ...base, would: 'needs_human', why: mirrorHeld ? `page ${slug} changed after ${path} was last committed (page updated ${evidence.page_updated_at}, file committed ${evidence.file_committed_at}), so a person decides which side to keep; ${mirrorDriftRoute(sourceId, side)}`

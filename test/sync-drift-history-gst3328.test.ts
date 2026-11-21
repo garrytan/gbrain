@@ -69,6 +69,18 @@ for (const backend of testBackends()) {
     expect(await body(engine, 'notes/b')).toContain('Edited in the database.');
   }, { databaseUrl, setup }), 240_000);
 
+  test(`[${backend}] the earlier version a record-less page holds is found by the file's own history, however many other commits came since`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await unrecorded(engine);
+    edit(root, ['notes/a'], 'A first Git edit'); git(root, 'commit', '-qam', 'first edit');
+    for (let i = 0; i < 55; i++) { writeFileSync(join(root, 'log.txt'), `entry ${i}\n`); git(root, 'add', 'log.txt'); git(root, 'commit', '-qm', `log ${i}`); }
+    edit(root, ['notes/a'], 'A second Git edit'); git(root, 'commit', '-qam', 'second edit');
+    await coordinated(engine, "UPDATE sources SET last_commit='0123456789abcdef0123456789abcdef01234567' WHERE id='default'");
+    await performManagedSync(engine, OPTS);
+    expect(await held(engine)).toEqual([]);
+    expect(await body(engine, 'notes/a')).toContain('A second Git edit of notes/a.');
+  }, { databaseUrl, setup }), 240_000);
+
   test(`[${backend}] a hold the current screen wrote is screened against earlier versions after retry-held, and the preview says so first`, () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     const original = await body(engine, 'notes/a');
@@ -119,6 +131,21 @@ for (const backend of testBackends()) {
     const live = await liveFileDrift(engine, 'default', 'notes/a');
     expect(live).toMatchObject({ still_present: null, reason: 'invalid_params' });
     expect(live.message).toContain('valid UTF-8');
+  }, { databaseUrl, setup }), 240_000);
+
+  test(`[${backend}] on a read-only mirror the held preview names why it could not read a held file, not only the error code`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await unrecorded(engine, ['notes/a']);
+    edit(root, ['notes/a'], 'A first Git edit'); git(root, 'commit', '-qam', 'first edit');
+    await performManagedSync(engine, OPTS);
+    expect(await held(engine)).toEqual(['notes/a.md']);
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"mirror_read_only": true}'::jsonb WHERE id='default'`);
+    writeFileSync(join(root, 'notes/a.md'), Buffer.concat([Buffer.from(note('notes/a', 'Bytes that are not ')), Buffer.from([0xff, 0xfe])]));
+    const preview = await withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () =>
+      (await repairRunner(engine, { apply: false, logger })).run('file-drift', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', held: true, side: 'unknown' }));
+    const listed = preview.listing!.find(entry => entry.item === 'default:notes/a')!;
+    expect(listed.class).toBe('unknown');
+    expect(String(listed.detail)).toContain('invalid_params: The canonical file must contain valid UTF-8.');
   }, { databaseUrl, setup }), 240_000);
 }
 
