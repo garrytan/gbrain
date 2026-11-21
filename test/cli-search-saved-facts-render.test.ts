@@ -7,8 +7,9 @@
 
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { formatResult, captureRetrievalMeta, resetRetrievalMetaForTests } from '../src/cli/main.ts';
+import { _resetCliOptionsForTest, getCliOptions, setCliOptions } from '../src/core/cli-options.ts';
 
-afterEach(() => resetRetrievalMetaForTests());
+afterEach(() => { resetRetrievalMetaForTests(); _resetCliOptionsForTest(); });
 
 const savedFact = { id: 1, fact: "The user's sister's new cat is called Zorbloon-example.", entity_slug: 'user', kind: 'fact', valid_from: '2026-11-17', source: 'chat' };
 
@@ -38,6 +39,18 @@ describe('CLI search prints the saved facts the op matched', () => {
       spy.mockRestore();
     }
     expect(writes.join('')).toContain('Zorbloon-example');
+  });
+
+  test('--room prints no saved facts, since the room marks none of them', () => {
+    setCliOptions({ ...getCliOptions(), room: 'group:team-a' } as ReturnType<typeof getCliOptions>);
+    captureRetrievalMeta('retrieval', { returned_count: 0, retrieved_count: 0, saved_facts: [savedFact] });
+    expect(formatResult('search', [], {})).not.toContain('Zorbloon-example');
+  });
+
+  test('--explain output keeps the saved facts after the rows', () => {
+    setCliOptions({ ...getCliOptions(), explain: true } as ReturnType<typeof getCliOptions>);
+    captureRetrievalMeta('retrieval', { returned_count: 1, retrieved_count: 1, saved_facts: [savedFact] });
+    expect(formatResult('search', [{ slug: 'notes/cats', title: 'Cats', type: 'note', chunk_text: 'cats', score: 1 }], {})).toContain('Zorbloon-example');
   });
 
   test('no saved facts: output unchanged', () => {

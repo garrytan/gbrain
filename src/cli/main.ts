@@ -1587,7 +1587,7 @@ export function formatResult(
       const { results, meta } = redactRetrievalOutput(room.rows as any[], lastRetrievalMeta);
       const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
       if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
-      const capLine = pageCapLine(meta, '--limit'), savedFacts: string = require('../mcp/saved-facts-notice.ts').cliSavedFacts(meta, params.json === true);
+      const capLine = pageCapLine(meta, '--limit'), savedFacts: string = require('../mcp/saved-facts-notice.ts').cliSavedFacts(getCliOptions().room === undefined ? meta : null, params.json === true); // --room marks no saved fact, so none prints
       if (capLine) process.stderr.write(capLine + '\n');
       if (params.json === true) {
         const incompleteNotice = retrievalIncompleteLine(meta);
