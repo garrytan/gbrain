@@ -150,7 +150,7 @@ const HOST_BINDING_SQL = 'SELECT h.local_path FROM persistence_host_bindings h J
 const STABLE_IN_GROUP = new Set([HOST_BINDING_SQL]);
 /**
  * #6007: the group transaction seen through a per-transaction read snapshot.
- * The stable reads above and config values (`getConfig`, one consistent value
+ * The stable reads above (also asked through readOwnerHostBinding) and config values (`getConfig`, one consistent value
  * per key for every member) are answered once; every other call reaches the
  * transaction unchanged. It lives only for one group transaction, so nothing
  * survives a rollback.
@@ -165,6 +165,12 @@ function groupReads(tx: BrainEngine): BrainEngine {
   return new Proxy(tx, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       STABLE_IN_GROUP.has(flat(sql)) ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
+    // The typed owner-binding read (the effect journal's Git target) shares the HOST_BINDING_SQL answer, so the group
+    // reads the binding once whichever way it is asked first.
+    if (key === 'readOwnerHostBinding') return (worktreeId: string) =>
+      once<{ local_path: string | null }[]>(JSON.stringify([flat(HOST_BINDING_SQL), [worktreeId]]),
+        () => target.readOwnerHostBinding(worktreeId).then(path => path === null ? [] : [{ local_path: path }]))
+        .then(rows => rows[0]?.local_path ?? null);
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
     if (key === 'readSourceState') return (sourceId: string, opts?: SourceStateOptions) =>
       opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
