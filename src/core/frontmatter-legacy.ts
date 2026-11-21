@@ -15,7 +15,7 @@ import { dataFrontmatter, LEGACY_TYPED_SCHEMA } from './data-frontmatter.ts';
 import { coerceFrontmatterString, comparableFrontmatter, parseMarkdownHead } from './markdown.ts';
 import type { BrainEngine } from './engine.ts';
 import { hasCapability } from './engine-capabilities.ts';
-import { recordChronicleCarry } from './chronicle/carry.ts';
+import { moveChronicleRows } from './chronicle/carry.ts';
 import { SYNC_IMPORT_PROVENANCE_OP } from './persistence/sync-holds.ts';
 
 /** parseMarkdown keeps the text it read here, so alignWithStored can read the same file the old way. */
@@ -227,16 +227,5 @@ export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string,
        ON CONFLICT DO NOTHING`,
       [fingerprint, carried, toHash, pageId, sourceId]);
   }
-  // The chronicle ledger row moves: it carries recorded spend and failed attempts, which a copy would count twice. It
-  // names the page's slug now, as a rename in the same sync left it.
-  await tx.executeRaw(
-    `UPDATE chronicle_page_state c SET content_hash=$3,
-            slug=COALESCE((SELECT p.slug FROM pages p WHERE p.id=c.page_id AND p.source_id=c.source_id AND p.deleted_at IS NULL), c.slug)
-      WHERE c.source_id=$4 AND c.page_id=$1 AND c.content_hash=$2
-       AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= now())
-       AND NOT EXISTS (SELECT 1 FROM chronicle_page_state n WHERE n.source_id=c.source_id AND n.page_id=c.page_id
-         AND n.content_hash=$3 AND n.extractor_version=c.extractor_version)`,
-    [pageId, fromHash, toHash, sourceId]);
-  // A row that stays (leased or waiting) is recorded as carried: the new hash's row waits for it, and it follows later.
-  await recordChronicleCarry(tx, sourceId, pageId, fromHash, toHash);
+  await moveChronicleRows(tx, sourceId, pageId, fromHash, toHash);
 }

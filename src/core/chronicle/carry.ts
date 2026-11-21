@@ -18,7 +18,8 @@
  * A moved row's record stays, marked settled, as a forwarding entry from the old hash to the new one: a judge whose
  * lease ended while the row moved still reports to the row (finish follows it), so its spend is recorded once (keyed to
  * its attempt) and its outcome applies only while its attempt is still the row's latest. A settled entry is dropped once
- * the row it forwards to is gone; entries exist only for rows leased or waiting at the upgrade re-read.
+ * the row it forwards to is gone; entries exist only for rows leased or waiting at the upgrade re-read, and for rows a
+ * judge's ended lease or an ended retry delay left pending or failed, which the re-read moved at once.
  *
  * The carried row replaces the new hash's row only when that row holds no paid history (a fresh write decision), so its
  * campaign stamp, attempts and recorded spend stay on the page's live row and count once. A page whose content changed
@@ -46,7 +47,7 @@ const carriedRowSql = (alias: string) => `${alias}.source_id = m.completed_keys-
  * Inside the page write, after the ledger row move: records each current-extractor row still at `fromHash` because a
  * judge holds its lease or it waits out a retry delay.
  */
-export async function recordChronicleCarry(tx: BrainEngine, sourceId: string, pageId: number, fromHash: string, toHash: string): Promise<void> {
+async function recordChronicleCarry(tx: BrainEngine, sourceId: string, pageId: number, fromHash: string, toHash: string): Promise<void> {
   await tx.executeRaw(
     `INSERT INTO op_checkpoints (op, fingerprint, completed_keys)
      SELECT $1, ${fingerprintSql('c')},
@@ -56,6 +57,33 @@ export async function recordChronicleCarry(tx: BrainEngine, sourceId: string, pa
         AND c.state IN ('pending','failed') AND c.next_attempt_at > now()
      ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()`,
     [CHRONICLE_CARRY_OP, sourceId, pageId, fromHash, toHash, CHRONICLE_EXTRACTOR_VERSION]);
+}
+
+/**
+ * Inside the page write: moves the page's ledger rows from `fromHash` to `toHash` (they carry recorded spend and failed
+ * attempts, which a copy would count twice), naming the page's slug now, as a rename in the same sync left it. A row
+ * whose lease or retry delay already ended moves at once; a current-extractor row of those that a judge may still
+ * report to (its lease ended while it called the model) gets a settled forwarding record, so that judge's spend and
+ * outcome follow the row. A row that stays (leased or waiting) is recorded as carried: the new hash's row waits for
+ * it, and it follows later.
+ */
+export async function moveChronicleRows(tx: BrainEngine, sourceId: string, pageId: number, fromHash: string, toHash: string): Promise<void> {
+  await tx.executeRaw(
+    `WITH moved AS (
+       UPDATE chronicle_page_state c SET content_hash=$3,
+              slug=COALESCE((SELECT p.slug FROM pages p WHERE p.id=c.page_id AND p.source_id=c.source_id AND p.deleted_at IS NULL), c.slug)
+        WHERE c.source_id=$4 AND c.page_id=$1 AND c.content_hash=$2
+          AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= now())
+          AND NOT EXISTS (SELECT 1 FROM chronicle_page_state n WHERE n.source_id=c.source_id AND n.page_id=c.page_id
+            AND n.content_hash=$3 AND n.extractor_version=c.extractor_version)
+        RETURNING c.source_id, c.page_id, c.state, c.next_attempt_at, c.extractor_version)
+     INSERT INTO op_checkpoints (op, fingerprint, completed_keys)
+     SELECT $5, m.source_id || ':' || m.page_id::text || ':' || $2::text,
+            jsonb_build_array(jsonb_build_object('sourceId', m.source_id, 'pageId', m.page_id, 'fromHash', $2::text, 'toHash', $3::text, 'settled', true))
+       FROM moved m WHERE m.extractor_version=$6 AND m.state IN ('pending','failed') AND m.next_attempt_at IS NOT NULL
+     ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()`,
+    [pageId, fromHash, toHash, sourceId, CHRONICLE_CARRY_OP, CHRONICLE_EXTRACTOR_VERSION]);
+  await recordChronicleCarry(tx, sourceId, pageId, fromHash, toHash);
 }
 
 /**

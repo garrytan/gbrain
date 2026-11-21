@@ -21,7 +21,9 @@
  *      so the late report lands on a hash no row has and its paid call is lost;
  *    - on Postgres, the same holds when the move commits after the judge read the row's hash (it fails when the report
  *      lands on the old hash after the row left it), and when two runs move the row at once (it fails when the second
- *      deletes the forwarding record the first just settled).
+ *      deletes the forwarding record the first just settled);
+ *    - a judge whose lease ended just before the re-read moved its row at once keeps its spend and outcome on the moved
+ *      row (it fails when the move leaves no forwarding record).
  * 4. Runs on PGLite and, with DATABASE_URL, on Postgres (the managed-brain fixture). The Rust engine serves no raw SQL,
  *    so the managed sync and the chronicle phase stop there with engine_capability_missing. The judge is the phase's
  *    injected judge, recording spend on the ambient BudgetTracker; the embedding provider is a stub. No network, no
@@ -272,6 +274,25 @@ describe(`pages-03: the upgrade re-read while a chronicle judge is calling the m
       const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
       await runPhaseChronicle(engine, { judge }); // moves the row; its campaign attempts are used, so nothing is claimed
       expect(judge.calls).toBe(1);
+      judge.release();
+      await firstDrain;
+      await runPhaseChronicle(engine, { judge });
+      expect(judge.calls).toBe(1);
+      await expectJudgedOnceInCampaign(engine, id, liveHash);
+      expect(await ledger(engine, id)).toHaveLength(1);
+    });
+  }, { setup, databaseUrl }), 240_000);
+
+  test('a judge whose lease ended before the re-read moved its row still reports its answer and spend to the moved row', () => managedBrain(async ({ engine, root }) => {
+    await inGateway(async () => {
+      const judge = pausingJudge();
+      const { id, oldHash } = await campaignBrain(engine, '-1 second');
+      const firstDrain = runPhaseChronicle(engine, { judge });
+      await judge.inCall;
+      // The judge's lease ends while it is still calling the model; then the re-read moves the row at once.
+      await engine.executeRaw(`UPDATE chronicle_page_state SET next_attempt_at = now() - interval '1 second' WHERE page_id=$1 AND content_hash=$2`, [id, oldHash]);
+      const liveHash = await upgradeReread(engine, root, oldHash);
+      await drainEffects(engine);
       judge.release();
       await firstDrain;
       await runPhaseChronicle(engine, { judge });
