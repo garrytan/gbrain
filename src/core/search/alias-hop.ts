@@ -60,7 +60,10 @@ export interface IdentityTierOpts {
   requireSafeChunks?: boolean;
   excludeSlugs?: string[];
   excludeSlugPrefixes?: string[];
-  /** Caller's shape filters: a page of another type is never injected (same gate as exact-lookup). */
+}
+
+/** Caller's shape filters: a page of another type is never injected (same gate as exact-lookup). */
+interface AliasTypeGate {
   type?: string;
   types?: string[];
 }
@@ -304,8 +307,10 @@ async function fetchAliasCanonical(
   // clause (getPage, not search); re-apply the private predicate here so
   // an untrusted caller can't hop into a `visibility: private` page.
   if (opts.excludePrivate && isPrivatePageForCaller(page)) return null;
-  if (opts.type && page.type !== opts.type) return null;
-  if (opts.types && opts.types.length > 0 && !opts.types.includes(page.type)) return null;
+  // The request layer passes the caller's type/types through the shared opts bag.
+  const { type, types } = opts as IdentityTierOpts & AliasTypeGate;
+  if (type && page.type !== type) return null;
+  if (types && types.length > 0 && !types.includes(page.type)) return null;
   return page;
 }
 
