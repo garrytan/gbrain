@@ -25,7 +25,7 @@ import { resolveModel } from '../model-config.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { providerHaltReason, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { chat as gatewayChat, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
@@ -611,7 +611,7 @@ export async function runPhaseSynthesizeConcepts(
       source_id: opts.sourceId ?? 'default',
       cost_delta: estimatedSpendUsd,
       round_completed_delta: failures.length === 0 && publicationDeferred.length === 0 && publicationHeld.length === 0 && publicationPending.length === 0 ? 1 : 0,
-      halt_delta: failures.length > 0 ? 1 : 0, halt_reason: 'item_error',
+      halt_delta: failures.length > 0 ? 1 : 0, halt_reason: providerHaltReason(abortedGlobalError) ?? 'item_error',
     });
   }
 
