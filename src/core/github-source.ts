@@ -1329,7 +1329,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
         // Repo card, refreshed once per repo.
         const cardPath = repoCardPath(cfg.dir, repo);
         keepPaths.add(relative(cfg.dir, cardPath).replace(/\\/g, '/'));
-        if (opts.full || !(await storedPage(deps, cardPath, '')).exists) {
+        if (!opts.signal?.aborted && (opts.full || !(await storedPage(deps, cardPath, '')).exists)) {
           try {
             const meta = await client.fetchJSON<RawRepo>(`/repos/${repo}`, { signal: opts.signal });
             repoMeta.set(repo, meta);

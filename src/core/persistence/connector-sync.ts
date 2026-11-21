@@ -473,22 +473,21 @@ export class ManagedConnectorSync {
     this.lease.signal.throwIfAborted();
   }
   async load(): Promise<void> {
-    try {
-      await this.recover('__managed_sync_checkpoint__');
-      if (this.retryFailed) {
-        const blocked = await this.retryBlocker(this.engine);
-        if (blocked) {
-          await this.authorizeRetryReceipt(this.engine, blocked);
-          if (!isTerminal(blocked) && !blocked.recovery) {
-            writeResponse(await waitForWrite(this.engine, blocked, loadConfig() ?? { engine: this.engine.kind }, maintenancePublishWaitMs()));
-            await this.recover('__managed_sync_checkpoint__');
-          }
-          await this.refuseRetryBlocker(this.engine);
-        }
-      }
-    } catch (error) {
+    const recover = () => this.recover('__managed_sync_checkpoint__').catch(async (error: unknown) => {
       if (error instanceof OperationError && error.writeError === 'recovery_required') await this.recordRefusal(error).catch(() => {});
       throw error;
+    });
+    await recover();
+    if (this.retryFailed) {
+      const blocked = await this.retryBlocker(this.engine);
+      if (blocked) {
+        await this.authorizeRetryReceipt(this.engine, blocked);
+        if (!isTerminal(blocked) && !blocked.recovery) {
+          writeResponse(await waitForWrite(this.engine, blocked, loadConfig() ?? { engine: this.engine.kind }, maintenancePublishWaitMs()));
+          await recover();
+        }
+        await this.refuseRetryBlocker(this.engine);
+      }
     }
     const limits = await readJournalLimits(this.engine);
     this.outstandingCap = Math.max(1, Math.min(90, limits.principalOutstanding - 10));
@@ -1019,7 +1018,7 @@ export class ManagedConnectorSync {
       { id: handle.id, token: handle.acquisitionToken, acquiredAt: handle.acquiredAt });
     if (!written) throw new LockStolenError(handle.id);
   }
-  /** #9968: a sync refused before its sweep on a retained publication records that refusal as its failure; the rest of the stored state is kept. */
+  /** #9968: a sync whose recovery refuses on the binding's retained publication records that refusal as its failure; the rest of the stored state is kept. */
   private async recordRefusal(error: OperationError): Promise<void> {
     const state = await readManagedConnectorState(this.engine, this.sourceId, this.source.incarnation);
     const requestId = error.writeRequest?.request_id ?? null;
