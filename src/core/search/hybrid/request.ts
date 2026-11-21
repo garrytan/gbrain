@@ -106,6 +106,17 @@ export interface HybridRequest {
 
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
 
+/**
+ * #9921: a non-positive limit reads as unset (the mode default, as limit 0 already does) and a negative offset as 0,
+ * matching clampSearchLimit and the search op's offset parsing, so neither reaches slice(offset, offset + limit).
+ */
+export function normalizePaging<T extends { limit?: number; offset?: number }>(opts: T | undefined): T | undefined {
+  const badLimit = opts?.limit !== undefined && !(opts.limit > 0);
+  const badOffset = opts?.offset !== undefined && !(opts.offset >= 0);
+  if (!opts || (!badLimit && !badOffset)) return opts;
+  return { ...opts, ...(badLimit ? { limit: undefined } : {}), ...(badOffset ? { offset: undefined } : {}) };
+}
+
 export async function resolveHybridRequest(
   engine: BrainEngine,
   query: string,
