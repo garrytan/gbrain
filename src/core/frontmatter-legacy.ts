@@ -140,8 +140,9 @@ export function legacyHashToCarry(existing: { content_hash?: string | null; dele
  * Carries the content_hash-keyed records of the paid page phases (extract_atoms' scan state, chronicle's ledger) from
  * a page's old hash to its new one, so a re-read that changes only how values are kept does not scan or judge the page
  * again. A page whose atoms carry the old hash (scanned before the scan-state table) gets a finished scan at the new
- * hash. The scan state is copied; the chronicle ledger row moves (it holds recorded spend and failed attempts, which
- * campaign and ledger totals sum). Neither replaces a record the new hash already has. Runs inside the page write.
+ * hash. The scan state and the managed atom checkpoints (a partial or held page's disposition lives only there) are
+ * copied; the chronicle ledger row moves (it holds recorded spend and failed attempts, which campaign and ledger totals
+ * sum). None replaces a record the new hash already has. Runs inside the page write.
  */
 export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string, pageId: number, fromHash: string, toHash: string): Promise<void> {
   await tx.executeRaw(
@@ -153,6 +154,15 @@ export async function carryHashKeyedPageState(tx: BrainEngine, sourceId: string,
         AND atom.deleted_at IS NULL))
      ON CONFLICT DO NOTHING`,
     [pageId, fromHash, toHash, sourceId]);
+  // Keyed by content (managedAtomIdentitySql); a copy under its own fingerprint, so a run keyed to the old hash keeps its row.
+  await tx.executeRaw(
+    `INSERT INTO op_checkpoints (op, fingerprint, completed_keys)
+     SELECT ac.op, ac.fingerprint || ':carried:' || $3, jsonb_set(ac.completed_keys, '{0,contentHash}', to_jsonb($3::text))
+       FROM op_checkpoints ac
+      WHERE ac.op='managed-atoms' AND ac.completed_keys->0->>'sourceId'=$4 AND ac.completed_keys->0->>'kind'='page'
+        AND ac.completed_keys->0->>'pageId'=$1::text AND ac.completed_keys->0->>'contentHash'=$2
+     ON CONFLICT DO NOTHING`,
+    [String(pageId), fromHash, toHash, sourceId]);
   // The chronicle ledger row moves: it carries recorded spend and failed attempts, which a copy would count twice.
   await tx.executeRaw(
     `UPDATE chronicle_page_state c SET content_hash=$3 WHERE c.source_id=$4 AND c.page_id=$1 AND c.content_hash=$2

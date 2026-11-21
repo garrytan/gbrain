@@ -28,6 +28,7 @@ import { contentHash } from '../src/core/utils.ts';
 import { discoverExtractablePages } from '../src/core/cycle/extract-atoms.ts';
 import { CHRONICLE_EXTRACTOR_VERSION } from '../src/core/chronicle/contract.ts';
 import { campaignSpentUsd } from '../src/core/chronicle/campaign.ts';
+import { listHeldManagedAtoms } from '../src/core/persistence/atom-maintenance.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
@@ -123,6 +124,31 @@ describe('pages-03: the one-time re-read after the upgrade', () => {
   const pageRow = async (engine: BrainEngine, slug: string) => (await engine.executeRaw<Row>(
     'SELECT id, title, type, compiled_truth, timeline, frontmatter, content_hash FROM pages WHERE slug=$1', [slug]))[0]!;
   const hashOf = (row: Row, frontmatter: Record<string, unknown>) => contentHash({ title: row.title, type: row.type as never, compiled_truth: row.compiled_truth, timeline: row.timeline ?? '', frontmatter, tags: [] });
+  /** What an older gbrain left for each meeting: the old typing stored, the hash it computed over that typing, and its parser version. */
+  const storedByOlderGbrain = async (engine: BrainEngine): Promise<Map<string, string>> => {
+    const oldHash = new Map<string, string>();
+    await withManagedFixtureWrite(engine, ['default'], async tx => {
+      for (const slug of MEETINGS) {
+        const row = await pageRow(tx, slug);
+        expect(hashOf(row, row.frontmatter)).toBe(row.content_hash); // the stored hash is the formula over the stored values
+        const legacy = { ...row.frontmatter, ...legacyTypedFrontmatter(meeting(slug)) };
+        expect(legacy).toMatchObject({ date: '2024-03-01T00:00:00.000Z', room: 101 });
+        oldHash.set(slug, hashOf(row, legacy));
+        await tx.executeRaw('UPDATE pages SET frontmatter=$1::text::jsonb, content_hash=$2 WHERE slug=$3', [JSON.stringify(legacy), oldHash.get(slug), slug]);
+      }
+    });
+    for (const slug of MEETINGS) await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,revision}',to_jsonb($2::text)) WHERE op=$1 AND fingerprint LIKE '%:' || $3`,
+      [SYNC_IMPORT_PROVENANCE_OP, await revisionOf(engine, slug), String((await pageRow(engine, slug)).id)]);
+    await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
+    await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged,parser_fp}','\"an-older-parser\"'::jsonb) WHERE op='managed-sync-pass'");
+    return oldHash;
+  };
+  /** The embedding provider stubbed, as every managed write here embeds. */
+  const withStubEmbeddings = (run: () => Promise<void>) => withEnv({ GBRAIN_EMBEDDING_MODEL: MODEL, GBRAIN_EMBEDDING_DIMENSIONS: String(DIMS), OPENAI_API_KEY: 'sk-test-upgrade-reread' }, async () => {
+    configureGateway({ embedding_model: MODEL, embedding_dimensions: DIMS, env: { OPENAI_API_KEY: 'sk-test-upgrade-reread' } });
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(v => Array.from(vector(v))) })) as never);
+    try { await run(); } finally { __setEmbedTransportForTests(null); resetGateway(); }
+  });
 
   test('a re-read that changes only how values are kept does not scan or judge the page again', () => managedBrain(async ({ engine, root }) => {
     await withEnv({ GBRAIN_EMBEDDING_MODEL: MODEL, GBRAIN_EMBEDDING_DIMENSIONS: String(DIMS), OPENAI_API_KEY: 'sk-test-upgrade-reread' }, async () => {
@@ -132,22 +158,7 @@ describe('pages-03: the one-time re-read after the upgrade', () => {
         const opts = { sourceId: 'default', noPull: true };
         expect((await performManagedSync(engine, opts)).status).toBe('first_sync');
         await drainEffects(engine);
-        // What an older gbrain left: the old typing stored, and the hash it computed over that typing.
-        const oldHash = new Map<string, string>();
-        await withManagedFixtureWrite(engine, ['default'], async tx => {
-          for (const slug of MEETINGS) {
-            const row = await pageRow(tx, slug);
-            expect(hashOf(row, row.frontmatter)).toBe(row.content_hash); // the stored hash is the formula over the stored values
-            const legacy = { ...row.frontmatter, ...legacyTypedFrontmatter(meeting(slug)) };
-            expect(legacy).toMatchObject({ date: '2024-03-01T00:00:00.000Z', room: 101 });
-            oldHash.set(slug, hashOf(row, legacy));
-            await tx.executeRaw('UPDATE pages SET frontmatter=$1::text::jsonb, content_hash=$2 WHERE slug=$3', [JSON.stringify(legacy), oldHash.get(slug), slug]);
-          }
-        });
-        for (const slug of MEETINGS) await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,revision}',to_jsonb($2::text)) WHERE op=$1 AND fingerprint LIKE '%:' || $3`,
-          [SYNC_IMPORT_PROVENANCE_OP, await revisionOf(engine, slug), String((await pageRow(engine, slug)).id)]);
-        await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,parser,parser_version}','"an-older-parser"'::jsonb) WHERE op=$1`, [SYNC_IMPORT_PROVENANCE_OP]);
-        await engine.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,obligations,converged,parser_fp}','\"an-older-parser\"'::jsonb) WHERE op='managed-sync-pass'");
+        const oldHash = await storedByOlderGbrain(engine);
         // The older gbrain scanned both pages for atoms and judged both for events, at the hash it stored, and kept
         // no record at a hash it never computed (this fixture's own first sync left one there).
         for (const slug of MEETINGS) {
@@ -186,6 +197,35 @@ describe('pages-03: the one-time re-read after the upgrade', () => {
           'SELECT count(*)::int AS n, sum(judge_input_failures)::int AS failures FROM chronicle_page_state WHERE page_id=$1', [kept.id]);
         expect(keptRows).toEqual([{ n: 1, failures: 3 }]);
       } finally { __setEmbedTransportForTests(null); resetGateway(); }
+    });
+  }, { setup: meetingSetup }), 240_000);
+
+  test('a re-read keeps a managed atom partial or held disposition, so neither unchanged page is sent to the model again', () => managedBrain(async ({ engine, root }) => {
+    await withStubEmbeddings(async () => {
+      const opts = { sourceId: 'default', noPull: true };
+      expect((await performManagedSync(engine, opts)).status).toBe('first_sync');
+      await drainEffects(engine);
+      const oldHash = await storedByOlderGbrain(engine);
+      // The older gbrain's managed atom drain read meetings/kept under a 4,096-character cap and held meetings/edited
+      // after repeated failures; a managed brain records both only in its checkpoints, never in the scan state.
+      const dispositions = [['meetings/kept', { partial: 4096 }], ['meetings/edited', { failure: 'judge_parse_failed', attempts: 3, held: true }]] as const;
+      for (const [slug, disposition] of dispositions) {
+        const { id } = await pageRow(engine, slug);
+        await engine.executeRaw('DELETE FROM extract_atoms_page_state WHERE page_id=$1', [id]);
+        await engine.executeRaw(`INSERT INTO op_checkpoints (op, fingerprint, completed_keys)
+          SELECT 'managed-atoms', $1::text, jsonb_build_array(jsonb_build_object('sourceId', 'default', 'incarnation', incarnation::text, 'requestId', $1::text,
+            'kind', 'page', 'locator', $2::text, 'pageId', $3::int, 'contentHash', $4::text) || $5::text::jsonb) FROM sources WHERE id='default'`,
+          [`older-run-${slug}`, slug, id, oldHash.get(slug), JSON.stringify(disposition)]);
+      }
+      const held = async () => (await listHeldManagedAtoms(engine, ['default'])).map(entry => entry.locator);
+      expect(await discoverExtractablePages(engine, 'default', MEETINGS)).toEqual([]);
+      expect(await held()).toEqual(['meetings/edited']);
+
+      rewriteHistory(root);
+      expect(await performManagedSync(engine, opts)).toMatchObject({ status: 'synced', modified: MEETINGS.length });
+      for (const slug of MEETINGS) expect((await pageRow(engine, slug)).content_hash).not.toBe(oldHash.get(slug));
+      expect(await discoverExtractablePages(engine, 'default', MEETINGS)).toEqual([]);
+      expect(await held()).toEqual(['meetings/edited']);
     });
   }, { setup: meetingSetup }), 240_000);
 });
