@@ -25,6 +25,10 @@ import { storeCall } from './common.ts';
 
 const MEMBER = 'writerReleaseStore';
 
+/** The stored brain mode: `enabled` and `mode_epoch` (text) of the persistence brain row. */
+export async function readBrainMode(brain: StoreBrain, member: string): Promise<{ enabled: boolean; mode_epoch: string }> {
+  return storeCall({ member }, () => brain.writerReleaseRows({ kind: 'brain_mode' }));
+}
 
 function rustWriterReleaseStore(brain: StoreBrain): WriterReleaseStore {
   const call = <T>(run: () => Promise<T>): Promise<T> => storeCall({ member: MEMBER }, run);

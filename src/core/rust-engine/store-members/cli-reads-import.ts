@@ -12,7 +12,7 @@ import type { SyncDispatchRow } from '../../engine-sql/sync-dispatch.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import { withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
-import { readBrainMode } from './brain-mode.ts';
+import { readBrainMode } from './writer-release.ts';
 
 export const listSourceRecords: StoreMember<[], SourceRecordRow[]> = async (brain) => {
   const rows: SourceRecordRow[] = await storeCall({ member: 'listSourceRecords' }, () => brain.listSourceRecords());

@@ -109,6 +109,8 @@ import * as cliReadsExport from './cli-reads-export.ts';
 import * as synopsisTier from './synopsis-tier.ts';
 import * as sourceCrMode from './source-cr-mode.ts';
 
+const { readBrainMode: _brainModeHelper, ...writerReleaseMembers } = writerRelease;
+
 export const STORE_MEMBERS = {
   initSchema,
   ...config, ...sources, ...tags, ...versions, ...chunks, ...search, ...links, ...graph, ...timeline,
@@ -166,7 +168,8 @@ export const STORE_MEMBERS = {
   // Writer administration: the reviewed state digest, the operator lock, transfer prepare and cancel (same section).
   ...writerAdmin,
   // Writer activation, deactivation and the pre-activation release over the stored brain mode (same doc, "Writer release").
-  ...writerRelease,
+  // `readBrainMode` is the module's shared brain-mode read for other members, not a BrainEngine member, so it is not served.
+  ...writerReleaseMembers,
   // A bound publication's request-row reads and writes around its files (same doc, "Publication journal").
   ...publicationJournal,
   ...writerStatus,

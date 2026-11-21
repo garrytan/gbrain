@@ -29,7 +29,7 @@ import { requestRow, topologyRow } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
 import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
-import { readBrainMode } from './brain-mode.ts';
+import { readBrainMode } from './writer-release.ts';
 // The managed-worktree admission members (managed_persistence), served beside the journal's.
 export * from './persistence-admission.ts';
 
