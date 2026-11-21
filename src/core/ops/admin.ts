@@ -278,7 +278,8 @@ const get_versions: Operation = {
       if (isSegmentedPage(v)) {
         const sized = await remoteVersionSize(ctx, v);
         const { compiled_truth: _b, timeline: _t, ...rest } = sized;
-        out.push({ ...rest, ...reason(v), body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v) } });
+        // A version whose rows no longer tile (remoteVersionSize left its size out) has no readable body to reference.
+        out.push({ ...rest, ...reason(v), ...(ctx.remote === false || 'total_bytes' in sized ? { body_ref: { version_id: v.id, total_bytes: 'total_bytes' in sized ? sized.total_bytes : pageBodyBytes(v) } } : {}) });
         continue;
       }
       if (ctx.remote === false) { out.push(v); continue; }
@@ -327,11 +328,17 @@ async function remoteReasons(ctx: OperationContext, slug: string, versions: Read
  * for a segmented page), never the stored body_bytes, whose difference would say how much text the projection hides.
  */
 async function remoteVersionSize<V extends { page_id: number; body_storage?: string; body_generation?: number; body_bytes?: number }>(ctx: OperationContext, v: V):
-  Promise<V | Omit<V, 'body_bytes'> & { total_bytes: number }> {
+  Promise<V | Omit<V, 'body_bytes'> & { total_bytes?: number }> {
   if (ctx.remote === false || v.body_storage !== 'segmented') return v;
   const { body_bytes: _stored, ...rest } = v;
-  const body = await openSegmentedBody(ctx.engine, { pageId: v.page_id, generation: v.body_generation, hideHeld: worldOnlyFacts(ctx.remote) });
-  return { ...rest, total_bytes: (await segmentedReadDocument(ctx.engine, body)).total };
+  try {
+    const body = await openSegmentedBody(ctx.engine, { pageId: v.page_id, generation: v.body_generation, hideHeld: worldOnlyFacts(ctx.remote) });
+    return { ...rest, total_bytes: (await segmentedReadDocument(ctx.engine, body)).total };
+  } catch (error) {
+    // A version whose generation's rows do not tile (a repaired page keeps its damaged generation) is listed without a size, not refused for the whole list.
+    if ((error as { code?: unknown }).code === 'page_body_rows_unreadable') return rest;
+    throw error;
+  }
 }
 
 const revert_version: Operation = {
