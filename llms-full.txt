@@ -5956,10 +5956,10 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 
 - **Fail-open.** Mirroring never slows or fails a primary call. The queue is bounded (`--queue-bound`, default 256)
   and sheds when full; reads inside a transaction are skipped; `--sample-rate` (default 0.1) picks which reads are
-  mirrored. Only sampled reads are copied, at the moment the primary answers, so a caller that changes a result
+  mirrored. Only sampled reads are copied, the arguments before the call and the result the moment the primary answers, so a caller that changes a result
   afterwards cannot cause a false difference. The copy stops as soon as a call's arguments or result pass about
   1 MiB (every value counts, even a null), so a huge result is counted as too large and never built. A
-  call that stays stuck in the Rust engine holds one of four slots; past that new reads are shed and the child goes
+  call that stays stuck in the Rust engine holds one of four slots; past that new reads are recorded as `timeout` (stalled) without being replayed and the child goes
   quiet so it is restarted. Reads still queued when a process closes are delivered, not dropped. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
   child silent for 60 seconds is killed, and a privacy divergence (Rust returns something the primary hid) pauses
   comparison.
@@ -5973,7 +5973,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
 - **Evals.** `gbrain eval longmemeval` and `gbrain eval brainbench` take `--engine pglite|rust`. With `rust`, a missing
   or mismatched addon stops the run with its code and reason, and so does a Rust store that cannot yet run the table
-  reset between fixtures (`rust_benchmark_unsupported`), so until the store is seeded and serves raw reads the flag
+  reset between fixtures (`rust_benchmark_unsupported`), so until the benchmark can reset a Rust store without raw SQL (the Rust engine never reports `raw_sql`) the flag
   stops before any work. A longmemeval run records the engine in its resume hash, and the memory-trust brainbench
   suites refuse `--engine rust` because they always build PGLite brains.
 - **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, the Rust store is not
