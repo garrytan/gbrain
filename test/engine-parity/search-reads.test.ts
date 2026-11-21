@@ -25,6 +25,7 @@ import { archiveSource, basisEmbedding, createSource, parityArms, sorted } from 
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, seedPage } from './chunk-fixtures.ts';
 import { structuralExactLookup } from '../../src/core/search/exact-lookup.ts';
+import { hybridSearch, _resetSupersedeProbeForTests } from '../../src/core/search/hybrid.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -123,6 +124,47 @@ describe('engine parity: search reads', () => {
       expect(canon).toEqual(['notes/canon']);
       expect(degraded).toEqual([]);
       return { stale, canon, unscoped, degraded };
+    },
+  );
+
+  // Search asks "does this brain have any supersedes link?" before it looks up which results are replaced. Only a YES is
+  // remembered (a NO could hide a link another process just wrote), so a brain with links costs no extra query per search
+  // and a brain without links costs one probe per search. Counted on each arm's own `hasSupersedeEdges` member, one query.
+  parityTest(
+    'hybridSearch: on a brain with a supersedes link the existence probe runs once, then every search reuses the answer; with none it runs on every search',
+    { methods: ['putPage', 'sealChunks', 'addLink', 'searchKeyword', 'hasSupersedeEdges', 'supersedingPageSlugs'] },
+    async (engine) => {
+      for (const slug of ['notes/canon', 'notes/stale']) {
+        await seedPage(engine, { slug, input: { type: 'note', title: slug, compiled_truth: `Page ${slug}.`, timeline: '' } as never, chunks: [chunk(0, `The tapirword fee for ${slug} is stated here.`)] });
+      }
+      let probes = 0;
+      const counted = new Proxy(engine, {
+        get(target, prop, receiver) {
+          if (prop === 'hasSupersedeEdges') return () => { probes++; return target.hasSupersedeEdges(); };
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const search = async () => (await hybridSearch(counted, 'tapirword', { limit: 5, useCache: false })).map(r => `${r.slug}${r.superseded ? ' (replaced)' : ''}`);
+      const probesDuring = async (searches: number) => {
+        const before = probes;
+        let last: string[] = [];
+        for (let i = 0; i < searches; i++) last = await search();
+        return { probes: probes - before, last };
+      };
+
+      _resetSupersedeProbeForTests();
+      const noLinks = await probesDuring(3);
+      await engine.addLink('notes/canon', 'notes/stale', '', 'supersedes', 'manual');
+      const first = await probesDuring(1);
+      const cached = await probesDuring(5);
+
+      expect(noLinks.probes).toBe(3); // nothing to remember: each search checks again, so a link another process wrote is seen at once
+      expect(first.probes).toBe(1);
+      expect(cached.probes).toBe(0); // the cached yes: no extra query per search
+      expect(first.last).toContain('notes/stale (replaced)'); // the link written after three no-link searches is seen by the very next search
+      expect(cached.last).toEqual(first.last);
+      return { noLinks, first, cached: cached.probes };
     },
   );
 

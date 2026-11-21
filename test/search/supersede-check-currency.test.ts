@@ -37,6 +37,7 @@ describe('supersession check currency (PGLite)', () => {
     emitResponseMeta: (key: string, value: unknown) => { if (key === 'retrieval') meta = value as Record<string, unknown>; },
   } as unknown as OperationContext;
   const realSupersedingPageSlugs = PGLiteEngine.prototype.supersedingPageSlugs;
+  const realHasSupersedeEdges = PGLiteEngine.prototype.hasSupersedeEdges;
 
   beforeAll(async () => {
     engine = new PGLiteEngine();
@@ -48,6 +49,7 @@ describe('supersession check currency (PGLite)', () => {
   beforeEach(async () => {
     _resetSupersedeProbeForTests();
     engine.supersedingPageSlugs = realSupersedingPageSlugs;
+    engine.hasSupersedeEdges = realHasSupersedeEdges;
     for (const slug of ['notes/pricing-v1', 'notes/pricing-v2']) await engine.deletePage(slug).catch(() => undefined);
     await importFromContent(engine, 'notes/pricing-v1', '# Pricing v1\n\nThe tapirword fee is 10.');
     await importFromContent(engine, 'notes/pricing-v2', '# Pricing v2\n\nThe tapirword fee is 20 now.');
@@ -152,6 +154,35 @@ describe('supersession check currency (PGLite)', () => {
     const rows = await hybridSearch(engine, 'tapirword', { limit: 5, useCache: false });
     expect(slugs(rows)[0]).toBe('notes/pricing-v2');
     expect(rows.find(r => r.slug === 'notes/pricing-v1')?.superseded).toBe(true);
+  });
+
+  // The probe is `engine.hasSupersedeEdges()`: one `SELECT 1 FROM links WHERE link_type = 'supersedes' LIMIT 1` (SUPERSEDE_EDGE_PROBE_SQL).
+  describe('probe queries per search (the existence probe)', () => {
+    let probeStatements = 0;
+    beforeEach(() => {
+      probeStatements = 0;
+      engine.hasSupersedeEdges = async () => { probeStatements++; return realHasSupersedeEdges.call(engine); };
+    });
+    const searches = async (n: number) => { for (let i = 0; i < n; i++) await hybridSearch(engine, 'tapirword', { limit: 5, useCache: false }); };
+
+    test('a brain with a supersedes link: the first search probes once, the next searches issue no probe query (the cached yes)', async () => {
+      await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
+      await searches(1);
+      expect(probeStatements).toBe(1);
+      await searches(5);
+      expect(probeStatements).toBe(1);
+    });
+
+    test('a brain with no supersedes link probes on every search, and the first search after a link is added already sees it', async () => {
+      await searches(3);
+      expect(probeStatements).toBe(3);
+      await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
+      const rows = await hybridSearch(engine, 'tapirword', { limit: 5, useCache: false });
+      expect(probeStatements).toBe(4);
+      expect(rows.find(r => r.slug === 'notes/pricing-v1')?.superseded).toBe(true);
+      await searches(3);
+      expect(probeStatements).toBe(4);
+    });
   });
 
   describe('exact-lookup tier (identity slot)', () => {
