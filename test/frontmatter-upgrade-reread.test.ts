@@ -4,7 +4,7 @@
  * 1. Protects: when a brain written by an older gbrain (records naming the older parser, dates and numbers stored under
  *    the old typing) syncs once with this parser, a page whose file did not change makes no embedding call and queues
  *    no fact extraction: a page with no affected value keeps its revision, and a page with one stores the values as
- *    written with its chunks and embeddings untouched.
+ *    written with its chunks and embeddings untouched. No file is held and no file is rewritten.
  * 2. Fails when: the parser change re-embeds or re-extracts an unchanged page, or the re-read leaves the old typing.
  *    The paid page phases keyed on the page's content hash (extract_atoms' scan state, chronicle's ledger) keep their
  *    records across that re-read when the page's meaning is unchanged, so neither scans or judges it again; a page whose
@@ -18,7 +18,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
+import { readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP } from '../src/core/persistence/sync-holds.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -96,6 +96,9 @@ describe('pages-03: the one-time re-read after the upgrade', () => {
         const reread = await performManagedSync(engine, opts);
         expect(reread).toMatchObject({ status: 'synced', pass: { kind: 'full', candidates: PLAIN.length + TYPED.length },
           waived: { imports: PLAIN.length }, modified: TYPED.length, embedded: 0 });
+        // No file is held, and no file is rewritten: the re-read stores the written values from the unchanged files.
+        expect((await readGitSourceHolds(engine, { sourceIds: ['default'] })).flatMap(entry => entry.holds.map(hold => `${hold.path}: ${hold.code}`))).toEqual([]);
+        expect(git(root, 'status', '--porcelain')).toBe('');
         await drainEffects(engine);
 
         expect(embedded).toEqual([]);

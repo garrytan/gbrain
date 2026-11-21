@@ -106,6 +106,12 @@ describe('the label editor writes readable_by as one flow-list line', () => {
     expect(replaced).toBe(withLine(text, readersLine(OWNER)).replace('title: A' + NL, 'title: A' + CR + NL));
     expect(spliceLabelLines(added, readLabelEdit({ set: {}, remove: ['readable_by'] })!)!.text).toBe(text);
   });
+  test('a reader id that a YAML reader would read as a number, a date or a boolean is quoted (pages-03)', () => {
+    // gbrain keeps `007` and `1.10` as text, but another YAML reader would type them, so the editor quotes them.
+    const ids = ['007', '1.10', '2024-03-01', 'true', 'alice-example'];
+    const written = spliceLabelLines(text, readLabelEdit({ set: { readable_by: ids }, remove: [] })!)!.text;
+    expect(written).toBe(withLine(text, "readable_by: ['007', '1.10', '2024-03-01', 'true', alice-example]"));
+  });
   test('a block list of plain items (as put_page writes it) is replaced with its item lines; every other byte is kept', () => {
     const block = text.replace('type: note', 'type: note' + NL + 'readable_by:' + NL + '  - alice-example' + NL + '  - group:team-example');
     expect(spliceLabelLines(block, readLabelEdit({ set: { readable_by: [OWNER] }, remove: [] })!)!.text).toBe(withLine(text, readersLine(OWNER)));
