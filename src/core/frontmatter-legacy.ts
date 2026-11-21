@@ -138,18 +138,18 @@ export function legacyStoredFrontmatter(current: Record<string, unknown>, fileTe
 
 /**
  * pages-03: SQL true when page row `page` was stored by the importer before pages-03: its import record, at the page's
- * current revision (or, with `renamed`, at a revision the page was renamed from without a content change), names an
+ * current revision (or, with `renamed`, at a revision the page was renamed from with the same frontmatter, title and type), names an
  * importer before import=2 (or none, on records from before the parser stamp). A page with no such record, or one a
  * later edit moved past the recorded revision, is not proven old.
  */
 export function importedByOldParserSql(page: string, renamed = false): string {
-  // A rename versions the page as it stood (updateSlug), so the version at the recorded revision holding the live
-  // content proves only the slug changed since that import.
+  // A rename versions the page as it stood (updateSlug), so a version at the recorded revision holding the live
+  // frontmatter, title and type proves the stored typing is still that import's. The body is not compared: the carry
+  // also needs the stored content hash to equal the old reading of the file (legacyHashToCarry), which binds the body.
   const revision = renamed
     ? `(lp.completed_keys->0->>'revision'=${page}.knowledge_revision::text OR EXISTS (SELECT 1 FROM page_versions pv
         WHERE pv.page_id=${page}.id AND pv.knowledge_revision::text=lp.completed_keys->0->>'revision'
           AND pv.frontmatter=${page}.frontmatter AND pv.title IS NOT DISTINCT FROM ${page}.title AND pv.type IS NOT DISTINCT FROM ${page}.type
-          AND pv.compiled_truth IS NOT DISTINCT FROM ${page}.compiled_truth AND pv.timeline IS NOT DISTINCT FROM ${page}.timeline
           AND COALESCE(pv.content_hash, ${page}.content_hash)=${page}.content_hash AND pv.is_deleted IS NOT TRUE))`
     : `lp.completed_keys->0->>'revision'=${page}.knowledge_revision::text`;
   return `EXISTS (SELECT 1 FROM op_checkpoints lp JOIN sources ls ON ls.id=${page}.source_id
