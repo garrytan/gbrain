@@ -308,6 +308,10 @@ function onceReads(engine: BrainEngine): BrainEngine {
     };
     if (key === 'readPersistenceBrainId') return (opts?: { lock?: boolean }) =>
       opts?.lock ? target.readPersistenceBrainId(opts) : memo('typed:brain', () => target.readPersistenceBrainId());
+    // The opening page-visibility probe (authorizePageVisibility) was a plain executeRaw read this memo answered once;
+    // as a typed member it is answered once too, so a receipt check's second visibility pass sends no second probe.
+    if (key === 'readWriteVisibilityProbe') return (sourceId: string, slug: string) =>
+      memo(JSON.stringify(['typed:visibility', sourceId, slug]), () => target.readWriteVisibilityProbe(sourceId, slug));
     if (key === 'readLocalWriterRow') return (id: string, opts?: { lock?: boolean }) => opts?.lock ? target.readLocalWriterRow(id, opts)
       : memo(JSON.stringify(['typed:writer', id]), () => target.readLocalWriterRow(id));
     const value = Reflect.get(target, key, target);

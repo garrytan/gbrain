@@ -120,7 +120,7 @@ answer on a brain with none, and the two token writes match no token. The policy
 | `listUnboundTokenNames()` / `listUnboundClientIds()` | `[]` | `UNBOUND_TOKEN_NAMES_SQL`, `UNBOUND_CLIENT_IDS_SQL` |
 | `readLiveAccessToken(name)` / `listKeysReadingSource(sourceId)` | `null` / `[]` | `LIVE_TOKEN_SQL`, `KEYS_READING_SOURCE_SQL` |
 | `recordTokenSetupReads(name, reads)` / `revokeAccessTokenById(id)` | nothing | `RECORD_SETUP_READS_SQL`, `REVOKE_TOKEN_SQL` |
-| `listUnarchivedSourceIds(ids)` | the ids of `ids` that name a source that is not archived (`listAllSources`) | `UNARCHIVED_SOURCE_IDS_SQL` |
+| `filterUnarchivedSourceIds(ids)` | the ids of `ids` that name a source that is not archived (`listAllSources`) | `UNARCHIVED_SOURCE_IDS_SQL` |
 | `countCompanyPages(sourceId)` | `{ pages, calls }`: the live pages of the source and those under `company/calls/` (`listAccessPrefixSlugs`) | `COMPANY_PAGE_COUNTS_SQL` |
 | `listAccessPolicySources()` | every source with access state, archived ones too, by id in code-unit order | `POLICY_STATE_SOURCES_SQL` |
 | `countPeopleFolderPages()` | `{ source_id, folder, pages }` for each `people/<folder>/` holding live pages, by source then folder in code-unit order | `PEOPLE_FOLDER_PAGES_SQL` |

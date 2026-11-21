@@ -7,7 +7,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the source row carries the source's incarnation, last commit, drain lock, pass row and admission
  *    probes (null while the stored admission reads as normal; otherwise pinned only while an open pass row holds the
- *    live drain lease); an archived or missing source has no row. A brain with no managed write has no committed page,
+ *    live drain lease) and the Apple Contacts review and held-delete records keyed by its own id; an archived or missing source has no row. A brain with no managed write has no committed page,
  *    held push or fence, head request, recovery record, cursor, failure or identity downgrade. A managed-sync cursor
  *    reads with its failure and manifest path, the failed cursor first; an old incarnation's cursor counts as retired.
  *  - Regression: an engine that refuses these as raw SQL (the Rust engine did, which failed `gbrain sync status`
@@ -23,6 +23,7 @@ import { syncLockId } from '../../src/core/db-lock.ts';
 import { writePassRow } from '../../src/core/persistence/sync-pass-row.ts';
 import { readManagedSyncFailures } from '../../src/core/persistence/sync-failures.ts';
 import { listIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
+import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../../src/core/apple-contacts/review-status.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -64,7 +65,7 @@ describe('engine parity: sync status reads', () => {
         source: {
           incarnation: true, last_commit: null, drain_lock: false, pass_value: null, pass_updated: false, read_at: true, withheld: null, synced: false,
           admission_stored: null, admission_row_value: null, admission_set_at: null, admission_pinned: null, admission_destructive: null,
-          writeback_failed: null, refresh: null,
+          writeback_failed: null, refresh: null, identity_reviews: null, held_deletes: null,
         },
         missing: null,
         committed: { n: 0, git_push_held: false, fence_held: false, last_committed_at: null },
@@ -72,6 +73,19 @@ describe('engine parity: sync status reads', () => {
         recovery: { n: 0, request_id: null, slug: null, blocked: null },
         downgrades: [], callers: { failures: [], downgrades: [] },
       });
+      return result;
+    });
+
+  parityTest('the source row carries the Apple Contacts review and held-delete records of its own source only',
+    { methods: ['readSyncStatusSourceRow', 'writeOpCheckpointKeys'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
+      await createSource(engine, backend, 'other', {}, '/srv/brain/other');
+      await engine.writeOpCheckpointKeys(APPLE_CONTACTS_REVIEW_OP, 'repo', ['review-a', 'review-b']);
+      await engine.writeOpCheckpointKeys(APPLE_CONTACTS_PENDING_DELETES_OP, 'repo', ['held-a']);
+      const pick = (row: Awaited<ReturnType<typeof sourceRow>>) => row && { reviews: row.identity_reviews, held: row.held_deletes };
+      const result = { repo: pick(await sourceRow(engine, 'repo')), other: pick(await sourceRow(engine, 'other')) };
+      expect(result).toEqual({ repo: { reviews: ['review-a', 'review-b'], held: ['held-a'] }, other: { reviews: null, held: null } });
       return result;
     });
 

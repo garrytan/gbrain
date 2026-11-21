@@ -20,7 +20,6 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { answersFromCatalog, catalogTableExists } from '../rust-engine/store-members/catalog.ts';
-import { TERMINAL_AUDIT_SOURCE } from './audit-sources.ts';
 import { CONVERSATION_UNRESOLVED, RELINK_REASONS } from './relink-reasons.ts';
 
 export const PAID_REEXTRACT = 'paid_reextract';
@@ -45,16 +44,13 @@ export const conversationPaidSql = `EXISTS (SELECT 1 FROM fact_relink_attempts p
  */
 export async function hasRelinkAttemptsTable(db: BrainEngine): Promise<boolean> {
   if (answersFromCatalog(db)) return catalogTableExists(db, 'fact_relink_attempts');
-  const [table] = await db.executeRaw<{ t: string | null }>(`SELECT to_regclass('fact_relink_attempts')::text AS t`);
-  return !!table?.t;
+  return db.factRelinkAttemptsTableExists();
 }
 
 /** After a page's extraction completes: its paid-attempt memo for the current content (replacing older ones). */
 export async function recordReextractMemo(db: BrainEngine, sourceId: string, slug: string): Promise<void> {
   if (!await hasRelinkAttemptsTable(db)) return;
-  const [outcome] = await db.executeRaw<{ id: number | string; hash: string }>(
-    `SELECT f.id, COALESCE(p.content_hash, '') AS hash FROM facts f JOIN pages p ON p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.deleted_at IS NULL
-      WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.source = $3 AND f.expired_at IS NULL ORDER BY f.id DESC LIMIT 1`, [sourceId, slug, TERMINAL_AUDIT_SOURCE]);
+  const outcome = await db.readReextractOutcomeRow(sourceId, slug);
   if (!outcome) return;
   await db.deleteFactRelinkMemos(sourceId, PAID_REEXTRACT, slug);
   await db.upsertFactRelinkAttempt(sourceId,

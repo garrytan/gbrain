@@ -46,6 +46,7 @@ import { isSyncable } from '../sync.ts';
 import { untrackAdmitted, untrackTargets, type UntrackPageVerdict } from './untrack-admission.ts';
 export { untrackAdmitted, untrackPageCandidates } from './untrack-admission.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
+import { assertNotOwnedPaths } from '../owned-folder/paths.ts';
 
 export const COMMIT_LOCK_NAME = 'brain-commit.lock';
 /** Taken by pre-#6530 helpers and hooks; held too so they still exclude us during the mixed-version window. */
@@ -418,7 +419,7 @@ function restoreIndex(root: string, rel: string[], before: string[], flagged: st
  * `untrack`: commit the removal of the named paths instead (#7753); `db_only` (GST-2519, a managed canonical worktree)
  * admits only files under a storage.db_only dir HEAD's gbrain.yml declares (untrackAdmitted).
  */
-interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; bases?: ReadonlyMap<string, string>; untrack?: 'any' | { dbOnly: ManagedFilesystemRoot; pages?: UntrackPageVerdict } }
+export interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; owned?: true; bases?: ReadonlyMap<string, string>; untrack?: 'any' | { dbOnly: ManagedFilesystemRoot; pages?: UntrackPageVerdict } }
 
 /** A named path `git add -A` left out of the index while still exiting 0 (GST-2116). */
 
@@ -575,7 +576,8 @@ function stagePaths(root: string, rel: string[], before: string[], flagged: stri
  * Stage and commit exactly `rel` (the caller holds the commit lock), after admitPaths. A commit git refuses leaves the
  * index as it found it. `skipped` lists the named paths git left out (GST-2116); the rest are still committed.
  */
-function commitPaths(root: string, rel: string[], message: string, scope: CommitScope): { sha: string | null; skipped: SkippedPath[] } {
+export function commitPaths(root: string, rel: string[], message: string, scope: CommitScope): { sha: string | null; skipped: SkippedPath[] } {
+  if (!scope.owned) assertNotOwnedPaths(rel, 'Refusing to commit');
   admitPaths(root, rel, scope.roots, scope.bases);
   const dirtyBefore = directoryStatus(root, rel);
   const before = indexEntries(root, rel);
@@ -585,6 +587,7 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
   try {
     const sparse = stagePaths(root, rel, before, flagged);
     const paths = withRenamePartners(root, rel);
+    if (!scope.owned) assertNotOwnedPaths(gitOk(root, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--', ...literalPathspecs(paths)], 'diff --cached').split('\0').filter(Boolean), 'Refusing to commit');
     const partners = paths.filter(p => !insideSourceRoots(p, scope.roots));
     if (partners.length) throw outsideRootError(root, scope.roots, partners, 'A staged rename would commit');
     // A file git did not index would fail `commit --only` for every path; it is left out here and reported as skipped.

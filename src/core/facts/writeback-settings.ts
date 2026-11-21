@@ -118,7 +118,7 @@ export async function writeAgentWriteback(
 ): Promise<{ previous: AgentWritebackValue | null }> {
   const result = await engine.transaction(async (tx) => {
     // Serialize concurrent changes so each audit row's `old` is the value it replaced.
-    await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1))', [AGENT_WRITEBACK_KEY]);
+    await tx.lockAgentWritebackSetting(AGENT_WRITEBACK_KEY);
     const previous = parseAgentWriteback(await tx.getConfig(AGENT_WRITEBACK_KEY)) ?? null;
     await tx.setConfig(AGENT_WRITEBACK_KEY, value);
     await tx.logMcpRequest({

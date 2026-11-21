@@ -22,7 +22,7 @@ microsecond ISO text.
 | Member | What it does |
 |---|---|
 | `mergeOntologyFact` | Finds the current row of the dimension: the newest open, active, non-conversation row (by `valid_from`, then confidence, then id). The same value from a new provenance is stored expired with `consolidated_into` the current row (`corroborated`); a repeat of a seen provenance is a `noop`. A different value is stored live. When it is forward of an active current row, the current row closes at the new `valid_from` (or now) with `superseded_by` the new row (`superseded_prior`); else the result is `inserted`. A dated observation first frees the stint key from conversation-slot rows. A taken stint key is a `noop`. |
-| `getOntology` | The best row per dimension as of `asof` (default now): `valid_from <= asof < valid_until`, active unless `includeQuarantined`, at or above `minConfidence`, filtered by the visibility list, `excludeDiary` (`life/diary/` sources) and soft-deleted provenance pages. Dimensions come out in byte order. |
+| `getOntology` | The best row per dimension as of `asof` (default now): `valid_from <= asof < valid_until`, active unless `includeQuarantined`, at or above `minConfidence` (compared as a 32-bit float, as SQL's `REAL` column is, so a stored 0.7 meets a floor of 0.7), filtered by the visibility list, `excludeDiary` (`life/diary/` sources) and soft-deleted provenance pages. Dimensions come out in byte order. |
 | `discoverOntologyDimensions` | Per dimension, the distinct entities and the observation count of open slot rows. Most entities first, then dimension. |
 | `findOntologyConflicts` | Open, active slot rows grouped by entity and dimension, kept when they hold two or more distinct values from two or more distinct sources. Values come out in id order. A null entity sorts last. |
 
@@ -51,3 +51,20 @@ These do not show in the parity cases. Each is a documented edge, not a normalis
   member-page CASE. Any other caller whose policy differs refuses. `requireSafeChunks`, `minTrust`, `suppressFlagged` and
   `takesHoldersAllowList` are ignored: the member does not yet route the trust and suppression reads to this lookup.
 - The Rust `now()` is one value per member call. PGLite takes one value per statement.
+
+## Ontology re-key and repair statements (`src/core/engine-sql/ontology-repair.ts`)
+
+Six members for the statements `src/core/facts/ontology-rekey.ts` and `src/core/repair/ontology-facts.ts` ran as raw SQL:
+`listRekeyLosers`, `repointSupersededToKept`, `clearOntologySlots`, `deleteRekeyLosers`, `listOntologyFactCandidates` and
+`restoreOntologyFact`. (`listSourceIncarnations` is the existing facts-repair member.) None is served on Rust today: each is
+absent from `store-members/*`, so it refuses with `engine_capability_missing` naming the member (the capability in
+`members.ts` is `facts`). The caller sees the refusal; no member changes behaviour. What the store would need:
+
+| Members | Reads or writes | The store would need |
+| --- | --- | --- |
+| `listRekeyLosers` | the rows a re-key move would duplicate, for six where shapes, three entity shapes and three sms shapes | the fact slot index to find a row already at the target slot; the member takes the shape as SQL text validated against closed lists, and a text outside them throws before any statement is sent, so the store would key on the shape |
+| `repointSupersededToKept`, `clearOntologySlots`, `deleteRekeyLosers` | repoint `superseded_by`, clear the slot columns, delete the losers | the three writes over the fact records and their slot index entries |
+| `listOntologyFactCandidates` | the fenced and retired rows with their class, and whether another row duplicates them | a scan of the fact records for fenced and expired rows with the duplicate check |
+| `restoreOntologyFact` | restore a row only as previewed (class and expiry unchanged), returning whether it applied and the `expired` flag evaluated after the update | a conditional update that compares the previewed state |
+
+The conversation-slot and not-conversation-slot predicates are Postgres text only.

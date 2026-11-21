@@ -24,6 +24,7 @@ import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 import { syncAdmissionEffectSql, syncAdmissionSettingSql } from '../src/core/persistence/sync-admission.ts';
 import { GIT_PUSH_CODES } from '../src/core/persistence/git-push-holds.ts';
 import { ACTIVE_REFRESH_STATES_SQL } from '../src/core/persistence/worktree-refresh-schema.ts';
+import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../src/core/apple-contacts/review-status.ts';
 import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 
@@ -1007,7 +1008,7 @@ const PINS: Pin[] = [
   },
   {
     from: 'src/commands/access-serves.ts:197 member key plan (active sources) (at 6e123afe98)',
-    case: { method: 'listUnarchivedSourceIds', variant: 'default', run: e => e.listUnarchivedSourceIds(['src-a', 'src-b']) },
+    case: { method: 'filterUnarchivedSourceIds', variant: 'default', run: e => e.filterUnarchivedSourceIds(['src-a', 'src-b']) },
     texts: ['SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE'],
   },
   {
@@ -1147,7 +1148,7 @@ const PINS: Pin[] = [
     WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'incarnation'<>$2 AND COALESCE(completed_keys->0->>'done','false')<>'true' ORDER BY updated_at LIMIT 1`],
   },
   {
-    from: 'src/core/persistence/sync-status.ts:364 readSyncStatus (source row) (at 21cd64e151)',
+    from: 'src/core/persistence/sync-status.ts:369 readSyncStatus (source row) (at 78d30a2be4, with the Apple Contacts review and held-delete columns)',
     case: { method: 'readSyncStatusSourceRow', variant: 'default', run: e => e.readSyncStatusSourceRow('default') },
     texts: () => {
       const admissionSql = syncAdmissionSettingSql(4);
@@ -1157,7 +1158,9 @@ const PINS: Pin[] = [
         AND e.request_id IN (SELECT id::uuid FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.completed_keys->0->'obligations'->'converged'->'writeback')='array'
           THEN p.completed_keys->0->'obligations'->'converged'->'writeback' ELSE '[]'::jsonb END) AS w(id)) ORDER BY e.id LIMIT 1) AS writeback_failed,
       (SELECT row_to_json(f) FROM (SELECT r.id,r.worktree_id,r.state,r.source_ids,r.outcome,r.old_head,r.target_head,r.barrier_sequence,r.updated_at,w.owner_host_id FROM persistence_worktree_refreshes r
-        LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE s.id=ANY(r.source_ids) AND r.state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh FROM sources s
+        LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE s.id=ANY(r.source_ids) AND r.state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh,
+      (SELECT ir.completed_keys FROM op_checkpoints ir WHERE ir.op='${APPLE_CONTACTS_REVIEW_OP}' AND ir.fingerprint=s.id) AS identity_reviews,
+      (SELECT hd.completed_keys FROM op_checkpoints hd WHERE hd.op='${APPLE_CONTACTS_PENDING_DELETES_OP}' AND hd.fingerprint=s.id) AS held_deletes FROM sources s
       LEFT JOIN op_checkpoints p ON p.op=$2 AND p.fingerprint=s.id||':'||s.incarnation::text
       LEFT JOIN op_checkpoints w ON w.op=$3 AND w.fingerprint=s.id||':'||s.incarnation::text
       ${admissionSql.joins}

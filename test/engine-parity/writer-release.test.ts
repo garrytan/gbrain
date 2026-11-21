@@ -18,6 +18,8 @@
  *    has no supported exit and fences sync for good.
  *  - Why existing coverage misses it: test/persistence-preactivation-claim.test.ts runs on PGLite and Postgres only and
  *    claims through the internal claimWorktree; the Rust engine refused every raw-SQL step of both paths.
+ *  - Rust stop: the sync after a release runs its company sweep, which needs listEntityKeyRows (`pages`, not served by
+ *    the Rust store yet); sync swallows that refusal, so `sync` below rethrows it.
  *  - Seam: none. Real engines, real Git checkout, typed members only.
  */
 import { execFileSync } from 'node:child_process';
@@ -64,7 +66,28 @@ async function refusal(run: Promise<unknown>): Promise<string> {
 const reviewed = async (engine: BrainEngine, operation: string) => ({ admin_intent: operation, expected_state: await writerAdminState(engine) });
 const claim = async (engine: BrainEngine, root: string) =>
   (await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, ...await reviewed(engine, 'writer_claim') })).claimed;
-const sync = (engine: BrainEngine, root: string) => performSync(engine, { sourceId: 'work', repoPath: root, noPull: true, noEmbed: true, noExtract: true });
+/**
+ * performSync as the CLI runs it. Sync logs and swallows a typed refusal from its company sweep (on the Rust engine,
+ * listEntityKeyRows, which the store does not serve yet); the first one is rethrown here so the Rust arm counts the
+ * stop instead of passing a sync that skipped work (the in-test pin, harness.ts `rustStop`).
+ */
+async function sync(engine: BrainEngine, root: string) {
+  const refused: unknown[] = [];
+  const watched = new Proxy(engine, { get(target, key, receiver) {
+    const value = Reflect.get(target, key, receiver);
+    if (typeof value !== 'function') return value;
+    return (...args: unknown[]) => {
+      const out = value.apply(target, args);
+      return out instanceof Promise ? out.catch((error: unknown) => {
+        if ((error as { code?: unknown } | null)?.code === 'engine_capability_missing') refused.push(error);
+        throw error;
+      }) : out;
+    };
+  } });
+  const result = await performSync(watched, { sourceId: 'work', repoPath: root, noPull: true, noEmbed: true, noExtract: true });
+  if (refused.length) throw refused[0];
+  return result;
+}
 
 describe('writer release on a never-activated brain', () => {
   parityTest('a claimed source fences sync until a reviewed deactivate releases the claim, then sync imports the checkout', {
