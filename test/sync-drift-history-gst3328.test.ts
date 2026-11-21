@@ -130,6 +130,32 @@ for (const backend of testBackends()) {
     expect(await held(engine)).toEqual(['notes/b.md']);
   }, { databaseUrl, setup }), 240_000);
 
+  test(`[${backend}] a source rooted in a subdirectory of its checkout gets the same preview and retry route`, () => managedBrain(async ({ engine, root }) => {
+    const pages = join(root, 'brain');
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    const original = await body(engine, 'notes/a');
+    await unrecorded(engine, ['notes/a', 'notes/b']);
+    edit(pages, ['notes/a', 'notes/b'], 'A first Git edit'); git(root, 'commit', '-qam', 'first edit');
+    await performManagedSync(engine, OPTS);
+    expect(await held(engine)).toHaveLength(2);
+    await coordinated(engine, "UPDATE pages SET compiled_truth = $1, knowledge_revision = $2::uuid WHERE source_id='default' AND slug='notes/a'", [original, randomUUID()]);
+
+    const preview = await withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () =>
+      (await repairRunner(engine, { apply: false, logger })).run('file-drift', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', held: true, side: 'unknown' }));
+    const listed = (slug: string) => preview.listing!.find(entry => entry.item === `default:${slug}`)!;
+    expect(String(listed('notes/a').detail)).toContain('an earlier version, so only the file moved since (Git is the parent): gbrain sources retry-held default re-screens it');
+    expect(String(listed('notes/b').detail)).not.toContain('retry-held');
+
+    await retryHeld(engine, 'default');
+    await performManagedSync(engine, OPTS);
+    expect(await body(engine, 'notes/a')).toContain('A first Git edit of notes/a.');
+    expect(await held(engine)).toHaveLength(1);
+  }, { databaseUrl, sourceDir: 'brain', setup: ({ root }) => {
+    mkdirSync(join(root, 'brain', 'notes'), { recursive: true }); git(root, 'init', '-q');
+    for (const slug of ['notes/a', 'notes/b', 'notes/c']) writeFileSync(join(root, 'brain', `${slug}.md`), note(slug, `The committed body of ${slug}.`));
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'notes');
+  } }), 240_000);
+
   test(`[${backend}] a record-less page with an older import's stored keys and a schema-pack retype stamp still imports the Git edit when it equals an earlier version`, () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     await unrecorded(engine);

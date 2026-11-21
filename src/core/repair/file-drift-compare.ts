@@ -11,6 +11,7 @@
  */
 import { execFileSync } from '../spawn.ts';
 import { GIT_READ_ENV, gitChildEnv } from '../git-env.ts';
+import { realpathSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { ParsedPage } from '../import-file.ts';
@@ -111,13 +112,15 @@ export async function readDriftEvidence(engine: BrainEngine, sourceId: string, s
 async function earlierVersionHeld(engine: BrainEngine, sourceId: string, slug: string): Promise<string | null> {
   try {
     const state = await readReconcileState(engine, sourceId, slug);
-    const path = relative(state.root, state.path).split(sep).join('/');
     const git = (args: string[]) => execFileSync('git', ['-C', state.root, ...args], { env: gitChildEnv(GIT_READ_ENV), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
+    // The same read sync's screen takes (sync-pass-run.ts readDriftHistories: the Git top level and a path from it), so
+    // the two always compare the same versions, a source rooted in a subdirectory of its checkout included.
+    const top = git(['rev-parse', '--show-toplevel']).trim();
+    const path = relative(realpathSync(top), realpathSync(state.path)).split(sep).join('/');
     const head = git(['rev-parse', '--verify', 'HEAD']).trim();
     let atHead: string | null = null;
-    try { atHead = git(['rev-parse', '--verify', '--quiet', `HEAD:./${path}`]).trim() || null; } catch { /* not at HEAD */ }
-    // The same read sync's screen takes (sync-pass-run.ts readDriftHistories), so the two always compare the same versions.
-    const versions = [...new Set((await pathBlobHistories(state.root, head, [path], DRIFT_HISTORY_DEPTH)).get(path) ?? [])].filter(oid => oid !== atHead).slice(0, DRIFT_HISTORY_VERSIONS);
+    try { atHead = git(['rev-parse', '--verify', '--quiet', `HEAD:${path}`]).trim() || null; } catch { /* not at HEAD */ }
+    const versions = [...new Set((await pathBlobHistories(top, head, [path], DRIFT_HISTORY_DEPTH)).get(path) ?? [])].filter(oid => oid !== atHead).slice(0, DRIFT_HISTORY_VERSIONS);
     for (const oid of versions) if (await fileMatchesSnapshot(engine, slug, git(['cat-file', 'blob', oid]), state.snapshot, state.importPath).catch(() => false)) return oid;
     return null;
   } catch { return null; }
