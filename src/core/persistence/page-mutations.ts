@@ -114,6 +114,8 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
       BATCH_SHARED_READS.has(flatSql(sql)) || extra?.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     if (key === 'readPersistenceBrainId') return () => once('typed:brain', () => target.readPersistenceBrainId());
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
+    // The typed form of the shared `SELECT value FROM config WHERE key=$1` read (engine-sql/config.ts), once per key.
+    if (key === 'readStoredConfigValue') return (name: string) => once(JSON.stringify([key, name]), () => target.readStoredConfigValue(name));
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
     // The worktree binding, once per source and host; an absence is read again, since a later page may claim the worktree.
     if (key === 'getWorktreeBinding') return sharedWorktreeBinding(reads, once, (sourceId, hostId) => target.getWorktreeBinding(sourceId, hostId));

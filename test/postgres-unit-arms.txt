@@ -253,8 +253,10 @@ test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/spend-log.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
+test/engine-parity/sync-admission.test.ts
 test/engine-parity/sync-aliases.test.ts
 test/engine-parity/sync-import-provenance.test.ts
+test/engine-parity/sync-pass-pages.test.ts
 test/engine-parity/takes.test.ts
 test/engine-parity/telemetry.test.ts
 test/engine-parity/timeline-reads.test.ts

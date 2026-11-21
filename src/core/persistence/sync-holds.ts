@@ -62,7 +62,8 @@ import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
 export { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP };
 export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
-export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
+import { SYNC_IMPORT_PROVENANCE_OP } from './sync-pass-pages-sql.ts';
+export { SYNC_IMPORT_PROVENANCE_OP };
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
 export const SYNC_CONVERSION_OP = 'sync-conversions';
 /** How many conversions the log keeps per source. */

@@ -752,7 +752,7 @@ src/core/persistence/soak-counters.ts	execute_raw	4
 src/core/persistence/source-lifecycle.ts	execute_raw	33
 src/core/persistence/staging.ts	execute_raw	4
 src/core/persistence/sync-administration.ts	execute_raw	1
-src/core/persistence/sync-admission.ts	execute_raw	4
+src/core/persistence/sync-admission.ts	execute_raw	3
 src/core/persistence/sync-admitted.ts	execute_raw	1
 src/core/persistence/sync-authority.ts	execute_raw	1
 src/core/persistence/sync-blocked.ts	execute_raw	2
@@ -786,7 +786,7 @@ src/core/persistence/sync-pass-readers.ts	execute_raw	1
 src/core/persistence/sync-pass-row.ts	execute_raw	4
 src/core/persistence/sync-pass-run.ts	execute_raw	14
 src/core/persistence/sync-pass-status.ts	execute_raw	3
-src/core/persistence/sync-pass.ts	execute_raw	14
+src/core/persistence/sync-pass.ts	execute_raw	9
 src/core/persistence/sync-prepare.ts	execute_raw	17	#9646: the stamp fence-trend pre-read runs outside the 5 s publication (newest sequence, open-import probe); moves with the persistence engine-sql conversion
 src/core/persistence/sync-prescreen.ts	execute_raw	2
 src/core/persistence/sync-run.ts	execute_raw	28

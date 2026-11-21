@@ -104,7 +104,7 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'readSourceMembership', 'getWorktreeBinding', 'readLiveMember', 'readFolderAccess',
   'listGuestSourceIds', 'readDatabaseClock', 'listStoredTimelineRowsOrdered', 'matchTakeRows',
   'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
-  'getConfig', 'getAllConfig', 'listConfigKeys', 'readPageSnapshot', 'getPage',
+  'getConfig', 'getAllConfig', 'listConfigKeys', 'readStoredConfigValue', 'readPageSnapshot', 'getPage',
   'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
   'readSegmentTexts', 'readManifest']);
 

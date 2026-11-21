@@ -63,6 +63,7 @@ mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
 mod receipt_list;
+mod sync_pass_pages;
 mod topology;
 mod writer_versions;
 pub use effect_worker::{EffectClaim, EffectSettle, Settle};
@@ -75,6 +76,7 @@ pub use projection_queue::{
 };
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
 pub use receipt_list::WriteRequestListFilter;
+pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use topology::TopologyChangeInsert;
 
 /// The byte after `keys::PERSISTENCE` of a counter row.

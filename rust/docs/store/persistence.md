@@ -165,6 +165,24 @@ Differences from the SQL engines:
   checkpoint that no run clears stays until an op clears it.
 - The other `op_checkpoints` writers (sync identity downgrades, sync holds, fence repair, the
   persistence receipts) are still raw SQL. Their rows are not in this store.
+
+## Sync pass pages
+
+A managed sync pass's `I⋈P` read (`src/core/engine-sql/sync-pass-pages.ts`): the source's pages with a
+`source_path`, each with the fields of its `sync-import-provenance` record (fingerprint
+`<source>:<incarnation>:<page id>`), in page id order. It reads the pages, their body state and
+contextual retrieval mode, the records, and for a deleted page the `sync-delete-tombstone` record and the
+committed `managed_sync_delete` requests.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readSyncImportPageRows(query, window)` | the rows for `window` `{ ids }` or `{ after, limit }`; `query` carries the Markdown chunker version the SQL statement embeds | `readSyncImportPageRows` |
+
+Differences from the SQL engines:
+
+- Postgres's whole-source cursor (`declareSyncImportPageCursor`, `fetchSyncImportPageCursor`) has no store
+  form; both refuse with `raw_sql`. A Rust sync pass stops before them, at the round snapshot.
+- A bad id in `{ ids }` refuses with `invalid_input`, as the `::bigint[]` cast refuses.
 ## Writer versions
 
 Which binaries admitted and published the retained requests (`writer-versions.ts`), from the

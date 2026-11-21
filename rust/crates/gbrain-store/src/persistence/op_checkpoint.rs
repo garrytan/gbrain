@@ -31,7 +31,7 @@ fn text<'a>(value: &'a str, what: &str) -> Result<&'a str> {
     Ok(value)
 }
 
-fn parent_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
+pub(super) fn parent_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
     let mut key = vec![keys::PERSISTENCE, super::HOUSEKEEPING];
     key.extend_from_slice(text(op, "op")?.as_bytes());
     key.push(0);

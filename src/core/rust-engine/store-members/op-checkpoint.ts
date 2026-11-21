@@ -4,6 +4,8 @@
  * stopped midway on this engine resumes with the keys it banked. What the store keeps and how it differs:
  * rust/docs/store/persistence.md, "Op checkpoints".
  */
+import { MARKDOWN_CHUNKER_VERSION } from '../../chunkers/recursive.ts';
+import type { SyncImportPageQuery, SyncImportPageRow, SyncImportPageWindow } from '../../engine-sql/sync-pass-pages.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
 /**
@@ -41,3 +43,12 @@ export const readOpCheckpointRecords: StoreMember<[op: string, fingerprints: rea
 export const writeOpCheckpointRecords: StoreMember<[op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>], void> = async (brain, op, rows) => {
   await storeCall({ member: 'writeOpCheckpointRecords' }, () => brain.writeOpCheckpointRecords(op, rows.map(({ fingerprint, record }) => ({ fingerprint, record }))));
 };
+
+/**
+ * A sync pass's `I⋈P` rows (engine-sql/sync-pass-pages.ts): the store reads the pages and their import records itself, so
+ * it is sent the Markdown chunker version the SQL statement embeds.
+ */
+export const readSyncImportPageRows: StoreMember<[q: SyncImportPageQuery, window: SyncImportPageWindow], SyncImportPageRow[]> = (brain, q, window) =>
+  storeCall({ member: 'readSyncImportPageRows' }, () => brain.readSyncImportPageRows(
+    { sourceId: q.sourceId, incarnation: q.incarnation, expected: q.expected, chunkerVersion: MARKDOWN_CHUNKER_VERSION },
+    'ids' in window ? { ids: [...window.ids] } : { after: window.after, limit: window.limit }));

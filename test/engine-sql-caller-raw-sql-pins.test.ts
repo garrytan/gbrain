@@ -16,6 +16,8 @@ import { runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postg
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { boundedBodyPrefixSql } from '../src/core/page-window/bounded-lead.ts';
+import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
+import { syncDeleteOrigin } from '../src/core/persistence/sync-delete-tombstones.ts';
 import { callerAccessAllowedSql, privateLinkOriginFilterForCaller, privatePagesFilterForCaller, remoteReadFloorSql } from '../src/core/search/private-visibility.ts';
 
 /** caller.ts MEMBER_SQL at 7470c703ed: MEMBERS_WHERE_SQL(`m.id = (${member})`), copied verbatim. */
@@ -343,7 +345,57 @@ const PINS: Pin[] = [
     SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`],
   },
+  {
+    from: 'src/core/persistence/sync-admission.ts:34 readSyncAdmission',
+    case: { method: 'readStoredConfigValue', variant: 'default', run: e => e.readStoredConfigValue('sync.admission') },
+    texts: ['SELECT value FROM config WHERE key=$1'],
+  },
+  {
+    from: 'src/core/persistence/sync-pass.ts:460 readPages (a confirm round: the named page ids)',
+    case: { method: 'readSyncImportPageRows', variant: 'ids', run: e => e.readSyncImportPageRows(SYNC_PASS_Q, { ids: ['1', '2'] }) },
+    texts: () => [`${syncPassSelect(false)} AND p.id = ANY($5::bigint[]) ORDER BY p.id`],
+  },
+  {
+    from: 'src/core/persistence/sync-pass.ts:488 readPages (PGLite\'s keyset page)',
+    case: { method: 'readSyncImportPageRows', variant: 'keyset', run: e => e.readSyncImportPageRows(SYNC_PASS_Q, { after: 0, limit: 2_000 }) },
+    texts: () => [`${syncPassSelect(false)} AND p.id>$5 ORDER BY p.id LIMIT 2000`],
+  },
+  {
+    from: 'src/core/persistence/sync-pass.ts:468 readPages (Postgres\'s whole-source cursor, the record subquery kept by OFFSET 0)',
+    case: { method: 'declareSyncImportPageCursor', variant: 'default', run: e => e.declareSyncImportPageCursor(SYNC_PASS_Q) },
+    texts: () => ['SET LOCAL cursor_tuple_fraction = 1', `DECLARE sync_pass_pages NO SCROLL CURSOR FOR ${syncPassSelect(true)}`],
+  },
+  {
+    from: 'src/core/persistence/sync-pass.ts:472 readPages (a cursor fetch)',
+    case: { method: 'fetchSyncImportPageCursor', variant: 'default', run: e => e.fetchSyncImportPageCursor(4_000) },
+    texts: ['FETCH 4000 FROM sync_pass_pages'],
+  },
 ];
+
+const SYNC_PASS_Q = { sourceId: 'default', incarnation: 'inc-1', expected: { parser_version: 'p', markdown_chunker: 4, schema_pack: null } };
+
+/** sync-pass.ts readPages `select` at 2e7e4b6554, verbatim; `offsetZero` is `kind === 'postgres' && !only`. */
+function syncPassSelect(offsetZero: boolean): string {
+  return `SELECT p.id, p.slug, p.source_path, p.knowledge_revision::text AS revision, p.deleted_at IS NOT NULL AS deleted,
+      p.revision_write_request_id::text AS request_id, c.fingerprint IS NOT NULL AS has_record,
+      c.origin IS NOT DISTINCT FROM p.source_path AS rec_origin_same,
+      CASE WHEN c.origin IS DISTINCT FROM p.source_path THEN c.origin END AS rec_origin,
+      c.blob_oid AS rec_blob_oid,
+      c.disk_blob_oid IS NOT DISTINCT FROM c.blob_oid AS rec_disk_same,
+      CASE WHEN c.disk_blob_oid IS DISTINCT FROM c.blob_oid THEN c.disk_blob_oid END AS rec_disk_blob_oid,
+      c.revision IS NULL AS rec_revision_null,
+      NULLIF(c.revision, p.knowledge_revision::text) AS rec_revision,
+      CASE WHEN c.parser IS DISTINCT FROM $4::jsonb THEN c.parser::text END AS rec_parser, c.parser = $4::jsonb AS rec_parser_expected,
+      c.full_episode AS rec_full_episode, c.working AS rec_working,
+      (p.page_kind = 'markdown' AND p.chunker_version = ${MARKDOWN_CHUNKER_VERSION} AND p.body_storage IS DISTINCT FROM 'segmented'
+        AND p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision AND p.contextual_retrieval_mode IS NOT NULL) AS derived_current,
+      CASE WHEN p.deleted_at IS NOT NULL THEN ${syncDeleteOrigin('p')} ELSE false END AS sync_deleted
+    FROM pages p LEFT JOIN (SELECT fingerprint, completed_keys->0->>'origin' AS origin, completed_keys->0->>'blob_oid' AS blob_oid,
+        completed_keys->0->>'disk_blob_oid' AS disk_blob_oid, completed_keys->0->>'revision' AS revision,
+        completed_keys->0->'parser' AS parser, completed_keys->0->>'full_episode' AS full_episode, (completed_keys->0->'working')::text AS working
+      FROM op_checkpoints WHERE op=$2${offsetZero ? ' OFFSET 0' : ''}) c ON c.fingerprint=$3||p.id::text
+    WHERE p.source_id=$1 AND p.source_path IS NOT NULL`;
+}
 
 /** entity-card.ts CARD_ROW_COLUMNS at 7470c703ed, verbatim. */
 function CARD_ROW_COLUMNS(): string {

@@ -30,9 +30,8 @@ export function parseSyncAdmission(value: string | null | undefined): SyncAdmiss
 }
 
 /** The value in effect, read in the caller's transaction (`tx`) when given, so admission and publication see one value. */
-export async function readSyncAdmission(engine: Pick<BrainEngine, 'executeRaw'>): Promise<SyncAdmission> {
-  const [row] = await engine.executeRaw<{ value: string | null }>('SELECT value FROM config WHERE key=$1', [SYNC_ADMISSION_KEY]);
-  return parseSyncAdmission(row?.value ?? null);
+export async function readSyncAdmission(engine: Pick<BrainEngine, 'readStoredConfigValue'>): Promise<SyncAdmission> {
+  return parseSyncAdmission(await engine.readStoredConfigValue(SYNC_ADMISSION_KEY));
 }
 
 /** Whether a kind of write may be admitted (or published) under `admission`. */
