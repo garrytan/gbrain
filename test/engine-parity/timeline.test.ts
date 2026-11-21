@@ -474,6 +474,38 @@ describe('engine parity: timeline entries', () => {
       return answers;
     },
   );
+  parityTest(
+    'insertPageTimelineRows inserts the body rows in body order, keeps a stored duplicate as it is, and inserts nothing when one row fails',
+    { methods: ['insertPageTimelineRows', 'listStoredTimelineRows', 'addTimelineEntry', 'putPage', 'getPage'] },
+    async (engine) => {
+      await putPlain(engine, 'people/insert');
+      const pageId = Number((await engine.getPage('people/insert'))!.id);
+      await engine.addTimelineEntry('people/insert', { date: '2026-02-03', source: 'cal', summary: 'already here', detail: 'stored detail' });
+      const rows = async () => (await engine.listStoredTimelineRows('default', 'people/insert'))
+        .sort((a, b) => Number(a.id) - Number(b.id)).map((r) => `${r.date}|${r.source}|${r.summary}|${r.detail}`);
+      const refused = async (run: () => Promise<unknown>) => run().then(() => false, () => true);
+      await engine.insertPageTimelineRows(pageId, [
+        { date: '2026-03-01', source: '', summary: 'first in the body', detail: '' },
+        { date: '2026-01-01', source: 'cal', summary: 'second in the body', detail: 'with detail' },
+        { date: '2026-02-03', source: 'cal', summary: 'already here', detail: 'new detail' },
+        { date: '2026-03-01', source: '', summary: 'first in the body', detail: 'twin in one call' },
+      ]);
+      await engine.insertPageTimelineRows(pageId, []);
+      const answers = {
+        inserted: await rows(),
+        badDate: await refused(() => engine.insertPageTimelineRows(pageId, [
+          { date: '2026-04-01', source: '', summary: 'before the bad row', detail: '' },
+          { date: '2026-02-30', source: '', summary: 'not a calendar date', detail: '' },
+        ])),
+        missingPage: await refused(() => engine.insertPageTimelineRows(987654, [{ date: '2026-04-01', source: '', summary: 'no page', detail: '' }])),
+        after: await rows(),
+      };
+      expect(answers.inserted).toEqual(['2026-02-03|cal|already here|stored detail', '2026-03-01||first in the body|',
+        '2026-01-01|cal|second in the body|with detail']);
+      expect(answers).toMatchObject({ badDate: true, missingPage: true, after: answers.inserted });
+      return answers;
+    },
+  );
 });
 
 /**

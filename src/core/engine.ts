@@ -59,7 +59,7 @@ import type { OverdueHold, OverdueHoldKind } from './engine-sql/persistence-owne
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionFilter, TrueUpReservation } from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
-import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
+import type { TimelineDetailRefresh, TimelineRowInsert, TimelineRowRemoval } from './engine-sql/timeline.ts';
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { FactPreimage, FenceProjectionTarget } from './engine-sql/facts.ts';
@@ -2392,6 +2392,12 @@ export interface BrainEngine {
    * still equals the preimage `detail`; any other row stays. Event projections are never touched.
    */
   updateTimelineDetails(pageId: number, rows: readonly TimelineDetailRefresh[]): Promise<void>;
+  /**
+   * Insert the page body's timeline entries on the page in the order given. A row equal to a stored one (same date,
+   * summary and source) or to an earlier row of the call is skipped; one bad row inserts nothing. A page write calls it
+   * inside its own transaction (persistence/canonical-projections.ts).
+   */
+  insertPageTimelineRows(pageId: number, rows: readonly TimelineRowInsert[]): Promise<void>;
 
   // v0.42.x — Life Chronicle (#2390) per-entity ontology (rides `facts`).
   /**

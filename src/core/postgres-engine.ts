@@ -2778,6 +2778,7 @@ export class PostgresEngine implements BrainEngine {
 
   removeTimelineRows(pageId: number, rows: readonly timelineImpl.TimelineRowRemoval[]) { return timelineImpl.removeTimelineRows(this.autocommitSql, pageId, rows); }
   updateTimelineDetails(pageId: number, rows: readonly timelineImpl.TimelineDetailRefresh[]) { return timelineImpl.updateTimelineDetails(this.autocommitSql, pageId, rows); }
+  insertPageTimelineRows(pageId: number, rows: readonly timelineImpl.TimelineRowInsert[]) { return timelineImpl.insertPageTimelineRows(this.autocommitSql, pageId, rows); }
 
   async mergeOntologyFact(obs: OntologyObservationInput): Promise<OntologyMergeResult> {
     const sql = this.sql;

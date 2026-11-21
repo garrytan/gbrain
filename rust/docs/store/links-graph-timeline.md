@@ -35,6 +35,7 @@ the origin.
 | `brain.traversePathsDetailed(slug, opts?)` | `{ paths, truncated }`; at most 5,000 edges, `truncated` when more exist | `traversePathsDetailed` |
 | `brain.addTimelineEntry(slug, { date, summary, source?, detail? }, { sourceId?, skipExistenceCheck? }?)` | `true` when a row was written, `false` for a duplicate (same page, date, summary and source) | `addTimelineEntry` |
 | `brain.addTimelineEntriesBatch(entries)` | inserted count; entries of missing pages are skipped | `addTimelineEntriesBatch` |
+| `brain.insertPageTimelineRows(pageId, [{ date, source, summary, detail }])` | `null`; rows insert in the order given and a duplicate (of a stored row or an earlier row) is skipped. One bad row inserts nothing; a missing page is `constraint_violation` | `insertPageTimelineRows` |
 | `brain.getTimeline(slug, { limit?, after?, before?, sourceId?, sourceIds?, excludePrivate?, eligibleOnly? }?)` | `{ id, page_id, date, source, summary, detail, event_page_id, created_at, write_request_id, write_principal_kind, write_principal_id, last_write_request_id, last_write_principal_kind, last_write_principal_id, last_written_at }[]`, `date DESC, id DESC`, default `limit` 100, `0` for all | `getTimeline` |
 
 Where this engine differs from PGLite:

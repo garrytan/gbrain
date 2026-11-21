@@ -475,6 +475,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'hasSegmentStorage': OOS.writeGuards,
   'removeTimelineRows': OOS.pageWriteRows,
   'updateTimelineDetails': OOS.pageWriteRows,
+  'insertPageTimelineRows': OOS.pageWriteRows,
   'matchTakeRows': OOS.pageWriteRows,
   'deleteTakeRows': OOS.pageWriteRows,
   'listFenceRetireCandidates': OOS.trustFence,

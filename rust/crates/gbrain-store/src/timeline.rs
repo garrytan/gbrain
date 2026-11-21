@@ -114,6 +114,16 @@ pub struct TimelineBatchInput {
     pub source_id: Option<String>,
 }
 
+/// One row of `insertPageTimelineRows`: an entry the page body carries, in body order.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct TimelineRowInsert {
+    pub date: Option<String>,
+    pub source: Option<String>,
+    pub summary: Option<String>,
+    pub detail: Option<String>,
+}
+
 /// `TimelineOpts` of `getTimeline`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -507,6 +517,66 @@ impl Store {
                 }
             }
             Ok(inserted)
+        })
+    }
+
+    /// `insertPageTimelineRows(pageId, rows)`: inserts the rows on the page in the order given, as
+    /// `INSERT .. SELECT .. ORDER BY ord ON CONFLICT DO NOTHING` does: a row equal to a stored one
+    /// (or to an earlier row of the call) is skipped, and each row takes an id, skipped or not. A
+    /// soft-deleted page takes rows too. Every date is read before any row is written, so one bad
+    /// row fails the whole call; a page that does not exist is the foreign key's
+    /// `constraint_violation`. No row inserts nothing, even for a missing page.
+    pub fn insert_page_timeline_rows(
+        &self,
+        page_id: i64,
+        rows: &[TimelineRowInsert],
+    ) -> Result<()> {
+        let mut asked = Vec::with_capacity(rows.len());
+        for row in rows {
+            let date = match row.date.as_deref() {
+                Some(text) => parse_date(text)?,
+                None => return Err(not_null("date")),
+            };
+            let Some(summary) = row.summary.as_deref() else {
+                return Err(not_null_summary());
+            };
+            asked.push((date, summary, row));
+        }
+        if asked.is_empty() {
+            return Ok(());
+        }
+        self.write(|tx| {
+            let page = match u64::try_from(page_id) {
+                Ok(id) => read_page_by_id(&*tx, id)?.map(|page| page.id),
+                Err(_) => None,
+            };
+            let Some(page_id) = page else {
+                return Err(StoreError::new(
+                    CONSTRAINT_VIOLATION,
+                    format!(
+                        "insert or update on table \"timeline_entries\" violates foreign key constraint on page_id: page {page_id} does not exist"
+                    ),
+                ));
+            };
+            let now = self.env.now_micros();
+            for (date, summary, row) in asked {
+                insert_entry(
+                    tx,
+                    TimelineRecord {
+                        id: 0,
+                        page_id,
+                        date,
+                        source: clean(row.source.as_deref().unwrap_or("")),
+                        summary: clean(summary),
+                        detail: clean(row.detail.as_deref().unwrap_or("")),
+                        event_page_id: None,
+                        created_at_us: now,
+                        receipt: TimelineReceipt::default(),
+                        trust: TimelineTrust::default(),
+                    },
+                )?;
+            }
+            Ok(())
         })
     }
 

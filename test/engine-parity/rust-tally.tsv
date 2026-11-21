@@ -3,7 +3,7 @@ test/engine-parity/access-flag.test.ts	1	0
 test/engine-parity/alias-fanout-reads.test.ts	10	0
 test/engine-parity/alias-trust.test.ts	5	0
 test/engine-parity/calibration-profiles.test.ts	5	0
-test/engine-parity/chronicle-publish-parity.test.ts	2	1
+test/engine-parity/chronicle-publish-parity.test.ts	3	0
 test/engine-parity/chunk-reads.test.ts	11	0
 test/engine-parity/chunks.test.ts	14	1
 test/engine-parity/cli-capabilities.test.ts	2	0
@@ -42,7 +42,7 @@ test/engine-parity/facts-repair.test.ts	16	1
 test/engine-parity/facts-rest-sites.test.ts	21	6
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	10	0
-test/engine-parity/facts-unique-violation.test.ts	2	1
+test/engine-parity/facts-unique-violation.test.ts	3	0
 test/engine-parity/facts.test.ts	36	0
 test/engine-parity/family-tail-sites.test.ts	9	3
 test/engine-parity/fence-overlay.test.ts	2	0
@@ -55,7 +55,7 @@ test/engine-parity/forget-remember.test.ts	2	0
 test/engine-parity/forget-whole.test.ts	2	0
 test/engine-parity/generation-output-parity.test.ts	15	0
 test/engine-parity/generation-page-rows-order.test.ts	1	0
-test/engine-parity/generation-write-parity.test.ts	1	2
+test/engine-parity/generation-write-parity.test.ts	3	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/holding-page-purges.test.ts	2	0
 test/engine-parity/import-members.test.ts	9	0
@@ -110,7 +110,7 @@ test/engine-parity/sync-aliases.test.ts	10	0
 test/engine-parity/takes.test.ts	25	1
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/timeline-reads.test.ts	4	0
-test/engine-parity/timeline.test.ts	32	0
+test/engine-parity/timeline.test.ts	33	0
 test/engine-parity/transaction-settings.test.ts	9	1
 test/engine-parity/traversal-cache.test.ts	5	2
 test/engine-parity/trust-fence.test.ts	5	0

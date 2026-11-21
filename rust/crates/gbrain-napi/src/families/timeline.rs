@@ -44,6 +44,21 @@ impl Brain {
         })
     }
 
+    /// `insertPageTimelineRows(pageId, rows)`: resolves null.
+    #[napi]
+    pub fn insert_page_timeline_rows<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        rows: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<gbrain_store::timeline::TimelineRowInsert> =
+                required(rows, "insertPageTimelineRows rows")?;
+            s.insert_page_timeline_rows(page_id as i64, &rows)
+        })
+    }
+
     /// `getTimeline(slug, { limit?, sourceId?, sourceIds?, after?, before? }?)`: newest first.
     /// `date` is `YYYY-MM-DD` and `created_at` an ISO string; the shell makes them `Date`s.
     #[napi]

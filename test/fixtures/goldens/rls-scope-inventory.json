@@ -6350,6 +6350,7 @@
         "insertLeasePressure": "none",
         "insertLocalWriterRow": "none",
         "insertOauthClient": "none",
+        "insertPageTimelineRows": "none",
         "insertPublicationEffects": "none",
         "insertPurgeEffects": "none",
         "insertReasonPurgeTombstones": "none",

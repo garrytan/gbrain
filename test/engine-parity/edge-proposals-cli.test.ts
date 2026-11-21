@@ -15,15 +15,16 @@
  *    or answers a date or a timestamp in another form changes what the user reads.
  *  - Why existing coverage misses it: test/edge-proposals-list-flags.test.ts and test/edge-proposals-json-bigint.test.ts
  *    check the flags and the id form against a recording stub, and no case ran the command on a Rust brain.
- *  - Seam: none. Pages come from putPage, proposals from recordEdgeProposal. On a Rust brain the dated case stops at a
- *    named known stop: the add_timeline_entry write reads the source kind through executeRaw
- *    (persistence/semantic-pages.ts:83), outside this command; the pin comes out when that read is served. Ids differ between arms, so each output
+ *  - Seam: none. Pages come from putPage, proposals from recordEdgeProposal. The dated case runs the add_timeline_entry
+ *    write to the end on every engine, so the subject page's timeline is compared too. On a Rust brain the write's page
+ *    projection rebuild still stops at one named known stop (RUST_KNOWN_STOP). Ids differ between arms, so each output
  *    names a proposal by the row it seeded (P1 to P5), and a creation time by its form.
  */
 import { describe, expect, spyOn } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { runEdgeProposals } from '../../src/commands/edge-proposals.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../../src/core/cli-force-exit.ts';
+import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -117,68 +118,43 @@ function idNamed(labels: Map<number, string>, name: string): string {
   return String(found![0]);
 }
 
-/** The engine the command gets: it keeps the last typed capability refusal and the stack of the call that raised it. */
-function watched(engine: BrainEngine) {
-  let refusal: unknown = null;
-  let refusalSite = '';
-  const wrapped = new Proxy(engine, {
-    get(target, key, receiver) {
-      const value = Reflect.get(target, key, receiver);
+/**
+ * The one raw-SQL stop left in the dated case on Rust (owner: lane 3, cut 1, rust-engine/rust-rebuild-path, due 5 PM PST
+ * Nov 23): the add_timeline_entry write rebuilds the page projections, and selectWindowJobs
+ * (src/core/page-state/projections.ts:664, called from rebuildPendingPageProjections) probes the queued pages through
+ * executeRaw. The rebuild logs the refusal and keeps the work queued, so the command still prints the same output.
+ * Whichever of this change and lane 3's cut 1 lands second in rust-engine/main removes this pin; the case must then be
+ * equal on all three arms. The pin fails as soon as Rust stops refusing there or refuses anywhere else.
+ */
+const RUST_KNOWN_STOP = {
+  frames: [/at selectWindowJobs \([^)]*src\/core\/page-state\/projections\.ts:\d+:/, /at (?:async )?rebuildPendingPageProjections \([^)]*src\/core\/page-state\/projections\.ts:\d+:/],
+  message: "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.",
+};
+
+/** `engine`, keeping every raw-SQL refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
+function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {
+  return new Proxy(engine, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
       if (typeof value !== 'function') return value;
       return (...args: unknown[]) => {
-        // The caller's stack, taken before the call: an async refusal no longer names who made the call.
-        const site = new Error().stack ?? '';
-        const out = value.apply(target, args);
-        if (!(out instanceof Promise)) return out;
-        return out.catch((e: unknown) => {
-          if ((e as { code?: unknown })?.code === 'engine_capability_missing') { refusal = e; refusalSite = site; }
-          throw e;
+        if ((prop === 'transaction' || prop === 'transactionDirect') && typeof args[0] === 'function') {
+          const fn = args[0] as (tx: BrainEngine) => unknown;
+          args = [(tx: BrainEngine) => fn(keepingRefusals(tx, refusals)), ...args.slice(1)];
+        }
+        const result = (value as (...a: unknown[]) => unknown).apply(target, args);
+        if (!(result instanceof Promise)) return result;
+        return result.catch((error: unknown) => {
+          if (isCapabilityRefusal(error, 'raw_sql')) refusals.push(error);
+          throw error;
         });
       };
     },
   });
-  return { engine: wrapped, refusal: () => refusal, refusalSite: () => refusalSite };
 }
 
-/**
- * Known stops on Rust: `date` writes its line through the add_timeline_entry operation. On a Rust brain that write
- * queues on a refused executeRaw, so the dated case stops there. Two stops are pinned, in the order the case meets them:
- * 1. Today: the preparation reads the source kind through executeRaw (prepareSemanticPageMutation,
- *    src/core/persistence/semantic-pages.ts:83). The getSource hunk on that line serves it: babe38bded
- *    (rust-engine/admin-unowned-rust) and 65b3f8a992 (rust-engine/timeline-add-rust) carry it byte-identical.
- * 2. With that hunk applied, the publish transaction stops in guardFenceRows (src/core/trust/fence-guard.ts:71), which
- *    clears the guarded rows through executeRaw. The tx engine is not watched, so this stop is read from the stack of
- *    the refusal itself; the watched call is the transaction (publicationTransaction).
- * The pin fails as soon as the case runs to the end on Rust: it must then compare equal, and whichever change lands
- * second (this branch, or the branch that carries the getSource hunk) removes this pin.
- */
-const RUST_KNOWN_STOP = new RegExp([
-  /at prepareSemanticPageMutation \([^)]*src\/core\/persistence\/semantic-pages\.ts:83:/.source,
-  /at (?:async )?guardFenceRows \([^)]*src\/core\/trust\/fence-guard\.ts:71:/.source,
-].join('|'));
-
-/** Where the queued write stopped: the watched call's stack, then the stack of the refusal it raised. */
-function stopSite(w: ReturnType<typeof watched>): string {
-  return `${w.refusalSite()}\n${(w.refusal() as Error | null)?.stack ?? ''}`;
-}
-
-/** Runs a command whose write a missing capability queues: it then stops on the typed refusal the write waits for. */
-async function orTheQueuedRefusal<T>(w: ReturnType<typeof watched>, backend: string, run: () => Promise<T>): Promise<T> {
-  let out: T;
-  try {
-    out = await run();
-  } catch (error) {
-    const blocked = (error as { writeRequest?: { blocked_reason?: unknown } })?.writeRequest?.blocked_reason;
-    if (blocked === 'engine_capability_missing' && w.refusal() !== null) {
-      if (backend === 'rust') expect(stopSite(w)).toMatch(RUST_KNOWN_STOP);
-      throw w.refusal();
-    }
-    throw error;
-  }
-  // The known stop above: reaching here on Rust means the read is served, so this pin has to go.
-  if (backend === 'rust') expect('the dated case ran to the end on Rust').toBe('the case stops at prepareSemanticPageMutation or guardFenceRows (RUST_KNOWN_STOP)');
-  return out;
-}
+/** The dated case's answer on the first non-Rust arm: the Rust arm compares with it before it stops on the pin. */
+let datedReference: unknown;
 
 describe('engine parity: gbrain edge-proposals', () => {
   parityTest('list, show and retry print the same text and JSON and set the same exit verdict', {
@@ -238,23 +214,35 @@ describe('engine parity: gbrain edge-proposals', () => {
 
   parityTest('date records the start line on the subject page and rejects the undated proposal, once', {
     methods: ['putPage', 'readPageIdInSource', 'recordEdgeProposal', 'setConfig', 'listEdgeProposalCliRows', 'readEdgeProposalSourceId',
-      'markEdgeProposalDated'],
+      'markEdgeProposalDated', 'getSource', 'insertPageTimelineRows'],
   }, async (base, backend) => {
-    const w = watched(base);
-    const engine = w.engine;
+    const refusals: unknown[] = [];
+    const engine = keepingRefusals(base, refusals);
     const labels = await seed(engine);
     const id = (name: string) => idNamed(labels, name);
     // The derived links are not what this command writes; auto-link stays off so the case reads only its own statements.
     await engine.setConfig('auto_link', 'false');
     const runs: CliRun[] = [];
-    for (const args of [['date', id('P2'), '2024-03-01', '--json']]) runs.push(await orTheQueuedRefusal(w, backend, () => cli(engine, labels, args)));
-    for (const args of [['date', id('P2'), '2024-03-01'], ['show', id('P2'), '--json'], ['list']]) runs.push(await cli(engine, labels, args));
+    for (const args of [['date', id('P2'), '2024-03-01', '--json'], ['date', id('P2'), '2024-03-01'], ['show', id('P2'), '--json'], ['list']]) runs.push(await cli(engine, labels, args));
     const snapshot = await engine.readPageSnapshot(ALICE, { sourceId: 'default' });
     const byArgs = Object.fromEntries(runs.map((r) => [r.args, r]));
     expect(JSON.parse(byArgs['date P2 2024-03-01 --json']!.out)).toEqual({ id: 'P2', status: 'dated', target: WIDGET, date: '2024-03-01' });
     expect(byArgs['date P2 2024-03-01']).toMatchObject({ err: 'No undated proposal #P2.', exit: 1 });
     expect(JSON.parse(byArgs['show P2 --json']!.out).status).toBe('rejected');
     expect(snapshot?.page.timeline).toContain(`Started works_at [[${WIDGET}]]`);
-    return { runs, timeline: snapshot?.page.timeline ?? null, body: snapshot?.page.compiled_truth ?? null };
+    const value = { runs, timeline: snapshot?.page.timeline ?? null, body: snapshot?.page.compiled_truth ?? null };
+    const stops = refusals.map((e) => ({ message: (e as Error).message,
+      atKnownStop: RUST_KNOWN_STOP.frames.every((frame) => frame.test(String((e as Error).stack))) }));
+    if (backend !== 'rust') {
+      expect({ backend, rawSqlRefusals: stops }).toEqual({ backend, rawSqlRefusals: [] });
+      datedReference ??= value;
+      return value;
+    }
+    // The known stop (RUST_KNOWN_STOP): exactly one refusal, at selectWindowJobs. Zero means lane 3's typed read is
+    // served: remove this pin and let the harness compare the case.
+    expect({ backend, rawSqlRefusals: stops }).toEqual({ backend, rawSqlRefusals: [{ message: RUST_KNOWN_STOP.message, atKnownStop: true }] });
+    expect({ backend, value }).toEqual({ backend, value: datedReference as typeof value });
+    // Every result above holds on Rust too; the arm still counts as stopped until the pin is removed.
+    throw refusals[0];
   });
 });

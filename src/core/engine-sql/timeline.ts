@@ -291,6 +291,25 @@ export async function removeTimelineRows(exec: SqlExecutor, pageId: number, rows
   return exec.executeRaw<{ date: string; removed: boolean }>(REMOVE_TIMELINE_ROWS_SQL, [pageId, JSON.stringify(rows)]);
 }
 
+/** One entry a page body carries, inserted by the canonical projection (`BrainEngine.insertPageTimelineRows`). */
+export interface TimelineRowInsert { date: string; source: string; summary: string; detail: string }
+
+const INSERT_PAGE_TIMELINE_ROWS_SQL = `INSERT INTO timeline_entries (page_id,date,source,summary,detail)
+    SELECT $1,r.date::date,r.source,r.summary,r.detail FROM jsonb_to_recordset($2::text::jsonb) AS r(ord integer,date text,source text,summary text,detail text)
+    ORDER BY r.ord
+    ON CONFLICT (page_id,date,md5(summary),source) DO NOTHING`;
+
+/**
+ * Inserts the page body's entries on the page in the order given (`BrainEngine.insertPageTimelineRows`). A row equal to
+ * a stored one (same date, summary and source) is skipped; one bad row fails the whole statement. Free text is NUL and
+ * lone-surrogate sanitized (#2011).
+ */
+export async function insertPageTimelineRows(exec: SqlExecutor, pageId: number, rows: readonly TimelineRowInsert[]): Promise<void> {
+  const ordered = rows.map((row, ord) => ({ ord, date: row.date, source: sanitizeForJsonb(row.source || ''),
+    summary: sanitizeForJsonb(row.summary), detail: sanitizeForJsonb(row.detail || '') }));
+  await exec.executeRaw(INSERT_PAGE_TIMELINE_ROWS_SQL, [pageId, JSON.stringify(ordered)]);
+}
+
 /** Replaces the detail of the page's own (non-event) rows named in `rows` with `next` when the stored detail still equals `detail` (`BrainEngine.updateTimelineDetails`). */
 export async function updateTimelineDetails(exec: SqlExecutor, pageId: number, rows: readonly TimelineDetailRefresh[]): Promise<void> {
   await exec.executeRaw(UPDATE_TIMELINE_DETAILS_SQL, [pageId, JSON.stringify(rows)]);

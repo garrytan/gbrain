@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1148/1154
+# covered: 1149/1155
 # lifecycle: 9/9
 # pages: 39/39
 # search: 7/7
@@ -19,7 +19,7 @@
 # extraction: 8/14
 # links: 23/23
 # tags: 5/5
-# timeline: 23/23
+# timeline: 24/24
 # ontology: 10/10
 # raw_files: 26/26
 # takes: 24/24
@@ -89,11 +89,11 @@ transaction	lifecycle	yes	150	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	128	yes	yes	yes	serves
+getPage	pages	yes	129	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	560	yes	yes	yes	serves
+putPage	pages	yes	561	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	9	yes	yes	yes	serves
@@ -114,7 +114,7 @@ getAllSlugs	pages	yes	4	no	yes	yes	serves
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	3	no	yes	yes	serves
 updateSourceConfig	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	6	no	yes	yes	serves
+getSource	pages	yes	7	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
 listSourceRoutingRows	pages	yes	1	no	yes	yes	serves
@@ -274,7 +274,7 @@ storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
 listTimelineOrphanPages	timeline	yes	1	no	yes	yes	serves
-addTimelineEntry	timeline	yes	39	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	40	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	3	no	yes	yes	serves
 getTimeline	timeline	yes	19	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	6	no	yes	yes	serves
@@ -284,6 +284,7 @@ getLastSeen	timeline	yes	5	no	yes	yes	serves
 upsertEventProjection	timeline	yes	21	no	yes	yes	serves
 removeTimelineRows	timeline	yes	2	no	yes	yes	serves
 updateTimelineDetails	timeline	yes	2	no	yes	yes	serves
+insertPageTimelineRows	timeline	yes	2	no	yes	yes	serves
 listEventProjectionRows	timeline	yes	3	no	yes	yes	serves
 readEventProjectionId	timeline	yes	1	no	yes	yes	serves
 deleteEventProjections	timeline	yes	3	no	yes	yes	serves
@@ -1122,7 +1123,7 @@ readPageTrustRows	cli_reads_import	yes	14	no	yes	yes	serves
 readRowTrustRows	cli_reads_import	yes	4	no	yes	yes	serves
 readDatabaseClock	cli_reads_import	yes	1	no	yes	yes	serves
 listLinkPageMetadata	cli_reads_import	yes	1	no	yes	yes	serves
-listStoredTimelineRows	cli_reads_import	yes	5	no	yes	yes	serves
+listStoredTimelineRows	cli_reads_import	yes	6	no	yes	yes	serves
 filterPagesAtRevision	cli_reads_import	yes	1	no	yes	yes	serves
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	8	no	yes	yes	serves
