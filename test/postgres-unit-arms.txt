@@ -139,8 +139,8 @@ test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-parity/access-flag.test.ts
-test/engine-parity/access-tokens.test.ts
 test/engine-parity/access-policy.test.ts
+test/engine-parity/access-tokens.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/belief-ledger.test.ts
@@ -247,9 +247,9 @@ test/engine-parity/purge-dry-run.test.ts
 test/engine-parity/purge-plan.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
+test/engine-parity/relational-reads.test.ts
 test/engine-parity/remember-meta.test.ts
 test/engine-parity/remember-whole.test.ts
-test/engine-parity/relational-reads.test.ts
 test/engine-parity/remote-policy.test.ts
 test/engine-parity/request-tools-persist.test.ts
 test/engine-parity/resolve-reads.test.ts
