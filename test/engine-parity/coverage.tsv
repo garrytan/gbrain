@@ -715,7 +715,7 @@ completeSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 failSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 listExportPageKeys	cli_reads_export	yes	1	no	yes	yes	serves
 readExportWithdrawalLedgerBytes	cli_reads_export	yes	1	no	yes	yes	serves
-listExportWithdrawals	cli_reads_export	yes	1	no	yes	yes	serves
+listExportWithdrawals	cli_reads_export	yes	2	no	yes	yes	serves
 readExportPageRows	cli_reads_export	yes	1	no	yes	yes	serves
 normalizeFenceLines	cli_reads_export	yes	1	no	yes	yes	serves
 readSegmentedPageHead	cli_reads_export	yes	4	no	yes	yes	serves
@@ -826,7 +826,7 @@ listUnfencedFactRows	facts_purge	yes	1	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	4	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	5	no	yes	yes	serves
-insertFactPurge	facts_purge	yes	8	no	yes	yes	serves
+insertFactPurge	facts_purge	yes	9	no	yes	yes	serves
 listDerivedRows	facts_purge	yes	2	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	refuses:facts
 readPurgeSourceLocalPath	facts_purge	yes	1	no	yes	yes	refuses:facts
@@ -1067,7 +1067,7 @@ getRecentSalience	salience_enrich	yes	8	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	3	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	22	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	23	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	4	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves

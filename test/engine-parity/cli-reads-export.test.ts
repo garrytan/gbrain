@@ -125,6 +125,22 @@ describe('engine parity: export reads', () => {
     };
   });
 
+  // A purge tombstone is a ledger row too (`purged` true, its time the purge's): the export drops the purged fact's row.
+  parityTest('listExportWithdrawals lists purge tombstones beside withdrawals', {
+    methods: ['listExportWithdrawals', 'insertFactWithdrawal', 'insertFactPurge'],
+  }, async (engine) => {
+    await engine.insertFactWithdrawal('default', 'world', 'Alice founded Acme', '*', '2026-01-03T00:00:00.000Z');
+    const before = Date.now() - 60_000;
+    await engine.insertFactPurge({ sourceId: 'default', visibility: 'private', subject: 'people/bob', factHash: 'a1b2c3',
+      requestId: null, actor: 'owner:local', reason: 'parity' });
+    await engine.insertFactPurge({ sourceId: 'default', visibility: 'world', subject: '*', factHash: 'ffff', requestId: null, actor: null, reason: null });
+    const rows = await engine.listExportWithdrawals('default');
+    for (const row of rows) expect(row.withdrawn_at).toBeInstanceOf(Date);
+    return rows.map(r => ({ ...r,
+      // A tombstone's time is the engine's clock at the purge, so it is compared by relation, not value.
+      withdrawn_at: r.purged ? r.withdrawn_at.getTime() >= before : r.withdrawn_at.toISOString() }));
+  });
+
   // The pages the export writes, looked up by id: live ones only, with their tags in tag order.
   parityTest('readExportPageRows reads live pages by id with their tags', {
     methods: ['readExportPageRows', 'putPage', 'addTag', 'softDeletePage', 'getPage'],
