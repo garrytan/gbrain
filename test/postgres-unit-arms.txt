@@ -813,6 +813,7 @@ test/sync-full-cursor-slices-6349.test.ts
 test/sync-full-untracked-import-5459.test.ts
 test/sync-group-member-order.test.ts
 test/sync-handler-drain-6706.test.ts
+test/sync-history-read-budget.test.ts
 test/sync-holds-followups-7974.test.ts
 test/sync-holds-only-converge-7327.test.ts
 test/sync-holds-wave-gbra133.test.ts

@@ -4,15 +4,24 @@
  *   - a group whose read is cut short keeps the blobs it already read;
  *   - no group starts once the deadline has passed;
  *   - the caller hears a beat while a long group read streams, not only when it ends;
- *   - a path listed twice still ends its group's walk early, and a blob counts once however often it recurs.
+ *   - a path listed twice still ends its group's walk early, and a blob counts once however often it recurs;
+ *   - a sync whose history read is cut short marks the hold `history_unread`, and the next plain sync screens it again
+ *     (real PGLite, and Postgres when DATABASE_URL is set, with a managed worktree).
  */
 import { afterAll, afterEach, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { hardenedGitStream } from '../src/core/hardened-git.ts';
+import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { __setSyncGitStreamForTests, pathBlobHistories } from '../src/core/persistence/sync-git-stream.ts';
+import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { managedBrain } from './helpers/managed-brain.ts';
+import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const dirs: string[] = [];
 afterAll(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }); });
@@ -45,17 +54,22 @@ test('a history read that is cut short keeps the versions it already read', asyn
     const result = await hardenedGitStream(gitRoot, args, opts);
     return args[0] === 'log' ? { ok: false, reason: 'timeout' } : result;
   });
-  const read = await pathBlobHistories(root, head, ['notes/a.md', 'notes/missing.md'], 5);
+  const partial = new Set<string>();
+  const read = await pathBlobHistories(root, head, ['notes/a.md', 'notes/missing.md'], 5, undefined, { partial });
   expect(read.get('notes/a.md')).toEqual([...blobs].reverse());
   expect(read.has('notes/missing.md')).toBe(false);
+  expect([...partial]).toEqual(['notes/a.md']);
 });
 
 test('no history group starts once the deadline has passed, and a group read before it keeps its versions', async () => {
   const { root, head, blobs } = repo(['One.\n', 'Two.\n'], 100);
   const groups: number[] = [];
   __setSyncGitStreamForTests(async (gitRoot, args, opts) => {
-    if (args[0] === 'log') { groups.push(args.length); await new Promise(resolve => setTimeout(resolve, 300)); }
-    return hardenedGitStream(gitRoot, args, opts);
+    if (args[0] !== 'log') return hardenedGitStream(gitRoot, args, opts);
+    groups.push(args.length);
+    const result = await hardenedGitStream(gitRoot, args, { ...opts, timeoutMs: 10_000 });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    return result;
   });
   const paths = ['notes/a.md', ...Array.from({ length: 100 }, (_, i) => `notes/other-${i}.md`)];
   const read = await pathBlobHistories(root, head, paths, 5, undefined, { deadline: Date.now() + 100 });
@@ -98,3 +112,36 @@ test('a path listed twice still ends its group\'s walk early, and a recurring bl
   expect((await pathBlobHistories(root, head, ['notes/a.md'], 5)).get('notes/a.md')).toEqual([blobs[3], blobs[2], blobs[1]]);
   expect(stoppedEarly).toBe(false);
 });
+
+const note = (slug: string, body: string) => `---\ntype: concept\ntitle: ${slug}\n---\n\n${body}\n`;
+const OPTS = { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true };
+
+for (const backend of testBackends()) {
+  const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+  const coordinated = (engine: BrainEngine, sql: string, params: unknown[] = []) => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(sql, params), TEST_WRITE_ATTRIBUTION));
+  const holds = async (engine: BrainEngine) => (await engine.executeRaw<{ path: string; unread: string | null }>(
+    "SELECT completed_keys->0->>'path' AS path, completed_keys->0->'meta'->>'history_unread' AS unread FROM op_checkpoints WHERE op='sync-hold' AND completed_keys->0->>'code'='file_drift' ORDER BY 1"));
+
+  test(`[${backend}] a held note whose history read was cut short is screened again by the next sync, with no retry-held`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    // An older gbrain imported the page: no import record and a revision no sync request wrote, still holding the first commit's body.
+    await coordinated(engine, "DELETE FROM op_checkpoints WHERE op='sync-import-provenance'");
+    await coordinated(engine, `UPDATE pages SET knowledge_revision = $1::uuid, revision_write_request_id = NULL, updated_at = now() - interval '1 hour'
+      WHERE source_id='default' AND slug='notes/a'`, [randomUUID()]);
+    writeFileSync(join(root, 'notes/a.md'), note('notes/a', 'A Git edit.')); git(root, 'commit', '-qam', 'edit');
+    await coordinated(engine, "UPDATE sources SET last_commit='0123456789abcdef0123456789abcdef01234567' WHERE id='default'");
+    __setSyncGitStreamForTests(async (gitRoot, args, opts) => args[0] === 'log' ? { ok: false, reason: 'timeout' } : hardenedGitStream(gitRoot, args, opts));
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual([{ path: 'notes/a.md', unread: 'true' }]);
+
+    __setSyncGitStreamForTests();
+    await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual([]);
+    const [page] = await engine.executeRaw<{ t: string }>("SELECT compiled_truth AS t FROM pages WHERE source_id='default' AND slug='notes/a'");
+    expect(page!.t).toContain('A Git edit.');
+  }, { databaseUrl, setup: ({ root }) => {
+    mkdirSync(join(root, 'notes'), { recursive: true }); git(root, 'init', '-q');
+    writeFileSync(join(root, 'notes/a.md'), note('notes/a', 'The committed body.'));
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'notes');
+  } }), 240_000);
+}
