@@ -68,6 +68,7 @@ pub mod keyword;
 pub mod large_page;
 pub mod link_queries;
 pub mod memory_mutation_reads;
+pub mod moved_page_reads;
 pub mod ontology;
 pub mod page_body;
 pub mod page_embedding_budget;

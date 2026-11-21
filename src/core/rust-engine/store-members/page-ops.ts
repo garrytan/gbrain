@@ -3,7 +3,9 @@
  *
  * Served: readPageSnapshotsBatch, findDuplicatePage, findDuplicatePages, deletePages, purgeDeletedPages, resolveSlugsByPaths,
  * softDeletePages, findPages, countPagesBy, getAllSlugs, listAllPageRefs, listPrefixSampledPages, listCorpusSample, bumpPageRetrievals,
- * the atoms-restore reads listRestorableAtoms and countKeptAtomRetirements (page_ops/atom_restore.rs),
+ * the atoms-restore reads listRestorableAtoms and countKeptAtomRetirements (page_ops/atom_restore.rs), the moved-pages reads
+ * listLivePagesBySourcePaths, listLivePagesByFileName, listLivePagesSharingFrontmatterId, hasSegmentedHistory and
+ * readLivePagesByIds (moved_page_reads.rs),
  * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, readAdmittedPageRefs,
  * readPageSynopses, readSeedTitleSlugs, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
@@ -23,6 +25,7 @@ import { pickCanonicalOrigin } from '../../persistence/origin-guard.ts';
 import { segmentedRevertRefusal } from '../../page-state/versions.ts';
 import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadPolicy, PageReadScope } from '../../types.ts';
 import type { RestorableAtomRow } from '../../engine-sql/atom-restore-reads.ts';
+import type { MovedPageRow } from '../../engine-sql/moved-page-reads.ts';
 import type { PageRefRow, RelationalPageRow } from '../../engine-sql/relational-reads.ts';
 import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
@@ -353,4 +356,37 @@ export const listRestorableAtoms: StoreMember<[sourceIds: readonly string[], ato
 export const countKeptAtomRetirements: StoreMember<[sourceIds: readonly string[]], { origin_gone: number; replaced: number; older_generation: number }> = async (brain, sourceIds) => {
   const row: { origin_gone: number; replaced: number; older_generation: number } = await storeCall({ member: 'countKeptAtomRetirements' }, () => brain.countKeptAtomRetirements([...sourceIds]));
   return { origin_gone: Number(row.origin_gone), replaced: Number(row.replaced), older_generation: Number(row.older_generation) };
+};
+
+function wholeNumber(member: string, what: string, value: number): void {
+  if (!Number.isSafeInteger(value)) refuseMember(member, `${what} that is not an integer`);
+}
+
+const movedRow = (r: MovedPageRow): MovedPageRow => ({ id: Number(r.id), slug: r.slug, revision: String(r.revision), source_path: r.source_path ?? null });
+
+export const listLivePagesBySourcePaths: StoreMember<[sourceId: string, excludeId: number, paths: readonly string[]], MovedPageRow[]> = async (brain, sourceId, excludeId, paths) => {
+  wholeNumber('listLivePagesBySourcePaths', 'a page id', excludeId);
+  const rows: MovedPageRow[] = await storeCall({ member: 'listLivePagesBySourcePaths', sourceId }, () => brain.listLivePagesBySourcePaths(sourceId, excludeId, [...paths]));
+  return rows.map(movedRow);
+};
+
+export const listLivePagesByFileName: StoreMember<[sourceId: string, excludeId: number, name: string], Array<{ slug: string; source_path: string }>> = (brain, sourceId, excludeId, name) => {
+  wholeNumber('listLivePagesByFileName', 'a page id', excludeId);
+  return storeCall({ member: 'listLivePagesByFileName', sourceId }, () => brain.listLivePagesByFileName(sourceId, excludeId, name));
+};
+
+export const listLivePagesSharingFrontmatterId: StoreMember<[sourceId: string, pageId: number], string[]> = (brain, sourceId, pageId) => {
+  wholeNumber('listLivePagesSharingFrontmatterId', 'a page id', pageId);
+  return storeCall({ member: 'listLivePagesSharingFrontmatterId', sourceId }, () => brain.listLivePagesSharingFrontmatterId(sourceId, pageId));
+};
+
+export const hasSegmentedHistory: StoreMember<[pageId: number], boolean> = (brain, pageId) => {
+  wholeNumber('hasSegmentedHistory', 'a page id', pageId);
+  return storeCall({ member: 'hasSegmentedHistory' }, () => brain.hasSegmentedHistory(pageId));
+};
+
+export const readLivePagesByIds: StoreMember<[sourceId: string, ids: readonly number[]], MovedPageRow[]> = async (brain, sourceId, ids) => {
+  for (const id of ids) wholeNumber('readLivePagesByIds', 'a page id', id);
+  const rows: MovedPageRow[] = await storeCall({ member: 'readLivePagesByIds', sourceId }, () => brain.readLivePagesByIds(sourceId, [...ids]));
+  return rows.map(movedRow);
 };

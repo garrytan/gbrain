@@ -72,6 +72,7 @@ mod keyword;
 mod link_queries;
 mod link_temporal;
 mod memory_mutation_reads;
+mod moved_page_reads;
 mod ontology;
 mod page_body;
 mod page_embedding_budget;

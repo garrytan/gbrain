@@ -17,6 +17,10 @@
  *    SQL arms, and the Rust engine refuses it by name ("repair accepted-takes page write").
  *    atoms-restore lists the restorable re-extraction retirements (and counts the kept ones by reason) the same way on
  *    every arm, and its unmanaged apply restores the atom live without its retirement stamp on every arm.
+ *    moved-pages, on a brain this host owns with a real Git history: a ghost page whose file was deleted while another
+ *    file of the same name holds other content is held (`first_blob_differs`) the same way on every arm; a ghost page
+ *    whose file a commit moved is listed as moved on the SQL arms, and the Rust engine refuses the verdict's access
+ *    comparison by name ("repair moved-pages access check": the privacy predicate has no typed member).
  *  - Regression: these kinds read and rewrite `page_versions` through executeRaw, so a Rust brain failed on a generic
  *    executeRaw refusal that named no step.
  *  - Why existing coverage misses it: test/purged-change-reasons-repair-gst2886.test.ts,
@@ -39,6 +43,8 @@ import { resolveRepairScope, type RepairKind, type RepairResult } from '../../sr
 import { repairRunner } from '../../src/core/repair/registry.ts';
 import { renderFactsTable } from '../../src/core/facts-fence.ts';
 import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
+import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { renderTakesFence, type ParsedTake } from '../../src/core/takes-fence.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -49,13 +55,13 @@ function shape(result: RepairResult, root?: string) {
   const { scope, ...rest } = result;
   let text = JSON.stringify({ ...rest, scope: { brain_id: typeof scope.brain_id, source_ids: scope.source_ids } })
     .replace(/\b[0-9a-f]{64}\b/g, '<sha256>').replace(/\b[0-9a-f]{40}\b/g, '<sha1>')
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, '<uuid>');
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, '<uuid>').replace(/\b[0-9a-f]{12}\b/g, '<commit>');
   if (root) text = text.split(root).join('<root>');
-  // Postgres sequences keep counting across cases (harness reset), so a fact or version id is not comparable; nor is a
-  // request's completion time.
+  // Postgres sequences keep counting across cases (harness reset), so a page, fact or version id is not comparable; nor
+  // is a request's completion time or a commit id.
   text = text.replace(/#\d+/g, '#<id>').replace(/"version_id":\d+/g, '"version_id":"<id>"').replace(/version \d+/g, 'version <id>')
     .replace(/@v\d+/g, '@v<id>').replace(/restore_version:\d+/g, 'restore_version:<id>')
-    .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z/g, '<time>');
+    .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z/g, '<time>').replace(/"page_id":\d+/g, '"page_id":"<id>"').replace(/\(id \d+/g, '(id <id>');
   return JSON.parse(text);
 }
 
@@ -237,6 +243,39 @@ async function seedRetiredAtoms(engine: BrainEngine) {
   await put('atoms/live', 'atom', { source_slug: 'notes/other-origin', source_hash: 'h4' });
 }
 
+
+// ---- moved-pages ----
+
+const noteBody = (title: string) => `---\ntype: note\ntitle: ${title}\n---\n\n${title} body.\n`;
+
+/** A checkout attached to `default`, this host its registered writer and owner; `steps` commit files in order. */
+async function ownedCheckout(engine: BrainEngine, dir: string): Promise<string> {
+  const root = join(dir, 'brain');
+  mkdirSync(join(root, 'notes'), { recursive: true });
+  git(root, 'init', '-q', '-b', 'main');
+  await engine.attachSourcePath('default', root);
+  await registerLocalWriter(engine, 'cli');
+  await claimWorktree(engine, 'default', root);
+  return root;
+}
+
+function commitAll(root: string, message: string) {
+  git(root, 'add', '-A');
+  git(root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-q', '-m', message);
+}
+
+async function putNotePage(engine: BrainEngine, slug: string, title: string, sourcePath: string) {
+  await engine.putPage(slug, { type: 'note', title, compiled_truth: `${title} body.`, timeline: '', source_path: sourcePath }, { sourceId: 'default' });
+}
+
+/** Twelve file-backed pages keep the source's file ratio over the ghost floor. */
+async function keepPages(engine: BrainEngine, root: string) {
+  for (let i = 0; i < 12; i++) {
+    writeFileSync(join(root, 'notes', `keep-${i}.md`), noteBody(`notes/keep-${i}`));
+    await putNotePage(engine, `notes/keep-${i}`, `notes/keep-${i}`, `notes/keep-${i}.md`);
+  }
+}
+
 describe('engine parity: the history repair kinds of batch 6a', () => {
   parityTest('purged-change-reasons previews the leaked reasons and the apply purges the approved ones on every arm', {
     methods: ['putPage', 'createVersion', 'attachSourcePath', 'writeReasonPurgeTombstones', 'listVersionsByChangeReason', 'replaceVersionChangeReasons', 'getVersions'],
@@ -378,5 +417,45 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
     const restored = await engine.getPage('atoms/restorable', { sourceId: 'default' });
     expect(restored?.frontmatter).toEqual({ source_slug: 'notes/origin', source_hash: 'pending:h1' });
     return { listed, kept, otherSource, run, restored: { slug: restored?.slug, frontmatter: restored?.frontmatter } };
+  }));
+  parityTest('moved-pages holds a deleted file whose name another file reuses the same way on every arm', {
+    methods: ['putPage', 'attachSourcePath', 'getWorktreeBinding', 'listLivePagesByFileName'],
+    timeout: 60_000,
+  }, async (engine) => withDir(async (dir) => {
+    const root = await ownedCheckout(engine, dir);
+    await keepPages(engine, root);
+    mkdirSync(join(root, 'notes', 'archive'), { recursive: true });
+    writeFileSync(join(root, 'notes', 'plan.md'), noteBody('Plan'));
+    await putNotePage(engine, 'notes/plan', 'Plan', 'notes/plan.md');
+    commitAll(root, 'seed');
+    rmSync(join(root, 'notes', 'plan.md'));
+    writeFileSync(join(root, 'notes', 'archive', 'plan.md'), noteBody('Another plan'));
+    await putNotePage(engine, 'notes/archive/plan', 'Another plan', 'notes/archive/plan.md');
+    commitAll(root, 'delete the plan, add another');
+    const previewed = shape(await runKind(engine, 'moved-pages', false), root);
+    expect(JSON.stringify(previewed)).toContain('first_blob_differs');
+    return previewed;
+  }));
+
+  parityTest('moved-pages lists a moved file on the SQL arms, and the Rust engine refuses the access comparison by name', {
+    methods: ['putPage', 'attachSourcePath', 'getWorktreeBinding', 'listLivePagesBySourcePaths', 'hasSegmentedHistory'],
+    requires: 'raw_sql', timeout: 60_000,
+  }, async (engine, backend) => withDir(async (dir) => {
+    const root = await ownedCheckout(engine, dir);
+    await keepPages(engine, root);
+    writeFileSync(join(root, 'notes', 'old.md'), noteBody('Moved'));
+    await putNotePage(engine, 'notes/old', 'Moved', 'notes/old.md');
+    commitAll(root, 'seed');
+    git(root, 'mv', 'notes/old.md', 'notes/new.md');
+    await putNotePage(engine, 'notes/new', 'Moved', 'notes/new.md');
+    commitAll(root, 'move');
+    try {
+      const previewed = shape(await runKind(engine, 'moved-pages', false), root);
+      expect(previewed.affected).toBe(1);
+      return previewed;
+    } catch (err) {
+      if (backend === 'rust') expect(refusalText(err)).toContain('repair moved-pages access check');
+      throw err;
+    }
   }));
 });

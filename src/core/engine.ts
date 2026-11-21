@@ -1853,6 +1853,16 @@ export interface BrainEngine {
   listRestorableAtoms(sourceIds: readonly string[], atomId: number | null): Promise<import('./engine-sql/atom-restore-reads.ts').RestorableAtomRow[]>;
   /** The re-extraction retirements of the sources the restore rule keeps, by reason. */
   countKeptAtomRetirements(sourceIds: readonly string[]): Promise<{ origin_gone: number; replaced: number; older_generation: number }>;
+  /** moved-pages: the live pages of a source (but one) whose recorded path is one of `paths`, by id (engine-sql/moved-page-reads.ts). */
+  listLivePagesBySourcePaths(sourceId: string, excludeId: number, paths: readonly string[]): Promise<import('./engine-sql/moved-page-reads.ts').MovedPageRow[]>;
+  /** At most five live pages of a source (but one) whose recorded path is `name` or ends in `/name`, by slug. */
+  listLivePagesByFileName(sourceId: string, excludeId: number, name: string): Promise<Array<{ slug: string; source_path: string }>>;
+  /** At most five other live pages of a source sharing page `pageId`'s frontmatter `id`, by slug. */
+  listLivePagesSharingFrontmatterId(sourceId: string, pageId: number): Promise<string[]>;
+  /** Whether the page or one of its versions is stored in segments. */
+  hasSegmentedHistory(pageId: number): Promise<boolean>;
+  /** The named live pages of a source with their revision and recorded path. */
+  readLivePagesByIds(sourceId: string, ids: readonly number[]): Promise<import('./engine-sql/moved-page-reads.ts').MovedPageRow[]>;
 
   // Search
   searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
