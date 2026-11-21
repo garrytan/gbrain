@@ -1,0 +1,8 @@
+**The job-status, last-autopilot-run, embedding-column, held-fence and config reads now sit behind engine members, and the job-status reads run on the opt-in Rust engine.**
+
+### Changed
+- The queries of seventeen reads now live in `src/core/engine-sql/` (`jobs-status.ts`, `embedding-catalog.ts`, `fence-holds.ts`) and are called through new `BrainEngine` members on PGLite and Postgres: the last autopilot runs, the job counts by status, the waiting depth per queue, the last completed job, the waiting-TTL cancellations, the scope behind a returned job, the recently completed and recently failed jobs, the queued page length of the facts drain, the per-source job counts and embed-backfill state, the vector column width and stored embedding identity, the stored-vector probe, the multimodal coverage count, and the held fence rows.
+- The callers (`gbrain status`, `gbrain jobs stats`, the facts drain, the source health and sync status reports, the embedding doctor checks, `gbrain init`, `gbrain embeddings`, and the fence reader) use those members. Four single-key config reads use the engine's keyed config read through `src/core/config-values.ts`.
+- On the Rust engine the eleven job-status members work on the same queue table the Rust addon serves. The embedding-catalog and held-fence members refuse there as raw SQL until its store wiring lands, instead of guessing.
+- Some statements carry a tie-break or a bound parameter where the old text had none (for example a job-count order, and a window in seconds instead of a fixed interval). The changes and the tests that prove the old answers survive are listed in the pull request notes.
+- No write, schema, privacy or visibility filter moved. The memory-mutation reads stay where they are until a later slice.
