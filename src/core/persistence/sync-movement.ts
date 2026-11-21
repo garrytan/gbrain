@@ -50,6 +50,7 @@ import { claimStateOf, type ClaimState } from './claim-phase.ts';
 import { readPreparationPolicy } from './switches.ts';
 import { listHostConsumers } from './consumer-heartbeat.ts';
 import type { DrainHolder } from './sync-lease.ts';
+import { assertServesStatusRead, UNTYPED_STATUS_READS } from './untyped-status-reads.ts';
 
 export type MovementState = 'moving' | 'held' | 'parked' | 'not_moving' | 'nothing_pending' | 'unknown';
 /** #6781: why a source's movement is `unknown`; `error` is the failed read's message, bounded. */
@@ -137,6 +138,7 @@ export async function liveSyncJob(engine: BrainEngine, sourceId: string, liveHol
 
 /** The movement of every active managed source (or of `sourceIds`), one bounded read each; sources without a binding are omitted. */
 export async function readSourceMovement(engine: BrainEngine, opts: { sourceIds?: string[]; now?: number } = {}): Promise<SourceMovement[]> {
+  assertServesStatusRead(engine, UNTYPED_STATUS_READS.sourceMovement);
   const now = opts.now ?? Date.now();
   const bindings = await engine.executeRaw<BindingRow>(`SELECT b.source_id, b.worktree_id::text AS worktree_id, b.source_incarnation::text AS source_incarnation, w.owner_host_id::text AS owner_host_id
     FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
