@@ -733,8 +733,8 @@ store write that answers what the SQL member answers:
   seal and embedding signature cleared; a changed body takes a new knowledge revision, as the revision trigger does.
 
 `blankPurgeCoreEditNotices` answers 0 in TypeScript: the store keeps no core edit notices (the core guard writes them
-through `executeRaw`, which this engine refuses). `rewritePageBodies` versions an inline page through `createVersion`
-with the preimage it read, an option the Rust `createVersion` member still refuses, so the rewrite stops there.
+through `executeRaw`, which this engine refuses). `rewritePageBodies` versions an inline page with createPageVersion
+(page-state/versions.ts), whose `INSERT INTO page_versions` runs through `executeRaw`, so the rewrite stops there.
 `deletePurgeTakeProposals` and the segmented-storage writes (`abortPurgedStagings`, `deletePurgedStagingParts`,
 `deletePageViewDigests`, `deleteUnreferencedPurgedTexts`) stay refused.
 
