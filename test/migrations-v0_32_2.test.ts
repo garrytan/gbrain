@@ -19,6 +19,7 @@ import { execFileSync } from 'node:child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { v0_32_2, __setTestEngineOverride, __testing } from '../src/commands/migrations/v0_32_2.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
+import { planUnfencedFacts } from '../src/core/facts/unfenced-facts.ts';
 import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, upsertFactRow, type ParsedFact } from '../src/core/facts-fence.ts';
 
 let engine: PGLiteEngine;
@@ -242,6 +243,33 @@ describe('phaseBFenceFacts — happy path backfill', () => {
     );
     expect(rows.rows[0]).toMatchObject({ entity_slug: 'people/alice', row_num: 1 });
     expect(rows.rows[1]).toMatchObject({ entity_slug: null, row_num: null });
+  });
+
+  // The cycle plans on every pass, and NULL-entity rows never fence, so the plan counts them in SQL instead of
+  // downloading their claim text each time (on a hosted brain that re-read was a steady egress cost).
+  test('plan counts NULL-entity rows without fetching them', async () => {
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Fenceable' });
+    await seedLegacyFact({ entity_slug: null, fact: 'Unfenceable one' });
+    await seedLegacyFact({ entity_slug: null, fact: 'Unfenceable two' });
+
+    const fetched: Array<{ entity_slug?: string | null }> = [];
+    const original = engine.executeRaw;
+    // A shadowing instance property, deleted afterwards: re-assigning a bound copy would pin later
+    // transaction-scoped calls to the base engine and deadlock PGLite's single connection.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (engine as any).executeRaw = async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
+      const rows = await original.call(this, sql, params);
+      if (/FROM facts f/.test(sql)) fetched.push(...(rows as Array<{ entity_slug?: string | null }>));
+      return rows;
+    };
+    try {
+      const plan = await planUnfencedFacts(engine);
+      expect(plan.outcome).toMatchObject({ scanned: 3, skipped_no_entity: 2 });
+      expect(fetched.map(r => r.entity_slug)).toEqual(['people/alice']);
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (engine as any).executeRaw;
+    }
   });
 
   test('skips when source has no local_path', async () => {

@@ -300,6 +300,13 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   const mirrors = new Set(managed ? [] : sources.filter(s => parseSourceConfig(s.config).mirror_read_only === true).map(s => s.id));
   const localPathById = new Map(sources.map(s => [s.id, s.local_path] as const));
   const archived = new Set(sources.filter(s => s.archived).map(s => s.id));
+  const unfenced = `row_num IS NULL AND expired_at IS NULL AND dimension IS NULL
+        ${opts.sourceId !== undefined ? 'AND source_id = $1' : ''}`;
+  const params = opts.sourceId !== undefined ? [opts.sourceId] : [];
+  // A row with no entity slug can never be fenced, and the cycle runs this plan on every pass, so those rows are
+  // counted in the database instead of downloaded each time (they were ~98% of a long-lived brain's unfenced rows).
+  const [noEntity] = await engine.executeRaw<{ n: number | string }>(
+    `SELECT count(*)::int AS n FROM facts WHERE ${unfenced} AND entity_slug IS NULL`, params);
   const rows = await engine.executeRaw<UnfencedFactRow>(
     `SELECT id, source_id, entity_slug, fact, kind, visibility, notability,
             context, valid_from, valid_until, source, confidence,
@@ -307,18 +314,17 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
             EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id
               AND p.slug = f.entity_slug AND p.deleted_at IS NULL) AS page_exists
        FROM facts f
-      WHERE row_num IS NULL AND expired_at IS NULL AND dimension IS NULL
-        ${opts.sourceId !== undefined ? 'AND source_id = $1' : ''}
+      WHERE ${unfenced} AND entity_slug IS NOT NULL
       ORDER BY source_id, entity_slug, id`,
-    opts.sourceId !== undefined ? [opts.sourceId] : [],
+    params,
   );
+  const skippedNoEntity = Number(noEntity?.n ?? 0);
   const outcome: UnfencedFactsOutcome = {
-    scanned: rows.length, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
+    scanned: rows.length + skippedNoEntity, fenced: 0, skipped_no_entity: skippedNoEntity, skipped_no_local_path: 0, skipped_no_page: 0,
     skipped_archived: 0, skipped_url_clone: 0, skipped_mirror_read_only: 0, pages_touched: 0, failed_pages: [], write_errors: 0, fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
   };
   const groups = new Map<string, UnfencedFactRow[]>();
   for (const row of rows) {
-    if (row.entity_slug === null) { outcome.skipped_no_entity += 1; continue; }
     // A managed brain publishes through the source's maintenance authority,
     // which an archived source does not grant; it never blocks the others.
     if (managed && archived.has(row.source_id)) { outcome.skipped_archived += 1; continue; }
