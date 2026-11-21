@@ -99,6 +99,9 @@ test('inline_fence_pages and segment_fence_rows send the old shortlist statement
   });
 });
 
+// Main join (da99c637a7): the cli-members line's caller (withdrawal-discovery.ts:85-86 at de72811022) compared and
+// sorted the region with `m.region COLLATE "C"`; the join re-applied that byte order to main's member, so the pin
+// carries it too.
 test('split_fence_slots sends the old split fence statement', async () => {
   const { engine, last } = recordingEngine();
   await engine.readWithdrawalDiscovery({ kind: 'split_fence_slots', sourceId: 'src-a', subjects: ['notes/a'], after: [5, 'truth', 12], limit: 128 });
@@ -107,16 +110,18 @@ test('split_fence_slots sends the old split fence statement', async () => {
         (s->>'open_start')::bigint::text AS open_start,sum((s->>'end')::bigint-(s->>'start')::bigint)::text AS bytes
       FROM page_body_manifest m JOIN pages p ON p.id=m.page_id CROSS JOIN LATERAL jsonb_array_elements(m.facts_slots) s
       WHERE p.source_id=$1 AND p.body_storage='segmented' AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.facts_slots<>'[]'::jsonb AND s ? 'open_start'
-        AND ($2::text[] IS NULL OR p.slug=ANY($2::text[])) AND (m.page_id,m.region,(s->>'open_start')::bigint)>($3::int,$4::text,$5::bigint)
-      GROUP BY m.page_id,p.slug,m.region,(s->>'open_start')::bigint ORDER BY m.page_id,m.region,(s->>'open_start')::bigint LIMIT $6`,
+        AND ($2::text[] IS NULL OR p.slug=ANY($2::text[])) AND (m.page_id,m.region COLLATE "C",(s->>'open_start')::bigint)>($3::int,$4::text,$5::bigint)
+      GROUP BY m.page_id,p.slug,m.region,(s->>'open_start')::bigint ORDER BY m.page_id,m.region COLLATE "C",(s->>'open_start')::bigint LIMIT $6`,
     params: ['src-a', ['notes/a'], 5, 'truth', 12, 128],
   });
 });
 
+// Main join (da99c637a7): the cli-members line's sample_slugs caller (withdrawal-discovery.ts:26 at de72811022) sorted
+// `ORDER BY slug COLLATE "C" LIMIT 20`; the join re-applied that byte order to main's member. target_pages is unchanged.
 test('target_pages and sample_slugs send the old page reads', async () => {
   const { engine, last } = recordingEngine();
   await engine.readWithdrawalDiscovery({ kind: 'target_pages', sourceId: 'src-a', ids: [3, 1] });
   expect(last()).toEqual({ text: 'SELECT slug,id AS page_id,knowledge_revision AS revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[])', params: ['src-a', [3, 1]] });
   await engine.readWithdrawalDiscovery({ kind: 'sample_slugs', sourceId: 'src-a', ids: [3, 1] });
-  expect(last()).toEqual({ text: 'SELECT slug FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug LIMIT 20', params: ['src-a', [3, 1]] });
+  expect(last()).toEqual({ text: 'SELECT slug FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug COLLATE "C" LIMIT 20', params: ['src-a', [3, 1]] });
 });

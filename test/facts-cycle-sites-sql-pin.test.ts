@@ -90,6 +90,8 @@ const PINS: Pin[] = [
     params: [['src-a', 'canon']],
   },
   {
+    // Main join (da99c637a7): the cli-members line's caller (phantom-redirect.ts:788 at de72811022) compared and sorted
+    // with `slug COLLATE "C"`; the join re-applied that byte order to main's member, so the pin carries it too.
     from: 'src/core/cycle/phantom-redirect.ts:782 runPhantomRedirectPass',
     case: { method: 'listRootPageSlugsAfter', variant: 'default', run: async e => { await e.listRootPageSlugsAfter('src-a', 51, ['held'], 'after'); } },
     texts: [`SELECT slug FROM pages
@@ -97,8 +99,8 @@ const PINS: Pin[] = [
          AND deleted_at IS NULL
          AND slug NOT LIKE '%/%'
          AND slug <> ALL($3::text[])
-         AND slug > $4
-       ORDER BY slug ASC
+         AND slug COLLATE "C" > $4
+       ORDER BY slug COLLATE "C" ASC
        LIMIT $2`],
     params: [['src-a', 51, ['held'], 'after']],
   },
@@ -230,22 +232,26 @@ const PINS: Pin[] = [
     params: [['src-a']],
   },
   {
+    // Main join (da99c637a7): the cli-members line's caller (facts-home.ts:79 at de72811022) sorted
+    // `f.entity_slug COLLATE "C" NULLS FIRST, f.id`; the join re-applied that byte order to main's member.
     from: 'src/core/facts/facts-home.ts:77 scanFactsHome',
     case: { method: 'scanUnfencedFactRows', variant: 'default', run: async e => { await e.scanUnfencedFactRows('src-a'); } },
     texts: [`SELECT f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
   f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, f.dimension, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists,
     EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NOT NULL) AS page_deleted FROM facts f
-    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug NULLS FIRST, f.id`],
+    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug COLLATE "C" NULLS FIRST, f.id`],
     params: [['src-a']],
   },
   {
+    // Main join (da99c637a7): the cli-members line's caller (facts-home.ts:97 at de72811022) sorted
+    // `f.entity_slug COLLATE "C", f.id`; the join re-applied that byte order to main's member.
     from: 'src/core/facts/facts-home.ts:94 scanFactsHome',
     case: { method: 'listHeldFactRows', variant: 'default', run: async e => { await e.listHeldFactRows('src-a', '30'); } },
     texts: [`SELECT f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
   f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists, f.source_markdown_slug AS from_slug,
       to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS held_since, f.created_at < now() - ($2 || ' days')::interval AS old
      FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND (hp.slug = 'memory/unattributed' OR hp.slug LIKE '%/memory/unattributed')) AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
-      AND f.entity_slug IS NOT NULL AND NOT (f.entity_slug = 'memory/unattributed' OR f.entity_slug LIKE '%/memory/unattributed') ORDER BY f.entity_slug, f.id`],
+      AND f.entity_slug IS NOT NULL AND NOT (f.entity_slug = 'memory/unattributed' OR f.entity_slug LIKE '%/memory/unattributed') ORDER BY f.entity_slug COLLATE "C", f.id`],
     params: [['src-a', '30']],
   },
   {

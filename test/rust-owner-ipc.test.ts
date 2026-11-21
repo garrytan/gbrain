@@ -747,8 +747,10 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
       const calls: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
         ['executeRaw', e => e.executeRaw('SELECT 1')],
         // transaction is served in process now; a client refuses it with the owner-socket refusal (tested above).
-        // A member the Rust store does not serve (capability facts: the store keeps no page_facts_reconcile table).
-        ['listFactsReconcileBacklog', e => e.listFactsReconcileBacklog()],
+        // A member the Rust store does not serve (capability facts). Main join (da99c637a7): listFactsReconcileBacklog,
+        // the cli-members line's example, is served since the join took rust-engine/main's page_facts_reconcile store
+        // reads, and main's example lockOAuthClient is served by the cli-members line's job queue members.
+        ['readFactTableCatalog', e => e.readFactTableCatalog()],
       ];
       for (const [member, call] of calls) {
         expect(member in STORE_MEMBERS).toBe(false);
