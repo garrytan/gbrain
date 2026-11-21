@@ -7,7 +7,8 @@
  *     frontmatter `company` / `role` or a `Company:` / `Job title:` fact another writer left there (never this
  *     source's own rows, so a card's value is never echoed back to it); two different values fill nothing;
  *   - a confirmed email or phone is added beside the card's own: one from a Google Contacts page that shares an exact
- *     email or phone with that card alone, or from a fact on the linked person page the owner confirmed, curated or
+ *     email or phone with that card alone (and the card is not linked to two people), or from a still-valid fact on the
+ *     linked person page that is wholly `Email: <address>` or `Phone: <number>` and that the owner confirmed, curated or
  *     stated themselves (`content_origin user_said`); never a value another card holds;
  *   - only with `apple_contacts.enrich.create_cards` = true (default false: the owner is shrinking the address book),
  *     a new card, at most 10 a run (the helper allows 50 a day), for a Google Contacts entry no card shares a value with
@@ -57,8 +58,8 @@ const json = (v: unknown): Record<string, unknown> => {
   return v && typeof v === 'object' ? v as Record<string, unknown> : {};
 };
 const sha = (parts: string[], n: number) => createHash('sha256').update(parts.join('\u0000')).digest('hex').slice(0, n);
-const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
-const PHONE_RE = /\+?\d[\d ().-]{5,}\d/g;
+const EMAIL_RE = /^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+const PHONE_RE = /^\+?[\d ().-]{7,}$/;
 
 /** Every enrichment change for this source, in send order (fills, then added values, then new cards), within the caps. */
 export async function proposeEnrichment(engine: BrainEngine, sourceId: string, countryCode: string): Promise<EnrichProposal[]> {
@@ -96,7 +97,7 @@ export async function proposeEnrichment(engine: BrainEngine, sourceId: string, c
   /** The company and job title a person page gives, each only when every source of it agrees. */
   const personFields = async (person: { ref: Ref; fm: Record<string, unknown> }) => {
     const facts = await engine.executeRaw<{ fact: string; trust_tier: string | null; write_origin: unknown }>(
-      `SELECT fact, trust_tier, write_origin FROM facts WHERE source_id=$1 AND entity_slug=$2 AND expired_at IS NULL AND source NOT LIKE 'apple-contacts:%' AND source <> $3`,
+      `SELECT fact, trust_tier, write_origin FROM facts WHERE source_id=$1 AND entity_slug=$2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND source NOT LIKE 'apple-contacts:%' AND source <> $3`,
       [person.ref.source_id, person.ref.slug, personFactSource(sourceId)]);
     const one = (values: Array<string | null>) => { const set = new Set(values.filter((v): v is string => !!v)); return set.size === 1 ? [...set][0]! : null; };
     const claim = (prefix: string) => facts.map(f => f.fact.startsWith(prefix) ? text(f.fact.slice(prefix.length)) : null);
@@ -104,7 +105,8 @@ export async function proposeEnrichment(engine: BrainEngine, sourceId: string, c
       || (f.trust_tier === 'agent_written' && json(f.write_origin).content_origin === USER_SAID_ORIGIN_MARKER));
     return {
       company: one([text(person.fm.company), ...claim('Company: ')]), jobTitle: one([text(person.fm.role), ...claim('Job title: ')]),
-      emails: confirmed.flatMap(f => f.fact.match(EMAIL_RE) ?? []), phones: confirmed.flatMap(f => f.fact.match(PHONE_RE) ?? []),
+      emails: confirmed.map(f => f.fact.startsWith('Email: ') ? text(f.fact.slice(7)) : null).filter((v): v is string => !!v && EMAIL_RE.test(v)),
+      phones: confirmed.map(f => f.fact.startsWith('Phone: ') ? text(f.fact.slice(7)) : null).filter((v): v is string => !!v && PHONE_RE.test(v)),
     };
   };
 
@@ -131,6 +133,7 @@ export async function proposeEnrichment(engine: BrainEngine, sourceId: string, c
     const owners = new Set(keysOf(emails, phones).flatMap(k => [...holders.get(k) ?? []]));
     if (owners.size === 1) {
       const [card] = owners;
+      if ((personOf.get(cards.find(c => c.id === card)!.pageId) ?? []).length > 1) continue;
       for (const e of emails) addValue(card!, 'emails', e, ref);
       for (const p of phones) addValue(card!, 'phones', p, ref);
       continue;

@@ -17,7 +17,8 @@ import { options } from './helpers/connector-fixture.ts';
 import { ContactsStub, STUB_TOKEN, type StubContact } from './helpers/apple-contacts-stub.ts';
 import { runAppleContactsSync } from '../src/core/apple-contacts/apple-contacts-source.ts';
 import { parseAppleContactsSourceConfig } from '../src/core/apple-contacts/source-config.ts';
-import { readEnrichRecord } from '../src/core/apple-contacts/enrich.ts';
+import { proposeEnrichment, readEnrichRecord } from '../src/core/apple-contacts/enrich.ts';
+import { APPLE_CONTACT_ID_KEY } from '../src/core/apple-contacts/types.ts';
 import { appleContactsError } from '../src/core/apple/contacts-client.ts';
 import type { ContactsWriteOpts } from '../src/core/apple/contacts-write-client.ts';
 import { runAppleContacts } from '../src/commands/apple-contacts.ts';
@@ -65,7 +66,7 @@ beforeAll(async () => {
   await person('people/twin-two', 'Twin Two', { email: 'twin@example.invalid', company: 'Twin Co' });
   await person('people/carol-example', 'Carol Example', { email: 'carol@example.invalid', company: 'Carol Co' });
   const { operationsByName } = await import('../src/core/operations.ts');
-  await operationsByName.remember!.handler(ownerCtx(), { fact: 'Her other phone is (555) 555-0123', entity: 'people/alice-example', source_id: 'default',
+  await operationsByName.remember!.handler(ownerCtx(), { fact: 'Phone: (555) 555-0123', entity: 'people/alice-example', source_id: 'default',
     provenance: 'owner-note', content_origin: 'user_said', infer_entity: false });
   await operationsByName.remember!.handler(ownerCtx(true), { fact: 'An old address was alice.old@example.invalid', entity: 'people/alice-example', source_id: 'default',
     provenance: 'mail-extract', content_origin: 'inferred', infer_entity: false });
@@ -164,5 +165,22 @@ describe('apple contacts enrichment (repo-less brain)', () => {
     const dry = JSON.parse(lines[1]!) as { dry_run: boolean; changes: unknown[] };
     expect(dry.dry_run).toBe(true);
     expect(dry.changes).toHaveLength(6);
+  });
+
+  test('only a whole, still valid Email: or Phone: fact adds a value, and a card linked to two people gets nothing from Google Contacts', async () => {
+    const { operationsByName } = await import('../src/core/operations.ts');
+    for (const fact of ['Do not use mallory@example.invalid; it belongs to someone else now', 'Met on 2024-01-15 10:30', 'Phone: +1 555 555 0199']) {
+      await operationsByName.remember!.handler(ownerCtx(), { fact, entity: 'people/alice-example', source_id: 'default', provenance: 'owner-note',
+        content_origin: 'user_said', infer_entity: false });
+    }
+    await engine.executeRaw("UPDATE facts SET valid_from='1999-01-01', valid_until='2000-01-01' WHERE fact='Phone: +1 555 555 0199'");
+    const [twinCard] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND frontmatter->>$2 = $3', [sourceId, APPLE_CONTACT_ID_KEY, 'c-twin']);
+    const twins = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE source_id='default' AND slug IN ('people/twin-one','people/twin-two')");
+    for (const [source, page] of [[sourceId, twinCard!.id], ...twins.map(t => ['default', t.id] as const)] as const) {
+      await engine.executeRaw("INSERT INTO entity_identities (entity_id, source_id, page_id) VALUES ('ent-twin-example', $1, $2)", [source, page]);
+    }
+    await person('contacts/twin-only', 'Twin Only', { google_contact_id: 'people/contacts/twin-only', emails: ['twin@example.invalid', 'twin.alt@example.invalid'] }, 'google-a');
+    const adds = (await proposeEnrichment(engine, sourceId, '1')).filter(p => p.change.op === 'add_value').map(p => p.change.id + ' ' + p.change.value);
+    expect(adds.sort()).toEqual(['c-alice (555) 555-0123', 'c-alice alice.work@example.invalid']);
   });
 });
