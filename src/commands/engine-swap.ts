@@ -30,7 +30,6 @@ export function parseEngineSwapArgs(args: readonly string[]): EngineSwapArgs {
     const a = args[i]!;
     if (a === 'swap') continue;
     if (a === '--to') { out.to = args[++i]; continue; }
-    if (a.startsWith('--to=')) { out.to = a.slice(5); continue; }
     if (a === '--plan' || a === '--dry-run') { out.plan = true; continue; }
     if (a === '--json') { out.json = true; continue; }
     if (a === '--brain') { out.brain = args[++i]; continue; }
