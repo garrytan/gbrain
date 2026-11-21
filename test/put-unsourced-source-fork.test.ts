@@ -8,8 +8,9 @@
  *    sources, or only by a source outside a restricted local writer's grant, is not refused; a retry of a stored
  *    request_id keeps its receipt after the page moved elsewhere; a dry run refuses like the real put.
  * 2. Fails when: the put forks a shadow copy that an unscoped get prefers (the old behavior), the refusal text
- *    changes, a sourced put is refused, or the flip notice is silent, the refusal runs before the stored-request replay or probes sources the writer's
- *    grant does not cover.
+ *    changes, a sourced put is refused, or the flip notice is silent.
+ *    Also fails when the refusal runs before the stored-request replay, probes sources the writer's grant does not
+ *    cover, or makes a first-use dry run (no writer registered yet) fail.
  * 3. Real seams: MCP dispatch with remote=false and localSourceImplicit (the path the CLI uses), the durable write
  *    path and the real sources table, on PGLite.
  */
@@ -170,4 +171,26 @@ describe('a restricted local writer is not told about pages in sources its grant
     expect(text).not.toContain('slug_in_other_source');
     expect(text).not.toContain('lives in source vault');
   }, 120_000);
+});
+
+describe('a first-use dry run, before any local writer is registered (PGLite)', () => {
+  test('previewing an unsourced put of a new slug succeeds and writes nothing', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'pages02-first-use-'));
+    const engine = new PGLiteEngine();
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        await engine.connect({ engine: 'pglite' } as never);
+        await engine.initSchema();
+        const out = await dispatchToolCall(engine, 'put_page', { slug: 'notes/first-use-example', content: '# First use', dry_run: true },
+          { remote: false, sourceId: 'default', localSourceImplicit: true, takesHoldersAllowList: ['world'] });
+        const text = out.content.map(c => c.text).join('\n');
+        expect(out.isError, text).not.toBe(true);
+        expect(JSON.parse(text)).toMatchObject({ dry_run: true });
+        expect(await engine.readPageSnapshot('notes/first-use-example', { sourceId: 'default', includeDeleted: true })).toBeNull();
+      });
+    } finally {
+      await engine.disconnect();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 240_000);
 });

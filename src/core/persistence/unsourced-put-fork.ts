@@ -19,7 +19,8 @@
  * engine members only (listAllSources, readPageSnapshot, the local writer row).
  */
 import type { BrainEngine } from '../engine.ts';
-import { opError, type OperationContext } from '../ops/contract.ts';
+import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
+import type { LocalGrant } from '../engine-sql/persistence-state.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { validateSlug } from '../utils.ts';
 import { parseSourceConfig } from '../sources-load.ts';
@@ -63,6 +64,16 @@ export function unsourcedForkRefusal(slug: string, holder: string, target: strin
     });
 }
 
+/** The CLI writer's grant; null when this installation has no registration yet (a first-use dry run: nothing to restrict it). */
+async function localGrant(engine: BrainEngine): Promise<LocalGrant | null> {
+  try {
+    return (currentVerifiedLocalWriter() ?? await verifyLocalWriter(engine, await readLocalWriter(engine, 'cli'))).grant;
+  } catch (error) {
+    if (error instanceof OperationError && error.code === 'writer_registration_required') return null;
+    throw error;
+  }
+}
+
 /**
  * Refuses an unsourced local put that would fork a page living in exactly one other source.
  * `admitted` comes from the durable write path, after the write authority and the replay check, with whether the
@@ -74,8 +85,7 @@ export async function assertUnsourcedPutKeepsSource(ctx: OperationContext, targe
   let slug: string;
   try { slug = validateSlug(p.slug); } catch { return; } // the write path refuses a bad slug with its own message
   // An engine without persistence_journal (Rust) has no local-writer grants and no stored requests to consult.
-  const grant = hasCapability(ctx.engine, 'persistence_journal')
-    ? (currentVerifiedLocalWriter() ?? await verifyLocalWriter(ctx.engine, await readLocalWriter(ctx.engine, 'cli'))).grant : null;
+  const grant = hasCapability(ctx.engine, 'persistence_journal') ? await localGrant(ctx.engine) : null;
   const covers = (sourceId: string) => grant === null || grant.sourceIds.includes('*') || grant.sourceIds.includes(sourceId);
   if (!covers(target) || (admitted === undefined && grant?.slugPrefixes?.length)) return; // the write authority answers these
   const holder = await forkedFromSource(ctx.engine, target, slug, { targetHasRow: admitted?.targetHasRow, readable: covers });
