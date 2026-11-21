@@ -47,6 +47,8 @@
 #     (classification 'sensitive-full-database-state') and the private 0600
 #     restore inventory .gbrain/restore-detached.json, which retains detached
 #     source configs so the operator can reconnect them.
+#   Internal writers that store config and never print it: the managed clone's
+#     commit (src/core/engine-sql/topology-store.ts insertCloneSource).
 #   Internal readers that never serialize config (predicates only): sync,
 #     autopilot, source resolver, destructive guard, webhook HMAC check,
 #     connectors, minion authority (hashed into a digest), company brain.

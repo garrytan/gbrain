@@ -449,6 +449,157 @@ pub(crate) fn committed_outcomes_in(read: &dyn KvRead, operation: &str) -> Resul
         .collect())
 }
 
+/// One update of a topology change by id: the `UPDATE persistence_topology_changes ... WHERE
+/// id=$1` statements of `src/core/engine-sql/topology-store.ts`, each with its guard.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TopologyChangeUpdate {
+    /// `saveRecovery`: `recovery = $2` while the change is `recovering`.
+    SaveRecovery { recovery: Value },
+    /// `commitChange`: `state = 'committed'`, `outcome = outcome || $2`.
+    Commit { outcome: Value },
+    /// `releaseChange`: `state = $2`, no recovery, `outcome = COALESCE(outcome,'{}') || $3`.
+    Release { state: String, outcome: Value },
+    /// `clearChangeRecovery`: no recovery, `recovery_bytes = 0`, `intent_bytes = 0`.
+    ClearRecovery,
+    /// `settleRetire`: `state`, `outcome` and `terminal_bytes` of a recovering change with no
+    /// recovery record.
+    SettleRetire {
+        state: String,
+        outcome: Value,
+        terminal_bytes: i64,
+    },
+}
+
+/// jsonb `a || b`: two objects merge with `b`'s keys winning; arrays concatenate; any other pair
+/// is the array of both.
+fn jsonb_concat(a: Value, b: Value) -> Value {
+    match (a, b) {
+        (Value::Object(mut a), Value::Object(b)) => {
+            a.extend(b);
+            Value::Object(a)
+        }
+        (Value::Array(mut a), Value::Array(b)) => {
+            a.extend(b);
+            Value::Array(a)
+        }
+        (Value::Array(mut a), b) => {
+            a.push(b);
+            Value::Array(a)
+        }
+        (a, Value::Array(b)) => Value::Array(std::iter::once(a).chain(b).collect()),
+        (a, b) => Value::Array(vec![a, b]),
+    }
+}
+
+fn require_state(state: &str) -> Result<()> {
+    if TOPOLOGY_STATES.contains(&state) {
+        Ok(())
+    } else {
+        Err(violation(format!(
+            "\"{state}\" is not a topology change state"
+        )))
+    }
+}
+
+/// The change with id `id` and its key, or None (`SELECT * ... WHERE id=$1::uuid`).
+fn change_by_id(read: &dyn KvRead, id: &str) -> Result<Option<(Vec<u8>, TopologyChangeRecord)>> {
+    let id = uuid_param(id, "changeId")?;
+    Ok(all_changes(read)?
+        .into_iter()
+        .find(|r| r.id == id)
+        .map(|r| (change_key(&r.principal_id, &r.request_id), r)))
+}
+
+/// `topologyStore().change(id)`: the row, or None.
+pub(crate) fn topology_change_in(read: &dyn KvRead, id: &str) -> Result<Option<Value>> {
+    Ok(change_by_id(read, id)?.map(|(_, r)| to_row(&r)))
+}
+
+/// Applies `update` to the change with id `id`: the updated row, or None when no change has
+/// that id or its guard does not hold (nothing is written then).
+pub(crate) fn update_topology_change_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    id: &str,
+    update: &TopologyChangeUpdate,
+) -> Result<Option<Value>> {
+    let Some((key, mut r)) = change_by_id(&*tx, id)? else {
+        return Ok(None);
+    };
+    match update {
+        TopologyChangeUpdate::SaveRecovery { recovery } => {
+            if r.state != "recovering" {
+                return Ok(None);
+            }
+            r.recovery = Some(recovery.clone()).filter(|v| !v.is_null());
+        }
+        TopologyChangeUpdate::Commit { outcome } => {
+            r.state = "committed".into();
+            r.outcome = r.outcome.take().map(|o| jsonb_concat(o, outcome.clone()));
+        }
+        TopologyChangeUpdate::Release { state, outcome } => {
+            require_state(state)?;
+            r.state = state.clone();
+            r.recovery = None;
+            r.recovery_bytes = 0;
+            let prior = r.outcome.take().unwrap_or_else(|| json!({}));
+            r.outcome = Some(jsonb_concat(prior, outcome.clone()));
+        }
+        TopologyChangeUpdate::ClearRecovery => {
+            r.recovery = None;
+            r.recovery_bytes = 0;
+            r.intent_bytes = 0;
+        }
+        TopologyChangeUpdate::SettleRetire {
+            state,
+            outcome,
+            terminal_bytes,
+        } => {
+            if r.state != "recovering" || r.recovery.is_some() {
+                return Ok(None);
+            }
+            require_state(state)?;
+            if *terminal_bytes < 0 {
+                return Err(violation("terminal_bytes must not be negative".to_string()));
+            }
+            r.state = state.clone();
+            r.outcome = Some(outcome.clone()).filter(|v| !v.is_null());
+            r.terminal_bytes = *terminal_bytes;
+        }
+    }
+    r.updated_at_us = env.now_micros();
+    put_json(tx, &key, &r)?;
+    Ok(Some(to_row(&r)))
+}
+
+/// `topologyStore().retireAdmissions(...)`: the recovering remove and purge changes of the
+/// source incarnation with no recovery record, other than (principal, request), in id order.
+pub(crate) fn topology_retire_admissions_in(
+    read: &dyn KvRead,
+    source_id: &str,
+    incarnation: &str,
+    principal_id: &str,
+    request_id: &str,
+) -> Result<Vec<Value>> {
+    let incarnation = uuid_param(incarnation, "sourceIncarnation")?;
+    let principal_id = uuid_param(principal_id, "principalId")?;
+    let request_id = uuid_param(request_id, "requestId")?;
+    let mut rows: Vec<TopologyChangeRecord> = all_changes(read)?
+        .into_iter()
+        .filter(|r| {
+            r.source_id == source_id
+                && r.source_incarnation.as_deref() == Some(incarnation.as_str())
+                && r.state == "recovering"
+                && r.recovery.is_none()
+                && (r.operation == "remove" || r.operation == "purge")
+                && !(r.principal_id == principal_id && r.request_id == request_id)
+        })
+        .collect();
+    rows.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(rows.iter().map(to_row).collect())
+}
+
 impl Store {
     /// `insertTopologyChange(input)`: the stored row.
     pub fn insert_topology_change(&self, input: &TopologyChangeInsert) -> Result<Value> {
@@ -472,6 +623,38 @@ impl Store {
         limit: f64,
     ) -> Result<Vec<Value>> {
         topology_recoveries_of_host(&*self.read()?, host_id, after, limit)
+    }
+
+    /// `topologyStore().change(id)`: the row, or None.
+    pub fn topology_change(&self, id: &str) -> Result<Option<Value>> {
+        topology_change_in(&*self.read()?, id)
+    }
+
+    /// One `UPDATE persistence_topology_changes ... WHERE id=$1` of the topology store: the
+    /// updated row, or None when its guard does not hold.
+    pub fn update_topology_change(
+        &self,
+        id: &str,
+        update: &TopologyChangeUpdate,
+    ) -> Result<Option<Value>> {
+        self.write(|tx| update_topology_change_in(tx, &*self.env, id, update))
+    }
+
+    /// `topologyStore().retireAdmissions(sourceId, incarnation, principalId, requestId)`.
+    pub fn topology_retire_admissions(
+        &self,
+        source_id: &str,
+        incarnation: &str,
+        principal_id: &str,
+        request_id: &str,
+    ) -> Result<Vec<Value>> {
+        topology_retire_admissions_in(
+            &*self.read()?,
+            source_id,
+            incarnation,
+            principal_id,
+            request_id,
+        )
     }
 
     /// `findTopologyChanges(principalId, requestIds)`.

@@ -626,9 +626,11 @@ admission is typed. The owner pending-wait read in `owner-activity.ts` stays raw
 
 A source lifecycle change (`src/core/persistence/source-lifecycle.ts`, `topology-locks.ts`,
 `topology-clone.ts`, `topology-transaction.ts`) reads its source, worktrees, owners and pending requests through
-`engine.topologyStore()` before its first write. On PGLite and Postgres the store is the SQL in
+`engine.topologyStore()` before its first write. A managed clone (`topology-clone.ts`, `topology-recovery.ts`) and
+its receipts (`topology-receipts.ts`) also write through it. On PGLite and Postgres the store is the SQL in
 `src/core/engine-sql/topology-store.ts`, statement for statement as the callers ran it; on this engine it
-is the reads below, on the handle it was taken from (a transaction's store reads the transaction).
+is the reads and writes below, on the handle it was taken from (a transaction's store reads and writes the
+transaction, so a clone transaction's writes commit together).
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -640,14 +642,29 @@ is the reads below, on the handle it was taken from (a transaction's store reads
 | `brain.topologyCanonicalStamp(worktreeId)` | the md5 of `id:knowledge_revision:incarnation` of every page of the bound sources, in page id order, joined with `,` | `topologyCanonicalStamp` |
 | `brain.topologyUnsettledRequests(sourceIds, worktreeIds)` | the requests on the sources or worktrees that are queued, deferred, running or recovering or hold a recovery record, in sequence order | `assertTopologyRequestsSettled` |
 | `brain.topologyBlockingEffect(sourceIds, worktreeIds)` | the first effect on them that is running, holds a recovery record, or is a queued `withdrawal-mirror`: `{ id, source_id }`; `null` when none | the same check's effect read |
+| `brain.topologyChange(changeId)` | the topology change row (`insertTopologyChange`'s shape); `null` for an unknown id | `change`, `lockChange` |
+| `brain.topologyRetireAdmissions(sourceId, incarnation, principalId, requestId)` | the other `remove` and `purge` changes of the source incarnation that are `recovering` with no recovery record, in id order | `supersedeTopologyRetires` |
+| `brain.topologyUpdateWorktree(worktreeId, { kind })` | `recover` sets `state = 'recovering'`; `recover_with_manifest` also sets the manifest; `manifest` sets only the manifest (`null` clears it); `activate` sets `state = 'active'`. An unknown worktree changes nothing | the clone's `UPDATE persistence_worktrees` statements |
+| `brain.topologyAdvanceGeneration(worktreeIds)` | adds 1 to each named worktree's generation once (a repeated id counts once), then gives each source binding of those worktrees its worktree's generation | `advanceTopology` |
+| `brain.topologyUnbindSource(sourceId, incarnation)` | deletes the source's binding when it names that incarnation | the release's binding `DELETE` |
+| `brain.topologyInsertSource({ id, name, localPath, config, incarnation })` | stores a new source with the given incarnation; a taken id or name refuses `constraint_violation` and writes nothing | the clone commit's `INSERT INTO sources` |
+| `brain.topologyResetSourceCheckpoint(sourceId, incarnation)` | clears `last_commit` and `last_sync_at` when the source has that incarnation | the reclone commit's checkpoint reset |
+| `brain.topologyUpdateChange(changeId, { kind })` | the updated row, or `null` when the id is unknown or the guard fails. `save_recovery` needs `state = 'recovering'`; `commit` sets `committed` and `outcome = outcome \|\| $2` (a null outcome stays null, as in SQL); `release` sets the state (one of the topology states, else it refuses), clears the recovery and `recovery_bytes`, and merges the outcome onto `{}`; `clear_recovery` clears the recovery, `recovery_bytes` and `intent_bytes`; `settle_retire` needs a `recovering` change with no recovery record and sets state, outcome and `terminal_bytes` (negative refuses) | `saveCloneRecovery`, `commitChange`, `releaseChange`, `clearChangeRecovery`, `settleRetire` |
 
-`durable`, `syncCommit`, `lockBrain`, `lockSources` and `sharePrincipal` do nothing: a store commit is
+The outcome merges follow jsonb `||`: two objects merge with the right side's keys winning, arrays concatenate,
+and any other pair is the array of both.
+
+`durable`, `syncCommit`, `lockBrain`, `lockSources` and `sharePrincipal` do nothing, and `lockChange` is `change`: a store commit is
 durable before it returns and the store runs one write transaction at a time, so the commit setting,
 the wait bounds and the row locks change nothing. `activeRefresh` is always `null`: this engine keeps no
 worktree refresh rows (`gbrain sources refresh` refuses before it writes one). `hostLocalPaths`,
 `hostBinding` and `lockedSource` are served from `listHostWorktrees`, `readHostBinding` and
-`topologySource`. A managed clone runs every read here, then stops at its first write (the
-`persistence_worktrees` row), which still runs raw SQL; the transaction rolls back.
+`topologySource`. `brainId` is `readPersistenceBrainId`; `worktree` is `readWorktree`;
+`insertCloneWorktree`, `bindCloneSource` are `insertWorktree` and `insertSourceBinding`; `bindCloneHost` reads the
+host binding first and keeps an existing one, as `ON CONFLICT DO NOTHING` does. `markTopologyChange` does nothing: no
+trigger guards this engine's source records. The receipts' counter changes go through `addPersistenceCounters`.
+A managed clone commits on this engine; the owner's recovery of an interrupted change still stops by name (see
+docs/ENGINES.md, "Topology recovery on the Rust engine").
 
 ## TypeScript members with no stored state
 

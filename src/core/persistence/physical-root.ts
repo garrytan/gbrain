@@ -15,8 +15,8 @@ export { assertPhysicalRoot, isPhysicalRootMetadata, readPhysicalRootReservation
 export interface PhysicalRootClaim { hostId: string; worktreeId?: string; coordinationPath?: string; }
 /**
  * The database facts a root claim checks: the brain id, a worktree's owner and state, and its host binding. The
- * default reads them with SQL on `tx`; the unmanaged claim passes its claim store (engine-sql/worktree-claim.ts), so a
- * Rust brain answers them from its binding records.
+ * default reads them with SQL on `tx`; the unmanaged claim passes its claim store (engine-sql/worktree-claim.ts) and a
+ * managed clone its topology store (engine-sql/topology-store.ts), so a Rust brain answers them from its records.
  */
 export interface PhysicalRootFacts {
   brainId(): Promise<string | null>;
@@ -114,9 +114,9 @@ export async function claimPhysicalRoot(tx: SqlEngine, path: string, opts: Physi
  * Moving this stage to target preserves the stamp and immutable reservation.
  */
 export async function preparePhysicalRootReplacement(tx: SqlEngine, stage: string, target: string,
-  opts: Required<PhysicalRootClaim>): Promise<void> {
-  const reservation = await reservePhysicalRoot(tx, target, opts);
-  const [owner] = await tx.executeRaw<{ owner_host_id: string; state: string }>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid', [opts.worktreeId]);
+  opts: Required<PhysicalRootClaim>, facts: PhysicalRootFacts = sqlPhysicalRootFacts(tx)): Promise<void> {
+  const reservation = await reservePhysicalRoot(tx, target, opts, facts);
+  const owner = await facts.worktree(opts.worktreeId);
   if (owner?.owner_host_id !== opts.hostId || owner.state !== 'recovering') throw physicalRootError('A directory replacement requires durable source recovery.');
   if (existsSync(target)) assertPhysicalRoot(target, opts);
   writePhysicalRootStamp(stage, reservation);

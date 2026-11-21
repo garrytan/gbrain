@@ -1842,9 +1842,9 @@ runs on PGLite alone without the flag.
 
 The recovery of an interrupted source lifecycle change needs raw SQL, which the Rust engine never serves. It refuses
 it by name (`member=source_topology_recovery`, `written=nothing`) before any lock, row or directory is touched. Doctor
-warns `topology_recovery_stopped`; `sources writer status --json` lists `topology_recoveries`. A managed clone
-(`sources add --url`, `sources reclone`) refuses `member=executeRaw`, `written=nothing`, at its first write, which rolls
-back. Finish either change from a pglite or postgres engine.
+warns `topology_recovery_stopped`; `sources writer status --json` lists `topology_recoveries`. Finish that change
+from a pglite or postgres engine. A managed clone (`sources add --url`, `sources reclone`) runs on the Rust engine
+as on the SQL engines: its reads, writes and receipts go through the typed topology store.
 
 ## Adding a new engine
 

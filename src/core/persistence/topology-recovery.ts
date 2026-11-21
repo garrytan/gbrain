@@ -33,7 +33,7 @@ function retainedClone(message:string,record:TopologyCloneRecovery,detail:string
     {why:`Checkout ${record.target}, staging ${record.stage}, retained original ${record.aside}.`,fix:cloneStatusFix(record.sourceId)});
 }
 async function readChange(engine:BrainEngine,id:string):Promise<TopologyChange>{
-  const [row]=await engine.executeRaw<TopologyChange>('SELECT * FROM persistence_topology_changes WHERE id=$1::uuid',[id]);
+  const row=await (await engine.topologyStore()).change(id);
   if(!row)throw opError('not_found','Source lifecycle request not found.',
     `No source lifecycle request ${id} is recorded on this brain, so there is nothing to recover. Check writer status for the source's current state instead.`,
     {fix:readFix('Shows every source binding, worktree state and blocking effect on this brain, read-only.',{argv:['gbrain','sources','writer','status','--json']})});
@@ -81,30 +81,30 @@ function removeOwnedStage(record:TopologyCloneRecovery):void{
   if(existsSync(record.stage))rmSync(record.stage,{recursive:true,force:true});
 }
 async function guard(tx:BrainEngine,row:TopologyChange,record:TopologyCloneRecovery):Promise<string[]>{
-  await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-  const [owner]=await tx.executeRaw<{owner_host_id:string;owner_epoch:string;state:string}>('SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE',[record.worktreeId]);
-  const [host]=await tx.executeRaw<{local_path:string}>('SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[record.worktreeId,hostIdFor(tx)]);
+  const store=await tx.topologyStore();
+  await store.syncCommit();
+  const owner=await store.lockOwner(record.worktreeId);
+  const host=await store.hostBinding(record.worktreeId,hostIdFor(tx));
   if(!owner||owner.owner_host_id!==record.ownerHostId||String(owner.owner_epoch)!==record.ownerEpoch||owner.state!=='recovering'||host?.local_path!==record.target)
     throw retainedClone('Ownership changed while the clone needed recovery.',record,
       `Worktree ${record.worktreeId} no longer has owner epoch ${record.ownerEpoch} on this host in the recovering state.`);
-  const members=await tx.executeRaw<{source_id:string}>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id',[record.worktreeId]);
-  const sources=[...new Set([record.sourceId,...members.map(value=>value.source_id)])].sort();
-  await tx.executeRaw('SELECT id FROM sources WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE',[sources]);
+  const sources=[...new Set([record.sourceId,...await store.members([record.worktreeId])])].sort();
+  await store.lockSources(sources);
   return sources;
 }
 async function releaseReservation(tx:BrainEngine,row:TopologyChange,record:TopologyCloneRecovery,state:'committed'|'failed'):Promise<void>{
   if(!await releaseTopologyReservation(tx,row))return;
-  await tx.executeRaw(`UPDATE persistence_topology_changes SET state=$2,recovery=NULL,recovery_bytes=0,updated_at=now(),
-    outcome=COALESCE(outcome,'{}'::jsonb)||$3::text::jsonb WHERE id=$1::uuid`,[row.id,state,JSON.stringify(state==='failed'?{write_error:record.failureCode??'clone_interrupted'}:{})]);
-  if(state==='failed'&&record.operation==='add')await tx.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid',[record.sourceId,record.incarnation]);
-  await tx.executeRaw("UPDATE persistence_worktrees SET state='active' WHERE id=$1::uuid",[record.worktreeId]);
+  const store=await tx.topologyStore();
+  await store.releaseChange(row.id,state,state==='failed'?{write_error:record.failureCode??'clone_interrupted'}:{});
+  if(state==='failed'&&record.operation==='add')await store.unbindSource(record.sourceId,record.incarnation);
+  await store.activateWorktree(record.worktreeId);
 }
 async function abortClone(engine:BrainEngine,row:TopologyChange,record:TopologyCloneRecovery,code:string):Promise<TopologyChange>{
   if(record.phase!=='aborting'){
     record={...record,phase:'aborting',failureCode:/^[a-z0-9_]{1,64}$/.test(code)?code:'storage_error'};
     await topologyTransaction(engine,async tx=>{
       await guard(tx,row,record);
-      await tx.executeRaw("UPDATE persistence_topology_changes SET recovery=$2::text::jsonb,updated_at=now() WHERE id=$1::uuid AND state='recovering'",[row.id,JSON.stringify(record)]);
+      await (await tx.topologyStore()).saveCloneRecovery(row.id,record);
     });
   }
   await topologyTransaction(engine,async tx=>{
@@ -146,7 +146,8 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
       try{
         await topologyTransaction(engine,async tx=>{
           const sources=await guard(tx,row,record);
-          const [source]=await tx.executeRaw<{incarnation:string;last_commit:string|null;config:unknown}>('SELECT incarnation,last_commit,config FROM sources WHERE id=$1',[record.sourceId]);
+          const store=await tx.topologyStore();
+          const source=await store.lockedSource(record.sourceId);
           if(record.operation==='add'?!!source:!source||source.incarnation!==record.incarnation||source.last_commit!==record.checkpoint
             ||record.operation==='reclone'&&(parseSourceConfig(source?.config).remote_url??null)!==record.sourceRemoteUrl)
             throw opError('source_changed','The source identity/checkpoint changed while cloning.',
@@ -175,17 +176,16 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
           }else if(target!==record.afterHash)throw retainedClone('Neither a verified stage nor the published clone is present.',record,
             'Neither the staging directory nor the checkout holds the verified clone.');
           assertPhysicalRoot(record.target,{worktreeId:record.worktreeId});
-          await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
+          await store.markTopologyChange();
           await withCoordinatedWrite(tx,sources,async()=>{
-            if(record.operation==='add')await tx.executeRaw('INSERT INTO sources(id,name,local_path,config,incarnation) VALUES($1,$2,$3,$4::text::jsonb,$5::uuid)',
-              [record.sourceId,record.input.name??record.sourceId,record.target,JSON.stringify({...record.input.config,remote_url:record.input.remoteUrl,managed_clone:true}),record.incarnation]);
-            else await tx.executeRaw('UPDATE sources SET last_commit=NULL,last_sync_at=NULL WHERE id=$1 AND incarnation=$2::uuid',[record.sourceId,record.incarnation]);
+            if(record.operation==='add')await store.insertCloneSource({id:record.sourceId,name:record.input.name??record.sourceId,localPath:record.target,
+              config:{...record.input.config,remote_url:record.input.remoteUrl,managed_clone:true},incarnation:record.incarnation});
+            else await store.resetSourceCheckpoint(record.sourceId,record.incarnation);
           },principalAttribution({kind:'local_cli',id:row.principal_id}));
           await advanceTopology(tx,[record.worktreeId]);
-          await tx.executeRaw('UPDATE persistence_worktrees SET manifest=$2::text::jsonb WHERE id=$1::uuid',[record.worktreeId,JSON.stringify({...(record.manifest?compactStoredManifest(record.manifest):null),canonical_stamp:await topologyCanonicalStamp(tx,record.worktreeId)})]);
+          await store.setWorktreeManifest(record.worktreeId,{...(record.manifest?compactStoredManifest(record.manifest):null),canonical_stamp:await topologyCanonicalStamp(tx,record.worktreeId)});
           await refreshManagedFilesystemRoots(tx,managedFilesystemDatastorePath(engine));
-          await tx.executeRaw("UPDATE persistence_topology_changes SET state='committed',outcome=outcome||$2::text::jsonb,updated_at=now() WHERE id=$1::uuid",
-            [row.id,JSON.stringify({cloned:true,local_path:record.target})]);
+          await store.commitChange(row.id,{cloned:true,local_path:record.target});
         });
         row=await readChange(engine,id);await hooks.boundary?.('committed');
       }catch(error){

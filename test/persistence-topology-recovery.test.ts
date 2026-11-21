@@ -4,6 +4,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { sqlTopologyStore } from '../src/core/engine-sql/topology-store.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import type { TopologyCloneRecovery } from '../src/core/persistence/topology-clone-model.ts';
 import { finishTopologyClone } from '../src/core/persistence/topology-recovery.ts';
@@ -35,13 +36,15 @@ async function expectValidation(record: TopologyCloneRecovery, accepted: boolean
   let transactions = 0;
   // Stop at the first publication transaction. Invalid recovery paths must be
   // rejected before that boundary, without opening a datastore or moving files.
+  const executeRaw = async (sql: string, params: unknown[]) => {
+    expect(sql).toBe('SELECT * FROM persistence_topology_changes WHERE id=$1::uuid');
+    expect(params).toEqual([id]);
+    return [{ id, state: 'recovering', recovery: record }];
+  };
   const engine = {
     kind: 'pglite',
-    executeRaw: async (sql: string, params: unknown[]) => {
-      expect(sql).toBe('SELECT * FROM persistence_topology_changes WHERE id=$1::uuid');
-      expect(params).toEqual([id]);
-      return [{ id, state: 'recovering', recovery: record }];
-    },
+    executeRaw,
+    topologyStore: async () => sqlTopologyStore({ executeRaw } as unknown as BrainEngine),
     transaction: async () => { transactions++; throw validated; },
   } as unknown as BrainEngine;
   if (accepted) await expect(finishTopologyClone(engine, id)).rejects.toBe(validated);

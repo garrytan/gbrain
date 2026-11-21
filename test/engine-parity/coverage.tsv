@@ -970,7 +970,7 @@ readPendingProposalSummary	write_misc	yes	1	no	yes	yes	serves
 listMemoryProposalRows	write_misc	yes	1	no	yes	yes	serves
 listOwnerProposalRows	write_misc	yes	1	no	yes	yes	serves
 attachSourcePath	write_misc	yes	1	no	yes	yes	serves
-addPersistenceCounters	write_misc	yes	3	no	yes	yes	serves
+addPersistenceCounters	write_misc	yes	4	no	yes	yes	serves
 listAppliedPolicyRevisions	write_misc	yes	3	no	yes	yes	serves
 readMayActFor	write_misc	yes	3	no	yes	yes	serves
 readAudiencePrincipals	write_misc	yes	2	no	yes	yes	serves

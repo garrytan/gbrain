@@ -201,7 +201,5 @@ export async function settleTopologyRequests(tx: BrainEngine, sources: string[],
 }
 
 export async function advanceTopology(tx: BrainEngine, worktrees: string[]): Promise<void> {
-  await tx.executeRaw('UPDATE persistence_worktrees SET topology_generation=topology_generation+1 WHERE id=ANY($1::uuid[])',[worktrees]);
-  await tx.executeRaw(`UPDATE persistence_source_bindings b SET topology_generation=w.topology_generation
-    FROM persistence_worktrees w WHERE b.worktree_id=w.id AND w.id=ANY($1::uuid[])`,[worktrees]);
+  await (await tx.topologyStore()).advanceGeneration(worktrees);
 }

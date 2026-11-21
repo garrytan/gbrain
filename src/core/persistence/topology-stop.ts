@@ -4,8 +4,8 @@
  * reclone or retire under topology-locks.ts `withTopologyLocks`) still claims and writes through raw SQL. On an engine
  * without `raw_sql` (the Rust engine) it refuses by name before any lock, filesystem write or row change, so a
  * recovering change stays exactly as recorded. PGLite, Postgres and transaction handles (no capability set) pass.
- * The managed clone (topology-clone.ts `runManagedSourceClone`) reads and locks through the typed `topologyStore`
- * member instead; on Rust it stops at its first clone-transaction write (`member=executeRaw`), which rolls back.
+ * The managed clone (topology-clone.ts `runManagedSourceClone`) reads, locks and writes through the typed
+ * `topologyStore` member instead, so it commits on every engine.
  *
  * Doctor (`topology_recovery_stopped`) and `gbrain sources writer status` (`topology_recoveries`) name the stop for
  * each recovering change on this host through `readTopologyRecoveryStops`, a typed read only.

@@ -1,6 +1,7 @@
 /**
  * The reads a source lifecycle change (sources add --url, reclone, remove, set-path, refresh) makes before its first
- * write, as `BrainEngine.topologyStore()` (Rust engine lane 7, step A). The statements are the ones
+ * write, and the writes of a managed clone's transactions, its commit and the lifecycle receipts, as
+ * `BrainEngine.topologyStore()` (Rust engine lane 7, steps A and B). The statements are the ones
  * persistence/source-lifecycle.ts, topology-clone.ts, topology-locks.ts and topology-transaction.ts ran through executeRaw, kept
  * byte-identical: tests and benches match their text, and each runs on the engine the caller holds (the root engine
  * before the locks, the transaction engine inside them), so a wrapper of that engine sees it. What the rows mean
@@ -11,6 +12,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from '../persistence/model.ts';
+import type { TopologyChange } from './persistence-claims.ts';
 
 type RawSql = Pick<BrainEngine, 'executeRaw'>;
 
@@ -37,6 +39,10 @@ export interface TopologyHostBindingRow { local_path: string; coordination_path:
 export interface TopologyBlockingEffectRow { id: string; source_id: string | null }
 /** A request principal a topology change holds a share lock on. */
 export interface TopologyPrincipalRef { kind: string; id: string }
+/** A worktree's owner host and state. */
+export interface TopologyWorktreeRow { owner_host_id: string | null; state: string }
+/** The source a managed clone's commit creates, with the incarnation the clone recorded. */
+export interface TopologyCloneSource { id: string; name: string; localPath: string; config: Record<string, unknown>; incarnation: string }
 
 export interface TopologyStore {
   /** Turns on durable commit and bounds the lock and statement waits of the topology transaction (the transaction's first statement). */
@@ -79,6 +85,53 @@ export interface TopologyStore {
   blockingEffect(sourceIds: string[], worktreeIds: string[]): Promise<TopologyBlockingEffectRow | null>;
   /** Holds the principal's row (OAuth client, legacy token or local writer) until the transaction ends. */
   sharePrincipal(principal: TopologyPrincipalRef): Promise<void>;
+
+  /** The persistence brain id; null before the persistence identity exists. */
+  brainId(): Promise<string | null>;
+  /** The worktree's owner host and state; null when it is missing. */
+  worktree(worktreeId: string): Promise<TopologyWorktreeRow | null>;
+  /** The topology change with this id; null when there is none. */
+  change(changeId: string): Promise<TopologyChange | null>;
+  /** The topology change with this id, locked; null when there is none. */
+  lockChange(changeId: string): Promise<TopologyChange | null>;
+  /** The other recovering remove and purge admissions of the source incarnation with no recovery record, in id order. */
+  retireAdmissions(sourceId: string, incarnation: string, principalId: string, requestId: string): Promise<TopologyChange[]>;
+
+  /** Puts the worktree in the recovering state (a prepared owner the clone takes over). */
+  recoverWorktree(worktreeId: string): Promise<void>;
+  /** Puts the worktree in the recovering state with this manifest (a reclone). */
+  recoverWorktreeWithManifest(worktreeId: string, manifest: unknown): Promise<void>;
+  /** Sets the worktree's manifest. */
+  setWorktreeManifest(worktreeId: string, manifest: unknown): Promise<void>;
+  /** Puts the worktree back in the active state. */
+  activateWorktree(worktreeId: string): Promise<void>;
+  /** Creates the clone's worktree, owned by `hostId` at epoch 1, recovering. */
+  insertCloneWorktree(worktreeId: string, hostId: string): Promise<void>;
+  /** Binds the worktree on `hostId` at these paths; an existing binding is kept. */
+  bindCloneHost(worktreeId: string, hostId: string, localPath: string, coordinationPath: string): Promise<void>;
+  /** Binds the source incarnation to the worktree. */
+  bindCloneSource(sourceId: string, incarnation: string, worktreeId: string): Promise<void>;
+  /** Deletes the source incarnation's worktree binding. */
+  unbindSource(sourceId: string, incarnation: string): Promise<void>;
+  /** Raises each worktree's topology generation by one; its source bindings take the new generation. */
+  advanceGeneration(worktreeIds: string[]): Promise<void>;
+  /** Marks this transaction as a topology change, which the source triggers allow. */
+  markTopologyChange(): Promise<void>;
+  /** Creates the clone's source. */
+  insertCloneSource(source: TopologyCloneSource): Promise<void>;
+  /** Clears the last commit and last sync time of the source incarnation. */
+  resetSourceCheckpoint(sourceId: string, incarnation: string): Promise<void>;
+
+  /** Saves the clone's recovery record while the change is recovering. */
+  saveCloneRecovery(changeId: string, recovery: unknown): Promise<void>;
+  /** Commits the change and adds `outcome` to its outcome. */
+  commitChange(changeId: string, outcome: Record<string, unknown>): Promise<void>;
+  /** Ends the change in `state`, drops its recovery and adds `outcome` to its outcome. */
+  releaseChange(changeId: string, state: string, outcome: Record<string, unknown>): Promise<void>;
+  /** Drops the change's recovery record and its reserved recovery and intent bytes. */
+  clearChangeRecovery(changeId: string): Promise<void>;
+  /** Settles a recovering retire admission with no recovery record; null when the change is not one. */
+  settleRetire(changeId: string, state: string, outcome: Record<string, unknown>, terminalBytes: number): Promise<TopologyChange | null>;
 }
 
 /** The SQL store over an engine (the root engine before the locks, a transaction engine inside them). */
@@ -153,6 +206,82 @@ export function sqlTopologyStore(exec: RawSql): TopologyStore {
       if (principal.kind === 'oauth_client') await exec.executeRaw('SELECT client_id FROM oauth_clients WHERE client_id=$1 FOR SHARE', [principal.id]);
       else if (principal.kind === 'legacy_token') await exec.executeRaw('SELECT id FROM access_tokens WHERE id=$1 FOR SHARE', [principal.id]);
       else await exec.executeRaw('SELECT id FROM persistence_local_writers WHERE id=$1::uuid FOR SHARE', [principal.id]);
+    },
+
+    async brainId() {
+      const [brain] = await exec.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+      return brain?.brain_id ?? null;
+    },
+    async worktree(worktreeId) {
+      const [row] = await exec.executeRaw<TopologyWorktreeRow>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid', [worktreeId]);
+      return row ?? null;
+    },
+    async change(changeId) {
+      const [row] = await exec.executeRaw<TopologyChange>('SELECT * FROM persistence_topology_changes WHERE id=$1::uuid', [changeId]);
+      return row ?? null;
+    },
+    async lockChange(changeId) {
+      const [row] = await exec.executeRaw<TopologyChange>('SELECT * FROM persistence_topology_changes WHERE id=$1::uuid FOR UPDATE', [changeId]);
+      return row ?? null;
+    },
+    retireAdmissions: (sourceId, incarnation, principalId, requestId) => exec.executeRaw<TopologyChange>(`SELECT * FROM persistence_topology_changes WHERE source_id=$1 AND source_incarnation=$2::uuid
+    AND state='recovering' AND recovery IS NULL AND operation IN ('remove','purge') AND NOT (principal_id=$3::uuid AND request_id=$4::uuid) ORDER BY id`,
+      [sourceId, incarnation, principalId, requestId]),
+
+    async recoverWorktree(worktreeId) { await exec.executeRaw("UPDATE persistence_worktrees SET state='recovering' WHERE id=$1::uuid", [worktreeId]); },
+    async recoverWorktreeWithManifest(worktreeId, manifest) {
+      await exec.executeRaw("UPDATE persistence_worktrees SET state='recovering',manifest=$2::text::jsonb WHERE id=$1::uuid", [worktreeId, JSON.stringify(manifest)]);
+    },
+    async setWorktreeManifest(worktreeId, manifest) {
+      await exec.executeRaw('UPDATE persistence_worktrees SET manifest=$2::text::jsonb WHERE id=$1::uuid', [worktreeId, JSON.stringify(manifest)]);
+    },
+    async activateWorktree(worktreeId) { await exec.executeRaw("UPDATE persistence_worktrees SET state='active' WHERE id=$1::uuid", [worktreeId]); },
+    async insertCloneWorktree(worktreeId, hostId) {
+      await exec.executeRaw("INSERT INTO persistence_worktrees(id,owner_host_id,owner_epoch,state) VALUES($1::uuid,$2::uuid,1,'recovering')", [worktreeId, hostId]);
+    },
+    async bindCloneHost(worktreeId, hostId, localPath, coordinationPath) {
+      await exec.executeRaw('INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO NOTHING',
+        [worktreeId, hostId, localPath, coordinationPath]);
+    },
+    async bindCloneSource(sourceId, incarnation, worktreeId) {
+      await exec.executeRaw('INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id) VALUES($1,$2::uuid,$3::uuid)', [sourceId, incarnation, worktreeId]);
+    },
+    async unbindSource(sourceId, incarnation) {
+      await exec.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid', [sourceId, incarnation]);
+    },
+    async advanceGeneration(worktreeIds) {
+      await exec.executeRaw('UPDATE persistence_worktrees SET topology_generation=topology_generation+1 WHERE id=ANY($1::uuid[])', [worktreeIds]);
+      await exec.executeRaw(`UPDATE persistence_source_bindings b SET topology_generation=w.topology_generation
+    FROM persistence_worktrees w WHERE b.worktree_id=w.id AND w.id=ANY($1::uuid[])`, [worktreeIds]);
+    },
+    async markTopologyChange() { await exec.executeRaw("SELECT set_config('gbrain.topology_change','on',true)"); },
+    // Stores the clone's config (a database write, never printed): the receipt redacts it (source-lifecycle.ts).
+    async insertCloneSource({ id, name, localPath, config, incarnation }) {
+      await exec.executeRaw('INSERT INTO sources(id,name,local_path,config,incarnation) VALUES($1,$2,$3,$4::text::jsonb,$5::uuid)',
+        [id, name, localPath, JSON.stringify(config), incarnation]);
+    },
+    async resetSourceCheckpoint(sourceId, incarnation) {
+      await exec.executeRaw('UPDATE sources SET last_commit=NULL,last_sync_at=NULL WHERE id=$1 AND incarnation=$2::uuid', [sourceId, incarnation]);
+    },
+
+    async saveCloneRecovery(changeId, recovery) {
+      await exec.executeRaw("UPDATE persistence_topology_changes SET recovery=$2::text::jsonb,updated_at=now() WHERE id=$1::uuid AND state='recovering'", [changeId, JSON.stringify(recovery)]);
+    },
+    async commitChange(changeId, outcome) {
+      await exec.executeRaw("UPDATE persistence_topology_changes SET state='committed',outcome=outcome||$2::text::jsonb,updated_at=now() WHERE id=$1::uuid",
+        [changeId, JSON.stringify(outcome)]);
+    },
+    async releaseChange(changeId, state, outcome) {
+      await exec.executeRaw(`UPDATE persistence_topology_changes SET state=$2,recovery=NULL,recovery_bytes=0,updated_at=now(),
+    outcome=COALESCE(outcome,'{}'::jsonb)||$3::text::jsonb WHERE id=$1::uuid`, [changeId, state, JSON.stringify(outcome)]);
+    },
+    async clearChangeRecovery(changeId) {
+      await exec.executeRaw('UPDATE persistence_topology_changes SET recovery=NULL,recovery_bytes=0,intent_bytes=0,updated_at=now() WHERE id=$1::uuid', [changeId]);
+    },
+    async settleRetire(changeId, state, outcome, terminalBytes) {
+      const [row] = await exec.executeRaw<TopologyChange>(`UPDATE persistence_topology_changes SET state=$2,outcome=$3::text::jsonb,terminal_bytes=$4,updated_at=now()
+    WHERE id=$1::uuid AND state='recovering' AND recovery IS NULL RETURNING *`, [changeId, state, JSON.stringify(outcome), terminalBytes]);
+      return row ?? null;
     },
   };
 }

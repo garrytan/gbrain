@@ -103,10 +103,11 @@ pub use projection_queue::{
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
 pub use publication::{PublicationRead, PublicationWrite, RecoveryTable};
 pub use receipt_list::WriteRequestListFilter;
-pub use topology::TopologyChangeInsert;
+pub use topology::{TopologyChangeInsert, TopologyChangeUpdate};
 pub use worktree_admission::WorktreeAdmissionKey;
 pub use worktrees::{
-    CounterDelta, HostBindingInsert, ReleaseRead, SourceBindingInsert, WorktreeInsert,
+    CloneSourceInsert, CounterDelta, HostBindingInsert, ReleaseRead, SourceBindingInsert,
+    WorktreeInsert, WorktreeUpdate,
 };
 
 /// The byte after `keys::PERSISTENCE` of a counter row.

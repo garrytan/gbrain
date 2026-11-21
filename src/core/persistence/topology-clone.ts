@@ -137,13 +137,12 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
           `The current checkout of source ${input.sourceId} (${oldBytes} bytes) uses nearly all of the ${reserved}-byte recovery capacity, so nothing was cloned. Ask the user to raise persistence.limits.worktree_recovery_bytes and persistence.limits.brain_recovery_bytes (more disk reserved for recovery), then run the ${input.operation} again.`,
           {fix:recoveryCapacityFix()});
         if(!currentBinding){
-          if(preparedOwner)await tx.executeRaw("UPDATE persistence_worktrees SET state='recovering' WHERE id=$1::uuid",[worktreeId]);
-          else await tx.executeRaw("INSERT INTO persistence_worktrees(id,owner_host_id,owner_epoch,state) VALUES($1::uuid,$2::uuid,1,'recovering')",[worktreeId,hostIdFor(engine)]);
-          await tx.executeRaw('INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO NOTHING',[worktreeId,hostIdFor(engine),target,coordination]);
-          await tx.executeRaw('INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id) VALUES($1,$2::uuid,$3::uuid)',[input.sourceId,incarnation,worktreeId]);
-        }else await tx.executeRaw("UPDATE persistence_worktrees SET state='recovering',manifest=$2::text::jsonb WHERE id=$1::uuid",[worktreeId,JSON.stringify(manifest)]);
-        const [brain]=await tx.executeRaw<{brain_id:string}>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-        recordManagedRoots(brain.brain_id,[{local_path:target,source_id:input.sourceId,source_incarnation:incarnation,worktree_id:worktreeId}]);
+          if(preparedOwner)await store.recoverWorktree(worktreeId);
+          else await store.insertCloneWorktree(worktreeId,hostIdFor(engine));
+          await store.bindCloneHost(worktreeId,hostIdFor(engine),target,coordination!);
+          await store.bindCloneSource(input.sourceId,incarnation,worktreeId);
+        }else await store.recoverWorktreeWithManifest(worktreeId,manifest);
+        recordManagedRoots((await store.brainId())!,[{local_path:target,source_id:input.sourceId,source_incarnation:incarnation,worktree_id:worktreeId}]);
         return recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation,worktrees:[worktreeId]},
           {operation:input.operation,source_id:input.sourceId,source_incarnation:incarnation,invalidated_requests:invalidated},recovery as unknown as Record<string,unknown>,reserved);
       });
@@ -154,8 +153,9 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
       await withFilesystemPublication([target,recovery.stage,recovery.aside],async()=>{
         mkdirSync(dirname(target),{recursive:true});flushTopologyDirectory(dirname(target));
         await topologyTransaction(engine,async tx=>{
-          await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-          await reservePhysicalRoot(tx,target,{hostId:hostIdFor(tx),worktreeId,coordinationPath:coordination!});
+          const store=await tx.topologyStore();
+          await store.syncCommit();
+          await reservePhysicalRoot(tx,target,{hostId:hostIdFor(tx),worktreeId,coordinationPath:coordination!},store);
         });
         if(existsSync(recovery.stage))throw opError('recovery_required','The recorded staging path is already occupied.',
           `Staging directory ${recovery.stage} already exists, so source ${input.sourceId}'s clone stopped without touching it and is rolled back. Show the user that path; lifecycle request ${requestId}'s receipt records the failure.`,
@@ -163,8 +163,9 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
         mkdirSync(recovery.stage,{mode:0o700});flushTopologyDirectory(dirname(recovery.stage));
         recovery.stageIdentity=topologyDirectoryIdentity(recovery.stage);
         await topologyTransaction(engine,async tx=>{
-          await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-          await tx.executeRaw("UPDATE persistence_topology_changes SET recovery=$2::text::jsonb,updated_at=now() WHERE id=$1::uuid AND state='recovering'",[accepted!.id,JSON.stringify(recovery)]);
+          const store=await tx.topologyStore();
+          await store.syncCommit();
+          await store.saveCloneRecovery(accepted!.id,recovery);
         });
         await (hooks.clone??cloneTopologyCheckout)(url,recovery.stage,recovery.cloneBudget,{skipLfs:lfsDownloadsOff(lockedConfig)});
         const stageBytes=await topologyDirectoryBytes(recovery.stage,recovery.cloneBudget);
@@ -179,9 +180,10 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
             `The cloned repository (${stageBytes} bytes) plus the old checkout exceed the ${admission.recovery_bytes}-byte recovery reservation, so the clone is rolled back. Ask the user to raise persistence.limits.worktree_recovery_bytes and persistence.limits.brain_recovery_bytes, then run the ${input.operation} again under a new request id.`,
             {fix:recoveryCapacityFix()});
         await topologyTransaction(engine,async tx=>{
-          await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-          await preparePhysicalRootReplacement(tx,recovery.stage,target,{hostId:hostIdFor(tx),worktreeId,coordinationPath:coordination!});
-          await tx.executeRaw("UPDATE persistence_topology_changes SET recovery=$2::text::jsonb,updated_at=now() WHERE id=$1::uuid AND state='recovering'",[accepted!.id,JSON.stringify(recovery)]);
+          const store=await tx.topologyStore();
+          await store.syncCommit();
+          await preparePhysicalRootReplacement(tx,recovery.stage,target,{hostId:hostIdFor(tx),worktreeId,coordinationPath:coordination!},store);
+          await store.saveCloneRecovery(accepted!.id,recovery);
         });
         await hooks.boundary?.('prepared');
         accepted=await finishTopologyClone(engine,accepted!.id,hooks);

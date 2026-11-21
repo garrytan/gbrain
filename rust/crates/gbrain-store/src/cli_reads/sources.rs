@@ -5,8 +5,9 @@
 //! pages a full sync reconciles, and the stored side a rename's identity check compares.
 //! `listQuarantinedSlugs` names the live pages its link and timeline extraction skips.
 
+use crate::env::Env;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
-use crate::kv::{KvRead, scan_prefix};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::PageRecord;
 use crate::sources::{
     DEFAULT_SOURCE, SourceRecord, SourceRow, all_sources, read_source, valid_source_id,
@@ -454,42 +455,58 @@ impl Store {
         local_path: Option<&str>,
         config: &Map<String, Value>,
     ) -> Result<SourceRow> {
-        if !valid_source_id(id) {
-            return Err(StoreError::invalid(
-                "a source id is 1 to 32 characters of a-z, 0-9 and -",
-            ));
-        }
         self.write(|tx| {
-            if read_source(&*tx, id)?.is_some() {
-                return Err(StoreError::new(
-                    CONSTRAINT_VIOLATION,
-                    format!("source \"{id}\" already exists"),
-                ));
-            }
-            if all_sources(&*tx)?
-                .iter()
-                .any(|s| s.name.as_deref() == Some(name))
-            {
-                return Err(StoreError::new(
-                    CONSTRAINT_VIOLATION,
-                    format!("a source named \"{name}\" already exists"),
-                ));
-            }
-            let record = SourceRecord {
-                id: id.to_string(),
-                name: Some(name.to_string()),
-                local_path: local_path.map(str::to_string),
-                last_sync_at_us: None,
-                config: config.clone(),
-                incarnation: self.env.new_uuid(),
-                archived: false,
-                created_at_us: self.env.now_micros(),
-                chunker_version: None,
-                last_commit: None,
-                newest_content_at_us: None,
-            };
-            put_json(tx, &keys::text(keys::SOURCE, &[id]), &record)?;
-            Ok(SourceRow::from(record))
+            insert_source_in(tx, &*self.env, id, name, local_path, config, None)
+                .map(SourceRow::from)
         })
     }
+}
+
+/// The source INSERT of `insertSource` (a new incarnation) and of a managed clone's commit
+/// (`topologyStore().insertCloneSource`, the incarnation the clone recorded). Refuses as
+/// `insertSource` does.
+pub(crate) fn insert_source_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    id: &str,
+    name: &str,
+    local_path: Option<&str>,
+    config: &Map<String, Value>,
+    incarnation: Option<&str>,
+) -> Result<SourceRecord> {
+    if !valid_source_id(id) {
+        return Err(StoreError::invalid(
+            "a source id is 1 to 32 characters of a-z, 0-9 and -",
+        ));
+    }
+    if read_source(&*tx, id)?.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!("source \"{id}\" already exists"),
+        ));
+    }
+    if all_sources(&*tx)?
+        .iter()
+        .any(|s| s.name.as_deref() == Some(name))
+    {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            format!("a source named \"{name}\" already exists"),
+        ));
+    }
+    let record = SourceRecord {
+        id: id.to_string(),
+        name: Some(name.to_string()),
+        local_path: local_path.map(str::to_string),
+        last_sync_at_us: None,
+        config: config.clone(),
+        incarnation: incarnation.map_or_else(|| env.new_uuid(), str::to_string),
+        archived: false,
+        created_at_us: env.now_micros(),
+        chunker_version: None,
+        last_commit: None,
+        newest_content_at_us: None,
+    };
+    put_json(tx, &keys::text(keys::SOURCE, &[id]), &record)?;
+    Ok(record)
 }

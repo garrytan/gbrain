@@ -45,7 +45,9 @@ use serde_json::{Value, json};
 
 mod release;
 mod topology_reads;
+mod topology_writes;
 pub use release::{CounterDelta, ReleaseRead};
+pub use topology_writes::{CloneSourceInsert, WorktreeUpdate};
 
 /// `persistence_worktrees.state` CHECK.
 const WORKTREE_STATES: &[&str] = &["active", "draining", "recovering", "retired"];
