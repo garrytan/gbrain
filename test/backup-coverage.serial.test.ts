@@ -11,7 +11,7 @@
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1115,28 +1115,80 @@ describe('computeBackupCoverage — storage config read', () => {
     });
   });
 
-  test('an unreadable gbrain.yml keeps an otherwise verified verdict in warn', async () => {
-    const mk = (name: string) => {
-      const bare = join(tmp, `${name}.git`);
-      execFileSync('git', ['init', '--bare', '-b', 'main', bare], { stdio: ['ignore', 'pipe', 'pipe'] });
-      const work = join(tmp, name);
-      initRepo(work);
-      commitFile(work, 'a.md', 'x', 'init');
-      g(work, ['remote', 'add', 'origin', bare]);
-      g(work, ['push', '-u', 'origin', 'main']);
-      return work;
-    };
-    const probes = { localGitProbes: true, verifyRemoteRefs: true } as const;
+  /** A repo whose origin holds its HEAD: verified (verdict ok) under verifyRemoteRefs. */
+  const mkVerified = (name: string) => {
+    const bare = join(tmp, `${name}.git`);
+    execFileSync('git', ['init', '--bare', '-b', 'main', bare], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const work = join(tmp, name);
+    initRepo(work);
+    commitFile(work, 'a.md', 'x', 'init');
+    g(work, ['remote', 'add', 'origin', bare]);
+    g(work, ['push', '-u', 'origin', 'main']);
+    return work;
+  };
+  const probes = { localGitProbes: true, verifyRemoteRefs: true } as const;
+  const asRoot = typeof process.getuid === 'function' && process.getuid() === 0; // root ignores directory modes
 
-    const healthy = await computeBackupCoverage(stubEngine({ sources: [srcRow('ok-src', mk('repo-ok'))] }), probes);
+  test('an unreadable gbrain.yml keeps an otherwise verified verdict in warn', async () => {
+    const healthy = await computeBackupCoverage(stubEngine({ sources: [srcRow('ok-src', mkVerified('repo-ok'))] }), probes);
     expect(healthy.overall).toBe('ok'); // control: the same verified repo with no gbrain.yml
 
-    const bad = mk('repo-ok-bad-yml');
+    const bad = mkVerified('repo-ok-bad-yml');
     mkdirSync(join(bad, 'gbrain.yml'));
     const s = await computeBackupCoverage(stubEngine({ sources: [srcRow('bad-src', bad)] }), probes);
 
     expect(s.assets.find((a) => a.kind === 'db_only')).toMatchObject({ state: 'unknown', detail: 'storage_config_unreadable' });
     expect(s.overall).toBe('warn');
+  });
+
+  test('an unreadable gbrain.yml in the bootstrap workspace is a warning, not ok', async () => {
+    const ws = mkVerified('workspace-repo');
+    writeReceipt(ws, { repo_url: 'https://example.com/acme-example/brain.git' });
+    const engine = (id: string) => stubEngine({ sources: [srcRow(id, ws)] });
+
+    const healthy = await computeBackupCoverage(engine('ws-ok'), probes);
+    expect(healthy.overall).toBe('ok'); // control: verified workspace repo, no gbrain.yml
+
+    mkdirSync(join(ws, 'gbrain.yml')); // exists but cannot be read as a file
+    const s = await computeBackupCoverage(engine('ws-bad'), probes);
+
+    expect(s.assets.find((a) => a.kind === 'db_only')).toMatchObject({ id: 'ws-bad', state: 'unknown', detail: 'storage_config_unreadable' });
+    expect(s.overall).toBe('warn');
+  });
+
+  test.skipIf(asRoot)('a symlinked gbrain.yml behind a denied directory keeps the db_only row and warns', async () => {
+    const repo = mkVerified('repo-link-yml');
+    const cfgDir = join(tmp, 'cfg');
+    mkdirSync(cfgDir);
+    writeFileSync(join(cfgDir, 'real.yml'), 'storage:\n  db_tracked:\n    - people/\n  db_only:\n    - media/\n');
+    symlinkSync(join(cfgDir, 'real.yml'), join(repo, 'gbrain.yml'));
+    const engine = stubEngine({ sources: [srcRow('link-src', repo)] });
+
+    const before = await computeBackupCoverage(engine, probes);
+    expect(before.assets.find((a) => a.kind === 'db_only')).toMatchObject({ state: 'info' }); // control: the config is read
+
+    chmodSync(cfgDir, 0o000);
+    try {
+      const s = await computeBackupCoverage(engine, probes);
+
+      expect(s.assets.find((a) => a.kind === 'db_only')).toMatchObject({ id: 'link-src', state: 'unknown', detail: 'storage_config_unreadable' });
+      expect(s.overall).toBe('warn');
+    } finally {
+      chmodSync(cfgDir, 0o700);
+    }
+  });
+
+  test('a dangling gbrain.yml symlink (ENOENT) still means no config', async () => {
+    const repo = mkVerified('repo-dangling-yml');
+    symlinkSync(join(tmp, 'nowhere.yml'), join(repo, 'gbrain.yml'));
+    g(repo, ['add', '.']);
+    g(repo, ['commit', '-m', 'dangling config link']);
+    g(repo, ['push', 'origin', 'main']); // keep the tree clean and the remote current
+
+    const s = await computeBackupCoverage(stubEngine({ sources: [srcRow('dangling-src', repo)] }), probes);
+
+    expect(s.assets.find((a) => a.kind === 'db_only')).toBeUndefined();
+    expect(s.overall).toBe('ok');
   });
 
   test('a repo with no gbrain.yml has no db_only row at all', async () => {

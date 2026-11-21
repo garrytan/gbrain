@@ -15,6 +15,7 @@
  */
 
 import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { VERSION } from '../../version.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -119,6 +120,21 @@ function receiptTrulyAbsent(home: string): boolean {
     const code = (err as NodeJS.ErrnoException).code;
     return code === 'ENOENT' || code === 'ENOTDIR';
   }
+}
+
+/**
+ * Whether the source's gbrain.yml declares db_only dirs. Only ENOENT means "no config": loadStorageConfig's
+ * existsSync also answers false for EACCES/ELOOP (a denied parent, a symlink loop), which would read as no
+ * tiering, so the path is stat'ed first and every other error throws for the caller to report as unknown.
+ */
+function readDbOnlyDeclared(localPath: string): boolean {
+  try {
+    statSync(join(localPath, 'gbrain.yml'));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+  return (loadStorageConfig(localPath)?.db_only?.length ?? 0) > 0;
 }
 
 /** The cached verdict for a failed refresh: degraded, and without a count the failed read can no longer vouch for. */
@@ -299,15 +315,16 @@ export async function computeBackupCoverage(
           continue;
         }
       }
-      if (root === workspaceRoot) continue; // the workspace asset above owns it
-      const entry = byRoot.get(root);
+      // Read gbrain.yml BEFORE the workspace dedup below: a source in the workspace root still owes this answer.
       let dbOnly = false;
       try {
-        dbOnly = (loadStorageConfig(row.local_path)?.db_only?.length ?? 0) > 0;
+        dbOnly = readDbOnlyDeclared(row.local_path);
       } catch {
-        // gbrain.yml exists but cannot be read: db_only tiering is UNKNOWN, not absent.
+        // gbrain.yml cannot be read: db_only tiering is UNKNOWN, not absent.
         pushAsset(assets, { kind: 'db_only', id: row.id, state: 'unknown', detail: 'storage_config_unreadable' });
       }
+      if (root === workspaceRoot) continue; // the workspace asset above owns it
+      const entry = byRoot.get(root);
       if (entry) {
         entry.ids.push(row.id);
         entry.dbOnly = entry.dbOnly || dbOnly;
