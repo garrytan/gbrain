@@ -407,7 +407,7 @@ impl Store {
             }
             let at = match &d.decided_at {
                 None => None,
-                Some(text) => Some(parse_iso(text).ok_or_else(|| {
+                Some(text) => Some(decided_at_micros(text).ok_or_else(|| {
                     StoreError::invalid(format!("{MEMBER}: decided_at is not a timestamp: {text}"))
                 })?),
             };
@@ -572,6 +572,21 @@ fn group_has_canonical(read: &dyn KvRead, entity_id: &str) -> Result<bool> {
     Ok(false)
 }
 
+/// A decision's `decided_at`: an ISO timestamp, or the text this store lists it as
+/// (`timestamptz_text`, `2026-11-18 00:00:00.5+00`), which a caller that re-applies a listed
+/// decision sends back, as Postgres accepts its own output.
+fn decided_at_micros(text: &str) -> Option<i64> {
+    if let Some(at) = parse_iso(text) {
+        return Some(at);
+    }
+    let base = text.strip_suffix("+00")?;
+    let (time, frac) = base.split_once('.').unwrap_or((base, ""));
+    if time.len() != 19 || time.as_bytes()[10] != b' ' || frac.len() > 6 {
+        return None;
+    }
+    parse_iso(&format!("{}T{}.{:0<6}Z", &time[..10], &time[11..], frac))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -608,6 +623,18 @@ mod tests {
         });
         let rec: ReviewRecord = serde_json::from_value(old).unwrap();
         assert_eq!(rec.evidence, None);
+    }
+
+    #[test]
+    fn decided_at_reads_the_listed_text_back() {
+        let at = parse_iso("2026-11-18T00:00:00.500000Z").unwrap();
+        assert_eq!(decided_at_micros("2026-11-18 00:00:00.5+00"), Some(at));
+        assert_eq!(decided_at_micros("2026-11-18T00:00:00.500000Z"), Some(at));
+        assert_eq!(
+            decided_at_micros("2026-11-18 00:00:00+00"),
+            parse_iso("2026-11-18T00:00:00.000000Z")
+        );
+        assert_eq!(decided_at_micros("2026-11-18 00:00:00"), None);
     }
 
     #[test]
