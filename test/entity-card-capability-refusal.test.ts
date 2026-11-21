@@ -58,7 +58,7 @@ const CASES: Array<[string, Parameters<typeof refusing>[0]]> = [
   ['the alias member (readEntityAliasRows)', { member: 'readEntityAliasRows' }],
   ['the inbound edge member (readEntityInboundEdges)', { member: 'readEntityInboundEdges' }],
   ['the open-loop member (readEntityOpenLoops)', { member: 'readEntityOpenLoops' }],
-  ['the mention coverage read', { sqlMatch: /FROM mention_index_status/ }],
+  ['the mention coverage read', { member: 'readMentionIndexStatus' }],
   ['the outbound link member (getLinks)', { member: 'getLinks' }],
   ['the timeline member (getTimeline)', { member: 'getTimeline' }],
 ];
