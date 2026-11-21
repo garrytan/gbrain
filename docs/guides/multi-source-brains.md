@@ -98,8 +98,13 @@ first):
 
 So inside `~/.gstack/plans/` on a brain that pinned `gstack` to
 `~/.gstack` via `.gbrain-source`, `gbrain put` implicitly writes to
-the `gstack` source. Outside any registered directory with no env/dotfile
-set, it writes to the default.
+the `gstack` source. Otherwise, a put uses the source selected by routing.
+If a trusted local put names no source, its target has no row for the slug,
+and exactly one other source readable by the local writer holds it live,
+the put refuses with `invalid_params` (`detail: slug_in_other_source`),
+including with `--force`. Repeat the same put with `--source-id <holder>`
+to target the existing page, or name the intended target explicitly to
+create a separate copy.
 
 ## Federation flag
 
