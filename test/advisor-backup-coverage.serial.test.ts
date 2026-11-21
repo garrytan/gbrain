@@ -30,6 +30,7 @@ import {
   saveBackupStatus,
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
+import { N4_SOURCE_MEMBERS } from './helpers/n4-engine-members.ts';
 
 const ENV_KEYS = ['GBRAIN_HOME', 'GBRAIN_BACKUP_CHECK', 'GBRAIN_BACKUP_CHECK_DAYS'] as const;
 
@@ -109,6 +110,7 @@ function makeEngine(opts: { sources?: SourceFixture[]; pageCount?: number } = {}
   const calls: string[] = [];
   const engine = {
     kind: 'pglite',
+    ...N4_SOURCE_MEMBERS,
     executeRaw: async (sql: string) => {
       calls.push(sql);
       if (/from\s+sources/i.test(sql)) {

@@ -14,6 +14,7 @@ import {
   deriveBrainId,
 } from '../src/core/skillpack/brain-resident-locate.ts';
 import { OperationError, type OperationContext } from '../src/core/operations.ts';
+import { N4_SOURCE_MEMBERS } from './helpers/n4-engine-members.ts';
 
 let root: string;
 let packDir: string;
@@ -34,6 +35,7 @@ afterEach(() => {
 /** Minimal fake engine: only executeRaw (sources SELECT) + getConfig are used. */
 function fakeEngine(sources: Array<{ id: string; local_path: string | null; config?: Record<string, unknown> }>, cfg: Record<string, string> = {}) {
   return {
+    ...N4_SOURCE_MEMBERS,
     executeRaw: async () =>
       sources.map((s) => ({
         id: s.id,
