@@ -26,6 +26,7 @@ import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from './embed-retr
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { healOversizedPageChunks, healedChunksToStaleRows } from './embed-oversize-heal.ts';
 import { healAndReportOverLength } from './embed-overlength-heal.ts';
+import { embeddingsDisabled } from './embedding-disabled.ts';
 import { hasSignatureDrift, invalidateStaleSignatureEmbeddingsGuarded, splitEmbeddingSignature, currentSpaceChunkPredicate } from './embedding-invalidation.ts';
 import {
   resolveActiveEmbeddingColumnFromEngine,
@@ -300,6 +301,8 @@ export async function embedStalePages(
     embeddingSignature?: string;
   } = {},
 ): Promise<{ embedded: number; pagesProcessed: number; aborted: boolean }> {
+  // A brain with embedding turned off (either config plane) never sends text to a provider.
+  if (await embeddingsDisabled(engine)) return { embedded: 0, pagesProcessed: 0, aborted: false };
   const embedFn = opts.embedFn ?? (async (texts: string[], fnOpts: { abortSignal?: AbortSignal }) =>
     embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }));
   const result = { embedded: 0, pagesProcessed: 0, aborted: false };
