@@ -4,9 +4,12 @@
  *    that lives only in the git source is refused with the holding source and the exact retry command, and no
  *    second copy appears in 'default'; `put --force --source-id <source>` still writes to that source; an unsourced
  *    put of a new slug still goes to 'default' and prints the documented routing-flip notice even when the git
- *    source is federated.
+ *    source is federated; an explicit --source-id may still make a separate copy; a slug held by two other
+ *    sources, or only by a source outside a restricted local writer's grant, is not refused; a retry of a stored
+ *    request_id keeps its receipt after the page moved elsewhere; a dry run refuses like the real put.
  * 2. Fails when: the put forks a shadow copy that an unscoped get prefers (the old behavior), the refusal text
- *    changes, a sourced put is refused, or the flip notice is silent.
+ *    changes, a sourced put is refused, or the flip notice is silent, the refusal runs before the stored-request replay or probes sources the writer's
+ *    grant does not cover.
  * 3. Real seams: MCP dispatch with remote=false and localSourceImplicit (the path the CLI uses), the durable write
  *    path and the real sources table, on PGLite.
  */
@@ -18,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const SLUG = 'people/erin-example';
@@ -88,6 +92,50 @@ describe('an unsourced local put does not fork a page that lives in another sour
     expect(await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true })).toBeNull();
   }, 120_000);
 
+  test('an explicit --source-id may still make a separate copy in another source', async () => {
+    const slug = 'people/gina-example';
+    expect((await put(slug, page('Gina is at vault-co.'), { implicit: false, ctxSource: 'vault' })).body?.source_id).toBe('vault');
+    const out = await unsourced(slug, page('Gina has a separate copy.'), { source_id: 'default' });
+    expect(out.isError, out.text).toBe(false);
+    expect(out.body?.source_id).toBe('default');
+    expect((await engine.getPage(slug, { sourceId: 'default' }))?.compiled_truth).toContain('separate copy');
+    expect((await engine.getPage(slug, { sourceId: 'vault' }))?.compiled_truth).toContain('vault-co');
+  }, 120_000);
+
+  test('a dry run refuses the same fork and writes nothing', async () => {
+    const out = await unsourced(SLUG, page('Erin dry run.'), { dry_run: true });
+    expect(out.isError).toBe(true);
+    expect((JSON.parse(out.text) as { detail?: string }).detail).toBe('slug_in_other_source');
+    expect(await engine.readPageSnapshot(SLUG, { sourceId: 'default', includeDeleted: true })).toBeNull();
+  }, 120_000);
+
+  test('a slug held by two other sources is not refused (no single source to name)', async () => {
+    const slug = 'people/hana-example';
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('vault-two', 'vault-two', '{}'::jsonb) ON CONFLICT (id) DO NOTHING`);
+    for (const source of ['vault', 'vault-two']) {
+      const written = await put(slug, page(`Hana in ${source}.`), { implicit: false, ctxSource: source });
+      expect(written.isError, written.text).toBe(false);
+    }
+    const out = await unsourced(slug, page('Hana unsourced.'));
+    expect(out.isError, out.text).toBe(false);
+    expect(out.body?.source_id).toBe('default');
+    await engine.executeRaw(`UPDATE sources SET archived = true WHERE id = 'vault-two'`); // later cases see one non-default source again
+  }, 120_000);
+
+  test('a retry of a stored request keeps its receipt after the page moved to another source', async () => {
+    const slug = 'notes/iris-example';
+    const params = { request_id: randomUUID() };
+    const first = await unsourced(slug, page('Iris first.'), params);
+    expect(first.isError, first.text).toBe(false);
+    expect((await put(slug, page('Iris elsewhere.'), { implicit: false, ctxSource: 'vault' })).isError).toBe(false);
+    await engine.executeRaw(`DELETE FROM pages WHERE source_id = 'default' AND slug = $1`, [slug]);
+    expect(await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true })).toBeNull();
+    const retry = await unsourced(slug, page('Iris first.'), params);
+    expect(retry.isError, retry.text).toBe(false);
+    expect(retry.body).toEqual(first.body);
+    expect(await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true })).toBeNull();
+  }, 120_000);
+
   test('an unsourced put of a new slug goes to default and prints the routing-flip notice', async () => {
     const lines: string[] = [];
     const original = console.error;
@@ -100,5 +148,26 @@ describe('an unsourced local put does not fork a page that lives in another sour
     }
     expect(out.body?.source_id).toBe('default');
     expect(lines).toContain("[gbrain] sole non-default source 'vault' exists, but 'default' is non-empty — routing to 'default' (#3070 emptiness guard). Pass --source vault or set sources.default to target it.");
+  }, 120_000);
+});
+
+describe('a restricted local writer is not told about pages in sources its grant does not cover (PGLite)', () => {
+  let engine: BrainEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' } as never);
+    await engine.initSchema();
+    await registerLocalWriter(engine, 'cli', { sourceIds: ['default'], operations: null, scopes: ['read', 'write'], slugPrefixes: null });
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('vault', 'vault', '{}'::jsonb)`);
+    await engine.putPage('notes/jo-example', { type: 'note', title: 'Jo', compiled_truth: 'Held in vault.', timeline: '' }, { sourceId: 'vault' });
+  }, 240_000);
+  afterAll(async () => { await engine?.disconnect(); }, 60_000);
+
+  test('an unsourced put is not refused for a page in a source outside the grant', async () => {
+    const out = await dispatchToolCall(engine, 'put_page', { slug: 'notes/jo-example', content: page('Jo copy.'), request_id: randomUUID() },
+      { remote: false, sourceId: 'default', localSourceImplicit: true, takesHoldersAllowList: ['world'] });
+    const text = out.content.map(c => c.text).join('\n');
+    expect(text).not.toContain('slug_in_other_source');
+    expect(text).not.toContain('lives in source vault');
   }, 120_000);
 });

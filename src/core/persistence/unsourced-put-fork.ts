@@ -12,8 +12,11 @@
  * names the source and the retry with --source-id. A put that names its source
  * (--source-id, --source, GBRAIN_SOURCE or a .gbrain-source pin) is never
  * refused here, and remote callers never reach it (it would be a cross-source
- * existence oracle outside their grant). Reads go through typed engine members
- * only (listAllSources, readPageSnapshot).
+ * existence oracle outside their grant). A local writer registered for fewer
+ * sources only hears about holders in sources its grant covers, and a real put
+ * is checked after the write authority and after a stored request_id replay, so
+ * a refused or replayed request keeps the answer it had. Reads go through typed
+ * engine members only (listAllSources, readPageSnapshot, the local writer row).
  */
 import type { BrainEngine } from '../engine.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
@@ -21,18 +24,22 @@ import { readFix } from '../ops/op-fix.ts';
 import { validateSlug } from '../utils.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { formatSoleNonDefaultFlip } from '../source-resolver.ts';
+import { hasCapability } from '../engine-capabilities.ts';
+import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter } from './identity.ts';
 
 /** True when `p` is a put from the trusted local CLI whose source was not named by the caller. */
 export function isUnsourcedLocalPut(ctx: Pick<OperationContext, 'remote' | 'localSourceImplicit'>, p: Record<string, unknown>): boolean {
   return ctx.remote === false && ctx.localSourceImplicit === true && p.source_id === undefined;
 }
 
-/** The one other source holding a live page at `slug` while `target` holds no row for it; null otherwise. */
-export async function forkedFromSource(engine: BrainEngine, target: string, slug: string): Promise<string | null> {
-  if (await engine.readPageSnapshot(slug, { sourceId: target, includeDeleted: true })) return null;
+/** The one other source in `readable` holding a live page at `slug` while `target` holds no row for it; null otherwise. */
+export async function forkedFromSource(engine: BrainEngine, target: string, slug: string,
+  opts: { targetHasRow?: boolean; readable?: (sourceId: string) => boolean } = {}): Promise<string | null> {
+  const hasRow = opts.targetHasRow ?? !!(await engine.readPageSnapshot(slug, { sourceId: target, includeDeleted: true }));
+  if (hasRow) return null;
   const holders: string[] = [];
   for (const source of await engine.listAllSources()) {
-    if (source.id === target) continue;
+    if (source.id === target || opts.readable?.(source.id) === false) continue;
     if (await engine.readPageSnapshot(slug, { sourceId: source.id })) holders.push(source.id);
   }
   return holders.length === 1 ? holders[0]! : null;
@@ -56,13 +63,33 @@ export function unsourcedForkRefusal(slug: string, holder: string, target: strin
     });
 }
 
-/** Refuses an unsourced local put that would fork a page living in exactly one other source. */
-export async function assertUnsourcedPutKeepsSource(ctx: OperationContext, target: string, p: Record<string, unknown>): Promise<void> {
+/**
+ * Refuses an unsourced local put that would fork a page living in exactly one other source.
+ * `admitted` comes from the durable write path, after the write authority and the replay check, with whether the
+ * target already has a row; without it (a dry run, which has no admission) a slug-restricted writer is left alone.
+ */
+export async function assertUnsourcedPutKeepsSource(ctx: OperationContext, target: string, p: Record<string, unknown>,
+  admitted?: { targetHasRow: boolean }): Promise<void> {
   if (!isUnsourcedLocalPut(ctx, p) || typeof p.slug !== 'string') return;
   let slug: string;
   try { slug = validateSlug(p.slug); } catch { return; } // the write path refuses a bad slug with its own message
-  const holder = await forkedFromSource(ctx.engine, target, slug);
+  // An engine without persistence_journal (Rust) has no local-writer grants and no stored requests to consult.
+  const grant = hasCapability(ctx.engine, 'persistence_journal')
+    ? (currentVerifiedLocalWriter() ?? await verifyLocalWriter(ctx.engine, await readLocalWriter(ctx.engine, 'cli'))).grant : null;
+  const covers = (sourceId: string) => grant === null || grant.sourceIds.includes('*') || grant.sourceIds.includes(sourceId);
+  if (!covers(target) || (admitted === undefined && grant?.slugPrefixes?.length)) return; // the write authority answers these
+  const holder = await forkedFromSource(ctx.engine, target, slug, { targetHasRow: admitted?.targetHasRow, readable: covers });
   if (holder !== null) throw unsourcedForkRefusal(slug, holder, target, p.force === true);
+}
+
+/**
+ * The check a put makes before admission: a dry run and an engine with no persistence journal have no admission to
+ * hold it, so they refuse here (and a dry run previews the routing-flip notice, which a real put prints once it landed).
+ */
+export async function guardUnsourcedPutEarly(ctx: OperationContext, target: string, p: Record<string, unknown>): Promise<void> {
+  if (!ctx.dryRun && hasCapability(ctx.engine, 'persistence_journal')) return;
+  await assertUnsourcedPutKeepsSource(ctx, target, p);
+  if (ctx.dryRun) await noteSuppressedSourceFlip(ctx, target, p);
 }
 
 /**
@@ -84,10 +111,4 @@ export async function noteSuppressedSourceFlip(ctx: OperationContext, target: st
   } catch {
     // Advisory only: a failed read never blocks the put.
   }
-}
-
-/** put_page's admission for a put that named no source: refuse a fork, then print the routing-flip notice. */
-export async function guardUnsourcedPut(ctx: OperationContext, target: string, p: Record<string, unknown>): Promise<void> {
-  await assertUnsourcedPutKeepsSource(ctx, target, p);
-  await noteSuppressedSourceFlip(ctx, target, p);
 }
