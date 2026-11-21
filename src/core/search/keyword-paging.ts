@@ -28,6 +28,7 @@ import { opError, type OperationContext } from '../ops/contract.ts';
 import { invalidParam } from '../ops/op-fix.ts';
 import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
 import { KEYWORD_COUNT_CAP, type KeywordPageAfter } from './keyword-statement.ts';
+import { hasCJK } from '../cjk.ts';
 
 export type SearchMatch = 'hybrid' | 'keyword';
 
@@ -173,6 +174,8 @@ export interface KeywordPage {
   rows: SearchResult[];
   meta: Record<string, unknown>;
   degraded?: DegradedStageEntry;
+  /** #9936: the CJK rows read hit its statement timeout, so the page holds no rows (keyword_candidates_incomplete). */
+  bound?: DegradedStageEntry;
 }
 
 /**
@@ -181,7 +184,13 @@ export interface KeywordPage {
  */
 export async function readKeywordPage(engine: BrainEngine, p: Record<string, unknown>, opts: SearchOpts, paging: SearchPaging, limit: number, names: string[] | null = null): Promise<KeywordPage> {
   const queryText = String(p.query);
-  const rowsRead = engine.searchKeywordPages(queryText, opts, { limit: limit + 1, ...(paging.cursor ? { after: paging.cursor } : { offset: paging.offset }) });
+  let bound: DegradedStageEntry | undefined;
+  const rowsRead = engine.searchKeywordPages(queryText, opts, { limit: limit + 1, ...(paging.cursor ? { after: paging.cursor } : { offset: paging.offset }) })
+    .catch((e: unknown): SearchResult[] => {
+      if (!hasCJK(queryText) || !isTimeout(e)) throw e;
+      bound = { stage: 'keyword_candidates_incomplete', reason: 'timeout' };
+      return [];
+    });
   const [probe, count] = await Promise.all([rowsRead, countKeywordMatches(engine, queryText, opts, KEYWORD_COUNT_TIMEOUT_MS, rowsRead)]);
   const rows = probe.slice(0, limit);
   const start = paging.cursor ? paging.cursor.shown : paging.offset;
@@ -207,6 +216,7 @@ export async function readKeywordPage(engine: BrainEngine, p: Record<string, unk
       ...(next ? { next } : {}),
     },
     ...(degraded ? { degraded } : {}),
+    ...(bound ? { bound } : {}),
   };
 }
 
