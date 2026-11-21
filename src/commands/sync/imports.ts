@@ -21,6 +21,7 @@ import {
   resolveMaxConnections,
   clampWorkersForConnectionBudget,
   shouldRunParallel,
+  usesPostgresImportWorkers,
 } from '../../core/sync-concurrency.ts';
 import { isPathSafe } from '../../core/sync-git.ts';
 import { resolveStallAbortSeconds, composeAbortSignals } from '../../core/sync-reconcile.ts';
@@ -448,7 +449,7 @@ async function drainImports(
       // back to serial when database_url is unset, so we never crash on a null
       // assertion if config is missing.
       const config = loadConfig();
-      if (engine.kind === 'pglite' || !config?.database_url) {
+      if (!config?.database_url || !usesPostgresImportWorkers(engine.kind, config.database_url)) {
         for (const path of importsToDo) {
           // v0.41.13.0 (T2 / D-V3-2): per-iteration abort check. PGLite
           // serial fallback inside the parallel branch (database_url unset).
