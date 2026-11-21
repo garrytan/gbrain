@@ -373,7 +373,15 @@ describe.skipIf(!canRunScripts)('digest script (fake gh and curl)', () => {
   const EARLY = '2026-11-21T17:10:00Z';
   const LATE = '2026-11-21T18:00:00Z';
   const R = 'repos/garrytan/gbrain/';
-  const SINCE = 'since=2026-11-21T17:30:00Z&per_page=100';
+  const START = '2026-11-21T17:30:00Z';
+  const since = (start: string) => 'since=' + start + '&per_page=100';
+  const SINCE = since(START);
+  const runFixtures = (created: string, prev: string | null) => ({
+    [R + 'actions/runs/1']: { created_at: created, workflow_id: 77 },
+    [R + 'actions/workflows/77/runs?event=schedule&status=success&created=%3C' + created + '&per_page=1']: {
+      workflow_runs: prev ? [{ created_at: prev }] : [],
+    },
+  });
   const pr = (n: number, sha: string, ref: string, repo = 'garrytan/gbrain') => ({ number: n, state: 'open', head: { sha, ref, repo: { full_name: repo } } });
   const issueComment = (id: number, n: number, login: string, created_at = IN) => ({
     id,
@@ -382,15 +390,15 @@ describe.skipIf(!canRunScripts)('digest script (fake gh and curl)', () => {
     created_at,
     body: 'SECRET-COMMENT-TEXT',
   });
-  const fixtures = (created: string) => ({
-    [R + 'actions/runs/1']: { created_at: created },
+  const fixtures = (created: string, prev: string | null = '2026-11-21T17:35:12Z', start = START) => ({
+    ...runFixtures(created, prev),
     [R + 'issues?labels=rust-engine&state=open&per_page=100']: [
       { number: 10, updated_at: IN, pull_request: {} },
       { number: 11, updated_at: '2026-11-21T09:00:00Z', pull_request: {} },
       { number: 12, updated_at: IN, pull_request: {} },
       { number: 13, updated_at: IN },
     ],
-    [R + 'issues?labels=rust-engine&state=closed&' + SINCE]: [],
+    [R + 'issues?labels=rust-engine&state=closed&' + since(start)]: [],
     [R + 'pulls/10']: pr(10, A, 'vorflux/a+b'),
     [R + 'pulls/11']: pr(11, B, 'vorflux/quiet'),
     [R + 'pulls/12']: pr(12, A, 'feature', 'someone/gbrain'),
@@ -417,6 +425,9 @@ describe.skipIf(!canRunScripts)('digest script (fake gh and curl)', () => {
       { id: 32, event: 'closed', actor: { login: 'alice-example' }, created_at: IN, commit_id: null },
       { id: 33, event: 'mentioned', actor: { login: 'alice-example' }, created_at: IN, commit_id: null },
       { id: 34, event: 'unlabeled', actor: { login: 'alice-example' }, label: { name: 'full-ci' }, created_at: EARLY, commit_id: null },
+      { id: 35, event: 'labeled', actor: { login: 'garrytan' }, label: { name: 'full-ci' }, created_at: IN, commit_id: null },
+      { id: 36, event: 'unlabeled', actor: { login: 'github-actions[bot]' }, label: { name: 'full-ci' }, created_at: IN, commit_id: null },
+      { id: 37, event: 'review_requested', actor: { login: 'capy-ai[bot]' }, created_at: IN, commit_id: null },
     ],
     [R + 'pulls/10/reviews?per_page=100']: [
       { id: 41, user: { login: 'capy-ai[bot]' }, state: 'COMMENTED', submitted_at: IN, body: 'SECRET-REVIEW-TEXT' },
@@ -424,14 +435,14 @@ describe.skipIf(!canRunScripts)('digest script (fake gh and curl)', () => {
       { id: 43, user: { login: 'garrytan' }, state: 'COMMENTED', submitted_at: IN, body: '' },
       { id: 44, user: { login: 'alice-example' }, state: 'PENDING', submitted_at: null, body: '' },
     ],
-    [R + 'issues/comments?' + SINCE]: [
+    [R + 'issues/comments?' + since(start)]: [
       issueComment(51, 10, 'bob-example'),
       issueComment(52, 10, 'capy-ai[bot]'),
       issueComment(53, 12, 'bob-example'),
       issueComment(54, 99, 'bob-example'),
       issueComment(55, 10, 'bob-example', EARLY),
     ],
-    [R + 'pulls/comments?' + SINCE]: [
+    [R + 'pulls/comments?' + since(start)]: [
       { id: 61, pull_request_url: 'https://api.github.com/repos/garrytan/gbrain/pulls/10', user: { login: 'bob-example' }, created_at: IN, body: 'SECRET-COMMENT-TEXT' },
       { id: 62, pull_request_url: 'https://api.github.com/repos/garrytan/gbrain/pulls/10', user: { login: 'garrytan' }, created_at: IN, body: 'SECRET-COMMENT-TEXT' },
     ],
@@ -450,7 +461,7 @@ describe.skipIf(!canRunScripts)('digest script (fake gh and curl)', () => {
       event: 'digest',
       window_start: '2026-11-21T17:30:00Z',
       window_end: '2026-11-21T18:00:00Z',
-      delivery_id: 'digest:2026-11-21T17:30:00Z',
+      delivery_id: 'digest:2026-11-21T17:30:00Z:2026-11-21T18:00:00Z',
       count: 8,
       truncated: 0,
       items: [
@@ -472,9 +483,32 @@ describe.skipIf(!canRunScripts)('digest script (fake gh and curl)', () => {
     expect(rerun.body).toEqual(first.body);
   });
 
+  test('a run delayed past the next half hour, or one after a dropped run, reads every unread half hour', () => {
+    const r = runScript(DIGEST_RUN, env, fixtures('2026-11-21T18:07:31Z', '2026-11-21T17:05:02Z', '2026-11-21T17:00:00Z'));
+    expect(r.status).toBe(0);
+    expect(r.out).toContain('Window 2026-11-21T17:00:00Z to 2026-11-21T18:00:00Z');
+    expect(r.body.delivery_id).toBe('digest:2026-11-21T17:00:00Z:2026-11-21T18:00:00Z');
+    expect(r.body.items).toContainEqual({ pr: 10, kind: 'comment', comment_id: 55, author: 'bob-example' });
+    expect(r.body.items).toContainEqual({ pr: 10, kind: 'force_push', activity_id: 23, author: 'alice-example', before: A, after: B });
+  });
+
+  test('catching up reaches back at most six hours, and a first run reads one half hour', () => {
+    const late = runScript(DIGEST_RUN, env, fixtures('2026-11-21T18:07:31Z', '2026-11-19T09:05:00Z', '2026-11-21T12:00:00Z'));
+    expect(late.out).toContain('Window 2026-11-21T12:00:00Z to 2026-11-21T18:00:00Z');
+    const first = runScript(DIGEST_RUN, env, fixtures('2026-11-21T18:07:31Z', null));
+    expect(first.out).toContain('Window 2026-11-21T17:30:00Z to 2026-11-21T18:00:00Z');
+  });
+
+  test('a run in a half hour an earlier run already read posts nothing', () => {
+    const r = runScript(DIGEST_RUN, env, runFixtures('2026-11-21T18:07:31Z', '2026-11-21T18:01:40Z'));
+    expect(r.status).toBe(0);
+    expect(r.body).toBeNull();
+    expect(r.out).toContain('Nothing sent: an earlier scheduled run already read up to 2026-11-21T18:00:00Z');
+  });
+
   test('an empty window posts nothing', () => {
     const r = runScript(DIGEST_RUN, env, {
-      [R + 'actions/runs/1']: { created_at: '2026-11-21T18:07:31Z' },
+      ...runFixtures('2026-11-21T18:07:31Z', '2026-11-21T17:35:12Z'),
       [R + 'issues?labels=rust-engine&state=open&per_page=100']: [],
       [R + 'issues?labels=rust-engine&state=closed&' + SINCE]: [],
       [R + 'issues/comments?' + SINCE]: [],
