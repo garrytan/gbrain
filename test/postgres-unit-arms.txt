@@ -210,6 +210,7 @@ test/engine-parity/files-ops-sites.test.ts
 test/engine-parity/forget-commit.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-remember.test.ts
+test/engine-parity/harness-consumer-stop.test.ts
 test/engine-parity/held-fence-cells.test.ts
 test/engine-parity/holding-page-purges.test.ts
 test/engine-parity/hot-memory-watermark.test.ts
