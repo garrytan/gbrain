@@ -74,7 +74,7 @@ export async function ruleReadByNobodyLines(engine: BrainEngine, sourceId: strin
   const ownerOptIn = !!owner && enabled.some(m => m.id === owner) && await ownerReadsRestrictedOn(engine);
   const identities = enabled.map(m => identityFor(m.id, m.groups));
   const rows = await engine.executeRaw<{ slug: string; frontmatter: unknown }>(
-    `SELECT slug, frontmatter FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE ${ruleCoversSql('slug', 'pfx')}) ORDER BY slug`,
+    `SELECT slug, frontmatter FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE ${ruleCoversSql('slug', 'pfx')}) ORDER BY slug COLLATE "C"`,
     [sourceId, prefixes]);
   const someoneReads = (slug: string, fm: unknown, rules: FolderRule[]) => {
     const restricted = normalizeReaders(fm) !== null || rules.some(r => ruleCovers(slug, r.prefix));

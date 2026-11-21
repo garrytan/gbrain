@@ -61,7 +61,7 @@ export async function readBudgetLimited(engine: BrainEngine, opts: { sourceId?: 
     source.pending_chars += Number(row.chars);
     sources.set(row.source_id, source);
   }
-  out.by_source = [...sources.values()].sort((a, b) => b.pending_chunks - a.pending_chunks || a.source_id.localeCompare(b.source_id));
+  out.by_source = [...sources.values()].sort((a, b) => b.pending_chunks - a.pending_chunks || (a.source_id < b.source_id ? -1 : a.source_id > b.source_id ? 1 : 0));
   return out;
 }
 

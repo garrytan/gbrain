@@ -20,10 +20,11 @@ export async function readExportWithdrawals(tx: BrainEngine, sourceId: string): 
     FROM fact_withdrawals WHERE source_id=$1`, [sourceId]);
   if (Number(size.bytes) > EXPORT_PAYLOAD_LIMIT) throw new Error('Export withdrawal ledger capacity exceeded. No destination output was published.');
   // Purge tombstones ride the same overlay and drop their rows from the export.
-  return tx.executeRaw<ExportWithdrawal>(`SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
+  // A UNION's ORDER BY takes only output column names, so the byte order sorts the wrapped union.
+  return tx.executeRaw<ExportWithdrawal>(`SELECT * FROM (SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
     FROM fact_withdrawals WHERE source_id=$1
-    UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1
-    ORDER BY visibility,fact_hash,subject`, [sourceId]);
+    UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1) w
+    ORDER BY visibility COLLATE "C",fact_hash COLLATE "C",subject COLLATE "C"`, [sourceId]);
 }
 
 export type ExportSnapshot = { page: Page; tags: string[] };
@@ -44,7 +45,7 @@ export async function readExportPages(tx: BrainEngine, keys: ReadonlyArray<{ id:
   const rows = await tx.executeRaw<Record<string, unknown>>(`WITH export_page AS MATERIALIZED (
     SELECT * FROM pages WHERE id = ANY($1::bigint[])
   ) SELECT p.*,
-    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
+    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
     FROM export_page p WHERE p.deleted_at IS NULL`,
   [keys.map(key => key.id)]);
   const byId = new Map(rows.map(row => [String(row.id), row]));

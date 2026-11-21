@@ -3172,7 +3172,7 @@ export class PostgresEngine implements BrainEngine {
     const privacy = sql.unsafe(`AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForReader('facts')}` : ''}${opts?.excludeDiary ? ` AND NOT starts_with(COALESCE(source_markdown_slug, ''), 'life/diary/')` : ''}`);
     const visibility = opts?.visibility ? sql`AND visibility = ANY(${opts.visibility})` : sql``;
     const rows = await sql<OntologyValue[]>`
-      SELECT DISTINCT ON (dimension)
+      SELECT DISTINCT ON (dimension COLLATE "C")
         dimension, value, confidence,
         source_markdown_slug AS source, valid_from, valid_until AS valid_to,
         COALESCE(dim_status, 'active') AS status, id AS fact_id
@@ -3183,7 +3183,7 @@ export class PostgresEngine implements BrainEngine {
         AND COALESCE(valid_until, 'infinity'::timestamptz) > COALESCE(${asof}::timestamptz, now())
         AND confidence >= ${minConf}
         AND (${includeQ}::boolean OR dim_status IS NULL OR dim_status = 'active')
-      ORDER BY dimension, valid_from DESC NULLS LAST, confidence DESC, id DESC`;
+      ORDER BY dimension COLLATE "C", valid_from DESC NULLS LAST, confidence DESC, id DESC`;
     return rows.map((r) => ({ ...r, confidence: Number(r.confidence), fact_id: Number(r.fact_id) }));
   }
 
@@ -3196,7 +3196,7 @@ export class PostgresEngine implements BrainEngine {
       SELECT dimension, count(DISTINCT entity_slug)::int AS entities, count(*)::int AS observations
       FROM facts
       WHERE dimension IS NOT NULL AND expired_at IS NULL AND ${sql.unsafe(NOT_CONVERSATION_SLOT_SQL)} ${scope}
-      GROUP BY dimension ORDER BY entities DESC, dimension`;
+      GROUP BY dimension ORDER BY entities DESC, dimension COLLATE "C"`;
     return rows.map((r) => ({ dimension: r.dimension, entities: Number(r.entities), observations: Number(r.observations) }));
   }
 
@@ -3223,7 +3223,7 @@ export class PostgresEngine implements BrainEngine {
       FROM cur
       GROUP BY entity_slug, dimension
       HAVING count(DISTINCT value) >= 2 AND count(DISTINCT source) >= 2
-      ORDER BY entity_slug, dimension`;
+      ORDER BY entity_slug COLLATE "C", dimension COLLATE "C"`;
     return rows.map((r) => ({ entity_slug: r.entity_slug, dimension: r.dimension, values: r.values }));
   }
 
@@ -4019,7 +4019,7 @@ export class PostgresEngine implements BrainEngine {
     const pattern = `${escaped}%`;
     return this.configRead(async sql => {
       const rows = await sql<{ key: string }[]>`
-        SELECT key FROM config WHERE key LIKE ${pattern} ESCAPE '\\' ORDER BY key
+        SELECT key FROM config WHERE key LIKE ${pattern} ESCAPE '\\' ORDER BY key COLLATE "C"
       `;
       return rows.map(r => r.key);
     });

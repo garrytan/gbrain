@@ -275,7 +275,7 @@ export async function listNameVariantCandidates(exec: LegacyUnscopedRead, source
         WHERE deleted_at IS NULL AND source_id = ${sourceId}
           AND (type = ANY(${[...q.types]}::text[]) OR slug LIKE ANY(${[...q.slugPatterns]}::text[]))
           AND (title ILIKE ANY(${[...q.probes]}::text[]) OR slug ILIKE ANY(${[...q.probes]}::text[]))
-        ORDER BY probe_hits DESC, length(title), slug
+        ORDER BY probe_hits DESC, length(title), slug COLLATE "C"
         LIMIT ${limit}`);
   return exec.executeRaw<NameVariantCandidateRow>(text, params);
 }

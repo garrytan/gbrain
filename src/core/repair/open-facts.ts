@@ -124,7 +124,7 @@ async function countReasons(engine: BrainEngine, sel: Selection): Promise<{ elig
   let rows: Array<{ cls: string; reason: string; n: number }>;
   try {
     rows = await engine.executeRaw(`SELECT cls, reason, count(*)::int AS n FROM (SELECT ${openFactClassSql('f')} AS cls, COALESCE(${openFactsReasonSql('f')}, 'eligible') AS reason
-      FROM facts f WHERE ${BASE('f')}) x GROUP BY cls, reason ORDER BY cls, reason`, [sel.source_id, sel.created_before, sel.ids], bounded);
+      FROM facts f WHERE ${BASE('f')}) x GROUP BY cls, reason ORDER BY cls COLLATE "C", reason COLLATE "C"`, [sel.source_id, sel.created_before, sel.ids], bounded);
   } catch (error) {
     if ((error as { code?: string } | null)?.code === '57014') return null;
     throw error;

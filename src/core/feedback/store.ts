@@ -113,7 +113,7 @@ export async function getRetrievalEvent(engine: BrainEngine, id: string): Promis
     [id],
   );
   const links = await engine.executeRaw<EventLink>(
-    `SELECT source_id, edge_key, to_slug FROM retrieval_event_links WHERE event_id = $1 ORDER BY source_id, edge_key, to_slug`,
+    `SELECT source_id, edge_key, to_slug FROM retrieval_event_links WHERE event_id = $1 ORDER BY source_id COLLATE "C", edge_key COLLATE "C", to_slug COLLATE "C"`,
     [id],
   );
   return {

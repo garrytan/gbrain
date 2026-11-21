@@ -96,7 +96,7 @@ async function planUnbackedPages(engine: BrainEngine, sourceId: string, slugs: s
   const rows = await engine.executeRaw<{ id: number | string; fact: string; context: string | null; visibility: FactVisibility; slug: string; attributed_to: FactAttribution | null; entity_slug: string }>(
     `SELECT f.id, f.fact, f.context, f.visibility, f.source_markdown_slug AS slug, f.attributed_to, f.entity_slug FROM facts f
       WHERE f.source_id = $1 AND f.source_markdown_slug = ANY($2::text[]) AND ${UNBACKED} AND ${derivedConversationRow('$3')}
-      ORDER BY f.source_markdown_slug, f.id`, [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
+      ORDER BY f.source_markdown_slug COLLATE "C", f.id`, [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
   const targets = new Map<string, string | null>();
   const pages = new Map<string, PagePlan>();
   for (const row of rows) {
@@ -117,7 +117,7 @@ async function planPages(engine: BrainEngine, sourceId: string, slugs: string[])
   const rows = await engine.executeRaw<{ id: number | string; fact: string; context: string | null; visibility: FactVisibility; slug: string; attributed_to: FactAttribution | null }>(
     `SELECT f.id, f.fact, f.context, f.visibility, f.source_markdown_slug AS slug, f.attributed_to FROM facts f
       WHERE f.source_id = $1 AND f.source_markdown_slug = ANY($2::text[]) AND ${ACTIVE} AND ${derivedConversationRow('$3')}
-      ORDER BY f.source_markdown_slug, f.id`, [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
+      ORDER BY f.source_markdown_slug COLLATE "C", f.id`, [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
   const pages = new Map<string, PagePlan>();
   for (const row of rows) {
     const page = pages.get(row.slug) ?? { slug: row.slug, link: [], misses: [], notUserAttributed: 0 };

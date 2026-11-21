@@ -32,7 +32,7 @@ export async function loadConceptRedirects(engine: BrainEngine, sourceId: string
        FROM pages
       WHERE source_id = $1 AND slug LIKE 'concepts/%' AND deleted_at IS NULL
         AND ((frontmatter->>'merged_into') IS NOT NULL OR jsonb_typeof(frontmatter->'aliases') = 'array')
-      ORDER BY slug`, [sourceId]);
+      ORDER BY slug COLLATE "C"`, [sourceId]);
   const redirects = new Map<string, string>();
   const add = (from: string | null, to: string | null) => {
     if (from && to && from !== to && !redirects.has(from)) redirects.set(from, to);

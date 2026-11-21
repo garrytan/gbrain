@@ -222,8 +222,13 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
   const nearest = async (): Promise<Row[]> => {
     if (!vec) return [];
     const p = armParams(simParams);
-    const sql = `SELECT ${COLS}, ${simSql} FROM facts f WHERE ${where} AND f.embedding IS NOT NULL AND f.embedding_model = $${n + 2}${column!.dims > 0 ? '' : ` AND vector_dims(f.embedding) = $${n + 3}`}
-       ORDER BY f.embedding <=> $${n + 1}${vec.cast} LIMIT $${p.length + 1}`;
+    // The inner query orders by distance alone so the HNSW index (and its iterative scan) serves it; the outer sort
+    // breaks ties inside the depth.cosine rows by fact id. Which rows tie at the cut stays approximate, as any ANN read is.
+    const sql = `SELECT ${COLS}, f.similarity FROM (
+         SELECT ${COLS}, ${simSql}, f.embedding <=> $${n + 1}${vec.cast} AS distance
+           FROM facts f WHERE ${where} AND f.embedding IS NOT NULL AND f.embedding_model = $${n + 2}${column!.dims > 0 ? '' : ` AND vector_dims(f.embedding) = $${n + 3}`}
+          ORDER BY f.embedding <=> $${n + 1}${vec.cast} LIMIT $${p.length + 1}) f
+       ORDER BY f.distance, f.id`;
     const bound = [...p, opts.depth.cosine];
     if (!opts.hnswIterativeScan) return engine.executeRaw<Row>(sql, bound);
     return engine.transaction(async tx => {
@@ -291,9 +296,9 @@ export async function poolUnbackedKeys(engine: BrainEngine, scope: FactPoolScope
   const { where, params } = poolPredicate(scope, undefined);
   const n = params.length;
   return engine.executeRaw<{ source_id: string; entity_slug: string }>(
-    `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${where} AND f.entity_slug = ANY($${n + 1}::text[])
+    `SELECT DISTINCT f.source_id COLLATE "C" AS source_id, f.entity_slug COLLATE "C" AS entity_slug FROM facts f WHERE ${where} AND f.entity_slug = ANY($${n + 1}::text[])
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
-     ORDER BY f.source_id, f.entity_slug LIMIT $${n + 2}`, [...params, [...keys], limit]);
+     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C" LIMIT $${n + 2}`, [...params, [...keys], limit]);
 }
 
 /** GBRA-574 B5: what marks a later fact as calling an earlier one off: saved-facts-match.ts's RETRACTION plus plain cancellation words. Fixed, never configurable. */
@@ -353,7 +358,7 @@ export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope
 export async function poolEntityPairs(engine: BrainEngine, scope: FactPoolScope, filters: FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>> {
   const { where, params } = poolPredicate(scope, filters);
   return engine.executeRaw<{ source_id: string; entity_slug: string }>(
-    `SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${where} AND f.entity_slug IS NOT NULL ORDER BY f.source_id, f.entity_slug`, params);
+    `SELECT DISTINCT f.source_id COLLATE "C" AS source_id, f.entity_slug COLLATE "C" AS entity_slug FROM facts f WHERE ${where} AND f.entity_slug IS NOT NULL ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`, params);
 }
 
 export interface ScoredFact {

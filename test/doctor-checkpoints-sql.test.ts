@@ -37,10 +37,10 @@ describe('doctor checkpoint SQL text', () => {
   test('identity downgrades: the statement listIdentityDowngrades composed', () => {
     expect(LIST_OPEN_IDENTITY_DOWNGRADES_SQL).toBe(
       `SELECT dg.completed_keys->0 AS record, np.slugs AS new_slugs FROM op_checkpoints dg JOIN pages p ON p.id::text = dg.fingerprint
-      LEFT JOIN LATERAL (SELECT array_agg(slug ORDER BY slug) AS slugs FROM pages WHERE source_id = p.source_id AND deleted_at IS NULL AND source_path = dg.completed_keys->0->>'to') np ON true
+      LEFT JOIN LATERAL (SELECT array_agg(slug ORDER BY slug COLLATE "C") AS slugs FROM pages WHERE source_id = p.source_id AND deleted_at IS NULL AND source_path = dg.completed_keys->0->>'to') np ON true
       WHERE dg.op = $1 AND p.deleted_at IS NOT NULL AND ${identityDowngradeOpen('p')}
         AND p.source_id = dg.completed_keys->0->>'source_id' AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
-      ORDER BY dg.completed_keys->0->>'recorded_at', dg.fingerprint`);
+      ORDER BY dg.completed_keys->0->>'recorded_at' COLLATE "C", dg.fingerprint COLLATE "C"`);
   });
 
   test('credential re-chunk holds: the statement readCredentialResealHolds composed, with the producer bound as $1', () => {

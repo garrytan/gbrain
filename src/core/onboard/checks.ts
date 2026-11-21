@@ -635,6 +635,9 @@ export async function checkPackUpgradeAvailable(
  *
  * The (source, type) pairs are read by a skip scan over idx_pages_source_type
  * (v316): one index probe per distinct pair, never a pass over every page.
+ * The walk keeps the database collation so the skip scan can use that index;
+ * the pairs are then sorted by byte in JS, so every Postgres locale reports
+ * them in the same order as PGLite.
  */
 export async function checkTypeProliferation(
   engine: BrainEngine,
@@ -643,7 +646,8 @@ export async function checkTypeProliferation(
     ({ check: { name: 'type_proliferation', status, message }, remediations: [] });
   let rows: Array<{ source_id: string; type: string }>;
   try {
-    rows = await engine.listPageTypePairs();
+    rows = (await engine.listPageTypePairs())
+      .sort((a, b) => Buffer.compare(Buffer.from(a.source_id), Buffer.from(b.source_id)) || Buffer.compare(Buffer.from(a.type), Buffer.from(b.type)));
   } catch (e) {
     return result('warn', `type_proliferation not verified: the page type query failed (${(e as Error).message}).`);
   }

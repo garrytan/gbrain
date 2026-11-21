@@ -259,7 +259,7 @@ const UNTILED_SQL = `SELECT p.id, p.source_id, p.slug, p.knowledge_revision::tex
                AND (m.gen_to IS NULL OR m.gen_to > p.body_generation)) r) t
       WHERE p.body_storage = 'segmented' AND p.deleted_at IS NULL AND ($1::text[] IS NULL OR p.source_id = ANY($1::text[]))
         AND ($2::text[] IS NULL OR p.slug = ANY($2::text[])) AND (NOT t.gapless OR t.covered <> p.body_bytes)
-      ORDER BY p.source_id, p.slug LIMIT $3`;
+      ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C" LIMIT $3`;
 
 /** Live segmented pages of unarchived sources whose live generation's rows do not tile the body (ordered by source and slug). */
 export function listUntiledSegmentedPageRows(raw: EngineRawRead, sourceIds: readonly string[] | null, slugs: readonly string[] | null, limit: number): Promise<UntiledPageRow[]> {
@@ -336,7 +336,7 @@ const BUDGET_LIMITED_SQL = `SELECT p.source_id, b.state, COALESCE(b.reason, 'awa
              AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation)))) AND (cc."__COL__" IS NULL OR (p.body_storage IS DISTINCT FROM 'segmented' AND cc.embedded_at IS NULL)
       OR ($1::text IS NOT NULL AND p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1::text))) w
       WHERE b.state <> 'open' AND ((CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > 1048576 OR b.reason IN ('archive_backfill', 'archive_open_day', 'call_import')) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND w.chunks > 0
-      GROUP BY 1, 2, 3 ORDER BY 1, 2, 3`;
+      GROUP BY 1, 2, 3 ORDER BY p.source_id COLLATE "C", b.state COLLATE "C", COALESCE(b.reason, 'awaiting_approval') COLLATE "C"`;
 // chunk-visibility-ok: the chunkGenerationFilter('p', 'cc') predicate is inlined as literal text (check:engine-sql-dynamic forbids composed SQL), moved from held-embedding.ts
 const BUDGET_LIMITED_SOURCE_SQL = `SELECT p.source_id, b.state, COALESCE(b.reason, 'awaiting_approval') AS reason, count(*)::int AS pages,
             sum(w.chunks)::bigint AS chunks, sum(w.chars)::bigint AS chars
@@ -348,7 +348,7 @@ const BUDGET_LIMITED_SOURCE_SQL = `SELECT p.source_id, b.state, COALESCE(b.reaso
              AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation)))) AND (cc."__COL__" IS NULL OR (p.body_storage IS DISTINCT FROM 'segmented' AND cc.embedded_at IS NULL)
       OR ($1::text IS NOT NULL AND p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1::text))) w
       WHERE b.state <> 'open' AND ((CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > 1048576 OR b.reason IN ('archive_backfill', 'archive_open_day', 'call_import')) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND w.chunks > 0 AND p.source_id = $2
-      GROUP BY 1, 2, 3 ORDER BY 1, 2, 3`;
+      GROUP BY 1, 2, 3 ORDER BY p.source_id COLLATE "C", b.state COLLATE "C", COALESCE(b.reason, 'awaiting_approval') COLLATE "C"`;
 
 /** Held and capped large pages with chunks still waiting for `column`, by source, state and reason (`sourceId` narrows it). */
 export function listBudgetLimitedRows(raw: EngineRawRead, opts: { column: string; sourceId?: string; signature: string | null }): Promise<BudgetLimitedRow[]> {

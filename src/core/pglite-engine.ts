@@ -3305,7 +3305,7 @@ export class PGLiteEngine implements BrainEngine {
     params.push(opts?.visibility ?? null);
     const visibility = `AND ($${params.length}::text[] IS NULL OR visibility = ANY($${params.length}::text[]))`;
     const r = await this.db.query(
-      `SELECT DISTINCT ON (dimension) dimension, value, confidence,
+      `SELECT DISTINCT ON (dimension COLLATE "C") dimension, value, confidence,
          source_markdown_slug AS source, valid_from, valid_until AS valid_to,
          COALESCE(dim_status,'active') AS status, id AS fact_id
        FROM facts
@@ -3314,7 +3314,7 @@ export class PGLiteEngine implements BrainEngine {
          AND COALESCE(valid_until,'infinity'::timestamptz) > COALESCE($2::timestamptz, now())
          AND confidence >= $3
          AND ($4::boolean OR dim_status IS NULL OR dim_status = 'active')
-       ORDER BY dimension, valid_from DESC NULLS LAST, confidence DESC, id DESC`,
+       ORDER BY dimension COLLATE "C", valid_from DESC NULLS LAST, confidence DESC, id DESC`,
       params,
     );
     return r.rows.map((row) => ({ ...(row as OntologyValue), confidence: Number((row as { confidence: number }).confidence), fact_id: Number((row as { fact_id: number }).fact_id) }));
@@ -3328,7 +3328,7 @@ export class PGLiteEngine implements BrainEngine {
     const r = await this.db.query(
       `SELECT dimension, count(DISTINCT entity_slug)::int AS entities, count(*)::int AS observations
        FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND ${NOT_CONVERSATION_SLOT_SQL} ${scope}
-       GROUP BY dimension ORDER BY entities DESC, dimension`,
+       GROUP BY dimension ORDER BY entities DESC, dimension COLLATE "C"`,
       params,
     );
     return r.rows.map((row) => {
@@ -3358,7 +3358,7 @@ export class PGLiteEngine implements BrainEngine {
               json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id) ORDER BY fact_id) AS values
        FROM cur GROUP BY entity_slug, dimension
        HAVING count(DISTINCT value) >= 2 AND count(DISTINCT source) >= 2
-       ORDER BY entity_slug, dimension`,
+       ORDER BY entity_slug COLLATE "C", dimension COLLATE "C"`,
       params,
     );
     return r.rows.map((row) => {
@@ -4056,7 +4056,7 @@ export class PGLiteEngine implements BrainEngine {
     // LIKE-escape the prefix so a user-supplied % or _ doesn't act as a wildcard.
     const escaped = prefix.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
     const { rows } = await this.db.query(
-      `SELECT key FROM config WHERE key LIKE $1 || '%' ESCAPE '\\' ORDER BY key`,
+      `SELECT key FROM config WHERE key LIKE $1 || '%' ESCAPE '\\' ORDER BY key COLLATE "C"`,
       [escaped],
     );
     return (rows as { key: string }[]).map(r => r.key);

@@ -92,7 +92,7 @@ export async function resolveNameVariant<R extends VariantRow>(
           WHERE deleted_at IS NULL AND source_id = $1
             AND (type = ANY($2::text[]) OR slug LIKE ANY($3::text[]))
             AND (title ILIKE ANY($4::text[]) OR slug ILIKE ANY($4::text[]))${opts.privatePredicate}
-          ORDER BY probe_hits DESC, length(title), slug
+          ORDER BY probe_hits DESC, length(title), slug COLLATE "C"
           LIMIT ${VARIANT_CANDIDATE_CAP + 1}`,
         [sourceId, types, slugPatterns, words.map(likeWord)],
       );

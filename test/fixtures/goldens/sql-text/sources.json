@@ -270,8 +270,8 @@
               "string",
               "number"
             ],
-            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug",
-            "textSha256": "056b71d4359215c2373ec81e174be8cbd46570ba1d6a4653fc6d198de9c35460"
+            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE \"C\"",
+            "textSha256": "a0fecf88f17a3217b226130091ae27f06442fecd20bbf205c1e6ed92a49ef342"
           }
         ],
         "slugs": [
@@ -282,8 +282,8 @@
               "array<string>",
               "number"
             ],
-            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $3 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug",
-            "textSha256": "aa98a64693e09380f76b21ee932430d338292d6fdfd7318d63aa7b7213d0f2c5"
+            "sql": "SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $3 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE \"C\"",
+            "textSha256": "59155a20cf7bb95ed355ede6c37056106e6643019de7a2fb5bb86dac18647fb5"
           }
         ]
       },

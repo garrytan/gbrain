@@ -266,8 +266,8 @@ interface BodyRewrites { rewritten: string[]; segmented: number[]; unsealed: str
 export async function rewritePageBodies(tx: BrainEngine, sourceId: string, pages: PurgePlan['pages']): Promise<BodyRewrites> {
   const out: BodyRewrites = { rewritten: [], segmented: [], unsealed: [], replaced: [], derivations: 0 };
   if (!pages.length) return out;
-  const rows = await tx.executeRaw<Record<string, unknown>>(`SELECT p.*,COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS purge_tags
-    FROM pages p WHERE p.source_id=$1 AND p.id=ANY($2::int[]) ORDER BY p.slug`, [sourceId, pages.map(p => p.page_id)]);
+  const rows = await tx.executeRaw<Record<string, unknown>>(`SELECT p.*,COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS purge_tags
+    FROM pages p WHERE p.source_id=$1 AND p.id=ANY($2::int[]) ORDER BY p.slug COLLATE "C"`, [sourceId, pages.map(p => p.page_id)]);
   for (const row of rows) {
     if (row.body_storage === 'segmented') {
       const slug = String(row.slug);
@@ -588,7 +588,7 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
         [...bodies.replaced, ...versions.replaced], admitted.id);
       const cache = (await clearRebuildableCache(tx, 'query_cache')) ?? 0;
       const pages = pageIds.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
-        'SELECT id,slug,knowledge_revision::text AS knowledge_revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug', [p.sourceId, pageIds]) : [];
+        'SELECT id,slug,knowledge_revision::text AS knowledge_revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug COLLATE "C"', [p.sourceId, pageIds]) : [];
       await tx.executeRaw(`INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
         SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
         FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation

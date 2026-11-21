@@ -76,7 +76,7 @@ export async function scanFactsHome(engine: BrainEngine, sourceId: string): Prom
   const pageLive = 'EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL)';
   const unfenced = await engine.executeRaw<UnfencedFactRow & { dimension: string | null; page_deleted: boolean }>(`SELECT ${ROW_COLUMNS}, f.dimension, ${pageLive} AS page_exists,
     EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NOT NULL) AS page_deleted FROM facts f
-    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug NULLS FIRST, f.id`, [sourceId]);
+    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug COLLATE "C" NULLS FIRST, f.id`, [sourceId]);
   for (const row of unfenced) {
     const base = { id: Number(row.id), entity_slug: row.entity_slug };
     if (row.dimension != null) { add({ ...base, group: 'ontology_observation', reason: row.dimension }); continue; }
@@ -94,7 +94,7 @@ export async function scanFactsHome(engine: BrainEngine, sourceId: string): Prom
   const held = await engine.executeRaw<UnfencedFactRow & { held_since: string; old: boolean; from_slug: string }>(`SELECT ${ROW_COLUMNS}, ${pageLive} AS page_exists, f.source_markdown_slug AS from_slug,
       to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS held_since, f.created_at < now() - ($2 || ' days')::interval AS old
      FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND ${holdingSlugSql('hp.slug')}) AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
-      AND f.entity_slug IS NOT NULL AND NOT ${holdingSlugSql('f.entity_slug')} ORDER BY f.entity_slug, f.id`, [sourceId, String(HELD_TOO_LONG_DAYS)]);
+      AND f.entity_slug IS NOT NULL AND NOT ${holdingSlugSql('f.entity_slug')} ORDER BY f.entity_slug COLLATE "C", f.id`, [sourceId, String(HELD_TOO_LONG_DAYS)]);
   const waiting = new Map<string, typeof held>();
   const targets = new Map<string, Awaited<ReturnType<typeof heldFactTarget>>>();
   for (const row of held) {

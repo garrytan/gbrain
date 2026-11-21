@@ -62,7 +62,7 @@ export async function classifyPagelessEntities(engine: BrainEngine, sourceIds: s
      WHERE f.source_id = ANY($1::text[]) AND f.entity_slug IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
      GROUP BY f.source_id, f.entity_slug
-     ORDER BY f.source_id, f.entity_slug`, [sourceIds]);
+     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`, [sourceIds]);
   const out: PagelessEntity[] = [];
   for (const row of rows) {
     const ids = (row.ids ?? []).map(Number);

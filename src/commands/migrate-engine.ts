@@ -409,7 +409,7 @@ export async function copyMigrationConfig(
   target: BrainEngine,
 ): Promise<{ copied: number; skipped: string[] }> {
   const rows = await source.executeRaw<{ key: string; value: string }>(
-    'SELECT key, value FROM config ORDER BY key');
+    'SELECT key, value FROM config ORDER BY key COLLATE "C"');
   const skipped: string[] = [];
   let copied = 0;
   for (const row of rows) {

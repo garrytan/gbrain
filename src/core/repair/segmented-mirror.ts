@@ -103,7 +103,7 @@ export async function scanSegmentedMirrors(engine: BrainEngine, sourceIds: reado
   for (const sourceId of sourceIds) {
     const binding = await getWorktreeBinding(engine, sourceId, hostId);
     if (!binding) continue;
-    const slugs = (await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND body_storage='segmented' AND deleted_at IS NULL ORDER BY slug", [sourceId]))
+    const slugs = (await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND body_storage='segmented' AND deleted_at IS NULL ORDER BY slug COLLATE \"C\"", [sourceId]))
       .map(row => row.slug);
     if (!slugs.length) continue;
     if (binding.owner_host_id !== hostId || !binding.local_path) {
@@ -186,7 +186,7 @@ async function admitRemirror(ctx: OperationContext, stale: StaleMirror, hash: st
 interface EffectState { kind: string; state: string; error_code: string | null; recovering: boolean; parked: boolean; skipped: Array<{ slug?: string; reason?: string }> }
 async function readEffects(engine: BrainEngine, requestRowId: string): Promise<EffectState[]> {
   const rows = await engine.executeRaw<EffectState>(`SELECT kind,state,error_code,recovery IS NOT NULL AS recovering,data ? 'parked' AS parked,
-    COALESCE(data->'skipped','[]'::jsonb) AS skipped FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind`, [requestRowId]);
+    COALESCE(data->'skipped','[]'::jsonb) AS skipped FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind COLLATE "C"`, [requestRowId]);
   return rows.map(row => ({ ...row, skipped: typeof row.skipped === 'string' ? JSON.parse(row.skipped) : row.skipped }));
 }
 const effectSettled = (effect: EffectState) => !effect.recovering && (effect.state === 'committed' || effect.state === 'failed' || effect.parked);

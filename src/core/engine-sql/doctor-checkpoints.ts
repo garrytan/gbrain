@@ -75,7 +75,7 @@ const parsed = <T>(value: T | string): T => (typeof value === 'string' ? JSON.pa
 
 const LIST_FENCE_CANDIDATE_RECORDS_SQL = `SELECT c.completed_keys->0 AS record FROM op_checkpoints c
     JOIN sources s ON s.id=c.completed_keys->0->>'source_id' AND s.incarnation::text=c.completed_keys->0->>'incarnation'
-    WHERE c.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) ORDER BY c.fingerprint`;
+    WHERE c.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) ORDER BY c.fingerprint COLLATE "C"`;
 
 /** The fence candidate records of live source incarnations (one source's when `sourceIds` is given), by fingerprint. */
 export async function listFenceCandidateRecords(raw: EngineRawRead, op: string, sourceIds?: readonly string[]): Promise<CandidateRecord[]> {
@@ -165,10 +165,10 @@ export async function listCheckpointBlockedSources(raw: EngineRawRead, sourceIds
 }
 
 export const LIST_OPEN_IDENTITY_DOWNGRADES_SQL = `SELECT dg.completed_keys->0 AS record, np.slugs AS new_slugs FROM op_checkpoints dg JOIN pages p ON p.id::text = dg.fingerprint
-      LEFT JOIN LATERAL (SELECT array_agg(slug ORDER BY slug) AS slugs FROM pages WHERE source_id = p.source_id AND deleted_at IS NULL AND source_path = dg.completed_keys->0->>'to') np ON true
+      LEFT JOIN LATERAL (SELECT array_agg(slug ORDER BY slug COLLATE "C") AS slugs FROM pages WHERE source_id = p.source_id AND deleted_at IS NULL AND source_path = dg.completed_keys->0->>'to') np ON true
       WHERE dg.op = $1 AND p.deleted_at IS NOT NULL AND dg.completed_keys->0->>'disposition' IS NULL AND p.deleted_at = (dg.completed_keys->0->>'old_deleted_at')::timestamptz
         AND p.source_id = dg.completed_keys->0->>'source_id' AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
-      ORDER BY dg.completed_keys->0->>'recorded_at', dg.fingerprint`;
+      ORDER BY dg.completed_keys->0->>'recorded_at' COLLATE "C", dg.fingerprint COLLATE "C"`;
 
 /** The open identity-downgrade records (no disposition, old page still soft-deleted by that sync), oldest first, with the live slugs at the new path. */
 export async function listOpenIdentityDowngrades(raw: EngineRawRead, op: string, sourceIds?: readonly string[]): Promise<OpenIdentityDowngradeRow[]> {

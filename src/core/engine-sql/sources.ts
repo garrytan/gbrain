@@ -312,11 +312,11 @@ export interface PageSizeRow { slug: string; bytes: number | string | null; segm
 const PAGE_SIZE_ROWS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
        FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
       WHERE p.source_id = $1 AND p.deleted_at IS NULL
-        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug`;
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE "C"`;
 const PAGE_SIZE_ROWS_FOR_SLUGS_SQL = `SELECT p.slug, (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END)::bigint AS bytes, p.body_storage = 'segmented' AS segmented, p.frontmatter, b.state, b.reason
        FROM pages p LEFT JOIN page_embedding_budget b ON b.page_id = p.id
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($3::text[])
-        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug`;
+        AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip' OR (CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > $2 OR p.body_storage = 'segmented' OR b.page_id IS NOT NULL) ORDER BY p.slug COLLATE "C"`;
 
 /**
  * The live pages of one source (only `slugs` when given) that carry embed_skip, have a body over `maxBytes`, are

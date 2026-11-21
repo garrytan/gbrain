@@ -42,7 +42,7 @@ export async function rebindContentReceipts(tx: SqlEngine, worktreeIds: string[]
        JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$2::uuid
        JOIN persistence_brain p ON p.singleton=1
        JOIN config c ON c.key='shared_skills.content.v1.'||b.source_id||'.'||b.source_incarnation::text
-      WHERE b.worktree_id=ANY($1::uuid[]) AND ($3::text[] IS NULL OR b.source_id=ANY($3::text[])) ORDER BY b.source_id`,
+      WHERE b.worktree_id=ANY($1::uuid[]) AND ($3::text[] IS NULL OR b.source_id=ANY($3::text[])) ORDER BY b.source_id COLLATE "C"`,
     [worktreeIds, hostId, sourceIds ?? null]);
   const moved: ContentReceiptRebind[] = [];
   for (const row of rows) {

@@ -280,7 +280,7 @@ export function listDecideCalibrationRows(raw: EngineRawRead, slot: string | nul
   return raw<Row>(
     `SELECT * FROM decide_calibrations
       WHERE ($1::text IS NULL OR slot = $1) AND ($2::boolean OR retired_at IS NULL)
-      ORDER BY slot, created_at DESC, id DESC`,
+      ORDER BY slot COLLATE "C", created_at DESC, id DESC`,
     [slot, includeRetired]);
 }
 
@@ -311,7 +311,7 @@ export function listDecideSlotUsage(raw: EngineRawRead, sinceHours: number): Pro
             SUM(CASE WHEN outcome = 'skipped' THEN 1 ELSE 0 END)::int AS skipped,
             SUM(CASE WHEN error_reason LIKE 'egress%' OR error_reason IN ('denied_source','missing_provenance') THEN 1 ELSE 0 END)::int AS egress
        FROM decision_receipts WHERE created_at >= now() - ($1::int * interval '1 hour')
-      GROUP BY slot ORDER BY slot`,
+      GROUP BY slot ORDER BY slot COLLATE "C"`,
     [sinceHours]);
 }
 
@@ -333,7 +333,7 @@ export function listDecideReceiptStats(raw: EngineRawRead, sinceHours: number, s
             COALESCE(SUM(input_tokens), 0)::int AS input_tokens
        FROM decision_receipts
       WHERE created_at >= now() - ($1::int * interval '1 hour') AND ($2::text IS NULL OR slot = $2)
-      GROUP BY slot, mode, outcome, error_reason ORDER BY slot, mode, outcome, error_reason`,
+      GROUP BY slot, mode, outcome, error_reason ORDER BY slot COLLATE "C", mode COLLATE "C", outcome COLLATE "C", error_reason COLLATE "C"`,
     [sinceHours, slot]);
 }
 
@@ -373,7 +373,7 @@ export async function readChronicleLedgerStats(raw: EngineRawRead): Promise<Chro
     const reasons = await raw<{ state: string; reason: string; n: number }>(
       `SELECT state, reason, count(*)::int AS n FROM chronicle_page_state
        WHERE trigger = 'auto' AND state IN ('skipped','failed') AND reason IS NOT NULL AND updated_at > now() - interval '7 days'
-       GROUP BY state, reason ORDER BY n DESC, reason`);
+       GROUP BY state, reason ORDER BY n DESC, reason COLLATE "C"`);
     const tally = (rows: typeof reasons) => rows.reduce<Record<string, number>>((acc, r) => {
       acc[r.reason] = (acc[r.reason] ?? 0) + Number(r.n);
       return acc;
@@ -382,7 +382,7 @@ export async function readChronicleLedgerStats(raw: EngineRawRead): Promise<Chro
     const [calls] = await raw<{ n: number }>(
       `SELECT count(*)::int AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'`);
     const principals = await raw<{ principal: string; calls: number }>(
-      `SELECT coalesce(l.principal_kind, 'unattributed') || coalesce(':' || l.principal_id, '') AS principal, count(*)::int AS calls
+      `SELECT (coalesce(l.principal_kind, 'unattributed') || coalesce(':' || l.principal_id, '')) COLLATE "C" AS principal, count(*)::int AS calls
        FROM chronicle_judge_reservations r
        LEFT JOIN chronicle_page_state l ON l.source_id = r.source_id AND l.page_id = r.page_id
          AND l.content_hash = r.content_hash AND l.trigger = 'auto'
@@ -459,11 +459,11 @@ export async function readFeedbackStatus(raw: EngineRawRead): Promise<FeedbackSt
                 AND f.element_key = w.element_key AND f.rating <= 2)::int AS low_ratings
        FROM retrieval_weights w
       WHERE w.element_kind = 'page' AND w.weight < 0.5
-      ORDER BY w.weight ASC, w.source_id, w.element_key LIMIT 10`);
+      ORDER BY w.weight ASC, w.source_id COLLATE "C", w.element_key COLLATE "C" LIMIT 10`);
   const highest = await raw<{ source_id: string; slug: string; weight: number | string }>(
     `SELECT source_id, element_key AS slug, weight FROM retrieval_weights
       WHERE element_kind = 'page' AND weight > 0.5
-      ORDER BY weight DESC, source_id, element_key LIMIT 10`);
+      ORDER BY weight DESC, source_id COLLATE "C", element_key COLLATE "C" LIMIT 10`);
   return {
     events: Number(counts?.events ?? 0),
     ratings_explicit: Number(counts?.ratings_explicit ?? 0),

@@ -54,7 +54,7 @@ export async function findClosedTies(engine: BrainEngine, sourceIds: string[]): 
       FROM facts f
      WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.claim_metric IS NOT NULL
        AND f.consolidated_into IS NOT NULL AND f.valid_until = f.valid_from AND f.entity_slug IS NOT NULL
-     ORDER BY f.source_id, f.id`, [sourceIds]);
+     ORDER BY f.source_id COLLATE "C", f.id`, [sourceIds]);
   return rows.filter(row => row.partners?.length).map(row => ({ source_id: row.source_id, id: Number(row.id), entity_slug: row.entity_slug,
     take_id: Number(row.take_id), valid_from: row.valid_from, partners: row.partners!.map(Number) }));
 }

@@ -103,7 +103,7 @@ async function staleAtoms(db: BrainEngine, sourceIds: string[], atomId?: number)
             AND EXISTS (SELECT 1 FROM pages r WHERE r.source_id=atom.source_id AND r.type='atom' AND r.deleted_at IS NULL
               AND r.frontmatter->>'source_slug' IN (atom.origin_slug, atom.origin_live_slug)
               AND regexp_replace(COALESCE(r.frontmatter->>'source_hash',''),'^pending:','')=substring(atom.origin_hash from 1 for 16))
-            ORDER BY ac.fingerprint LIMIT 1)
+            ORDER BY ac.fingerprint COLLATE "C" LIMIT 1)
           ELSE (SELECT 'unmanaged:'||e.id FROM pages e WHERE e.source_id=atom.source_id AND e.type='atom' AND e.deleted_at IS NULL
             AND COALESCE(e.frontmatter->>'managed_extraction','')<>'true' AND e.frontmatter->>'source_slug' IN (atom.origin_slug, atom.origin_live_slug)
             AND e.frontmatter->>'source_hash'=substring(atom.origin_hash from 1 for 16) ORDER BY e.id LIMIT 1)

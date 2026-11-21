@@ -282,9 +282,9 @@ const PINS: Pin[] = [
      counts AS (SELECT canonical_type, count(*)::int AS n FROM typed GROUP BY canonical_type)
      SELECT x.id, x.slug, x.source_id, x.type, c.canonical_type, to_char(x.d AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d, c.n AS gtotal
        FROM counts c CROSS JOIN LATERAL (
-         SELECT * FROM typed t WHERE t.canonical_type = c.canonical_type ORDER BY t.d DESC NULLS LAST, t.source_id, t.slug LIMIT $6
+         SELECT * FROM typed t WHERE t.canonical_type = c.canonical_type ORDER BY t.d DESC NULLS LAST, t.source_id COLLATE "C", t.slug COLLATE "C" LIMIT $6
        ) x
-      ORDER BY c.canonical_type, x.d DESC NULLS LAST, x.source_id, x.slug`],
+      ORDER BY c.canonical_type COLLATE "C", x.d DESC NULLS LAST, x.source_id COLLATE "C", x.slug COLLATE "C"`],
   })),
   ...([[false, false], [true, true]] as const).map(([excludePrivate, floored]): Pin => ({
     from: 'src/core/mentions/referrers.ts:387 readTargetReferences counts (with referrersCteBatched at :274)',
@@ -351,9 +351,9 @@ const PINS: Pin[] = [
     },
     texts: () => [`${pinnedReferrersCte(excludePrivate, floored)}
      SELECT id, slug, source_id, type, canonical_type, to_char(d AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d FROM typed
-      WHERE ($6::text IS NULL OR canonical_type = $6 OR type = $6)${cursor ? ` AND ((d IS NOT DISTINCT FROM $7::text::timestamptz AND (source_id, slug) > ($8::text, $9::text))
+      WHERE ($6::text IS NULL OR canonical_type = $6 OR type = $6)${cursor ? ` AND ((d IS NOT DISTINCT FROM $7::text::timestamptz AND (source_id COLLATE "C", slug COLLATE "C") > ($8::text, $9::text))
                 OR ($7::text::timestamptz IS NOT NULL AND (d < $7::text::timestamptz OR d IS NULL)))` : ''}
-      ORDER BY d DESC NULLS LAST, source_id, slug LIMIT $${cursor ? 10 : 7}`],
+      ORDER BY d DESC NULLS LAST, source_id COLLATE "C", slug COLLATE "C" LIMIT $${cursor ? 10 : 7}`],
   })),
   ...([[false, false], [true, true]] as const).map(([excludePrivate, floored]): Pin => ({
     from: 'src/core/mentions/referrers.ts:369 readTargetReferences candidates (with referrersCteBatched at mentions/referrers-sql.ts:69; lines at 97bf5544dd)',
@@ -382,9 +382,9 @@ const PINS: Pin[] = [
      SELECT x.i, x.id, x.slug, x.source_id, x.canonical_type, to_char(x.d AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d
        FROM (SELECT DISTINCT i FROM tgt) q CROSS JOIN LATERAL (
          SELECT * FROM typed t WHERE t.i = q.i AND t.canonical_type = ANY($7::text[])
-          ORDER BY t.d DESC NULLS LAST, t.source_id, t.slug LIMIT $8
+          ORDER BY t.d DESC NULLS LAST, t.source_id COLLATE "C", t.slug COLLATE "C" LIMIT $8
        ) x
-      ORDER BY x.i, x.d DESC NULLS LAST, x.source_id, x.slug`],
+      ORDER BY x.i, x.d DESC NULLS LAST, x.source_id COLLATE "C", x.slug COLLATE "C"`],
   })),
   ...([[false, false], [true, true]] as const).map(([excludePrivate, floored]): Pin => ({
     from: 'src/core/mentions/referrers.ts:131 referrerTypes (with referrersCte at mentions/referrers-sql.ts:43; lines at a4198fc65a)',

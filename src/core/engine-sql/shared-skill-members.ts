@@ -87,7 +87,7 @@ export async function listSharedSkillCatalogHeads(exec: SqlExecutor, q: SharedSk
     AND ($3::text IS NULL OR h.source_id=$3) AND ($4::text IS NULL OR h.source_incarnation::text=$4)
     AND ($5::text IS NULL OR h.pack_id=$5) AND ($6::text IS NULL OR h.name=$6)
     AND ($7::boolean=false OR COALESCE((h.metadata->>'private')::boolean,false)=false)
-    ORDER BY h.source_id,h.source_incarnation,h.pack_id,h.name LIMIT $2`,
+    ORDER BY h.source_id COLLATE "C",h.source_incarnation,h.pack_id COLLATE "C",h.name COLLATE "C" LIMIT $2`,
   [q.sourceIds, q.limit, q.sourceId, q.sourceIncarnation, q.packId, q.name, q.hidePrivate]);
 }
 

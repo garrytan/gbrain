@@ -117,18 +117,18 @@ export function referrerCountSql(scope: ReferrerSqlScope): string {
 }
 
 /**
- * One referrer page, newest first by `(d DESC, source_id, slug)`. Params: the five of `referrersCte`, $6 the type (or
+ * One referrer page, newest first by `(d DESC, source_id, slug)`, the text keys in byte order (COLLATE "C"). Params: the five of `referrersCte`, $6 the type (or
  * null); with a cursor $7 its date (or null), $8 its source and $9 its slug; then the row limit, last. $7 binds as text
  * (`$7::text::timestamptz`): bound as a timestamptz, postgres.js turns it into a JavaScript Date and drops the
  * microseconds, so the next page skipped a referrer dated earlier in the cursor row's millisecond.
  */
 export function referrerRowsSql(scope: ReferrerSqlScope, cursor: boolean): string {
-  const after = cursor ? ` AND ((d IS NOT DISTINCT FROM $7::text::timestamptz AND (source_id, slug) > ($8::text, $9::text))
+  const after = cursor ? ` AND ((d IS NOT DISTINCT FROM $7::text::timestamptz AND (source_id COLLATE "C", slug COLLATE "C") > ($8::text, $9::text))
                 OR ($7::text::timestamptz IS NOT NULL AND (d < $7::text::timestamptz OR d IS NULL)))` : '';
   return `${referrersCte(scope)}
      SELECT id, slug, source_id, type, canonical_type, ${dateText('d')} AS d FROM typed
       WHERE ${REFERRER_TYPE_FILTER}${after}
-      ORDER BY d DESC NULLS LAST, source_id, slug LIMIT $${cursor ? 10 : 7}`;
+      ORDER BY d DESC NULLS LAST, source_id COLLATE "C", slug COLLATE "C" LIMIT $${cursor ? 10 : 7}`;
 }
 
 /**
@@ -140,9 +140,9 @@ export function referrerRecordCandidatesSql(scope: ReferrerSqlScope): string {
      SELECT x.i, x.id, x.slug, x.source_id, x.canonical_type, ${dateText('x.d')} AS d
        FROM (SELECT DISTINCT i FROM tgt) q CROSS JOIN LATERAL (
          SELECT * FROM typed t WHERE t.i = q.i AND t.canonical_type = ANY($7::text[])
-          ORDER BY t.d DESC NULLS LAST, t.source_id, t.slug LIMIT $8
+          ORDER BY t.d DESC NULLS LAST, t.source_id COLLATE "C", t.slug COLLATE "C" LIMIT $8
        ) x
-      ORDER BY x.i, x.d DESC NULLS LAST, x.source_id, x.slug`;
+      ORDER BY x.i, x.d DESC NULLS LAST, x.source_id COLLATE "C", x.slug COLLATE "C"`;
 }
 
 /** The titles and date sources of the record pages kept (`$1` the page ids, as int[]). */
@@ -158,9 +158,9 @@ export function referrerGroupsSql(scope: ReferrerSqlScope): string {
      counts AS (SELECT canonical_type, count(*)::int AS n FROM typed GROUP BY canonical_type)
      SELECT x.id, x.slug, x.source_id, x.type, c.canonical_type, ${dateText('x.d')} AS d, c.n AS gtotal
        FROM counts c CROSS JOIN LATERAL (
-         SELECT * FROM typed t WHERE t.canonical_type = c.canonical_type ORDER BY t.d DESC NULLS LAST, t.source_id, t.slug LIMIT $6
+         SELECT * FROM typed t WHERE t.canonical_type = c.canonical_type ORDER BY t.d DESC NULLS LAST, t.source_id COLLATE "C", t.slug COLLATE "C" LIMIT $6
        ) x
-      ORDER BY c.canonical_type, x.d DESC NULLS LAST, x.source_id, x.slug`;
+      ORDER BY c.canonical_type COLLATE "C", x.d DESC NULLS LAST, x.source_id COLLATE "C", x.slug COLLATE "C"`;
 }
 
 /** The card details of the referring pages a group read kept (`$1` the page ids, as int[]). */

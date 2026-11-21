@@ -93,7 +93,7 @@ export async function scanLostFenceRows(engine: BrainEngine, sourceIds: readonly
      WHERE g.source_id = ANY($1::text[]) AND g.kind IN ('fact_fence','take_fence') AND g.state <> 'held' AND left(g.owner_key, 5) = 'page:'
        AND i.action = 'retired' AND i.preimage IS NOT NULL AND COALESCE(g.completeness->>'proof', '') = ''
        AND ($2::text IS NULL OR (g.source_id = $2 AND g.owner_key = 'page:' || $3))
-     ORDER BY g.source_id, g.owner_key, g.id, i.item_key`, [[...sourceIds], only?.source_id ?? null, only?.slug ?? null]);
+     ORDER BY g.source_id COLLATE "C", g.owner_key COLLATE "C", g.id, i.item_key COLLATE "C"`, [[...sourceIds], only?.source_id ?? null, only?.slug ?? null]);
   const byPage = new Map<string, { source_id: string; slug: string; rows: LostRow[] }>();
   const histories = new Map<string, History | Residual>();
   const historyOf = async (sourceId: string, slug: string): Promise<History | Residual> => {
