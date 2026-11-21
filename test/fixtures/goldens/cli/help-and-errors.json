@@ -788,7 +788,7 @@
         "  --cross-modal              Default auto.",
         "  --embedding-column         Registered embedding column.",
         "  --adaptive-return          true for one answer (fewer rows, never empty); omit for breadth.",
-        "  --autocut                  Default on (never empty); false: full top-K for breadth.",
+        "  --autocut                  Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.",
         "  --relational               Relationship-graph arm (default on).",
         "  --min-trust                Lowest trust tier to return (the connection floor still applies).",
         "  --explain                  Per-row score_details.",

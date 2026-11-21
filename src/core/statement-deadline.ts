@@ -18,15 +18,19 @@
  *     error, so the caller's owner can still report the result as unknown;
  *   - PGLite has one in-process connection and no cancellation: it gets only
  *     the refusal before each statement, and a statement already running
- *     finishes.
+ *     finishes;
+ *   - on Postgres a typed read in BOUNDED_TYPED_READS (a member that replaced a
+ *     statement the doctor bounded through `executeRaw`: the decide-store reads) runs
+ *     under `withReadDeadline`, so the engine ends it at the deadline like a raw statement.
  *
  * Without a scope (or with `deadlineAt: null`) the wrapper passes every call
- * through. Engine methods with their own SQL (e.g. `getStats`) get only the
+ * through. Other engine methods with their own SQL (e.g. `getStats`) get only the
  * refusal before the call. The wrapper exposes the engine it wraps under
  * `RAW_ENGINE`, and `engineCacheKey` maps either to the same object, so
  * engine-keyed caches keep one entry per real engine.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { ReadDeadlineError, withReadDeadline } from './read-deadline.ts';
 
 export interface StatementDeadline {
   startedAt: number;
@@ -85,12 +89,17 @@ function refuse(scope: StatementDeadline): never {
   throw new StatementDeadlineError(Date.now() - scope.startedAt);
 }
 
+/** The typed reads (engine-sql/decide-store.ts) that replaced statements this wrapper bounded through executeRaw: decide_health. */
+export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations']);
+
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
 
 export function deadlineBoundEngine<E extends object>(engine: E): E {
   const raw = engineCacheKey(engine) as E;
   const known = wrappers.get(raw);
   if (known) return known as E;
+  // Only Postgres takes a per-statement bound; the other engines run a statement to its end. An engine's kind never changes.
+  const boundsStatements = (raw as { kind?: string }).kind === 'postgres';
   const wrapper = new Proxy(raw, { get(target, key) {
     if (key === RAW_ENGINE) return target;
     const value = Reflect.get(target, key, target);
@@ -101,7 +110,7 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
       if (!scope || scope.deadlineAt === null) return call(sql, params, opts);
       const left = scope.deadlineAt - Date.now();
       if (left <= 0) refuse(scope);
-      if ((target as { kind?: string }).kind !== 'postgres') return call(sql, params, opts);
+      if (!boundsStatements) return call(sql, params, opts);
       const signal = opts?.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(left)]) : AbortSignal.timeout(left);
       try {
         return await call(sql, params, { ...opts, signal, timeoutMs: Math.min(left, opts?.timeoutMs ?? left), deadlineAt: scope.deadlineAt });
@@ -114,7 +123,18 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
     return new Proxy(value as (...a: unknown[]) => unknown, { apply(fn, _self, args) {
       const scope = scopes.getStore();
       if (scope && scope.deadlineAt !== null && Date.now() >= scope.deadlineAt) refuse(scope);
-      return Reflect.apply(fn, target, args);
+      if (!scope || scope.deadlineAt === null || typeof key !== 'string' || !BOUNDED_TYPED_READS.has(key) || !boundsStatements) {
+        return Reflect.apply(fn, target, args);
+      }
+      // A typed read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline,
+      // and the signal discards its connection when the deadline passes with the read unanswered (as executeRaw's did).
+      const deadlineAt = scope.deadlineAt;
+      return withReadDeadline(deadlineAt, () => Reflect.apply(fn, target, args) as Promise<unknown>, AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())))
+        .catch((error: unknown) => {
+          if (error instanceof ReadDeadlineError) refuse(scope);
+          if (cancelled(error) && Date.now() >= deadlineAt - 100) scope.expired = true;
+          throw error;
+        });
     } });
   } });
   wrappers.set(raw, wrapper);

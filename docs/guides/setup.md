@@ -395,7 +395,7 @@ claimed from documentation alone.
 | codex | local stdio | supported | native-verified: on codex-cli 0.162.1, after a fresh `gbrain setup codex`, the `UserPromptSubmit` hook put a randomized brain item into a fresh native `codex exec` session, which answered it with no tool call (3 of 3 installs); a `--no-hooks` control answered NONE |
 | openclaw | local context engine | instruction block; MCP per [its guide](../mcp/OPENCLAW.md) | native-pending |
 | openclaw | thin client | instruction block; MCP per [its guide](../mcp/OPENCLAW.md) | unsupported |
-| hermes | local stdio | instruction block; MCP per [its guide](../mcp/HERMES.md) | unsupported |
+| hermes | local stdio | instruction block and turn hook; MCP through `hermes mcp add` ([its guide](../mcp/HERMES.md)) | unsupported |
 
 ## How setup relates to the other entry points
 
