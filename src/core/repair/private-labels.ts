@@ -48,6 +48,8 @@
  * leaves the checkout, but the commits that held it keep the page's content.
  */
 import type { BrainEngine } from '../engine.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { openTwins, openTwinsLines, openTwinsWarning, type OpenTwins } from '../access/open-twins.ts';
 import { ownerMemberId } from '../access/owner.ts';
@@ -464,6 +466,9 @@ export const privateLabelsRepair: RepairHandler = {
   /** GBRA-443: a label-only edit keeps every stored vector; the plan names the pages that re-embed anyway (embedding_items). */
   embeds: false,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
+    // The label scan and the dependents read evaluate the privacy predicate (privacyAliasSql, privacyPartSql), which has
+    // no typed member: an engine without raw SQL stops here by name, before it reads or writes anything.
+    if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', 'repair private-labels privacy scan');
     const selection: Selection = { source_ids: scope.source_ids, class: selectedClass(opts) };
     const command = previewCommand(scope, selection);
     const ledger = opts?.privateLabelsLedger;

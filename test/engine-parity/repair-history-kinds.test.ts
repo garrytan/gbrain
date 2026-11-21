@@ -21,6 +21,8 @@
  *    file of the same name holds other content is held (`first_blob_differs`) the same way on every arm; a ghost page
  *    whose file a commit moved is listed as moved on the SQL arms, and the Rust engine refuses the verdict's access
  *    comparison by name ("repair moved-pages access check": the privacy predicate has no typed member).
+ *    private-labels previews an alias-labelled page on the SQL arms, and the Rust engine refuses its privacy scan by name
+ *    ("repair private-labels privacy scan": the label scan and the dependents read evaluate the privacy predicate).
  *  - Regression: these kinds read and rewrite `page_versions` through executeRaw, so a Rust brain failed on a generic
  *    executeRaw refusal that named no step.
  *  - Why existing coverage misses it: test/purged-change-reasons-repair-gst2886.test.ts,
@@ -455,6 +457,19 @@ describe('engine parity: the history repair kinds of batch 6a', () => {
       return previewed;
     } catch (err) {
       if (backend === 'rust') expect(refusalText(err)).toContain('repair moved-pages access check');
+      throw err;
+    }
+  }));
+  parityTest('private-labels previews an alias-labelled page on the SQL arms, and the Rust engine refuses the privacy scan by name', {
+    methods: ['putPage'], requires: 'raw_sql', timeout: 60_000,
+  }, async (engine, backend) => withDir(async () => {
+    await engine.putPage('notes/aliased', { type: 'note', title: 'Aliased', compiled_truth: 'Aliased body.', timeline: '', frontmatter: { access: 'private' } }, { sourceId: 'default' });
+    try {
+      const previewed = shape(await runKind(engine, 'private-labels', false));
+      expect(previewed.affected).toBeGreaterThan(0);
+      return previewed;
+    } catch (err) {
+      if (backend === 'rust') expect(refusalText(err)).toContain('repair private-labels privacy scan');
       throw err;
     }
   }));
