@@ -69,6 +69,18 @@ for (const backend of testBackends()) {
     expect(await body(engine, 'notes/b')).toContain('Edited in the database.');
   }, { databaseUrl, setup }), 240_000);
 
+  test(`[${backend}] the earlier version a record-less page holds is found by the file's own history, however many other commits came since`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await unrecorded(engine);
+    edit(root, ['notes/a'], 'A first Git edit'); git(root, 'commit', '-qam', 'first edit');
+    for (let i = 0; i < 55; i++) { writeFileSync(join(root, 'log.txt'), `entry ${i}\n`); git(root, 'add', 'log.txt'); git(root, 'commit', '-qm', `log ${i}`); }
+    edit(root, ['notes/a'], 'A second Git edit'); git(root, 'commit', '-qam', 'second edit');
+    await coordinated(engine, "UPDATE sources SET last_commit='0123456789abcdef0123456789abcdef01234567' WHERE id='default'");
+    await performManagedSync(engine, OPTS);
+    expect(await held(engine)).toEqual([]);
+    expect(await body(engine, 'notes/a')).toContain('A second Git edit of notes/a.');
+  }, { databaseUrl, setup }), 240_000);
+
   test(`[${backend}] a hold the current screen wrote is screened against earlier versions after retry-held, and the preview says so first`, () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     const original = await body(engine, 'notes/a');
