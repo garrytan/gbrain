@@ -41,6 +41,9 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
     // The held-fact move's two reads (held-fact-move.ts) moved off executeRaw onto typed members; the raw stub answered both with no rows.
     async listHeldMoveRows() { return []; },
     async listStruckHeldRows() { return []; },
+    // The read-only checkout probe (mirror-read-only.ts readOnlyCheckout) reads the source through the typed member; the raw
+    // stub answered its SELECT local_path, config FROM sources with no row.
+    async readSourceState() { return null; },
     async getAllSlugs() { return []; },
     async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; },

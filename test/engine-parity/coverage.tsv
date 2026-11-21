@@ -771,7 +771,7 @@ hasStoredVectors	embedding_catalog	yes	1	no	yes	yes	serves
 countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	serves
 countPageChildOrphans	doctor_reads	yes	1	no	yes	yes	serves
 listPendingCoreNotices	core_notices	yes	1	no	yes	yes	refuses:pages
-readGitGapSource	git_gap_census	yes	1	no	yes	yes	refuses:sources
+readGitGapSource	git_gap_census	yes	1	no	yes	yes	refuses:pages
 readGitGapNewestWindow	git_gap_census	yes	1	no	yes	yes	refuses:pages
 listGitGapPageKeys	git_gap_census	yes	1	no	yes	yes	refuses:pages
 countGitGapRowsWithoutFile	git_gap_census	yes	1	no	yes	yes	refuses:facts

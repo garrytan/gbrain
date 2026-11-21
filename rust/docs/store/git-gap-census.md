@@ -15,14 +15,16 @@ reads are five members; PGLite and Postgres run one SQL text each (`src/core/eng
 | `countGitGapSourceRows(sourceId, opts)` | unfenced live facts, fenced facts with no live page, underived links by provenance, open `sync-hold` holds by code, parked effect targets by kind and code; groups sort bytewise (`COLLATE "C"`), NULL codes last |
 
 The Rust engine has no store member for any of them, so each refuses by name (`engine_capability_missing`;
-capability `sources` for `readGitGapSource`, `pages` for the window and key reads, `facts` for the counts). A census
+capability `pages` for `readGitGapSource` and the window and key reads, `facts` for the counts). The source read is
+named `pages`, not `sources`: it counts live pages, and a refusing `sources` member would withhold the `sources`
+capability the store serves (`store-capabilities.ts`). A census
 needs more than these reads: the read-only mirror flag, the alias setting and schema version the privacy predicate
 follows, export snapshots, sync import provenance, the slug-root mode, direction evidence from `page_versions`, holds
 and parked effects. The store serves none of them yet, so a partial census would report pages it never compared.
 
 `readGitGapSource` is the census's first database read after the source resolves, so on Rust the census stops there:
 `gbrain sources git-gap` exits with the refusal, and doctor `db_ahead_of_git` reports `Could not compare: <source>
-(This brain's engine does not support readGitGapSource yet (it needs the sources capability) ...)` under the unknown
+(This brain's engine does not support readGitGapSource yet (it needs the pages capability) ...)` under the unknown
 convention (warn, `health: unknown`). It never answers an empty census, which a caller would read as "nothing outside Git".
 
 Parity: `test/engine-parity/git-gap-census.test.ts`. Census behavior: `test/git-gap-census.test.ts`.
