@@ -4351,11 +4351,14 @@ A file held for something other than its frontmatter (a `file_drift` hold of a
 deleted or purged page, a `page_identity_changed` hold such as two spellings of
 one path, an origin conflict, a write that raced the database) is
 `needs_review` with that hold's own fix, for example the
-[`repair file-drift --held`](#deleted-canonical-files) preview: importing it
-would decide that hold without you. So is any file whose import would bring a
+[`repair file-drift --held`](#file-drift-held) preview (`--side deleted`
+restores or keeps a deleted page after you decide): importing it would decide
+that hold without you. So is any file whose import would bring a
 deleted page back (`page_deleted`: restore it with `gbrain restore` first) or
-re-create a purged one (`page_purged`). Frontmatter repair never imports
-either.
+re-create a purged one (`page_purged`). So are two files whose paths differ
+only by case and name one page (`notes/Standup.md` and `notes/standup.md`), held or
+not: importing one would pick a spelling. Frontmatter repair never imports
+any of these.
 
 Two passes: when interpretive candidates exist, the safe preview's
 `next_actions` carry both the safe apply and the `--include-ambiguous` preview.
