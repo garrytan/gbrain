@@ -55,7 +55,7 @@ import type { Notice } from '../core/agent-output.ts';
 import { migrationsNotice, pendingUpgradeMigrationsNotice } from './migrations-notice.ts';
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
-import { opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
+import { opBooleanValue, opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from '../core/cli-options.ts';
 import { runCliPreflight } from '../core/cli-preflight.ts';
 import { isBooleanLiteral, isKnownOpFlag } from '../core/op-flag-tokens.ts';
@@ -1102,14 +1102,17 @@ export function parseOpArgs(op: OperationMeta, args: string[]): Record<string, u
         // CLI-local booleans: `--json=<v>` / `--dry-run=<v>` must parse as
         // booleans, not fall through to the junk-key path (which would
         // consume the NEXT token as a value and corrupt positional parsing).
+        // #9918: an inline boolean takes only true or false; any other value
+        // is refused (it used to read as true, so `--purge=0` hard-deleted).
+        const flag = `--${key.replace(/_/g, '-')}`;
         if (key === 'json' || key === 'dry_run') {
-          params[key] = arg.slice(eq + 1) !== 'false';
+          params[key] = opBooleanValue(op, flag, arg.slice(eq + 1));
           continue;
         }
         const def = op.params[key];
         if (def) {
           const raw = arg.slice(eq + 1);
-          params[key] = def.type === 'boolean' ? raw !== 'false' : opFlagValue(op, key, def, raw, params[key]);
+          params[key] = def.type === 'boolean' ? opBooleanValue(op, flag, raw) : opFlagValue(op, key, def, raw, params[key]);
           continue;
         }
       }
