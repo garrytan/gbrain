@@ -495,7 +495,7 @@ fn embed_backfill_by_source_reports_only_the_requested_sources() {
 fn no_admitted_job_owns_a_budget_so_the_budget_owner_list_is_empty() {
     let b = brain("jobs-budget-owners");
     assert_eq!(b.list_budget_owner_jobs().unwrap(), Vec::<Value>::new());
-    // admitJob stores every budget column as null, whatever the insert carries.
+    // No admit path writes the budget columns on any engine, so budget-shaped insert data leaves them null.
     let id = add(
         &b,
         "work",

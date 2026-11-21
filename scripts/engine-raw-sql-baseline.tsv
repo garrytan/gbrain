@@ -160,7 +160,7 @@ src/commands/sync/run.ts	execute_raw	3
 src/commands/takes.ts	execute_raw	2
 src/commands/trust.ts	execute_raw	1
 src/commands/upgrade.ts	execute_raw	1
-src/core/access/actor.ts	execute_raw	3
+src/core/access/actor.ts	execute_raw	2
 src/core/access/attest-sources.ts	sql_template	7
 src/core/access/federation-exposure.ts	execute_raw	1
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut

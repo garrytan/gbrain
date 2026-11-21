@@ -1640,6 +1640,8 @@ export interface BrainEngine {
   readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }): Promise<AccessMembersSql.CredentialBindingRow | undefined>;
   /** The member a credential is bound to (a revoked or deleted one too, nothing locked), or null. */
   readCredentialMemberId(target: AccessMembersSql.CredentialTarget): Promise<string | null>;
+  /** The enabled member linked to (system, externalId), with its groups, or null (access/actor.ts linkedMember). */
+  readLinkedMember(system: string, externalId: string): Promise<AccessMembersSql.LinkedMemberRow | null>;
   /** Writes a credential's member, may_act_for and attest columns. */
   writeCredentialBinding(target: AccessMembersSql.CredentialTarget, binding: AccessMembersSql.CredentialBinding): Promise<void>;
   /** Sets a credential's reads_unscoped to now() (true) or clears it (false). */
@@ -4587,6 +4589,12 @@ export interface BrainEngine {
   readLiveJobIds(ids: number[]): Promise<number[]>;
   /** `{ data }` of the job holding an idempotency key, whatever its status, or null. */
   readJobDataByIdempotencyKey(key: string): Promise<{ data: unknown } | null>;
+  /**
+   * The idempotency-key step of admitJob on its own: the row holding `key` when `policy.decide` returns it, or null
+   * when no row holds the key or a dead or cancelled row's key was freed. `policy.authority` is the caller's
+   * submission authority, which the Rust store decides with; the SQL engines ask `decide`.
+   */
+  coalesceOnIdempotencyKey(key: string, policy: { authority: unknown; decide: AdmitJobPolicy['decide'] }): Promise<JobRow | null>;
 
   /** Job rows matching every given filter, newest first (default 50 from offset 0). */
   listJobs(filter?: ListJobsFilter): Promise<JobRow[]>;

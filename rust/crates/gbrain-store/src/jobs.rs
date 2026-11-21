@@ -906,6 +906,24 @@ fn parse_time(what: &str, text: &Option<String>) -> Result<Option<i64>> {
     }
 }
 
+/// `data || '{"__released_idempotency_key": key}'::jsonb` (engine-sql/jobs.ts `releaseIdempotencyKey`): an
+/// object gains the key; an array gains the object as its last element; any other value becomes a
+/// two-element array of the value and the object, as jsonb concatenation does.
+fn with_released_key(data: Value, key: &str) -> Value {
+    let marker = json!({ "__released_idempotency_key": key });
+    match data {
+        Value::Object(mut map) => {
+            map.insert("__released_idempotency_key".into(), json!(key));
+            Value::Object(map)
+        }
+        Value::Array(mut items) => {
+            items.push(marker);
+            Value::Array(items)
+        }
+        other => Value::Array(vec![other, marker]),
+    }
+}
+
 /// The coalesce rule (`coalesceDecision`) for a row stored here: a row under another submission
 /// authority is a conflict the caller refuses; a dead or cancelled row's key is released; any
 /// other row is returned. A row with a NULL authority (written before the authority cutover) is
@@ -1027,6 +1045,45 @@ impl Store {
         Ok(load(&*read, id)?
             .filter(|r| r.idempotency_key.as_deref() == Some(key))
             .map(|r| json!({ "data": r.data })))
+    }
+
+    /// `coalesceOnIdempotencyKey(key, authority)`: the idempotency fast path of `admitJob` on its own, in one
+    /// write. `{ outcome: 'none' }` when no row holds `key`; `{ outcome: 'coalesced', row }` when the row is
+    /// returned; `{ outcome: 'released' }` after a dead or cancelled row's key was freed (kept in its data as
+    /// `__released_idempotency_key`); `{ outcome: 'conflict', row }` for a row the caller must refuse, with
+    /// nothing written. Mirrors engine-sql/jobs.ts `coalesceOnIdempotencyKey` under the rule of `decide`.
+    pub fn coalesce_on_idempotency_key(
+        &self,
+        key: &str,
+        authority: Option<&Value>,
+    ) -> Result<Value> {
+        let authority = authority.filter(|a| !a.is_null());
+        // `self.write`, not a write of its own: inside an engine transaction (POST /ingest runs this in one) the step
+        // is a statement of that transaction.
+        self.write(|tx| {
+            let existing = match get_json::<i64>(&*tx, &idem_key(key))? {
+                Some(id) => load(&*tx, id)?.filter(|r| r.idempotency_key.as_deref() == Some(key)),
+                None => None,
+            };
+            let Some(existing) = existing else {
+                return Ok(json!({ "outcome": "none" }));
+            };
+            match decide(&existing, authority) {
+                Decision::Coalesce => {
+                    Ok(json!({ "outcome": "coalesced", "row": existing.to_json() }))
+                }
+                Decision::Conflict => {
+                    Ok(json!({ "outcome": "conflict", "row": existing.to_json() }))
+                }
+                Decision::Release => {
+                    let mut new = existing.clone();
+                    new.idempotency_key = None;
+                    new.data = with_released_key(std::mem::take(&mut new.data), key);
+                    save(tx, Some(&existing), &new)?;
+                    Ok(json!({ "outcome": "released" }))
+                }
+            }
+        })
     }
 
     /// `listJobs`: every given (non-empty) filter, newest first (ties by id, newest first), 50 from 0
@@ -1789,9 +1846,7 @@ fn admit_in(
             Decision::Release => {
                 let mut new = existing.clone();
                 new.idempotency_key = None;
-                if let Value::Object(data) = &mut new.data {
-                    data.insert("__released_idempotency_key".into(), json!(key));
-                }
+                new.data = with_released_key(std::mem::take(&mut new.data), key);
                 save(tx, Some(&existing), &new)?;
             }
         }

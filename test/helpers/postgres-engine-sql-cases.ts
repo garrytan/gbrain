@@ -976,6 +976,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'readCredentialMemberId': OOS.callerRawSql,
   'pingStore': OOS.callerRawSql,
   'readJobDataByIdempotencyKey': OOS.callerRawSql,
+  'coalesceOnIdempotencyKey': OOS.callerRawSql,
+  'readLinkedMember': OOS.callerRawSql,
   'listBudgetOwners': OOS.callerRawSql,
   'readLatestCatalogProvenanceAudit': OOS.callerRawSql,
   'listOauthGrantAudit': OOS.callerRawSql,

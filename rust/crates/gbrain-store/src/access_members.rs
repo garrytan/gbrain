@@ -187,7 +187,7 @@ fn all_members(read: &dyn KvRead) -> Result<Vec<MemberRecord>> {
 }
 
 /// Every group member as `(group id, member id)`, in key order.
-fn all_group_members(read: &dyn KvRead) -> Result<Vec<(String, String)>> {
+pub(crate) fn all_group_members(read: &dyn KvRead) -> Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     scan_prefix(
         read,
@@ -207,7 +207,7 @@ fn all_group_members(read: &dyn KvRead) -> Result<Vec<(String, String)>> {
     Ok(out)
 }
 
-fn read_member(read: &dyn KvRead, id: &str) -> Result<Option<MemberRecord>> {
+pub(crate) fn read_member(read: &dyn KvRead, id: &str) -> Result<Option<MemberRecord>> {
     get_json(read, &member_key(id))
 }
 

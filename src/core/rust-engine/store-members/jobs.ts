@@ -103,6 +103,22 @@ export const getJob: StoreMember<[id: number], JobRow | null> = async (brain, id
 export const readJobDataByIdempotencyKey: StoreMember<[key: string], { data: unknown } | null> = async (brain, key) =>
   await storeCall({ member: 'readJobDataByIdempotencyKey' }, () => brain.readJobDataByIdempotencyKey(key)) as { data: unknown } | null;
 
+/**
+ * The idempotency-key step of admitJob alone, decided by the store in one write under the rule admitJob uses (above):
+ * no row or a freed key reads null, a returned row comes back as PGLite read it, and a row held under another
+ * authority is handed to the caller's `decide`, which throws the refusal PGLite throws.
+ */
+export const coalesceOnIdempotencyKey: StoreMember<[key: string, policy: { authority: unknown; decide: AdmitJobPolicy['decide'] }], JobRow | null> =
+  async (brain, key, policy) => {
+    const out: { outcome: 'none' | 'released' | 'coalesced' | 'conflict'; row?: JobRow } =
+      await storeCall({ member: 'coalesceOnIdempotencyKey' }, () => brain.coalesceOnIdempotencyKey(key, policy.authority ?? null));
+    if (out.outcome === 'none' || out.outcome === 'released') return null;
+    const row = keyedRow(out.row!);
+    if (out.outcome === 'coalesced') return row;
+    await policy.decide(noDatabase('coalesceOnIdempotencyKey'), row);
+    return refuseMember('coalesceOnIdempotencyKey', 'a coalesce the store and the policy decide differently');
+  };
+
 export const listJobs: StoreMember<[filter?: ListJobsFilter], JobRow[]> = async (brain, filter) => {
   const rows: JobRow[] = await storeCall({ member: 'listJobs' }, () => brain.listJobs(filter ?? null));
   return rows.map(r => jobRow(r)!);

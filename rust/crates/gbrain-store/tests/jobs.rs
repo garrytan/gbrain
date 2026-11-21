@@ -295,3 +295,71 @@ fn admit_job_runs_as_a_statement_of_an_open_transaction() {
     tx.rollback_transaction().unwrap();
     assert_eq!(b.list_jobs(&ListFilter::default()).unwrap().len(), 1);
 }
+
+#[test]
+fn the_idempotency_key_step_alone_coalesces_frees_or_hands_back_a_conflict() {
+    let b = brain("jobs-key-alone");
+    let app = json!({"version": 1, "kind": "application"});
+    let other = json!({"version": 1, "kind": "remote", "client": "c"});
+    assert_eq!(
+        b.coalesce_on_idempotency_key("k1", Some(&app)).unwrap(),
+        json!({"outcome": "none"})
+    );
+    let first = add(&b, "work", json!({"idempotency_key": "k1"}));
+    let out = b.coalesce_on_idempotency_key("k1", Some(&app)).unwrap();
+    assert_eq!(
+        (out["outcome"].as_str(), out["row"]["id"].as_i64()),
+        (Some("coalesced"), Some(first))
+    );
+    // Another authority: handed back, nothing written; the key stays held.
+    let out = b.coalesce_on_idempotency_key("k1", Some(&other)).unwrap();
+    assert_eq!(
+        (out["outcome"].as_str(), out["row"]["id"].as_i64()),
+        (Some("conflict"), Some(first))
+    );
+    assert_eq!(job(&b, first)["idempotency_key"], "k1");
+    // A dead holder frees its key, keeping it in its data, and the next read finds no row.
+    claim(&b, "w:1").unwrap();
+    b.fail_job(first, "w:1", "boom", "dead", None, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        b.coalesce_on_idempotency_key("k1", Some(&app)).unwrap(),
+        json!({"outcome": "released"})
+    );
+    let freed = job(&b, first);
+    assert_eq!(freed["idempotency_key"], Value::Null);
+    assert_eq!(freed["data"]["__released_idempotency_key"], "k1");
+    assert_eq!(
+        b.coalesce_on_idempotency_key("k1", Some(&app)).unwrap(),
+        json!({"outcome": "none"})
+    );
+    let second = add(&b, "work", json!({"idempotency_key": "k1"}));
+    assert_ne!(second, first);
+}
+
+#[test]
+fn a_released_key_is_kept_in_non_object_data_as_jsonb_concatenation_keeps_it() {
+    let b = brain("jobs-key-release-shapes");
+    let app = json!({"version": 1, "kind": "application"});
+    for (n, data, want) in [
+        (1, json!([]), json!([{"__released_idempotency_key": "a1"}])),
+        (
+            2,
+            json!("text"),
+            json!(["text", {"__released_idempotency_key": "a2"}]),
+        ),
+    ] {
+        let key = format!("a{n}");
+        let id = add(&b, "work", json!({"idempotency_key": key, "data": data}));
+        claim(&b, &format!("w:{n}")).unwrap();
+        b.fail_job(id, &format!("w:{n}"), "boom", "dead", None, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            b.coalesce_on_idempotency_key(&key, Some(&app)).unwrap(),
+            json!({"outcome": "released"})
+        );
+        assert_eq!(job(&b, id)["data"], want, "{key}");
+    }
+}

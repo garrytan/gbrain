@@ -69,10 +69,10 @@ const INTERFACE_METHODS: readonly string[] = [
   'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
   'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
   'readEmbedBackfillBySource',
-  // The unowned admin and serve routes' reads and writes, Rust engine lane admin-unowned-rust (caller raw SQL moved to
+  // The unowned admin and serve routes' reads and writes, Rust engine lanes admin-unowned-rust and admin-followups-rust (caller raw SQL moved to
   // engine-sql/access-members.ts, client-grants.ts, health.ts, jobs.ts and jobs-status.ts).
   'listAccessTokenRows', 'lockOauthClientName', 'readAccessMemberLink', 'insertAccessMemberLink', 'deleteAccessMemberLink',
-  'listAccessMemberLinks', 'readCredentialMemberId', 'pingStore', 'readJobDataByIdempotencyKey', 'listBudgetOwners',
+  'listAccessMemberLinks', 'readCredentialMemberId', 'pingStore', 'readJobDataByIdempotencyKey', 'coalesceOnIdempotencyKey', 'listBudgetOwners', 'readLinkedMember',
   // doctor job checks
   'listStalledEmbedBackfillSources', 'readGlobalMaintenanceDeaths', 'readLastFailedGlobalMaintenanceJob', 'listFactsAbsorbJobsStillDead', 'readLegacyJobAuthority',
   'readQueuedSpendRows', 'listBuildSkewStacktraceLines', 'countDeadDreamSubmissionRows', 'listFactsAbsorbJobsByKeyPrefix', 'listDeadFactsAbsorbJobsByKeys',

@@ -17,7 +17,7 @@
  * A time crosses the binding as ISO text and leaves here as a `Date`.
  */
 import type { AccessGroupRow, AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
-import type { AccessMemberInsert, AccessMemberKind, AccessMemberLinkRow, CredentialBinding, CredentialBindingRow, CredentialTarget } from '../../engine-sql/access-members.ts';
+import type { AccessMemberInsert, AccessMemberKind, AccessMemberLinkRow, CredentialBinding, CredentialBindingRow, CredentialTarget, LinkedMemberRow } from '../../engine-sql/access-members.ts';
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
@@ -97,6 +97,10 @@ export const deleteAccessMemberLink: StoreMember<[system: string, externalId: st
 
 export const listAccessMemberLinks: StoreMember<[memberId: string | null], AccessMemberLinkRow[]> = async (brain, memberId) =>
   (await storeCall({ member: 'listAccessMemberLinks' }, () => brain.listAccessMemberLinks(memberId)) as Record<string, unknown>[]).map(asLink);
+
+/** The enabled member a link names, with its groups in byte order (the Postgres SQL sorts them with COLLATE "C"). */
+export const readLinkedMember: StoreMember<[system: string, externalId: string], LinkedMemberRow | null> = async (brain, system, externalId) =>
+  await storeCall({ member: 'readLinkedMember' }, () => brain.readLinkedMember(system, externalId)) as LinkedMemberRow | null;
 
 /** The ids of the members neither disabled nor removed, by id. */
 export const listActiveAccessMembers: StoreMember<[], string[]> = async (brain) =>

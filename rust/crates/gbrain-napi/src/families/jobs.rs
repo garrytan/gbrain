@@ -132,6 +132,19 @@ impl Brain {
         self.run(env, move |s| s.job_data_by_idempotency_key(&key))
     }
 
+    /// `coalesceOnIdempotencyKey(key, authority)`: resolves `{ outcome: 'none'|'coalesced'|'released'|'conflict', row? }`.
+    #[napi]
+    pub fn coalesce_on_idempotency_key<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+        authority: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.coalesce_on_idempotency_key(&key, Some(&authority))
+        })
+    }
+
     /// `listJobs(filter?)`: newest first.
     #[napi]
     pub fn list_jobs<'env>(

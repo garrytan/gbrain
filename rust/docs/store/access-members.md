@@ -36,6 +36,7 @@ there is no reverse index.
 | `readAccessGroupIds(ids)` | the ids that name an existing group, each once, in byte order | `engine-sql/access-control.ts` `AUDIENCE_GROUPS_SQL` (`SELECT id FROM access_groups WHERE id = ANY($1)`) |
 | `listActiveAccessMembers()` | the member ids neither disabled nor removed, by id | `engine-sql/write-misc.ts` |
 | `readAccessMemberLink(system, externalId)` | `{ system, external_id, member_id, created_at }`, matched exactly, or null | `SELECT ... FROM access_member_links WHERE system = $1 AND external_id = $2` (`gbrain access member link\|unlink`) |
+| `readLinkedMember(system, externalId)` | `{ id, groups }` of the member the link names when it is neither disabled nor removed, groups in byte order; null otherwise | `SELECT m.id, array_agg(g.group_id ORDER BY g.group_id) ... FROM access_member_links l JOIN access_members m ... LEFT JOIN access_group_members g ... WHERE l.system = $1 AND l.external_id = $2 AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL GROUP BY m.id` |
 | `insertAccessMemberLink(system, externalId, memberId)` | null | `INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)` |
 | `deleteAccessMemberLink(system, externalId)` | null; nothing for no such link | `DELETE FROM access_member_links WHERE system = $1 AND external_id = $2` |
 | `listAccessMemberLinks(memberId \| null)` | every link, or the links of exactly that member, by member id, system and external id, each in byte order | `SELECT ... ORDER BY member_id COLLATE "C", system COLLATE "C", external_id COLLATE "C"` (`gbrain access member links`) |
@@ -82,8 +83,8 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
   ([access-tokens.md](access-tokens.md) "Member binding", [oauth-clients.md](oauth-clients.md)).
 - Link cascade: members are never deleted (a removal is a tombstone), so the `ON DELETE CASCADE` of
   `access_member_links.member_id` has nothing to do; a removed member keeps its links, as on Postgres. The attested
-  read of a link (`linkedMember` in `src/core/access/actor.ts`, a join with the member and its groups) is not a store
-  member yet: it still sends SQL, which this engine refuses.
+  read of a link (`linkedMember` in `src/core/access/actor.ts`) is `readLinkedMember`, which reads the link, the member
+  and its groups in one read.
 - Order: ids sort in byte order. The SQL sorts member ids, group ids and each member's groups with `COLLATE "C"`,
   so an `en_US` Postgres gives the same order (`test/engine-parity/access-sort-order.test.ts`).
 

@@ -174,6 +174,17 @@ impl Brain {
         })
     }
 
+    /// `readLinkedMember(system, externalId)`: `{ id, groups }` of the enabled member the link names, or null.
+    #[napi]
+    pub fn read_linked_member<'env>(
+        &self,
+        env: &'env Env,
+        system: String,
+        external_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_linked_member(&system, &external_id))
+    }
+
     /// `insertAccessMemberLink(system, externalId, memberId)`: resolves null.
     #[napi]
     pub fn insert_access_member_link<'env>(

@@ -13,7 +13,7 @@
 //! reference (`access_member_links_member_id_fkey`). Members are never deleted (a removal is a
 //! tombstone), so the `ON DELETE CASCADE` of the member reference has nothing to do here.
 
-use crate::access_members::{member_key, now, refused};
+use crate::access_members::{all_group_members, member_key, now, read_member, refused};
 use crate::env::iso;
 use crate::error::Result;
 use crate::kv::{KvRead, scan_prefix};
@@ -91,6 +91,28 @@ impl Store {
     ) -> Result<Option<Value>> {
         let read = self.read()?;
         Ok(read_link(&*read, system, external_id)?.map(|l| link_json(system, external_id, &l)))
+    }
+
+    /// `readLinkedMember(system, externalId)`: `{ id, groups }` of the member the link names when that member
+    /// is neither disabled nor removed, its groups in byte order; None for no link or a member not enabled.
+    /// Mirrors the join in engine-sql/access-members.ts `readLinkedMember`, whose groups sort with `COLLATE "C"`.
+    pub fn read_linked_member(&self, system: &str, external_id: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        let Some(link) = read_link(&*read, system, external_id)? else {
+            return Ok(None);
+        };
+        let Some(member) = read_member(&*read, &link.member_id)?
+            .filter(|m| m.disabled_at_us.is_none() && m.tombstoned_at_us.is_none())
+        else {
+            return Ok(None);
+        };
+        let mut groups: Vec<String> = all_group_members(&*read)?
+            .into_iter()
+            .filter(|(_, m)| *m == member.id)
+            .map(|(g, _)| g)
+            .collect();
+        groups.sort();
+        Ok(Some(json!({ "id": member.id, "groups": groups })))
     }
 
     /// `insertAccessMemberLink(system, externalId, memberId)`: adds the link. Refuses an invalid

@@ -8,9 +8,10 @@ test/engine-parity/access-sort-order.test.ts	5	1
 test/engine-parity/access-tokens.test.ts	24	0
 test/engine-parity/admin-counts.test.ts	3	0
 test/engine-parity/admin-http.test.ts	2	1
-test/engine-parity/admin-unowned-http.test.ts	7	0
+test/engine-parity/admin-unowned-http.test.ts	8	0
 test/engine-parity/alias-fanout-reads.test.ts	11	0
 test/engine-parity/alias-trust.test.ts	6	0
+test/engine-parity/attested-actor-link.test.ts	1	0
 test/engine-parity/backup-readiness-callers.test.ts	3	0
 test/engine-parity/chronicle-publish-parity.test.ts	2	1
 test/engine-parity/chunk-reads.test.ts	13	0
@@ -95,10 +96,10 @@ test/engine-parity/jobs-health.test.ts	8	0
 test/engine-parity/jobs-insight.test.ts	2	0
 test/engine-parity/jobs-queue.test.ts	38	0
 test/engine-parity/jobs-spend.test.ts	4	0
-test/engine-parity/jobs-status.test.ts	11	0
+test/engine-parity/jobs-status.test.ts	12	0
 test/engine-parity/jobs-subagent.test.ts	16	0
 test/engine-parity/jobs-wake.test.ts	20	0
-test/engine-parity/jobs.test.ts	14	0
+test/engine-parity/jobs.test.ts	15	0
 test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/large-page.test.ts	1	0
 test/engine-parity/lifecycle.test.ts	10	1
