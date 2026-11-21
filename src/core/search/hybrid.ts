@@ -47,7 +47,7 @@ import { enforceTokenBudget } from './token-budget.ts';
 import {
   semanticResultCacheAvailable,
 } from './query-cache.ts';
-import { resolveHybridRequest } from './hybrid/request.ts';
+import { normalizePaging, resolveHybridRequest } from './hybrid/request.ts';
 import { prepareSemanticCache, resolveCacheSearchMode, semanticCacheSkipped, serveSemanticCacheHit } from './hybrid/cache-stages.ts';
 import { buildPostFusionOpts, joinVectorSide, resolveEarlyModality, runLexicalAndRelational, startVectorSide } from './hybrid/arms.ts';
 import { searchVectorFallback, searchWithoutEmbeddings } from './hybrid/keyword-only.ts';
@@ -1067,6 +1067,7 @@ export async function hybridSearch(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
+  opts = normalizePaging(opts);
   if (opts?.types?.length === 0) return [];
   if (needsEngineScope(engine)) return withEngineScope(engine, () => hybridSearch(engine, query, opts));
   const timer = opts?._timings ?? UNTIMED;
@@ -1193,6 +1194,7 @@ export async function hybridSearchCached(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
+  opts = normalizePaging(opts);
   if (opts?.types?.length === 0) return [];
   if (needsEngineScope(engine)) return withEngineScope(engine, () => hybridSearchCached(engine, query, opts));
   const timer = opts?._timings ?? UNTIMED;

@@ -383,6 +383,7 @@ export async function runPhaseConversationFactsBackfill(
     pages_marked_non_extractable: 0,
     pages_skipped_unrecognized_speaker: 0,
     pages_failed: 0,
+    windows_declined: 0,
     facts_inserted: 0,
     pages_pending: 0,
     fallback_slugify_count: 0,
@@ -402,6 +403,7 @@ export async function runPhaseConversationFactsBackfill(
     totals.pages_marked_non_extractable += r.pages_marked_non_extractable;
     totals.pages_skipped_unrecognized_speaker += r.pages_skipped_unrecognized_speaker;
     totals.pages_failed += r.pages_failed;
+    totals.windows_declined += r.windows_declined ?? 0;
     totals.facts_inserted += r.facts_inserted;
     totals.pages_pending += r.pages_pending ?? 0;
     totals.fallback_slugify_count += r.fallback_slugify_count;
@@ -438,6 +440,7 @@ export async function runPhaseConversationFactsBackfill(
       pages_marked_non_extractable: totals.pages_marked_non_extractable,
       pages_skipped_unrecognized_speaker: totals.pages_skipped_unrecognized_speaker,
       pages_failed: totals.pages_failed,
+      windows_declined: totals.windows_declined,
       facts_inserted: totals.facts_inserted,
       pages_pending: totals.pages_pending,
       fallback_slugify_count: totals.fallback_slugify_count,
