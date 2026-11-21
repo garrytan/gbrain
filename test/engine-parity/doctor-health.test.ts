@@ -19,10 +19,16 @@
  * none can be missing or INVALID and `readRequestIndexStates` answers each named index valid. Doctor and
  * `repair request-indexes` print what a healthy PGLite brain prints; the scan's speed loss is row 20 of "Open before
  * `rust` can be selected" in docs/designs/RUST_ENGINE.md, not a doctor finding.
+ *
+ * Known stop on Rust: the full `repair request-indexes` run (preview and apply) gets past the index states and stops on
+ * the repair core's own raw SQL, its cursor read on op_checkpoints (src/core/repair/core.ts readCursor). The case pins
+ * that refusal and ends on it, so the harness counts it stopped. Lane 10 (rust-engine/repair-rust) types that core;
+ * whichever of rust-engine/doctor-checks-3 and rust-engine/repair-rust lands second removes the pin.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms } from './harness.ts';
+import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { checkAbandonedThreads, checkContextualRetrievalCoverage, checkGradeConfidenceDrift } from '../../src/commands/doctor/checks/calibration.ts';
 import { checkSchemaPackSourceDrift } from '../../src/commands/doctor/schema-pack-checks.ts';
@@ -39,6 +45,10 @@ import { requestIndexesRepair } from '../../src/core/repair/request-indexes.ts';
 import { renderRepairResult } from '../../src/commands/repair.ts';
 
 const { parityTest } = parityArms(testBackends());
+
+/** The pin's failure once the repair core is typed (the known stop in the header). */
+const REPAIR_CORE_STOP_LIFTED = 'lane 10 rust-engine/repair-rust 8982a86c49 typed readOpCheckpointRecord/writeOpCheckpointRecord/readCounterRows: '
+  + 'remove this pin and compare the printed output on 3 arms';
 
 const OTHER = 'other-source';
 
@@ -318,11 +328,16 @@ describe('doctor catalog checks', () => {
   parityTest(
     'repair request-indexes previews and applies nothing on a healthy brain, with the same output on every engine',
     { methods: ['readRequestIndexStates'] },
-    async (engine) => {
-      // On Rust this stops on the repair core's own raw SQL (its cursor in op_checkpoints and the journal counters), not
-      // on the index states; rust-engine/repair-rust types that core, and then this case compares the printed output.
+    async (engine, backend) => {
       const ctx = { engine, config: {}, remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
       const scope = await resolveRepairScope(engine);
+      if (backend === 'rust') {
+        // Known stop on Rust (see the header): the run ends on the repair core's cursor read, raw SQL on op_checkpoints.
+        const stop: unknown = await runRepair(ctx, requestIndexesRepair, scope, { apply: false }).then(() => null, (error: unknown) => error);
+        const atReadCursor = isCapabilityRefusal(stop, 'raw_sql') && /at readCursor \([^)]*src\/core\/repair\/core\.ts:/.test((stop as Error).stack ?? '');
+        if (!atReadCursor) throw new Error(`${REPAIR_CORE_STOP_LIFTED} (the run ${stop === null ? 'finished' : `ended on: ${(stop as Error).message}`})`);
+        throw stop;
+      }
       const preview = await runRepair(ctx, requestIndexesRepair, scope, { apply: false });
       const applied = await runRepair(ctx, requestIndexesRepair, scope, { apply: true });
       expect({ affected: applied.affected, applied: applied.applied, failed: applied.failed, complete: applied.complete }).toEqual({ affected: 0, applied: 0, failed: [], complete: true });
