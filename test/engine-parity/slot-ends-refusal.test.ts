@@ -3,8 +3,8 @@
  * error and refuse on a missing engine capability.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: a listSlotRows read that fails with any error but `engine_capability_missing` leaves the rows as stored
- *    on every arm; an `engine_capability_missing` refusal reaches the caller, so a reader on an engine without the
+ *  - Contract: a listSlotRows read that fails with any error but `engine_capability_missing` leaves the rows as stored;
+ *    an `engine_capability_missing` refusal reaches the caller, so a reader on an engine without the
  *    slot read refuses by name instead of showing an ended value (an old employer, city or role) as current. On PGLite
  *    and Postgres, where listSlotRows runs one SQL read and never refuses a capability, recall and the recall op show
  *    the same facts as before the refusal was let through.
@@ -12,12 +12,13 @@
  *    the old employer still current and no sign of a skipped read.
  *  - Why existing coverage misses it: test/facts-slot-windows-gbra574.test.ts runs on PGLite and Postgres only, where
  *    the read never refuses; test/engine-parity/caller-typed-reads.test.ts pins the Rust stop but not the fail-open path.
- *  - Seam: applySlotEnds through an engine whose listSlotRows is replaced (the error a read can raise), then the
- *    `gbrain recall` command in process and the `recall` op handler over stored slot rows.
+ *  - Seam: applySlotEnds through a stub engine whose only member, listSlotRows, rejects with the error a read can
+ *    raise (a plain test: the failure is injected, so no engine arm runs), then, on every arm, the `gbrain recall`
+ *    command in process and the `recall` op handler over stored slot rows.
  * Rust known stop (the second case): listSlotRows, owner lane 4 (listSlotRows, due 5 PM PST Nov 25), as in
  * test/engine-parity/caller-typed-reads.test.ts RUST_KNOWN_STOP. The lane that serves it removes the Rust branch below.
  */
-import { describe, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { runRecall } from '../../src/commands/recall.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
 import { isEngineCapabilityRefusal } from '../../src/core/engine-capability-refusal.ts';
@@ -33,28 +34,21 @@ const { parityTest } = parityArms(testBackends());
 const ALICE = 'people/alice-example';
 const SCOPE = { sourceId: 'default', worldOnly: false, excludePrivate: false };
 
-/** The engine with listSlotRows replaced by `fail`; every other member is the engine's own. */
-function slotReadFailing(engine: BrainEngine, fail: () => Error): BrainEngine {
-  return new Proxy(engine, {
-    get(target, prop, receiver) {
-      if (prop === 'listSlotRows') return () => Promise.reject(fail());
-      const value = Reflect.get(target, prop, receiver);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
+/** An engine whose only member, listSlotRows, rejects with `fail`: applySlotEnds reads nothing else. */
+function slotReadFailing(fail: () => Error): BrainEngine {
+  return { listSlotRows: () => Promise.reject(fail()) } as unknown as BrainEngine;
 }
 
 describe('engine parity: read-time slot ends on a failed slot read', () => {
-  parityTest('a database error from listSlotRows leaves the rows as stored; a capability refusal reaches the caller', {
-    methods: [],
-  }, async (engine) => {
+  // No engine arm runs here: the failure is injected, so this is the same on every lane by construction.
+  test('a database error from listSlotRows leaves the rows as stored; a capability refusal reaches the caller', async () => {
     const rows = [
       { id: 1, source_id: 'default', entity_slug: ALICE, dimension: 'employer', valid_until: null, fact: 'Alice Example works at Acme Example.' },
       { id: 2, source_id: 'default', entity_slug: ALICE, dimension: 'employer', valid_until: null, fact: 'Alice Example joined Beta Example.' },
     ];
-    const reset = slotReadFailing(engine, () => Object.assign(new Error('Connection terminated unexpectedly'), { code: 'ECONNRESET' }));
-    const missingTable = slotReadFailing(engine, () => Object.assign(new Error('relation "facts" does not exist'), { code: '42P01' }));
-    const refusing = slotReadFailing(engine, () => capabilityMissing('facts', 'listSlotRows'));
+    const reset = slotReadFailing(() => Object.assign(new Error('Connection terminated unexpectedly'), { code: 'ECONNRESET' }));
+    const missingTable = slotReadFailing(() => Object.assign(new Error('relation "facts" does not exist'), { code: '42P01' }));
+    const refusing = slotReadFailing(() => capabilityMissing('facts', 'listSlotRows'));
     const got = {
       reset: await applySlotEnds(reset, SCOPE, rows, { activeOnly: true }),
       missingTable: await applySlotEnds(missingTable, SCOPE, rows, { activeOnly: false }),
@@ -67,7 +61,6 @@ describe('engine parity: read-time slot ends on a failed slot read', () => {
       refused: { refusal: true, message: "This brain's engine does not support listSlotRows yet (it needs the facts capability), so nothing ran.",
         detail: 'member=listSlotRows capability=facts outcome=none written=nothing' },
     });
-    return got;
   });
 
   parityTest('recall and the recall op show an employer a later one ended as ended, as before the refusal was let through', {
