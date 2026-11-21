@@ -14,7 +14,6 @@
 use super::purge_probe::{holds_claim, swept};
 use super::{DERIVATION_PURGE, DerivationRecord, kind_key, violation};
 use crate::Store;
-use crate::env::is_uuid;
 use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json, json_rows};
 use crate::kv::KvRead;
 use crate::links::no_nul;
@@ -60,14 +59,43 @@ fn record_key(request_id: &str) -> Vec<u8> {
     key
 }
 
-/// `$1::uuid`: the lowercase text of a uuid, or the error Postgres raises for text that is not one.
+/// `$1::uuid`: the canonical lowercase hyphenated text of a uuid, in every spelling Postgres accepts (`uuid_in`: optional braces,
+/// two hex digits per byte, an optional hyphen after any group of four digits but the last, upper or lower case), or the
+/// error Postgres raises for text that is not one. The record's key, its lookup and its conflict check all use this form.
 fn request_uuid(text: &str) -> Result<String> {
-    if is_uuid(text) {
-        return Ok(text.to_ascii_lowercase());
+    let bad = || StoreError::invalid(format!("invalid input syntax for type uuid: \"{text}\""));
+    let bytes = text.as_bytes();
+    let braced = bytes.first() == Some(&b'{');
+    let mut at = usize::from(braced);
+    let mut digits = String::with_capacity(32);
+    for i in 0..16 {
+        let pair = bytes.get(at..at + 2).ok_or_else(bad)?;
+        if !pair.iter().all(u8::is_ascii_hexdigit) {
+            return Err(bad());
+        }
+        digits.extend(pair.iter().map(|b| char::from(b.to_ascii_lowercase())));
+        at += 2;
+        if i % 2 == 1 && i < 15 && bytes.get(at) == Some(&b'-') {
+            at += 1;
+        }
     }
-    Err(StoreError::invalid(format!(
-        "invalid input syntax for type uuid: \"{text}\""
-    )))
+    if braced {
+        if bytes.get(at) != Some(&b'}') {
+            return Err(bad());
+        }
+        at += 1;
+    }
+    if at != bytes.len() {
+        return Err(bad());
+    }
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &digits[..8],
+        &digits[8..12],
+        &digits[12..16],
+        &digits[16..20],
+        &digits[20..]
+    ))
 }
 
 /// Whether a recorded sweep of the page's source drops this derivation row: the trigger's condition (the row is in a sweep's

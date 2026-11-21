@@ -230,7 +230,7 @@ The TypeScript engine refuses these with `engine_capability_missing`:
 `recordDerivationPurgeRow(row)` keeps the record `recordDerivationPurge` (`src/core/page-body/segment-derive.ts`) wrote to
 `page_segment_derivation_purges`: the claim forms (`needles`, `patterns`) and the pages the purge rewrote (`page_ids`, in the order
 the purge gave them), keyed by the purge request under `b 0x09 <request uuid>`. A second record of the same request keeps nothing
-(`ON CONFLICT (request_id) DO NOTHING`, also when the uuid is spelled in capitals); a request id that is not a uuid, a page id outside
+(`ON CONFLICT (request_id) DO NOTHING`); the request id is read as Postgres reads a uuid (upper or lower case, compact, brace-wrapped, a hyphen after any group of four digits) and kept in its canonical hyphenated form, so every spelling is one request; a request id that is not a uuid, a page id outside
 `integer` and, for a new record, an unknown source refuse as Postgres does (the source's foreign key). `readDerivationPurgeState(requestId)`
 answers `{ state: 'pending', reason: null }` for a record and null for none. A claim that normalizes to nothing records nothing, in
 TypeScript before the call.
@@ -238,7 +238,7 @@ TypeScript before the call.
 While a record is there, `upsertSegmentDerivations` does what the trigger `gbrain_refuse_purging_derivation` does: a row of the record's
 source that its sweep would delete (its page one the purge rewrote or a deleted page, or no live manifest row of its page and occurrence
 with the row's segment hash backing it) and that holds the claim (the output or receipt holds a claim form as whole words of one string
-value or key) is not stored, the stored row stays, the other rows are stored, and the member raises `derivation_purge_pending` with the
+value or key) is not stored (it is dropped before the CHECK constraints and before the repeated-key check, as the BEFORE trigger drops it ahead of them), the stored row stays, the other rows are stored, and the member raises `derivation_purge_pending` with the
 count dropped. The table probe counts the records within their source.
 
 What the store does not do: nothing walks or ends a record. `continueDerivationPurges` (the batches, the verify walks and the record's

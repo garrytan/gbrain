@@ -207,3 +207,117 @@ fn a_derivation_write_the_sweep_would_delete_and_that_holds_the_claim_is_dropped
         0
     );
 }
+
+#[test]
+fn a_request_id_is_one_request_in_every_spelling_postgres_reads_as_a_uuid() {
+    let (_dir, store) = brain("derivation-purge-record-uuid");
+    let plain = REQ.replace('-', "");
+    let spellings = [
+        REQ.to_string(),
+        REQ.to_uppercase(),
+        plain.clone(),
+        plain.to_uppercase(),
+        format!("{{{REQ}}}"),
+        format!("{{{plain}}}"),
+        format!(
+            "{}-{}-{}-{}",
+            &plain[..8],
+            &plain[8..16],
+            &plain[16..24],
+            &plain[24..]
+        ),
+        format!(
+            "{}-{}-{}-{}-{}-{}-{}-{}",
+            &plain[..4],
+            &plain[4..8],
+            &plain[8..12],
+            &plain[12..16],
+            &plain[16..20],
+            &plain[20..24],
+            &plain[24..28],
+            &plain[28..]
+        ),
+    ];
+    record(&store, &spellings[4], "default", &[1], "alice likes tea").unwrap();
+    for spelling in &spellings {
+        assert_eq!(
+            state(&store, spelling).unwrap(),
+            json!({ "state": "pending", "reason": null }),
+            "{spelling}"
+        );
+        record(&store, spelling, "default", &[2], "zebra crossing").unwrap();
+    }
+    assert_eq!(probe(&store, "default", "zebra crossing"), 0);
+    assert_eq!(probe(&store, "default", "alice likes tea"), 1);
+    for bad in [
+        "",
+        "not-a-uuid",
+        &REQ[1..],
+        &format!("{REQ}0"),
+        &format!("{{{REQ}"),
+        &format!("{REQ}}}"),
+        &format!(" {REQ}"),
+        &REQ.replace("c1", "cg"),
+    ] {
+        assert_eq!(
+            state(&store, bad).unwrap_err().code,
+            INVALID_ARGUMENT,
+            "{bad:?}"
+        );
+        assert_eq!(
+            record(&store, bad, "default", &[], "x").unwrap_err().code,
+            INVALID_ARGUMENT,
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn a_row_the_sweep_drops_reaches_neither_the_check_constraints_nor_the_conflict_handling() {
+    let (_dir, store) = brain("derivation-purge-record-order");
+    let page = shell(&store, "notes/a");
+    record(&store, REQ, "default", &[page], "alice likes tea").unwrap();
+    let outputs = || -> Vec<Value> {
+        store
+            .read_segment_derivations(page, &DerivationReadOptions::default())
+            .unwrap()
+            .iter()
+            .map(|r| r["output"].clone())
+            .collect()
+    };
+    // Two rows of one key: the first holds the claim and is dropped, so the second is no repeat.
+    let refused = store
+        .upsert_segment_derivations(&[
+            derivation(page, 1, json!({ "excerpt": "Alice likes tea" })),
+            derivation(page, 1, json!({ "excerpt": "harmless" })),
+        ])
+        .unwrap();
+    assert_eq!(refused, 1);
+    assert_eq!(outputs(), vec![json!({ "excerpt": "harmless" })]);
+    // Two harmless rows of one key still reach the conflict handling.
+    let repeated = store.upsert_segment_derivations(&[
+        derivation(page, 2, json!({ "n": 1 })),
+        derivation(page, 2, json!({ "n": 2 })),
+    ]);
+    assert_eq!(repeated.unwrap_err().code, CONSTRAINT_VIOLATION);
+    // A dropped row that would fail a CHECK (a negative version) is dropped; a kept one fails it.
+    let negative = |output: Value| -> SegmentDerivationInput {
+        let mut row = derivation(page, 3, output);
+        row.version = -1;
+        row
+    };
+    assert_eq!(
+        store
+            .upsert_segment_derivations(&[negative(json!({ "excerpt": "Alice likes tea" }))])
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .upsert_segment_derivations(&[negative(json!({ "excerpt": "harmless" }))])
+            .unwrap_err()
+            .code,
+        CONSTRAINT_VIOLATION
+    );
+    assert_eq!(outputs(), vec![json!({ "excerpt": "harmless" })]);
+}

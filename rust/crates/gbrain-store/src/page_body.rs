@@ -2054,18 +2054,13 @@ impl Store {
             )?;
             let context = from_hex(&row.context_hash, "upsertSegmentDerivations contextHash")?;
             int4(row.version, "upsertSegmentDerivations version")?;
-            if !DERIVATION_KINDS.contains(&row.kind.as_str())
+            // The CHECK constraints: Postgres evaluates them after the BEFORE trigger, so a row the trigger drops never reaches them.
+            let check_failed = !DERIVATION_KINDS.contains(&row.kind.as_str())
                 || !DERIVATION_STATES.contains(&row.state.as_str())
                 || row.version < 0
                 || segment.len() != 32
-                || context.len() != 32
-            {
-                return Err(violation(format!(
-                    "new row for relation \"page_segment_derivations\" violates check constraint (page {}, kind \"{}\", occurrence {})",
-                    row.page_id, row.kind, row.occurrence_id
-                )));
-            }
-            prepared.push((row, to_hex(&segment), to_hex(&context)));
+                || context.len() != 32;
+            prepared.push((row, to_hex(&segment), to_hex(&context), check_failed));
         }
         if prepared.is_empty() {
             return Ok(0);
@@ -2074,40 +2069,61 @@ impl Store {
         self.write(|tx| {
             let mut seen = HashSet::new();
             let mut refused = 0;
-            for (row, segment, context) in &prepared {
+            // The foreign key is checked at the end of the statement, after every row's trigger, CHECK and conflict handling.
+            let mut missing_page = None;
+            for (row, segment, context, check_failed) in &prepared {
                 let found = page_u64(row.page_id).and_then(|id| match read_page_by_id(&*tx, id) {
                     Ok(Some(page)) => Some((id, page)),
                     _ => None,
                 });
-                let Some((page_id, page)) = found else {
+                let built = match &found {
+                    Some((page_id, _)) => {
+                        let key = derivation_key(*page_id, &row.kind, row.occurrence_id);
+                        let created = get_json::<DerivationRecord>(&*tx, &key)?
+                            .map_or(now, |old| old.created_at_us);
+                        let record = DerivationRecord {
+                            pipeline_version: row.version,
+                            segment_sha256: segment.clone(),
+                            context_hash: context.clone(),
+                            state: row.state.clone(),
+                            output: row.output.clone(),
+                            receipt: row.receipt.clone(),
+                            created_at_us: created,
+                            updated_at_us: now,
+                        };
+                        Some((*page_id, key, record))
+                    }
+                    None => None,
+                };
+                // The trigger on page_segment_derivations runs first: a row a recorded sweep would delete and that holds
+                // its claim is not stored, and reaches neither the CHECK constraints nor the conflict handling.
+                if let (Some((_, page)), Some((_, _, record))) = (&found, &built)
+                    && purge_record::sweep_drops(&*tx, record, page, row.occurrence_id)?
+                {
+                    refused += 1;
+                    continue;
+                }
+                if *check_failed {
                     return Err(violation(format!(
-                        "insert into \"page_segment_derivations\" violates foreign key: page {} does not exist",
-                        row.page_id
+                        "new row for relation \"page_segment_derivations\" violates check constraint (page {}, kind \"{}\", occurrence {})",
+                        row.page_id, row.kind, row.occurrence_id
                     )));
+                }
+                let Some((page_id, key, record)) = built else {
+                    missing_page.get_or_insert(row.page_id);
+                    continue;
                 };
                 if !seen.insert((page_id, row.kind.clone(), row.occurrence_id)) {
                     return Err(violation(
                         "ON CONFLICT DO UPDATE command cannot affect row a second time (a derivation key repeats in the batch)",
                     ));
                 }
-                let key = derivation_key(page_id, &row.kind, row.occurrence_id);
-                let created = get_json::<DerivationRecord>(&*tx, &key)?.map_or(now, |old| old.created_at_us);
-                let record = DerivationRecord {
-                    pipeline_version: row.version,
-                    segment_sha256: segment.clone(),
-                    context_hash: context.clone(),
-                    state: row.state.clone(),
-                    output: row.output.clone(),
-                    receipt: row.receipt.clone(),
-                    created_at_us: created,
-                    updated_at_us: now,
-                };
-                // The trigger on page_segment_derivations: a row a recorded sweep would delete and that holds its claim is not stored.
-                if purge_record::sweep_drops(&*tx, &record, &page, row.occurrence_id)? {
-                    refused += 1;
-                    continue;
-                }
                 put_json(tx, &key, &record)?;
+            }
+            if let Some(page) = missing_page {
+                return Err(violation(format!(
+                    "insert into \"page_segment_derivations\" violates foreign key: page {page} does not exist"
+                )));
             }
             Ok(refused)
         })
