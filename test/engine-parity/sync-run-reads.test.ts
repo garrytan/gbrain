@@ -22,6 +22,7 @@ import { expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { refusesInput } from './input-refusal.ts';
 import { readAdmitted } from '../../src/core/persistence/sync-admitted.ts';
 import { concurrentWriteProof } from '../../src/core/persistence/sync-concurrent-write.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
@@ -140,4 +141,17 @@ parityTest('readPageRevisionWriter and readRevisionWriterRequest name a page\'s 
   expect([out.after.writer, out.plain.writer, out.request?.state, out.request?.page_id, out.sameRevision, out.otherIncarnation, out.notImport, out.notConflict, out.syncWritten])
     .toEqual(['writer', null, 'committed', 'page', null, null, null, null, null]);
   return out;
+});
+
+parityTest('the sync run reads refuse a malformed request id instead of answering nothing', {
+  methods: ['readAdmittedWriteRequests', 'readRevisionWriterRequest'],
+}, async (engine) => {
+  const refuses = refusesInput;
+  return {
+    admitted: await refuses(engine.readAdmittedWriteRequests('local_cli', 'writer-a', ['not-a-uuid'], false)),
+    writerRequest: await refuses(engine.readRevisionWriterRequest('not-a-uuid')),
+    // Control: a well-formed id that names no request answers nothing.
+    admittedUnknown: await engine.readAdmittedWriteRequests('local_cli', 'writer-a', [UNKNOWN], false),
+    writerUnknown: await engine.readRevisionWriterRequest(UNKNOWN),
+  };
 });

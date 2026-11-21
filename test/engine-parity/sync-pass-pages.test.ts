@@ -25,6 +25,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { PageInput } from '../../src/core/types.ts';
 import type { SyncImportPageRow } from '../../src/core/engine-sql/sync-pass-pages.ts';
 import { SYNC_IMPORT_PROVENANCE_OP, syncImportParser } from '../../src/core/persistence/sync-holds.ts';
+import { refusesInput } from './input-refusal.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -130,4 +131,18 @@ parityTest('the whole-source sync pass cursor answers the keyset\'s rows on SQL 
   const rows = view(pages.flat(), seeded).sort((a, b) => String(a.id).localeCompare(String(b.id)));
   expect(rows).toEqual(view(keyset, seeded).sort((a, b) => String(a.id).localeCompare(String(b.id))));
   return { sizes: pages.map(p => p.length), rows };
+});
+
+parityTest('readSyncImportPageRows refuses a keyset page size that is not a positive safe integer, as SQL does', {
+  methods: ['putPage', 'readSyncImportPageRows'],
+}, async (engine) => {
+  await engine.putPage('notes/limit', { ...NOTE, source_path: 'notes/limit.md' });
+  const sizes = [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 2];
+  const refused: Record<string, boolean> = {};
+  for (const limit of sizes) {
+    refused[String(limit)] = await refusesInput(engine.readSyncImportPageRows(Q, { after: 0, limit }));
+  }
+  // Control: the smallest valid size still answers the page.
+  const one = (await engine.readSyncImportPageRows(Q, { after: 0, limit: 1 })).map(row => row.slug);
+  return { refused, one };
 });

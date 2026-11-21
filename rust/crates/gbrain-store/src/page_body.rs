@@ -612,7 +612,7 @@ fn derivation_key(page_id: u64, kind: &str, occurrence: i64) -> Vec<u8> {
     key
 }
 
-fn body_key(page_id: u64) -> Vec<u8> {
+pub(crate) fn body_key(page_id: u64) -> Vec<u8> {
     let mut key = kind_key(BODY);
     key.extend_from_slice(&page_id.to_be_bytes());
     key
