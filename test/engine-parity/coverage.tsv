@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 254/258
+# covered: 290/294
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
@@ -36,6 +36,8 @@
 # eval_capture: 5/5
 # large_page: 2/2
 # field_usage: 1/1
+# decide_proposals: 16/16
+# decide_store: 20/20
 # owner_only: 1/1
 # wanted_links: 2/2
 # salience_enrich: 5/5
@@ -49,20 +51,20 @@ transaction	lifecycle	yes	13	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	40	yes	yes	yes	serves
-readPageSnapshot	pages	yes	7	no	yes	yes	serves
+getPage	pages	yes	41	yes	yes	yes	serves
+readPageSnapshot	pages	yes	11	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	157	yes	yes	yes	serves
+putPage	pages	yes	161	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	42	yes	yes	yes	serves
+softDeletePage	pages	yes	43	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
-purgeDeletedPages	pages	yes	4	no	yes	yes	serves
+purgeDeletedPages	pages	yes	5	no	yes	yes	serves
 listPages	pages	yes	5	yes	yes	yes	serves
 findPages	pages	yes	1	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
@@ -73,7 +75,7 @@ listIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	refuses:pages
 applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
-listAllSources	pages	yes	2	no	yes	yes	serves
+listAllSources	pages	yes	5	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
 getSource	pages	yes	1	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
@@ -199,7 +201,7 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
-insertFact	facts	yes	26	yes	yes	yes	serves
+insertFact	facts	yes	27	yes	yes	yes	serves
 insertFacts	facts	yes	13	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
 expireFact	facts	yes	9	no	yes	yes	serves
@@ -247,7 +249,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	4	no	yes	yes	serves
-setConfig	config	yes	10	no	yes	yes	serves
+setConfig	config	yes	11	no	yes	yes	serves
 unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -271,7 +273,7 @@ readCycleLocks	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	3	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	5	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	3	yes	yes	yes	serves
@@ -290,6 +292,42 @@ listEvalCaptureFailures	eval_capture	yes	1	no	yes	yes	serves
 readStoredBodyBytes	large_page	yes	1	no	yes	yes	refuses:raw_sql
 readPageBodySizes	large_page	yes	1	no	yes	yes	refuses:raw_sql
 readFieldUsageSamples	field_usage	yes	3	no	yes	yes	serves
+insertDecideProposal	decide_proposals	yes	5	no	yes	yes	serves
+getDecideProposal	decide_proposals	yes	2	no	yes	yes	serves
+listDecideProposalIds	decide_proposals	yes	1	no	yes	yes	serves
+listDecideProposals	decide_proposals	yes	1	no	yes	yes	serves
+transitionDecideProposal	decide_proposals	yes	4	no	yes	yes	serves
+listDecideProposedPairs	decide_proposals	yes	1	no	yes	yes	serves
+insertDecideReviewProposal	decide_proposals	yes	2	no	yes	yes	serves
+listDecideReviewProposals	decide_proposals	yes	1	no	yes	yes	serves
+getDecideReviewProposal	decide_proposals	yes	1	no	yes	yes	serves
+transitionDecideReviewProposal	decide_proposals	yes	2	no	yes	yes	serves
+listDecideReviewProposalIds	decide_proposals	yes	1	no	yes	yes	serves
+readProposalReviewRates	decide_proposals	yes	1	no	yes	yes	serves
+listDueDecideReviewQueue	decide_proposals	yes	1	no	yes	yes	serves
+applyDecideReviewQueue	decide_proposals	yes	1	no	yes	yes	serves
+listDueDecideSweepDeferred	decide_proposals	yes	1	no	yes	yes	serves
+applyDecideSweepDeferred	decide_proposals	yes	1	no	yes	yes	serves
+readDecideState	decide_store	yes	4	no	yes	yes	serves
+upsertDecideState	decide_store	yes	4	no	yes	yes	serves
+deleteDecideState	decide_store	yes	2	no	yes	yes	serves
+ensureDecideState	decide_store	yes	2	no	yes	yes	serves
+insertDecideSpend	decide_store	yes	9	no	yes	yes	serves
+dailyDecideSpend	decide_store	yes	8	no	yes	yes	serves
+listDecideSpendBySlot	decide_store	yes	7	no	yes	yes	serves
+insertDecideReceipts	decide_store	yes	14	no	yes	yes	serves
+pruneDecideReceipts	decide_store	yes	3	no	yes	yes	serves
+listDecideReceiptStats	decide_store	yes	7	no	yes	yes	serves
+decideSlotUsage	decide_store	yes	7	no	yes	yes	serves
+decideConflictNoEntityCounts	decide_store	yes	3	no	yes	yes	serves
+listDecideReplayReceipts	decide_store	yes	5	no	yes	yes	serves
+listDecideResolvedModels	decide_store	yes	3	no	yes	yes	serves
+listDecideMixedModelDecisions	decide_store	yes	3	no	yes	yes	serves
+insertDecideCalibration	decide_store	yes	7	no	yes	yes	serves
+storeDecideQualification	decide_store	yes	3	no	yes	yes	serves
+listDecideCalibrations	decide_store	yes	7	no	yes	yes	serves
+getDecideCalibration	decide_store	yes	6	no	yes	yes	serves
+setDecideCalibrationRetired	decide_store	yes	4	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	refuses:links
 replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	refuses:links

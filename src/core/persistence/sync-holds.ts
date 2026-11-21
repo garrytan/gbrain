@@ -54,6 +54,7 @@ import { VERSION } from '../../version.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { chunkerStamp } from '../chunkers/code.ts';
 import { gitBlobOid, sha256 } from './digest.ts';
+import { READERS_FIX_EFFECT, readersHoldSteps } from './readers-request.ts';
 import { carriedKeepDeleted, heldDriftPreviewArgv, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, type KeepDeletedDecision } from './sync-holds-carried.ts';
 export { CARRIED_SAMPLE, carriedHolds, heldDriftPreviewArgv, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, type CarriedHolds, type KeepDeletedDecision } from './sync-holds-carried.ts';
 import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.ts';
@@ -707,11 +708,12 @@ export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, re
  * to the content-repair lane's preview (#6377), #6194 concurrent-write holds
  * to the reconcile preview and a re-screen, #6278 preparation-stalled holds to
  * writer status and a re-screen (never a file repair), every other hold to the
- * frontmatter repair preview; a source with several kinds names each.
+ * frontmatter repair preview; a source with several kinds names each. `readers` (`readers_noncanonical`, a file edit no repair does) routes to a status read, the edit and a sync.
  */
 export interface HoldRepairRoute { fences: number; others: number; concurrent?: number; stalled?: number; dirty?: number;
   /** #6712 `file_drift` holds: a database edit sync would have overwritten; each routes to `gbrain repair file-drift`. */
   drift?: number;
+  readers?: number;
   /** #6377 `frontmatter_slug_conflict` holds, counted apart from `others` by callers that read codes (summary counts leave them in `others`). */
   slug_conflicts?: number;
   /** GBRA-542: the source is a read-only mirror, so its drift holds are carried and never resolved toward the database. */
@@ -752,9 +754,11 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
   const unblock = ['gbrain', 'sync', 'unblock', '--source', sourceId, '--apply'];
   const dirtyText = `the ${route.dirty ?? 0} worktree-dirty hold(s) are uncommitted edits in the checkout that sync would not overwrite: commit them (gbrain sources status ${sourceId} names each file), `
     + `then run ${unblock.join(' ')}, which re-screens every held file that is now committed, and the same sync`;
-  const driftText = route.mirror ? `the file-drift holds are on a read-only mirror, which gbrain never writes, so their pages stay live and database-only: list them with ${heldDriftPreviewArgv(sourceId, 'deleted', 'file_gone', 'file').join(' ')} (a preview that writes nothing), and turn the mirror flag off only if gbrain should write the checkout`
-    : `for each file-drift hold, preview the resolution with gbrain repair file-drift --source ${sourceId} --slug <slug> --prefer database (or --prefer file) `
-    + `(gbrain sources status ${sourceId} names each slug and the database write sync did not overwrite) and decide with the user. ${FILE_DRIFT_APPLY_STEP} Then run gbrain sync --source ${sourceId} --no-pull`;
+  const fileWins = route.mirror ? `the source is a read-only mirror, whose checkout is never written: gbrain repair file-drift --source ${sourceId} --held --side unknown --prefer file --whole-class previews every page whose file is newer for one approval and imports each into its page database-only`
+    : `a page whose file was committed after it changed is the user's call with --prefer file (gbrain repair file-drift --source ${sourceId} --held --side unknown --prefer file --whole-class previews them all for one approval). ${FILE_DRIFT_APPLY_STEP}`;
+  const driftText = `the ${route.drift ?? 0} file-drift hold(s) are pages that differ from their file where sync could not prove which side moved (a database edit, or no import record), so it kept each page: preview them all with gbrain repair file-drift --source ${sourceId} --held (writes nothing; --cursor pages through the rest) and relay what it lists. `
+    + `A page that equals an earlier committed version of its file needs no repair: gbrain sources retry-held ${sourceId} and the next sync import the file; ${fileWins}. A page that changed after its file, a file with uncommitted bytes (commit or restore it first) and a file that is gone stay held until the user decides. Then run gbrain sync --source ${sourceId} --no-pull`;
+  if (route.readers && !route.others && !content && !route.concurrent && !route.stalled && !route.dirty && !route.drift) return readersHoldSteps(sourceId);
   if (route.stalled && !route.others && !content && !route.concurrent && !route.dirty && !route.drift) {
     return { argv: stalled.status, commands: [stalled.status.join(' '), stalled.retry.join(' '), stalled.sync.join(' ')], text: stalledText };
   }
@@ -1010,6 +1014,9 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         user_message: `${record.path} asks for visibility: private in a spelling page privacy does not read (another case, a block scalar, a list, a flow mapping or a merge key), so sync holds it instead of storing a world-readable page, and the rest of source ${source} keeps syncing. Write visibility: private on its own frontmatter line (lowercase key and value), commit, then run gbrain sync --source ${source} --no-pull.`,
         why: 'Page privacy reads only the exact lowercase visibility: private; no frontmatter repair rewrites a privacy request, and the hold re-screens when the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    case 'readers_noncanonical': return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
+        user_message: `${record.path} names its readers with a key page access does not read (another case, a hyphen or space instead of the underscore, or readableBy), so sync holds it instead of storing a page every member can read, and the rest of source ${source} keeps syncing. Write the key as readable_by (lowercase, with an underscore) on its own frontmatter line, remove any other spelling of it, commit, then run gbrain sync --source ${source} --no-pull. ${READERS_FIX_EFFECT}`,
+        why: 'Page access reads only the exact lowercase readable_by key; no frontmatter repair rewrites who may read a page, and the hold re-screens when the file changes.', verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'content_null_bytes':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
         user_message: `${record.path} holds NUL bytes (U+0000${record.meta.line !== undefined ? `, first on line ${record.meta.line}` : ''}), so sync holds it and the rest of source ${source} keeps syncing. A UTF-16 file (a Windows "Unicode" save) looks like this: save it as UTF-8. Otherwise remove the NUL bytes, or remove a binary file (or leave it out with sync.exclude), then commit and run gbrain sync --source ${source} --no-pull.`,
