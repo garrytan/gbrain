@@ -18,7 +18,10 @@
  *      moment the delay ends, judging the page outside the campaign;
  *    - a leased judge whose lease ends and whose row a later run moves before it reports keeps its spend and outcome on
  *      the moved row, or only its spend once a newer attempt claimed the row; it fails when the move drops the record,
- *      so the late report lands on a hash no row has and its paid call is lost.
+ *      so the late report lands on a hash no row has and its paid call is lost;
+ *    - on Postgres, the same holds when the move commits after the judge read the row's hash (it fails when the report
+ *      lands on the old hash after the row left it), and when two runs move the row at once (it fails when the second
+ *      deletes the forwarding record the first just settled).
  * 4. Runs on PGLite and, with DATABASE_URL, on Postgres (the managed-brain fixture). The Rust engine serves no raw SQL,
  *    so the managed sync and the chronicle phase stop there with engine_capability_missing. The judge is the phase's
  *    injected judge, recording spend on the ambient BudgetTracker; the embedding provider is a stub. No network, no
@@ -44,6 +47,7 @@ import { campaignSpentUsd } from '../src/core/chronicle/campaign.ts';
 import type { ChronicleJudge } from '../src/core/chronicle/extract-events.ts';
 import { runPhaseChronicle } from '../src/core/cycle/chronicle.ts';
 import { runChronicleJob } from '../src/core/chronicle/job.ts';
+import { settleChronicleCarries } from '../src/core/chronicle/carry.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -310,5 +314,66 @@ describe(`pages-03: the upgrade re-read while a chronicle judge is calling the m
       expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.25 + 2 * CALL_USD);
     });
   }, { setup, databaseUrl }), 240_000);
+
+  /** Waits until `n` statements of this database wait on a row lock (bounded). */
+  async function lockWaiters(engine: BrainEngine, n: number): Promise<void> {
+    for (const until = Date.now() + 30_000; Date.now() < until; await new Promise(resolve => setTimeout(resolve, 25))) {
+      const [{ waiting }] = await engine.executeRaw<{ waiting: number }>(
+        `SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'`);
+      if (Number(waiting) >= n) return;
+    }
+    throw new Error(`fewer than ${n} statements waited on a lock`);
+  }
+  const carryRecords = (engine: BrainEngine, id: number) => engine.executeRaw<{ settled: boolean }>(
+    `SELECT completed_keys->0->>'settled' IS NOT NULL AS settled FROM op_checkpoints WHERE op='chronicle-carry' AND fingerprint LIKE '%:' || $1 || ':%'`, [String(id)]);
+
+  // Two connections race only on Postgres; PGLite runs one statement at a time.
+  if (backend === 'postgres') {
+    test('a failing judge whose row moves after it read the row\'s hash records its failure and spend once on the moved row', () => managedBrain(async ({ engine, root }) => {
+      await inGateway(async () => {
+        const judge = pausingJudge(true);
+        const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
+        // A later run moves the row; it holds the carry and the row while the judge reports.
+        await engine.transaction(async (tx) => {
+          await tx.executeRaw(`SELECT 1 FROM op_checkpoints WHERE op='chronicle-carry' FOR UPDATE`);
+          await tx.executeRaw(`SELECT 1 FROM chronicle_page_state WHERE page_id=$1 FOR UPDATE`, [id]);
+          judge.release();
+          await lockWaiters(engine, 1);
+          await settleChronicleCarries(tx);
+        });
+        await firstDrain;
+        await runPhaseChronicle(engine, { judge });
+        expect(judge.calls).toBe(1);
+        const rows = await ledger(engine, id);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ content_hash: liveHash, state: 'failed', reason: 'judge_chat_error', campaign_id: 'campaign-a', attempts: 2 });
+        expect(Number(rows[0]!.cost_usd)).toBeCloseTo(0.25 + CALL_USD, 10);
+        expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.25 + CALL_USD);
+      });
+    }, { setup, databaseUrl }), 240_000);
+
+    test('two runs moving one carried row at once keep its forwarding record, so the late judge\'s spend lands once', () => managedBrain(async ({ engine, root }) => {
+      await inGateway(async () => {
+        const judge = pausingJudge(true);
+        const { id, liveHash, firstDrain } = await leaseEndsAndRowMoves(engine, root, judge);
+        // Both runs read the carry before either moves the row.
+        let movers!: Promise<unknown>;
+        await engine.transaction(async (tx) => {
+          await tx.executeRaw(`SELECT 1 FROM chronicle_page_state WHERE page_id=$1 AND content_hash<>$2 FOR UPDATE`, [id, liveHash]);
+          movers = Promise.all([settleChronicleCarries(engine), settleChronicleCarries(engine)]);
+          await lockWaiters(engine, 2);
+        });
+        await movers;
+        expect(await carryRecords(engine, id)).toEqual([{ settled: true }]);
+        judge.release();
+        await firstDrain;
+        const rows = await ledger(engine, id);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ content_hash: liveHash, state: 'failed', reason: 'judge_chat_error', campaign_id: 'campaign-a', attempts: 2 });
+        expect(Number(rows[0]!.cost_usd)).toBeCloseTo(0.25 + CALL_USD, 10);
+        expect(await campaignSpentUsd(engine, 'campaign-a')).toBe(0.25 + CALL_USD);
+      });
+    }, { setup, databaseUrl }), 240_000);
+  }
 });
 }

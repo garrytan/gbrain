@@ -124,7 +124,8 @@ async function setNextAttempt(engine: BrainEngine, row: ChronicleLedgerRow, at: 
  * replayed completion adds nothing, and recorded even from a stale executor because the money was
  * spent. The outcome itself applies only while `attempt` is still the row's latest attempt, so a
  * completion arriving after its lease expired and another executor claimed the row is fenced. A row the upgrade re-read
- * carried to its page's new hash while this attempt ran is found there (carry.ts), under the same rules.
+ * carried to its page's new hash while this attempt ran is found there (carry.ts), under the same rules; a move of the row
+ * that starts while this runs waits for it.
  */
 async function finish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: number, patch: {
   state: ChronicleLedgerRow['state']; reason: string | null; nextAttemptAt: Date | null;
@@ -135,7 +136,15 @@ async function finish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: num
   /** This attempt was a paid judge call that ended in a SAME_INPUT_FAILURES outcome. */
   countFailure?: boolean;
 }): Promise<void> {
-  row = { ...row, content_hash: await carriedRowHash(engine, row) };
+  await engine.transaction(async (tx) => {
+    // The row is locked at its hash before its hash is resolved: a carry move of the row waits until this attempt's
+    // spend and outcome are on it, and a move that committed first is found through its forwarding record.
+    await tx.executeRaw(`SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 FOR UPDATE`, [...key(row)]);
+    await recordFinish(tx, { ...row, content_hash: await carriedRowHash(tx, row) }, attempt, patch);
+  });
+}
+
+async function recordFinish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: number, patch: Parameters<typeof finish>[3]): Promise<void> {
   if (patch.costUsd != null) {
     await engine.executeRaw(
       `UPDATE chronicle_page_state SET cost_usd=COALESCE(cost_usd, 0) + $5::numeric, cost_attempts=array_append(cost_attempts, $6::int)

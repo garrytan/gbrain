@@ -80,6 +80,12 @@ async function moveCarried(engine: BrainEngine, key: CarryKey, owner: { attempts
   return engine.transaction(async (tx) => {
     const fingerprint = fingerprintOf(key);
     const drop = async () => { await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [CHRONICLE_CARRY_OP, fingerprint]); return null; };
+    // Movers of one carry take turns on its record, so the second reads what the first left: a settled forwarding
+    // record it keeps, never the unsettled one it read before the first moved the row (it would drop it, and a late
+    // judge's spend with it). The read below is a new statement, so it sees the first mover's commit.
+    const [held] = await tx.executeRaw<{ held: number }>('SELECT 1 AS held FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR UPDATE',
+      [CHRONICLE_CARRY_OP, fingerprint]);
+    if (!held) return null;
     const [carry] = await tx.executeRaw<{ to_hash: string; live_hash: string | null; attempts: number | null; waiting: boolean | null; settled: boolean; moved_attempts: number | null }>(
       `SELECT m.completed_keys->0->>'toHash' AS to_hash,
               (SELECT p.content_hash FROM pages p WHERE p.id=$3 AND p.source_id=$2 AND p.deleted_at IS NULL) AS live_hash,
