@@ -350,7 +350,7 @@ src/core/chronicle/event-identity.ts	execute_raw	1
 src/core/chronicle/execute.ts	execute_raw	9
 src/core/chronicle/ledger-stats.ts	execute_raw	5
 src/core/chronicle/ledger.ts	execute_raw	11	#9636: add_link carries a still-pending automatic decision to its revision, read from chronicle_page_state by page; no typed engine method for the ledger exists yet
-src/core/chronicle/publish.ts	execute_raw	4
+src/core/chronicle/publish.ts	execute_raw	3
 src/core/chunkers/symbol-resolver.ts	execute_raw	8
 src/core/claw-test/seed-pglite.ts	driver_call	1
 src/core/code-chunks.ts	execute_raw	3
@@ -523,7 +523,7 @@ src/core/fence-repair/import-step.ts	execute_raw	2
 src/core/fence-repair/repair-io.ts	execute_raw	1
 src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
-src/core/frontmatter-legacy.ts	execute_raw	3	pages-03: the one-time re-read after the frontmatter fix copies extract_atoms_page_state rows and managed-atoms page checkpoints and moves chronicle_page_state rows from a page's old content_hash to its new one inside the import's page write; no typed engine method exists yet, and the Rust engine does not run it (raw_sql capability check)
+src/core/frontmatter-legacy.ts	execute_raw	5	pages-03: the one-time re-read after the frontmatter fix copies extract_atoms_page_state rows and managed-atoms page checkpoints (read one at a time to carry each drain key and name the page's current slug, +1) and moves settled chronicle_page_state rows (never a pending or failed row a paid judge may still report to) from a page's old content_hash to its new one inside the import's page write, after checking the page's import record names the older importer (+1); no typed engine method exists yet, and the Rust engine does not run it (raw_sql capability check)
 src/core/function-search-path.ts	execute_raw	3
 src/core/generations/adapters/atoms.ts	execute_raw	3
 src/core/generations/adapters/chronicle-events.ts	execute_raw	13
@@ -738,7 +738,7 @@ src/core/persistence/admin-lock.ts	execute_raw	7
 src/core/persistence/administration.ts	execute_raw	8
 src/core/persistence/admission-origin.ts	execute_raw	1
 src/core/persistence/applied-watermark.ts	execute_raw	4
-src/core/persistence/atom-maintenance.ts	execute_raw	21
+src/core/persistence/atom-maintenance.ts	execute_raw	25	pages-03: carriedAtomDrainKey and carriedRetryCheckpoint read the checkpoint, receipt intent, page and atom generation to carry a page's attempt count, hold and retry across the one-time re-read (+4); no typed engine method for managed-atoms checkpoints exists yet
 src/core/persistence/authority.ts	execute_raw	11
 src/core/persistence/blocking-effects.ts	execute_raw	2
 src/core/persistence/bounded-reads.ts	execute_raw	10

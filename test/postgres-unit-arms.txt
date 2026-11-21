@@ -224,6 +224,9 @@ test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
 test/forget-door-landed-gst2517.test.ts
 test/forget-one-id-9738.test.ts
+test/frontmatter-reread-checkpoints.test.ts
+test/frontmatter-reread-chronicle.test.ts
+test/frontmatter-reread-rename.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
 test/function-search-path-upgrade-parity.test.ts
 test/g4-forget-fence-edit.test.ts

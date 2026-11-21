@@ -13,7 +13,7 @@ import { basename, extname, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { classifyImportHold, parseMarkdown, resolveParsedSubtype, type ParseOpts, type ParsedMarkdown } from './markdown.ts';
-import { carryHashKeyedPageState, legacyHashToCarry } from './frontmatter-legacy.ts';
+import { carryHashKeyedPageState, legacyHashToCarry, provenLegacyCarry } from './frontmatter-legacy.ts';
 import { hasCapability } from './engine-capabilities.ts';
 import { alignWithStored } from './persistence/align-stored.ts';
 import { CODE_FILE_MAX_BYTES, isLargePageBytes } from './page-size-policy.ts';
@@ -284,8 +284,8 @@ export async function importFromContent(
     ingested_via?: string | null;
     /** Wave B: who stages a segmented body (the journaled request's principal); unset: the local maintenance principal, kind `import`. */
     segmentedOwner?: SegmentedStagingOwner;
-    /** Wave B: a segmented body an earlier preparation of this write staged (`PreparedContentImport.segmented`), reused when its inputs are unchanged. */
-    reuseSegments?: SegmentedImport;
+    /** Wave B: a segmented body an earlier preparation of this write staged (`PreparedContentImport.segmented`), reused when its inputs are unchanged; pages-03 `renamedFrom`: on a rename's re-preparation, the revision the page had before this transaction renamed it (provenLegacyCarry). */
+    reuseSegments?: SegmentedImport; renamedFrom?: string;
     /** Untrusted caller (remote MCP put_page: `ctx.remote !== false`); drives the remote fence merge and hidden rows. */
     remote?: boolean;
     /** GST-2891: with `remote`, the writer read the page without its held fence rows (worldOnlyFacts), so the merge restores them as stored. */
@@ -487,7 +487,8 @@ export async function importFromContent(
       tags: parsed.tags,
     });
 
-    const carryHashFrom = legacyHashToCarry(existing, parsed.frontmatter, content, hash, frontmatter => contentHash({ ...parsed, frontmatter })); // pages-03
+    const carryHashFrom = await provenLegacyCarry(engine, sourceId ?? 'default', existing?.id, // pages-03
+      legacyHashToCarry(existing, parsed, content, hash, (frontmatter, title) => contentHash({ ...parsed, frontmatter, title })), opts.renamedFrom);
     const parsedPage: ParsedPage = {
       type: parsed.type,
       title: parsed.title,

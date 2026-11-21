@@ -36,6 +36,7 @@ import { spawn } from './spawn.ts';
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from './hardened-git.ts';
 import { explicitMarkdownTitle } from './markdown.ts';
+import { importedByOldParserSql, legacyTypedFrontmatter } from './frontmatter-legacy.ts';
 import { isMarkdownFilePath, resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason, type RenameSideSource, type SyncManifest } from './sync.ts';
 import { computeSyncDelta, type SyncDeltaResult } from './sync-delta.ts';
 
@@ -84,6 +85,32 @@ export function frontmatterIdentity(head: Buffer | string | null): FrontmatterId
     return text === '' ? null : queryable(text);
   };
   return { id: field('id', true), slug: field('slug'), title, digest };
+}
+
+/**
+ * pages-03: SQL true when page row `page` stores a frontmatter id typed by the old YAML reading (`id: 007` stored as the
+ * number 7): the stored id is a JSON number and the page was stored by the old importer (importedByOldParserSql). Any
+ * other page's id compares as stored.
+ */
+export function legacyTypedIdSql(page: string): string {
+  return `(jsonb_typeof(${page}.frontmatter->'id')='number' AND ${importedByOldParserSql(page)})`;
+}
+
+/**
+ * pages-03: the frontmatter id of a file, read against the id a page row stores. An older gbrain stored the id with its
+ * old typing (`id: 007` as the number 7, so the row's id reads '7'), while today's reading keeps the text ('007'). Only
+ * for a page proven stored that way (`legacyTyped`, from `legacyTypedIdSql`) is the old reading of this very file
+ * compared too: when it is the stored id, the file reads as the stored id, as it did before the upgrade; otherwise, and
+ * for every other page, the id as written. A quoted `id: "007"` read as the text '007' then too, so it never matches a
+ * stored 7.
+ */
+export function fileIdAgainstStored(text: string | null, storedId: string | null, legacyTyped: boolean): string | null {
+  const id = frontmatterIdentity(text).id;
+  const stored = storedId?.trim() || null;
+  if (!legacyTyped || text === null || id === null || stored === null || id === stored) return id;
+  const legacy = legacyTypedFrontmatter(text.replace(/^\uFEFF/, ''))?.id;
+  const legacyText = typeof legacy === 'string' ? legacy.trim() : typeof legacy === 'number' && Number.isFinite(legacy) ? String(legacy) : null;
+  return legacyText === stored ? stored : id;
 }
 
 /** The first 64 KiB of each `<rev>:<path>` object through one `git cat-file --batch` stream; null for a missing object or a non-blob (GST-2331: one a partial clone lacks is never fetched). */

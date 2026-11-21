@@ -44,6 +44,7 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
+import { SYNC_IMPORT_PROVENANCE_OP } from '../../src/core/persistence/sync-holds.ts';
 import { TEST_WRITE_ATTRIBUTION } from '../helpers/write-attribution.ts';
 import { conversationPage } from '../helpers/conversation-page.ts';
 import { ownerImportFile } from '../helpers/owner-import.ts';
@@ -267,6 +268,12 @@ test('the re-read of a page over the ceiling stored under the old typing keeps i
         await tx.executeRaw(`INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned)
           SELECT incarnation, $1, $2, 0, true FROM sources WHERE id=$3`, [first.id, oldHash, f.sourceId]);
       });
+      // The import record the older gbrain's sync left: only a page the old importer stored is carried (provenLegacyCarry).
+      await engine.executeRaw(`INSERT INTO op_checkpoints (op, fingerprint, completed_keys)
+          SELECT $1, s.id || ':' || s.incarnation::text || ':' || $3, jsonb_build_array(jsonb_build_object('revision', $4::text,
+            'parser', jsonb_build_object('parser_version', 'import=1;frontmatter=1;fence=1'))) FROM sources s WHERE s.id=$2
+        ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys`,
+        [SYNC_IMPORT_PROVENANCE_OP, f.sourceId, String(first.id), await revisionOf(engine, f, slug)]);
       await disposePersistenceConsumer(engine);
       await ownerImportFile(engine, f.sourceId, file, `${slug}.md`, { pageId: first.id, revision: await revisionOf(engine, f, slug) });
       const reread = await row();

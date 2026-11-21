@@ -14,7 +14,7 @@
  *   converging stop `resumable` (`not_converged`).
  */
 import { randomUUID } from 'node:crypto';
-import { confirmedSyncDelta, confirmRenameIdentities, explicitIdVeto } from '../sync-rename-identity.ts';
+import { confirmedSyncDelta, confirmRenameIdentities, explicitIdVeto, legacyTypedIdSql } from '../sync-rename-identity.ts';
 import { buildDetachedWorkingTreeManifest } from '../sync-delta.ts';
 import type { DowngradedRename, SyncManifest } from '../sync.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -204,7 +204,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   if (adopting.length) {
     // A batch-wide read runs on this thread under PGLite (at 8k new files, about as long as the loops' budget): it starts a stretch of its own.
     await step.pause();
-    const identities = await engine.executeRaw<LegacyIdentity>("SELECT id, slug, source_path, deleted_at, frontmatter->>'id' AS fm_id FROM pages WHERE source_id=$1 AND (source_path IS NULL OR slug=ANY($2::text[]))",
+    const identities = await engine.executeRaw<LegacyIdentity>(`SELECT id, slug, source_path, deleted_at, frontmatter->>'id' AS fm_id, ${legacyTypedIdSql('pages')} AS fm_legacy FROM pages WHERE source_id=$1 AND (source_path IS NULL OR slug=ANY($2::text[]))`,
       [level.sourceId, [...new Set(adopting.map(entry => slugOf.get(entry.path)!))]]);
     const bySlug = new Map(identities.map(page => [page.slug, page]));
     for (const entry of adopting) {
@@ -216,8 +216,8 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   }
   const slugs = [...new Set([...slugOf.values()].filter(Boolean))];
   if (slugs.length) await step.pause();
-  const holders = new Map((slugs.length ? await engine.executeRaw<{ id: number | string; slug: string; source_path: string | null; revision: string; deleted: boolean; unbound: boolean; fm_id: string | null }>(
-    `SELECT id, slug, source_path, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, ${databaseOnlyPageSql('pages')} AS unbound, frontmatter->>'id' AS fm_id FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])`, [level.sourceId, slugs]) : [])
+  const holders = new Map((slugs.length ? await engine.executeRaw<{ id: number | string; slug: string; source_path: string | null; revision: string; deleted: boolean; unbound: boolean; fm_id: string | null; fm_legacy: boolean }>(
+    `SELECT id, slug, source_path, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, ${databaseOnlyPageSql('pages')} AS unbound, frontmatter->>'id' AS fm_id, ${legacyTypedIdSql('pages')} AS fm_legacy FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])`, [level.sourceId, slugs]) : [])
     .map(page => [page.slug, page]));
   const gitPathOfOrigin = (origin: string) => level.slugMode === 'source-root' && level.scope ? `${level.scope}/${syncOriginPath(origin)}` : syncOriginPath(origin);
   // #6887: a both-moved import imports when the page still holds what its recorded disk blob imports (sync-screen.ts driftBaselineContent).
@@ -283,7 +283,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
     if (holder) {
       // #6729: a file whose frontmatter id differs from the page's is another document; it inherits nothing. GBRA-130 B-4: it is
       // held alone and the page keeps its slug (its origin's deletion waits with it); discovery still refuses the source.
-      const incoming = holder.fm_id ? incomingId(discovery, named(winner)) : null;
+      const incoming = holder.fm_id ? incomingId(discovery, named(winner), holder) : null;
       if (explicitIdVeto(incoming, holder.fm_id)) {
         identity.push({ entry: winner, origin: deletes.find(entry => entry.path === holderPath) ?? null, slug, ids: { page: holder.fm_id!, file: incoming! } });
         if (holderPath !== null) deleteEntries.delete(holderPath);
@@ -303,10 +303,10 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
     // A held destination renamed again (a Git rename of the held path) carries the held identity on.
     const heldAt = (path: string | undefined) => path === undefined ? undefined : level.heldRenames.find(row => row.path === path)?.rename;
     const held = heldAt(winner.path) ?? (level.heldRenames.length ? heldAt((await gitRenames())?.get(winner.path)?.from) : undefined);
-    const origin = held ? (await engine.executeRaw<{ source_path: string | null; revision: string; deleted: boolean; fm_id: string | null }>(
-      "SELECT source_path, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, frontmatter->>'id' AS fm_id FROM pages WHERE source_id=$1 AND id=$2", [level.sourceId, held.pageId]))[0] : undefined;
+    const origin = held ? (await engine.executeRaw<{ source_path: string | null; revision: string; deleted: boolean; fm_id: string | null; fm_legacy: boolean }>(
+      `SELECT source_path, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, frontmatter->>'id' AS fm_id, ${legacyTypedIdSql('pages')} AS fm_legacy FROM pages WHERE source_id=$1 AND id=$2`, [level.sourceId, held.pageId]))[0] : undefined;
     if (held && origin && !origin.deleted && origin.source_path !== null && syncOriginPath(origin.source_path) === syncOriginPath(held.sourcePath)
-      && !explicitIdVeto(incomingId(discovery, named(winner)), origin.fm_id)) {
+      && !explicitIdVeto(incomingId(discovery, named(winner), origin), origin.fm_id)) {
       entries.push({ ...base, pageId: null, revision: null, ...(origin.revision === held.revision ? { renameFrom: held } : { renameHeld: held }) });
       continue;
     }
