@@ -493,7 +493,8 @@ type SweepRecord = { request_id: string; needles: string[]; patterns: string[]; 
  */
 export async function continueDerivationPurges(engine: BrainEngine, sourceId: string, opts: DerivationSweepOptions = {}): Promise<number> {
   const { deleted, work } = await engine.continueDerivationSweep(sourceId, opts, { ...sweepLimits },
-    { afterBatch: afterSweepBatch ?? undefined, beforeUnreadDelete: beforeUnreadDelete ?? undefined, statement: recordDerivationStatement });
+    // The seams are read at each use, not once here: a hook that clears itself mid-call stops, and one installed meanwhile runs from the next batch.
+    { afterBatch: async () => { await afterSweepBatch?.(); }, beforeUnreadDelete: async (tx) => { await beforeUnreadDelete?.(tx); }, statement: recordDerivationStatement });
   if (recordSweepWork) derivationSweepWork.push(...work);
   return deleted;
 }
