@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-const NEXT_TIMELINE_ID: &str = "next_timeline_id";
+pub(crate) const NEXT_TIMELINE_ID: &str = "next_timeline_id";
 
 /// What is stored for a timeline entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,6 +181,49 @@ fn raise_latest(tx: &mut dyn KvWrite, page_id: u64, created_at_us: i64) -> Resul
         tx.put(&latest, &created_at_us.to_be_bytes())?;
     }
     Ok(())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the entry `id` of `page_id` on `date`, with its
+/// dedup key, and sets the page's newest `created_at` to what the remaining entries hold. `false`
+/// when there is no such entry.
+pub(crate) fn remove_entry(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    date: &str,
+    id: u64,
+) -> Result<bool> {
+    let Some(old) = crate::get_json::<TimelineRecord>(&*tx, &keys::timeline(page_id, date, id))?
+    else {
+        return Ok(false);
+    };
+    tx.delete(&keys::timeline(page_id, date, id))?;
+    let dedup = old.dedup_key();
+    if tx.get(&dedup)?.and_then(|b| keys::be8(&b)) == Some(id) {
+        tx.delete(&dedup)?;
+    }
+    let mut newest: Option<i64> = None;
+    let mut failed = None;
+    scan_prefix(&*tx, &keys::timeline_prefix(page_id), false, &mut |_, v| {
+        match serde_json::from_slice::<TimelineRecord>(v) {
+            Ok(r) => newest = newest.max(Some(r.created_at_us)),
+            Err(e) => {
+                failed = Some(e);
+                return false;
+            }
+        }
+        true
+    })?;
+    if let Some(e) = failed {
+        return Err(StoreError::new(
+            crate::error::STORE_CORRUPT,
+            format!("bad timeline record: {e}"),
+        ));
+    }
+    match newest {
+        Some(at) => tx.put(&keys::timeline_latest(page_id), &at.to_be_bytes())?,
+        None => tx.delete(&keys::timeline_latest(page_id))?,
+    }
+    Ok(true)
 }
 
 /// The next timeline entry id, from the same counter `addTimelineEntry` uses (the `serial`).

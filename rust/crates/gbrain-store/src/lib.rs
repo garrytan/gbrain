@@ -26,6 +26,7 @@ mod page_projection;
 pub mod pages;
 pub mod redb_kv;
 pub mod search;
+pub mod seed;
 pub mod sources;
 #[cfg(test)]
 mod test_support;
@@ -239,10 +240,20 @@ impl Store {
 
     /// Runs `f` in the write transaction and commits when it returns `Ok`. An `Err` rolls back.
     pub(crate) fn write<T>(&self, f: impl FnOnce(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
+        self.write_as(self.write_trust()?, f)
+    }
+
+    /// [`Store::write`] under the trust context `trust` instead of the handle's write settings. The
+    /// shadow seed (`seed.rs`) copies rows with the tiers another engine stored for them.
+    pub(crate) fn write_as<T>(
+        &self,
+        trust: crate::trust::WriteTrust,
+        f: impl FnOnce(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
         let mut tx = self.kv.begin_write()?;
         let value = {
             let _clock = crate::env::transaction_clock::open(self.env.clone());
-            let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
+            let _trust = crate::write_trust::stamp_context::open(trust);
             f(&mut *tx)?
         };
         tx.commit()?;

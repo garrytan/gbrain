@@ -55,10 +55,12 @@ mod topology;
 mod writer_versions;
 pub use effects::{PublicationEffectsSpec, QueuedEffect};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn};
-pub(crate) use projection_queue::queue_page_projection;
+#[cfg(test)]
+pub(crate) use projection_queue::{JobRecord, read_job};
 pub use projection_queue::{
     ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
+pub(crate) use projection_queue::{SeedJob, queue_page_projection, seed_job};
 pub use topology::TopologyChangeInsert;
 
 /// The byte after `keys::PERSISTENCE` of a counter row.

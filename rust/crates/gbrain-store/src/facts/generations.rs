@@ -18,11 +18,11 @@ use super::{FactRecord, fact_fingerprint, read_fact, source_rows};
 use crate::Store;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
-use crate::keys;
-use crate::kv::{KvRead, scan_prefix};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::read_page;
 use crate::timeline_queries::jsonb_field_text;
+use crate::{get_json, keys};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -59,13 +59,47 @@ pub(crate) struct GenerationRecord {
     pub items: Vec<ItemRecord>,
 }
 
-/// The key of one generation (the test writer's only use: no Rust writer
-/// fills this table yet).
-#[cfg(test)]
+/// The key of one generation.
 fn key(id: u64) -> Vec<u8> {
     let mut key = vec![keys::FACT, GENERATION];
     key.extend_from_slice(&id.to_be_bytes());
     key
+}
+
+/// The shadow seed (`seed.rs`): stores `record`, a generation copied from another engine under its
+/// own id, with no items yet. `false` when the id already holds a generation.
+pub(crate) fn seed_generation(
+    tx: &mut dyn KvWrite,
+    id: u64,
+    record: &GenerationRecord,
+) -> Result<bool> {
+    if tx.get(&key(id))?.is_some() {
+        return Ok(false);
+    }
+    crate::put_json(tx, &key(id), record)?;
+    Ok(true)
+}
+
+/// The shadow seed: appends `item` to its generation, where the items' foreign key keeps them. A
+/// generation that is not stored is the foreign key violation; `false` when it already holds the
+/// item key.
+pub(crate) fn seed_item(
+    tx: &mut dyn KvWrite,
+    generation_id: u64,
+    item: ItemRecord,
+) -> Result<bool> {
+    let Some(mut generation) = get_json::<GenerationRecord>(&*tx, &key(generation_id))? else {
+        return Err(crate::takes::fk_failed(
+            "derived_generation_items",
+            "derived_generation_items_generation_id_fkey",
+        ));
+    };
+    if generation.items.iter().any(|i| i.item_key == item.item_key) {
+        return Ok(false);
+    }
+    generation.items.push(item);
+    crate::put_json(tx, &key(generation_id), &generation)?;
+    Ok(true)
 }
 
 /// Every generation, in id order.
@@ -293,6 +327,48 @@ fn covers_fact(read: &dyn KvRead, f: &FactRecord, subject: &str) -> Result<bool>
         return Ok(subject == slug);
     }
     withdrawal_covers(read, f, subject)
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the generation `id` with its items. `false` when
+/// there is none.
+pub(crate) fn remove_generation(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    if tx.get(&key(id))?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key(id))?;
+    Ok(true)
+}
+
+/// The shadow follow: replaces the header of generation `id` and keeps its items, as an `UPDATE`
+/// of the row does. Stores a new generation when there is none.
+pub(crate) fn replace_generation(
+    tx: &mut dyn KvWrite,
+    id: u64,
+    mut record: GenerationRecord,
+) -> Result<()> {
+    if let Some(old) = get_json::<GenerationRecord>(&*tx, &key(id))? {
+        record.items = old.items;
+    }
+    crate::put_json(tx, &key(id), &record)
+}
+
+/// The shadow follow: removes the item `item_key` of generation `generation_id`. `false` when
+/// there is none.
+pub(crate) fn remove_item(
+    tx: &mut dyn KvWrite,
+    generation_id: u64,
+    item_key: &str,
+) -> Result<bool> {
+    let Some(mut generation) = get_json::<GenerationRecord>(&*tx, &key(generation_id))? else {
+        return Ok(false);
+    };
+    let before = generation.items.len();
+    generation.items.retain(|i| i.item_key != item_key);
+    if generation.items.len() == before {
+        return Ok(false);
+    }
+    crate::put_json(tx, &key(generation_id), &generation)?;
+    Ok(true)
 }
 
 #[cfg(test)]

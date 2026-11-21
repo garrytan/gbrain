@@ -37,8 +37,13 @@ use std::collections::BTreeMap;
 
 mod calibrations;
 mod receipts;
+pub(crate) use calibrations::{
+    CALIBRATION_ID, CalibrationRecord, remove_calibration, seed_calibration,
+};
 pub use calibrations::{DecideCalibrationInput, DecideQualificationInput};
 pub use receipts::DecideReceiptInput;
+pub(crate) use receipts::remove_receipt;
+pub(crate) use receipts::{RECEIPT_ID, ReceiptRecord, seed_receipt};
 
 const STATE: u8 = 0x10;
 const SPEND: u8 = 0x11;
@@ -102,6 +107,25 @@ fn float8(value: &Value, member: &str, column: &str) -> Result<Option<f64>> {
             "{member}: {column} must be a number, got {value}"
         ))),
     }
+}
+
+/// The shadow seed (`seed.rs`): stores a `decide_state` row copied from another engine, with its
+/// own `updated_at`. `false` when `key` already holds a row.
+pub(crate) fn seed_state(
+    tx: &mut dyn KvWrite,
+    key: &str,
+    value: &str,
+    updated_at_us: i64,
+) -> Result<bool> {
+    if load_state(&*tx, key)?.is_some() {
+        return Ok(false);
+    }
+    let record = StateRecord {
+        value: value.to_string(),
+        updated_at_us,
+    };
+    put_json(tx, &state_key(key), &record)?;
+    Ok(true)
 }
 
 fn state_value_required(value: Option<&str>) -> Result<&str> {
@@ -176,19 +200,19 @@ fn spend_time_key(created_at_us: i64, seq: u64) -> Vec<u8> {
 
 /// One `decide_spend` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SpendRecord {
-    request_id: String,
-    created_at_us: i64,
-    source_id: Option<String>,
-    slot: String,
-    provider: String,
-    model_resolved: Option<String>,
-    lane: String,
-    remote: bool,
-    input_tokens: i32,
+pub(crate) struct SpendRecord {
+    pub request_id: String,
+    pub created_at_us: i64,
+    pub source_id: Option<String>,
+    pub slot: String,
+    pub provider: String,
+    pub model_resolved: Option<String>,
+    pub lane: String,
+    pub remote: bool,
+    pub input_tokens: i32,
     /// `cost_usd`, as `f64::to_bits`.
-    cost_bits: u64,
-    outcome: String,
+    pub cost_bits: u64,
+    pub outcome: String,
 }
 
 impl SpendRecord {
@@ -297,6 +321,23 @@ fn prune_spend_before(tx: &mut dyn KvWrite, cutoff_us: i64) -> Result<u64> {
     Ok(doomed.len() as u64)
 }
 
+/// The shadow seed (`seed.rs`): stores a `decide_spend` row copied from another engine, with its
+/// own `created_at`, and its time-index entry as [`Store::insert_decide_spend`] writes it (the
+/// sequence number comes from `M decide_spend_seq`, so rows seeded later sort after earlier ones
+/// of the same instant). `false` when the request id already holds a row.
+pub(crate) fn seed_spend(tx: &mut dyn KvWrite, record: &SpendRecord) -> Result<bool> {
+    if tx.get(&spend_key(&record.request_id))?.is_some() {
+        return Ok(false);
+    }
+    let seq = next_id(tx, SPEND_SEQ)?;
+    put_json(tx, &spend_key(&record.request_id), record)?;
+    tx.put(
+        &spend_time_key(record.created_at_us, seq),
+        record.request_id.as_bytes(),
+    )?;
+    Ok(true)
+}
+
 impl Store {
     /// `insertDecideSpend(rows)`: records the rows, all stamped now. A request id that is
     /// already recorded, or earlier in the batch, keeps its first row. Every row is checked
@@ -365,4 +406,39 @@ impl Store {
                 .collect(),
         ))
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the `decide_state` row `key`. `false` when there
+/// is none.
+pub(crate) fn remove_state(tx: &mut dyn KvWrite, key: &str) -> Result<bool> {
+    if key.contains('\0') || load_state(&*tx, key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&state_key(key))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the `decide_spend` row of `request_id` with its time-index entry,
+/// which is found by the row's `created_at`. `false` when there is none.
+pub(crate) fn remove_spend(tx: &mut dyn KvWrite, request_id: &str) -> Result<bool> {
+    let Some(bytes) = tx.get(&spend_key(request_id))? else {
+        return Ok(false);
+    };
+    let record: SpendRecord = serde_json::from_slice(&bytes)?;
+    let (start, end) = (
+        spend_time_key(record.created_at_us, 0),
+        spend_time_key(record.created_at_us.saturating_add(1), 0),
+    );
+    let mut index = Vec::new();
+    tx.scan(&start, &end, false, &mut |k, v| {
+        if v == request_id.as_bytes() {
+            index.push(k.to_vec());
+        }
+        true
+    })?;
+    for key in index {
+        tx.delete(&key)?;
+    }
+    tx.delete(&spend_key(request_id))?;
+    Ok(true)
 }

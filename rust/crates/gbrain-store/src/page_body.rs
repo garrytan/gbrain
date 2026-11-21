@@ -612,6 +612,21 @@ fn delete_prefix(tx: &mut dyn KvWrite, prefix: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// The shadow seed (`seed.rs`): stores a page's body columns (`body_storage`, `body_generation`,
+/// `body_bytes`, `truth_bytes`, `body_lines`, `segment_count`, `segmenter_version`, `truth_lead`,
+/// `timeline_lead`, `body_flags`, `chunker_version`) as another engine holds them.
+pub(crate) fn seed_body_state(tx: &mut dyn KvWrite, page_id: u64, columns: Value) -> Result<()> {
+    let state: BodyState = serde_json::from_value(columns)
+        .map_err(|e| StoreError::invalid(format!("seed pages body columns: {e}")))?;
+    put_json(tx, &body_key(page_id), &state)
+}
+
+/// The shadow follow (`seed/follow.rs`): removes a page's body columns and nothing else: its
+/// manifest, derivations and stagings stay.
+pub(crate) fn clear_body_state(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&body_key(page_id))
+}
+
 fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>> {
     get_json(read, &body_key(page_id))
 }

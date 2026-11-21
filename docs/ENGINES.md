@@ -1849,6 +1849,79 @@ runs on PGLite alone without the flag.
   `executeRaw`. The Rust engine never reports `raw_sql` (design D18), so the ledger refuses until its reads and appends
   have typed members. Nothing in the Rust engine writes belief events today.
 
+## Rust engine shadow mode
+
+Shadow mode checks the Rust engine against your real reads before you switch to it. It is off by default and changes
+nothing about how your brain answers: the primary engine (PGLite or Postgres) always answers first, and a sample of
+reads and searches is then replayed against the Rust engine in a separate, supervised child process. The child
+compares the two answers and records only content-free rows (operation, outcome, sizes, timings, hashes) in a local
+ledger. Nothing is written to the brain database, the config table or the brain repo; all shadow state lives in
+`~/.gbrain/shadow/<brain>/` (`$GBRAIN_HOME/.gbrain/shadow/<brain>/` when `GBRAIN_HOME` is set).
+
+**Say to your agent:** *"Turn on Rust engine shadow mode for my brain and show me the report."*
+
+```bash
+gbrain engine shadow seed [--json]                 # copy the brain into the Rust store once (shadow mode off)
+gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing
+gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
+gbrain engine shadow reconcile [--full] [--json]   # compare the whole brain with the Rust store and repair differences
+gbrain engine shadow status [--json]
+gbrain engine shadow report [--json]               # writes reports/provisional.{json,md}
+gbrain engine shadow stop [--delete]               # turn it off; --delete removes the shadow directory
+```
+
+- **Fail-open.** Mirroring never slows or fails a primary call. The queue is bounded (`--queue-bound`, default 256)
+  and sheds when full; reads inside a transaction are skipped; `--sample-rate` (default 0.1) picks which reads are
+  mirrored. Only sampled reads are copied, at the moment the primary answers, so a caller that changes a result
+  afterwards cannot cause a false difference. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  child silent for 60 seconds is killed, and a privacy divergence (Rust returns something the primary hid) pauses
+  comparison.
+- **No network in the background.** gbrain downloads no addon. `start --yes`, the child
+  and `gbrain doctor` only use an addon that is already installed; without one they record `addon_unavailable`
+  (`rust_engine_addon_missing`, reason `not_installed`).
+- **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
+- **Seed.** `seed` copies the brain into the Rust store once, from one read-only snapshot, and writes
+  `seed.json`: what it copied, the values the store could not keep, the unfinished jobs and segmented pages it left
+  behind, and the unseeded gap rows (tables the Rust store cannot serve yet; a swap is refused while any remain).
+  It refuses while shadow mode is on. To seed again, `stop --delete` and seed into the new directory.
+  Rust store layout: [rust/docs/store/seed.md](../rust/docs/store/seed.md).
+- **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
+  read back from the brain, in its own short read-only `REPEATABLE READ` transaction (on Postgres, a dedicated
+  one-connection pool, so the serving pool is never used), and applied to the Rust store, so stored ids and fact
+  fingerprints stay identical. A rolled-back transaction changes nothing. The coverage watermark says whether every
+  committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
+  the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
+  displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again
+  only when a full reconcile pass that started after the session start has proven the store. A relation marked dirty
+  is settled by a pass for that relation that started after the mark. Only the process that owns the Rust store
+  applies writes. A second process cannot apply: its child leaves a line in `follower-invalidations.jsonl` (at most
+  one per second while it sees writes) and the owner reads those lines before it advances the watermark, treating the
+  second after each line as unproven. A write by a second process is therefore unproven for a short moment before its
+  line lands, and a read-only command leaves no line.
+- **Reconcile.** `reconcile` compares every seeded relation with the Rust store in 500-row key intervals and replaces
+  any interval that differs, then checks allocators and the fingerprint probe. Each interval is its own short read of
+  the primary (with a pause between intervals) and nothing is held open while the pass talks to the Rust store, so a
+  pass is not one snapshot: each interval is protected by the generation taken just before its read. `reconcile` and
+  `reconcile --full` both run a full pass. It needs the Rust store to be free (stop the serving process first). A full
+  pass also runs on its own a minute after a serving process starts if the watermark is still invalid, every 24 hours
+  while the follower runs, and again when the watermark is invalid and the last pass is over an hour old. A pass that
+  displaced rows does not restore the watermark; the relation gets another pass and the full restore waits for the
+  next full pass.
+- **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `stopped`, `invalid`, `behind`,
+  `following`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
+  value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,
+  `error`), `last_pass` (with `repaired_rows`, `repaired_by_relation` and `follower_misses`: repaired rows found while the
+  watermark claimed coverage), `consecutive_clean_full_passes`, `next_full_pass_due`; `fingerprints` (`checked_rows`,
+  `mismatches`, and a `probe` that runs a fixed text corpus through the primary's fingerprint SQL); `allocators`;
+  `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
+  aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
+  this is a reading, not the swap's own check); and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
+  `write_comparisons` and `fingerprints` counts are totals for the current epoch; one epoch is one seed.
+- **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, write comparisons
+  are not built yet, and the readiness decision come in later phases of the plan
+  (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
+  `capability_missing`.
+
 ## Adding a new engine
 
 1. Create `src/core/<name>-engine.ts` implementing `BrainEngine`

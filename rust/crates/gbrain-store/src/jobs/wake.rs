@@ -127,16 +127,16 @@ struct WatchRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ForgetRecord {
-    id: i64,
-    wake_user: String,
-    state: String,
-    attempts: i32,
-    next_attempt_at: i64,
-    lease_until: Option<i64>,
-    last_error: Option<String>,
-    created_at: i64,
-    updated_at: i64,
+pub(crate) struct ForgetRecord {
+    pub id: i64,
+    pub wake_user: String,
+    pub state: String,
+    pub attempts: i32,
+    pub next_attempt_at: i64,
+    pub lease_until: Option<i64>,
+    pub last_error: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -320,6 +320,82 @@ fn cron_runs(read: &dyn KvRead, name: &str) -> Result<Vec<CronRunRecord>> {
 
 fn lease_text(lease_until: i64) -> String {
     lease_until.to_string()
+}
+
+// ---------------------------------------------------------------- the shadow seed
+
+/// The shadow seed (`seed.rs`): stores a `wake_crons` row copied from another engine with its own
+/// `created_at`. `false` when the name is already registered.
+pub(crate) fn seed_cron(tx: &mut dyn KvWrite, name: &str, created_at: i64) -> Result<bool> {
+    if tx.get(&cron_key(name))?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &cron_key(name), &CronRecord { created_at })?;
+    Ok(true)
+}
+
+/// The shadow seed (`seed.rs`): stores a `wake_cron_runs` row copied from another engine with its
+/// own id and time, and raises the `wake_cron_run` sequence past the id. `false` when the run is
+/// already stored.
+pub(crate) fn seed_cron_run(
+    tx: &mut dyn KvWrite,
+    name: &str,
+    id: i64,
+    status: &str,
+    finished_at: i64,
+) -> Result<bool> {
+    let key = run_key(name, finished_at, id);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    let record = CronRunRecord {
+        id,
+        status: status.to_owned(),
+        finished_at,
+    };
+    put_json(tx, &key, &record)?;
+    raise_seq(tx, "wake_cron_run", id)?;
+    Ok(true)
+}
+
+/// What [`seed_forget`] did with a row.
+pub(crate) enum SeededForget {
+    Stored,
+    /// The id already holds a row: a retried batch.
+    Present,
+    /// Another pending forget of the same user holds the unique index.
+    PendingConflict,
+}
+
+/// The shadow seed (`seed.rs`): stores a `wake_forgets` row copied from another engine, its pending
+/// index entry when it is pending, as [`save_forget`] keeps it, and raises the `wake_forget`
+/// sequence past the id.
+pub(crate) fn seed_forget(tx: &mut dyn KvWrite, row: &ForgetRecord) -> Result<SeededForget> {
+    if load_forget(&*tx, row.id)?.is_some() {
+        return Ok(SeededForget::Present);
+    }
+    if row.state == "pending" && tx.get(&pending_key(&row.wake_user))?.is_some() {
+        return Ok(SeededForget::PendingConflict);
+    }
+    save_forget(tx, None, row)?;
+    raise_seq(tx, "wake_forget", row.id)?;
+    Ok(SeededForget::Stored)
+}
+
+/// The shadow seed (`seed.rs`): stores a `wake_terms_acceptances` row copied from another engine
+/// with its own `accepted_at`. `false` when the acceptance is already stored.
+pub(crate) fn seed_terms(
+    tx: &mut dyn KvWrite,
+    principal_key: &str,
+    version: &str,
+    accepted_at: i64,
+) -> Result<bool> {
+    let key = terms_key(principal_key, version);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &key, &TermsRecord { accepted_at })?;
+    Ok(true)
 }
 
 // ---------------------------------------------------------------- specs and results
@@ -1110,4 +1186,59 @@ impl Store {
             Ok(true)
         })
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the `wake_crons` row `name`. `false` when there is
+/// none.
+pub(crate) fn remove_cron(tx: &mut dyn KvWrite, name: &str) -> Result<bool> {
+    if tx.get(&cron_key(name))?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&cron_key(name))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the run `id` of the cron `name`. `false` when there is none.
+pub(crate) fn remove_cron_run(tx: &mut dyn KvWrite, name: &str, id: i64) -> Result<bool> {
+    let mut doomed = None;
+    scan_prefix(&*tx, &run_prefix(name), false, &mut |k, v| {
+        if serde_json::from_slice::<CronRunRecord>(v).is_ok_and(|r| r.id == id) {
+            doomed = Some(k.to_vec());
+            return false;
+        }
+        true
+    })?;
+    let Some(key) = doomed else {
+        return Ok(false);
+    };
+    tx.delete(&key)?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the forget row `id` with its pending index entry. `false` when
+/// there is none.
+pub(crate) fn remove_forget(tx: &mut dyn KvWrite, id: i64) -> Result<bool> {
+    let Some(old) = load_forget(&*tx, id)? else {
+        return Ok(false);
+    };
+    if old.state == "pending" {
+        tx.delete(&pending_key(&old.wake_user))?;
+    }
+    tx.delete(&forget_key(id))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the terms acceptance `(principal_key, version)`. `false` when there
+/// is none.
+pub(crate) fn remove_terms(
+    tx: &mut dyn KvWrite,
+    principal_key: &str,
+    version: &str,
+) -> Result<bool> {
+    let key = terms_key(principal_key, version);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
 }
