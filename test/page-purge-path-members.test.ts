@@ -32,7 +32,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { PURGE_PATH, purgeEntryName, purgePathStops, type PurgePathEntry } from '../src/core/persistence/purge-path-members.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { beliefBrain } from './helpers/belief-ledger.ts';
+import { beliefBrain, beliefPage } from './helpers/belief-ledger.ts';
 
 const RAW_PRIMITIVES = ['executeRaw', 'executeRawDirect', 'withReservedConnection', 'keywordBoundedRead'];
 const members = new Set<string>();
@@ -130,7 +130,8 @@ describe('the purge path calls only what the list names', () => {
 
   test('a page with a belief ledger', async () => {
     await beliefBrain(async (brain) => {
-      await brain.put('notes/ledger', page('ledger', [], 'Door code is 4417.'));
+      // A fact claim on a ledger brain: the receipt then probes the recorded values and the fact contexts for it.
+      await brain.put('notes/ledger', beliefPage({ facts: ['Door code is 4417'] }));
       await brain.put('notes/other', page('other', [], 'Other.'));
       await disposePersistenceConsumer(brain.engine);
       const snapshot = await brain.engine.readPageSnapshot('notes/ledger', { sourceId: brain.sourceId });
