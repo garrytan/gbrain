@@ -15,6 +15,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
+import { upsertExtractRollup as rollupStatement } from '../src/core/engine-sql/extract-bookkeeping.ts';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
 import {
   runPhaseProposeTakes,
@@ -88,6 +89,10 @@ function buildMockEngine(opts: {
       }
       // Other writes — return nothing.
       return [];
+    },
+    // The rollup is an engine member; run its statement through executeRaw above, so the test reads its text and binds.
+    async upsertExtractRollup(row: Parameters<typeof rollupStatement>[1], form?: 'pre_v141') {
+      return rollupStatement(this as unknown as Parameters<typeof rollupStatement>[0], row, form);
     },
   } as unknown as BrainEngine;
 

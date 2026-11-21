@@ -279,8 +279,10 @@ const PINS: Pin[] = [
   {
     from: 'src/core/link-reconciliation.ts:442 lookupRefsForSlugs (the links and timeline pass\'s page refs, at 932324b281)',
     case: { method: 'listPageRefsForSlugs', variant: 'default', run: e => e.listPageRefsForSlugs(['a', 'b']) },
+    // The one deliberate change: the slugs bind as one text[] (= ANY) instead of an expanded IN list, so the statement passes
+    // check:engine-sql-dynamic; it matches the same rows.
     texts: [`SELECT slug, source_id, type, knowledge_revision FROM pages
-        WHERE deleted_at IS NULL AND slug IN ($1, $2)`],
+        WHERE deleted_at IS NULL AND slug = ANY($1::text[])`],
   },
   {
     from: 'src/core/extract/rollup-writer.ts:199 upsertExtractRollup (at 54246f2bd8)',

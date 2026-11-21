@@ -1,6 +1,7 @@
 /**
  * The page reads of the maintenance sweep (core/sweep.ts): one SQL implementation for both engines. Each statement is
- * the text sweep.ts ran through `executeRaw` at c231d6c992, byte for byte (test/engine-sql-caller-raw-sql-pins.test.ts).
+ * the text sweep.ts ran through `executeRaw` at c231d6c992, byte for byte (test/engine-sql-caller-raw-sql-pins.test.ts),
+ * except `listPageRefsForSlugs`, which binds its slugs as one array (see there).
  * Every member runs on the executor it is given, so a member of a transaction-bound engine runs on that transaction.
  */
 
@@ -97,17 +98,18 @@ export async function listSweepDeferredPages(exec: SweepReadsExec, q: SweepDefer
   return exec.executeRaw<SweepDeferredPageRow>(SWEEP_DEFERRED_PAGES_SQL, [q.sourceId, q.since, [...q.slugs]]);
 }
 
+const PAGE_REFS_FOR_SLUGS_SQL = `SELECT slug, source_id, type, knowledge_revision FROM pages
+        WHERE deleted_at IS NULL AND slug = ANY($1::text[])`;
+
 /**
  * The links and timeline pass's page refs: the live pages of any source whose slug is in `slugs`, in no set order. The
- * slugs go 200 to a statement (the text link-reconciliation.ts lookupRefsForSlugs ran at 932324b281).
+ * slugs go 200 to a statement, each chunk bound as one `text[]` parameter. link-reconciliation.ts lookupRefsForSlugs ran
+ * `slug IN ($1, .., $n)` at 932324b281; `= ANY($1::text[])` matches the same rows and passes check:engine-sql-dynamic.
  */
 export async function listPageRefsForSlugs(exec: SweepReadsExec, slugs: readonly string[]): Promise<SweepPageRefRow[]> {
   const out: SweepPageRefRow[] = [];
   for (let i = 0; i < slugs.length; i += 200) {
-    const chunk = slugs.slice(i, i + 200);
-    const placeholders = chunk.map((_, j) => `$${j + 1}`).join(', ');
-    out.push(...await exec.executeRaw<SweepPageRefRow>(`SELECT slug, source_id, type, knowledge_revision FROM pages
-        WHERE deleted_at IS NULL AND slug IN (${placeholders})`, chunk));
+    out.push(...await exec.executeRaw<SweepPageRefRow>(PAGE_REFS_FOR_SLUGS_SQL, [slugs.slice(i, i + 200)]));
   }
   return out;
 }

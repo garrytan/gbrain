@@ -157,7 +157,6 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/questions/phase.ts', expr: 'key', why: P },
   { file: 'src/core/reindex-consent.ts', expr: 'key', why: P },
   { file: 'src/core/rust-engine/store-members/config.ts', expr: 'key', why: P },
-  { file: 'src/core/rust-engine/store-members/init-schema.ts', expr: 'key', why: 'walk over the two embedding identity rows a Rust brain seeds at setup (embedding_model, embedding_dimensions), as PGLite does' },
   // link-queries.ts reads the link extraction generation (a registered const key) and hands a `(key) => getConfig(brain,
   // key)` adapter to effectiveRangesEnabled; the scan reads `brain`, the store member's first argument.
   { file: 'src/core/rust-engine/store-members/link-queries.ts', expr: 'brain', why: P },
