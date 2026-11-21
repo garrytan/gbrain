@@ -23,8 +23,9 @@ What it does on day one:
 - **`whois` by phone.** `gbrain whois "+1 555 555 0100"` finds the person whose `phone` or `phones` holds that
   number in any format.
 
-What it does not do: syncing never writes to Contacts, never copies phones or emails onto people pages, and never
-extracts facts from contact cards. Changing a contact is a separate, owner-only command that is off by default; see
+What it does not do: syncing never copies phones or emails onto people pages and never extracts facts from contact
+cards, and it writes to Contacts only if you switch on [enrichment](#filling-in-contacts-from-your-brain), which only
+adds. Changing a contact is a separate, owner-only command that is off by default; see
 [Changing contacts](#changing-contacts).
 
 ## Privacy
