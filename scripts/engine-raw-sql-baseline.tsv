@@ -346,9 +346,9 @@ src/core/calibration/think-ab.ts	execute_raw	2
 src/core/calibration/undo-wave.ts	execute_raw	9
 src/core/chronicle/backfill.ts	execute_raw	1
 src/core/chronicle/campaign.ts	execute_raw	3
-src/core/chronicle/carry.ts	execute_raw	6	pages-03: a chronicle_page_state row the one-time re-read leaves at a page's old content_hash (a judge holds its lease or it waits out a retry delay) is recorded in op_checkpoints inside the import's page write and moved to the new hash when its judge publishes or its wait ends; no typed engine method for the ledger exists yet, and the Rust engine does not run the re-read (raw_sql capability check)
+src/core/chronicle/carry.ts	execute_raw	9	pages-03: a chronicle_page_state row the one-time re-read leaves at a page's old content_hash (a judge holds its lease or it waits out a retry delay) is recorded in op_checkpoints inside the import's page write, settled by the claim or the judge that publishes, and kept as a forwarding record so a late judge's spend lands once on the moved row; no typed engine method for the ledger exists yet, and the Rust engine does not run the re-read (raw_sql capability check)
 src/core/chronicle/event-identity.ts	execute_raw	1
-src/core/chronicle/execute.ts	execute_raw	9
+src/core/chronicle/execute.ts	execute_raw	10	pages-03: claimChronicleRow re-reads the row a carry settlement moved before claiming it (+1); no typed engine method for the chronicle ledger exists yet
 src/core/chronicle/ledger-stats.ts	execute_raw	5
 src/core/chronicle/ledger.ts	execute_raw	11	#9636: add_link carries a still-pending automatic decision to its revision, read from chronicle_page_state by page; no typed engine method for the ledger exists yet
 src/core/chronicle/publish.ts	execute_raw	4
@@ -524,7 +524,7 @@ src/core/fence-repair/import-step.ts	execute_raw	2
 src/core/fence-repair/repair-io.ts	execute_raw	1
 src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
-src/core/frontmatter-legacy.ts	execute_raw	3	pages-03: the one-time re-read after the frontmatter fix copies extract_atoms_page_state rows and managed-atoms page checkpoints and moves chronicle_page_state rows from a page's old content_hash to its new one inside the import's page write; no typed engine method exists yet, and the Rust engine does not run it (raw_sql capability check)
+src/core/frontmatter-legacy.ts	execute_raw	4	pages-03: the one-time re-read after the frontmatter fix copies extract_atoms_page_state rows and managed-atoms page checkpoints (naming the page's current slug) and moves chronicle_page_state rows from a page's old content_hash to its new one inside the import's page write; no typed engine method exists yet, and the Rust engine does not run it (raw_sql capability check)
 src/core/function-search-path.ts	execute_raw	3
 src/core/generations/adapters/atoms.ts	execute_raw	3
 src/core/generations/adapters/chronicle-events.ts	execute_raw	13
@@ -739,7 +739,7 @@ src/core/persistence/admin-lock.ts	execute_raw	7
 src/core/persistence/administration.ts	execute_raw	8
 src/core/persistence/admission-origin.ts	execute_raw	1
 src/core/persistence/applied-watermark.ts	execute_raw	4
-src/core/persistence/atom-maintenance.ts	execute_raw	21
+src/core/persistence/atom-maintenance.ts	execute_raw	25	pages-03: carriedAtomDrainKey and carriedRetryCheckpoint read the checkpoint, receipt intent, page and atom generation to carry a page's attempt count, hold and retry across the one-time re-read (+4); no typed engine method for managed-atoms checkpoints exists yet
 src/core/persistence/authority.ts	execute_raw	11
 src/core/persistence/blocking-effects.ts	execute_raw	2
 src/core/persistence/bounded-reads.ts	execute_raw	10
