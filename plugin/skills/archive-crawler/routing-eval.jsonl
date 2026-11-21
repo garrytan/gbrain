@@ -1,0 +1,7 @@
+// Routing eval fixtures for skills/archive-crawler. Each intent
+// includes at least one trigger string as substring.
+{"intent":"Please crawl my archive and surface the writing worth keeping","expected_skill":"archive-crawler"}
+{"intent":"Find gold in my archive of old letters and ideas","expected_skill":"archive-crawler"}
+{"intent":"Run archive crawler on the gbrain.yml allow-listed paths","expected_skill":"archive-crawler"}
+{"intent":"Scan my dropbox for substantive email threads with people who matter","expected_skill":"archive-crawler"}
+{"intent":"Mine my old files for journal entries and reflections worth ingesting","expected_skill":"archive-crawler"}

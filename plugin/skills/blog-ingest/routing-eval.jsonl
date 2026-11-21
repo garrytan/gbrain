@@ -1,0 +1,16 @@
+// Routing eval fixtures for skills/blog-ingest. Each positive intent
+// includes at least one trigger string as substring (structural matcher
+// requirement) while paraphrasing real user phrasing.
+// Adversarial negatives at the bottom guard the publication-scope vs
+// single-item boundary (idea-ingest, media-ingest).
+{"intent":"Please ingest this whole blog into my brain — every post in the archive, not just the recent ones","expected_skill":"blog-ingest"}
+{"intent":"Ingest this publication: walk the RSS feed, paginate the archive, and write one page per post","expected_skill":"blog-ingest"}
+{"intent":"Backfill this blog from its feed, oldest posts first, and make sure re-runs don't duplicate","expected_skill":"blog-ingest"}
+{"intent":"Ingest this newsletter archive — all the back issues, deduped by canonical URL","expected_skill":"blog-ingest"}
+{"intent":"Save this whole substack to my brain, public posts only","expected_skill":"blog-ingest","ambiguous_with":["idea-ingest"]}
+// Adversarial negatives: pattern-match blog-ingest phrasing but the
+// correct route is single-item ingestion, not the publication layer.
+{"intent":"Save this article for me — just the one post, it's a great essay","expected_skill":"idea-ingest","ambiguous_with":["blog-ingest"]}
+{"intent":"Ingest this PDF whitepaper I found on a blog","expected_skill":"media-ingest","ambiguous_with":["blog-ingest"]}
+// Negative: adjacent (newsletters) but out of scope — inbox management, not ingestion.
+{"intent":"Unsubscribe me from this newsletter and mute future issues","expected_skill":null}

@@ -1,0 +1,9 @@
+// Routing eval fixtures for skills/meeting-ingestion (v2.x upgrade). Each
+// positive intent includes at least one trigger string as substring
+// (structural matcher requirement) while paraphrasing real user phrasing.
+// Includes 1 negative (expected_skill: null) + 1 ambiguous_with case.
+{"intent":"A new meeting transcript received from my recorder — run the full pipeline on it","expected_skill":"meeting-ingestion"}
+{"intent":"My meeting recorder just finished — ingest this recording into the brain and update everyone who was there","expected_skill":"meeting-ingestion"}
+{"intent":"Here are the meeting notes from my sync with alice-example — file them with attendee pages and timeline merge","expected_skill":"meeting-ingestion"}
+{"intent":"I have a voice note from my meeting recorder — process this meeting into the brain","expected_skill":"meeting-ingestion","ambiguous_with":["voice-note-ingest"]}
+{"intent":"Reschedule tomorrow's standup with alice-example to the afternoon","expected_skill":null}

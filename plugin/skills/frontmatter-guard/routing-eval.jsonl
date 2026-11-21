@@ -1,0 +1,8 @@
+// Routing eval fixtures for skills/frontmatter-guard. Check 5 (W2, v0.17).
+// Layer A (structural) requires intents to contain trigger words from
+// the resolver. Paraphrase the trigger framing, not its meaning.
+{"intent": "please validate frontmatter on the latest batch of brain pages", "expected_skill": "frontmatter-guard"}
+{"intent": "fix frontmatter on these pages", "expected_skill": "frontmatter-guard"}
+{"intent": "I want to run a frontmatter audit across the brain", "expected_skill": "frontmatter-guard"}
+// Negative case: something that sounds similar but should NOT route here.
+{"intent": "what's for breakfast", "expected_skill": null, "ambiguous_with": []}

@@ -1,0 +1,7 @@
+// Routing eval fixtures for skills/brain-pdf. Each intent
+// includes at least one trigger string as substring.
+{"intent":"Please make pdf from brain page media/books/this-book-personalized","expected_skill":"brain-pdf"}
+{"intent":"Run brain pdf on this strategy doc for the meeting","expected_skill":"brain-pdf"}
+{"intent":"Convert brain page to pdf with a draft watermark","expected_skill":"brain-pdf"}
+{"intent":"Publish this page as pdf for the printable deliverable","expected_skill":"brain-pdf"}
+{"intent":"Export brain page to a clean PDF I can send","expected_skill":"brain-pdf"}
