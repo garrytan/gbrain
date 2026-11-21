@@ -51,6 +51,7 @@ import { assessTimelineForGate, type WriteGateAssessment } from '../write-gate.t
 import { recordWriteGateReceipt } from '../write-gate-store.ts';
 import type { InputState, ProposedItem } from '../generations/contract.ts';
 import { originGone, type EmptySourceProof } from '../generations/proofs.ts';
+import { pageIdentityHash, type PageIdentityInput } from '../generations/adapters/page.ts';
 import { publishGeneration, type PublishOutcome, type PublishRequest } from '../generations/publish.ts';
 import { planManagedGeneration, recordActivation, type ActivationIntent } from '../generations/managed.ts';
 import { CHRONICLE_EVENT_KIND, CHRONICLE_RETIRED_BY, chronicleEventAdapter, chronicleEventItem, chronicleOwnerKey, depthInputPin, depthPinBroken,
@@ -139,8 +140,6 @@ export interface ChronicleGenerationResult {
 export async function publishChronicleGeneration(engine: BrainEngine, opts: {
   sourceId: string; pin: ChronicleDepthPin | null; depthSlug?: string; events: BuiltChronicleEvent[]; decisionRequestId: string | null;
   replaces: boolean; proof?: EmptySourceProof; maintenance?: MaintenanceAuthority | null; signal?: AbortSignal;
-  /** Hashes of events this attempt already wrote in a publication the re-read superseded (pages-03): its own. */
-  owned?: readonly string[];
 }): Promise<ChronicleGenerationResult> {
   const { sourceId, pin } = opts;
   const depthSlug = pin?.slug ?? opts.depthSlug!;
@@ -158,7 +157,6 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
     input = await chronicleEventAdapter.readInput(engine, key, context);
     if (input?.pin !== depthInputPin(pin)) return { ...result, superseded: 'superseded' };
     const owned = await ownedEventHashes(engine, sourceId, pin.pageId);
-    for (const hash of opts.owned ?? []) owned.add(hash);
     for (const event of await resolveChronicleEventSlugs(engine, sourceId, opts.events)) {
       const verdict = await judgeTarget(engine, sourceId, await engine.readPageSnapshot(event.slug, { sourceId, includeDeleted: true }), owned);
       if (!verdict.write) { result.protected.push({ slug: event.slug, reason: verdict.reason }); continue; }
@@ -173,7 +171,7 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
   const request = { key, items, input, partial: !opts.replaces, ...(opts.proof ? { proof: opts.proof } : {}), context };
   let outcome: PublishOutcome | null;
   try {
-    outcome = maintenance ? await publishManagedChronicle(engine, maintenance, request, pin, members, opts.decisionRequestId, opts.owned)
+    outcome = maintenance ? await publishManagedChronicle(engine, maintenance, request, pin, members, opts.decisionRequestId)
       : await publishGeneration(engine, chronicleEventAdapter, request);
   } catch (error) {
     if (!isSupersession(error)) throw error;
@@ -183,13 +181,23 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
   return { ...result, written: await writtenEvents(engine, sourceId, items), retired: outcome?.state === 'published' ? outcome.retired : [] };
 }
 
-/** The live content hash of each proposed event (what the chronicle ledger records as the extractor's). */
+/**
+ * The live content hash of each proposed event this attempt wrote (what the chronicle ledger records as the extractor's,
+ * and so owns). An event whose live page no longer reads as the content proposed here is left out: an operator edited it
+ * after this attempt wrote it (before a failed activation, say), and owning that edit's hash would let a later
+ * generation overwrite it. One read gives both the content and its hash, so an edit between two reads is never owned.
+ */
 async function writtenEvents(engine: BrainEngine, sourceId: string, items: readonly ProposedItem[]): Promise<Array<{ slug: string; hash: string }>> {
   if (!items.length) return [];
-  const rows = await engine.executeRaw<{ slug: string; content_hash: string | null }>(
-    'SELECT slug, content_hash FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL', [sourceId, items.map(item => item.key)]);
-  const hashes = new Map(rows.map(row => [row.slug, row.content_hash]));
-  return items.flatMap(item => hashes.get(item.key) ? [{ slug: item.key, hash: String(hashes.get(item.key)) }] : []);
+  const rows = await engine.executeRaw<PageIdentityInput & { slug: string; content_hash: string | null; tags: string[] | null }>(
+    `SELECT p.slug, p.content_hash, p.type, p.title, p.compiled_truth, p.timeline, p.frontmatter,
+            COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
+       FROM pages p WHERE p.source_id=$1 AND p.slug=ANY($2::text[]) AND p.deleted_at IS NULL`, [sourceId, items.map(item => item.key)]);
+  const live = new Map(rows.map(row => [row.slug, row]));
+  return items.flatMap(item => {
+    const row = live.get(item.key);
+    return row?.content_hash && pageIdentityHash({ ...row, tags: row.tags ?? [] }) === item.identityHash ? [{ slug: item.key, hash: String(row.content_hash) }] : [];
+  });
 }
 
 /**
@@ -200,13 +208,12 @@ async function writtenEvents(engine: BrainEngine, sourceId: string, items: reado
  */
 async function publishManagedChronicle(engine: BrainEngine, maintenance: MaintenanceAuthority, request: PublishRequest<ChronicleGenerationContext>,
   pin: ChronicleDepthPin | null, members: Map<string, { event: BuiltChronicleEvent; verdict: Extract<TargetVerdict, { write: true }>; markdown: string }>,
-  decisionRequestId: string | null, extraOwned: readonly string[] = []): Promise<PublishOutcome | null> {
+  decisionRequestId: string | null): Promise<PublishOutcome | null> {
   const plan = await planManagedGeneration(engine, chronicleEventAdapter, request, { scope: decisionRequestId });
   if (plan.kind === 'held') return plan.outcome;
   if (plan.kind === 'unchanged') return { state: 'unchanged', generation: null, retired: [], protected: [] };
   await engine.transaction(tx => recordActivation(tx, plan.intent));
   const owned = pin ? await ownedEventHashes(engine, request.key.sourceId, pin.pageId) : new Set<string>();
-  for (const hash of extraOwned) owned.add(hash);
   const derivation = pin ? await deriveTrust(engine, [{ table: 'pages', id: pin.pageId }], { channel: 'derive:chronicle' }) : null;
   const gateCfg = pin ? await derivedGateConfig(engine) : null;
   for (const member of plan.members) {
