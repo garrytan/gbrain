@@ -9,6 +9,7 @@ import { join, relative, sep } from 'node:path';
 import { isSyncMetafile, matchesAnyGlob } from '../sync.ts';
 import { syncExcludePatterns } from './sync-discovery.ts';
 import type { BrainEngine } from '../engine.ts';
+import { requirePurgePathServed } from './purge-path-members.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
 import { importFromContent, verifyPageReadable, type ParsedPage } from '../import-file.ts';
@@ -751,6 +752,8 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
   options: { activePack?: ParseOpts['activePack']; clock?: ClaimPhaseClock; allowMissingFile?: boolean }): Promise<PreparedMutation> {
   const p = row.intent!, source = { sourceId: row.source_id }, clock = options.clock;
   assertPurgeParams(p, row.authority.remote);
+  // Backstop for a journaled purge that is prepared later (a recovered request): the same check as at submission, before the first read.
+  if (p.purge === true) await requirePurgePathServed(engine, p.retention === true ? 'retention' : 'delete_page');
   if (!snapshot) throw pageRefusal('page_not_found', 'Page not found.', row,
     `Page ${row.slug} does not exist in source ${row.source_id}, so nothing was deleted. Check the slug and the source.`, pageFix(row.source_id, row.slug));
   const observedRevision = snapshot.revision;

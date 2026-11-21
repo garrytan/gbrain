@@ -64,7 +64,8 @@ async function readsOf(engine: BrainEngine, slugs: string[], pageIds: number[]):
   }
   // Deleting a park or an owed-purge row that is not there removes nothing: a count above zero is a write that ran.
   out.parks = [await engine.deleteOriginHoldRows('derived-origin-park', pageIds), await engine.deleteOriginHoldRows('owed-page-purge', pageIds)];
-  out.journal = { ceiling: await engine.readJournalCeiling(SRC), counters: await engine.readCounterRows(['brain']) };
+  out.journal = { ceiling: await engine.readJournalCeiling(SRC), counters: (await engine.readCounterRows(['brain'])).map(({ terminal_bytes: _compacted, ...row }) => row) };
+  // terminal_bytes is left out: the resident consumer compacts the finished setup requests in the background, which has nothing to do with the purge.
   return out;
 }
 
@@ -89,7 +90,7 @@ describe('a page purge on a Rust brain refuses before any write', () => {
     await engine.addLink('notes/doomed', 'notes/keeper', 'the doomed page cites the keeper', 'mentions');
     await engine.addLink('notes/keeper', 'notes/doomed', 'the keeper cites the doomed page', 'mentions');
     const slugs = ['notes/doomed', 'notes/doomed-digest', 'notes/keeper'];
-    const ids = [Number((await engine.getPage('notes/doomed', { sourceId: SRC }) as R).id), Number((await engine.getPage('notes/doomed-digest', { sourceId: SRC }) as R).id)];
+    const ids = [Number((await engine.getPage('notes/doomed', { sourceId: SRC }) as unknown as R).id), Number((await engine.getPage('notes/doomed-digest', { sourceId: SRC }) as unknown as R).id)];
     const before = await readsOf(engine, slugs, ids);
     expect((before['notes/doomed'] as R).page).toMatchObject({ deleted: false });
     expect((before['notes/doomed'] as R).versions).toBe(1);
@@ -118,7 +119,7 @@ describe('a page purge on a Rust brain refuses before any write', () => {
     const snapshot = await engine.readPageSnapshot('notes/expired', { sourceId: SRC });
     await operationsByName.delete_page!.handler(ctx, { slug: 'notes/expired', request_id: randomUUID(), expected_revision: snapshot?.revision });
     await disposePersistenceConsumer(engine);
-    const id = Number((await engine.getPage('notes/expired', { sourceId: SRC, includeDeleted: true }) as R).id);
+    const id = Number((await engine.getPage('notes/expired', { sourceId: SRC, includeDeleted: true }) as unknown as R).id);
     const before = await readsOf(engine, ['notes/expired'], [id]);
     expect((before['notes/expired'] as R).page).toMatchObject({ deleted: true });
 

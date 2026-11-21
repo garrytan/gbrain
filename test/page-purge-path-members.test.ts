@@ -12,7 +12,7 @@
  * belief ledger; a retention purge of an expired tombstone in a worktree-bound source; an origin whose derived page it
  * labelled private and one it could not (the parked, held branch).
  */
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -68,7 +68,20 @@ const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 const page = (title: string, frontmatter: string[], body: string) => ['---', `title: ${title}`, 'type: note', ...frontmatter, '---', `# ${title}`, '', body].join('\n');
 const contextOf = (engine: object, extra: Record<string, unknown> = {}) =>
   ({ engine, config: { engine: 'pglite', embedding_disabled: true }, logger: quiet, dryRun: false, remote: false, sourceId: 'default', ...extra }) as unknown as OperationContext;
-const freshEngine = async () => { const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); return engine; };
+// One engine per scenario that opens one (three), made up front so each scenario starts on an empty brain.
+const engines: PGLiteEngine[] = [];
+const unused: PGLiteEngine[] = [];
+beforeAll(async () => {
+  for (let i = 0; i < 3; i++) {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    engines.push(engine);
+    unused.push(engine);
+  }
+}, 120_000);
+afterAll(async () => { for (const engine of engines.splice(0)) await engine.disconnect().catch(() => undefined); });
+const freshEngine = async () => unused.shift()!;
 
 describe('the purge path calls only what the list names', () => {
   test('a page with a link and an alias, and a page with every purged store', async () => {

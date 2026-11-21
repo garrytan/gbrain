@@ -16,8 +16,9 @@
  *
  * The origin, dependent, checkout and label-guard reads go through typed engine members (engine-sql/label-door.ts), so
  * the Rust engine runs the soft-delete carry the same way. An engine that refuses one of them with
- * engine_capability_missing surfaces the refusal; it is never read as "no origin". The explicit purge parks and purges
- * through raw SQL, so on an engine without it the purge refuses before any write and the page stays live.
+ * engine_capability_missing surfaces the refusal; it is never read as "no origin". The purge itself still reaches raw SQL
+ * and receipt reads a Rust brain does not serve, so both purges check the list in persistence/purge-path-members.ts first:
+ * an engine missing one of them refuses by name, with its owner lane, before any write and the page stays live.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
@@ -29,7 +30,8 @@ import { maintenancePreflight, publishMaintenancePages } from '../persistence/pr
 import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, finishPurgeNote, parkDerivedOrigin, pruneDerivedOriginParks, readDerivedOriginParks, recordOwedPurge, type DerivedOriginPark } from '../persistence/derived-origin-hold.ts';
 import { privacyPartSql, readHonorAliases, withoutCallerAccess } from '../search/private-visibility.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
-import { capabilityMissing, rethrowCapabilityMissing, servesRawSql } from '../rust-engine/errors.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import { requirePurgePathServed } from '../persistence/purge-path-members.ts';
 import { filesInCheckout, importAtRevision, writeLabelFile } from './label-write.ts';
 
 const bounded = { timeoutMs: 120_000, jitOff: true, prepare: false };
@@ -155,9 +157,9 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
     if (origin && (await originOf(ctx.engine, sourceId, origin.slug).catch(capabilityOrNull))?.deleted) await carryPrivate(ctx.engine, [origin], batch);
     return finishPagePurge(ctx, result);
   }
-  // The purge path (the carry's parks, the owed-purge record, the page purge itself) reads and writes through raw SQL,
-  // so an engine without it refuses here, before the origin lookup and any fallback soft delete write anything.
-  if (!servesRawSql(ctx.engine)) throw capabilityMissing('raw_sql', 'delete_page --purge (the purge parks and purges through raw SQL)');
+  // An engine that cannot serve every member and raw-SQL site the purge reaches refuses here, naming the first one and
+  // its owner lane, before the origin lookup and any fallback soft delete write anything.
+  await requirePurgePathServed(ctx.engine, 'delete_page');
   let origin: (Origin & { deleted: boolean }) | null;
   try { origin = slug ? await originOf(ctx.engine, sourceId, slug) : null; }
   catch {
@@ -202,6 +204,7 @@ async function expiringOrigins(engine: BrainEngine, olderThanHours: number): Pro
  * applies: the caller clears those after its purge, so an origin parked when the purge was previewed stays this run.
  */
 export async function carryPrivateBeforePurge(engine: BrainEngine, olderThanHours: number): Promise<{ parks: DerivedOriginPark[]; unparked: Origin[] }> {
+  await requirePurgePathServed(engine, 'retention');
   await pruneDerivedOriginParks(engine);
   const parks: DerivedOriginPark[] = [];
   const batch = `derived-origin-carry:purge-${randomUUID()}`;

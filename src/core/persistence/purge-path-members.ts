@@ -187,7 +187,7 @@ export async function purgePathStops(engine: object, entryPoint: PurgeEntryPoint
     }
     const capability = rustMemberCapability(entry.member);
     if (capability) stops.push({ entry, name, owner: entry.owner, capability, why: entry.stop ?? 'not served by the Rust engine' });
-    else if (entry.refuses) stops.push({ entry, name, owner: entry.owner, capability: (RUST_ENGINE_MEMBERS as Record<string, Capability>)[entry.member]!, why: entry.refuses });
+    else if (entry.refuses) stops.push({ entry, name, owner: entry.owner, capability: (RUST_ENGINE_MEMBERS as unknown as Record<string, Capability>)[entry.member]!, why: entry.refuses });
   }
   return stops;
 }
@@ -200,5 +200,5 @@ export async function purgePathStops(engine: object, entryPoint: PurgeEntryPoint
 export async function requirePurgePathServed(engine: object, entryPoint: PurgeEntryPoint = 'delete_page'): Promise<void> {
   const [first] = await purgePathStops(engine, entryPoint);
   if (!first) return;
-  throw capabilityMissing(first.capability, `delete_page --purge, which needs ${first.name} (owner ${first.owner}: ${first.why})`);
+  throw capabilityMissing(first.capability, `${entryPoint === 'retention' ? 'the retention purge' : 'delete_page --purge'}, which needs ${first.name} (owner ${first.owner}: ${first.why})`);
 }

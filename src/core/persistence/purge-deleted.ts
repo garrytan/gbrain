@@ -18,6 +18,7 @@ import { faultPoint } from './fault-points.ts';
 import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, derivedOriginPurgeHold, pruneOwedPurges, readDerivedOriginParks, readOwedPurges, recordOwedPurge, releaseStaleHolds, type DerivedOriginPark } from './derived-origin-hold.ts';
 import type { CarryForecast } from '../repair/origin-carry.ts';
 import { writerOnboardingPreflight } from './onboarding.ts';
+import { requirePurgePathServed } from './purge-path-members.ts';
 import { clearPurgePark, isParked, notePurgeSourceWriter, PURGE_PARK_LIMIT, purgeParkKey, prunePurgeParks, readPurgeParks, recordPurgeFailure, type PurgePark } from './purge-parks.ts';
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
 import { readUnreviewedSyncTombstones, syncDeleteHeld } from './sync-delete-tombstones.ts';
@@ -410,6 +411,8 @@ export type PurgeFilter = (page: { source_id: string; slug: string }) => boolean
 
 export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; only?: PurgeFilter; release?: readonly number[] } = {}): Promise<DeletedPagePurge> {
   const { release = [], ...purge } = opts;
+  // An engine missing a member or raw-SQL site the purge reaches refuses here by name, before it reads or writes anything.
+  await requirePurgePathServed(engine, 'retention');
   // GST-2766: an owner purge a park held is recorded apart from the park, so the carry clearing the park never drops it.
   await releaseStaleHolds(engine);
   for (const park of await readDerivedOriginParks(engine)) if (park.held_request_id) await recordOwedPurge(engine, park.page_id, park.held_request_id);

@@ -116,6 +116,7 @@ test/engine-parity/page-purge-reads.test.ts	10	0
 test/engine-parity/page-purge-scrubs.test.ts	4	0
 test/engine-parity/page-purge-stores.test.ts	3	0
 test/engine-parity/page-purge-sweep.test.ts	5	1
+test/engine-parity/page-purge.test.ts	0	1
 test/engine-parity/page-read-options.test.ts	3	0
 test/engine-parity/page-snapshot-alias.test.ts	2	0
 test/engine-parity/page-vector-flip.test.ts	1	0
