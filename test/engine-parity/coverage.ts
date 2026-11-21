@@ -243,7 +243,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'hasExtractedEvents', 'listActiveAccessMembers', 'notifierCoverageRecorded', 'listAccessTokens', 'listAppliedPolicyRevisions', 'readMayActFor', 'readAudiencePrincipals', 'readAccessMembers', 'readAccessCredentials', 'listAudienceAccessMembers', 'readLiveMember', 'hasLabelledOnlyMember', 'readFolderAccess', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
     'attachSourcePath', 'readMemoryProposal', 'readPendingProposalSummary', 'listMemoryProposalRows', 'listOwnerProposalRows',
     'readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint', 'deleteOpCheckpointPaths',
-    'readOpCheckpointRecords', 'writeOpCheckpointRecords', 'readSyncImportPageRows', 'declareSyncImportPageCursor', 'fetchSyncImportPageCursor', 'readHealthMemoClock', 'listSynopsisSourceIds'],
+    'readOpCheckpointRecords', 'writeOpCheckpointRecords', 'readSyncImportPageRows', 'declareSyncImportPageCursor', 'fetchSyncImportPageCursor',
+    'readAdmittedWriteRequests', 'readPageRevisionWriter', 'readRevisionWriterRequest', 'writeSyncAdmissionStamp', 'readSyncAdmissionEffects', 'readHealthMemoClock', 'listSynopsisSourceIds'],
   // write_attribution: get_write_attribution's receipt and name reads (engine-sql/write-attribution.ts)
   write_attribution: ['readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions',
     'readOldestVersionAttribution', 'readRowAttribution'],

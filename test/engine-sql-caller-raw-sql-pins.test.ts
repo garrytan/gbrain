@@ -370,7 +370,56 @@ const PINS: Pin[] = [
     case: { method: 'fetchSyncImportPageCursor', variant: 'default', run: e => e.fetchSyncImportPageCursor(4_000) },
     texts: ['FETCH 4000 FROM sync_pass_pages'],
   },
+  // The managed sync run's journal reads and the sync.admission statements, copied verbatim from the callers at bdb0fb17a4.
+  {
+    from: 'src/core/persistence/sync-admitted.ts:38 readAdmitted (every admitted request)',
+    case: { method: 'readAdmittedWriteRequests', variant: 'all', run: e => e.readAdmittedWriteRequests('local_cli', 'writer-1', [ADMITTED_REQUEST], false) },
+    texts: ['SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])'],
+  },
+  {
+    from: 'src/core/persistence/sync-admitted.ts:38 readAdmitted (committed only)',
+    case: { method: 'readAdmittedWriteRequests', variant: 'committed', run: e => e.readAdmittedWriteRequests('local_cli', 'writer-1', [ADMITTED_REQUEST], true) },
+    texts: ["SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[]) AND state='committed'"],
+  },
+  {
+    from: 'src/core/persistence/sync-concurrent-write.ts:30 concurrentWriteProof (the page; the same text as sync-page-fault.ts:76 pageChangeProof)',
+    case: { method: 'readPageRevisionWriter', variant: 'default', run: e => e.readPageRevisionWriter(7, 'default') },
+    texts: ['SELECT knowledge_revision::text AS revision, revision_write_request_id::text AS writer FROM pages WHERE id=$1 AND source_id=$2'],
+  },
+  {
+    from: 'src/core/persistence/sync-concurrent-write.ts:33 concurrentWriteProof (the writer; the same text as sync-page-fault.ts:79 and :99)',
+    case: { method: 'readRevisionWriterRequest', variant: 'default', run: e => e.readRevisionWriterRequest(ADMITTED_REQUEST) },
+    texts: [`SELECT request_id::text, operation, intent->>'kind' AS kind, state, source_incarnation::text AS incarnation, page_id FROM persistence_requests WHERE id=$1::uuid`],
+  },
+  {
+    from: 'src/core/persistence/sync-admission.ts:98 writeSyncAdmission (the dating row)',
+    case: { method: 'writeSyncAdmissionStamp', variant: 'default', run: e => e.writeSyncAdmissionStamp('sync-admission', 'brain', 'imports_only'),
+      rows: [[/^INSERT INTO op_checkpoints\(op,fingerprint,completed_keys,updated_at\)/, [{ set_at: '2026-01-01T00:00:00+00:00' }]]] },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at)
+      VALUES($1,$2,jsonb_build_array(jsonb_build_object('value',$3::text,'set_at',clock_timestamp())),now())
+      ON CONFLICT (op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()
+      RETURNING completed_keys->0->>'set_at' AS set_at`],
+  },
+  {
+    from: 'src/core/persistence/sync-admission.ts:150 syncAdmissionStatus (the effective probes, effectProbes over $1..$7)',
+    case: { method: 'readSyncAdmissionEffects', variant: 'default', run: e => e.readSyncAdmissionEffects({ lockId: 'sync-lock-example', passOp: 'sync-pass-example',
+      passKey: 'default:inc-1', setAt: null, sourceId: 'default', incarnation: 'inc-1', kinds: ['managed_sync_delete'] }),
+      rows: [[/^SELECT EXISTS \(SELECT 1 FROM op_checkpoints p JOIN gbrain_cycle_locks/, [{ pinned: false, destructive: false }]]] },
+    texts: () => [`SELECT EXISTS (SELECT 1 FROM op_checkpoints p JOIN gbrain_cycle_locks l ON l.id=$1 AND l.ttl_expires_at > now()
+          AND l.acquisition_token::text = p.completed_keys->0->>'lease_token'
+        WHERE p.op=$2 AND p.fingerprint=$3 AND p.completed_keys->0->'telemetry'->>'outcome'='open'
+          AND ($4::timestamptz IS NULL OR (p.completed_keys->0->'telemetry'->>'started_at')::timestamptz < $4::timestamptz)) AS pinned, EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=$5 AND r.source_incarnation=$6::uuid
+          AND r.state IN ('queued','running','recovering') AND r.intent->>'kind' = ANY($7::text[])
+          AND ($4::timestamptz IS NULL OR r.created_at < $4::timestamptz)) AS destructive`],
+  },
+  {
+    from: 'src/core/persistence/sync-administration.ts:19 runAuthenticatedSyncSlice (now the existing readSourceMembership, the same text)',
+    case: { method: 'readSourceMembership', variant: 'default', run: e => e.readSourceMembership('default') },
+    texts: ['SELECT incarnation,archived FROM sources WHERE id=$1'],
+  },
 ];
+
+const ADMITTED_REQUEST = 'b0000000-0000-4000-8000-0000000000b1';
 
 const SYNC_PASS_Q = { sourceId: 'default', incarnation: 'inc-1', expected: { parser_version: 'p', markdown_chunker: 4, schema_pack: null } };
 

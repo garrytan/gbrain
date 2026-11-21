@@ -7,6 +7,8 @@ import type * as CalibrationProfilesSql from './engine-sql/calibration-profiles.
 import type { WriteContextInput, WriteContextResult } from './engine-sql/transaction-settings.ts';
 import type { RecentWriterVersionRow, WriterVersionRow } from './engine-sql/writer-versions.ts';
 import type { SyncImportPageQuery, SyncImportPageRow, SyncImportPageWindow } from './engine-sql/sync-pass-pages.ts';
+import type { PageRevisionWriter, RevisionWriterRequest } from './engine-sql/sync-run-reads.ts';
+import type { SyncAdmissionEffectsInput } from './engine-sql/sync-admission.ts';
 import type * as EntityIdentitiesSql from './engine-sql/entity-identities.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type * as TrustWriteGateSql from './engine-sql/trust-write-gate.ts';
@@ -1511,6 +1513,16 @@ export interface BrainEngine {
   declareSyncImportPageCursor(q: SyncImportPageQuery): Promise<void>;
   /** The open `I⋈P` cursor's next `rows` rows; fewer means it is done. */
   fetchSyncImportPageCursor(rows: number): Promise<SyncImportPageRow[]>;
+  /** The principal's request rows under `requestIds`, only committed ones when `committedOnly` (engine-sql/sync-run-reads.ts; sync-admitted.ts readAdmitted). */
+  readAdmittedWriteRequests(principalKind: string, principalId: string, requestIds: readonly string[], committedOnly: boolean): Promise<WriteRequest[]>;
+  /** Page `pageId` of `sourceId`: its live revision and the request row id that wrote it; null for no page (sync-concurrent-write.ts). */
+  readPageRevisionWriter(pageId: number, sourceId: string): Promise<PageRevisionWriter | null>;
+  /** The journal request with row id `id`, projected to the `concurrent_write` proof's columns; null when absent. */
+  readRevisionWriterRequest(id: string): Promise<RevisionWriterRequest | null>;
+  /** The `sync.admission` dating row `[{value, set_at}]` written with the database clock; returns `set_at` as stored (sync-admission.ts writeSyncAdmission). */
+  writeSyncAdmissionStamp(op: string, fingerprint: string, value: string): Promise<string>;
+  /** `sync status`'s two `effective` probes of a restricted `sync.admission` (engine-sql/sync-admission.ts; sync-admission.ts syncAdmissionStatus). */
+  readSyncAdmissionEffects(input: SyncAdmissionEffectsInput): Promise<{ pinned: boolean; destructive: boolean }>;
   /** The request, OAuth client, legacy token and local writer rows that name write attributions (ops/attribution.ts). */
   readWriteAttributionNames(ids: WriteAttributionNameIds): Promise<WriteAttributionNames>;
   /** A page's live revision with the actor that wrote it, its trust tier and write origin; null for no page. */

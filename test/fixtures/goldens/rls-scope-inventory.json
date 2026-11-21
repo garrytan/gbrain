@@ -6289,6 +6289,7 @@
         "readAccessTokenWriteGrant": "none",
         "readAdmissionRate": "none",
         "readAdmissionSource": "none",
+        "readAdmittedWriteRequests": "none",
         "readAgentClientSpend": "none",
         "readAudiencePrincipals": "none",
         "readBeliefHistoryRows": "none",
@@ -6392,6 +6393,7 @@
         "readPageIndexingState": "none",
         "readPageOrigin": "none",
         "readPageRevisionAttribution": "none",
+        "readPageRevisionWriter": "none",
         "readPageRevisions": "none",
         "readPageSnapshot": "direct",
         "readPageSnapshotsBatch": "direct",
@@ -6417,6 +6419,7 @@
         "readRemoteForgetTier": "none",
         "readRequestEffects": "none",
         "readRetirementHop": "none",
+        "readRevisionWriterRequest": "none",
         "readRowAttribution": "none",
         "readRowTrustRows": "none",
         "readSearchStats": "none",
@@ -6437,6 +6440,7 @@
         "readStoredBodyBytes": "none",
         "readStoredConfigValue": "none",
         "readStoredPageTier": "none",
+        "readSyncAdmissionEffects": "none",
         "readSyncImportPageRows": "none",
         "readTopologyChange": "none",
         "readTransaction": "none",
@@ -6630,6 +6634,7 @@
         "writeMiscReads": "none",
         "writeOpCheckpointKeys": "none",
         "writeOpCheckpointRecords": "none",
+        "writeSyncAdmissionStamp": "none",
         "writeTextProjectionSeal": "none"
       }
     }

@@ -109,10 +109,12 @@ test/engine-parity/source-resolver-reads.test.ts	14	0
 test/engine-parity/spend-log.test.ts	11	0
 test/engine-parity/stats-vectors.test.ts	3	0
 test/engine-parity/stats.test.ts	7	0
+test/engine-parity/sync-admission-effects.test.ts	3	0
 test/engine-parity/sync-admission.test.ts	3	0
 test/engine-parity/sync-aliases.test.ts	10	0
 test/engine-parity/sync-import-provenance.test.ts	4	0
 test/engine-parity/sync-pass-pages.test.ts	2	1
+test/engine-parity/sync-run-reads.test.ts	2	0
 test/engine-parity/takes.test.ts	28	0
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/timeline-reads.test.ts	4	0

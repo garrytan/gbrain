@@ -176,6 +176,13 @@ export const RUST_ENGINE_MEMBERS = {
   readOpCheckpointRecords: 'persistence_journal',
   writeOpCheckpointRecords: 'persistence_journal',
   readSyncImportPageRows: 'persistence_journal',
+  // A managed sync run's journal reads and the sync.admission stamp and probes (sync-admitted.ts, sync-concurrent-write.ts,
+  // sync-admission.ts): persistence_journal's request, page receipt, checkpoint and cycle-lock rows.
+  readAdmittedWriteRequests: 'persistence_journal',
+  readPageRevisionWriter: 'persistence_journal',
+  readRevisionWriterRequest: 'persistence_journal',
+  writeSyncAdmissionStamp: 'persistence_journal',
+  readSyncAdmissionEffects: 'persistence_journal',
   // Postgres's whole-source sync pass cursor (persistence/sync-pass.ts readPages). The store has no cursor; a Rust sync
   // pass stops before it, at the round snapshot's raw SET TRANSACTION. Both refuse by name.
   declareSyncImportPageCursor: 'raw_sql',

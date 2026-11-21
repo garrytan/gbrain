@@ -183,6 +183,31 @@ Differences from the SQL engines:
 - Postgres's whole-source cursor (`declareSyncImportPageCursor`, `fetchSyncImportPageCursor`) has no store
   form; both refuse with `raw_sql`. A Rust sync pass stops before them, at the round snapshot.
 - A bad id in `{ ids }` refuses with `invalid_input`, as the `::bigint[]` cast refuses.
+
+## Sync run reads
+
+A managed sync run's journal reads (`src/core/engine-sql/sync-run-reads.ts`) and the `sync.admission`
+statements (`src/core/engine-sql/sync-admission.ts`): the requests a principal admitted, the two reads of the
+`concurrent_write` proof, the row that dates a local `config set sync.admission`, and `sync status`'s two
+`effective` probes of a restricted value. A parameter the SQL casts to `uuid` that is not a UUID refuses with
+`invalid_input`.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readAdmittedWriteRequests(kind, id, requestIds, committedOnly)` | the principal's request rows whose `request_id` is listed, each at most once; only `committed` ones when `committedOnly` | `readAdmittedWriteRequests` |
+| `brain.readPageRevisionWriter(pageId, sourceId)` | `{ revision, writer }` (the live `knowledge_revision` as text, the request row id that wrote it), `null` for no page of that source | `readPageRevisionWriter` |
+| `brain.readRevisionWriterRequest(id)` | the request row `id` as `{ request_id, operation, kind, state, incarnation, page_id }`, `null` when absent | `readRevisionWriterRequest` |
+| `brain.writeSyncAdmissionStamp(op, fingerprint, value)` | sets the checkpoint parent to `[{ value, set_at }]` in one write and resolves `set_at` as jsonb text | `writeSyncAdmissionStamp` |
+| `brain.readSyncAdmissionEffects(input)` | `{ pinned, destructive }`: the pass row is `open` and its `lease_token` holds the live drain lease, and a destructive request of the incarnation is queued, running or recovering; each before `setAt` when set | `readSyncAdmissionEffects` |
+
+Differences from the SQL engines:
+
+- `set_at` is the store clock, not the database's `clock_timestamp()`.
+- An unparsable `setAt`, or a pinned pass whose `started_at` does not parse, refuses with `invalid_input`, as the
+  `::timestamptz` casts refuse.
+- `syncAdmissionStatus` reads the setting itself with raw SQL first, so `sync status` still refuses on this engine
+  until that read is a member.
+
 ## Writer versions
 
 Which binaries admitted and published the retained requests (`writer-versions.ts`), from the

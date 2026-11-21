@@ -124,6 +124,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'readOpCheckpointRecords', 'writeOpCheckpointRecords',
   // A sync pass's I⋈P read (engine-sql/sync-pass-pages.ts; covered by test/engine-parity/sync-pass-pages.test.ts)
   'readSyncImportPageRows', 'declareSyncImportPageCursor', 'fetchSyncImportPageCursor',
+  // A managed sync run's journal reads and the sync.admission stamp and probes (engine-sql/sync-run-reads.ts, engine-sql/sync-admission.ts;
+  // covered by test/engine-parity/sync-run-reads.test.ts and test/engine-parity/sync-admission-effects.test.ts)
+  'readAdmittedWriteRequests', 'readPageRevisionWriter', 'readRevisionWriterRequest', 'writeSyncAdmissionStamp', 'readSyncAdmissionEffects',
   'readHealthMemoClock', 'listSynopsisSourceIds',
   // Write attribution reads (engine-sql/write-attribution.ts; covered by test/engine-parity/write-attribution.test.ts)
   'readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'readRowAttribution',

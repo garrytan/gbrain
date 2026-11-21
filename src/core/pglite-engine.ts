@@ -176,6 +176,9 @@ import * as writeAttributionImpl from './engine-sql/write-attribution.ts';
 import * as opCheckpointImpl from './engine-sql/op-checkpoint.ts';
 import * as syncPassPagesImpl from './engine-sql/sync-pass-pages.ts';
 import type { SyncImportPageQuery, SyncImportPageWindow } from './engine-sql/sync-pass-pages.ts';
+import * as syncRunReadsImpl from './engine-sql/sync-run-reads.ts';
+import * as syncAdmissionImpl from './engine-sql/sync-admission.ts';
+import type { SyncAdmissionEffectsInput } from './engine-sql/sync-admission.ts';
 import type { RowAttributionTarget, VersionRef, WriteAttributionNameIds } from './engine-sql/write-attribution.ts';
 import * as persistenceStateImpl from './engine-sql/persistence-state.ts';
 import * as persistenceDeclarationImpl from './engine-sql/persistence-declaration.ts';
@@ -1853,6 +1856,11 @@ export class PGLiteEngine implements BrainEngine {
   readSyncImportPageRows(q: SyncImportPageQuery, window: SyncImportPageWindow) { return syncPassPagesImpl.readSyncImportPageRows(this, q, window); }
   declareSyncImportPageCursor(q: SyncImportPageQuery) { return syncPassPagesImpl.declareSyncImportPageCursor(this, q); }
   fetchSyncImportPageCursor(rows: number) { return syncPassPagesImpl.fetchSyncImportPageCursor(this, rows); }
+  readAdmittedWriteRequests(principalKind: string, principalId: string, requestIds: readonly string[], committedOnly: boolean) { return syncRunReadsImpl.readAdmittedWriteRequests(this, principalKind, principalId, requestIds, committedOnly); }
+  readPageRevisionWriter(pageId: number, sourceId: string) { return syncRunReadsImpl.readPageRevisionWriter(this, pageId, sourceId); }
+  readRevisionWriterRequest(id: string) { return syncRunReadsImpl.readRevisionWriterRequest(this, id); }
+  writeSyncAdmissionStamp(op: string, fingerprint: string, value: string) { return syncAdmissionImpl.writeSyncAdmissionStamp(this, op, fingerprint, value); }
+  readSyncAdmissionEffects(input: SyncAdmissionEffectsInput) { return syncAdmissionImpl.readSyncAdmissionEffects(this, input); }
   /** Write attribution reads (engine-sql/write-attribution.ts). */
   private get attributionReads() { return unscopedExecutor(this.engineSql, 'write attribution: get_write_attribution ran these unscoped through executeRaw'); }
   readWriteAttributionNames(ids: WriteAttributionNameIds) { return writeAttributionImpl.readWriteAttributionNames(this.attributionReads, ids); }

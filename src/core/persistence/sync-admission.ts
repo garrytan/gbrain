@@ -18,6 +18,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { syncLockId } from '../db-lock.ts';
 import { MANAGED_SYNC_PASS_OP, passFingerprint } from './sync-pass-row.ts';
+import { effectProbes } from './sync-admission-sql.ts';
 
 export const SYNC_ADMISSION_KEY = 'sync.admission';
 export const SYNC_ADMISSION_VALUES = ['normal', 'imports_only', 'classify_only'] as const;
@@ -95,25 +96,8 @@ function settingOf(row: SyncAdmissionSettingRow | undefined): Omit<SyncAdmission
 export async function writeSyncAdmission(engine: Pick<BrainEngine, 'transaction'>, value: SyncAdmission): Promise<string> {
   return engine.transaction(async tx => {
     await tx.setConfig(SYNC_ADMISSION_KEY, value);
-    const [row] = await tx.executeRaw<{ set_at: string }>(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('value',$3::text,'set_at',clock_timestamp())),now())
-      ON CONFLICT (op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()
-      RETURNING completed_keys->0->>'set_at' AS set_at`, [SYNC_ADMISSION_SET_OP, SET_FINGERPRINT, value]);
-    return iso(row!.set_at)!;
+    return iso(await tx.writeSyncAdmissionStamp(SYNC_ADMISSION_SET_OP, SET_FINGERPRINT, value))!;
   });
-}
-
-/** `effective`'s two probes as SQL: `e` names the expressions they read (binds, or columns of an enclosing read). */
-function effectProbes(e: { lock: string; passOp: string; passKey: string; setAt: string; sourceId: string; incarnation: string; kinds: string }) {
-  return {
-    pinned: `EXISTS (SELECT 1 FROM op_checkpoints p JOIN gbrain_cycle_locks l ON l.id=${e.lock} AND l.ttl_expires_at > now()
-          AND l.acquisition_token::text = p.completed_keys->0->>'lease_token'
-        WHERE p.op=${e.passOp} AND p.fingerprint=${e.passKey} AND p.completed_keys->0->'telemetry'->>'outcome'='open'
-          AND (${e.setAt} IS NULL OR (p.completed_keys->0->'telemetry'->>'started_at')::timestamptz < ${e.setAt}))`,
-    destructive: `EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=${e.sourceId} AND r.source_incarnation=${e.incarnation}
-          AND r.state IN ('queued','running','recovering') AND r.intent->>'kind' = ANY(${e.kinds})
-          AND (${e.setAt} IS NULL OR r.created_at < ${e.setAt}))`,
-  };
 }
 
 /**
@@ -141,13 +125,12 @@ export interface SyncAdmissionEffectRow extends SyncAdmissionSettingRow { pinned
  * running or recovering. `read` is the setting row a caller already read with `syncAdmissionSettingSql`, and its probes
  * when it read them too (`syncAdmissionEffectSql`).
  */
-export async function syncAdmissionStatus(engine: Exec, sourceId: string, incarnation: string, read?: SyncAdmissionSettingRow | SyncAdmissionEffectRow): Promise<SyncAdmissionStatus> {
+export async function syncAdmissionStatus(engine: Exec & Pick<BrainEngine, 'readSyncAdmissionEffects'>, sourceId: string, incarnation: string, read?: SyncAdmissionSettingRow | SyncAdmissionEffectRow): Promise<SyncAdmissionStatus> {
   const { value, raw_set_at } = read ? settingOf(read) : await readSetting(engine);
   const set_at = iso(raw_set_at);
   if (value === 'normal') return { value, set_at, effective: true };
-  const probes = effectProbes({ lock: '$1', passOp: '$2', passKey: '$3', setAt: '$4::timestamptz', sourceId: '$5', incarnation: '$6::uuid', kinds: '$7::text[]' });
-  const [row] = read && 'pinned' in read && read.pinned !== null && read.destructive !== null ? [read]
-    : await engine.executeRaw<{ pinned: boolean; destructive: boolean }>(`SELECT ${probes.pinned} AS pinned, ${probes.destructive} AS destructive`,
-      [syncLockId(sourceId), MANAGED_SYNC_PASS_OP, passFingerprint(sourceId, incarnation), raw_set_at, sourceId, incarnation, [...SYNC_ADMISSION_DESTRUCTIVE_KINDS]]);
-  return { value, set_at, effective: !row?.pinned && !row?.destructive };
+  const row = read && 'pinned' in read && read.pinned !== null && read.destructive !== null ? read
+    : await engine.readSyncAdmissionEffects({ lockId: syncLockId(sourceId), passOp: MANAGED_SYNC_PASS_OP, passKey: passFingerprint(sourceId, incarnation),
+      setAt: raw_set_at, sourceId, incarnation, kinds: SYNC_ADMISSION_DESTRUCTIVE_KINDS });
+  return { value, set_at, effective: !row.pinned && !row.destructive };
 }

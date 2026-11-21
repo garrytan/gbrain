@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 909/909
+# covered: 914/914
 # lifecycle: 9/9
 # pages: 48/48
 # search: 7/7
@@ -64,7 +64,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 39/39
+# write_misc: 44/44
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -85,7 +85,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	120	no	yes	yes	serves
+transaction	lifecycle	yes	122	no	yes	yes	serves
 transactionDirect	lifecycle	yes	11	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -93,7 +93,7 @@ getPage	pages	yes	127	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	542	yes	yes	yes	serves
+putPage	pages	yes	543	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	21	yes	yes	yes	serves
@@ -389,19 +389,19 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	15	no	yes	yes	serves
-setConfig	config	yes	31	no	yes	yes	serves
+setConfig	config	yes	32	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	6	no	yes	yes	serves
-readStoredConfigValue	config	yes	3	no	yes	yes	serves
+readStoredConfigValue	config	yes	4	no	yes	yes	serves
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	5	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	13	no	yes	yes	serves
-applyTransactionSettings	import_guards	yes	68	no	yes	yes	serves
+applyTransactionSettings	import_guards	yes	69	no	yes	yes	serves
 beginSnapshotRead	import_guards	yes	3	no	yes	yes	serves
 readCurrentWriteTrust	import_guards	yes	1	no	yes	yes	serves
 setWriteContext	import_guards	yes	1	no	yes	yes	serves
@@ -425,15 +425,15 @@ readAccessTokenWriteGrant	persistence_journal	yes	1	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	3	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
-lockPersistenceCounters	persistence_journal	yes	37	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	41	no	yes	yes	serves
-stampWriteClaim	persistence_journal	yes	20	no	yes	yes	serves
+lockPersistenceCounters	persistence_journal	yes	39	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	44	no	yes	yes	serves
+stampWriteClaim	persistence_journal	yes	22	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	5	no	yes	yes	serves
-completeWriteRow	persistence_journal	yes	15	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	17	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	7	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	3	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	46	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	49	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -501,7 +501,7 @@ readRetirementHop	entity_reads	yes	5	no	yes	yes	serves
 readEntityCardRows	entity_reads	yes	1	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
-acquireCycleLock	cycle_locks	yes	12	no	yes	yes	serves
+acquireCycleLock	cycle_locks	yes	13	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 readCycleLocks	cycle_locks	yes	9	no	yes	yes	serves
@@ -858,11 +858,16 @@ writeOpCheckpointKeys	write_misc	yes	4	no	yes	yes	serves
 appendOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	2	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
-readOpCheckpointRecords	write_misc	yes	4	no	yes	yes	serves
-writeOpCheckpointRecords	write_misc	yes	5	no	yes	yes	serves
+readOpCheckpointRecords	write_misc	yes	5	no	yes	yes	serves
+writeOpCheckpointRecords	write_misc	yes	6	no	yes	yes	serves
 readSyncImportPageRows	write_misc	yes	3	no	yes	yes	serves
 declareSyncImportPageCursor	write_misc	yes	1	no	yes	yes	refuses:raw_sql
 fetchSyncImportPageCursor	write_misc	yes	1	no	yes	yes	refuses:raw_sql
+readAdmittedWriteRequests	write_misc	yes	1	no	yes	yes	serves
+readPageRevisionWriter	write_misc	yes	1	no	yes	yes	serves
+readRevisionWriterRequest	write_misc	yes	1	no	yes	yes	serves
+writeSyncAdmissionStamp	write_misc	yes	3	no	yes	yes	serves
+readSyncAdmissionEffects	write_misc	yes	2	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	2	no	yes	yes	serves
 expireMemoryProposals	write_misc	yes	1	no	yes	yes	serves
