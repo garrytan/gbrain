@@ -27,6 +27,7 @@ import { importFromContent } from '../../src/core/import-file.ts';
 import { operationsByName } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { hybridSearch, _resetSupersedeProbeForTests } from '../../src/core/search/hybrid.ts';
+import { _resetWarnOnceForTests } from '../../src/core/utils.ts';
 import { structuralExactLookup } from '../../src/core/search/exact-lookup.ts';
 
 const DIM = 1536;
@@ -93,6 +94,29 @@ describe('supersession check currency (PGLite)', () => {
     await hybridSearch(engine, 'tapirword', { limit: 5, useCache: false, onMeta: (m) => { degraded = (m.degraded ?? []) as typeof degraded; } });
     expect(degraded).toContainEqual({ stage: 'supersede_check_failed', reason: 'provider_error' });
     expect(JSON.stringify(degraded)).not.toContain('secret');
+  });
+
+  test('the supersession warning names the failure class and code, never the raw error text', async () => {
+    await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
+    engine.supersedingPageSlugs = async () => {
+      throw Object.assign(new Error('connection terminated postgres://user:secret@internal-host/db'), { code: '57P01' });
+    };
+    _resetWarnOnceForTests();
+    const warned: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(' ')); };
+    try {
+      await hybridSearch(engine, 'tapirword', { limit: 5, useCache: false });
+    } finally {
+      console.warn = original;
+      _resetWarnOnceForTests();
+    }
+    const line = warned.find(w => w.includes('supersession check failed'));
+    expect(line).toBeDefined();
+    expect(line).toContain('provider_error');
+    expect(line).toContain('57P01');
+    expect(line).not.toContain('secret');
+    expect(line).not.toContain('postgres://');
   });
 
   test('a brain whose links table does not exist yet stays silent (no edges can exist)', async () => {
