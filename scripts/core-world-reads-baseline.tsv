@@ -477,6 +477,7 @@ src/core/github-source.ts	process_env	2	W6: settings plane out of the core
 src/core/google/access.ts	process_env	1	W6: settings plane out of the core
 src/core/google/access.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/google/file-modes.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/google/gbrainio-gmail.ts	spawn_import	1	W7: process-wide effects move to src/cli (runs the gbrainio command line the source names, as access.ts runs --token-command)
 src/core/google/google-source.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/google/google-source.ts	load_config	1	W6: settings plane out of the core
 src/core/google/loop-detect.ts	module_collection	1	W6: per-engine state, or mark as a constant table
