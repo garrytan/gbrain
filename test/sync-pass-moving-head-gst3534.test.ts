@@ -12,14 +12,19 @@
  *   the next plain sync imports the rest. Rounds after the first patch the previous round's `I⋈P` (checked against a whole
  *   read by GBRAIN_SYNC_LEVEL_REUSE_VERIFY), and `sync status`'s `convergence.levels` counts the heads and reads.
  * - A pass that stops resumable (a slice's writer_yield) keeps its `I⋈P` for the next pass, whose first round patches it.
+ * - The stamp-behind check refuses when one unsettled path is not a path the newer commits changed, when nothing is
+ *   unsettled, and when Git cannot diff the two commits: the pass then ends `not_converged` as before.
  * Real PGLite (and Postgres when DATABASE_URL is set), real managed syncs and real Git.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import type { ShadowPath } from '../src/core/persistence/sync-pass.ts';
+import { onlyMovedSince } from '../src/core/persistence/sync-pass-run.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { __resetTreeReuseForTests } from '../src/core/persistence/sync-tree-reuse.ts';
@@ -36,6 +41,26 @@ const SEEDED = 120;
 type Round = { round: number; head: string; patched: boolean };
 
 afterEach(() => { installFaultHook(undefined); __resetTreeReuseForTests(); });
+
+describe('GST-3534: onlyMovedSince', () => {
+  test('true only when every unsettled path changed between the two commits', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-gst3534-'));
+    try {
+      mkdirSync(join(root, 'notes')); git(root, 'init', '-q');
+      for (const name of ['a', 'b']) writeFileSync(join(root, `notes/${name}.md`), note(name, 'one'));
+      git(root, 'add', '-A'); git(root, 'commit', '-qm', 'one');
+      const from = git(root, 'rev-parse', 'HEAD');
+      writeFileSync(join(root, 'notes/a.md'), note('a', 'two')); writeFileSync(join(root, 'notes/c.md'), note('c', 'two'));
+      git(root, 'add', '-A'); git(root, 'commit', '-qm', 'two');
+      const to = git(root, 'rev-parse', 'HEAD');
+      const paths = (...names: string[]) => names.map(name => ({ path: `notes/${name}.md` }) as ShadowPath);
+      expect(await onlyMovedSince(root, from, to, '', paths('a', 'c'))).toBe(true);
+      expect(await onlyMovedSince(root, from, to, '', paths('a', 'b'))).toBe(false);
+      expect(await onlyMovedSince(root, from, to, '', [])).toBe(false);
+      expect(await onlyMovedSince(root, from, '0'.repeat(40), '', paths('a'))).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
 
 for (const backend of testBackends()) describe(`[${backend}] GST-3534: a pass while HEAD keeps moving`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;

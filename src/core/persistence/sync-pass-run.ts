@@ -76,7 +76,7 @@ type SettledLevel = Pick<ShadowLevel, 'head' | 'releasableHolds' | 'deletionCand
  * GST-3534: whether every one of `unsettled` (a round's paths at `to`) is a path a commit between `from` and `to` changed, so the
  * level at `from` was converged and only newer commits are left. False when there is nothing to attribute, or Git cannot say.
  */
-async function onlyMovedSince(gitRoot: string, from: string, to: string, scope: string, unsettled: readonly ShadowPath[]): Promise<boolean> {
+export async function onlyMovedSince(gitRoot: string, from: string, to: string, scope: string, unsettled: readonly ShadowPath[]): Promise<boolean> {
   if (!unsettled.length) return false;
   const changes = await readTreeChanges(gitRoot, from, to, scope).catch(() => null);
   if (!changes) return false;
@@ -953,10 +953,10 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
     return result(configured && context.source.last_commit === null ? 'first_sync' : 'synced', configured ? undefined : 'selection_scoped');
   };
   /** The pass's stamp at `at`'s commit, drained as an empty batch; the pass ends synced on it. */
-  const stampAt = async (at: SettledLevel): Promise<SyncResult> => {
+  const stampAt = async (at: SettledLevel, behind?: string): Promise<SyncResult> => {
     const stopped = await stampFor(at).then(async stamp => { await save('open', null); return drain([], stamp); });
     if (stopped) return stop(stopped);
-    value.telemetry = { ...value.telemetry, outcome: 'synced', stop_reason: configured ? null : 'selection_scoped', remaining: 0 };
+    value.telemetry = { ...value.telemetry, outcome: 'synced', stop_reason: configured ? null : 'selection_scoped', remaining: 0, ...(behind ? { settled_behind: behind } : {}) };
     return synced(false);
   };
   const stop = async (drained: SyncResult): Promise<SyncResult> => {
@@ -1037,9 +1037,9 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       // GST-3534: HEAD moved under the pass; on its last round, a level only newer commits unsettle stamps the previous round's commit.
       if (round === PASS_MAX_ROUNDS && settled && settled.head !== head && mode === 'committed' && !remote
         && await onlyMovedSince(context.gitRoot, settled.head, head, level.scope, [...deletes, ...imports, ...inFlight, ...owed, ...mismatch])) {
-        value.telemetry = { ...value.telemetry, settled_behind: head, remaining: 0 };
-        head = value.telemetry.target = settled.head;
-        return folded?.head === head && folded.done === doneKey() ? synced(true) : stampAt(settled);
+        const behind = head, stillReleasable = new Set(level.releasableHolds); head = value.telemetry.target = settled.head;
+        if (folded?.head === head && folded.done === doneKey()) { value.telemetry = { ...value.telemetry, settled_behind: behind, remaining: 0 }; return synced(true); }
+        return stampAt({ ...settled, releasableHolds: settled.releasableHolds.filter(path => stillReleasable.has(path)) }, behind);
       }
       if (!candidates && inFlight.length && waits < IN_FLIGHT_WAITS) {
         waits++; round--;
