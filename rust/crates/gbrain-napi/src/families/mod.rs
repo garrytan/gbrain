@@ -2,6 +2,7 @@
 //! block; napi-rs merges the blocks into one JavaScript class. Every family is listed once, here,
 //! so building a family never edits this list.
 
+mod access_doctor;
 mod access_members;
 mod access_rules;
 mod chronicle_events;

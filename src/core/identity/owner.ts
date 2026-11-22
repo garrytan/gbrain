@@ -18,7 +18,8 @@ import type { BrainEngine } from '../engine.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import { listMembers } from '../access/members.ts';
 import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
-import { exactIdentityStatement, type ExactIdentityRow } from '../engine-sql/exact-identity.ts';
+import type { ExactIdentityRow } from '../engine-sql/exact-identity.ts';
+import { sortSourcesById, sourceConfigText, sourceRecordsRawConfig } from '../source-rows.ts';
 import { resolvePersonTypes } from '../schema-pack/entity-types.ts';
 
 export const RESERVED_OWNER_SLUG = 'memory/owner';
@@ -74,12 +75,14 @@ export async function ownerIdentity(engine: BrainEngine, opts: { member?: string
   };
   for (const m of people) { const e = spelled(m.email); if (e) claim(e, m.id); }
 
-  const sources = await engine.executeRaw<{ id: string; account: string | null; members: string[] | null }>(
-    `SELECT s.id, s.config->>'g_account' AS account,
-            (SELECT array_agg(b.member_id ORDER BY b.member_id) FROM access_member_sources b WHERE b.source_id = s.id) AS members
-       FROM sources s
-      WHERE s.archived IS NOT TRUE AND s.config->>'kind' = 'google'
-      ORDER BY s.id COLLATE "C"`);
+  // The live sources by id in byte order, their config as stored (`config->>'k'` reads), and the member-source bindings
+  // by source then member: typed reads every engine answers (engine-sql/doctor-access.ts for the bindings).
+  const liveSources = sortSourcesById(await sourceRecordsRawConfig(engine));
+  const bindings = await engine.listAccessMemberSources();
+  const sources = liveSources.filter(s => sourceConfigText(s.config, 'kind') === 'google').map(s => {
+    const members = bindings.filter(b => b.source_id === s.id).map(b => b.member_id);
+    return { id: s.id, account: sourceConfigText(s.config, 'g_account'), members: members.length ? members : null };
+  });
   const skipped: SkippedSource[] = [];
   const googleOf = new Map<string, string[]>();
   for (const s of sources) {
@@ -108,8 +111,7 @@ export async function ownerIdentity(engine: BrainEngine, opts: { member?: string
     for (const source_id of ids) identifiers.push({ kind: 'google_account', value: account, source_id });
   }
   if (member) {
-    const links = await engine.executeRaw<{ system: string; external_id: string }>(
-      'SELECT system, external_id FROM access_member_links WHERE member_id = $1 ORDER BY system, external_id', [member]);
+    const links = await engine.listAccessMemberLinks(member);
     for (const l of links) identifiers.push({ kind: 'member_link', system: l.system, value: l.external_id });
   }
 
@@ -120,15 +122,15 @@ export async function ownerIdentity(engine: BrainEngine, opts: { member?: string
   let entity = fallback;
   let degraded: OwnerIdentity['degraded'];
   if (emails.length) {
-    const sourceIds = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"')).map(r => r.id);
+    const sourceIds = liveSources.map(r => r.id);
     const resolved = await resolvePersonTypes(engine, sourceIds);
     if (resolved.status === 'pack_unavailable') degraded = 'person_types_unavailable';
-    const { text, params } = exactIdentityStatement({
+    const candidates: ExactIdentityRow[] = await engine.listExactIdentityCandidates({
       probes: { titleKeys: [], titleRaw: '', basenames: [], aliasKeys: [], emails: [...new Set(emails.flatMap(e => [...(spellings.get(e) ?? [e])]))].sort() },
       sourceIds, types: resolved.filter, emailsOnly: true, limit: CANDIDATE_CAP,
     });
     const wanted = new Set(emails);
-    const pages = (await engine.executeRaw<ExactIdentityRow>(text, params))
+    const pages = candidates
       .filter(r => frontmatterEmails(r).some(e => wanted.has(e)))
       .map(r => ({ slug: r.slug, source_id: r.source_id }));
     if (pages.length === 1) entity = { ...pages[0]!, basis: 'identifier_page' };

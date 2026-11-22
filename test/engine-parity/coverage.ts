@@ -318,6 +318,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
   doctor_brain: ['listInterimStoredObjectCounts', 'readOldestSourceCreatedAt', 'listVisibilityCandidatePages',
     'countVisibilityNoncanonicalHolds', 'listContentBlockedReceipts', 'listPassAdmittedReceipts',
     'listOrphanConnectorCheckpoints'],
+  // doctor_access: the pages no enabled member reads and the member-source bindings access_pages_read_by_nobody and owner_identity ran through executeRaw (engine-sql/doctor-access.ts)
+  doctor_access: ['listPagesReadByNobody', 'listAccessMemberSources'],
   doctor_terminal: ['readTerminalFailureGroups', 'listTerminalFailureBatch', 'listOpenPassCheckpointBlockers',
     'listWorktreeBlockerRequests'],
   doctor_fence_census: ['listFenceCensusSources', 'readFencePassHorizon', 'listFenceCensusPagesById',

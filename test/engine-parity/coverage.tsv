@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1656/1662
+# covered: 1658/1664
 # lifecycle: 9/9
 # pages: 65/65
 # search: 7/7
@@ -54,6 +54,7 @@
 # doctor_checkpoints: 18/18
 # doctor_sync: 3/3
 # doctor_brain: 7/7
+# doctor_access: 2/2
 # doctor_terminal: 4/4
 # doctor_fence_census: 12/12
 # doctor_facts_trust: 7/7
@@ -573,7 +574,7 @@ deleteAccessGroup	access_members	yes	1	no	yes	yes	serves
 readAccessMemberLink	access_members	yes	1	no	yes	yes	serves
 insertAccessMemberLink	access_members	yes	2	no	yes	yes	serves
 deleteAccessMemberLink	access_members	yes	1	no	yes	yes	serves
-listAccessMemberLinks	access_members	yes	1	no	yes	yes	serves
+listAccessMemberLinks	access_members	yes	2	no	yes	yes	serves
 readCredentialBindingForUpdate	access_members	yes	4	no	yes	yes	serves
 readCredentialMemberId	access_members	yes	1	no	yes	yes	serves
 readLinkedMember	access_members	yes	1	no	yes	yes	serves
@@ -982,7 +983,7 @@ completeSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 failSubagentToolExecution	minion_subagent	yes	7	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	5	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
-listExactIdentityCandidates	cli_reads_ops	yes	5	no	yes	yes	serves
+listExactIdentityCandidates	cli_reads_ops	yes	6	no	yes	yes	serves
 rankEntities	cli_reads_ops	yes	4	no	yes	yes	serves
 readRankCoverage	cli_reads_ops	yes	1	no	yes	yes	serves
 readExactSnippetChunks	cli_reads_ops	yes	1	no	yes	yes	serves
@@ -1158,6 +1159,8 @@ countVisibilityNoncanonicalHolds	doctor_brain	yes	1	no	yes	yes	serves
 listContentBlockedReceipts	doctor_brain	yes	1	no	yes	yes	serves
 listPassAdmittedReceipts	doctor_brain	yes	1	no	yes	yes	serves
 listOrphanConnectorCheckpoints	doctor_brain	yes	1	no	yes	yes	serves
+listPagesReadByNobody	doctor_access	yes	1	no	yes	yes	serves
+listAccessMemberSources	doctor_access	yes	2	no	yes	yes	serves
 readTerminalFailureGroups	doctor_terminal	yes	2	no	yes	yes	serves
 listTerminalFailureBatch	doctor_terminal	yes	2	no	yes	yes	serves
 listOpenPassCheckpointBlockers	doctor_terminal	yes	1	no	yes	yes	serves
@@ -1448,7 +1451,7 @@ unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	9	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
-listSourceRecords	cli_reads_import	yes	8	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	10	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	4	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
@@ -1499,7 +1502,7 @@ readAccessStoreConfig	write_misc	no	0	no	-	-	-
 writeAccessStoreConfig	write_misc	no	0	no	-	-	-
 ensureAccessPolicyState	write_misc	yes	1	no	yes	yes	serves
 lockAccessPolicy	write_misc	yes	1	no	yes	yes	serves
-listAccessRules	write_misc	yes	2	no	yes	yes	serves
+listAccessRules	write_misc	yes	3	no	yes	yes	serves
 readAccessPolicyRevisions	write_misc	yes	2	no	yes	yes	serves
 listAccessCoverage	write_misc	yes	2	no	yes	yes	serves
 readAccessStateUnreadable	write_misc	yes	1	no	yes	yes	serves
@@ -1527,7 +1530,7 @@ switchAccessMigration	write_misc	yes	1	no	yes	yes	serves
 listAccessPolicySources	write_misc	yes	1	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 countOpenPages	write_misc	yes	3	no	yes	yes	serves
-readAccessMembers	write_misc	yes	14	no	yes	yes	serves
+readAccessMembers	write_misc	yes	16	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	5	no	yes	yes	serves
 revokeAccessTokensNamed	write_misc	yes	4	no	yes	yes	serves
 revokeAccessToken	write_misc	yes	12	no	yes	yes	serves
@@ -1763,4 +1766,4 @@ storeDecideQualification	decide_store	yes	3	no	yes	yes	serves
 listDecideCalibrations	decide_store	yes	9	no	yes	yes	serves
 getDecideCalibration	decide_store	yes	6	no	yes	yes	serves
 setDecideCalibrationRetired	decide_store	yes	4	no	yes	yes	serves
-ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
+ownerOnlyMarkTriggers	owner_only	yes	3	no	yes	yes	serves

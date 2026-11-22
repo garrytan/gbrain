@@ -119,6 +119,7 @@ import * as doctorSearch from './doctor-search.ts';
 import * as doctorAcc from './doctor-acc.ts';
 import * as doctorCheckpoints from './doctor-checkpoints.ts';
 import * as doctorTerminal from './doctor-terminal.ts';
+import * as doctorAccess from './doctor-access.ts';
 import * as doctorBrain from './doctor-brain.ts';
 import * as doctorSync from './doctor-sync.ts';
 import * as doctorFactsTrust from './doctor-facts-trust.ts';
@@ -226,6 +227,8 @@ export const STORE_MEMBERS = {
   ...doctorCheckpoints,
   // Doctor terminal reads: the grouped terminal write failure aggregate, its drill-down batch and the open-pass blocker statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-terminal.md).
   ...doctorTerminal,
+  // Doctor access reads: the pages no enabled member reads, the member-source bindings (none: no writer) and the owner-only trigger state (rust/docs/store/access-doctor.md).
+  ...doctorAccess,
   // Doctor brain reads: the page, tag, fact, source and checkpoint statements the storage, archive, backup, git-hold and connector checks ran through executeRaw (rust/docs/store/cli-reads-doctor-brain.md).
   ...doctorBrain,
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw (rust/docs/store/cli-reads-doctor-sync.md).

@@ -211,6 +211,7 @@ import * as projectionBacklogImpl from './engine-sql/projection-backlog.ts';
 import * as doctorAccImpl from './engine-sql/doctor-acc.ts';
 import * as doctorCheckpointsImpl from './engine-sql/doctor-checkpoints.ts';
 import * as doctorTerminalImpl from './engine-sql/doctor-terminal.ts';
+import * as doctorAccessImpl from './engine-sql/doctor-access.ts';
 import * as doctorBrainImpl from './engine-sql/doctor-brain.ts';
 import * as doctorSyncImpl from './engine-sql/doctor-sync.ts';
 import * as doctorFactsTrustImpl from './engine-sql/doctor-facts-trust.ts';
@@ -1766,6 +1767,8 @@ export class PGLiteEngine implements BrainEngine {
   readLatestConnectorReceipt() { return doctorCheckpointsImpl.readLatestConnectorReceipt(this.rawRead); }
   listFactsAbsorbFailureGroups() { return doctorCheckpointsImpl.listFactsAbsorbFailureGroups(this.rawRead); }
   listCredentialResealHoldRows(producer: string, sourceIds?: readonly string[]) { return doctorCheckpointsImpl.listCredentialResealHoldRows(this.rawRead, producer, sourceIds); }
+  listPagesReadByNobody(spec: doctorAccessImpl.PagesReadByNobodySpec, opts?: doctorAccessImpl.DoctorAccessReadOpts) { return doctorAccessImpl.listPagesReadByNobody(this.rawRead, spec, opts); }
+  listAccessMemberSources() { return doctorAccessImpl.listAccessMemberSources(this.rawRead); }
   readTerminalFailureGroups(query: doctorTerminalImpl.TerminalGroupsQuery, opts?: doctorTerminalImpl.TerminalReadOpts) { return doctorTerminalImpl.readTerminalFailureGroups(this.rawRead, query, opts); }
   listTerminalFailureBatch(query: doctorTerminalImpl.TerminalBatchQuery, opts?: doctorTerminalImpl.TerminalReadOpts) { return doctorTerminalImpl.listTerminalFailureBatch(this.rawRead, query, opts); }
   listOpenPassCheckpointBlockers(passOp: string, sourceIds: readonly string[] | null) { return doctorTerminalImpl.listOpenPassCheckpointBlockers(this.rawRead, passOp, sourceIds); }

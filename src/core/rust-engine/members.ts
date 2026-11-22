@@ -29,10 +29,6 @@ export const RUST_ENGINE_MEMBERS = {
   // Optional on BrainEngine: only Postgres defines it. The Rust engine leaves it undefined, so a migration serializes
   // in-process (schema-migration-lock.ts), as on PGLite, and `schema` can be reported.
   holdSchemaMigrationLock: 'implemented',
-  // Creates and reads the SQL delete triggers behind owner_only_marks (migration v322). The Rust store has no SQL
-  // triggers and no owner-only sources, and every caller reaches it through a migration run or a raw-SQL source write,
-  // so it refuses with raw_sql and `schema` stays served.
-  ownerOnlyMarkTriggers: 'raw_sql',
   // transactions
   readTransactionSettings: 'transactions',
   applyTransactionSettings: 'transactions',
@@ -1427,6 +1423,13 @@ export const RUST_ENGINE_MEMBERS = {
   listAudienceAccessMembers: 'access_control',
   readAccessGroups: 'access_control',
   listPagesNamingReader: 'access_control',
+  // Doctor access reads (engine-sql/doctor-access.ts): the pages no enabled member reads and the member-source bindings
+  // access_pages_read_by_nobody and owner_identity ran through executeRaw (rust/docs/store/access-doctor.md).
+  listPagesReadByNobody: 'access_control',
+  listAccessMemberSources: 'access_control',
+  // The owner-only delete trigger state (migration v322). The store marks inline on every delete it serves, so it
+  // reports no missing trigger and the guard it tests (rust/docs/store/access-doctor.md).
+  ownerOnlyMarkTriggers: 'access_control',
   insertAccessMember: 'access_control',
   setAccessMemberDisabled: 'access_control',
   setAccessMemberEmail: 'access_control',

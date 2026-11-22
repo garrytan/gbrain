@@ -22,6 +22,7 @@ import type { AccessTokenGrantWrite, AccessTokenListRow, AccessTokenPrivateAxis,
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
+import type { AccessMemberSourceRow, DoctorAccessReadOpts, PageReadByNobodyRow, PagesReadByNobodySpec } from './engine-sql/doctor-access.ts';
 import type { AccessCredentialLookup, AccessCredentialRow, AccessGroupRow, AccessMemberLookup, PageNamingReaderRow, AccessMemberRow, LiveMemberRow, MemberBindingVia, AppliedPolicyRevision, AudiencePrincipalRows, FolderAccessRows, MayActForVia, JobPrincipalKind, LiveMemberVia } from './engine-sql/access-control.ts';
 import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from './engine-sql/access-policy.ts';
 import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, OpenPageCount, OpenPageExclusion, PeopleFolderCount } from './engine-sql/access-setup.ts';
@@ -5079,6 +5080,12 @@ export interface BrainEngine {
 
   /** The pages, in every source and by (source, slug), whose readers name exactly `principal`; at most 51 of them. */
   listPagesNamingReader(principal: string, opts?: { live?: boolean }): Promise<PageNamingReaderRow[]>;
+
+  // Doctor access reads (engine-sql/doctor-access.ts): the statements access_pages_read_by_nobody and owner_identity ran through executeRaw.
+  /** The live pages no enabled member reads remotely, by labelled readers or under one folder rule; unordered. Postgres ends the statement at `opts.timeoutMs`. */
+  listPagesReadByNobody(spec: PagesReadByNobodySpec, opts?: DoctorAccessReadOpts): Promise<PageReadByNobodyRow[]>;
+  /** Every member-source binding (access_member_sources), by source then member, in byte order. */
+  listAccessMemberSources(): Promise<AccessMemberSourceRow[]>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */

@@ -39,6 +39,7 @@ import { DOCTOR_SEARCH_MEMBERS } from './engine-sql/doctor-search.ts';
 import { DOCTOR_ACC_MEMBERS } from './engine-sql/doctor-acc-members.ts';
 import { DOCTOR_CHECKPOINT_MEMBERS } from './engine-sql/doctor-checkpoints.ts';
 import { DOCTOR_TERMINAL_MEMBERS } from './engine-sql/doctor-terminal.ts';
+import { DOCTOR_ACCESS_MEMBERS } from './engine-sql/doctor-access.ts';
 import { DOCTOR_BRAIN_MEMBERS } from './engine-sql/doctor-brain.ts';
 import { DOCTOR_SYNC_MEMBERS } from './engine-sql/doctor-sync.ts';
 import { DOCTOR_FACTS_TRUST_MEMBERS } from './engine-sql/doctor-facts-trust.ts';
@@ -108,20 +109,24 @@ const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows'
 /**
  * Typed reads that replaced a statement a doctor entry sent through this wrapper's executeRaw, outside the doctor-*.ts
  * member lists: the embedding column check, the entity duplicate finder, the source lists, onboard coverage, derived
- * taint, managed generations, backup maturity, the trust backfill, and the sync hold and pass-row reads.
+ * taint, managed generations, backup maturity, the trust backfill, the sync hold and pass-row reads, and the access and
+ * owner identity reads.
  */
 const DOCTOR_PATH_TYPED_READS: readonly string[] = [
   'readChunkColumnTypes', 'countChunkColumnCoverage', 'listUnretiredPagesBySlugPattern', 'countDistinctInboundLinkers',
   'listNameVariantCandidates', 'readSoleSourceId', 'readFirstSourceId', 'listSourceIds', 'countDatedMeetingPages',
   'entityFeatureCoverage', 'countDerivedRowTaint', 'listPendingGenerationMembers', 'listGenerationOrphanCandidates',
   'readBrainMaturity', 'readOpCheckpointKeys', 'readGitHoldRecords', 'readLiveSyncPassRows',
+  // access_pages_read_by_nobody and owner_identity (core/identity/owner.ts): the member, source, member-link and exact
+  // identity statements they ran through executeRaw.
+  'readAccessMembers', 'listSourceRecords', 'listAccessMemberLinks', 'listExactIdentityCandidates',
 ];
 /** The typed reads (engine-sql/decide-store.ts) that replaced statements this wrapper bounded through executeRaw: decide_health. */
 export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations']);
 /** The write-journal reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`), the liveness round trip (engine-sql/health.ts `pingStore`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
 const DOCTOR_BOUNDED_READS: ReadonlySet<string> = new Set([
   ...JOURNAL_TYPED_READS, 'getWorktreeBinding', 'pingStore', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS,
-  ...DOCTOR_CHECKPOINT_MEMBERS, ...DOCTOR_TERMINAL_MEMBERS, ...DOCTOR_BRAIN_MEMBERS, ...DOCTOR_SYNC_MEMBERS, ...DOCTOR_SRC_MEMBERS, ...DOCTOR_FACTS_TRUST_MEMBERS, ...FENCE_CENSUS_MEMBERS,
+  ...DOCTOR_CHECKPOINT_MEMBERS, ...DOCTOR_TERMINAL_MEMBERS, ...DOCTOR_ACCESS_MEMBERS, ...DOCTOR_BRAIN_MEMBERS, ...DOCTOR_SYNC_MEMBERS, ...DOCTOR_SRC_MEMBERS, ...DOCTOR_FACTS_TRUST_MEMBERS, ...FENCE_CENSUS_MEMBERS,
   ...DOCTOR_PATH_TYPED_READS,
 ]);
 /** Every typed read that replaced a bounded statement and runs under the doctor's read deadline: the journal and doctor reads, the decide reads and the writer-binding read. */
