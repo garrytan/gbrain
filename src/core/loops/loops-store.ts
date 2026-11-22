@@ -16,6 +16,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { throwIfRequestAborted } from '../request-signal.ts';
 
 export type LoopType =
   | 'commitment_owed_by_me'
@@ -125,7 +126,9 @@ export async function upsertOpenLoop(
   engine: BrainEngine,
   loop: OpenLoopUpsert,
 ): Promise<{ id: number; created: boolean; applied: boolean }> {
-  // The statement and its manual-close guard live in engine-sql/open-loops.ts.
+  // The statement and its manual-close guard live in engine-sql/open-loops.ts. Master ran it through executeRaw, which
+  // refuses a request that was already cancelled; the member does not, so the check stays here.
+  throwIfRequestAborted();
   return engine.upsertOpenLoop(loop);
 }
 
@@ -137,6 +140,7 @@ export async function closeOpenLoop(
   status: Exclude<LoopStatus, 'open'>,
   closedBy: string,
 ): Promise<OpenLoopRow | null> {
+  throwIfRequestAborted();
   const row = await engine.closeOpenLoop(sourceId, id, status, closedBy);
   return row ? normalizeRow(row) : null;
 }
@@ -188,6 +192,7 @@ export async function listOpenLoops(
   engine: BrainEngine,
   opts: ListLoopsOpts = {},
 ): Promise<OpenLoopRow[]> {
+  throwIfRequestAborted();
   const rows = await engine.listOpenLoops(opts);
   return rows.map(normalizeRow);
 }
