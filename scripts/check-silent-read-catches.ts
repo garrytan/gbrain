@@ -163,7 +163,8 @@ function markerReason(lines: readonly string[], lineIdx: number, marker: string)
 /**
  * One line's marker reason, parsed with string operations instead of a RegExp built from `marker`
  * (semgrep's detect-non-literal-regexp). Accepts `//` or `/*`, optional whitespace, the marker as a
- * whole word, then either nothing or `: <reason>`, then an optional closing `*\/`.
+ * whole word, then either nothing or `: <reason>`, then an optional closing `*\/`. After a `/*` the
+ * reason stops at that comment's own `*\/`, so code following an empty comment is never read as one.
  */
 function lineMarkerReason(line: string, marker: string): string | null {
   for (let p = 0; p < line.length - 1; p++) {
@@ -171,7 +172,12 @@ function lineMarkerReason(line: string, marker: string): string | null {
     if (opener !== '//' && opener !== '/*') continue;
     const rest = line.slice(p + 2).replace(/^\s+/, '');
     if (!rest.startsWith(marker) || /^\w/.test(rest.slice(marker.length))) continue;
+    // A block comment's reason ends at its own `*/`; the code after it is never part of the reason.
     let tail = rest.slice(marker.length);
+    if (opener === '/*') {
+      const close = tail.indexOf('*/');
+      if (close >= 0) tail = tail.slice(0, close);
+    }
     if (/[\r\u2028\u2029]/.test(tail)) continue;
     const colon = tail.startsWith(':');
     if (colon) tail = tail.slice(1);
@@ -181,7 +187,7 @@ function lineMarkerReason(line: string, marker: string): string | null {
       if (tail.trim() === '') return '';
       continue;
     }
-    return tail.replace(/\*\/\s*$/, '').trim();
+    return tail.trim();
   }
   return null;
 }
