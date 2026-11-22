@@ -463,10 +463,17 @@ impl Store {
     /// A consistent state to read: a snapshot, or the bound transaction's own view (its writes
     /// included).
     pub(crate) fn read(&self) -> Result<Box<dyn KvRead>> {
-        if let Some(tx) = &self.bound {
-            return Ok(tx.reader());
-        }
-        self.kv.snapshot()
+        let read = match &self.bound {
+            Some(tx) => tx.reader(),
+            None => self.kv.snapshot()?,
+        };
+        // A process whose open-time scan could not store the member-access flag reads it as '1'
+        // everywhere, the privacy policies' own reads of it included (`access_flag.rs`).
+        Ok(if self.flag_assumed {
+            access_flag::AssumedFlagRead::wrap(read)
+        } else {
+            read
+        })
     }
 
     /// Runs `f` in a write transaction and commits when it returns `Ok`. An `Err` rolls back.
