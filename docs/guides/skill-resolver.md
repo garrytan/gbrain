@@ -14,7 +14,8 @@ model.
   Setup writes nothing for it otherwise.
 - **Local and deterministic.** Word matching (BM25F) over the catalog's names,
   descriptions, triggers, routing rows and the first 4 KB of each body. No
-  network, no model, no clock, no randomness on the turn path.
+  network, no model, no clock, no randomness on the turn path, unless you turn
+  on the [model picker](#model-picker-opt-in).
 - **No brain needed.** It works on a keyless, repo-less or brainless install,
   on a thin client, and while `gbrain serve` holds the PGLite lock. It never
   reads or writes the brain.
@@ -138,8 +139,9 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   cold machine can take most of 50 ms just to load it (measured: up to about
   50 ms on an idle 4-core machine with an empty file cache, and up to about
   105 ms with the CPU oversubscribed), so the turn's own clock starts once it
-  is ready. At either limit the process prints nothing, exits and commits no
-  session state.
+  is ready. With the [model picker](#model-picker-opt-in) on, the turn also
+  gets the picker's wait (`router_timeout_ms`) plus 100 ms. At either limit
+  the process prints nothing, exits and commits no session state.
 - **Turn settings:** `skills.resolver.top_k` (1-8, default 5),
   `skills.resolver.min_match` (the weakest `match_strength` to suggest;
   default every match), `skills.resolver.top_gate` (0.6 unless set, 0 turns it off; see
@@ -183,7 +185,8 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   Hermes sends no compaction event; the lane resets a session when its history shrinks or on a first turn.
 
 Each turn appends one line (outcome, error code, duration, the worker's load
-time as `worker_ms`, catalogs; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
+time as `worker_ms`, catalogs, and with the model picker on, `router`: who
+answered, the fallback code and the picker's wait; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
 kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
 the recent error codes; it says nothing while the resolver is off. A hook from
@@ -403,8 +406,9 @@ line when a model key is configured.
 What it does on each turn:
 
 - **Where it runs.** Only `gbrain skills resolve` and the Claude Code and Codex
-  hook lanes can call it. The OpenClaw plugin, the Pi extension, Hermes and
-  library callers never do, whatever the config says.
+  hook lanes can call it. The OpenClaw plugin, the Pi extension and Hermes never
+  do, whatever the config says; a library caller does only when it passes
+  `router: true`.
 - **What it reads.** Every skill while the catalogs hold up to 150, else the top
   40 of the word ranking. Descriptions come from `picker.json`, which each
   build writes beside the index (cut at 400 characters). A project catalog's
@@ -421,7 +425,7 @@ What it does on each turn:
 | Setting | Default | |
 |---|---|---|
 | `skills.resolver.router` | `false` | turns the picker on |
-| `skills.resolver.router_model` | Claude Haiku 5.5 with an Anthropic key, else `openai:gpt-6-luna`, else `google:gemini-3.5-flash-lite` | an `anthropic:`, `openai:` or `google:` model id |
+| `skills.resolver.router_model` | Claude Haiku 5.5 with an Anthropic key, else `openai:gpt-6-luna`, else `google:gemini-3.5-flash-lite` | an `anthropic:`, `openai:` or `google:` model id, or `compat:` (below) |
 | `skills.resolver.router_timeout_ms` | 1500 in Claude Code, 2000 elsewhere | the longest a turn waits (200-2500); Claude Code's hook limit is 3 seconds |
 | `skills.resolver.router_max_usd_per_day` | 0.50 | the daily spend cap in USD (0-100; 0 stops every call) |
 
