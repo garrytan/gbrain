@@ -28,6 +28,7 @@
 import { appendFileSync, copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { rangeSecretRefusal, scanRange } from './range-secret-scan.ts';
+import { loadWorkspaceAllowlist } from '../secret-scan-allowlist.ts';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { literalPathspecs } from '../git-env.ts';
 import { git, gitOk, type GitRun } from './git-run.ts';
@@ -1197,7 +1198,8 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
   let stalled = 0;
   let quarantined: QuarantineEntry | undefined;
   const superseded = new Set<string>();
-  const clean = new Set<string>();
+  let clean = new Set<string>(), allow = '';
+  const cleanUnderAllowlist = () => { const now = loadWorkspaceAllowlist(ctx.root).join('\n'); if (now !== allow) [clean, allow] = [new Set(), now]; return clean; };
   const notes = () => ({ ...(quarantined ? { quarantined } : {}), ...(superseded.size ? { superseded: [...superseded] } : {}) });
   const onRemote = (): Published => {
     const tip = fetchTracking(ctx);
@@ -1208,7 +1210,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
     let remoteTip = bound && !isAncestor(ctx.root, bound, candidate) ? bound : null;
     if (!remoteTip) {
       const lease = bound ?? scannedBase;
-      assertNoSecretsInRange({ ...ctx, trackingRef: lease }, candidate, clean);
+      assertNoSecretsInRange({ ...ctx, trackingRef: lease }, candidate, cleanUnderAllowlist());
       const push = lease && !isAncestor(ctx.root, lease, candidate) ? null
         : remoteGit(ctx.root, 'push', ['--no-follow-tags', '--recurse-submodules=no', ...(ctx.keepCheckout ? ['--no-verify'] : []), `--force-with-lease=${ctx.mergeRef}:${lease}`, '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
       if (push?.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
@@ -1228,7 +1230,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
         continue;
       }
     }
-    assertNoSecretsInRange({ ...ctx, trackingRef: remoteTip }, candidate, clean);
+    assertNoSecretsInRange({ ...ctx, trackingRef: remoteTip }, candidate, cleanUnderAllowlist());
     const raw = integrate(ctx.root, candidate, remoteTip);
     const kept = supersededPaths(ctx.root, candidate, remoteTip, raw, resolutions);
     const merged = kept.length
@@ -1297,8 +1299,9 @@ function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]
 
 /**
  * The automatic-publish secret gate: scan what the commits in trackingRef..target add (publish passes the base it leases its
- * push on, under its lock). `clean` holds the commits this publish already scanned clean, so a publish that fetches and merges
- * a moved remote reads each local commit once, not once per attempt (each scan has the whole budget).
+ * push on, under its lock). `clean` holds the commits this publish already scanned clean under the current .gbrain-scan-allow
+ * (publish empties it when that file changes), so a publish that fetches and merges a moved remote reads each local commit
+ * once, not once per attempt (each scan has the whole budget).
  */
 function assertNoSecretsInRange(ctx: Ctx, target: string, clean?: Set<string>): void {
   const listed = new Set<string>();
