@@ -1,7 +1,7 @@
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
 import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
 import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
-import { readConfigTableCached, type ConfigTableRow } from './config-table-cache.ts';
+import { readConfigTableCached, type ConfigTableCacheSlot, type ConfigTableRow } from './config-table-cache.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { mutatePageTag } from './page-state/tags.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
@@ -275,6 +275,8 @@ export class PostgresEngine implements BrainEngine {
   private readonly onPoisoned = (pool: 'read' | 'direct', status: string) => this.poisonedDiscards.record(pool, status);
   /** #6383: stuck-connection retirements and build failures, per engine, with their warn lines. */
   private poolIncidents = new PoolIncidentCounter();
+  /** getAllConfig()'s last table hash and rows (config-table-cache.ts). */
+  private configTableCache: ConfigTableCacheSlot = {};
   private readonly poolHealth = (pool: 'read' | 'direct') => this.poolIncidents.hooks(pool);
   /**
    * #1471: module-singleton OWNERSHIP token. `true` only for the engine whose
@@ -2999,7 +3001,7 @@ export class PostgresEngine implements BrainEngine {
     const held = await requestConfigRows(this);
     if (held) return held;
     // Egress: re-send the table only when its content hash moved (config-table-cache.ts).
-    return this.connRetry(() => readConfigTableCached(this, known => this.sql<ConfigTableRow[]>`
+    return this.connRetry(() => readConfigTableCached(this.configTableCache, known => this.sql<ConfigTableRow[]>`
       WITH h AS (SELECT md5(COALESCE(string_agg(key || chr(1) || value, chr(2) ORDER BY key), '')) AS h FROM config)
       SELECT NULL::text AS key, h AS value FROM h
       UNION ALL SELECT c.key, c.value FROM config c, h WHERE h.h IS DISTINCT FROM ${known}::text`));

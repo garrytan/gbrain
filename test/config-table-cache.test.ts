@@ -1,8 +1,8 @@
 /**
  * Whole-config-table reads re-send the table only when its hash moved.
  * Fails when: an unchanged hash re-sends rows or misreads them, a changed
- * hash serves cached rows, a caller's mutation leaks into the cache, engines
- * share one cache entry, or a result without the hash row is accepted.
+ * hash serves cached rows, a caller's mutation leaks into the cache, two
+ * slots share one entry, or a result without the hash row is accepted.
  */
 import { describe, expect, test } from 'bun:test';
 import { readConfigTableCached, type ConfigTableRow } from '../src/core/config-table-cache.ts';
@@ -27,16 +27,16 @@ function fakeTable(initial: Record<string, string>) {
 
 describe('readConfigTableCached', () => {
   test('an unchanged table sends no rows; a write is seen on the next read', async () => {
-    const owner = {};
+    const slot = {};
     const t = fakeTable({ a: '1', b: '2' });
-    expect(await readConfigTableCached(owner, t.run)).toEqual({ a: '1', b: '2' });
-    expect(await readConfigTableCached(owner, t.run)).toEqual({ a: '1', b: '2' });
+    expect(await readConfigTableCached(slot, t.run)).toEqual({ a: '1', b: '2' });
+    expect(await readConfigTableCached(slot, t.run)).toEqual({ a: '1', b: '2' });
     t.write('a', '9');
-    expect(await readConfigTableCached(owner, t.run)).toEqual({ a: '9', b: '2' });
+    expect(await readConfigTableCached(slot, t.run)).toEqual({ a: '9', b: '2' });
     expect(t.sent).toEqual([2, 0, 2]);
   });
 
-  test('callers get copies, and each engine object has its own cache', async () => {
+  test('callers get copies, and each slot has its own cache', async () => {
     const t = fakeTable({ a: '1' });
     const one = {}, two = {};
     const first = await readConfigTableCached(one, t.run);
@@ -48,5 +48,8 @@ describe('readConfigTableCached', () => {
 
   test('a result without the hash row is refused, not cached as empty', async () => {
     await expect(readConfigTableCached({}, async () => [{ key: 'a', value: '1' }])).rejects.toThrow('no hash row');
+    const slot = {};
+    await expect(readConfigTableCached(slot, async () => [{ key: 'a', value: '1' }])).rejects.toThrow();
+    expect(slot).toEqual({});
   });
 });
