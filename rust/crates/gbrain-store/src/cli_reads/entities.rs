@@ -1,7 +1,7 @@
 //! Entity and mention reads the CLI made through `executeRaw` (`src/core/engine-sql/entity-reads.ts`).
 //!
-//! The store keeps no mention-pass state (`mention_index_status`, `page_mention_state`): no source
-//! has a pass time, and every live page is due, as on a PGLite brain where the pass never ran.
+//! The mention-pass reads use the pass's state (`mention_state.rs`): the status rows' pass times and
+//! each page's mention and alias state.
 //! Frontmatter values are read as PostgreSQL's `->>` reads them (see [`arrow_text`]).
 
 use crate::Store;
@@ -39,14 +39,16 @@ pub struct MentionIndexStatusRow {
     pub policy_fingerprint: Option<String>,
 }
 
-/// `countMentionDueSince(sourceId, since, mentionVersion)`: the version does not matter, since no
-/// page has mention state.
+/// `countMentionDueSince(sourceId, since, mentionVersion)`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MentionDueSinceQuery {
     pub source_id: String,
     /// A `timestamptz` text, or `-infinity` for no lower bound.
     pub since: String,
+    /// The extractor version a page's state must hold to count as scanned.
+    #[serde(default)]
+    pub mention_version: i64,
 }
 
 /// `recountMentionIndexStatus(sourceId, recount)`.
@@ -59,12 +61,25 @@ pub struct MentionIndexRecount {
     pub expected_fingerprint: Option<String>,
 }
 
-/// `countPagesDueForMentions(q)`: only the scope matters, since every page is due.
+/// `countPagesDueForMentions(q)`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MentionDueQuery {
     #[serde(default)]
     pub source_id: Option<String>,
+    /// The extractor version a page's mention state must carry to be current.
+    #[serde(default)]
+    pub mention_version: i64,
+    /// Also count pages of these types whose derived aliases are behind their content or `version`.
+    #[serde(default)]
+    pub aliases: Option<MentionDueAliases>,
+}
+
+/// `MentionDueQuery.aliases`.
+#[derive(Debug, Default, Deserialize)]
+pub struct MentionDueAliases {
+    pub types: Vec<String>,
+    pub version: i64,
 }
 
 /// `readIdentitySiblingCandidates(sourceId, q)`.
@@ -254,25 +269,50 @@ pub struct InboundLinkerCountRow {
 }
 
 impl Store {
-    /// `readMentionLastPass(sourceId?)`: the last mention pass time. The store records no pass, so
-    /// it is always `None`.
-    pub fn read_mention_last_pass(&self, _source_id: Option<&str>) -> Result<Option<String>> {
-        Ok(None)
+    /// `readMentionLastPass(sourceId?)`: the newest pass time over every source or one source, ISO
+    /// UTC in whole seconds (`to_char(..., 'YYYY-MM-DD"T"HH24:MI:SS"Z"')` truncates); `None` when no
+    /// pass ran.
+    pub fn read_mention_last_pass(&self, source_id: Option<&str>) -> Result<Option<String>> {
+        let read = self.read()?;
+        let last = crate::mention_state::all_statuses(&*read)?
+            .into_iter()
+            .filter(|(s, _)| source_id.is_none_or(|want| s == want))
+            .filter_map(|(_, r)| r.last_pass_at_us)
+            .max();
+        Ok(last.map(|us| {
+            let text = iso(us);
+            format!("{}Z", text.split('.').next().unwrap_or(&text))
+        }))
     }
 
-    /// `readMentionIndexStatus(sourceIds)`: the status rows of those sources. The store keeps no
-    /// mention-index status, so it is always empty and mention coverage counts each source's live
-    /// pages, as on a PGLite brain where the pass never ran.
+    /// `readMentionIndexStatus(sourceIds)`: the status rows of those sources (the pass's state,
+    /// `mention_state.rs`), in source byte order; a source the pass never ran on has no row.
     pub fn read_mention_index_status(
         &self,
-        _q: &MentionIndexStatusQuery,
+        q: &MentionIndexStatusQuery,
     ) -> Result<Vec<MentionIndexStatusRow>> {
-        Ok(Vec::new())
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for (source_id, r) in crate::mention_state::all_statuses(&*read)? {
+            if !q.source_ids.contains(&source_id) {
+                continue;
+            }
+            out.push(MentionIndexStatusRow {
+                source_id,
+                state: r.state,
+                pending: r.pending,
+                counted_at: r.counted_at_us.map(iso),
+                last_pass_at: r.last_pass_at_us.map(iso),
+                policy_fingerprint: r.policy_fingerprint,
+            });
+        }
+        Ok(out)
     }
 
-    /// `countMentionDueSince(sourceId, since)`: the source's live pages with `updated_at >= since`.
-    /// With no mention state every page is unscanned. `-infinity` has no bound; `infinity` matches
-    /// nothing; other text must be the ISO time coverage passes (`toIso`), or the read is refused.
+    /// `countMentionDueSince(sourceId, since, mentionVersion)`: the source's live pages with
+    /// `updated_at >= since` and no mention state at the page's content and `mention_version`.
+    /// `-infinity` has no bound; `infinity` matches nothing; other text must be the ISO time
+    /// coverage passes (`toIso`), or the read is refused.
     pub fn count_mention_due_since(&self, q: &MentionDueSinceQuery) -> Result<u64> {
         let since = match q.since.trim() {
             "-infinity" => i64::MIN,
@@ -284,31 +324,65 @@ impl Store {
             })?,
         };
         let read = self.read()?;
-        let n = all_pages(&*read)?
-            .iter()
-            .filter(|p| p.deleted_at_us.is_none() && p.source_id == q.source_id)
-            .filter(|p| p.updated_at_us >= since)
-            .count();
-        Ok(n as u64)
+        let mut n = 0u64;
+        for p in all_pages(&*read)? {
+            if p.deleted_at_us.is_some() || p.source_id != q.source_id || p.updated_at_us < since {
+                continue;
+            }
+            let state = crate::mention_state::read_page_state(&*read, p.id)?;
+            if crate::mention_state::mention_due(state.as_ref(), &p, q.mention_version) {
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
-    /// `recountMentionIndexStatus(sourceId, recount)`: the SQL updates the source's status row
-    /// only while its fingerprint is `expected_fingerprint`. The store keeps no status rows, so the
-    /// update matches nothing and nothing is written; it returns `null` as the engines do.
-    pub fn recount_mention_index_status(&self, _q: &MentionIndexRecount) -> Result<()> {
-        Ok(())
+    /// `recountMentionIndexStatus(sourceId, recount)`: saves the recount on the source's status
+    /// row (pending, counted_at, the fingerprint; `complete` becomes `pending` above 0) while its
+    /// fingerprint is still `expected_fingerprint`; a source with no row is untouched.
+    pub fn recount_mention_index_status(&self, q: &MentionIndexRecount) -> Result<()> {
+        let now = crate::env::transaction_clock::transaction_now()
+            .unwrap_or_else(|| self.env.now_micros());
+        self.write(|tx| {
+            let Some(mut row) = crate::mention_state::read_status(&*tx, &q.source_id)? else {
+                return Ok(());
+            };
+            if row.policy_fingerprint != q.expected_fingerprint {
+                return Ok(());
+            }
+            row.pending = q.pending;
+            row.counted_at_us = Some(now);
+            row.policy_fingerprint = Some(q.fingerprint.clone());
+            row.updated_at_us = now;
+            if row.state == "complete" && q.pending > 0 {
+                row.state = "pending".to_string();
+            }
+            crate::mention_state::put_status(tx, &q.source_id, &row)
+        })
     }
 
     /// `countPagesDueForMentions(q)`: the live pages in the scope (every page when `source_id` is
-    /// `None`), all of them due because no page has mention state.
+    /// `None`) with no mention state or state behind the page's content or `mention_version`; with
+    /// `aliases`, also the pages of its types whose derived aliases are behind.
     pub fn count_pages_due_for_mentions(&self, q: &MentionDueQuery) -> Result<u64> {
         let read = self.read()?;
-        let n = all_pages(&*read)?
-            .iter()
-            .filter(|p| p.deleted_at_us.is_none())
-            .filter(|p| q.source_id.as_deref().is_none_or(|s| p.source_id == s))
-            .count();
-        Ok(n as u64)
+        let mut n = 0u64;
+        for p in all_pages(&*read)? {
+            if p.deleted_at_us.is_some() || q.source_id.as_deref().is_some_and(|s| p.source_id != s)
+            {
+                continue;
+            }
+            let state = crate::mention_state::read_page_state(&*read, p.id)?;
+            let due = crate::mention_state::mention_due(state.as_ref(), &p, q.mention_version)
+                || q.aliases.as_ref().is_some_and(|a| {
+                    a.types.contains(&p.page_type)
+                        && crate::mention_state::alias_due(state.as_ref(), &p, a.version)
+                });
+            if due {
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
     /// `readIdentitySiblingCandidates(sourceId, q)`: live pages of the source whose type is one of

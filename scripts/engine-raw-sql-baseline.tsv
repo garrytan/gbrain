@@ -82,11 +82,9 @@ src/commands/engine-status.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
 src/commands/extract-conversation-facts.ts	execute_raw	1
 src/commands/extract-explain.ts	execute_raw	1
-src/commands/extract-mentions-explain.ts	execute_raw	6
 src/commands/extract-stale-options.ts	execute_raw	1
 src/commands/extract-status.ts	execute_raw	1
 src/commands/extract-timeline-db.ts	execute_raw	2
-src/commands/extract.ts	execute_raw	2
 src/commands/frontmatter-install-hook.ts	execute_raw	3
 src/commands/git.ts	execute_raw	1	GST-2988 PR 2 gbrain git redact-unpushed: reads sources.local_path for --source; branched before the #9641 ratchet; no typed engine method for a source's local path exists yet
 src/commands/google-attachments.ts	execute_raw	3
@@ -409,7 +407,7 @@ src/core/owned-folder/status.ts	execute_raw	1	GST-3022 owned folders, no typed e
 src/core/page-body/ingest.ts	execute_raw	1
 src/core/page-body/projection.ts	execute_raw	3
 src/core/page-body/rechunk.ts	execute_raw	7
-src/core/page-body/segment-derive.ts	execute_raw	29
+src/core/page-body/segment-derive.ts	execute_raw	28
 src/core/page-body/segment-facts.ts	execute_raw	1
 src/core/page-body/segment-ledger.ts	execute_raw	1
 src/core/page-body/segment-rewrite.ts	execute_raw	8
@@ -550,7 +548,7 @@ src/core/persistence/refresh-barrier.ts	execute_raw	4
 src/core/persistence/refusal-breaker.ts	execute_raw	1
 src/core/persistence/resolve-paths.ts	execute_raw	5
 src/core/persistence/rows-behind.ts	execute_raw	4
-src/core/persistence/searchable.ts	execute_raw	2
+src/core/persistence/searchable.ts	execute_raw	1
 src/core/persistence/segmented-apply.ts	execute_raw	7
 src/core/persistence/skill-activation.ts	execute_raw	11
 src/core/persistence/soak-counters.ts	execute_raw	3

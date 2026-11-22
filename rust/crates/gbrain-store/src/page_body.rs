@@ -2076,60 +2076,43 @@ impl Store {
     /// occurrence); a replaced row keeps its `createdAt`. Refuses the batch on an unknown page,
     /// kind or state, a negative version, a hash that is not 32 bytes, or a key repeated in it.
     pub fn upsert_segment_derivations(&self, rows: &[SegmentDerivationInput]) -> Result<()> {
-        let mut prepared = Vec::with_capacity(rows.len());
-        for row in rows {
-            let segment = from_hex(
-                &row.segment_sha256,
-                "upsertSegmentDerivations segmentSha256",
-            )?;
-            let context = from_hex(&row.context_hash, "upsertSegmentDerivations contextHash")?;
-            int4(row.version, "upsertSegmentDerivations version")?;
-            if !DERIVATION_KINDS.contains(&row.kind.as_str())
-                || !DERIVATION_STATES.contains(&row.state.as_str())
-                || row.version < 0
-                || segment.len() != 32
-                || context.len() != 32
-            {
-                return Err(violation(format!(
-                    "new row for relation \"page_segment_derivations\" violates check constraint (page {}, kind \"{}\", occurrence {})",
-                    row.page_id, row.kind, row.occurrence_id
-                )));
-            }
-            prepared.push((row, to_hex(&segment), to_hex(&context)));
-        }
+        let prepared = prepare_derivations(rows)?;
         if prepared.is_empty() {
             return Ok(());
         }
         let now = self.env.now_micros();
+        self.write(|tx| put_derivations(tx, &prepared, now))
+    }
+
+    /// `storeSegmentDerivationsIfLive(pageId, generation, rows)`: the derive pass's conditional store
+    /// (`segment-derive.ts` storeRuns): the rows are upserted as `upsertSegmentDerivations` does only
+    /// while the page is live, segmented and at body `generation`; returns how many rows were written
+    /// (0 when the page moved, as the SQL's `RETURNING 1` over an empty `live` set).
+    pub fn store_segment_derivations_if_live(
+        &self,
+        page_id: i64,
+        generation: i64,
+        rows: &[SegmentDerivationInput],
+    ) -> Result<u64> {
+        let prepared = prepare_derivations(rows)?;
+        if prepared.is_empty() {
+            return Ok(0);
+        }
+        let Some(id) = page_u64(page_id) else {
+            return Ok(0);
+        };
+        let now = self.env.now_micros();
         self.write(|tx| {
-            let mut seen = HashSet::new();
-            for (row, segment, context) in &prepared {
-                let Some(page_id) = page_u64(row.page_id).filter(|id| matches!(read_page_by_id(&*tx, *id), Ok(Some(_)))) else {
-                    return Err(violation(format!(
-                        "insert into \"page_segment_derivations\" violates foreign key: page {} does not exist",
-                        row.page_id
-                    )));
-                };
-                if !seen.insert((page_id, row.kind.clone(), row.occurrence_id)) {
-                    return Err(violation(
-                        "ON CONFLICT DO UPDATE command cannot affect row a second time (a derivation key repeats in the batch)",
-                    ));
-                }
-                let key = derivation_key(page_id, &row.kind, row.occurrence_id);
-                let created = get_json::<DerivationRecord>(&*tx, &key)?.map_or(now, |old| old.created_at_us);
-                let record = DerivationRecord {
-                    pipeline_version: row.version,
-                    segment_sha256: segment.clone(),
-                    context_hash: context.clone(),
-                    state: row.state.clone(),
-                    output: row.output.clone(),
-                    receipt: row.receipt.clone(),
-                    created_at_us: created,
-                    updated_at_us: now,
-                };
-                put_json(tx, &key, &record)?;
+            let live = read_page_by_id(&*tx, id)?.is_some_and(|p| p.deleted_at_us.is_none());
+            let state = read_body_state(&*tx, id)?;
+            if !live
+                || !is_segmented(state.as_ref())
+                || state.is_none_or(|s| s.body_generation != generation)
+            {
+                return Ok(0);
             }
-            Ok(())
+            put_derivations(tx, &prepared, now)?;
+            Ok(prepared.len() as u64)
         })
     }
 
@@ -4028,4 +4011,71 @@ mod segment_chunk_tests {
             1
         );
     }
+}
+
+type PreparedDerivation<'a> = (&'a SegmentDerivationInput, String, String);
+
+/// The rows of `upsertSegmentDerivations`, checked: each hash decoded, kind, state and version valid.
+fn prepare_derivations(rows: &[SegmentDerivationInput]) -> Result<Vec<PreparedDerivation<'_>>> {
+    let mut prepared = Vec::with_capacity(rows.len());
+    for row in rows {
+        let segment = from_hex(
+            &row.segment_sha256,
+            "upsertSegmentDerivations segmentSha256",
+        )?;
+        let context = from_hex(&row.context_hash, "upsertSegmentDerivations contextHash")?;
+        int4(row.version, "upsertSegmentDerivations version")?;
+        if !DERIVATION_KINDS.contains(&row.kind.as_str())
+            || !DERIVATION_STATES.contains(&row.state.as_str())
+            || row.version < 0
+            || segment.len() != 32
+            || context.len() != 32
+        {
+            return Err(violation(format!(
+                "new row for relation \"page_segment_derivations\" violates check constraint (page {}, kind \"{}\", occurrence {})",
+                row.page_id, row.kind, row.occurrence_id
+            )));
+        }
+        prepared.push((row, to_hex(&segment), to_hex(&context)));
+    }
+    Ok(prepared)
+}
+
+/// Upserts checked derivation rows in the caller's write transaction; a replaced row keeps its `created_at`.
+fn put_derivations(
+    tx: &mut dyn KvWrite,
+    prepared: &[PreparedDerivation<'_>],
+    now: i64,
+) -> Result<()> {
+    let mut seen = HashSet::new();
+    for (row, segment, context) in prepared {
+        let Some(page_id) =
+            page_u64(row.page_id).filter(|id| matches!(read_page_by_id(&*tx, *id), Ok(Some(_))))
+        else {
+            return Err(violation(format!(
+                "insert into \"page_segment_derivations\" violates foreign key: page {} does not exist",
+                row.page_id
+            )));
+        };
+        if !seen.insert((page_id, row.kind.clone(), row.occurrence_id)) {
+            return Err(violation(
+                "ON CONFLICT DO UPDATE command cannot affect row a second time (a derivation key repeats in the batch)",
+            ));
+        }
+        let key = derivation_key(page_id, &row.kind, row.occurrence_id);
+        let created =
+            get_json::<DerivationRecord>(&*tx, &key)?.map_or(now, |old| old.created_at_us);
+        let record = DerivationRecord {
+            pipeline_version: row.version,
+            segment_sha256: segment.clone(),
+            context_hash: context.clone(),
+            state: row.state.clone(),
+            output: row.output.clone(),
+            receipt: row.receipt.clone(),
+            created_at_us: created,
+            updated_at_us: now,
+        };
+        put_json(tx, &key, &record)?;
+    }
+    Ok(())
 }

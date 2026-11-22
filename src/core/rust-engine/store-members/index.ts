@@ -3,6 +3,7 @@
  * prototype (rust-engine.ts); a member in `RUST_ENGINE_MEMBERS` that is not here refuses with `engine_capability_missing`.
  */
 import type { BrainEngine } from '../../engine.ts';
+import * as mentionPass from './mention-pass.ts';
 import * as chunks from './chunks.ts';
 import * as config from './config.ts';
 import * as graph from './graph.ts';
@@ -176,6 +177,8 @@ import * as factsBackstop from './facts-backstop.ts';
 const { readBrainMode: _brainModeHelper, ...writerReleaseMembers } = writerRelease;
 
 export const STORE_MEMBERS = {
+  // The mention pass and the gazetteer, extract snapshot and explain reads (rust/docs/store/mention-state.md).
+  ...mentionPass,
   initSchema,
   ...config, ...sources, ...tags, ...versions, ...chunks, ...search, ...links, ...graph, ...timeline,
   getPage: pages.getPage, readPageSnapshot: pages.readPageSnapshot, putPage: pages.putPage, deletePage: pages.deletePage,

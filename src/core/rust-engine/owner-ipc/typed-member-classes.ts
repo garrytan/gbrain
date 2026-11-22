@@ -16,6 +16,34 @@
 
 /** Typed members that only read (lookups, counts, listings, probes, and the planning reads of a purge or a relink). */
 export const OWNER_IPC_TYPED_READS: readonly string[] = [
+  // The mention pass's and the gazetteer, extract snapshot and explain reads (engine-sql/mention-pass.ts, mention-reads.ts).
+  // readMentionPageRevisions and readMentionGenerations take row locks (FOR SHARE) only, so they stay reads.
+  'readSegmentedPageSealed',
+  'listMentionSourceIds',
+  'listMentionLinkOrigins',
+  'listStaleDerivedAliasSlugs',
+  'listAliasDuePages',
+  'listDerivedAliasRows',
+  'readMentionPageRevisions',
+  'listMentionCandidatePages',
+  'listGazetteerEntryKeys',
+  'listMentionLinkersOfTargets',
+  'readMentionGenerations',
+  'listMentionDuePages',
+  'listPageOutLinks',
+  'readMentionStatusStates',
+  'readMentionPolicyFingerprints',
+  'listLivePageSourceIds',
+  'listGazetteerPages',
+  'listGazetteerAliases',
+  'readPageStampTimes',
+  'readPageRevisionForShare',
+  'readExplainPage',
+  'readExplainScanPage',
+  'countMentionLinksTo',
+  'readPageNameText',
+  'listFrontmatterAliasNorms',
+  'listRejectedDeclarationPages',
   'closedLoopWithActiveFact', 'codeChunksExist', 'computeFactFingerprints', 'countActiveConversationFacts',
   'countAtomFacts', 'countChunkVectorCoverage', 'countClaimConflictPairs', 'countCoalescibleSynthJobs',
   'countCodeChunkPages', 'countConversationFactsOutsideWindows', 'countConversationPagesToExtract',
@@ -344,6 +372,21 @@ const nothingLock = 'nothing: the lock is released when the call ends, so runnin
 
 /** Typed writes and the read that confirms each. */
 export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> = {
+  // The mention pass's writes (engine-sql/mention-pass.ts). The two advisory locks take nothing on the rust store.
+  storeSegmentDerivationsIfLive: 'readSegmentDerivations for that page (the rows are there only when the page was live at that generation)',
+  writeMentionIndexStatus: 'readMentionStatusStates and readMentionPolicyFingerprints for that source (a bumped generation shows in readMentionGenerations)',
+  lockMentionSources: nothingLock,
+  lockMentionEntries: nothingLock,
+  deleteSourceMentionLinks: 'listMentionLinkOrigins for that source (no plain mention link left on the origins it deleted)',
+  clearMentionSourceIndex: 'listGazetteerEntryKeys and listDerivedAliasRows for that source (both empty)',
+  deleteDerivedAliasesForSlugs: 'listDerivedAliasRows for those slugs',
+  insertDerivedAliasRows: 'listDerivedAliasRows for those slugs',
+  upsertPageAliasState: 'listAliasDuePages for that source (a page whose state was written is no longer due)',
+  applyGazetteerEntryChanges: 'listGazetteerEntryKeys for that source',
+  resetMentionRevisions: 'listMentionDuePages for those sources or pages (every reset page is due)',
+  deleteLinksById: 'listPageOutLinks for the pages the links left',
+  upsertPageMentionState: 'listMentionDuePages for that source (a page whose state was written is no longer due)',
+  resetSourceMentionIndexRevisions: 'listMentionDuePages and listAliasDuePages for that source',
   // Measured by what each member executes, not by its name: it marks the unread messages read (engine-sql/jobs-queue.ts:467,
   // rust jobs/inbox.rs `read_job_inbox`). No read shows another message's read mark; readChildCompletions lists the child_done
   // messages whether or not they were marked read, so a lost answer still leaves those recoverable.

@@ -316,6 +316,9 @@ import { searchKeywordCJK } from './engine-sql/cjk-search.ts';
 import * as titlesImpl from './engine-sql/titles.ts';
 import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import * as entityReadsImpl from './engine-sql/entity-reads.ts';
+import * as mentionPassImpl from './engine-sql/mention-pass.ts';
+import * as mentionReadsImpl from './engine-sql/mention-reads.ts';
+import * as segmentDeriveStoreImpl from './engine-sql/segment-derive-store.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
 import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
@@ -2550,6 +2553,46 @@ export class PGLiteEngine implements BrainEngine {
   countLivePagesInSource(sourceId: string) { return entityReadsImpl.countLivePagesInSource(unscopedExecutor(this.engineSql, 'entities: live-page count ran unscoped through executeRaw'), sourceId); }
   countMentionDueSince(sourceId: string, since: string, mentionVersion: number) { return entityReadsImpl.countMentionDueSince(unscopedExecutor(this.engineSql, 'entities: mention due-since count ran unscoped through executeRaw'), sourceId, since, mentionVersion); }
   recountMentionIndexStatus(sourceId: string, recount: entityReadsImpl.MentionIndexRecount) { return entityReadsImpl.recountMentionIndexStatus(this.engineSql, sourceId, recount); }
+  readSegmentedPageSealed(sourceId: string, slug: string) { return segmentDeriveStoreImpl.readSegmentedPageSealed(this, sourceId, slug); }
+  storeSegmentDerivationsIfLive(pageId: number, generation: number, rows: readonly segmentDeriveStoreImpl.SegmentDerivationStoreRow[]) { return segmentDeriveStoreImpl.storeSegmentDerivationsIfLive(this, pageId, generation, rows); }
+  listMentionSourceIds() { return mentionPassImpl.listMentionSourceIds(this); }
+  writeMentionIndexStatus(sourceId: string, patch: mentionPassImpl.MentionStatusPatch) { return mentionPassImpl.writeMentionIndexStatus(this, sourceId, patch); }
+  lockMentionSources(sourceIds: readonly string[], shared: boolean) { return mentionPassImpl.lockMentionSources(this, sourceIds, shared); }
+  listMentionLinkOrigins(sourceId: string) { return mentionPassImpl.listMentionLinkOrigins(this, sourceId); }
+  deleteSourceMentionLinks(sourceId: string, origins: readonly string[] | null) { return mentionPassImpl.deleteSourceMentionLinks(this, sourceId, origins); }
+  clearMentionSourceIndex(sourceId: string) { return mentionPassImpl.clearMentionSourceIndex(this, sourceId); }
+  listStaleDerivedAliasSlugs(sourceId: string, types: readonly string[]) { return mentionPassImpl.listStaleDerivedAliasSlugs(this, sourceId, types); }
+  deleteDerivedAliasesForSlugs(sourceId: string, slugs: readonly string[]) { return mentionPassImpl.deleteDerivedAliasesForSlugs(this, sourceId, slugs); }
+  listAliasDuePages(sourceId: string, types: readonly string[], after: number, version: number, limit: number) { return mentionPassImpl.listAliasDuePages(this, sourceId, types, after, version, limit); }
+  listDerivedAliasRows(sourceId: string, slugs: readonly string[]) { return mentionPassImpl.listDerivedAliasRows(this, sourceId, slugs); }
+  readMentionPageRevisions(ids: readonly number[], opts: { forShare: boolean }) { return mentionPassImpl.readMentionPageRevisions(this, ids, opts); }
+  insertDerivedAliasRows(sourceId: string, rows: readonly mentionPassImpl.DerivedAliasInsertRow[]) { return mentionPassImpl.insertDerivedAliasRows(this, sourceId, rows); }
+  upsertPageAliasState(sourceId: string, pages: ReadonlyArray<{ id: number; revision: string }>, version: number) { return mentionPassImpl.upsertPageAliasState(this, sourceId, pages, version); }
+  listMentionCandidatePages(sourceIds: readonly string[], after: number, limit: number, patterns: readonly string[] | null) { return mentionPassImpl.listMentionCandidatePages(this, sourceIds, after, limit, patterns); }
+  listGazetteerEntryKeys(sourceId: string) { return mentionPassImpl.listGazetteerEntryKeys(this, sourceId); }
+  listMentionLinkersOfTargets(sourceId: string, slugs: readonly string[]) { return mentionPassImpl.listMentionLinkersOfTargets(this, sourceId, slugs); }
+  lockMentionEntries(sourceId: string) { return mentionPassImpl.lockMentionEntries(this, sourceId); }
+  applyGazetteerEntryChanges(sourceId: string, removed: readonly mentionPassImpl.GazetteerEntryKeyRow[], added: readonly mentionPassImpl.GazetteerEntryKeyRow[]) { return mentionPassImpl.applyGazetteerEntryChanges(this, sourceId, removed, added); }
+  resetMentionRevisions(by: { sourceIds: readonly string[] } | { pageIds: readonly number[] }) { return mentionPassImpl.resetMentionRevisions(this, by); }
+  readMentionGenerations(sourceIds: readonly string[], lock: boolean) { return mentionPassImpl.readMentionGenerations(this, sourceIds, lock); }
+  listMentionDuePages(sourceId: string, version: number, after: number, limit: number) { return mentionPassImpl.listMentionDuePages(this, sourceId, version, after, limit); }
+  listPageOutLinks(ids: readonly number[]) { return mentionPassImpl.listPageOutLinks(this, ids); }
+  deleteLinksById(ids: readonly number[]) { return mentionPassImpl.deleteLinksById(this, ids); }
+  upsertPageMentionState(sourceId: string, pages: ReadonlyArray<{ id: number; revision: string }>, version: number, generation: string) { return mentionPassImpl.upsertPageMentionState(this, sourceId, pages, version, generation); }
+  readMentionStatusStates(sourceIds: readonly string[]) { return mentionPassImpl.readMentionStatusStates(this, sourceIds); }
+  readMentionPolicyFingerprints(sourceIds: readonly string[]) { return mentionPassImpl.readMentionPolicyFingerprints(this, sourceIds); }
+  resetSourceMentionIndexRevisions(sourceId: string) { return mentionPassImpl.resetSourceMentionIndexRevisions(this, sourceId); }
+  listLivePageSourceIds() { return mentionReadsImpl.listLivePageSourceIds(this); }
+  listGazetteerPages(types: readonly string[], handleKeys: readonly [string, string, string, string]) { return mentionReadsImpl.listGazetteerPages(this, types, handleKeys); }
+  listGazetteerAliases(types: readonly string[]) { return mentionReadsImpl.listGazetteerAliases(this, types); }
+  readPageStampTimes(slugs: readonly string[], sourceIds: readonly string[]) { return mentionReadsImpl.readPageStampTimes(this, slugs, sourceIds); }
+  readPageRevisionForShare(sourceId: string, slug: string) { return mentionReadsImpl.readPageRevisionForShare(this, sourceId, slug); }
+  readExplainPage(sourceId: string, slug: string) { return mentionReadsImpl.readExplainPage(this, sourceId, slug); }
+  readExplainScanPage(sourceId: string, slug: string, version: number) { return mentionReadsImpl.readExplainScanPage(this, sourceId, slug, version); }
+  countMentionLinksTo(pageId: number, sourceId: string, targets: readonly string[]) { return mentionReadsImpl.countMentionLinksTo(this, pageId, sourceId, targets); }
+  readPageNameText(sourceId: string, slug: string) { return mentionReadsImpl.readPageNameText(this, sourceId, slug); }
+  listFrontmatterAliasNorms(sourceId: string, slug: string) { return mentionReadsImpl.listFrontmatterAliasNorms(this, sourceId, slug); }
+  listRejectedDeclarationPages(sourceId: string, types: readonly string[], pattern: string) { return mentionReadsImpl.listRejectedDeclarationPages(this, sourceId, types, pattern); }
   countPagesDueForMentions(q: entityReadsImpl.MentionDueQuery) { return entityReadsImpl.countPagesDueForMentions(unscopedExecutor(this.engineSql, 'entities: mention-due count ran unscoped through executeRaw'), q); }
   readIdentitySiblingCandidates(sourceId: string, q: entityReadsImpl.SiblingCandidateQuery) { return entityReadsImpl.readIdentitySiblingCandidates(unscopedExecutor(this.engineSql, 'entities: sibling candidates ran unscoped through executeRaw'), sourceId, q); }
   findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }) { return entityReadsImpl.findExactSlug(unscopedExecutor(this.engineSql, 'entities: exact slug ran unscoped through executeRaw'), sourceId, slugs, opts); }
