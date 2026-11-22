@@ -50,7 +50,7 @@ export interface PageOutLinkRow { id: number; from_page_id: number; to_slug: str
 
 /** Every source id, by id (pass.ts sourcesInScope). */
 export function listMentionSourceIds(raw: MentionRaw): Promise<Array<{ id: string }>> {
-  return raw.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id');
+  return raw.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id COLLATE "C"');
 }
 
 /** Insert or update one source's status row (pass.ts writeStatus). */

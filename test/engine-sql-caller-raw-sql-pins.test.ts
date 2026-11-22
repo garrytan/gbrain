@@ -92,9 +92,11 @@ const PINS: Pin[] = [
   },
   // from the callers at 0af1a6ecf0 (a literal's own variables are set as the caller set them).
   {
-    from: 'src/core/mentions/pass.ts:148 (at 0af1a6ecf0)',
+    // Not the caller's text: `COLLATE "C"` was added so a Postgres server with a linguistic locale orders the ids in byte
+    // order, as PGLite and the Rust engine do (the sources id byte-order guard, test/source-id-order-collation.test.ts).
+    from: 'src/core/mentions/pass.ts:148 (at 0af1a6ecf0), plus COLLATE "C"',
     case: { method: 'listMentionSourceIds', variant: 'default', run: e => e.listMentionSourceIds() },
-    texts: () => { return ['SELECT id FROM sources ORDER BY id']; },
+    texts: () => { return ['SELECT id FROM sources ORDER BY id COLLATE "C"']; },
   },
   {
     from: 'src/core/mentions/pass.ts:162 (at 0af1a6ecf0)',
