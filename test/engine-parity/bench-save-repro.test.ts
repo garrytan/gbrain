@@ -3,8 +3,8 @@
  * source a user can save to commits on every engine and never stays queued.
  *
  * Fail-first: on rust-engine/main 0ce95bbf7f and rust-engine/bound-write-rust 3d53109dc0 every case here fails on the
- * Rust arm only. Each fix lane keeps its case as written and makes it pass on Rust. Until then cases 2 and 3 carry a
- * `rustPendingStop` pin (harness.ts): on Rust the write ends write_pending behind exactly the named typed refusal. The
+ * Rust arm only. Each fix lane keeps its case as written and makes it pass on Rust. Until then case 3 carries a
+ * `rustPendingStop` pin (case 2's pin is gone: the Rust createVersion member serves the preimage option, so the write commits) (harness.ts): on Rust the write ends write_pending behind exactly the named typed refusal. The
  * pin fails when that refusal changes or goes away, so the owner's fix lane removes it.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -81,9 +81,7 @@ describe('the bench save failures', () => {
     }
   });
 
-  parityTest('case 2: a forced update of an existing page commits, and a later write behind it commits', { methods: ['createVersion', 'getPage'],
-    rustPendingStop: { capability: 'page_versions', member: 'createVersion (option preimage)', site: 'src/core/import-file.ts createVersion preimage',
-      owner: 'lane 2b, rust-engine/version-preimage-rust', due: '5 PM PST Nov 22' } }, async (engine) => {
+  parityTest('case 2: a forced update of an existing page commits, and a later write behind it commits', { methods: ['createVersion', 'getPage'] }, async (engine) => {
     try {
       const created = await run(engine, 'put_page', { slug: 'people/carol-example', content: person('v1') });
       const updated = await run(engine, 'put_page', { slug: 'people/carol-example', content: person('v2'), force: true });

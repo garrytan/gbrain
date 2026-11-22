@@ -8,7 +8,7 @@
  *  - Contract: two live sources registered on one path resolve to `default`, else the lowest id in byte order, on
  *    every engine and every Postgres locale; an archived source never wins; a source registered through a symlink
  *    resolves from the real path, and two such sources fail closed; the migration copy reads `default` first, then
- *    ids in byte order, and a Rust source refuses the raw read; a repair preview hashes the incarnation rows in byte
+ *    ids in byte order, on a Rust source too (readMigrationRows is a typed member the store serves); a repair preview hashes the incarnation rows in byte
  *    order, and an apply that names a hash printed in the old locale order is refused with preview_changed ("Re-run the preview").
  *  - Regression: a resolver or copy that breaks the id tie in the server locale (an en_US.utf8 Postgres then picks or
  *    copies `a0` before `a-c`, unlike PGLite); a resolver that reads sources through raw SQL (the Rust engine has none,
@@ -85,7 +85,7 @@ describe('engine parity: callers that order sources', () => {
     return { one, two: two ?? null };
   });
 
-  parityTest('copyMigrationSources copies default first, then ids in byte order, whatever the server locale', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('copyMigrationSources copies default first, then ids in byte order, whatever the server locale', { methods: ['readMigrationRows'] }, async (engine, backend) => {
     for (const id of ['ab', 'a0', 'a-c']) await createSource(engine, backend, id, {});
     const written: string[] = [];
     const target = {

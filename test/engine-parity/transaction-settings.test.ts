@@ -306,23 +306,4 @@ describe('engine parity: transaction-local settings', () => {
     });
     return { outcomes, after };
   });
-
-  // The Rust engine keeps the settings its writers read (the trust settings in the store, the attribution and source
-  // scope on the transaction) and any other custom gbrain name no schema SQL reads. A name schema SQL reads that no
-  // store writer reads yet, such as gbrain.writer_quiesced, refuses as a capability it lacks. PGLite answers it.
-  parityTest('a setting name the Rust engine does not keep refuses on Rust', {
-    methods: ['transaction', 'readTransactionSettings'],
-  }, async (engine, backend) => {
-    const read = (tx: BrainEngine) => tx.readTransactionSettings([TIER, 'gbrain.writer_quiesced']);
-    return engine.transaction(async (tx) => {
-      if (backend !== 'rust') return unset(await read(tx));
-      const refusal = await read(tx).then(() => null, (error: unknown) => error);
-      expect(refusal).toMatchObject({
-        code: 'engine_capability_missing',
-        reason: 'transactions',
-        detail: 'member=readTransactionSettings capability=transactions setting=gbrain.writer_quiesced outcome=none written=nothing',
-      });
-      throw refusal;
-    });
-  });
 });

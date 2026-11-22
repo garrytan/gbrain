@@ -404,7 +404,7 @@ describe('engine parity: write misc', () => {
   });
 
   parityTest('a live default page that names the synopsis tier in its frontmatter configures the tier; another value, key, source or a deleted page does not',
-    { methods: ['hasSynopsisFrontmatterOverride', 'listSynopsisSourceIds', 'putPage', 'softDeletePage'] }, async (engine, backend) => {
+    { methods: ['readSynopsisTierSources', 'putPage', 'softDeletePage'] }, async (engine, backend) => {
       await createSource(engine, backend, 'other');
       const put = (slug: string, sourceId: string, frontmatter: Record<string, unknown>) =>
         engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, timeline: '', frontmatter }, { sourceId });
@@ -1231,17 +1231,11 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  // getWorktreeBinding is constant null on Rust only because no Rust brain can hold a binding: the claim's rows (raw SQL
-  // here, claimWorktree's statements in production) must stop on the typed raw_sql refusal there and leave it unbound.
+  // A Rust brain holds the claim's binding rows too (the typed claim), so the answers are equal on every arm.
   parityTest('getWorktreeBinding reads the claimed binding with this host\'s paths, and null host columns for another host', { methods: ['getWorktreeBinding'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work', { canonical: 'git' }, '/var/tmp/work-root');
     await createSource(engine, backend, 'loose');
     const seeded = await bindWorktree(engine, 'work').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.getWorktreeBinding('work', HOST_A)).toBeNull();
-      throw seeded;
-    }
     expect(seeded).toBeNull();
     const answers = {
       owner: bindingView(await engine.getWorktreeBinding('work', HOST_A)),
@@ -1270,17 +1264,11 @@ describe('engine parity: write misc', () => {
     return answers;
   });
 
-  // As getWorktreeBinding: false is constant on Rust only because no Rust brain can hold a binding, so the claim's rows
-  // must stop on the typed raw_sql refusal there and leave the source unclaimed.
+  // As getWorktreeBinding: a Rust brain holds the binding, so the answers are equal on every arm.
   parityTest('isSourceClaimed is true for a source claimed at its current incarnation, false once the incarnation moves', { methods: ['isSourceClaimed'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work', { canonical: 'git' }, '/var/tmp/work-root');
     await createSource(engine, backend, 'loose');
     const seeded = await bindWorktree(engine, 'work').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.isSourceClaimed('work')).toBe(false);
-      throw seeded;
-    }
     expect(seeded).toBeNull();
     const claimed = { work: await engine.isSourceClaimed('work'), loose: await engine.isSourceClaimed('loose') };
     await engine.executeRaw('UPDATE sources SET incarnation = gen_random_uuid() WHERE id = $1', ['work']);

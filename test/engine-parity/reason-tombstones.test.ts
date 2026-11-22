@@ -8,7 +8,7 @@
  *    nothing; no pairs add nothing; an unknown source throws and stores nothing. A read returns the source's pairs
  *    (never another source's), or only the asked pair when it is stored. A sync's reason scan drops the reason of a
  *    tombstoned pair and keeps the others.
- *    A purge advances the source's purge epoch (`advanceSourcePurgeEpoch`, through `bumpPurgeEpoch`), so the next
+ *    A purge advances the source's purge epoch (`bumpSourcePurgeEpoch`, through `bumpPurgeEpoch`), so the next
  *    cached reason scan of the same range scans again and drops the reason the purge tombstoned.
  *  - Regression: an engine that forgets a tombstone (a later sync then stamps the purged reason again), counts a
  *    duplicate as added, leaks another source's pairs into the scan, or refuses the read (the Rust engine refused it
@@ -110,7 +110,7 @@ describe('engine parity: purged change-reason tombstones', () => {
   });
 
   parityTest('a purge between two syncs advances the purge epoch, so the second sync scans again and drops the purged reason', {
-    methods: ['advanceSourcePurgeEpoch', 'readSourcePurgeEpoch', 'insertReasonPurgeTombstones', 'readReasonPurgeTombstones'],
+    methods: ['bumpSourcePurgeEpoch', 'readSourcePurgeEpoch', 'insertReasonPurgeTombstones', 'readReasonPurgeTombstones'],
   }, async (engine, backend) => {
     clearReasonScanCache();
     const { root, sha } = repoWithReasons();

@@ -19,12 +19,9 @@
  *    through its local route; rows are read back with `getPage`, `getTimeline` and `listWriteGateReceiptsFor`.
  *    Generated ids are compared by whether they match, never by value.
  *
- * Known stop on Rust (lane 3, src/core/page-state/projections.ts): after the write commits, the resident projection
- * drain reaches the raw-SQL probe in selectWindowJobs (projections.ts:651, `engine.executeRaw` of the job probe; the
- * function starts at :637). The drain catches that refusal, so the write and its answer are whole. On Rust each tool case
- * checks the committed bullet and row, pins that every raw-SQL refusal it caught came from that one site, and then
- * ends on the refusal it caught, so the harness counts the case stopped, never equal. The pin fails as soon as the
- * probe stops refusing; remove it when lane 3's fix for projections.ts lands.
+ * No stop on Rust: after the write commits, the resident projection drain reads its window probe through the typed
+ * member `probeProjectionWindowCandidates` (it was a raw-SQL probe in selectWindowJobs, refused on Rust). Each tool case checks the
+ * committed bullet and row and that no arm caught a raw-SQL refusal, so the Rust arm is equal to PGLite.
  */
 import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
@@ -40,9 +37,6 @@ const { parityTest } = parityArms(testBackends());
 const SLUG = 'people/alice-example';
 const STDIO = { remote: true, admissionOrigin: 'interactive', transport: 'stdio', takesHoldersAllowList: ['world'], sourceId: 'default' } as const;
 const addTimelineEntry = operations.find(op => op.name === 'add_timeline_entry')!;
-
-/** The one site the Rust arm still refuses on these writes (see the known stop above). */
-const RUST_KNOWN_STOP = /at selectWindowJobs \([^)]*src\/core\/page-state\/projections\.ts:651:\d+\)/;
 
 /** `engine`, keeping every raw-SQL refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
 function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {
@@ -66,15 +60,9 @@ function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine 
   });
 }
 
-/** On Rust: every caught raw-SQL refusal came from the known stop; then end on one, so the case counts stopped. */
-function endOnKnownStop(backend: string, refusals: unknown[]): void {
-  if (backend !== 'rust') {
-    expect(refusals).toEqual([]);
-    return;
-  }
-  expect(refusals.length).toBeGreaterThan(0);
-  expect(refusals.map(e => RUST_KNOWN_STOP.test(String((e as Error).stack)))).toEqual(refusals.map(() => true));
-  throw refusals[0];
+/** No arm caught a raw-SQL refusal: the projection drain's window probe is a typed member on every engine. */
+function endOnKnownStop(_backend: string, refusals: unknown[]): void {
+  expect(refusals).toEqual([]);
 }
 
 async function seed(engine: BrainEngine): Promise<void> {
