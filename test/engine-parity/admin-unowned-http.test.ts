@@ -23,7 +23,7 @@
  */
 import { describe } from 'bun:test';
 import type { Server } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
@@ -60,7 +60,9 @@ function shape(value: unknown, key = ''): unknown {
 type Call = (path: string, payload?: unknown, headers?: Record<string, string>) => Promise<{ status: number; body: unknown; raw: unknown }>;
 
 async function inFreshHome<T>(fn: () => Promise<T>): Promise<T> {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-parity-admin-unowned-'));
+  // The real path: credential delivery files refuse a symlink anywhere in their path (harness/credentials.ts), and on
+  // macOS tmpdir() sits behind the /var -> /private/var symlink.
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-parity-admin-unowned-')));
   try { return await withEnv({ GBRAIN_HOME: home }, fn); }
   finally { rmSync(home, { recursive: true, force: true }); }
 }

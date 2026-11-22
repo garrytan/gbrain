@@ -600,7 +600,9 @@ describe('engine parity: access_tokens members', () => {
       await token('qtok-never', 'oc-qa', 'access', null);
       const code = async (name: string, client: string) => (await engine.readOauthCodeForUpdate(hashToken(name), client))?.expires_at;
       const out: Record<string, unknown> = {};
-      out.before = { a: await code('qcode-a', 'oc-qa'), live: await engine.readOauthCodeChallenge(hashToken('qcode-a'), 'oc-qa', now) };
+      // Each arm reads its own clock, so a live expiry is compared as seconds from that arm's `now`, not as a time.
+      const liveA = await code('qcode-a', 'oc-qa');
+      out.before = { aFromNow: liveA == null ? liveA : Number(liveA) - now, live: await engine.readOauthCodeChallenge(hashToken('qcode-a'), 'oc-qa', now) };
       out.expired = await engine.expireAllOauthCredentials();
       out.after = {
         a: await code('qcode-a', 'oc-qa'), b: await code('qcode-b', 'oc-qb'),
@@ -610,7 +612,9 @@ describe('engine parity: access_tokens members', () => {
       out.swept = await engine.deleteExpiredOauthCredentials(now);
       out.again = await engine.expireAllOauthCredentials();
       // Not vacuous: each code and token is still there with expires_at 0, and one sweep then removes all five rows.
-      if (out.swept !== 5 || (out.after as { a: unknown }).a !== 0) throw new Error(`quarantine: ${JSON.stringify(out)}`);
+      if (out.swept !== 5 || (out.after as { a: unknown }).a !== 0 || (out.before as { aFromNow: unknown }).aFromNow !== 600) {
+        throw new Error(`quarantine: ${JSON.stringify(out)}`);
+      }
       return out;
     });
 

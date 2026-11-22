@@ -370,6 +370,21 @@ const ymd = (v: string | Date | null | undefined): string | null => {
  * Skipped: no activity for HALFLIFE_DAYS.commitment, or the loop's own
  * google source more than 24 h stale.
  */
+/**
+ * The brief's loop rank: overdue first, then soonest due, newest activity, highest confidence, then the newer loop (id
+ * descending, the direction of the activity order and of listOpenLoops' `last_activity_at DESC, id DESC`), so loops
+ * recorded in the same millisecond keep the order they would have a millisecond apart. Exported for the rank test.
+ */
+export function compareBriefLoops(a: Pick<OpenLoopRow, 'id' | 'due_at' | 'last_activity_at' | 'confidence'>,
+  b: Pick<OpenLoopRow, 'id' | 'due_at' | 'last_activity_at' | 'confidence'>, now: number): number {
+  const dueAt = (l: Pick<OpenLoopRow, 'due_at'>) => (l.due_at ? Date.parse(l.due_at) : Number.POSITIVE_INFINITY);
+  return Number(dueAt(b) < now) - Number(dueAt(a) < now)
+    || dueAt(a) - dueAt(b)
+    || Date.parse(b.last_activity_at) - Date.parse(a.last_activity_at)
+    || b.confidence - a.confidence
+    || b.id - a.id;
+}
+
 async function loopItems(engine: BrainEngine, cp: BriefCounterparty, clock: BriefClock, opts: ArmOpts): Promise<Array<BriefItem & { factId: number | null }>> {
   const stale = new Set((await googleSources(engine, clock.now)).filter((s) => !s.fresh).map((s) => s.id));
   if (!live(clock)) return [];
@@ -380,15 +395,9 @@ async function loopItems(engine: BrainEngine, cp: BriefCounterparty, clock: Brie
   const texts = opts.includePrivate
     ? await evidenceAdmitted(engine, loops, opts)
     : await worldProjections(engine, loops.map((l) => l.fact_id).filter((n): n is number => n !== null), opts);
-  const dueAt = (l: OpenLoopRow) => (l.due_at ? Date.parse(l.due_at) : Number.POSITIVE_INFINITY);
   return loops
     .filter((l) => texts.has(l.id))
-    .sort((a, b) =>
-      Number(dueAt(b) < clock.now) - Number(dueAt(a) < clock.now)
-      || dueAt(a) - dueAt(b)
-      || Date.parse(b.last_activity_at) - Date.parse(a.last_activity_at)
-      || b.confidence - a.confidence
-      || a.id - b.id)
+    .sort((a, b) => compareBriefLoops(a, b, clock.now))
     .map((l) => ({
       id: `L${l.id}`,
       kind: 'loop' as const,
