@@ -245,7 +245,7 @@ export { isOpPageSlug };
  * recorded file path may belong to another page.
  */
 export function isLegacyStoredPageSlug(slug: string): boolean {
-  if (isOpPageSlug(slug) || typeof slug !== 'string' || slug.length > 255) return false;
+  if (isOpPageSlug(slug) || typeof slug !== 'string') return false; // includes a stored slug over 255 characters
   try { validateSlug(slug); return true; } catch { return false; } // refused by the storage guard too: not a legacy slug
 }
 
