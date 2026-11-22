@@ -182,6 +182,34 @@ const EVENT = (over: Record<string, unknown> = {}) => ({
     expect(day).toEqual({ requests: 1, rows_accepted: 5, refused: 2 });
   });
 
+  test('the newest release always reaches the pulse and each version lists at most 5 upgrade targets', async () => {
+    await asRole(ROLE.service_role, async tx => {
+      await tx`DELETE FROM public.gbrain_telemetry_events`;
+      for (let k = 1; k <= 11; k++) {
+        for (let i = 0; i < 3; i++) await tx`INSERT INTO public.gbrain_telemetry_events ${tx(EVENT({ gbrain_version: `0.60.${k}.0` }))}`;
+      }
+      await tx`INSERT INTO public.gbrain_telemetry_events ${tx(EVENT({ gbrain_version: '0.60.760.0', outcome: 'error', error_code: 'mcp_register_failed' }))}`;
+      for (let k = 1; k <= 7; k++) {
+        await tx`INSERT INTO public.gbrain_telemetry_events ${tx(EVENT({ event_type: 'upgrade', harness: null, step: null, gbrain_version: '0.60.11.0', to_version: `0.60.${100 + k}.0` }))}`;
+      }
+    });
+    const [{ p }] = await asRole(ROLE.service_role, tx => tx`SELECT public.gbrain_pulse_summary('0.60.760.0') AS p`);
+    const versions = p.setup.map((c: { version: string }) => c.version);
+    expect(new Set(versions).size).toBe(10);
+    expect(versions).toContain('0.60.760.0');
+    expect(p.error_codes).toContainEqual({ version: '0.60.760.0', code: 'mcp_register_failed', count: 1 });
+    expect(p.upgrades.length).toBe(5);
+  });
+
+  test('a second run of G001 upgrades an older copy of its tables', async () => {
+    await db.unsafe('ALTER TABLE public.gbrain_ingest_daily DROP COLUMN refused');
+    await db.unsafe('ALTER TABLE public.gbrain_pulse_cache DROP COLUMN attempted_at');
+    await db.unsafe(G001);
+    const cols = await db`SELECT table_name, column_name FROM information_schema.columns
+      WHERE (table_name, column_name) IN (('gbrain_ingest_daily', 'refused'), ('gbrain_pulse_cache', 'attempted_at'))`;
+    expect(cols.length).toBe(2);
+  });
+
   test('prune keeps recent rows and drops those past 400 days', async () => {
     await asRole(ROLE.service_role, tx => tx`INSERT INTO public.gbrain_telemetry_events ${tx({ ...EVENT(), received_at: new Date(Date.now() - 401 * 86_400_000).toISOString() })}`);
     const before = (await asRole(ROLE.service_role, tx => tx`SELECT count(*)::int AS n FROM public.gbrain_telemetry_events`))[0].n;

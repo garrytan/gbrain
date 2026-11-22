@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS public.gbrain_pulse_cache (
   refreshed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   attempted_at TIMESTAMPTZ
 );
+ALTER TABLE public.gbrain_ingest_daily ADD COLUMN IF NOT EXISTS refused INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.gbrain_pulse_cache ADD COLUMN IF NOT EXISTS attempted_at TIMESTAMPTZ;
 INSERT INTO public.gbrain_pulse_cache (id, refreshed_at) VALUES (1, 'epoch') ON CONFLICT (id) DO NOTHING;
 
 -- Real use only: live rows with a release-shaped version.
@@ -186,8 +188,10 @@ $$;
 -- Counts per harness x version are published as they are (counts, no ids);
 -- any cell that crosses with brain size or failing checks needs 5 distinct
 -- community installs. Every row is an unauthenticated report, so the
--- per-version lists cover only the 10 versions with the most rows, keeping the
--- answer small however many versions callers invent.
+-- per-version lists cover 10 versions: the newest release always, then the
+-- versions with the most setup, upgrade and doctor reports (daily rollups don't
+-- rank), and each version lists at most 5 upgrade targets. The answer stays
+-- small however many versions callers invent.
 CREATE OR REPLACE FUNCTION public.gbrain_pulse_summary(p_max_version TEXT)
 RETURNS JSONB
 LANGUAGE sql
@@ -206,7 +210,11 @@ known AS (
   WHERE p_max_version IS NULL OR v <= string_to_array(p_max_version, '.')::int[]
 ),
 top AS (
-  SELECT v FROM known GROUP BY v ORDER BY count(*) DESC, v DESC LIMIT 10
+  SELECT v FROM known
+  GROUP BY v
+  ORDER BY (p_max_version IS NOT NULL AND v = string_to_array(p_max_version, '.')::int[]) DESC,
+           count(*) FILTER (WHERE event_type <> 'daily_rollup') DESC, v DESC
+  LIMIT 10
 ),
 recent AS (
   SELECT * FROM known WHERE v IN (SELECT v FROM top)
@@ -266,7 +274,9 @@ SELECT jsonb_build_object(
   'setup', coalesce((SELECT jsonb_agg(jsonb_build_object('harness', harness, 'version', gbrain_version,
       'attempts', attempts, 'successes', successes, 'installs', installs) ORDER BY v DESC, harness) FROM setup), '[]'::jsonb),
   'upgrades', coalesce((SELECT jsonb_agg(jsonb_build_object('to_version', to_version, 'version', gbrain_version,
-      'attempts', attempts, 'failures', failures, 'wedged', wedged, 'installs', installs) ORDER BY v DESC, to_version) FROM upgrades), '[]'::jsonb),
+      'attempts', attempts, 'failures', failures, 'wedged', wedged, 'installs', installs) ORDER BY v DESC, to_version)
+      FROM (SELECT *, row_number() OVER (PARTITION BY gbrain_version ORDER BY attempts DESC, to_version) AS r FROM upgrades) t
+      WHERE r <= 5), '[]'::jsonb),
   'error_codes', coalesce((SELECT jsonb_agg(jsonb_build_object('version', gbrain_version, 'code', code, 'count', n) ORDER BY v DESC, n DESC, code)
       FROM (SELECT *, row_number() OVER (PARTITION BY gbrain_version ORDER BY n DESC, code) AS r FROM codes) t WHERE r <= 10), '[]'::jsonb),
   'commands', coalesce((SELECT jsonb_agg(jsonb_build_object('command', command, 'count', n) ORDER BY n DESC, command)

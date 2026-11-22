@@ -41,17 +41,13 @@ Deno.serve(async (req) => {
   }
 
   const supabase = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
-  const reserve = (rows: number) =>
-    supabase.rpc("gbrain_ingest_reserve", { p_rows: rows, p_max_requests: MAX_REQUESTS_PER_DAY, p_max_rows: MAX_ROWS_PER_DAY });
 
-  // gbrain telemetry forget: {"forget": "<installation id>"}. It counts as one
-  // request against the daily ceiling, like a batch.
+  // gbrain telemetry forget: {"forget": "<installation id>"}. It stays outside
+  // the daily ceiling, so a flood can never block withdrawal; it only deletes,
+  // and an unknown id is one index lookup.
   if (body && typeof body === "object" && !Array.isArray(body) && "forget" in body) {
     const id = str(UUID_RE, (body as Row).forget);
     if (!id) return json(400, { error: "invalid_installation_id" });
-    const { data: room, error: reserveError } = await reserve(0);
-    if (reserveError) return json(500, { error: "reserve_failed" });
-    if (room !== true) return json(429, { error: "daily_ceiling", retry_after_s: 3600 });
     const { data, error } = await supabase.rpc("gbrain_telemetry_forget", { p_installation_id: id });
     if (error) return json(500, { error: "forget_failed" });
     return json(200, { forgotten: true, events_cleared: data ?? 0 });
@@ -68,7 +64,11 @@ Deno.serve(async (req) => {
   const rejected = events.length - rows.length;
   if (rows.length === 0) return json(200, { accepted: 0, rejected });
 
-  const { data: room, error: reserveError } = await reserve(rows.length);
+  const { data: room, error: reserveError } = await supabase.rpc("gbrain_ingest_reserve", {
+    p_rows: rows.length,
+    p_max_requests: MAX_REQUESTS_PER_DAY,
+    p_max_rows: MAX_ROWS_PER_DAY,
+  });
   if (reserveError) return json(500, { error: "reserve_failed" });
   if (room !== true) return json(429, { error: "daily_ceiling", retry_after_s: 3600 });
 

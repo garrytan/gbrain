@@ -168,8 +168,8 @@ function day(v: unknown): string | null {
   return t > now + 86_400_000 || t < now - 31 * 86_400_000 ? null : v;
 }
 // {identifier: count} with at most 200 keys; keys off the identifier shape and
-// counts that aren't an integer from 0 to 10,000 (more than one install does in
-// a day) are dropped. crash_counts keys come from a fixed list.
+// counts that aren't a non-negative integer are dropped, and one report's count
+// for a key is capped at 10,000. crash_counts keys come from a fixed list.
 function counts(v: unknown, keyOk: (k: string) => boolean): Record<string, number> | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const out: Record<string, number> = {};
@@ -177,9 +177,9 @@ function counts(v: unknown, keyOk: (k: string) => boolean): Record<string, numbe
   for (const [k, c] of Object.entries(v as Record<string, unknown>)) {
     if (n >= 200) break;
     if (!keyOk(k)) continue;
-    const ci = int(c, 0, 10_000);
+    const ci = int(c, 0, Number.MAX_SAFE_INTEGER);
     if (ci === null) continue;
-    out[k] = ci;
+    out[k] = Math.min(ci, 10_000);
     n++;
   }
   return Object.keys(out).length ? out : null;

@@ -20,6 +20,7 @@ const CLAIM_MS = 5 * 60 * 1000;
 const VERSION_URL = "https://raw.githubusercontent.com/garrytan/gbrain/master/VERSION";
 const VERSION_RE = /^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}(\.[0-9]{1,6})?$/;
 const HEADERS = { "Content-Type": "application/json", "Cache-Control": "public, max-age=3600" };
+const STALE_HEADERS = { "Content-Type": "application/json", "Cache-Control": "public, max-age=60" };
 
 async function newestRelease(): Promise<string | null> {
   try {
@@ -48,7 +49,7 @@ Deno.serve(async (req) => {
   }
   const stale = () =>
     cached
-      ? new Response(JSON.stringify({ ...cached.data, status: "ok", stale: true, refreshed_at: cached.refreshed_at }), { status: 200, headers: HEADERS })
+      ? new Response(JSON.stringify({ ...cached.data, status: "ok", stale: true, refreshed_at: cached.refreshed_at }), { status: 200, headers: STALE_HEADERS })
       : new Response(JSON.stringify({ error: "pulse_unavailable" }), { status: 503, headers: { "Content-Type": "application/json" } });
 
   try {

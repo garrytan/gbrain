@@ -40,12 +40,29 @@ denied() { # <label> <curl args...>
   fi
 }
 
+# A real column to set and to filter on, so PostgREST runs an UPDATE.
+update_body() {
+  case "$1" in
+    gbrain_installations) echo '{"os":"other"}' ;;
+    gbrain_ingest_daily) echo '{"refused":0}' ;;
+    gbrain_pulse_cache) echo '{"data":{}}' ;;
+    *) echo '{"tier":"anonymous"}' ;;
+  esac
+}
+update_filter() {
+  case "$1" in
+    gbrain_ingest_daily) echo 'day=eq.2000-01-01' ;;
+    gbrain_pulse_cache) echo 'id=eq.0' ;;
+    *) echo 'installation_id=is.null' ;;
+  esac
+}
+
 run_role() { # <role label> <bearer>
   local who="$1" bearer="$2" t f
   for t in $TABLES; do
     denied "$who select $t" -H "apikey: $KEY" -H "Authorization: Bearer $bearer" "$URL/rest/v1/$t?select=*&limit=1"
     denied "$who insert $t" -X POST -H "apikey: $KEY" -H "Authorization: Bearer $bearer" -H "Content-Type: application/json" -d '{}' "$URL/rest/v1/$t"
-    denied "$who update $t" -X PATCH -H "apikey: $KEY" -H "Authorization: Bearer $bearer" -H "Content-Type: application/json" -d '{}' "$URL/rest/v1/$t?id=is.null"
+    denied "$who update $t" -X PATCH -H "apikey: $KEY" -H "Authorization: Bearer $bearer" -H "Content-Type: application/json" -d "$(update_body "$t")" "$URL/rest/v1/$t?$(update_filter "$t")"
   done
   for f in $FUNCS; do
     denied "$who call $f" -X POST -H "apikey: $KEY" -H "Authorization: Bearer $bearer" -H "Content-Type: application/json" -d '{}' "$URL/rest/v1/rpc/$f"
@@ -59,11 +76,13 @@ else
   echo "SKIP authenticated checks (set GBRAIN_VERIFY_AUTH_JWT)"; SKIP=1
 fi
 
-ING="$(curl -s --max-time 15 -X POST -H "apikey: $KEY" -H "Content-Type: application/json" -d '[]' "$URL/functions/v1/gbrain-telemetry-ingest" 2>/dev/null || true)"
-if printf '%s' "$ING" | grep -q '"accepted":0'; then echo "PASS ingest answers an empty batch"; PASS=$((PASS + 1)); else echo "FAIL ingest: $(printf '%s' "$ING" | head -c 200)"; FAIL=$((FAIL + 1)); fi
+# One test-source event (the live view and the pulse leave it out) proves the write path.
+PROBE="{"v":1,"ts":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","event_type":"setup","gbrain_version":"0.0.0","tier":"anonymous","source":"test"}"
+ING="$(curl -s --max-time 15 -X POST -H "apikey: $KEY" -H "Content-Type: application/json" -d "$PROBE" "$URL/functions/v1/gbrain-telemetry-ingest" 2>/dev/null || true)"
+if printf '%s' "$ING" | grep -q '"accepted":1'; then echo "PASS ingest stores a test event"; PASS=$((PASS + 1)); else echo "FAIL ingest: $(printf '%s' "$ING" | head -c 200)"; FAIL=$((FAIL + 1)); fi
 
-PUL_CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -H "apikey: $KEY" "$URL/functions/v1/gbrain-telemetry-pulse" 2>/dev/null || echo 000)"
-case "$PUL_CODE" in 200|503) echo "PASS pulse answers ($PUL_CODE)"; PASS=$((PASS + 1)) ;; *) echo "FAIL pulse answered $PUL_CODE"; FAIL=$((FAIL + 1)) ;; esac
+PUL="$(curl -s --max-time 30 -H "apikey: $KEY" "$URL/functions/v1/gbrain-telemetry-pulse" 2>/dev/null || true)"
+if printf '%s' "$PUL" | grep -q '"status":"ok"'; then echo "PASS pulse answers"; PASS=$((PASS + 1)); else echo "FAIL pulse: $(printf '%s' "$PUL" | head -c 200)"; FAIL=$((FAIL + 1)); fi
 
 if [ "$FAIL" -gt 0 ]; then echo "VERDICT: FAIL pass=$PASS fail=$FAIL"; exit 1; fi
 if [ "$SKIP" -gt 0 ]; then echo "VERDICT: INCOMPLETE pass=$PASS (signed-in checks skipped)"; exit 0; fi

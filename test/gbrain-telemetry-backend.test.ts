@@ -153,9 +153,9 @@ describe('gbrain telemetry ingest: days and counts', () => {
     }
   });
 
-  test('a count above 10,000 for one key is dropped', () => {
+  test('a count above 10,000 for one key is capped at 10,000', () => {
     const row = toRow({ ...base, command_counts: { query: 10_000, doctor: 10_001 }, error_code_counts: { no_brain: 1_000_000 } })!;
-    expect(row.command_counts).toEqual({ query: 10_000 });
-    expect(row.error_code_counts).toBeNull();
+    expect(row.command_counts).toEqual({ query: 10_000, doctor: 10_000 });
+    expect(row.error_code_counts).toEqual({ no_brain: 10_000 });
   });
 });

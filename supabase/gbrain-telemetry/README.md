@@ -15,7 +15,7 @@ gbrain's opt-in telemetry lands here: two Supabase edge functions and the SQL be
 - The publishable (anon) key the client ships can't read or write any table, view or function here: RLS is on with no policies and every privilege is revoked from `anon` and `authenticated`.
 - Only `service_role`, which the two functions hold in their own environment, reads and writes.
 - The pulse is public by design: counts only, no installation id. A cell crossed with brain size needs 5 distinct community installs, which stops a casual reader from singling out one install but can't stop a caller who invents ids.
-- Every row is an unauthenticated report, so the pulse is a lead to check, not proof, for anyone reading it (the severe sweep included). Its per-version lists cover the 10 versions with the most rows, and one install's count for any command or error code tops out at 10,000 a day.
+- Every row is an unauthenticated report, so the pulse is a lead to check, not proof, for anyone reading it (the severe sweep included). Its per-version lists cover 10 versions (the newest release always, then the most-reported), and one report's count for any command or error code is capped at 10,000.
 
 ## The daily ceiling
 
