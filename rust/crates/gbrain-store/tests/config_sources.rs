@@ -519,6 +519,7 @@ fn mark_source_synced_with_an_incarnation_stamps_only_that_incarnation_and_refus
     let incarnation = store.get_source_by_id("dept").unwrap().unwrap().incarnation;
     let with = |id: &str| SourceSyncStampOptions {
         incarnation: Some(id.to_string()),
+        newest_content_at: None,
     };
     assert!(
         !store
@@ -546,4 +547,54 @@ fn mark_source_synced_with_an_incarnation_stamps_only_that_incarnation_and_refus
         .mark_source_synced("dept", &with("not-a-uuid"))
         .unwrap_err();
     assert_eq!(err.code, INVALID_ARGUMENT);
+}
+
+#[test]
+fn mark_source_synced_with_a_newest_content_time_sets_it_and_null_keeps_it() {
+    let dir = TempDir::new("src-synced-newest");
+    let store = open(&dir);
+    store.upsert_source(&input("feed", Some("/f"))).unwrap();
+    let newest = |store: &Store| {
+        store
+            .list_source_records()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == "feed")
+            .and_then(|r| r.newest_content_at)
+    };
+    let with = |at: Option<&str>| SourceSyncStampOptions {
+        incarnation: None,
+        newest_content_at: at.map(str::to_string),
+    };
+    assert!(
+        store
+            .mark_source_synced("feed", &with(Some("2026-03-04T05:06:07.000Z")))
+            .unwrap()
+    );
+    assert_eq!(
+        newest(&store).as_deref(),
+        Some("2026-03-04T05:06:07.000000Z")
+    );
+    assert!(store.mark_source_synced("feed", &with(None)).unwrap());
+    assert_eq!(
+        newest(&store).as_deref(),
+        Some("2026-03-04T05:06:07.000000Z")
+    );
+    assert!(
+        store
+            .mark_source_synced("feed", &with(Some("2026-05-06T09:08:09+02:00")))
+            .unwrap()
+    );
+    assert_eq!(
+        newest(&store).as_deref(),
+        Some("2026-05-06T07:08:09.000000Z")
+    );
+    let err = store
+        .mark_source_synced("feed", &with(Some("not a time")))
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+    assert_eq!(
+        newest(&store).as_deref(),
+        Some("2026-05-06T07:08:09.000000Z")
+    );
 }

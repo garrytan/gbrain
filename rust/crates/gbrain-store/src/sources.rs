@@ -114,11 +114,14 @@ impl From<SourceRecord> for SourceDetailRow {
     }
 }
 
-/// `markSourceSynced` options: `incarnation` stamps only a source still of that incarnation.
+/// `markSourceSynced` options: `incarnation` stamps only a source still of that incarnation;
+/// `newest_content_at` (timestamptz text) also sets the newest content time, and null or absent
+/// keeps it (`COALESCE($n::timestamptz, newest_content_at)`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceSyncStampOptions {
     pub incarnation: Option<String>,
+    pub newest_content_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -410,6 +413,11 @@ impl Store {
                 )));
             }
         };
+        let newest = options
+            .newest_content_at
+            .as_deref()
+            .map(|text| crate::persistence::parse_timestamptz(text, "newest_content_at"))
+            .transpose()?;
         self.write(|tx| {
             let Some(mut record) = read_source(&*tx, id)? else {
                 return Ok(false);
@@ -421,6 +429,9 @@ impl Store {
                 return Ok(false);
             }
             record.last_sync_at_us = Some(self.env.now_micros());
+            if newest.is_some() {
+                record.newest_content_at_us = newest;
+            }
             put_json(tx, &source_key(id), &record)?;
             Ok(true)
         })

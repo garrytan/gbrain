@@ -137,7 +137,7 @@ applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	3	yes	yes	yes	serves
 listAllSources	pages	yes	13	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
-getSource	pages	yes	18	no	yes	yes	serves
+getSource	pages	yes	19	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	2	no	yes	yes	serves
@@ -158,7 +158,7 @@ advanceSourceCommit	pages	yes	7	no	yes	yes	serves
 writeSourceSyncHeartbeat	pages	yes	1	no	yes	yes	serves
 writeSourceUpstreamObservation	pages	yes	1	no	yes	yes	serves
 readPageIdentity	pages	yes	2	no	yes	yes	serves
-markSourceSynced	pages	yes	3	no	yes	yes	serves
+markSourceSynced	pages	yes	4	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	4	no	yes	yes	serves
 readPageSizeRows	pages	yes	4	no	yes	yes	serves
@@ -711,7 +711,7 @@ completeWriteRow	persistence_journal	yes	22	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	3	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	9	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	3	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	74	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	75	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
@@ -1449,7 +1449,7 @@ unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	9	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
-listSourceRecords	cli_reads_import	yes	8	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	9	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	4	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves

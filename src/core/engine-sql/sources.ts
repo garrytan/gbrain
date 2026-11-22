@@ -202,8 +202,12 @@ export async function lockAllSourceRows(exec: SqlExecutor, mode: 'update' | 'sha
   await exec.executeRaw(mode === 'update' ? 'SELECT id FROM sources ORDER BY id FOR UPDATE' : 'SELECT id FROM sources ORDER BY id FOR SHARE');
 }
 
-/** `markSourceSynced` options: `incarnation` stamps only while the source is still that incarnation (a managed sync run's guard). */
-export interface SourceSyncStampOptions { incarnation?: string }
+/**
+ * `markSourceSynced` options. `incarnation` stamps only while the source is still that incarnation (a managed sync
+ * run's guard). `newestContentAt` (a timestamptz text) also sets `newest_content_at`; null keeps the stored value
+ * (`COALESCE`), as a connector run that saw nothing newer does.
+ */
+export interface SourceSyncStampOptions { incarnation?: string; newestContentAt?: string | null }
 
 /**
  * Sets the source's last sync time to the database clock (`now()`): the stamp a clean `gbrain import` of a folder
@@ -212,9 +216,17 @@ export interface SourceSyncStampOptions { incarnation?: string }
  * incarnation) changes nothing.
  */
 export async function markSourceSynced(exec: SqlExecutor, sourceId: string, opts: SourceSyncStampOptions = {}): Promise<boolean> {
-  const rows = opts.incarnation === undefined
-    ? await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id', [sourceId])
-    : await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 AND incarnation = $2::uuid RETURNING id', [sourceId, opts.incarnation]);
+  const newest = opts.newestContentAt;
+  let rows: Array<{ id: string }>;
+  if (newest === undefined) {
+    rows = opts.incarnation === undefined
+      ? await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id', [sourceId])
+      : await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 AND incarnation = $2::uuid RETURNING id', [sourceId, opts.incarnation]);
+  } else {
+    rows = opts.incarnation === undefined
+      ? await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now(), newest_content_at = COALESCE($2::timestamptz, newest_content_at) WHERE id = $1 RETURNING id', [sourceId, newest])
+      : await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now(), newest_content_at = COALESCE($3::timestamptz, newest_content_at) WHERE id = $1 AND incarnation = $2::uuid RETURNING id', [sourceId, opts.incarnation, newest]);
+  }
   return rows.length > 0;
 }
 
