@@ -501,14 +501,34 @@ mod tests {
             assert!(by_hash().unwrap_err().message.contains("unreadable"));
         }
         assert!(s.list_access_tokens().is_err(), "other readers stay strict");
+        // An empty hash names no token: a record that is not JSON is skipped, never matched by a zero-length window.
+        put(b"\xff not json");
+        assert_eq!(by_hash_of(&s, ""), None);
+    }
+
+    fn by_hash_of(s: &Store, hash: &str) -> Option<Value> {
+        s.read_active_access_token_by_hash(hash).unwrap()
+    }
+
+    /// The store clock, set by the test.
+    struct Clock(std::sync::atomic::AtomicI64);
+    impl crate::env::Env for Clock {
+        fn now_micros(&self) -> i64 {
+            self.0.load(SeqCst)
+        }
+        fn new_uuid(&self) -> String {
+            crate::SystemEnv.new_uuid()
+        }
     }
 
     #[test]
     fn a_touch_that_writes_nothing_opens_no_write_transaction() {
         let writes = Arc::new(AtomicUsize::new(0));
         let kv = CountingKv(crate::test_support::mem_kv(), writes.clone());
-        let (env, opts) = (Arc::new(crate::SystemEnv), crate::OpenOptions::default());
-        let s = Store::open_kv(Arc::new(kv), env, opts).unwrap();
+        let clock = Arc::new(Clock(std::sync::atomic::AtomicI64::new(
+            1_700_000_000_000_000,
+        )));
+        let s = Store::open_kv(Arc::new(kv), clock.clone(), crate::OpenOptions::default()).unwrap();
         let (id, legacy) = (insert(&s, "a", Some("default")), insert(&s, "b", None));
         let base = writes.load(SeqCst);
         let touch = |id: &str| s.touch_access_token_last_used(id, true).unwrap();
@@ -519,5 +539,14 @@ mod tests {
         assert_eq!(writes.load(SeqCst) - base, 1, "a due touch writes once");
         touch(&id);
         assert_eq!(writes.load(SeqCst) - base, 1, "inside 60 s: no write");
+        // Past the debounce the token is stamped again, with the new time, in exactly one write.
+        clock.0.fetch_add(60_000_001, SeqCst);
+        touch(&id);
+        assert_eq!(writes.load(SeqCst) - base, 2, "past 60 s: one more write");
+        let row = by_hash_of(&s, "a").unwrap();
+        assert_eq!(
+            row["last_used_at"].as_str().map(str::to_owned),
+            Some(iso(clock.0.load(SeqCst)))
+        );
     }
 }
