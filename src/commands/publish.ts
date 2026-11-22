@@ -27,6 +27,7 @@ const MARKED_JS = readFileSync(join(dirname(require.resolve('marked')), 'marked.
 
 const TIMELINE_MARKER = /<!--+\s*timeline\s*-*-->/i;
 const TIMELINE_LINE = /^[ \t]*(?:-{3,}[ \t]*timeline[ \t]*-{3,}[ \t]*$|#{1,6}[ \t]+[^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
+const GBRAIN_BLOCK_END = /<!--+\s*gbrain:([a-z0-9_-]+):end\b[^>]*>/gi;
 const GBRAIN_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
 
 /** The text before the first match of `pattern`, or all of it when nothing matches. */
@@ -57,8 +58,8 @@ export function makeShareable(content: string): string {
   // Remove gbrain fences (facts, takes and other machine blocks) with their Facts/Takes headings
   for (let match = GBRAIN_BLOCK_BEGIN.exec(clean); match; match = GBRAIN_BLOCK_BEGIN.exec(clean)) {
     const rest = clean.slice(match.index + match[0].length);
-    const end = new RegExp(`<!--+\\s*gbrain:${match[1]}:end\\b[^>]*>`, 'i').exec(rest);
-    clean = clean.slice(0, match.index) + (end ? rest.slice(end.index + end[0].length) : '');
+    const end = [...rest.matchAll(GBRAIN_BLOCK_END)].find(candidate => candidate[1]!.toLowerCase() === match![1]!.toLowerCase());
+    clean = clean.slice(0, match.index) + (end ? rest.slice(end.index! + end[0].length) : '');
   }
 
   // Remove HTML comments
