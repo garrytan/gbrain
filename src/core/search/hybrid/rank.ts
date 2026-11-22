@@ -333,8 +333,8 @@ export async function rerankAndPin(
   const gatePending = prepareRerankGate(req, { deduped, rerankerOpts, egressDenied, lookups: identityPending, multimodal });
   // Both promises are awaited only after the reranker call. A capability refusal that lands while it runs would
   // otherwise be an unhandled rejection (the process exits); the no-op catches keep it for the awaits below.
-  identityPending.catch(() => undefined);
-  gatePending.catch(() => undefined);
+  identityPending.catch(() => undefined); // silent-read-ok: marks the rejection handled only; the same promise is awaited below and rethrows there
+  gatePending.catch(() => undefined); // silent-read-ok: marks the rejection handled only; the same promise is awaited below and rethrows there
   const reranked = rerankerOpts.enabled && !egressDenied
     ? await applyReranker(query, deduped, {
         ...(rerankerOpts as any),
