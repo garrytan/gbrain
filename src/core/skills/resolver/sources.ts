@@ -158,7 +158,7 @@ export function readDirSources(dirs: readonly string[], rootNamespaces: readonly
               st = statSync(real);
               if (inside(real)) at = real;
               else if (st.isDirectory() && existsSync(join(real, 'SKILL.md'))) readable.push(real);
-              else if (!(st.isFile() && name === 'SKILL.md')) { skipped.push({ reason: 'symlink_outside_root', path: full }); continue; }
+              else if (!(st.isFile() && name === 'SKILL.md' && basename(real) === 'SKILL.md')) { skipped.push({ reason: 'symlink_outside_root', path: full }); continue; }
             } else st = l;
           } catch { skipped.push({ reason: 'unreadable', path: full }); continue; }
           if (st.isDirectory()) {

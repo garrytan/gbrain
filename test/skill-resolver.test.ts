@@ -683,9 +683,15 @@ describe('catalog sources and bounds', () => {
     mkdirSync(join(root, 'qa'), { recursive: true });
     symlinkSync(join(checkout, 'loose', 'SKILL.md'), join(root, 'qa', 'SKILL.md'));
     symlinkSync(checkout, join(root, 'whole-checkout'));
+    writeFileSync(join(checkout, 'secret.txt'), 'not a skill');
+    mkdirSync(join(root, 'notes'), { recursive: true });
+    symlinkSync(join(checkout, 'secret.txt'), join(root, 'notes', 'SKILL.md'));
     const rec = await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
     expect(rec.catalog.skill_count).toBe(3);
-    expect(rec.catalog.skipped).toEqual([{ reason: 'symlink_outside_root', path: join(root, 'whole-checkout') }]);
+    expect(rec.catalog.skipped).toEqual([
+      { reason: 'symlink_outside_root', path: join(root, 'whole-checkout') },
+      { reason: 'symlink_outside_root', path: join(root, 'notes', 'SKILL.md') },
+    ]);
     const r = await resolveSkills({ message: 'review the plan, ship the pull request, run a qa pass', top_gate: 0 }, { home });
     expect(r.output.suggestions.map(s => s.id).sort()).toEqual(['plan-review', 'qa-pass', 'shipper']);
     expect(r.output.suggestions.find(s => s.id === 'shipper')!.path).toBe(join(root, 'shipper', 'SKILL.md'));
