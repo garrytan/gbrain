@@ -2,9 +2,7 @@
 
 ## Opt-in telemetry client follow-ups (filed 2026-11-22, telemetry PR 2)
 
-- [ ] **P1 — Keep up to 50 events from before the person answers, for 7 days.** **What:** the plan keeps a pending file of at most 50 events for up to 7 days before the telemetry question is answered, sent only if the answer is yes and deleted otherwise; the client records nothing until a tier is chosen. **Fix:** add the capped pending file, move it into the queue on `anonymous` or `community` and delete it on `off`. **Deferred from plan:** ~/.capy/work/gbrain-telemetry/plan-v2.md. **Effort:** S.
-- [ ] **P1 — Test that `--yes` and `--json` never set a telemetry tier, and that no tier is marked recommended.** **What:** the plan requires both guarantees; no test pins them. **Fix:** a setup test that runs with `--yes` and with `--json` and checks settings.json stays unanswered, and a check that the question shows no recommended option. **Deferred from plan:** ~/.capy/work/gbrain-telemetry/plan-v2.md. **Effort:** S.
-- [ ] **P1 — Test the pending-event cap.** **What:** the plan's test that the pending file never holds more than 50 events; it lands with the pending file above. **Deferred from plan:** ~/.capy/work/gbrain-telemetry/plan-v2.md. **Effort:** S.
+- [ ] **P1 — Test that `--yes` never sets a telemetry tier.** **What:** the plan requires that `--yes`, `--json` and unattended runs never answer the telemetry question; `--json` and the no-recommended-option rule are tested (test/gbrain-telemetry-cli.test.ts, test/init-first-run.test.ts), `--yes` is not. **Fix:** a setup test that runs with `--yes` and checks settings.json stays unanswered. **Deferred from plan:** ~/.capy/work/gbrain-telemetry/plan-v2.md. **Effort:** S.
 - [ ] **P2 — Failures that exit through `process.exit` or `exitCliError` are not recorded.** **What:** the telemetry hook in `src/cli/main.ts` runs only when `main()` resolves or the fatal handler runs, so most failure paths (a failed `init` or `setup`, most rendered error codes) record no failure and no command count, and setup success rates lean healthy. **Fix:** record at one exit seam, exactly once per process; needs a design choice. **Effort:** M.
 - [ ] **P2 — Daily counts are stamped with the sending build, not the build that collected them.** **What:** `buildBatch` adds the current version and environment to a stored day's counts at send time, so after an upgrade yesterday's counts from the old release are reported against the new one, and a change of traffic source relabels them. **Fix:** store the version and environment with each day's counts and send them as stored. **Effort:** S.
 
@@ -7973,6 +7971,9 @@ keeping both skills' triggers intact for chaining.
 **Found:** 2026-04-24 during v0.19.0 production-readiness review.
 
 ## Completed
+
+### Keep up to 50 telemetry events from before the person answers, for 7 days
+**Completed:** telemetry PR 3 (2026-11-22). Setup and upgrade events wait in `~/.gbrain/telemetry/pending.jsonl` (at most 50, 7 days) until the person answers; a yes moves them into the queue and `off` deletes them. The 50-event and 7-day cap is tested in test/gbrain-telemetry-client.test.ts.
 
 ### ~~F11 — manual native OAuth registration~~
 **Completed:** v0.54.1.1 (2026-09-24), with the original command proposal superseded.

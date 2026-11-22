@@ -13,7 +13,7 @@ import { setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { opError } from '../core/ops/contract.ts';
 import { usageError, writeCliError } from '../cli/cli-error.ts';
 import {
-  buildBatch, fetchPulse, forcedOff, forgetInstallation, readSettings, sentRecords, setTier, syncTelemetry, telemetryStatus, type Tier,
+  buildBatch, fetchPulse, forcedOff, forgetInstallation, heldEvents, readSettings, sentRecords, setTier, syncTelemetry, telemetryStatus, type Tier,
 } from '../core/telemetry/client.ts';
 
 export const TELEMETRY_HELP = `Usage: gbrain telemetry [status|show|off|anonymous|community|forget|pulse|sync] [--json]
@@ -49,6 +49,7 @@ async function status(json: boolean): Promise<void> {
   const lines = [
     `Telemetry: ${tierLine}`,
     ...(s.tier === 'community' && s.installation_id ? [`Install id: ${s.installation_id}`] : []),
+    ...(s.held_events ? [`Waiting for your answer: ${s.held_events} setup/upgrade event(s), sent only if you choose anonymous or community, deleted on off`] : []),
     `Queued: ${s.queued_events} event(s), ${s.count_days} day(s) of counts`,
     `Last send: ${s.last_sent_at ?? 'never'}${s.last_status !== null ? ` (last try: ${s.last_status})` : ''}`,
     `Sends to: ${s.endpoint ?? 'nowhere (blocked in tests)'}`,
@@ -63,20 +64,22 @@ async function show(json: boolean): Promise<void> {
   const settings = readSettings();
   const batch = settings.tier === 'off' || forcedOff() ? { events: [], bytes: 0 } : buildBatch(settings);
   const sent = sentRecords();
+  const held = heldEvents().map(({ qid: _qid, ...e }) => e);
   const human = [
+    ...(held.length ? [`Waiting for your answer (sent only if you choose anonymous or community, deleted on off): ${held.length} event(s)`, JSON.stringify(held, null, 2)] : []),
     `Next send: ${batch.events.length} event(s), ${batch.bytes} bytes`,
     JSON.stringify(batch.events, null, 2),
     `Recent sends: ${sent.length ? '' : 'none'}`,
     ...sent.map(r => `  ${r.sent_at}  HTTP ${r.http}  ${Array.isArray(r.events) ? r.events.length : 0} event(s)`),
   ];
-  await out(json, { tier: forcedOff() ? 'off' : settings.tier, next_send: batch.events, next_send_bytes: batch.bytes, sent }, `${human.join('\n')}\n`);
+  await out(json, { tier: forcedOff() ? 'off' : settings.tier, held_for_answer: held, next_send: batch.events, next_send_bytes: batch.bytes, sent }, `${human.join('\n')}\n`);
 }
 
 async function choose(tier: Tier, json: boolean): Promise<void> {
   const s = setTier(tier);
   const note = forcedOff() ? ' GBRAIN_TELEMETRY=off in this environment still forces it off.' : '';
   const human = tier === 'off'
-    ? `Telemetry is off. The local queue is deleted and nothing more is sent.${s.installation_id ? ' To also delete what this install already sent, run gbrain telemetry forget.' : ''}\n`
+    ? `Telemetry is off. The local queue and anything waiting for your answer are deleted, and nothing more is sent.${s.installation_id ? ' To also delete what this install already sent, run gbrain telemetry forget.' : ''}\n`
     : `Telemetry is ${tier}.${note} See exactly what is sent with gbrain telemetry show; stop any time with gbrain telemetry off.\n`;
   await out(json, { tier, forced_off_by_env: forcedOff(), installation_id: tier === 'community' ? s.installation_id ?? null : null }, human);
 }

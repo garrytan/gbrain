@@ -1,7 +1,8 @@
 /**
  * The CLI's telemetry seam (docs/guides/telemetry.md), called once per
  * one-shot command from runCli and the fatal seam in main.ts. At tier off it
- * reads one settings file and returns. At tier on it counts the command (only
+ * reads one settings file and returns. Before any answer it only holds setup,
+ * init and failed-upgrade outcomes in the local pending file. At tier on it counts the command (only
  * names from gbrain's command and operation tables) and the registered error
  * codes the command rendered, records setup, init and upgrade outcomes, writes
  * the counts, and starts a detached gbrain telemetry sync when one is due.
@@ -18,7 +19,7 @@ import { spawn } from '../core/spawn.ts';
 import { VERSION } from '../version.ts';
 import { renderedCliErrorCodes } from '../core/telemetry/error-tally.ts';
 import {
-  countCommand, countCrash, countErrorCode, currentTier, flushCounts, harnessOf, noteRunVersion, recordEvent, shouldSpawnSync,
+  awaitingAnswer, countCommand, countCrash, countErrorCode, currentTier, flushCounts, harnessOf, noteRunVersion, recordEvent, shouldSpawnSync,
 } from '../core/telemetry/client.ts';
 
 const NO_SEND_COMMANDS = new Set(['serve', 'hook', 'mcp', 'telemetry', 'check-update', 'self-upgrade', 'upgrade', 'post-upgrade']);
@@ -56,6 +57,14 @@ function recordSetupRun(command: string, argv: readonly string[], exitCode: numb
   });
 }
 
+/** Setup, init and failed-upgrade outcomes: queued at tier on, held for the answer before one. */
+function recordOutcomes(command: string, argv: readonly string[], exitCode: number): void {
+  if (command === 'setup' || command === 'init') recordSetupRun(command, argv, exitCode);
+  if (UPGRADE_COMMANDS.has(command) && exitCode !== 0 && !argv.includes('--dry-run')) {
+    recordEvent({ event_type: 'upgrade', from_version: VERSION, outcome: 'error', error_code: lastRegisteredCode(), channel: channelName() });
+  }
+}
+
 function spawnSync(): void {
   const exec = process.execPath ?? '';
   const isDevRuntime = /[/\\](bun|node)(\.exe)?$/.test(exec);
@@ -72,17 +81,19 @@ function spawnSync(): void {
 /** Once per one-shot command, after it finished (crash: the fatal error, when it threw). */
 export function telemetryAfterCli(exitCode: number, crash?: unknown, argv: readonly string[] = process.argv.slice(2)): void {
   try {
-    if (currentTier() === 'off') return;
+    const waiting = currentTier() === 'off' && awaitingAnswer();
+    if (currentTier() === 'off' && !waiting) return;
     const command = cliCommandOf(argv);
     if (!knownCommands().has(command)) return;
+    if (waiting) {
+      recordOutcomes(command, argv, exitCode);
+      return;
+    }
     countCommand(command);
     for (const code of renderedCliErrorCodes()) if (codeEntry(code)) countErrorCode(code);
     if (crash !== undefined) countCrash((crash as { constructor?: { name?: string } } | null)?.constructor?.name);
     noteRunVersion(channelName());
-    if (command === 'setup' || command === 'init') recordSetupRun(command, argv, exitCode);
-    if (UPGRADE_COMMANDS.has(command) && exitCode !== 0 && !argv.includes('--dry-run')) {
-      recordEvent({ event_type: 'upgrade', from_version: VERSION, outcome: 'error', error_code: lastRegisteredCode(), channel: channelName() });
-    }
+    recordOutcomes(command, argv, exitCode);
     flushCounts();
     if (!argv.includes('--json') && !NO_SEND_COMMANDS.has(command) && shouldSpawnSync()) spawnSync();
   } catch { /* telemetry never breaks a command */ }

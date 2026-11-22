@@ -6,7 +6,7 @@ import { join } from 'path';
 import { telemetryEndpoint } from '../src/core/telemetry/endpoint.ts';
 import {
   MAX_BATCH_BYTES, MAX_BATCH_EVENTS, buildBatch, countCommand, countCrash, countErrorCode, countOperation, deploymentOf, fetchPulse,
-  flushCounts, forgetInstallation, noteRunVersion, readSettings, recordDoctor, recordEvent, sanitize, scoreBand, setTier, shouldSpawnSync,
+  flushCounts, forgetInstallation, heldEvents, noteRunVersion, readSettings, recordDoctor, recordEvent, sanitize, scoreBand, setTier, shouldSpawnSync,
   sizeBand, syncTelemetry, telemetryDir, telemetryStatus,
 } from '../src/core/telemetry/client.ts';
 import { telemetryAfterCli } from '../src/cli/telemetry-hook.ts';
@@ -439,5 +439,86 @@ describe('gbrain telemetry client: an opt-out is never undone', () => {
     } finally {
       rmSync(lock, { force: true });
     }
+  });
+});
+
+describe('gbrain telemetry client: before the person answers', () => {
+  const held = () => (existsSync(join(telemetryDir(), 'pending.jsonl')) ? readFileSync(join(telemetryDir(), 'pending.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : []);
+  const home = () => mkdirSync(join(process.env.GBRAIN_HOME!, '.gbrain'), { recursive: true });
+
+  it('setup and upgrade events wait in the pending file; counts, doctor and the queue stay empty', () => {
+    home();
+    recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+    recordEvent({ event_type: 'upgrade', from_version: '0.1.0', outcome: 'error' });
+    recordDoctor({ score: 80, failing: [], pages: 5 });
+    countCommand('query');
+    flushCounts();
+    expect(held().map(e => e.event_type)).toEqual(['setup', 'upgrade']);
+    expect(readdirSync(telemetryDir()).sort()).toEqual(['pending.jsonl']);
+    expect(buildBatch().events).toEqual([]);
+    expect(telemetryStatus()).toMatchObject({ tier: 'off', answered: false, held_events: 2, queued_events: 0 });
+  });
+
+  it('with no gbrain home yet, nothing is held and no directory is created', () => {
+    recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'error' });
+    expect(existsSync(join(process.env.GBRAIN_HOME!, '.gbrain'))).toBe(false);
+  });
+
+  it('at most 50 events and 7 days are held', () => {
+    home();
+    const old = { qid: 'old', ts: new Date(Date.now() - 8 * 86_400_000).toISOString(), event_type: 'setup', gbrain_version: '0.1.0' };
+    mkdirSync(telemetryDir(), { recursive: true });
+    writeFileSync(join(telemetryDir(), 'pending.jsonl'), `${JSON.stringify(old)}\n`);
+    for (let i = 0; i < 60; i++) recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+    const rows = held();
+    expect(rows.length).toBe(50);
+    expect(rows.some(e => e.qid === 'old')).toBe(false);
+  });
+
+  it('a yes moves the held events into the queue; they are then sent with the tier', () => {
+    home();
+    recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+    setTier('anonymous');
+    expect(existsSync(join(telemetryDir(), 'pending.jsonl'))).toBe(false);
+    expect(queue().map(e => e.event_type)).toEqual(['setup', 'consent']);
+    expect(buildBatch().events.find(e => e.event_type === 'setup')).toMatchObject({ harness: 'codex', tier: 'anonymous' });
+  });
+
+  it('off deletes the held events, and nothing is held after an answer of off', () => {
+    home();
+    recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+    setTier('off');
+    expect(existsSync(join(telemetryDir(), 'pending.jsonl'))).toBe(false);
+    recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+    expect(held()).toEqual([]);
+    expect(queue()).toEqual([]);
+  });
+
+  it('a pending file left behind after an answer is never listed as waiting', () => {
+    home();
+    setTier('off');
+    const leftover = { qid: 'late', ts: new Date().toISOString(), event_type: 'setup', gbrain_version: '0.1.0' };
+    writeFileSync(join(telemetryDir(), 'pending.jsonl'), `${JSON.stringify(leftover)}\n`);
+    expect(heldEvents()).toEqual([]);
+    expect(telemetryStatus().held_events).toBe(0);
+  });
+
+  it('GBRAIN_TELEMETRY=off holds nothing', async () => {
+    home();
+    await withEnv({ GBRAIN_TELEMETRY: 'off' }, () => {
+      recordEvent({ event_type: 'setup', harness: 'codex', outcome: 'success' });
+      expect(existsSync(telemetryDir())).toBe(false);
+    });
+  });
+
+  // Value: protects=while unanswered the CLI seam holds a failed upgrade, but not a dry run or other commands' counts; fails_when=the waiting branch in telemetryAfterCli drops outcomes or counts commands; why_new=CLI test covers only init's held setup event; seam=none; no_claim=no spawned child or real upgrade (direct call)
+  it('the CLI seam holds a failed upgrade and counts nothing else while unanswered', () => {
+    home();
+    telemetryAfterCli(0, undefined, ['query', 'x']);
+    telemetryAfterCli(1, undefined, ['apply-migrations', '--dry-run']);
+    expect(existsSync(telemetryDir())).toBe(false);
+    telemetryAfterCli(1, undefined, ['apply-migrations']);
+    expect(held().map(e => [e.event_type, e.outcome])).toEqual([['upgrade', 'error']]);
+    expect(readdirSync(telemetryDir())).toEqual(['pending.jsonl']);
   });
 });
