@@ -2524,6 +2524,15 @@ const PINS: Pin[] = [
     FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text WHERE s.id=ANY($2::text[])`],
   },
   {
+    from: 'src/core/persistence/sync-holds.ts:1157 recordSyncConversion (at c03c5edfa2)',
+    case: { method: 'recordSyncConversion', variant: 'default', run: e => e.recordSyncConversion('default', '1', { request_id: 'r1', path: null, slug: null, run_id: 'run-1', outcome: 'held', converted_at: '2026-01-01T00:00:00.000Z' }) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'conversions',$5::text::jsonb)))
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object('conversions',
+      (SELECT COALESCE(jsonb_agg(c ORDER BY n),'[]'::jsonb) FROM jsonb_array_elements($5::text::jsonb||COALESCE(op_checkpoints.completed_keys->0->'conversions','[]'::jsonb))
+        WITH ORDINALITY AS e(c,n) WHERE n<=$6))),updated_at=now()`],
+  },
+  {
     from: 'src/core/persistence/sync-pass-row.ts:178 readPassRow (at 8b80bd80ab)',
     case: { method: 'readSyncPassRow', variant: 'default', run: e => e.readSyncPassRow('default', '1') },
     texts: ['SELECT completed_keys->0 AS value, updated_at, now() AS read_at FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],

@@ -14,8 +14,8 @@
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, type HeldCoverageRow } from '../../engine-sql/persistence-journal.ts';
 import { GIT_HOLD_RETRY_OP, type GitHoldRecordsQuery, type GitHoldReportInputs, type GitHoldSummaryRow } from '../../engine-sql/sync-hold-reads.ts';
 import {
-  GIT_HOLD_SUMMARY_COUNTERS, MANAGED_SYNC_PASS_OP, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint,
-  type GitHoldSummaryWeights, type SyncPassRowRead, type SyncPassRowWrite,
+  GIT_HOLD_SUMMARY_COUNTERS, MANAGED_SYNC_PASS_OP, SYNC_CONVERSION_KEEP, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint,
+  type GitHoldSummaryWeights, type SyncConversion, type SyncPassRowRead, type SyncPassRowWrite,
 } from '../../engine-sql/sync-hold-store.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { SourceRow } from '../../engine.ts';
@@ -307,6 +307,16 @@ export const readSyncConversionRows: StoreMember<[sourceIds: readonly string[]],
   }
   return out;
 };
+
+/**
+ * Puts the conversion first in the source incarnation's log, keeping the newest SYNC_CONVERSION_KEEP: one store write
+ * (rust/crates/gbrain-store/src/persistence/sync_conversions.rs).
+ */
+export const recordSyncConversion: StoreMember<[sourceId: string, incarnation: string, conversion: SyncConversion], void> =
+  async (brain, sourceId, incarnation, conversion) => {
+    await storeCall({ member: 'recordSyncConversion', sourceId },
+      () => brain.recordSyncConversion(sourceId, incarnation, { ...conversion }, SYNC_CONVERSION_KEEP));
+  };
 
 /** The pending `sources retry-held` request's keys for this fingerprint, or null. */
 export const readGitHoldRetryRequest: StoreMember<[fingerprint: string], Array<{ paths?: unknown }> | null> = async (brain, fingerprint) => {

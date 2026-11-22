@@ -9902,6 +9902,7 @@
         "recordPageEmbeddingHold": "none",
         "recordSearchTelemetry": "none",
         "recordSubagentToolExecutions": "none",
+        "recordSyncConversion": "none",
         "recordTokenSetupReads": "none",
         "recordWakeCronRun": "none",
         "recordWakeTermsAcceptance": "none",

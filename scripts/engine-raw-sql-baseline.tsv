@@ -565,7 +565,7 @@ src/core/persistence/sync-freshness.ts	execute_raw	3
 src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	10
+src/core/persistence/sync-holds.ts	execute_raw	9
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-markers.ts	execute_raw	9

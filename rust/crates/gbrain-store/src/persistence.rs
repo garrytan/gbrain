@@ -88,6 +88,7 @@ mod publication;
 mod purge_effects;
 mod receipt_compaction;
 mod receipt_list;
+mod sync_conversions;
 mod sync_orphan_reads;
 mod sync_pass_pages;
 mod sync_run_reads;

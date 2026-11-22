@@ -62,7 +62,7 @@ import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys
 
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
 import * as holdStore from '../engine-sql/sync-hold-store.ts';
-import { GIT_HOLD_SUMMARY_COUNTERS as SUMMARY_COUNTERS, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint, type GitHoldSummaryWeights as SummaryWeights } from '../engine-sql/sync-hold-store.ts';
+import { GIT_HOLD_SUMMARY_COUNTERS as SUMMARY_COUNTERS, SYNC_CONVERSION_KEEP, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint, type GitHoldSummaryWeights as SummaryWeights, type SyncConversion } from '../engine-sql/sync-hold-store.ts';
 export { gitHoldFingerprint, summaryFingerprint } from '../engine-sql/sync-hold-store.ts';
 import { requestGitHoldRetry as requestGitHoldRetryOver } from '../engine-sql/git-holds.ts';
 import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, readGitHoldReportInputs as readGitHoldReportInputsOver, type GitHoldRecordsQuery, type GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
@@ -70,9 +70,8 @@ export { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP };
 import { SYNC_IMPORT_PROVENANCE_OP } from './sync-pass-pages-sql.ts';
 export { SYNC_IMPORT_PROVENANCE_OP };
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
-export { SYNC_CONVERSION_OP };
+export { SYNC_CONVERSION_KEEP, SYNC_CONVERSION_OP, type SyncConversion };
 /** How many conversions the log keeps per source. */
-export const SYNC_CONVERSION_KEEP = 20;
 /** Default for `GBRAIN_SYNC_HOLD_CAP`: how many holds a result lists in detail. Storage is never capped. */
 export const GIT_HOLD_CAP = 500;
 export const GIT_HOLD_ESCALATE_COUNT = 50;
@@ -1149,17 +1148,9 @@ export async function fenceAutoRepairFor(engine: Exec, records: ReadonlyArray<Pi
 }
 
 /** A blocked sync request a run converted in place: held (the file is refused) or re-frozen (the file now imports). */
-export interface SyncConversion { request_id: string; path: string | null; slug: string | null; run_id: string; outcome: 'held' | 'refrozen'; converted_at: string }
-
 /** Appends a conversion to the source's log (newest first, bounded); call it in the transaction that saves the converted cursor. */
-export async function recordSyncConversion(tx: Exec, sourceId: string, incarnation: string, conversion: Omit<SyncConversion, 'converted_at'>): Promise<void> {
-  const entry = JSON.stringify([{ ...conversion, converted_at: new Date().toISOString() }]);
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'conversions',$5::text::jsonb)))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object('conversions',
-      (SELECT COALESCE(jsonb_agg(c ORDER BY n),'[]'::jsonb) FROM jsonb_array_elements($5::text::jsonb||COALESCE(op_checkpoints.completed_keys->0->'conversions','[]'::jsonb))
-        WITH ORDINALITY AS e(c,n) WHERE n<=$6))),updated_at=now()`,
-  [SYNC_CONVERSION_OP, summaryFingerprint(sourceId, incarnation), sourceId, incarnation, entry, SYNC_CONVERSION_KEEP]);
+export async function recordSyncConversion(tx: Pick<BrainEngine, 'recordSyncConversion'>, sourceId: string, incarnation: string, conversion: Omit<SyncConversion, 'converted_at'>): Promise<void> {
+  await tx.recordSyncConversion(sourceId, incarnation, { ...conversion, converted_at: new Date().toISOString() });
 }
 
 /** The conversion log of each listed source's current incarnation, newest first (sources with none are absent). */

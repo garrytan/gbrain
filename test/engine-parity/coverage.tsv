@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1966/1982
+# covered: 1967/1983
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 7/7
 # import_guards: 13/13
-# persistence_journal: 211/215
+# persistence_journal: 212/216
 # entity_reads: 28/28
 # cycle_locks: 10/10
 # minion_jobs: 10/10
@@ -681,7 +681,8 @@ countGitHolds	persistence_journal	yes	2	no	yes	yes	serves
 readGitHoldListingRows	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldCodeCountRows	persistence_journal	yes	1	no	yes	yes	serves
 readGitImageHoldCountRows	persistence_journal	yes	1	no	yes	yes	serves
-readSyncConversionRows	persistence_journal	yes	2	no	yes	yes	serves
+readSyncConversionRows	persistence_journal	yes	3	no	yes	yes	serves
+recordSyncConversion	persistence_journal	yes	2	no	yes	yes	serves
 readSyncPassRow	persistence_journal	yes	1	no	yes	yes	serves
 readLiveSyncPassRows	persistence_journal	yes	1	no	yes	yes	serves
 writeSyncPassRow	persistence_journal	yes	2	no	yes	yes	serves
@@ -1606,8 +1607,8 @@ readPageRevisionWriter	write_misc	yes	1	no	yes	yes	serves
 readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	15	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	32	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	16	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	33	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	4	no	yes	yes	serves

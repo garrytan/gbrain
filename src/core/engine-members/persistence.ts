@@ -17,7 +17,7 @@ import type { GenerationFenceBlockRow, GenerationOwnedItemRow } from '../engine-
 import type { GenerationPageRow, GenerationPageRowsQuery } from '../engine-sql/generation-page-rows.ts';
 import type { GenerationRepairFilter, GenerationRepairItemRow, HeldGenerationListRow, HeldGenerationProposalRow, RestorableGenerationRow, SourceIncarnationListRow, UnmatchedGenerationRow } from '../engine-sql/generation-repair.ts';
 import type { GitHoldRecordsQuery, GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
-import type { GitHoldSummaryWeights, SyncPassRowRead, SyncPassRowWrite } from '../engine-sql/sync-hold-store.ts';
+import type { GitHoldSummaryWeights, SyncConversion, SyncPassRowRead, SyncPassRowWrite } from '../engine-sql/sync-hold-store.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from '../engine-sql/connect-gate.ts';
 import type { IdleProbeRow, IdleProbeSpec } from '../engine-sql/persistence-idle-probe.ts';
 import type { LedgerScrubCounts } from '../engine-sql/generation-ledger.ts';
@@ -89,6 +89,8 @@ export interface PersistenceMembers {
   readGitImageHoldCountRows(sourceIds: readonly string[]): Promise<Array<{ source_id: string; images: number }>>;
   /** The stored conversion log of each listed source's current incarnation, in no set order. */
   readSyncConversionRows<C = Record<string, unknown>>(sourceIds: readonly string[]): Promise<Array<{ source_id: string; conversions: C[] | null }>>;
+  /** Puts the conversion first in the source incarnation's log, keeping the newest SYNC_CONVERSION_KEEP (SQL in engine-sql/sync-hold-store.ts). */
+  recordSyncConversion(sourceId: string, incarnation: string, conversion: SyncConversion): Promise<void>;
   /** The managed sync pass row of one source incarnation, or null (SQL in engine-sql/sync-hold-store.ts). */
   readSyncPassRow<V = Record<string, unknown>>(sourceId: string, incarnation: string): Promise<SyncPassRowRead<V> | null>;
   /** The managed sync pass rows of the sources' live incarnations (null: every source), in no set order. */
