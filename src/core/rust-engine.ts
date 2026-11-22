@@ -30,12 +30,45 @@ import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 
 /**
- * The async context this module loaded in, taken once. The engine runs its election, and the owner server and store
- * open that follow it, inside it, so the owner never runs with the authority, deadline or signal of the caller whose
- * call happened to start the election. Load this module at startup, outside any request or job (as the engine factory
- * and the tests do); a load inside one would make that one the owner's context.
+ * The empty async context: no request, job, deadline, signal or caller mark. The engine runs its election, and the
+ * owner server and store open that follow it, inside it, so the owner never runs with the authority, deadline or
+ * signal of the caller whose call happened to start the election, wherever this module was first loaded.
+ *
+ * A context is only reachable from inside itself, so the empty one is taken where no caller's context reaches: a
+ * MessagePort listener, which Bun runs at the root of the async context. A private probe store checks that on every
+ * take: when the listener sees the probe (a runtime that carries the context into it), the take refuses rather than
+ * hand back the caller's context.
+ *
+ * Runtime assumption: this relies on Bun (checked on 1.4.4) running MessagePort listeners with no caller context. A
+ * runtime or Bun release that carries the context into the listener makes every take refuse, so every connect() of a
+ * Rust brain fails closed with this refusal until the runtime changes; nothing runs in a caller's context.
+ * test/rust-engine-owner-context.test.ts pins both the assumption and the refusal.
  */
-const ownerContext = AsyncLocalStorage.snapshot();
+const contextProbe = new AsyncLocalStorage<true>();
+let emptyContextTaken: Promise<<R>(fn: () => R) => R> | undefined;
+
+/** The empty async context's runner (see above), taken once. */
+export function emptyAsyncContext(): Promise<<R>(fn: () => R) => R> {
+  if (emptyContextTaken) return emptyContextTaken;
+  const taking = contextProbe.run(true, () => new Promise<<R>(fn: () => R) => R>((resolve, reject) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      channel.port2.close();
+      if (contextProbe.getStore() !== undefined) {
+        reject(new Error('The Rust engine could not take an empty async context: this runtime carries the caller\'s context into a MessagePort listener.'));
+        return;
+      }
+      resolve(AsyncLocalStorage.snapshot());
+    };
+    channel.port2.postMessage(null);
+  }));
+  // A refusal is not kept: the next take tries again. The memo is cleared after the take settles, never inside the
+  // listener, which a runtime may call before this function has stored the take.
+  emptyContextTaken = taking;
+  taking.catch(() => { if (emptyContextTaken === taking) emptyContextTaken = undefined; });
+  return taking;
+}
 
 /** The loaded, verified addon exports. Opaque to the shell: the typed methods later PRs add call into it. */
 export type RustEngineAddonHandle = object;
@@ -115,10 +148,10 @@ export class RustEngine {
   private _electOnce(): Promise<void> {
     if (!this._opening) {
       const generation = this._generation;
-      // The election and the owner server it starts run in the context this module loaded in, not the caller's: a
-      // takeover a remote job's call starts must not hand that job's authority, deadline or signal to the owner every
-      // later caller reaches.
-      const opening: Promise<void> = ownerContext(() => this._open(generation))
+      // The election and the owner server it starts run in the empty async context, not the caller's: a takeover a
+      // remote job's call starts must not hand that job's authority, deadline or signal to the owner every later caller
+      // reaches.
+      const opening: Promise<void> = emptyAsyncContext().then(run => run(() => this._open(generation)))
         .finally(() => { if (this._opening === opening) this._opening = null; });
       this._opening = opening;
     }
