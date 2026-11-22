@@ -10,9 +10,10 @@
  *    the labelled-only member reads the facts of its own member page only.
  *  - Regression: the Rust store's page policy did not serve a labelled-only caller, so every read such a caller made
  *    refused with engine_capability_missing (docs/designs/RUST_ENGINE.md row 32e).
- *  - Known losses on Rust (rows 32e-2 and 32e-3): a labelled-only caller's remote read floor, and a labelled-only
- *    caller with lineage or an audience. The last describe pins each: Rust refuses and shows nothing while PGLite
- *    serves, so a pin fails when Rust stops refusing and its row must leave the table.
+ *  - Known losses on Rust (rows 32e-2 to 32e-5): a labelled-only caller's remote read floor, a labelled-only caller
+ *    with lineage or an audience, a folder-rule caller's world-only fact list, and a page a moved rule's stale stamp
+ *    still labels. The last describe pins each: Rust refuses or hides while PGLite serves, so a pin fails when Rust
+ *    stops refusing or starts showing, and its row must leave the table.
  *  - Why existing coverage misses it: access-members.test.ts reads one core-page list and pins the Rust refusal;
  *    test/access-labelled-only.test.ts runs on the SQL engines only.
  *  - Seam: none. Members through addMember and setMemberLabelledOnly, rules through proposeRevision, pages through
@@ -57,18 +58,39 @@ async function as<T>(engine: BrainEngine, member: string, read: () => Promise<T>
 const corePages = async (engine: BrainEngine) =>
   (await engine.listCorePageRows({ excludePrivate: true, forCaller: true, limit: 50 })).map(r => r.slug).sort();
 
-/** A labelled-only caller captured before a rule moves, read after the move and before the restamp. */
-async function pendingRuleMove(engine: BrainEngine) {
+const VERSIONED = ['core/open', 'core/for-alice', 'core/was-open', 'deals/q4'] as const;
+
+/**
+ * A labelled-only caller captured before the deals rule moves from deals/ to core/, read after the move and before
+ * any restamp: every core page list and each page's version snapshots (getVersions). core/was-open names alice now, but
+ * its one snapshot names no reader, so only a rule its last stamp kept could label that snapshot.
+ */
+async function ruleMoveReads(engine: BrainEngine) {
   await seed(engine);
+  await engine.putPage('core/was-open', core('Was open'), { sourceId: 'default' });
+  for (const slug of VERSIONED) await engine.createVersion(slug, { sourceId: 'default' });
+  await engine.putPage('core/was-open', core('Was open', { readable_by: ['alice-example'] }), { sourceId: 'default' });
   await engine.setConfig('mcp.stdio_member', 'alice-example');
   const captured = await remoteCallerAccess(engine, undefined, [], 'stdio');
   await engine.applyAccessRuleChanges('default', {
     remove: ['deals'], insert: [{ rule_id: 'deals', prefix: 'core/', readable_by: ['member:alice-example'], covers_derived: true }],
     pending: ['core/'], revision: 2, actor: 'test',
   });
-  // Only core/ is the case: the moved rule's old pages are not under a pending prefix, and no restamp has run.
-  const alice = (await withCallerAccess(captured, () => corePages(engine))).filter(slug => slug.startsWith('core/'));
-  expect(alice).toEqual(['core/for-alice', 'core/for-team']);
+  return withCallerAccess(captured, async () => {
+    const versions: Record<string, number> = {};
+    for (const slug of VERSIONED) versions[slug] = (await engine.getVersions(slug, { sourceId: 'default', excludePrivate: true, includeBody: false })).length;
+    return { pages: await corePages(engine), versions };
+  });
+}
+
+/** The pending part of ruleMoveReads: core/, the prefix the move left pending. deals/ is the stale-stamp loss (row 32e-5). */
+async function pendingRuleMove(engine: BrainEngine) {
+  const { pages, versions } = await ruleMoveReads(engine);
+  const alice = {
+    pages: pages.filter(slug => slug.startsWith('core/')),
+    versions: Object.fromEntries(Object.entries(versions).filter(([slug]) => slug.startsWith('core/'))),
+  };
+  expect(alice).toEqual({ pages: ['core/for-alice', 'core/for-team', 'core/was-open'], versions: { 'core/open': 0, 'core/for-alice': 1, 'core/was-open': 0 } });
   return alice;
 }
 
@@ -123,9 +145,10 @@ describe('engine parity: the labelled-only page policy', () => {
   });
 
   // A caller record captured before a rule move keeps reading by the stamps its pages carry: the moved rule has not
-  // restamped core/open yet (its folder_rule_ids is still empty), so the page is still unlabelled for the caller.
+  // restamped core/ yet (its pages' folder_rule_ids are still empty), so core/open and the snapshot of core/was-open
+  // are still unlabelled for the caller. The exact core/ page list and per-page version counts are compared.
   parityTest('a pending rule move does not label an unstamped page for a labelled-only caller captured before it', {
-    methods: ['listCorePageRows', 'applyAccessRuleChanges'],
+    methods: ['listCorePageRows', 'applyAccessRuleChanges', 'createVersion', 'getVersions'],
   }, pendingRuleMove);
 
   parityTest('a labelled-only member reads the facts of its own member page only', {
@@ -185,7 +208,7 @@ describe('the Rust arm serves the labelled-only page policy', () => {
   }
 });
 
-describe('the Rust arm refuses what it does not serve yet (rows 32e-2 and 32e-3), and shows nothing', () => {
+describe('the Rust arm refuses or hides what it does not serve yet (rows 32e-2 to 32e-5), and shows nothing more', () => {
   const refusal = async (run: () => Promise<unknown>) => {
     try {
       return { served: await run() };
@@ -245,5 +268,39 @@ describe('the Rust arm refuses what it does not serve yet (rows 32e-2 and 32e-3)
     // named on (the folder rule). Rust refuses both before the read.
     expect(results.pglite).toEqual({ lineage: { served: ['core/for-alice', 'core/for-team', 'deals/q4'] }, audience: { served: ['deals/q4'] } });
     expect(results.rust).toEqual({ lineage: STOP, audience: STOP });
+  });
+
+  test('loss (32e-4): a folder-rule caller\'s world-only fact list refuses on Rust', async () => {
+    const rust = await armOf('rust');
+    if (!rust) return;
+    const results: Record<string, unknown> = {};
+    for (const backend of ['pglite', 'rust']) {
+      const engine = (await armOf(backend))!;
+      await seed(engine);
+      await engine.putPage('memory/members/bob-example', core('Bob memory', { readable_by: ['member:bob-example'] }), { sourceId: 'default' });
+      const fact = (text: string, page: string, visibility: string, row: number) =>
+        ({ fact: text, entity_slug: 'people/carol-example', kind: 'fact', visibility, source: 'fence', row_num: row, source_markdown_slug: page });
+      await engine.insertFacts([fact('tea', 'core/open', 'world', 1), fact('q4', 'deals/q4', 'world', 2), fact('mine', 'memory/members/bob-example', 'private', 3)] as never, { source_id: 'default' });
+      // bob is not labelled-only; the deals rule names him, so his record carries a satisfied folder rule.
+      const read = async () => (await engine.listFactsSince('default', new Date(Date.UTC(2000, 0, 1)), { activeOnly: true, limit: 50, visibility: ['world'], excludePrivate: true } as never)).map(f => f.fact).sort();
+      await engine.setConfig('mcp.stdio_member', 'bob-example');
+      const bob = await remoteCallerAccess(engine, undefined, [], 'stdio');
+      expect([backend, bob.satisfiedRuleIds, bob.labelledOnly]).toEqual([backend, ['default:deals'], false]);
+      results[backend] = await refusal(() => withCallerAccess(bob, read));
+    }
+    expect(results.pglite).toEqual({ served: ['mine', 'tea'] });
+    expect(results.rust).toEqual(STOP);
+  });
+
+  // Fails closed: Rust hides what PGLite still shows from the stale stamp, never the other way round.
+  test('loss (32e-5): a page a moved rule left stamped stays labelled on PGLite and is hidden on Rust', async () => {
+    const rust = await armOf('rust');
+    if (!rust) return;
+    const results: Record<string, unknown> = {};
+    for (const backend of ['pglite', 'rust']) results[backend] = await ruleMoveReads((await armOf(backend))!);
+    const core = { 'core/open': 0, 'core/for-alice': 1, 'core/was-open': 0 };
+    const pages = ['core/for-alice', 'core/for-team', 'core/was-open'];
+    expect(results.pglite).toEqual({ pages: [...pages, 'deals/q4'], versions: { ...core, 'deals/q4': 1 } });
+    expect(results.rust).toEqual({ pages, versions: { ...core, 'deals/q4': 0 } });
   });
 });

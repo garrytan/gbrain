@@ -86,7 +86,7 @@ design 1): a labelled-only caller's fact passes only from `memory/members/<membe
 `member:<member>`, and its entity and holding pages are judged without the grant (`privateEntityFilterForCaller`). A
 page read for a labelled-only caller passes only a page whose readers name the caller or that carries a folder rule the
 caller satisfies, and a version only when its own readers name the caller or its live page carries such a rule. Any
-other caller (audiences, lineage, a labelled-only caller's remote floor: loss rows 32e-2 and 32e-3) is refused with
+other caller (audiences, lineage, a labelled-only caller's remote floor: loss rows 32e-2 and 32e-3, and a folder-rule caller's world-only fact list: row 32e-4) is refused with
 `engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`). A keyed-slug entity
 (an `entity_slug` with no `/`) is judged at the name-key page directories (`NAME_KEY_PAGE_DIRS`) by
 `facts/privacy.rs`, as `privateEntityFilterForCaller` does.
