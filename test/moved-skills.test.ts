@@ -18,6 +18,7 @@ import {
 } from '../src/core/skillpack/moved.ts';
 import { checkResolvable } from '../src/core/check-resolvable.ts';
 import { buildSkillIndex } from '../src/core/skills/resolver/build.ts';
+import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { runScaffold } from '../src/core/skillpack/scaffold.ts';
 import { recordScaffoldBases, runSkillpackUpdate, skillsRootKey } from '../src/core/skillpack/safe-update.ts';
 import { computeSkillsManifest, mergeSkillsLockHistory, renderSkillsLockHistory, renderSkillsManifest, SKILLS_LOCK_HISTORY_FILENAME, SKILLS_MANIFEST_FILENAME } from '../src/core/skills-integrity.ts';
@@ -230,8 +231,34 @@ describe('check-resolvable and doctor: a resolver row naming a moved skill', () 
   test('a configured skill directory holding the folder makes the row present', () => {
     const home = tmp('moved-home-');
     const elsewhere = tmp('moved-elsewhere-');
+    write(elsewhere, { 'briefing/SKILL.md': '---\nname: briefing\ndescription: A morning briefing.\n---\n# briefing\n' });
+    write(home, { 'config.json': JSON.stringify({ skills: { resolver: { per_harness: { codex: { dirs: [elsewhere] } } } } }) });
+    expect(about(checkResolvable(workspace(), { resolverHome: home }), 'briefing')).toEqual([]);
+  });
+
+  test('an empty folder in a configured directory, or a catalog entry whose SKILL.md is gone, does not make the row present', async () => {
+    const home = tmp('moved-home-');
+    const elsewhere = tmp('moved-elsewhere-');
     mkdirSync(join(elsewhere, 'briefing'), { recursive: true });
     write(home, { 'config.json': JSON.stringify({ skills: { resolver: { per_harness: { codex: { dirs: [elsewhere] } } } } }) });
+    expect(about(checkResolvable(workspace(), { resolverHome: home }), 'briefing').map(i => i.type)).toEqual(['missing_file']);
+    const indexed = tmp('moved-indexed-');
+    write(indexed, { 'briefing/SKILL.md': '---\nname: briefing\ndescription: A morning briefing.\n---\n# briefing\n' });
+    const staleHome = tmp('moved-home-');
+    await buildSkillIndex({ catalog: 'other-catalog', dirs: [indexed] }, { home: staleHome });
+    rmSync(join(indexed, 'briefing'), { recursive: true });
+    expect(about(checkResolvable(workspace(), { resolverHome: staleHome }), 'briefing').map(i => i.type)).toEqual(['missing_file']);
+  });
+
+  test('a catalog receipt with no source does not stop the check', async () => {
+    const home = tmp('moved-home-');
+    const elsewhere = tmp('moved-elsewhere-');
+    write(elsewhere, { 'briefing/SKILL.md': '---\nname: briefing\ndescription: A morning briefing.\n---\n# briefing\n' });
+    await buildSkillIndex({ catalog: 'other-catalog', dirs: [elsewhere] }, { home });
+    const receipt = catalogFile(home, 'other-catalog', 'receipt.json');
+    const doc = JSON.parse(readFileSync(receipt, 'utf8'));
+    delete doc.catalog.source;
+    writeFileSync(receipt, JSON.stringify(doc));
     expect(about(checkResolvable(workspace(), { resolverHome: home }), 'briefing')).toEqual([]);
   });
 

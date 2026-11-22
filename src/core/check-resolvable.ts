@@ -309,20 +309,20 @@ export function extractDelegationTargets(content: string): DelegationRef[] {
 /**
  * Whether a moved skill (skillpack/moved.ts) that the skills dir lacks is
  * available from another catalog: a built skill-resolver catalog under the
- * resolver home that indexes a skill of that name, or a skill directory
- * configured for a harness (skills.resolver.per_harness.<harness>.dirs) that
- * holds a folder of that name. A catalog built from gbrain's own bundled
+ * resolver home that indexes a skill of that name whose SKILL.md is still
+ * there, or a skill directory configured for a harness
+ * (skills.resolver.per_harness.<harness>.dirs) that holds <name>/SKILL.md. A catalog built from gbrain's own bundled
  * skills (--bundled) never counts: it holds the copies the skills dir lacks.
  */
 export function movedSkillAvailableElsewhere(name: string, home: string): boolean {
   for (const catalog of listCatalogs(home)) {
-    if (readReceipt(home, catalog)?.catalog.source.kind === 'bundled') continue;
+    if (readReceipt(home, catalog)?.catalog.source?.kind === 'bundled') continue;
     let reader: IndexReader | null = null;
     try {
       reader = IndexReader.open(catalogFile(home, catalog, 'index.bin'));
       for (let doc = 0; doc < reader.n; doc++) {
         const meta = reader.meta(doc);
-        if (meta.name === name || meta.id === name) return true;
+        if ((meta.name === name || meta.id === name) && (!meta.path || existsSync(meta.path))) return true;
       }
     } catch { /* an unreadable or incompatible index provides nothing */ } finally {
       reader?.close();
@@ -334,7 +334,7 @@ export function movedSkillAvailableElsewhere(name: string, home: string): boolea
     let dirs: string[] = [];
     try { dirs = configuredSkillDirs(section, harness); } catch { continue; }
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir is an absolute path the operator configured; name is a moved-skills registry name (kebab-case), only probed for existence
-    if (dirs.some(dir => { try { return statSync(join(dir, name)).isDirectory(); } catch { return false; } })) return true;
+    if (dirs.some(dir => { try { return statSync(join(dir, name, 'SKILL.md')).isFile(); } catch { return false; } })) return true;
   }
   return false;
 }

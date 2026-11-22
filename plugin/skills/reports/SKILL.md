@@ -49,7 +49,7 @@ This skill guarantees:
    ```
 2. **Load latest.** Given a category, find the most recent report file.
 3. **Keyword routing.** Map common queries to report categories:
-   - "email" / "inbox" → inbox-sweep
+   - "email" / "inbox" → inbox-sweep (reports filed before this name may sit under ea-inbox-sweep; check both and take the newest)
    - "social" / "mentions" → social-mentions
    - "briefing" / "morning" → morning-briefing
    - "meeting" → meeting-sync

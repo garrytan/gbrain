@@ -813,6 +813,22 @@ describe('skill-resolver lane: pins and session_start at SessionStart', () => {
     });
   }
 
+  test('a Claude Code pin from a configured extra directory names its SKILL.md, since the Skill tool loads only the native folder', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    const extra = join(b.home, 'team-skills');
+    skill(extra, 'triage-extra', 'Triage an incoming bug report for the team.');
+    await setup(b, 'claude-code');
+    editConfig(b, (r) => { r.per_harness = { 'claude-code': { dirs: [extra] } }; });
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['skills', 'pin', 'add', 'triage-extra', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    const context = startContext(await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE));
+    expect(context).toContain(`id: "triage-extra" path: ${JSON.stringify(join(extra, 'triage-extra', 'SKILL.md'))}`);
+    expect(context).toContain('read the SKILL.md at its path instead');
+    expect(context).toMatch(/id: "deploy-widget"\n/);
+  });
+
   test('a pin added mid-session stays suggestible on the next turn, before any SessionStart shows it', async () => {
     const b = box();
     seedSkills(claudeSkills(b));

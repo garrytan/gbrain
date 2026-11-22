@@ -14,8 +14,10 @@
  * which keeps the host's prompt cache warm.
  */
 import { estimateTokens, loadLine, quoted } from './block.ts';
+import { sep } from 'node:path';
 import { IndexReader } from './index-format.ts';
 import { catalogFile, validCatalogName } from './paths.ts';
+import { claudeUserSkillsDir } from '../../bootstrap/host-specs.ts';
 
 export const PIN_LINE_MAX = 100;
 export const PIN_BLOCK_TOKEN_CAP = 600;
@@ -73,7 +75,8 @@ export function renderPinnedBlock(pins: readonly Pin[], opts: { harness?: string
   const valid = pins.filter((p) => opts.known!.has(p.name));
   const unknown = pins.filter((p) => !opts.known!.has(p.name)).map((p) => p.name);
   const lines = valid.map((p) => `- id: ${quoted(p.name)}${p.line ? ` when: ${quoted(p.line)}` : ''}${opts.paths?.get(p.name) ? ` path: ${quoted(opts.paths.get(p.name)!)}` : ''}`);
-  const head = `Always-available skills, chosen by this agent's operator, whether or not a skill list shows them. ${loadLine(opts.harness)}`;
+  const pathed = opts.harness === 'claude-code' && valid.some((p) => opts.paths?.get(p.name));
+  const head = `Always-available skills, chosen by this agent's operator, whether or not a skill list shows them. ${loadLine(opts.harness)}${pathed ? ' A skill listed with a path is outside Claude Code\'s skills folder: read the SKILL.md at its path instead.' : ''}`;
   for (let kept = lines.length; kept > 0; kept--) {
     const block = ['<pinned_skills>', head, ...lines.slice(0, kept), '</pinned_skills>'].join('\n');
     const tokens = estimateTokens(block);
@@ -82,10 +85,18 @@ export function renderPinnedBlock(pins: readonly Pin[], opts: { harness?: string
   return { block: '', tokens: 0, ids: [], unknown, cut: valid.map((p) => p.name) };
 }
 
-/** The pinned block the Claude Code and Codex hook lane prints at SessionStart, from <harness>-user's pins; Codex's lines also name each SKILL.md, as its load line opens the file. */
+/**
+ * The pinned block the Claude Code and Codex hook lane prints at SessionStart, from <harness>-user's pins; Codex's lines
+ * also name each SKILL.md, as its load line opens the file. A Claude Code pin from a configured extra directory names its
+ * SKILL.md too, because the Skill tool loads only skills in Claude Code's own skills folder.
+ */
 export function sessionStartPinnedBlock(home: string, harness: 'claude-code' | 'codex', pins: readonly Pin[]): PinnedBlock {
   const catalog = `${harness}-user`;
-  if (harness === 'claude-code') return renderPinnedBlock(pins, { harness, known: catalogSkillIds(home, catalog) });
   const paths = catalogSkillPaths(home, catalog);
+  if (harness === 'claude-code') {
+    const native = claudeUserSkillsDir() + sep;
+    const outside = paths ? new Map([...paths].filter(([, path]) => path && !path.startsWith(native))) : null;
+    return renderPinnedBlock(pins, { harness, known: paths ? new Set(paths.keys()) : null, ...(outside?.size ? { paths: outside } : {}) });
+  }
   return renderPinnedBlock(pins, { harness, known: paths ? new Set(paths.keys()) : null, ...(paths ? { paths } : {}) });
 }
