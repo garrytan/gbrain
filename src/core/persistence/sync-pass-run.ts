@@ -818,8 +818,8 @@ async function readLevelReporting(engine: BrainEngine, levelInput: Parameters<ty
 /**
  * GST-3534: a pass's last round, with HEAD moved past `at` (the newest round whose batches all drained, at its commit), first
  * reads the level at `at` again, after those batches committed. The pass may stamp `at` behind HEAD only when both reads are
- * committed-mode, no write of the source is open, and every path of the new read triages as a stamp at HEAD takes it (nothing to
- * import or delete, in flight, owed or mismatched); otherwise null, and the round reads HEAD as before.
+ * committed-mode, that read saw no open write or pending Git effect of the source, and every path of it triages as a stamp at HEAD
+ * takes it (nothing to import or delete, in flight, owed or mismatched); otherwise null, and the round reads HEAD as before.
  */
 async function confirmBehind(engine: BrainEngine, levelInput: Parameters<typeof readShadowLevel>[1] & { context: ManagedSyncContext }, at: { head: string; mode: ShadowLevel['mode'] },
   triage: Pick<Parameters<typeof triageRound>[1], 'S' | 'legacyWaived' | 'readmitted' | 'admission' | 'remote'>, round: number): Promise<{ level: ShadowLevel; seen: string } | null> {
@@ -827,10 +827,8 @@ async function confirmBehind(engine: BrainEngine, levelInput: Parameters<typeof 
   if (at.mode !== 'committed') return null;
   const seen = (await readLevelHead(context.gitRoot, sourceId)).head;
   if (seen === at.head) return null;
-  const open = await engine.executeRaw(`SELECT 1 FROM persistence_requests WHERE source_id=$1 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) LIMIT 1`, [sourceId]);
-  if (open.length) return null;
   const level = await readShadowLevel(engine, { ...levelInput, pass: { ...levelInput.pass!, at: at.head } });
-  const left = level?.mode === 'committed' && level.head === at.head && !level.paths.some(entry => entry.state.openWork)
+  const left = level?.mode === 'committed' && level.head === at.head && !level.openWrites
     ? await triageRound(level, { ...triage, S: new Map(triage.S), readmitted: new Set(triage.readmitted), counts: { pausedDeletes: 0 }, consumeRetry: async () => undefined }) : null;
   const settled = !!left && Object.values(left).every(paths => !paths.length);
   await faultPoint('sync:confirm_behind', { sourceId, round, settled, ...(level ? { level: { statements: level.statements, confirm: level.confirm ?? null, shadow: level } } : {}) });
@@ -1018,6 +1016,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       const confirmed = round === PASS_MAX_ROUNDS && drained && !remote && configured && admission !== 'classify_only'
         ? await confirmBehind(engine, levelInput, drained, { S, legacyWaived, readmitted, admission, remote }, round) : null;
       if (confirmed) { head = value.telemetry.target = confirmed.level.head; levelSlugMode = confirmed.level.slugMode; lastLevel = confirmed.level; return await stampAt(confirmed.level, confirmed.seen); }
+      if (round === PASS_MAX_ROUNDS) drained = null; // read once: a wait on in-flight work repeats the round, not the confirm
       const level = await readLevelReporting(engine, levelInput, round, opts.onProgress).finally(() => { delete value.telemetry.step; });
       await faultPoint('sync:level_read', { sourceId, round, level: level ? { statements: level.statements, confirm: level.confirm ?? null, reused: level.reused ?? 0, shadow: level, input: levelInput } : undefined });
       assertActive();

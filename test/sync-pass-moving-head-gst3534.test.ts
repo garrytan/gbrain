@@ -155,7 +155,8 @@ for (const backend of testBackends()) describe(`[${backend}] GST-3534: a pass wh
       source_id,source_incarnation,slug,worktree_id,digest,intent,authority,intent_bytes,terminal_reservation,state) VALUES ('local_cli','fixture',gen_random_uuid(),'put_page',
       'default',$1::uuid,'notes/w3',$2::uuid,'d','{"kind":"put_page","sourcePath":"notes/w3.md"}'::jsonb,'{}'::jsonb,0,0,'queued')`, [binding.source_incarnation, binding.worktree_id]) });
     await asProtocol2("DELETE FROM persistence_requests WHERE principal_id='fixture'");
-    expect(confirms).toEqual([]);
+    // The confirm read saw the open write and refused, so the round read HEAD and waited on it.
+    expect(confirms).toEqual([false]);
     expect({ status: pass.status, reason: pass.reason ?? null }).toEqual({ status: 'partial', reason: 'writer_pending' });
     expect((await convergence(engine)).stamped_behind).toBeNull();
   }), 300_000);
