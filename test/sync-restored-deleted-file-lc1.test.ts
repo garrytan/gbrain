@@ -16,7 +16,7 @@
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
@@ -154,6 +154,26 @@ for (const backend of testBackends()) describe(`[${backend}] LC-1: a file restor
     expect(await holds(engine)).toEqual({});
     git(root, 'checkout', '--', `${slug}.md`);
     await performManagedSync(engine, OPTS);
+    expect(await holds(engine)).toEqual({ [`${slug}.md`]: ['file_drift', 'deleted', 'tombstone_edited', true] });
+    expect(await pageState(engine, slug)).toBe('deleted');
+  }, { databaseUrl, setup }), 240_000);
+
+  test('a restore that keeps the size and modification time of the file it replaced is still seen: the idle check compares change time and inode too', () => managedBrain(async ({ engine, ctx, root }) => {
+    const slug = 'notes/ivy-example', file = join(root, `${slug}.md`);
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await remove(engine, ctx, slug, false);
+    // Other bytes of the same length while the removal is not committed: the stamp records this file's stat.
+    const original = execFileSync('git', ['-C', root, 'show', `HEAD:${slug}.md`]);
+    writeFileSync(file, Buffer.from(original.toString('utf8').replace('committed body', 'COMMITTED BODY')));
+    const kept = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000); utimesSync(file, kept, kept);
+    await performManagedSync(engine, OPTS);
+    const before = await holds(engine);
+    expect((await performManagedSync(engine, OPTS)).status).toBe('up_to_date');
+    // The original bytes come back with the replaced file's modification time kept: size and mtime match the stamp.
+    writeFileSync(join(root, 'restore.tmp'), original); utimesSync(join(root, 'restore.tmp'), kept, kept); renameSync(join(root, 'restore.tmp'), file);
+    expect(statSync(file).mtimeMs).toBe(kept.getTime());
+    await performManagedSync(engine, OPTS);
+    expect(before).toEqual({});
     expect(await holds(engine)).toEqual({ [`${slug}.md`]: ['file_drift', 'deleted', 'tombstone_edited', true] });
     expect(await pageState(engine, slug)).toBe('deleted');
   }, { databaseUrl, setup }), 240_000);

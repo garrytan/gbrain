@@ -19,16 +19,22 @@ interface PendingEntry {
 
 const CLEAN_DIRTINESS = new Set<string | null>(['clean', 'clean_eol', 'clean_lfs', 'unknown']);
 
-/** A working-tree file's stat (`size:mtimeMs`, `absent` or `unreadable`); the caller owns the filesystem read. */
+/** A working-tree file's stat (a stat key, `absent` or `unreadable`); the caller owns the filesystem read. */
 export type StatFile = (path: string) => string;
 
-/** The level's `removalPending` field: the removal-pending paths of a committed-mode level, absent when there are none. */
-export function removalPendingField(mode: 'committed' | 'working', entries: Iterable<PendingEntry>, stat: StatFile): { removalPending?: RemovalPending } {
-  const pending = removalPending(mode, entries, stat);
+/**
+ * The level's `removalPending` field: the removal-pending paths of a committed-mode level, absent when there are none.
+ * `observed` holds each probed path's stat from before its dirtiness probe read it: a path whose stat moved since (a restore
+ * while the pass ran) records `raced`, which no stat matches, so the next sync reads it again instead of going idle.
+ */
+export function removalPendingField(mode: 'committed' | 'working', entries: Iterable<PendingEntry>, stat: StatFile,
+  observed?: ReadonlyMap<string, string>): { removalPending?: RemovalPending } {
+  const pending = removalPending(mode, entries, stat, observed);
   return pending !== undefined ? { removalPending: pending } : {};
 }
 
-function removalPending(mode: 'committed' | 'working', entries: Iterable<PendingEntry>, stat: StatFile): RemovalPending | undefined {
+function removalPending(mode: 'committed' | 'working', entries: Iterable<PendingEntry>, stat: StatFile,
+  observed: ReadonlyMap<string, string> | undefined): RemovalPending | undefined {
   if (mode !== 'committed') return undefined;
   const pending: Array<{ path: string; stat: string }> = [];
   for (const entry of entries) {
@@ -36,14 +42,15 @@ function removalPending(mode: 'committed' | 'working', entries: Iterable<Pending
     if (pending.length >= REMOVAL_PENDING_CAP) return null;
     // A staged removal can be undone in the index alone (`git restore --staged`), which leaves the disk stat as it was: such a
     // path records `staged`, which no stat matches, so the stamp is never idle until the pass reads the path again.
-    pending.push({ path: entry.path, stat: entry.state.dirty === 'staged' ? 'staged' : stat(entry.path) });
+    const now = entry.state.dirty === 'staged' ? 'staged' : stat(entry.path), seen = observed?.get(entry.path);
+    pending.push({ path: entry.path, stat: now !== 'staged' && seen !== undefined && seen !== now ? 'raced' : now });
   }
   return pending.length ? pending : undefined;
 }
 
-/** Whether a recorded removal-pending path changed on disk since the stamp (null, the overflowed set, always counts). */
+/** Whether a recorded removal-pending path changed on disk since the stamp (null, the overflowed set, and an `unreadable` stat always count). */
 export function removalPendingChanged(pending: RemovalPending | undefined, stat: StatFile): boolean {
   if (pending === undefined) return false;
   if (pending === null) return true;
-  return pending.some(entry => stat(entry.path) !== entry.stat);
+  return pending.some(entry => entry.stat === 'unreadable' || stat(entry.path) !== entry.stat);
 }

@@ -14,7 +14,7 @@
  * READ ONLY` transaction and `I⋈P` is one set-based statement read through a cursor; PGLite admits one transaction at a
  * time, so there they run as bounded statements of at most 2,000 rows with writers between them.
  */
-import { realpathSync, statSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { hardenedGitStream, hardenedStreamComplete, NulRecordSplitter } from '../hardened-git.ts';
@@ -36,7 +36,7 @@ import { FILE_DRIFT_VERSION, fileDriftSide, holdBasisMoved, holdRescreenDue, typ
   type GitHoldRecord, type SyncImportParser, type SyncImportProvenance } from './sync-holds.ts';
 import { movedDriftHolds, sameParser } from './sync-prescreen.ts';
 import { sameSyncOrigin, selectOriginClaimant, syncOriginPath, type SyncOriginScope } from './sync-origin.ts';
-import { hashWorkingLevel, probeDirtiness, readBlobs, readIndexDelta, readIndexLevel, readTreeLevel, workingChanged, type GitIndexEntry, type GitTreeEntry, type WorkingStatCache } from './sync-git-stream.ts';
+import { hashWorkingLevel, probeDirtiness, readBlobs, readIndexDelta, readIndexLevel, readTreeLevel, workingChanged, workingStatKey, type GitIndexEntry, type GitTreeEntry, type WorkingStatCache } from './sync-git-stream.ts';
 import { readOriginEvidence } from './sync-origin-evidence.ts';
 import { levelReuseVerify, readTreeLevelReusing, reportLevelReuseCheck, type TreeReuse } from './sync-tree-reuse.ts';
 import { classifySyncPath, syncPassKind, type SyncClassified, type SyncIdleBlocker, type SyncPathState } from './sync-classify.ts';
@@ -917,7 +917,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
   t = timer();
   const paths: ShadowPath[] = [];
   let reused = 0;
-  const candidates: string[] = [], candidateAt: number[] = [];
+  const candidates: string[] = [], candidateAt: number[] = [], observed = new Map<string, string>(); // observed: LC-1 stats from before the probe (sync-removal-pending.ts)
   const settledBeforeDirtiness = new Set(['held', 'spelling', 'untracked', 'kept', 'delete', 'delete_drift', 'gone', 'deleted_same', 'deleted_edited', 'legacy_same', 'matched']);
   const shared = { mode, fullObligation: input.pass ? !!input.pass.episodeFullId : input.full === true };
   // The cached claims stay whole for the next round. A narrowed round classifies again the paths whose entry `matchedUnchanged`
@@ -954,7 +954,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
   if (candidates.length && !strict) {
     t = timer();
     const candidateIndex = new Map<string, GitIndexEntry>();
-    for (const path of candidates) { if (step.due()) await step.pause(); const entry = indexed(path); if (entry) candidateIndex.set(path, entry); }
+    for (const path of candidates) { if (step.due()) await step.pause(); observed.set(path, workingFileStat(gitRoot, path)); const entry = indexed(path); if (entry) candidateIndex.set(path, entry); }
     const probed = await probeDirtiness(root, gitRoot, candidates, tree, candidateIndex, { step, persist: input.pass?.levelReuse === true,
       ...(levelReuseVerify() ? { verify: (reused: number, differs: string | null) => { if (reused) reportLevelReuseCheck('dirtiness probes', `${reused} reused`, differs); } } : {}) });
     timings.Dp = (timings.Dp ?? 0) + t();
@@ -1000,7 +1000,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
     releasableHolds: holds.filter(hold => releasableHold(hold, domain.has(toGit(hold.path)), dbOnlyUnknown, storage)).map(hold => hold.path),
     deletionCandidates: deletionCandidates(holds, path => domain.has(path) && !tree.has(path)
       && !(mode === 'working' && (untracked.has(path) || index.has(path))) && !readPresent(root, path, scope), toGit),
-    paths, reconcilable, ...removalPendingField(mode, paths as Iterable<ShadowPath>, path => workingFileStat(gitRoot, path)), ...(colon.refusals.size ? { fileRefusals: [...colon.refusals.values()] } : {}), timings_ms: timings, statements: statements + attestationStatements + 3,
+    paths, reconcilable, ...removalPendingField(mode, paths as Iterable<ShadowPath>, path => workingFileStat(gitRoot, path), observed), ...(colon.refusals.size ? { fileRefusals: [...colon.refusals.values()] } : {}), timings_ms: timings, statements: statements + attestationStatements + 3,
     ...(confirm ? { confirm: narrow ? { ...confirm, narrow: narrow === 'taken' && !reuse ? 'classified' : narrow } : confirm } : {}), ...(reuse ? { reused } : {}), ...(treeReuse ? { treeReuse } : {}), pack: pack?.identity ?? null,
     selection: { exclude: [...exclude].sort(), includeHidden: [...includeHidden].sort(), strategy, srcSubpath: scope || null, mode },
     rescreenDue: holds.filter(hold => holdRescreenDue(hold, retry.has(hold.path))).map(hold => toGit(hold.path)), workingCache: hashed?.cache ?? null };
@@ -1401,12 +1401,11 @@ export async function statusConvergence(engine: BrainEngine, sourceId: string): 
   }
 }
 
-/** LC-1: a working-tree file's stat for the removal-pending check (sync-removal-pending.ts): `size:mtimeMs`, `absent` or `unreadable`. */
+/** LC-1: a working-tree file's stat for the removal-pending check (sync-removal-pending.ts): its working-stat key (device, inode, mode, size, mtime and ctime), `absent` or `unreadable`. */
 export function workingFileStat(gitRoot: string, path: string): string {
   try {
-    const stat = statSync(join(gitRoot, path), { throwIfNoEntry: false });
-    return stat ? `${stat.size}:${stat.mtimeMs}` : 'absent';
-  } catch {
-    return 'unreadable';
+    return workingStatKey(lstatSync(join(gitRoot, path), { bigint: true })) ?? 'unreadable';
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'unreadable';
   }
 }
