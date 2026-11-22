@@ -3278,6 +3278,31 @@ then changes exactly the previewed rows; a page edited during the run reports
 managed brain `git revert` of the repair commit undoes it, and page history
 keeps the earlier revision.
 
+When the date is stated in verified evidence outside the claim, the host
+operator can supply `--evidence-file <path>` instead of selecting a bulk day.
+Use a JSON array. Each entry identifies a canonical fact row and its current
+start and claim, and records the earlier start and the source that supports it.
+For example, an entry for the claim `Acme Example opened its showroom` has these fields:
+
+```json
+{
+  "id": 123,
+  "claim_sha256": "8db07f8321c94b73a8895d52041091097046d2dd9da99c207f6529fee27a6af3",
+  "expected_valid_from": "2026-05-01T00:00:00Z",
+  "valid_from": "2025-03-14T14:05:09.125Z",
+  "evidence": "Publisher's dated notice of the storefront opening"
+}
+```
+
+`claim_sha256` is the lowercase SHA-256 of the exact stored fact text as
+UTF-8, without an extra newline. Both timestamps use UTC, with seconds and
+optional milliseconds. The new date must be an earlier UTC day. The preview
+lists the evidence and selects only rows named in the file. If any entry is
+stale, outside the source, or lacks a matching canonical Facts row, the preview
+selects no changes. The manifest content and page revisions are bound to the
+approval hash. Apply the printed command after review. The repair only changes
+approved `valid_from` cells and keeps each claim, row and speaker.
+
 <a id="failed-writes"></a>
 ### Failed writes
 

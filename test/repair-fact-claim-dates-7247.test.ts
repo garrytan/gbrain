@@ -8,7 +8,8 @@
  * finds nothing on a second preview.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
@@ -17,6 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../src/core/facts-fence.ts';
 import { claimDate } from '../src/core/facts/bulk-days.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
 import { factBulkDatesCheck } from '../src/commands/doctor/checks/fact-bulk-dates.ts';
 import { runWaveChecks } from '../src/commands/doctor/wave-checks.ts';
 import { runRepairCommand } from '../src/commands/repair.ts';
@@ -108,6 +110,71 @@ for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
   describe(`#7247 fact-claim-dates on a managed brain (${backend})`, () => {
+    test('explicit evidence changes only the approved start and keeps the original private attributed record', async () => {
+      await managedBrain(async ({ engine, ctx, root }) => {
+        const claim = 'Acme Example opened its showroom';
+        const oldStart = `${DAY}T00:00:00.000Z`;
+        const corrected = '2025-03-14T14:05:09.125Z';
+        const table = renderFactsTable([
+          { rowNum: 1, claim, kind: 'fact', confidence: 0.9, visibility: 'private', notability: 'medium', validFrom: DAY,
+            source: 'synthetic original', context: 'the original statement', active: true, attributedTo: 'user' },
+          { rowNum: 2, claim: 'Acme Example opened a second location on 2025-04-20', kind: 'fact', confidence: 1, visibility: 'private',
+            notability: 'medium', validFrom: DAY, source: 'unrelated fact', active: true, attributedTo: 'other' },
+        ]);
+        await putPage(ctx, ACME, `---\ntype: company\ntitle: Acme Example\n---\nSynthetic proof.\n\n## Facts\n\n${table}\n`);
+        const state = async () => engine.executeRaw<Record<string, unknown>>(`SELECT id, fact, entity_slug, attributed_to, visibility,
+          valid_from, source, source_window, trust_tier, row_num, created_at, write_request_id
+          FROM facts WHERE source_id='default' AND source_markdown_slug=$1 AND expired_at IS NULL ORDER BY row_num`, [ACME]);
+        const before = await state();
+        expect(before.map(row => row.attributed_to)).toEqual(['user', 'other']);
+        const file = join(root, 'external date proof.json');
+        const entry = { id: Number(before[0]!.id), claim_sha256: createHash('sha256').update(claim).digest('hex'),
+          expected_valid_from: oldStart, valid_from: corrected, evidence: 'Synthetic original publisher’s opening notice' };
+        const out = join(root, ACME + '.md');
+        const original = readFileSync(out, 'utf8');
+        const args = ['fact-claim-dates', '--source', 'default', '--evidence-file', file, '--json'];
+        async function cli(extra: string[] = []) {
+          _resetCliExitVerdictForTests();
+          const lines: string[] = [];
+          const log = console.log;
+          console.log = (...parts: unknown[]) => { lines.push(parts.map(String).join(' ')); };
+          try { await withEnv({ GBRAIN_INTERACTIVE: '0', CI: '1' }, () => runRepairCommand(engine, [...args, ...extra])); }
+          finally { console.log = log; }
+          return JSON.parse(lines.join('\n')).results[0];
+        }
+
+        writeFileSync(file, JSON.stringify([entry, { ...entry, id: entry.id + 10000 }]));
+        expect(await cli()).toMatchObject({ affected: 0, residuals: { evidence_fact_changed: 1 } });
+        expect(readFileSync(out, 'utf8')).toBe(original);
+        writeFileSync(file, JSON.stringify([entry]));
+        const plan = await cli();
+        expect(plan.affected).toBe(1);
+        expect(plan.apply_command).toContain('--evidence-file ');
+        expect(plan.apply_command).toContain(`'${file}'`);
+        expect(plan.listing.find((row: { class: string }) => row.class === 'external_evidence').detail).toContain(entry.evidence);
+        expect(await state()).toEqual(before);
+        expect((await refusal(() => cli(['--day', DAY]))).code).toBe('invalid_params');
+
+        writeFileSync(file, JSON.stringify([{ ...entry, evidence: 'Unapproved changed source' }]));
+        expect((await refusal(() => cli(['--apply', '--expect', plan.preview_hash, '--yes']))).code).toBe('preview_changed');
+        expect(await state()).toEqual(before);
+        writeFileSync(file, JSON.stringify([entry]));
+        expect(await cli(['--apply', '--expect', plan.preview_hash, '--yes'])).toMatchObject({ applied: 1, failed: [] });
+        const after = await state();
+        const actualStart = after[0]!.valid_from;
+        expect((actualStart instanceof Date ? actualStart : new Date(String(actualStart))).toISOString()).toBe(corrected);
+        expect<Record<string, unknown>>({ ...after[0], valid_from: before[0]!.valid_from }).toEqual(before[0]!);
+        expect(after[1]).toEqual(before[1]);
+        const expected = parseMarkdown(original.split('\n').map(line =>
+          line.includes(claim + ' |') ? line.replace(`| ${DAY} |`, `| ${corrected} |`) : line).join('\n'), ACME + '.md');
+        const actual = parseMarkdown(readFileSync(out, 'utf8'), ACME + '.md');
+        expect(actual.frontmatter).toEqual(expected.frontmatter);
+        expect(actual.compiled_truth).toBe(expected.compiled_truth);
+        expect(actual.timeline).toBe(expected.timeline);
+        expect((await cli()).affected).toBe(0);
+      }, { databaseUrl });
+    }, 240_000);
+
     test('doctor finding; preview writes nothing; a stale preview refuses; apply rewrites exactly the planned fence rows; a second preview is empty', async () => {
       await managedBrain(async ({ engine, ctx, root }) => {
         await seedPages(ctx);

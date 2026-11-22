@@ -93,6 +93,7 @@ import { segmentedMirrorRepair } from './segmented-mirror.ts';
 import { segmentedTilingRepair } from './segmented-tiling.ts';
 import { uncommittedDeletionsRepair, UNCOMMITTED_DELETIONS_CONSENT_TEXT } from './uncommitted-deletions.ts';
 import { factClaimDatesRepair } from './fact-claim-dates.ts';
+import type { FactDateEvidenceFile } from './fact-date-evidence.ts';
 import { provenanceRepair } from './provenance.ts';
 import { secretSpansRepair } from './secret-spans.ts';
 import { rowsBehindRepair } from './rows-behind.ts';
@@ -675,7 +676,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     handler: factClaimDatesRepair, embeds: 'effect', checks: ['fact_bulk_dates'], explicit_only: true, preview_bound: true, consent: 'destructive',
     consentText: {
       what: 'Set the valid_from of the previewed facts to the date each one\'s claim states',
-      why: 'The preview listed each facts fence row and database-only fact dated with the day a bulk load ran whose claim states exactly one earlier date; that date replaces the load day.',
+      why: 'The preview listed each candidate and the date supported by the claim or the operator’s evidence file.',
       risk: 'Only the listed valid_from cells change; every other row and page stays as it is. Page edits publish through revision-bound put_page (a managed brain commits the file, so git revert undoes it; page history keeps the earlier revision). A page that changed since the preview is skipped.',
       user_message: 'Move the previewed facts to the date their claim states? Only their valid_from changes',
     },
@@ -874,6 +875,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
       slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number; stop?: AbortSignal; recordDatabaseStops?: boolean;
       prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string; provenance?: string; cursor?: string; progress?: ProgressReporter;
       keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
+      factDateEvidence?: FactDateEvidenceFile;
       cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger; readers?: ReadersRequest; openFacts?: OpenFactsRequest } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
@@ -888,7 +890,8 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
         explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, includeCrossEntity: run.includeCrossEntity, only: run.only, skip: run.skip, slugs: run.slugs, noLlm: run.noLlm,
         maxLlmUsd: run.maxLlmUsd, deadline: run.deadline, ...(run.stop ? { stop: run.stop } : {}), ...(run.recordDatabaseStops ? { recordDatabaseStops: true } : {}), prefer: run.prefer, requests: run.requests, allDrifted: run.allDrifted, driftClass: run.driftClass, since: run.since,
         held: run.held, side: run.side, state: run.state, provenance: run.provenance, cursor: run.cursor, progress: run.progress, keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close, afterPage: run.afterPage, generations: run.generations, day: run.day, rules: run.rules,
-        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal, privateLabelsLedger: run.privateLabelsLedger, readers: run.readers, openFacts: run.openFacts });
+        factDateEvidence: run.factDateEvidence, cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal,
+        privateLabelsLedger: run.privateLabelsLedger, readers: run.readers, openFacts: run.openFacts });
     },
   };
 }

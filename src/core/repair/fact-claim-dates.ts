@@ -26,7 +26,10 @@
  * keeping a page that moved meanwhile as `changed_since_preview`. Nothing runs on upgrade, from --all or from the
  * remediation plan.
  */
+import { createHash } from 'node:crypto';
+import { shellQuote } from '../agent-output.ts';
 import type { BrainEngine } from '../engine.ts';
+import type { FactDateEvidenceFile } from './fact-date-evidence.ts';
 import type { Page } from '../types.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -45,10 +48,10 @@ const DOCS = 'docs/guides/repair.md#fact-claim-dates';
 const LISTED_ROWS = 5;
 
 type Section = 'compiled_truth' | 'timeline';
-interface PlannedRow { row: number; day: string; date: string }
+interface PlannedRow { row: number; day: string; date: string; expectedStart?: string }
 interface PagePlan { source_id: string; slug: string; revision: string; section: Section; rows: PlannedRow[] }
 interface FactsPlan { source_id: string; entity_slug: string | null; rows: Array<{ id: number; valid_from: string; day: string; date: string }> }
-interface Selection { source_ids: string[]; day: string | null }
+interface Selection { source_ids: string[]; day: string | null; evidenceDigest?: string }
 interface Approved { selection: Selection; page?: PagePlan; facts?: FactsPlan }
 interface ClaimItem extends RepairItem { approved: Approved; hash: string; last: boolean }
 
@@ -57,13 +60,20 @@ interface FactRow { id: number | string; entity_slug: string | null; fact: strin
 
 interface Plan { hash: string; days: BulkFactDay[]; pages: PagePlan[]; facts: FactsPlan[]; residuals: Record<string, number>; listing: RepairListing[] }
 
-const previewCommand = (sourceId: string, day: string | null) => `gbrain repair fact-claim-dates --source ${sourceId}${day ? ` --day ${day}` : ''}`;
+const previewCommand = (sourceId: string, day: string | null, evidence?: FactDateEvidenceFile) =>
+  shellQuote(['gbrain', 'repair', 'fact-claim-dates', '--source', sourceId,
+    ...(day ? ['--day', day] : []), ...(evidence ? ['--evidence-file', evidence.path] : [])]);
 
 /** The UTC day a fence valid_from cell projects to, read the way the fence projection reads it. */
-function cellDay(cell: string | undefined): string | null {
+function cellInstant(cell: string | undefined): string | null {
   if (!cell) return null;
   const date = new Date(cell);
-  return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : null;
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function matchesStart(cell: string | undefined, row: Pick<PlannedRow, 'day' | 'expectedStart'>): boolean {
+  const instant = cellInstant(cell);
+  return row.expectedStart ? instant === row.expectedStart : instant?.slice(0, 10) === row.day;
 }
 
 /**
@@ -76,7 +86,7 @@ function rewriteFence(page: Page, section: Section, rows: PlannedRow[]): string 
   const parsed = parseFactsFence(text);
   if (parsed.warnings.length) return null;
   const planned = new Map(rows.map(row => [row.row, row]));
-  if (rows.some(row => { const fact = parsed.facts.find(f => f.rowNum === row.row); return !fact?.active || cellDay(fact.validFrom) !== row.day; })) return null;
+  if (rows.some(row => { const fact = parsed.facts.find(f => f.rowNum === row.row); return !fact?.active || !matchesStart(fact.validFrom, row); })) return null;
   const next = parsed.facts.map(fact => planned.has(fact.rowNum) ? { ...fact, validFrom: planned.get(fact.rowNum)!.date } : fact);
   const rewritten = replaceOrInsertFactsFence(text, renderFactsTable(next));
   const reread = parseFactsFence(rewritten);
@@ -92,7 +102,9 @@ const PAGE_RESIDUALS: Record<string, string> = {
 };
 
 /** The plan for one page's candidate rows: the rows to move, or the residual class that keeps the page. */
-async function planPage(engine: BrainEngine, sourceId: string, slug: string, candidates: Array<{ row: FactRow; day: string; date: string }>,
+type Candidate = { row: FactRow; day: string; date: string; expectedStart?: string };
+
+async function planPage(engine: BrainEngine, sourceId: string, slug: string, candidates: Candidate[],
   count: (key: string, n?: number) => void): Promise<{ plan: PagePlan } | { residual: string } | null> {
   const snapshot = await engine.readPageSnapshot(slug, { sourceId });
   if (!snapshot) return { residual: 'no_page' };
@@ -102,9 +114,11 @@ async function planPage(engine: BrainEngine, sourceId: string, slug: string, can
   const parsed = parseFactsFence(snapshot.page[section] ?? '');
   if (parsed.warnings.length) return { residual: 'unparsed' };
   const rows: PlannedRow[] = [];
-  for (const { row, day, date } of candidates) {
+  for (const { row, day, date, expectedStart } of candidates) {
     const fact = parsed.facts.find(f => f.rowNum === Number(row.row_num));
-    if (fact?.active && cellDay(fact.validFrom) === day && normalizeClaimWhitespace(fact.claim) === normalizeClaimWhitespace(row.fact)) rows.push({ row: fact.rowNum, day, date });
+    if (fact?.active && matchesStart(fact.validFrom, { day, expectedStart }) && normalizeClaimWhitespace(fact.claim) === normalizeClaimWhitespace(row.fact)) {
+      rows.push({ row: fact.rowNum, day, date, ...(expectedStart ? { expectedStart } : {}) });
+    }
     else count('fence_mismatch');
   }
   if (!rows.length) return null;
@@ -114,15 +128,16 @@ async function planPage(engine: BrainEngine, sourceId: string, slug: string, can
 }
 
 /** The whole plan for one source and selection, read-only, with the hash an apply must match. */
-async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Selection): Promise<Plan> {
+async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Selection, evidence?: FactDateEvidenceFile): Promise<Plan> {
   const sourceId = selection.source_ids[0]!;
-  const days = selection.day ? [] : await findBulkFactDays(engine, [sourceId]);
+  const days = selection.day || evidence ? [] : await findBulkFactDays(engine, [sourceId]);
   const dayList = selection.day ? [selection.day] : days.map(d => d.day);
   const managed = await managedPersistenceEnabled(engine);
   const residuals: Record<string, number> = {};
   const count = (key: string, n = 1) => { residuals[key] = (residuals[key] ?? 0) + n; };
-  const byPage = new Map<string, Array<{ row: FactRow; day: string; date: string }>>();
+  const byPage = new Map<string, Candidate[]>();
   const byEntity = new Map<string, FactsPlan>();
+  const addPageRow = (slug: string, candidate: Candidate) => byPage.set(slug, [...(byPage.get(slug) ?? []), candidate]);
   for (const day of dayList) {
     const rows = await engine.executeRaw<FactRow>(`SELECT f.id, f.entity_slug, f.fact, f.row_num, f.source_markdown_slug, f.valid_from::text AS valid_from,
         to_char(f.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS valid_until_day
@@ -132,7 +147,7 @@ async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Sel
       if ('skip' in found) { count(found.skip); continue; }
       if (row.valid_until_day !== null && row.valid_until_day < found.date) { count('ends_before_claim_date'); continue; }
       if (row.row_num !== null && row.source_markdown_slug) {
-        byPage.set(row.source_markdown_slug, [...(byPage.get(row.source_markdown_slug) ?? []), { row, day, date: found.date }]);
+        addPageRow(row.source_markdown_slug, { row, day, date: found.date });
       } else if (managed) count('database_only_managed');
       else {
         const key = row.entity_slug ?? '';
@@ -140,6 +155,31 @@ async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Sel
         group.rows.push({ id: Number(row.id), valid_from: row.valid_from, day, date: found.date });
         byEntity.set(key, group);
       }
+    }
+  }
+  const evidenceListing: RepairListing[] = [];
+  if (evidence) {
+    const checked = await engine.executeRaw<FactRow>(`SELECT f.id, f.entity_slug, f.fact, f.row_num, f.source_markdown_slug,
+        f.valid_from::text AS valid_from, to_char(f.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS valid_until_day
+      FROM facts f WHERE f.source_id = $1 AND f.id = ANY($2::bigint[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
+        AND f.valid_from = date_trunc('milliseconds', f.valid_from)`, [sourceId, evidence.rows.map(row => row.id)]);
+    const byId = new Map(checked.map(row => [Number(row.id), row]));
+    for (const wanted of evidence.rows) {
+      const row = byId.get(wanted.id);
+      if (!row || cellInstant(row.valid_from) !== wanted.expected_valid_from ||
+          createHash('sha256').update(row.fact).digest('hex') !== wanted.claim_sha256) {
+        count('evidence_fact_changed');
+        continue;
+      }
+      if (row.row_num === null || !row.source_markdown_slug) { count('evidence_not_fenced'); continue; }
+      if (row.valid_until_day !== null && row.valid_until_day < wanted.valid_from.slice(0, 10)) {
+        count('ends_before_claim_date');
+        continue;
+      }
+      addPageRow(row.source_markdown_slug, { row, day: wanted.expected_valid_from.slice(0, 10), date: wanted.valid_from,
+        expectedStart: wanted.expected_valid_from });
+      evidenceListing.push({ item: `${sourceId}:fact ${wanted.id}`, class: 'external_evidence',
+        detail: `${wanted.expected_valid_from} -> ${wanted.valid_from}; ${wanted.evidence}` });
     }
   }
   const pages: PagePlan[] = [];
@@ -163,6 +203,13 @@ async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Sel
   for (const group of facts) {
     listing.push({ item: `${sourceId}:${group.entity_slug ?? '(no entity)'}`, class: 'update',
       detail: `${group.rows.length} database-only fact(s) take the date their claim states: ${group.rows.slice(0, LISTED_ROWS).map(row => `fact ${row.id} -> ${row.date}`).join(', ')}` });
+  }
+  if (evidence) {
+    listing.push(...evidenceListing);
+    if (Object.keys(residuals).length) {
+      listing.push({ item: sourceId, class: 'evidence_set_incomplete', detail: 'The evidence list has unmatched rows; the preview selected no changes.' });
+      pages.length = 0;
+    }
   }
   const [brain] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id = $1', [sourceId]);
   const hash = previewHash({ kind: 'fact-claim-dates-v1', brain_id: scope.brain_id, source: { id: sourceId, incarnation: brain?.incarnation ?? null }, selection,
@@ -192,10 +239,15 @@ export const factClaimDatesRepair: RepairHandler = {
         'A bulk load dates the facts of one source; name it, e.g. gbrain repair fact-claim-dates --source default.',
         { fix: readFix('Reports the bulk-dated days of every source, read-only.', { argv: ['gbrain', 'doctor', '--only', 'fact_bulk_dates', '--json'] }), docs: DOCS });
     }
-    const selection: Selection = { source_ids: scope.source_ids, day: opts?.day ?? null };
-    const command = previewCommand(scope.source_ids[0]!, selection.day);
+    const evidence = opts?.factDateEvidence;
+    if (evidence && (opts?.remote !== false || opts?.day)) {
+      throw opError('invalid_params', '--evidence-file requires a local operator and cannot be combined with --day.',
+        'On the brain host, run repair fact-claim-dates with --source and --evidence-file.');
+    }
+    const selection: Selection = { source_ids: scope.source_ids, day: opts?.day ?? null, ...(evidence ? { evidenceDigest: evidence.digest } : {}) };
+    const command = previewCommand(scope.source_ids[0]!, selection.day, evidence);
     if (!opts?.apply) {
-      const plan = await buildPlan(engine, scope, selection);
+      const plan = await buildPlan(engine, scope, selection, evidence);
       const approved: Approved[] = [...plan.pages.map(page => ({ selection, page })), ...plan.facts.map(facts => ({ selection, facts }))];
       if (approved.length) await saveApprovedSet<Approved>(engine, { command: 'fact-claim-dates', hash: plan.hash }, approved);
       return { items: approved.map((entry, index) => item(entry, index, plan.hash, index === approved.length - 1)), preview_hash: plan.hash,
@@ -206,11 +258,12 @@ export const factClaimDatesRepair: RepairHandler = {
         `Preview first: ${command} — show the user the listing, then run the apply command it prints: ${command} --apply --expect <preview-hash> --yes`, DOCS);
     }
     // A fresh apply recomputes the plan; a resumed one replays the saved set, whose finished items moved their pages.
-    const fresh = after ? null : await buildPlan(engine, scope, selection);
+    const fresh = after ? null : await buildPlan(engine, scope, selection, evidence);
     if (fresh && fresh.hash !== opts.expect) throw previewChangedError(opts.expect, command);
     const approved = await loadApprovedSet<Approved>(engine, { command: 'fact-claim-dates', hash: opts.expect, previewCommand: command,
-      emptyHash: async () => (fresh ?? await buildPlan(engine, scope, selection)).hash });
-    if (approved.items.some(entry => entry.selection.day !== selection.day || entry.selection.source_ids.join('\u0000') !== selection.source_ids.join('\u0000'))) {
+      emptyHash: async () => (fresh ?? await buildPlan(engine, scope, selection, evidence)).hash });
+    if (approved.items.some(entry => entry.selection.day !== selection.day || entry.selection.evidenceDigest !== selection.evidenceDigest ||
+        entry.selection.source_ids.join('\u0000') !== selection.source_ids.join('\u0000'))) {
       throw previewChangedError(opts.expect, command);
     }
     return { items: approved.items.map((entry, index) => item(entry, index, opts.expect!, index === approved.items.length - 1)).filter(entry => afterCursor(entry.cursor, after)),

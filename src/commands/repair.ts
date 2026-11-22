@@ -44,6 +44,7 @@ import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import type { OperationContext } from '../core/ops/contract.ts';
 import { privateLabelsLedger } from './repair-private-labels.ts';
 import { openFactsLedger, openFactsUndoLedger, readFactIdsFile } from './repair-open-facts.ts';
+import { readFactDateEvidence } from '../core/repair/fact-date-evidence.ts';
 import { createdBeforeRequired, memberModeRefused } from '../core/repair/open-facts.ts';
 import { isAbsolute } from 'node:path';
 import { readFileSync } from 'node:fs';
@@ -106,7 +107,7 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
        gbrain repair agent-session-facts [--source <id>] [--cwd <prefix>]... [--session <id>]... [--principal <label>] [--include-ambiguous]
                                          [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair duplicate-facts [--source <id>] [--include-cross-entity] [--apply --expect <preview-hash> --yes] [--json]
-       gbrain repair fact-claim-dates --source <id> [--day YYYY-MM-DD] [--apply --expect <preview-hash> --yes] [--json]
+       gbrain repair fact-claim-dates --source <id> [--day YYYY-MM-DD | --evidence-file <path>] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair provenance [--source <id>] [--slug <slug>]... [--include-ambiguous] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair secret-spans --source <id> --slug <slug>... [--rules <rule,...>] [--no-embed] [--apply --expect <preview-hash>] [--json]
        gbrain repair segmented-tiling --source <id> [--slug <slug>]... [--apply --expect <preview-hash>] [--json]
@@ -213,6 +214,8 @@ Options:
   --after <page-id>
                  uncommitted-deletions: preview the next window, below the next_after page id the previous preview printed;
                  the hash and the apply command carry it.
+  --evidence-file <path>
+                 fact-claim-dates: preview only the fact IDs in an operator-verified JSON evidence file. Local host only.
   --day <YYYY-MM-DD>
                  fact-claim-dates: the UTC day a bulk load stamped on the facts, instead of the days the preview detects;
                  the hash and the apply command carry it.
@@ -242,7 +245,7 @@ Proposed readers for the pages every member's key reads (visibility --propose): 
 Renames whose identity sync did not keep (rename-identity): docs/guides/live-sync.md#renaming-a-page.`;
 
 const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held', '--allow-without-owner', '--propose', '--whole-class']);
-const VALUE_FLAGS = new Set(['--readers', '--slugs-file', '--out', '--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal', '--created-before', '--ids-file', '--undo']);
+const VALUE_FLAGS = new Set(['--readers', '--slugs-file', '--out', '--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--evidence-file', '--cwd', '--session', '--principal', '--created-before', '--ids-file', '--undo']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
   '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'legacy-twins', 'rename-identity', 'url-clone-fences'],
@@ -252,7 +255,7 @@ const KIND_FLAGS: Record<string, readonly string[]> = {
   '--keep': ['stuck-recovery'], '--request-id': ['stuck-recovery'],
   '--older-than': ['receipt-compaction'], '--include-failures': ['receipt-compaction'], '--force': ['receipt-compaction'],
   '--after': ['uncommitted-deletions', 'open-facts'], '--created-before': ['open-facts'], '--ids-file': ['open-facts'], '--undo': ['open-facts'],
-  '--kind': ['generations'], '--mode': ['generations'], '--run': ['generations'], '--key': ['generations'], '--generation': ['generations'], '--day': ['fact-claim-dates'], '--rules': ['secret-spans'],
+  '--kind': ['generations'], '--mode': ['generations'], '--run': ['generations'], '--key': ['generations'], '--generation': ['generations'], '--day': ['fact-claim-dates'], '--evidence-file': ['fact-claim-dates'], '--rules': ['secret-spans'],
   '--cwd': ['agent-session-facts'], '--session': ['agent-session-facts'], '--principal': ['agent-session-facts'],
   '--readers': ['visibility'], '--slugs-file': ['visibility'], '--allow-without-owner': ['visibility'], '--propose': ['visibility'], '--out': ['visibility'],
 };
@@ -270,7 +273,7 @@ interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolea
   allDrifted: boolean; prefer?: 'file' | 'database'; requests: string[]; driftClass?: string; since?: string;
   held: boolean; side?: string; state?: string; provenance?: string; cursor?: string; wholeClass: boolean;
   keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures: boolean; force: boolean; from?: string; close: boolean; afterPage?: number;
-  generationKind?: string; generationMode?: string; run?: string; key?: string; generation?: number; day?: string; rules?: string[];
+  generationKind?: string; generationMode?: string; run?: string; key?: string; generation?: number; day?: string; dateEvidenceFile?: string; rules?: string[];
   cwdPrefixes: string[]; sessions: string[]; principal?: string; readers?: string; slugsFile?: string; allowWithoutOwner: boolean; propose: boolean; out?: string;
   /** `open-facts` (#8194): every --class value, the cut, the ids file and the ledger to undo. */
   classes: string[]; createdBefore?: string; idsFile?: string; undo?: string }
@@ -383,6 +386,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       parsed.createdBefore = new Date(value).toISOString();
     }
     else if (flag === '--ids-file') parsed.idsFile = value;
+    else if (flag === '--evidence-file') parsed.dateEvidenceFile = value;
     else if (flag === '--undo') parsed.undo = value;
     else if (flag === '--side') parsed.side = value;
     else if (flag === '--state') parsed.state = value;
@@ -618,7 +622,12 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   const { kind, apply, all, json, noEmbed, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
     prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, wholeClass, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,
     generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal, readers, slugsFile, allowWithoutOwner, propose, out,
-    classes, createdBefore, idsFile, undo } = parseRepairArgs(args);
+    classes, createdBefore, idsFile, undo, dateEvidenceFile } = parseRepairArgs(args);
+  if (dateEvidenceFile !== undefined && process.env.GBRAIN_ENFORCED_MEMBER !== undefined) throw memberModeRefused();
+  if (dateEvidenceFile !== undefined && (day || !source)) {
+    throw invalid('--evidence-file requires --source and cannot be combined with --day.', 'Preview fact-claim-dates on the brain host with one named source and an evidence file.');
+  }
+  const factDateEvidence = dateEvidenceFile === undefined ? undefined : readFactDateEvidence(dateEvidenceFile);
   if (kind === 'open-facts') {
     if (process.env.GBRAIN_ENFORCED_MEMBER !== undefined) throw memberModeRefused();
     if (!source) throw opError('invalid_params', 'gbrain repair open-facts opens facts in one named source.', 'Name one source with --source (gbrain sources list --json lists them).',
@@ -668,6 +677,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
       ...(includeAmbiguous ? ['--include-ambiguous'] : []), ...(includeCrossEntity ? ['--include-cross-entity'] : []), ...(requestId ? ['--request-id', requestId] : []),
       ...(olderThan ? ['--older-than', olderThan] : []), ...(includeFailures ? ['--include-failures'] : []), ...(force ? ['--force'] : []),
       ...(afterPage !== undefined ? ['--after', String(afterPage)] : []), ...(day ? ['--day', day] : []),
+      ...(factDateEvidence ? ['--evidence-file', factDateEvidence.path] : []),
       ...(kind === 'rename-identity' ? [...slugs.flatMap(slug => ['--slug', slug]), ...(from ? ['--from', from] : []), ...(close ? ['--close'] : [])] : []),
       ...(kind === 'origin-twins' || kind === 'moved-pages' || kind === 'timeline-order' || kind === 'contact-rows' || kind === 'provenance' ? slugs.flatMap(slug => ['--slug', slug]) : []),
       ...(generations ? generationsSelectionArgv(generations) : []),
@@ -707,6 +717,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     ...(k === kind && k === 'receipt-compaction' ? { olderThan, includeFailures, force } : {}),
     ...(k === kind && k === 'rename-identity' ? { from, close } : {}), ...(k === kind && afterPage !== undefined ? { afterPage } : {}),
     ...(k === kind && generations ? { generations } : {}), ...(k === kind && day ? { day } : {}), ...(k === kind && rules ? { rules } : {}),
+    ...(k === kind && factDateEvidence ? { factDateEvidence } : {}),
     ...(k === kind && k === 'agent-session-facts' ? { cwdPrefixes, sessions, principal } : {}), ...(k === kind && readersRequest ? { readers: readersRequest } : {}),
     ...(apply ? { stop: stop.signal, recordDatabaseStops: true } : {}) })).finally(() => releaseSignals?.());
   if (apply) clearHealthMemo(engine);

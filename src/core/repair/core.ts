@@ -44,6 +44,7 @@ import { lookupEmbeddingPrice, estimateCostFromChars } from '../embedding-pricin
 import { shellQuote, type Action } from '../agent-output.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import type { RepairKindSpec } from './registry.ts';
+import type { FactDateEvidenceFile } from './fact-date-evidence.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { repairAdmissionWindow, repairPublicationOwner, settleRepairReceipts, type PendingRepair } from './settle.ts';
 import { RECEIPT_RESERVATION_FLOOR } from '../persistence/receipt-bytes.ts';
@@ -146,6 +147,7 @@ export interface RepairPlanOptions { apply: boolean; expect?: string; includeAmb
   generations?: GenerationsSelection;
   /** `fact-claim-dates` (#7247): the bulk-loaded UTC day to repair (`--day`) instead of the detected ones. */
   day?: string;
+  factDateEvidence?: FactDateEvidenceFile;
   /** `secret-spans` (GST-327): the secret scanner rules to redact (`--rules`); default every named rule. */
   rules?: string[];
   /** `agent-session-facts` (#8064): operator evidence, sessions whose cwd is under a prefix (`--cwd`) or named (`--session`), and the note's agent (`--principal`). */
@@ -382,6 +384,7 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
     prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string;
     provenance?: string; cursor?: string; progress?: ProgressReporter;
     keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
+    factDateEvidence?: FactDateEvidenceFile;
     cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger; readers?: ReadersRequest; openFacts?: OpenFactsRequest;
     spec?: Pick<RepairKindSpec, 'explicit_only' | 'consent' | 'spends'>; maxLlmUsd?: number; deadline?: number; now?: () => number;
     /** GBRA-133: the CLI's termination signal; the apply stops before the next item with a result instead of dying mid-run. */
@@ -414,7 +417,8 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
     ...(opts.olderThan ? { olderThan: opts.olderThan } : {}), ...(opts.includeFailures ? { includeFailures: true } : {}), ...(opts.force ? { force: true } : {}),
     ...(opts.from ? { from: opts.from } : {}), ...(opts.close ? { close: true } : {}), ...(opts.afterPage !== undefined ? { afterPage: opts.afterPage } : {}),
     ...(opts.limit !== undefined ? { limit: opts.limit } : {}), ...(opts.generations ? { generations: opts.generations } : {}),
-    ...(opts.day ? { day: opts.day } : {}), ...(opts.rules?.length ? { rules: opts.rules } : {}),
+    ...(opts.day ? { day: opts.day } : {}), ...(opts.factDateEvidence ? { factDateEvidence: opts.factDateEvidence } : {}),
+    ...(opts.rules?.length ? { rules: opts.rules } : {}),
     ...(opts.cwdPrefixes?.length ? { cwdPrefixes: opts.cwdPrefixes } : {}), ...(opts.sessions?.length ? { sessions: opts.sessions } : {}), ...(opts.principal ? { principal: opts.principal } : {}),
     ...(opts.privateLabelsLedger ? { privateLabelsLedger: opts.privateLabelsLedger } : {}), ...(opts.readers ? { readers: opts.readers } : {}),
     ...(opts.openFacts ? { openFacts: opts.openFacts } : {}) };
@@ -446,7 +450,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
         ...(opts.allDrifted ? ['--all-drifted'] : []), ...(opts.driftClass ? ['--class', opts.driftClass] : []), ...(opts.since ? ['--since', opts.since] : []),
         ...(opts.held ? ['--held'] : []), ...(opts.side ? ['--side', opts.side] : []), ...(opts.state ? ['--state', opts.state] : []),
         ...(opts.provenance ? ['--provenance', opts.provenance] : []), ...(opts.cursor ? ['--cursor', opts.cursor] : []),
-        ...(opts.prefer ? ['--prefer', opts.prefer] : [])].map(arg => ` ${shellQuote([arg])}`).join('')}`
+        ...(opts.prefer ? ['--prefer', opts.prefer] : []), ...(opts.factDateEvidence ? ['--evidence-file', opts.factDateEvidence.path] : [])].map(arg => ` ${shellQuote([arg])}`).join('')}`
       + `${opts.includeAmbiguous ? ' --include-ambiguous' : ''}${opts.includeCrossEntity ? ' --include-cross-entity' : ''}${llm && opts.noLlm ? ' --no-llm' : ''}${llm && opts.maxLlmUsd !== undefined ? ` --max-usd ${opts.maxLlmUsd}` : ''}`
       + ` --apply${plan.preview_hash ? ` --expect ${plan.preview_hash}` : ''}${spec?.consent === 'destructive' ? ' --yes' : ''}`,
     ...(plan.scan ? { scan: plan.scan } : {}),
