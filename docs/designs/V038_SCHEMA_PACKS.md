@@ -42,7 +42,7 @@ self-describing one. The differences from the baseline plan:
 - The brain watches what you create and proposes schema refinements
   you didn't think to ask for (`schema suggest`)
 - Schema is per-source (ISOLATED reads), so ~/git/brain and
-  ~/git/team-brain hold different mental models in the same engine
+  ~/git/zion-brain hold different mental models in the same engine
   without renames. Cross-source federated reads still see per-source
   packs in isolation — a query joining results across mounts does
   NOT compute a closure across both packs. Federation (closure
