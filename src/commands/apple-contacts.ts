@@ -16,13 +16,12 @@ import type { BrainEngine } from '../core/engine.ts';
 import { parseAppleContactsSourceConfig } from '../core/apple-contacts/source-config.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { appleContactsError } from '../core/apple/contacts-client.ts';
-import { readOwnerKey, sendContactsBatch, type ContactsWriteChange } from '../core/apple/contacts-write-client.ts';
+import { DESTRUCTIVE_CONFIG_KEY, OWNER_KEY_FILE_CONFIG_KEY, readOwnerKey, sendContactsBatch, WRITE_CONFIG_KEY, type ContactsWriteChange } from '../core/apple/contacts-write-client.ts';
+import { CREATE_CARDS_CONFIG_KEY, ENRICH_CONFIG_KEY, proposeEnrichment, readEnrichRecord, WRITE_TOKEN_FILE_CONFIG_KEY } from '../core/apple-contacts/enrich.ts';
 import { listSources } from '../core/sources-ops.ts';
 import { parsePhoneCountryCode, PHONE_COUNTRY_CODE_CONFIG_KEY } from '../core/phone-key.ts';
 
-export const WRITE_CONFIG_KEY = 'apple_contacts.write';
-export const DESTRUCTIVE_CONFIG_KEY = 'apple_contacts.destructive_writes';
-export const OWNER_KEY_FILE_CONFIG_KEY = 'apple_contacts.owner_key_file';
+export { DESTRUCTIVE_CONFIG_KEY, OWNER_KEY_FILE_CONFIG_KEY, WRITE_CONFIG_KEY };
 
 const ADDITIVE: Record<string, ContactsWriteChange['op']> = { fill: 'fill', 'add-value': 'add_value', create: 'create', 'group-add': 'group_add' };
 const DESTRUCTIVE: Record<string, ContactsWriteChange['op']> = { set: 'set', 'remove-value': 'remove_value', 'group-remove': 'group_remove', delete: 'delete', merge: 'merge' };
@@ -30,6 +29,7 @@ const DESTRUCTIVE: Record<string, ContactsWriteChange['op']> = { set: 'set', 're
 const HELP = [
   'Usage: gbrain apple-contacts write <verb> --card <id> ... --owner-instruction "<the owner\'s words>" [--source <id>] [--json]',
   '       gbrain apple-contacts status [--source <id>] [--json]',
+  '       gbrain apple-contacts enrich status|dry-run [--source <id>] [--json]',
   '',
   'Adds only:   fill --card <id> --field <given_name|family_name|nickname|organization|job_title> --value <v>',
   '             add-value --card <id> --field <emails|phones> --value <v> [--label <work|home|mobile|...>]',
@@ -42,6 +42,11 @@ const HELP = [
   '             merge --card <keep id> --from <remove id>',
   'Change verbs also need: gbrain config set ' + DESTRUCTIVE_CONFIG_KEY + ' on (ships off).',
   'Every write needs: gbrain config set ' + WRITE_CONFIG_KEY + ' on (off by default; dry_run sends nothing).',
+  '',
+  'Enrichment after each pull fills empty companies and job titles and adds confirmed emails and phones from the brain:',
+  '  gbrain config set ' + ENRICH_CONFIG_KEY + ' dry_run|on (off by default); on also needs ' + WRITE_CONFIG_KEY + ' on and ' + WRITE_TOKEN_FILE_CONFIG_KEY + '.',
+  '  New cards from Google Contacts also need: gbrain config set ' + CREATE_CARDS_CONFIG_KEY + ' true (off by default).',
+  '  enrich status shows the last run; enrich dry-run lists what the next run would send and sends nothing.',
 ].join('\n');
 
 function flag(args: string[], name: string): string | undefined {
@@ -90,6 +95,26 @@ export async function runAppleContacts(engine: BrainEngine, args: string[]): Pro
       destructive_writes: norm(await engine.getConfig(DESTRUCTIVE_CONFIG_KEY).catch(() => null)) || 'off',
       owner_key_file_set: !!norm(await engine.getConfig(OWNER_KEY_FILE_CONFIG_KEY).catch(() => null)) };
     console.log(asJson ? JSON.stringify(state) : Object.entries(state).map(([k, v]) => k + ': ' + v).join('\n'));
+    return;
+  }
+  if (sub === 'enrich' && (verb === 'status' || verb === 'dry-run')) {
+    const source = await resolveSource(engine, flag(args, '--source'));
+    if (verb === 'dry-run') {
+      const proposals = await proposeEnrichment(engine, source.id, parsePhoneCountryCode(await engine.getConfig(PHONE_COUNTRY_CODE_CONFIG_KEY).catch(() => null)));
+      if (asJson) console.log(JSON.stringify({ dry_run: true, source: source.id, changes: proposals }));
+      else console.log(proposals.length ? proposals.map(p => [p.change.op, p.change.id ?? 'new card', p.change.field ?? '', p.change.value ?? '', 'from ' + p.from.source_id + ':' + p.from.slug].filter(Boolean).join(' ')).join('\n')
+        : 'Nothing to enrich.');
+      return;
+    }
+    const record = await readEnrichRecord(engine, source.id);
+    const mode = norm(await engine.getConfig(ENRICH_CONFIG_KEY).catch(() => null)) || 'off';
+    if (asJson) { console.log(JSON.stringify({ source: source.id, enrich: mode, last_run: record })); return; }
+    if (!record) { console.log('enrich: ' + mode + '\nNo enrichment run yet.'); return; }
+    const counts = new Map<string, number>();
+    for (const ch of record.changes) counts.set(ch.op + ' ' + ch.status, (counts.get(ch.op + ' ' + ch.status) ?? 0) + 1);
+    console.log(['enrich: ' + mode, 'last run: ' + record.at + ' (' + record.mode + (record.sent ? ', sent' : ', nothing sent') + (record.note ? ': ' + record.note : '') + ')',
+      ...[...counts].map(([k, n]) => '  ' + k + ': ' + n),
+      ...record.changes.map(ch => '  ' + ch.op + ' ' + (ch.card ?? 'new card') + (ch.field ? ' ' + ch.field : '') + (ch.value ? ' = ' + ch.value : '') + ' from ' + ch.from + ': ' + ch.status + (ch.reason ? ' (' + ch.reason + ')' : ''))].join('\n'));
     return;
   }
   if (sub !== 'write' || !verb || !(verb in ADDITIVE || verb in DESTRUCTIVE)) {
