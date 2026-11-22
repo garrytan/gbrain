@@ -77,11 +77,6 @@ export interface ReindexSearchVectorResult {
   durationMs: number;
 }
 
-interface CountRow {
-  pages: number;
-  chunks: number;
-}
-
 /** Checkpoint names (→ `backfill.<name>.last_id`), one per backfilled table. */
 const CHECKPOINT_NAME = { pages: 'fts_pages', content_chunks: 'fts_content_chunks' } as const;
 
@@ -98,13 +93,7 @@ export async function runReindexSearchVector(
   const startedAt = Date.now();
 
   // Inventory: how many rows will the backfill touch?
-  const counts = await engine.executeRaw<CountRow>(
-    `SELECT
-       (SELECT COUNT(*)::int FROM pages WHERE search_vector IS NOT NULL) AS pages,
-       (SELECT COUNT(*)::int FROM content_chunks WHERE search_vector IS NOT NULL) AS chunks`
-  );
-  const pagesCount = counts[0]?.pages ?? 0;
-  const chunksCount = counts[0]?.chunks ?? 0;
+  const { pages: pagesCount, chunks: chunksCount } = await engine.countSearchVectorRows();
 
   if (opts.dryRun) {
     const result: ReindexSearchVectorResult = {
