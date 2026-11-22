@@ -47,6 +47,7 @@ import { extractPageLinks } from '../../src/core/link-extraction.ts';
 import { capabilityMissing } from '../../src/core/rust-engine/errors.ts';
 import { randomUUID } from 'node:crypto';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { runTakes } from '../../src/commands/takes.ts';
 
 const arms = parityArms(testBackends());
 // Write operations start a persistence consumer keyed on the engine the case receives (the harness's recording
@@ -200,6 +201,34 @@ describe('engine parity: slug normal form', () => {
     const result = { slug: out.slug, restoredInPlace: after !== null && after.page.deleted_at == null, twin: twin?.page.slug ?? null };
     expect(result).toEqual({ slug: stored, restoredInPlace: true, twin: null });
     return result;
+  });
+  parityTest('ontology_propose and takes horizon set by a stored decomposed spelling act on that page, not on its composed look-alike', { methods: ['putPage', 'addTakesBatch'] }, async (engine, backend) => {
+    const stored = 'people/look-zoe\u0308';
+    const composed = 'people/look-zo\u00eb';
+    try {
+      await engine.putPage(composed, { type: 'person', title: 'Decomposed', compiled_truth: 'Old.', timeline: '' });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
+      await engine.putPage(composed, { type: 'person', title: 'Composed', compiled_truth: 'Look-alike.', timeline: '' });
+      const idOf = async (slug: string) => Number((await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1', [slug]))[0]!.id);
+      const [storedId, composedId] = [await idOf(stored), await idOf(composed)];
+      await engine.addTakesBatch([
+        { page_id: storedId, row_num: 1, claim: 'Decomposed claim', kind: 'bet', holder: 'world', weight: 0.6, since_date: '2025-01-01' },
+        { page_id: composedId, row_num: 1, claim: 'Composed claim', kind: 'bet', holder: 'world', weight: 0.6, since_date: '2025-01-01' },
+      ]);
+      await operationsByName.ontology_propose!.handler(ctx(engine), { entity: stored, dimension: 'role', value: 'advisor' });
+      const quiet = console.log;
+      console.log = () => {};
+      try { await runTakes(engine, ['horizon', 'set', stored, '--row', '1', '--date', '2026-06-30']); } finally { console.log = quiet; }
+      const facts = await engine.executeRaw<{ entity_slug: string }>('SELECT DISTINCT entity_slug FROM facts WHERE entity_slug IN ($1, $2)', [stored, composed]);
+      const horizons = await engine.executeRaw<{ slug: string }>(
+        `SELECT DISTINCT p.slug FROM take_horizons h JOIN takes t ON t.id = h.take_id JOIN pages p ON p.id = t.page_id WHERE p.slug IN ($1, $2)`, [stored, composed]);
+      const result = { facts: facts.map(f => f.entity_slug), horizons: horizons.map(h => h.slug) };
+      expect(result).toEqual({ facts: [stored], horizons: [stored] });
+      return result;
+    } catch (e) {
+      if (backend === 'rust') { expect((e as Error).message).toBe(RUST_RAW_SQL_STOP); throw e; }
+      throw e;
+    }
   });
   parityTest('add_tag, remove_tag, add_timeline_entry, edit_page and append_page by the stored decomposed spelling change that row in place, with no composed twin', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
     const stored = 'notes/write-cafe\u0301';
