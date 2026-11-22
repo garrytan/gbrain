@@ -273,6 +273,8 @@ export interface RustStoreEntry {
 
 type RustRow = [tag: string, kind: number | null, name: string, tables: string, index?: 'index', none?: [OutOfScopeReason, string]];
 const RUST_ROWS: readonly RustRow[] = [
+  ['1', null, 'reason_tombstones', 'reason_purge_tombstones'],
+  ['2', null, 'embedding_holds', 'page_embedding_budget'],
   ['A', 0x01, 'take', 'takes'],
   ['A', 0x02, 'take_by_row', 'takes', 'index'],
   ['A', 0x03, 'take_evidence', '', undefined, ['no_memory_text', 'synthesis_evidence rows: page ids, take row numbers and a citation index; the SQL table has no text-bearing column, so it has no row above']],
@@ -331,7 +333,7 @@ const RUST_ROWS: readonly RustRow[] = [
   ['e', null, 'extraction', 'pages'],
   ['f', null, 'jobs', 'dream_synthesis_completions'],
   ['g', null, 'code_edges', 'code_traversal_cache'],
-  ['h', null, 'embedding_holds', 'page_embedding_budget'],
+  ['h', null, 'generations', 'derived_generations derived_generation_items derived_generation_attempts derived_generation_valve derived_generation_activations'],
   ['i', null, 'entity_identities', 'entity_identities'],
   ['j', null, 'core', 'persistence_requests', 'index'],
   ['k', null, 'aliases', 'slug_aliases page_aliases pages slug_rename_history'],
@@ -347,7 +349,6 @@ const RUST_ROWS: readonly RustRow[] = [
   ['u', null, 'timeline_queries', 'timeline_entries', 'index'],
   ['v', null, 'relations', '', undefined, ['no_memory_text', 'the relation catalog: no record is built under v yet']],
   ['w', null, 'transactions', '', undefined, ['no_memory_text', 'the lock queue: held in memory, no record is written under w']],
-  ['y', null, 'reason_tombstones', 'reason_purge_tombstones'],
   ['z', null, 'access_rules', 'access_policy_state access_rules access_pending_coverage access_policy_revisions pages access_policy_migrations'],
 ];
 
