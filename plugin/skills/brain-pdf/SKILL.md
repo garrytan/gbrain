@@ -1,7 +1,7 @@
 ---
 name: brain-pdf
 version: 0.1.0
-description: Generate a publication-quality PDF from any brain page via the gstack make-pdf binary. Strips YAML frontmatter, sanitizes emoji, applies running headers and page numbers. Brain page is always the source of truth; PDF is a rendering.
+description: Generate a publication-quality PDF from any brain page via the gstack make-pdf binary. Strips private sections the way gbrain publish does, sanitizes emoji, applies running headers and page numbers. Brain page is always the source of truth; PDF is a rendering.
 triggers:
   - "make pdf from brain"
   - "brain pdf"
@@ -57,8 +57,9 @@ P="$HOME/.claude/skills/gstack/make-pdf/dist/pdf"
 
 ```
 1. RESOLVE  → Confirm the brain page exists (gbrain get <slug>).
-2. STRIP    → Remove YAML frontmatter — the renderer would otherwise
-              dump it as a full page of raw metadata text.
+2. STRIP    → `gbrain publish --markdown` removes what `gbrain publish`
+              removes: frontmatter, the Timeline, fact and takes blocks,
+              comments, citations and brain links.
 3. RENDER   → Invoke make-pdf with sane defaults (no --cover, no --toc).
 4. DELIVER  → Hand the PDF to the requester via the agent's preferred
               channel (do not use raw `MEDIA:` tags on Telegram —
@@ -84,13 +85,11 @@ else
   gbrain get "$SLUG" > "$RAW"   # prints the page as markdown with frontmatter
 fi
 
-# 3. Strip the leading YAML frontmatter block only: line 1 '---' through
-#    the next '---'. A later '---' (a horizontal rule) and a page without
-#    frontmatter are kept as written. Plain awk, so it behaves the same with
-#    BSD (macOS) and GNU tools. Stop if nothing is left to render.
+# 3. Strip private sections exactly as gbrain publish does. A page whose
+#    frontmatter never closes is refused; stop and report it.
 CLEAN=$(mktemp /tmp/brain-page-clean-XXXXXX.md)
-awk 'NR==1 && /^---[[:space:]]*$/ {f=1; next} f==1 && /^---[[:space:]]*$/ {f=2; next} f!=1' "$RAW" > "$CLEAN"
-[ -s "$CLEAN" ] || { echo "brain-pdf: nothing to render for $SLUG after removing frontmatter" >&2; exit 1; }
+gbrain publish "$RAW" --markdown --out "$CLEAN" || exit 1
+[ -n "$(tr -d '[:space:]' < "$CLEAN")" ] || { echo "brain-pdf: nothing to render for $SLUG after removing private sections" >&2; exit 1; }
 
 # 4. Render. NO --cover, NO --toc by default — they look corporate
 #    and waste space. Add them only if explicitly requested.
@@ -164,8 +163,8 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 - ❌ Generating a PDF without first confirming the brain page exists.
   No source = no PDF.
-- ❌ Skipping the frontmatter strip. The renderer dumps frontmatter as
-  raw text on the first page; ugly.
+- ❌ Skipping the `gbrain publish --markdown` strip, or stripping by hand.
+  The PDF would carry the page's private Timeline and fact rows.
 - ❌ Skipping emoji sanitization. Emoji that don't map to the rendering
   font show up as `□` boxes.
 - ❌ Adding `--cover` or `--toc` by default. Off unless asked.

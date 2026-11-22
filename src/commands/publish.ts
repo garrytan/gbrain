@@ -26,7 +26,7 @@ const MARKED_JS = readFileSync(join(dirname(require.resolve('marked')), 'marked.
 // ── Content stripping ──────────────────────────────────────────────
 
 const TIMELINE_MARKER = /<!--+\s*timeline\s*-*-->/i;
-const TIMELINE_LINE = /^[ \t]*(?:-{3,}[ \t]*timeline[ \t]*-{3,}[ \t]*$|#{1,6}[ \t]+[^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
+const TIMELINE_LINE = /^(?:[ \t]*-{3,}[ \t]*timeline[ \t]*-{3,}[ \t]*$|[ \t]*#{1,6}[ \t][^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
 const MANAGED_BLOCK_END = /<!--+\s*gbrain:([a-z0-9_-]+):end\b[^>]*>/gi;
 const MANAGED_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
 
@@ -73,7 +73,7 @@ export function makeShareable(content: string): string {
   clean = visible + clean.slice(at);
 
   // Remove [Source: ...] citations (all formats)
-  clean = clean.replace(/\s*\[Source:[^\]]*\]/g, '');
+  clean = clean.split(/\[Source:[^\]]*\]/).map((part, i, parts) => i < parts.length - 1 ? part.trimEnd() : part).join('');
 
   // Remove confirmation numbers
   clean = clean.replace(/\*\*Confirmation:\*\*\s*[A-Z0-9]{6,}/gi, '**Confirmation:** on file');
@@ -434,6 +434,7 @@ export async function runPublish(args: string[]) {
   const outIdx = args.indexOf('--out');
   const titleIdx = args.indexOf('--title');
   const pwIdx = args.indexOf('--password');
+  const markdownOnly = args.includes('--markdown');
 
   if (!inputPath) {
     console.error('Usage: gbrain publish <page.md> [--password ["secret"]] [--title "Title"] [--out path]');
@@ -445,12 +446,23 @@ export async function runPublish(args: string[]) {
     console.error('  --password          Auto-generate a password');
     console.error('  --password "secret" Use a specific password');
     console.error('  --title "Title"     Override the page title');
-    console.error('  --out path          Output file (default: <input-basename>.html)');
+    console.error('  --markdown          Write the stripped markdown instead of HTML, for another renderer (brain-pdf)');
+    console.error('  --out path          Output file (default: <input-basename>.html, or <input-basename>.shared.md with --markdown)');
     process.exit(1);
   }
 
+  if (markdownOnly && pwIdx >= 0) throw opError('invalid_params', '--password encrypts the HTML page, and --markdown writes plain markdown, so nothing was written.', 'Drop --password to write the stripped markdown, or drop --markdown to publish encrypted HTML.');
+
   const raw = readFileSync(inputPath, 'utf-8');
   const cleaned = makeShareable(raw);
+
+  if (markdownOnly) {
+    const outPath = outIdx >= 0 ? args[outIdx + 1] : basename(inputPath, '.md') + '.shared.md';
+    mkdirSync(dirname(outPath), { recursive: true });
+    writeFileSync(outPath, cleaned + '\n');
+    console.log(`Stripped markdown: ${outPath}`);
+    return;
+  }
   const title = (titleIdx >= 0 ? args[titleIdx + 1] : null) || extractTitle(cleaned);
 
   // Handle password

@@ -77,6 +77,47 @@ describe('makeShareable drops every private section, whatever comes before it (#
   });
 });
 
+describe('makeShareable stays fast on long whitespace lines', () => {
+  test('a line of 50,000 spaces strips in well under a second', () => {
+    const lines = ['# Test', '', ' '.repeat(50000) + 'x', '#' + ' '.repeat(50000) + 'x', ' '.repeat(50000), '', 'Body.'].join('\n');
+    const start = performance.now();
+    expect(makeShareable(lines)).toContain('Body.');
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+});
+
+describe('gbrain publish --markdown writes the stripped page for other renderers (brain-pdf)', () => {
+  test('writes the same stripped markdown publish shares, and no HTML', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'publish-md-'));
+    try {
+      const page = join(dir, 'page.md');
+      const out = join(dir, 'clean.md');
+      const input = '---\ntitle: T\nemail: ' + SECRET + '\n---\n# Test\n\nBody.\n\n## Timeline\n\n- 2026-01-01 ' + SECRET + '\n';
+      writeFileSync(page, input);
+      const log = console.log;
+      console.log = () => {};
+      try { await runPublish([page, '--markdown', '--out', out]); } finally { console.log = log; }
+      const written = readFileSync(out, 'utf8');
+      expect(written).toBe(makeShareable(input) + '\n');
+      expect(written).not.toContain(SECRET);
+      expect(written).not.toContain('<html');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('refuses --password, since a markdown file cannot be encrypted', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'publish-md-'));
+    try {
+      const page = join(dir, 'page.md');
+      writeFileSync(page, '# Test\n\nBody.\n');
+      await expect(runPublish([page, '--markdown', '--password', 'pw', '--out', join(dir, 'x.md')])).rejects.toThrow(/--password/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('gbrain publish writes no private section into the HTML (#10020)', () => {
   test('bare ## Timeline stays out of the published file, title included', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'publish-10020-'));
