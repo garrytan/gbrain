@@ -16,9 +16,9 @@
  * pinned-block.ts with the other harnesses' rules and cap) followed by
  * skills.resolver.per_harness.<harness>.session_start, as
  * hookSpecificOutput.additionalContext with hookEventName SessionStart. With
- * neither set it prints nothing. Those pin ids are also sent as exclude on
- * each turn, so a pinned skill is never also suggested. Compaction still
- * resets the session first.
+ * neither set it prints nothing. Both parts have their own caps, so the block
+ * is held to LANE_PAYLOAD_CHARS_MAX (Claude Code's hook output cap), not to
+ * lane_payload_chars. Compaction still resets the session first.
  *
  * Wire shapes (LANE_IO): Claude Code and Codex send the prompt, session_id
  * and cwd at the top level (read whole, up to LANE_STDIN_CAP_BYTES) and take
@@ -76,7 +76,7 @@
  * GBRAIN_SKILLS_NO_AUTOREBUILD=1.
  *
  * Turn settings: skills.resolver.top_k, min_match, top_gate, pinned (sent as
- * exclude, with <harness>-user's pin ids) and per_harness.<harness>.{top_k,min_match,top_gate} (config.ts
+ * exclude) and per_harness.<harness>.{top_k,min_match,top_gate} (config.ts
  * laneTurnSettings); unset, a turn is top_k 5 with every match, the resolver's
  * default top_gate (TOP_GATE_DEFAULT; 0 turns it off) and nothing excluded.
  *
@@ -100,7 +100,6 @@ import { claudeManagedSettingsPaths, claudeUserSettingsPath, codexHooksPath } fr
 import { shellWords } from '../../setup/hook-launcher.ts';
 import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-resolver-lane.ts';
 import { laneOwnerSenders, laneSessionStart, laneTurnSettings, type LaneTurnSettings } from './config.ts';
-import { EXCLUDE_MAX } from './limits.ts';
 import { appendDailyLog, appendDailyLogSync, LANE_LOG } from './daily-log.ts';
 import { HOOK_FIELD_CAP, readHookFields } from './hook-input.ts';
 import { assertCatalogName, catalogFile, CLAUDE_PLUGINS_CATALOG, logsDir, resolverHome } from './paths.ts';
@@ -356,9 +355,9 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     const reset = hookEvent.source === 'compact' && !!sessionId;
     if (reset) await Promise.all(['on', 'shadow'].map(scope => unlink(join(home, 'skill-index', 'sessions', `${sessionKey(scope as 'on' | 'shadow', harness, sessionId)}.json`)).catch(() => {})));
     if (!SESSION_START_SOURCES.includes(hookEvent.source as string)) return { outcome: reset ? 'reset' : 'off' };
-    const pins = userPins(settings.section, harness);
+    const pins = (settings.section.pins as Record<string, unknown> | null | undefined)?.[userCatalogName(harness)];
     let pinned = '';
-    if (pins.length > 0) {
+    if (Array.isArray(pins) && pins.length > 0) {
       const worker = ctl.worker;
       if (!worker || laneWorkerFailed()) return { outcome: 'error', code: 'skill_resolver_internal' };
       const posted = await askWorker(worker, { pins, harness, home });
@@ -369,7 +368,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     if (!block) return { outcome: reset ? 'reset' : 'off' };
     if (ctl.expired) return { outcome: 'timeout', code: 'skill_resolve_timeout' };
     const payload = LANE_IO[harness].render(block, 'SessionStart');
-    if (payload.length > settings.payloadChars) return { outcome: 'payload_dropped', dropped_chars: payload.length };
+    if (payload.length > LANE_PAYLOAD_CHARS_MAX) return { outcome: 'payload_dropped', dropped_chars: payload.length };
     await (io.write ?? writeStdout)(`${payload}\n`);
     return { outcome: 'delivered' };
   }
@@ -393,9 +392,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
 
   const worker = ctl.worker;
   if (!worker || laneWorkerFailed()) return { outcome: 'error', code: 'skill_resolver_internal', catalogs };
-  const pinIds = harness === 'hermes' ? [] : userPins(settings.section, harness).flatMap((p) => (typeof (p as { name?: unknown } | null)?.name === 'string' ? [(p as { name: string }).name] : []));
-  const exclude = pinIds.length ? [...new Set([...(turnSettings.exclude ?? []), ...pinIds])].filter((id) => id.length <= 256).slice(0, EXCLUDE_MAX) : turnSettings.exclude;
-  const posted = await askWorker(worker, { input: { message: prompt, harness, ...turnSettings, ...(exclude ? { exclude } : {}), ...(sessionId ? { session_id: sessionId } : {}), ...(reset ? { reset_session: true } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) });
+  const posted = await askWorker(worker, { input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}), ...(reset ? { reset_session: true } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) });
   if (posted.error || !posted.output) return { outcome: 'error', code: posted.error?.code ?? 'skill_resolver_internal', catalogs };
   const out = posted.output;
   if (out.meta.index_stale && settings.autoRebuild) await scheduleStaleRebuilds(home, catalogs, spawnFn);
@@ -415,12 +412,6 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     await commitSessionAsync(home, posted.pending.key, { ...posted.pending.delta, ...(hookEvent.history !== undefined ? { history: hookEvent.history } : {}) }, ctl.commit, gc);
   }
   return { outcome, catalogs };
-}
-
-/** The pins stored for this harness's user catalog (skills.resolver.pins.<harness>-user), unchecked: the worker parses them. */
-function userPins(section: Record<string, unknown>, harness: LaneHarness): unknown[] {
-  const raw = (section.pins as Record<string, unknown> | null | undefined)?.[userCatalogName(harness)];
-  return Array.isArray(raw) ? raw : [];
 }
 
 interface WorkerReply { output?: TurnOutput; pending?: { key: string; delta: TurnDelta } | null; pinned?: string; error?: { code: string } }

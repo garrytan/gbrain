@@ -147,7 +147,7 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
     if (!(field in holder) && !replaced) return fail(`Config key not found: ${key}`);
     delete holder[field];
   } else {
-    const value = rest.find((a) => !a.startsWith('-'));
+    const value = field === 'session_start' ? rest[0] : rest.find((a) => !a.startsWith('-'));
     if (value === undefined) return fail(`usage: gbrain config set ${key} <value>`);
     const parsed = parseLeafValue(leaf, value);
     if (!parsed.ok) return fail(`${key} ${parsed.error}`);

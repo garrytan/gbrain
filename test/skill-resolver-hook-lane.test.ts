@@ -19,8 +19,9 @@
  * per_harness.hermes.owner_sender_ids; with the lane off it prints and writes
  * nothing. Claude Code and Codex SessionStart (startup, resume, clear,
  * compact) prints <harness>-user's pins and per_harness.<harness>.session_start,
- * nothing when neither is set, the lane is off or the value is bad, and a
- * pinned skill is never also suggested on a turn.
+ * nothing when neither is set, the lane is off or the value is bad, under the
+ * harness's own output cap rather than lane_payload_chars; a pin added
+ * mid-session stays suggestible, and an outdated install is told to rerun setup.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
@@ -812,16 +813,27 @@ describe('skill-resolver lane: pins and session_start at SessionStart', () => {
     });
   }
 
-  test('a skill pinned for the harness is shown at SessionStart, so a turn never also suggests it', async () => {
+  test('a pin added mid-session stays suggestible on the next turn, before any SessionStart shows it', async () => {
     const b = box();
     seedSkills(claudeSkills(b));
     await setup(b, 'claude-code');
-    const turn = (id: string) => ({ prompt: 'please deploy the widget to staging', session_id: id });
-    expect(contextOf(await hook(b, wired(b, 'claude-code'), turn('before'), WIDE))).toContain('id: "deploy-widget"');
     expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
-    const after = await hook(b, wired(b, 'claude-code'), turn('after'), WIDE);
-    expect(after.exitCode).toBe(0);
-    expect(after.stdout === '' ? '' : contextOf(after)).not.toContain('id: "deploy-widget"');
+    const after = await hook(b, wired(b, 'claude-code'), { prompt: 'please deploy the widget to staging', session_id: 'mid' }, WIDE);
+    expect(contextOf(after)).toContain('id: "deploy-widget"');
+  });
+
+  test('an install whose SessionStart entry is missing (outdated) is told to rerun setup, not promised delivery', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const settings = join(b.home, '.claude', 'settings.json');
+    const doc = readJson(settings);
+    delete doc.hooks.SessionStart;
+    writeFileSync(settings, JSON.stringify(doc));
+    const pin = await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user']);
+    expect(pin.exitCode, pin.stderr).toBe(0);
+    expect(pin.stdout).not.toContain('gets these pins at its next session start (');
+    expect(pin.stdout).toContain('gbrain setup claude-code --skill-loading resolve');
   });
 
   test('session_start alone (no pins) is printed by itself', async () => {
@@ -870,15 +882,20 @@ describe('skill-resolver lane: pins and session_start at SessionStart', () => {
     expect(await hook(b, start, { source: 'startup', session_id: 's' }, WIDE)).toMatchObject({ exitCode: 0, stdout: '' });
   });
 
-  test('a block over the payload budget is dropped whole and counted', async () => {
+  test('lane_payload_chars does not drop a SessionStart block: pins plus a note at its cap, full of quotes, still arrive', async () => {
     const b = box();
     seedSkills(claudeSkills(b));
     await setup(b, 'claude-code');
     expect((await cli(b, ['config', 'set', 'skills.resolver.lane_payload_chars', '500'])).exitCode).toBe(0);
-    expect((await cli(b, ['config', 'set', 'skills.resolver.per_harness.claude-code.session_start', 'Read the team notes. '.repeat(30).trim()])).exitCode).toBe(0);
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    const note = `Quote ${'"\\'.repeat(1190)} end`;
+    expect((await cli(b, ['config', 'set', 'skills.resolver.per_harness.claude-code.session_start', note])).exitCode).toBe(0);
     const r = await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE);
-    expect(r).toMatchObject({ exitCode: 0, stdout: '' });
-    expect(laneLog(b).at(-1)).toMatchObject({ event: 'session-start', outcome: 'payload_dropped' });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.length).toBeGreaterThan(4000);
+    const context = startContext(r);
+    expect(context).toContain('id: "deploy-widget"');
+    expect(context.endsWith(note)).toBe(true);
   });
 });
 

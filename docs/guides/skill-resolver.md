@@ -162,9 +162,11 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   text of at most 600 tokens (about 2,400 characters), no control characters
   but newlines and tabs. Both live in `~/.gbrain/config.json`, so they work
   with no brain and no brain repository. With neither set, SessionStart
-  prints nothing. Both together count against the payload budget below, so at
-  their caps raise `lane_payload_chars`. A pinned skill is never also
-  suggested on a turn.
+  prints nothing. Each part has its own cap, so the block is held to the
+  harness's 10,000-character hook output cap rather than
+  `lane_payload_chars`. An install from before the SessionStart entry
+  (doctor shows its hook `outdated`) needs one setup run first; `gbrain
+  skills pin` says so.
 - **Session cleanup:** after the dedupe commit the lane runs one session GC
   pass before it exits, at most 64 files and never past the deadline.
 - **Payload:** at most `skills.resolver.lane_payload_chars` characters of hook
@@ -391,7 +393,8 @@ gbrain skills pin remove deploy-example --catalog openclaw-main
 A pin must name a skill in that catalog (`skill_resolver_pin_unknown`
 otherwise), its line is at most 100 characters with no `<` or `>`, a catalog
 holds at most 64 pins, and the rendered block is capped at 600 tokens (pins
-past it are listed as cut). A pinned skill is never also suggested. Pins live
+past it are listed as cut). A pinned skill is never also suggested, except on
+Claude Code and Codex, whose pins arrive at session start. Pins live
 in config.json under `skills.resolver.pins.<catalog>`, so turning the resolver
 off keeps them; an OpenClaw agent uses a change from its next turn, and Claude
 Code and Codex (`claude-code-user`, `codex-user`) from their next session
