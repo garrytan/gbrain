@@ -1,0 +1,201 @@
+/**
+ * The model picker (src/core/skills/resolver/router.ts) inside a turn.
+ *
+ * 1. Protects: the picker runs only when the caller passes router and
+ *    skills.resolver.router is on; its picks fill the block (match_strength
+ *    picked) under the session rules; its "no skill" empties the block; every
+ *    failure falls back to the word matcher with a stable code; the spend
+ *    ledger charges before the call and refuses past the daily cap; the
+ *    prompt carries picker.json's descriptions and never a project skill's.
+ * 2. Fails when: a library caller without router can start a call, a
+ *    fallback changes the word matcher's answer, or the cap stops holding.
+ * 3. Scratch GBRAIN_HOME with no brain and no database; the chat call is the
+ *    gateway's test transport, so nothing leaves the machine.
+ */
+import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { __setPickerTransportForTests, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
+import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
+import { parsePickerReply, PICKER_DESCRIPTION_CHARS, readRouterSpend } from '../src/core/skills/resolver/router.ts';
+
+const scratch: string[] = [];
+const tmp = (p = 'skrouter-') => { const d = mkdtempSync(join(tmpdir(), p)); scratch.push(d); return d; };
+afterEach(() => { __setPickerTransportForTests(null); });
+afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
+
+const LONG = 'Write weekly status reports for a team from the open tasks, the merged work and the meeting notes of the week, '.repeat(4) + 'TAILMARKER';
+const SKILLS = [
+  { id: 'gbrain:briefing', name: 'briefing', description: 'Prepare a daily briefing from calendar meetings and open notes' },
+  { id: 'gbrain:reports', name: 'reports', description: LONG },
+  { id: 'gbrain:people', name: 'people', description: 'Look up what the brain knows about a person' },
+];
+
+async function home(router: Record<string, unknown> | null): Promise<string> {
+  const h = tmp();
+  const f = join(tmp('skrouter-src-'), 'catalog.json');
+  writeFileSync(f, JSON.stringify(SKILLS));
+  await buildSkillIndex({ catalog: 'c', fromJson: f }, { home: h });
+  if (router) writeFileSync(join(h, 'config.json'), JSON.stringify({ skills: { resolver: router } }));
+  return h;
+}
+
+const calls: PickerRequest[] = [];
+function reply(text: string, delayMs = 0) {
+  calls.length = 0;
+  __setPickerTransportForTests(async (req) => {
+    calls.push(req);
+    if (delayMs) await new Promise((r, j) => { const t = setTimeout(r, delayMs); req.signal.addEventListener('abort', () => { clearTimeout(t); j(new Error('aborted')); }); });
+    return { text, refused: false, usage: { input: 3000, cacheRead: 0, cacheWrite: 0, output: 20 } };
+  });
+}
+const turn = (h: string, message: string, extra: Record<string, unknown> = {}, router = true) => resolveSkills({ message, harness: 'claude-code', ...extra }, { home: h, catalogs: ['c'], router });
+const strip = (o: object) => JSON.stringify({ ...o, meta: undefined, router: undefined });
+
+describe('parsePickerReply', () => {
+  const known = new Set(['a', 'b', 'c', 'd']);
+  test('keeps known ids in order, at most three, once each', () => {
+    expect(parsePickerReply('noise {"needed": true, "skills": ["b", "x", "b", "a", "c", "d"]} tail', known)).toEqual({ needed: true, ids: ['b', 'a', 'c'] });
+  });
+  test('needed false is an answer with no ids', () => {
+    expect(parsePickerReply('{"needed": false, "skills": ["a"]}', known)).toEqual({ needed: false, ids: [] });
+  });
+  test('only unknown ids, or a reply that is not the JSON asked for, is a fallback', () => {
+    expect(parsePickerReply('{"needed": true, "skills": ["zz"]}', known)).toEqual({ code: 'no_known_ids' });
+    expect(parsePickerReply('I think a', known)).toEqual({ code: 'parse_failed' });
+    expect(parsePickerReply('{"needed": "yes", "skills": []}', known)).toEqual({ code: 'parse_failed' });
+  });
+});
+
+describe('the picker in a turn', () => {
+  test('with the setting off the output carries no router field and matches a call without router', async () => {
+    const h = await home(null);
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    const a = (await turn(h, 'write the weekly status reports')).output;
+    const b = (await turn(h, 'write the weekly status reports', {}, false)).output;
+    expect(a.router).toBeUndefined();
+    expect(JSON.stringify({ ...a, meta: undefined })).toBe(JSON.stringify({ ...b, meta: undefined }));
+    expect(calls.length).toBe(0);
+  });
+
+  test('a caller that does not pass router never starts a call, whatever the config says', async () => {
+    const h = await home({ router: true });
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    const out = (await turn(h, 'write the weekly status reports', {}, false)).output;
+    expect(calls.length).toBe(0);
+    expect(out.router).toBeUndefined();
+    expect(out.suggestions[0]?.id).toBe('gbrain:reports');
+  });
+
+  test('its pick fills the block even when no catalog word matches, and the prompt carries picker.json descriptions', async () => {
+    const h = await home({ router: true });
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    const out = (await turn(h, 'zzqx vvrt')).output;
+    expect(out.suggestions.map(s => [s.id, s.match_strength])).toEqual([['gbrain:people', 'picked']]);
+    expect(out.block).toContain('gbrain:people');
+    expect(out.router).toMatchObject({ mode: 'picker', answered_by: 'picker', model: 'anthropic:claude-haiku-5-5', fallback: null });
+    expect(out.router!.est_usd).toBeGreaterThan(0);
+    expect(calls[0]!.system).toContain(LONG.split(/\s+/).join(' ').slice(0, PICKER_DESCRIPTION_CHARS));
+    expect(calls[0]!.system).not.toContain('TAILMARKER');
+    expect(calls[0]!.system).not.toContain('zzqx');
+    expect(calls[0]!.message).toBe('zzqx vvrt');
+    expect(calls[0]!.model).toBe('anthropic:claude-haiku-5-5');
+  });
+
+  test('its "no skill" empties the block even when words match', async () => {
+    const h = await home({ router: true });
+    reply('{"needed": false, "skills": ["gbrain:reports"]}');
+    const out = (await turn(h, 'write the weekly status reports')).output;
+    expect(out).toMatchObject({ no_skill: true, no_skill_reason: 'no_match', block_reason: 'no_match', block: '', suggestions: [] });
+    expect(out.router?.answered_by).toBe('picker');
+  });
+
+  test('a skill named in the turn still shows when the picker says no skill', async () => {
+    const h = await home({ router: true });
+    reply('{"needed": false, "skills": []}');
+    const out = (await turn(h, 'use gbrain:briefing for this')).output;
+    expect(out.suggestions.map(s => [s.id, s.match_strength])).toEqual([['gbrain:briefing', 'named']]);
+  });
+
+  test('the session rules hold for picked skills: a repeat pick is deduped', async () => {
+    const h = await home({ router: true });
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    const first = await turn(h, 'zzqx', { session_id: 's1' });
+    await first.commit();
+    const second = (await turn(h, 'zzqx again', { session_id: 's1' })).output;
+    expect(second.suggestions).toEqual([]);
+    expect(second.block_reason).toBe('deduped');
+    expect(second.deduped).toEqual(['gbrain:people']);
+  });
+
+  test('a provider error falls back to the word matcher\'s exact answer', async () => {
+    const h = await home({ router: true });
+    __setPickerTransportForTests(async () => { throw new Error('upstream 500'); });
+    const out = (await turn(h, 'write the weekly status reports')).output;
+    const words = (await turn(h, 'write the weekly status reports', {}, false)).output;
+    expect(out.router).toMatchObject({ answered_by: 'words', fallback: { code: 'provider_error' } });
+    expect(strip(out)).toBe(strip(words));
+  });
+
+  test('a slow picker is cut off at router_timeout_ms and the words answer', async () => {
+    const h = await home({ router: true, router_timeout_ms: 200 });
+    reply('{"needed": true, "skills": ["gbrain:people"]}', 2000);
+    const t0 = performance.now();
+    const out = (await turn(h, 'write the weekly status reports')).output;
+    expect(performance.now() - t0).toBeLessThan(1500);
+    expect(out.router).toMatchObject({ answered_by: 'words', fallback: { code: 'timeout' } });
+    expect(out.suggestions[0]?.id).toBe('gbrain:reports');
+  });
+
+  test('a reply naming no catalog skill falls back with no_known_ids', async () => {
+    const h = await home({ router: true });
+    reply('{"needed": true, "skills": ["not-a-skill"]}');
+    expect((await turn(h, 'write the weekly status reports')).output.router?.fallback).toEqual({ code: 'no_known_ids' });
+  });
+
+  test('a bad router value does not refuse the turn: config_invalid, no call, the words answer', async () => {
+    const h = await home({ router: true, router_timeout_ms: 5 });
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    const out = (await turn(h, 'write the weekly status reports')).output;
+    expect(out.router?.fallback).toEqual({ code: 'config_invalid' });
+    expect(calls.length).toBe(0);
+    expect(out.suggestions[0]?.id).toBe('gbrain:reports');
+  });
+
+  test('an unpriced model cannot run under the cap: no_pricing, no call', async () => {
+    const h = await home({ router: true, router_model: 'openai:unpriced-model' });
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    expect((await turn(h, 'zzqx')).output.router?.fallback).toEqual({ code: 'no_pricing' });
+    expect(calls.length).toBe(0);
+  });
+});
+
+describe('the daily spend cap', () => {
+  test('each call is charged to the day\'s ledger, settled to its real cost', async () => {
+    const h = await home({ router: true });
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    const out = (await turn(h, 'zzqx')).output;
+    const spend = await readRouterSpend(h);
+    expect(spend.charged_usd).toBeCloseTo(out.router!.est_usd, 6);
+    expect(spend.charged_usd).toBeGreaterThan(0);
+  });
+
+  test('a cap of 0 refuses every call before it is made', async () => {
+    const h = await home({ router: true, router_max_usd_per_day: 0 });
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    const out = (await turn(h, 'write the weekly status reports')).output;
+    expect(out.router).toMatchObject({ answered_by: 'words', fallback: { code: 'daily_cap' } });
+    expect(calls.length).toBe(0);
+    expect((await readRouterSpend(h)).charged_usd).toBe(0);
+  });
+
+  test('a call whose largest cost would pass the cap is refused; spend from another day does not count', async () => {
+    const h = await home({ router: true, router_max_usd_per_day: 0.001 });
+    writeFileSync(join(h, 'skill-index', 'router-spend.json'), JSON.stringify({ v: 1, day: new Date().toISOString().slice(0, 10), charged_usd: 0.000999 }));
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    expect((await turn(h, 'zzqx')).output.router?.fallback).toEqual({ code: 'daily_cap' });
+    writeFileSync(join(h, 'skill-index', 'router-spend.json'), JSON.stringify({ v: 1, day: '2000-01-01', charged_usd: 5 }));
+    expect((await turn(h, 'zzqx')).output.router?.fallback).toBeNull();
+  });
+});

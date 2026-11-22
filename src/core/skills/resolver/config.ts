@@ -11,6 +11,19 @@
  *   skills.resolver.auto_rebuild  false (or GBRAIN_SKILLS_NO_AUTOREBUILD=1)
  *     stops a stale resolve from scheduling a rebuild (no stale.stamp).
  *
+ * The model picker (router.ts; off by default, and only the command line and
+ * the Claude Code and Codex hook lanes may start it):
+ *
+ *   skills.resolver.router  true turns the picker on
+ *   skills.resolver.router_model  "provider:model" (default: Claude Haiku 5.5
+ *     with an Anthropic key, else the cheapest configured ROUTER_DEFAULT_MODELS)
+ *   skills.resolver.router_timeout_ms  the longest a turn waits for it
+ *     (ROUTER_TIMEOUT_MS_MIN..MAX; default 1500 in Claude Code, 2000 elsewhere)
+ *   skills.resolver.router_max_usd_per_day  the daily spend cap in USD
+ *     (0..ROUTER_MAX_USD_PER_DAY_MAX, default 0.50; 0 stops every call)
+ *   A bad router value does not refuse the turn: the picker stays off for it
+ *     and the turn reports router.fallback.code config_invalid.
+ *
  * The hook lane's turn settings (read by hook-lane.ts; a library caller
  * passes its own per turn):
  *
@@ -50,6 +63,44 @@ const DIRS_HARNESSES = ['claude-code', 'codex'];
 export interface ResolverSettings {
   sessionTokenBudget: number;
   autoRebuild: boolean;
+  router: RouterSettings;
+}
+
+export const ROUTER_TIMEOUT_MS_MIN = 200;
+export const ROUTER_TIMEOUT_MS_MAX = 2500;
+export const ROUTER_MAX_USD_PER_DAY_DEFAULT = 0.5;
+export const ROUTER_MAX_USD_PER_DAY_MAX = 100;
+const ROUTER_MODEL_RE = /^(anthropic|openai|google):[A-Za-z0-9][\w.\-]{0,127}$/;
+
+/** The picker's settings; `invalid` names the first bad key (the picker then stays off and reports config_invalid). */
+export interface RouterSettings { on: boolean; model: string | null; timeoutMs: number | null; maxUsdPerDay: number; invalid: string | null }
+
+export function validateRouterModel(v: unknown, key: string): string {
+  if (typeof v === 'string' && ROUTER_MODEL_RE.test(v)) return v;
+  throw configInvalid(key, 'must be an anthropic:, openai: or google: model id, like anthropic:claude-haiku-5-5');
+}
+
+export function validateRouterTimeout(v: unknown, key: string): number {
+  if (Number.isInteger(v) && (v as number) >= ROUTER_TIMEOUT_MS_MIN && (v as number) <= ROUTER_TIMEOUT_MS_MAX) return v as number;
+  throw configInvalid(key, `must be a whole number of milliseconds from ${ROUTER_TIMEOUT_MS_MIN} to ${ROUTER_TIMEOUT_MS_MAX} (unset: 1500 in Claude Code, 2000 elsewhere)`);
+}
+
+export function validateRouterMaxUsd(v: unknown, key: string): number {
+  if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= ROUTER_MAX_USD_PER_DAY_MAX) return v;
+  throw configInvalid(key, `must be a number of US dollars from 0 to ${ROUTER_MAX_USD_PER_DAY_MAX} (default ${ROUTER_MAX_USD_PER_DAY_DEFAULT})`);
+}
+
+/** The picker settings in a skills.resolver section. Never throws. */
+export function routerSettings(section: Record<string, unknown>): RouterSettings {
+  const p = 'skills.resolver.';
+  const out: RouterSettings = { on: section.router === true, model: null, timeoutMs: null, maxUsdPerDay: ROUTER_MAX_USD_PER_DAY_DEFAULT, invalid: null };
+  try {
+    if (section.router !== undefined && typeof section.router !== 'boolean') throw configInvalid(`${p}router`, 'must be true or false');
+    if (section.router_model !== undefined) out.model = validateRouterModel(section.router_model, `${p}router_model`);
+    if (section.router_timeout_ms !== undefined) out.timeoutMs = validateRouterTimeout(section.router_timeout_ms, `${p}router_timeout_ms`);
+    if (section.router_max_usd_per_day !== undefined) out.maxUsdPerDay = validateRouterMaxUsd(section.router_max_usd_per_day, `${p}router_max_usd_per_day`);
+  } catch (e) { out.invalid = (e as Error).message; }
+  return out;
 }
 
 export function validateSessionTokenBudget(v: unknown, where: string): number {
@@ -73,7 +124,7 @@ export function readResolverSettings(home: string, env: NodeJS.ProcessEnv = proc
   const budget = section.session_token_budget === undefined ? DEFAULT_SESSION_TOKEN_BUDGET
     : validateSessionTokenBudget(section.session_token_budget, 'skills.resolver.session_token_budget');
   const autoRebuild = env.GBRAIN_SKILLS_NO_AUTOREBUILD === '1' ? false : section.auto_rebuild !== false;
-  return { sessionTokenBudget: budget, autoRebuild };
+  return { sessionTokenBudget: budget, autoRebuild, router: routerSettings(section) };
 }
 
 /** What the hook lane adds to each turn's input. */

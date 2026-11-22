@@ -9,6 +9,8 @@
  *   skills.resolver.lane_payload_chars the hook lane's payload budget (500..10000, default 4000)
  *   skills.resolver.top_k, min_match, top_gate, pinned, per_harness.<harness>.{top_k,min_match,top_gate,dirs}
  *                                      the hook lane's turn settings (src/core/skills/resolver/config.ts)
+ *   skills.resolver.router, router_model, router_timeout_ms, router_max_usd_per_day
+ *                                      the model picker (src/core/skills/resolver/router.ts)
  *
  * A missing file is created with only these keys: no engine, no database, so
  * a brainless install stays brainless (loadConfig decides "a brain is
@@ -20,7 +22,7 @@ import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { setCliExitVerdict } from '../cli-force-exit.ts';
-import { laneTurnSettings, validateMinMatch, validateOwnerSenders, validatePinned, validateSessionTokenBudget, validateSkillDirs, validateTopGate, validateTopK } from '../skills/resolver/config.ts';
+import { laneTurnSettings, validateMinMatch, validateOwnerSenders, validatePinned, validateRouterMaxUsd, validateRouterModel, validateRouterTimeout, validateSessionTokenBudget, validateSkillDirs, validateTopGate, validateTopK } from '../skills/resolver/config.ts';
 
 const CONFIG_CAP_BYTES = 1024 * 1024;
 const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -89,7 +91,7 @@ export function setResolverHarness(read: Exclude<ResolverConfigRead, { state: 'u
 
 export const SKILL_RESOLVER_KEY_PREFIX = 'skills.resolver.';
 /** The leaves `gbrain config set|unset|get` accepts (harnesses is setup's: --skill-loading resolve|off). */
-export const SKILL_RESOLVER_CONFIG_LEAVES = ['enabled', 'session_token_budget', 'auto_rebuild', 'lane_payload_chars', 'top_k', 'min_match', 'top_gate', 'pinned', 'per_harness.<harness>.top_k', 'per_harness.<harness>.min_match', 'per_harness.<harness>.top_gate', 'per_harness.<harness>.dirs', 'per_harness.hermes.owner_sender_ids'] as const;
+export const SKILL_RESOLVER_CONFIG_LEAVES = ['enabled', 'session_token_budget', 'auto_rebuild', 'lane_payload_chars', 'top_k', 'min_match', 'top_gate', 'pinned', 'per_harness.<harness>.top_k', 'per_harness.<harness>.min_match', 'per_harness.<harness>.top_gate', 'per_harness.<harness>.dirs', 'per_harness.hermes.owner_sender_ids', 'router', 'router_model', 'router_timeout_ms', 'router_max_usd_per_day'] as const;
 const PER_HARNESS_LEAF = /^per_harness\.([a-z-]+)\.(top_k|min_match|top_gate|dirs|owner_sender_ids)$/;
 
 function parseLeafValue(leaf: string, value: string): { ok: true; value: boolean | number | string | string[] } | { ok: false; error: string } {
@@ -101,9 +103,12 @@ function parseLeafValue(leaf: string, value: string): { ok: true; value: boolean
     if (turnKey === 'top_gate') return { ok: true, value: validateTopGate(/^\d+(\.\d+)?$/.test(value) ? Number(value) : NaN, key) };
     if (turnKey === 'dirs') return { ok: true, value: validateSkillDirs(value.split(',').map(s => s.trim()).filter(Boolean), key) };
     if (leaf === 'pinned') return { ok: true, value: validatePinned(value.split(',').map(s => s.trim()).filter(Boolean), key) };
+    if (leaf === 'router_model') return { ok: true, value: validateRouterModel(value, key) };
+    if (leaf === 'router_timeout_ms') return { ok: true, value: validateRouterTimeout(/^\d+$/.test(value) ? Number(value) : NaN, key) };
+    if (leaf === 'router_max_usd_per_day') return { ok: true, value: validateRouterMaxUsd(/^\d+(\.\d+)?$/.test(value) ? Number(value) : NaN, key) };
     if (turnKey === 'owner_sender_ids') return { ok: true, value: validateOwnerSenders(value.split(',').map(s => s.trim()).filter(Boolean), key) };
   } catch (e) { return { ok: false, error: (e as Error).message.slice(key.length + 1) }; }
-  if (leaf === 'enabled' || leaf === 'auto_rebuild') {
+  if (leaf === 'enabled' || leaf === 'auto_rebuild' || leaf === 'router') {
     if (value === 'true' || value === 'false') return { ok: true, value: value === 'true' };
     return { ok: false, error: 'must be true or false' };
   }
