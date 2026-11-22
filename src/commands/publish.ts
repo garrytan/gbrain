@@ -13,13 +13,13 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+// @ts-ignore — `with { type: 'text' }` is Bun syntax; embeds marked at build time
+import MARKED_JS from '../../node_modules/marked/lib/marked.umd.js' with { type: 'text' };
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
-import { dirname, basename, join } from 'path';
-import { createRequire } from 'module';
+import { dirname, basename } from 'path';
 
-// Inline marked.js so published HTML is truly self-contained (no CDN dependency)
-const require = createRequire(import.meta.url);
-const MARKED_JS = readFileSync(join(dirname(require.resolve('marked')), 'marked.umd.js'), 'utf8');
+// MARKED_JS (imported above) is inlined so published HTML is self-contained
+// (no CDN dependency) and works in the compiled binary, which has no node_modules.
 
 // ── Content stripping ──────────────────────────────────────────────
 
