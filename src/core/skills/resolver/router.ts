@@ -24,7 +24,7 @@ import { ROUTER_TIMEOUT_MS_CLAUDE_CODE_MAX, type RouterSettings } from './config
 import { writeFileAtomic } from './fsutil.ts';
 import { releaseLeaseAsync, tryAcquireLeaseAsync } from './lock.ts';
 import { skillIndexRoot } from './paths.ts';
-import { PickerHttpError, pickerChat, pickerKey, providerOf, type PickerReply } from './router-http.ts';
+import { firstParty, PickerHttpError, pickerChat, pickerKey, providerOf, type PickerReply } from './router-http.ts';
 
 export const ROUTER_FALLBACK_CODES = ['timeout', 'provider_error', 'missing_key', 'daily_cap', 'parse_failed', 'no_known_ids', 'config_invalid', 'no_pricing', 'ledger_unavailable'] as const;
 export type RouterFallbackCode = (typeof ROUTER_FALLBACK_CODES)[number];
@@ -174,7 +174,7 @@ async function callPicker(home: string, message: string, skills: readonly Picker
   try {
     res = await pickerChat({ model, system, message, maxTokens: PICKER_MAX_OUTPUT_TOKENS, signal, ...(compat && s.baseUrl ? { baseUrl: s.baseUrl } : {}) }, key, env);
   } catch (e) {
-    if (!compat && e instanceof PickerHttpError && e.status >= 400 && e.status < 500) {
+    if (firstParty(providerOf(model), env) && e instanceof PickerHttpError && e.status >= 400 && e.status < 500) {
       const refunded = await settle(0);
       return { ok: false, code: 'provider_error', model, usd: refunded ? 0 : estimate };
     }

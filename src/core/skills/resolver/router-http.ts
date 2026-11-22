@@ -54,6 +54,11 @@ function counts(input: unknown, output: unknown, cacheRead: unknown = 0, cacheWr
   return ok(input) && ok(output) && ok(cacheRead) && ok(cacheWrite) ? { input, cacheRead, cacheWrite, output } : null;
 }
 
+const BASE_URL_ENV: Record<Exclude<PickerProvider, 'compat'>, string> = { anthropic: 'ANTHROPIC_BASE_URL', openai: 'OPENAI_BASE_URL', google: 'GOOGLE_GENERATIVE_AI_BASE_URL' };
+
+/** True when `provider` is answered by the provider itself: not a compat: endpoint, and no base-URL override pointing it at a proxy that may bill. */
+export const firstParty = (provider: PickerProvider | null, env: NodeJS.ProcessEnv): boolean => provider !== null && provider !== 'compat' && !env[BASE_URL_ENV[provider]];
+
 const base = (env: NodeJS.ProcessEnv, name: string, fallback: string) => (env[name] || fallback).replace(/\/+$/, '').replace(/\/v1(beta)?$/, '');
 
 /** A provider's HTTP error answer, with its status. */

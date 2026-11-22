@@ -411,9 +411,10 @@ What it does on each turn:
   `router: true`.
 - **What it reads.** Every skill while the catalogs hold up to 150, else the top
   40 of the word ranking; when no skill shares a word with the message there,
-  it makes no call and the word matcher answers, with no fallback code. Descriptions come from `picker.json`, which each
-  build writes beside the index (cut at 400 characters). A project catalog's
-  skills are sent by id only, as their hints are never shown.
+  it makes no call and the word matcher answers, with no fallback code.
+  Descriptions come from `picker.json`, which each build writes beside the
+  index (cut at 400 characters). A project catalog's skills are sent by id
+  only, as their hints are never shown.
 - **What it shows.** Its picks, best first, with `match_strength: "picked"`,
   under the same rules as any suggestion: `exclude`, the `min_match_strength`
   floor, the session's no-repeat rule, pacing and the token budget. `top_gate`
@@ -464,7 +465,10 @@ redirect from that address is refused, so the request goes nowhere else. Keys co
 `anthropic_api_key`, `openai_api_key` or `google_api_key` in
 `~/.gbrain/config.json`; `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` and
 `GOOGLE_GENERATIVE_AI_BASE_URL` point it at a proxy. The message is sent as
-text to route: only skill ids from your catalog are kept from the reply.
+text to route: only skill ids from your catalog are kept from the reply. A
+refused request (an HTTP 4xx) from the provider itself is not charged to the
+daily cap; through a proxy or a `compat:` endpoint it is, since that endpoint
+may bill it.
 
 ### router_fallback: timeout
 
@@ -488,7 +492,9 @@ set `skills.resolver.router_model` to a model whose key you have. For a
 
 Today's spend (UTC) reached `router_max_usd_per_day`; the word matcher answers
 until 00:00 UTC. `gbrain doctor` shows the spend and the cap. To raise it:
-`gbrain config set skills.resolver.router_max_usd_per_day 1`.
+`gbrain config set skills.resolver.router_max_usd_per_day 1`. A cap below one
+call's largest cost refuses every call, even with nothing spent; raising the
+cap is the fix.
 
 ### router_fallback: parse_failed
 

@@ -16,7 +16,7 @@ import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { __setPickerTransportForTests, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
+import { __setPickerTransportForTests, PickerHttpError, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
 import { parsePickerReply, PICKER_DESCRIPTION_CHARS, readRouterSpend, routerTimeoutMs } from '../src/core/skills/resolver/router.ts';
 import { routerSettings } from '../src/core/skills/resolver/config.ts';
@@ -307,12 +307,22 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     expect(r.output.router!.est_usd).toBeCloseTo((1000 * price.input + 160 * price.output) / 1e6, 6);
   });
 
-  test('a 4xx from Anthropic, OpenAI or Google is refunded; a compat endpoint keeps the reservation', async () => {
+  test('a 4xx from Anthropic, OpenAI or Google itself is refunded', async () => {
+    const h = await home({ router: true, router_model: 'google:gemini-3.5-flash-lite' });
+    const direct = { ...env, GOOGLE_GENERATIVE_AI_BASE_URL: undefined };
+    __setPickerTransportForTests(async () => { throw new PickerHttpError(403); });
+    const g = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env: direct });
+    expect(g.output.router).toMatchObject({ fallback: { code: 'provider_error' }, est_usd: 0 });
+    expect((await readRouterSpend(h)).charged_usd).toBe(0);
+  });
+
+  test('a 4xx through a base-URL proxy or a compat endpoint keeps the reservation', async () => {
     const h = await home({ router: true, router_model: 'google:gemini-3.5-flash-lite' });
     const genv = { ...process.env, GOOGLE_GENERATIVE_AI_BASE_URL: `http://127.0.0.1:${server.port}/gdeny`, GEMINI_API_KEY: 'k-test' };
     const g = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env: genv });
-    expect(g.output.router).toMatchObject({ fallback: { code: 'provider_error' }, est_usd: 0 });
-    expect((await readRouterSpend(h)).charged_usd).toBe(0);
+    expect(g.output.router?.fallback).toEqual({ code: 'provider_error' });
+    expect(g.output.router!.est_usd).toBeGreaterThan(0);
+    expect((await readRouterSpend(h)).charged_usd).toBeCloseTo(g.output.router!.est_usd, 6);
     const c = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/denied/v1`, router_usd_per_mtok: [1, 2] }));
     const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: c, catalogs: ['c'], router: true, env });
     expect(r.output.router?.fallback).toEqual({ code: 'provider_error' });
