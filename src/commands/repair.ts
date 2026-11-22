@@ -44,10 +44,10 @@ import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import type { OperationContext } from '../core/ops/contract.ts';
 import { privateLabelsLedger } from './repair-private-labels.ts';
 import { openFactsLedger, openFactsUndoLedger, readFactIdsFile } from './repair-open-facts.ts';
-import { readFactDateEvidence } from '../core/repair/fact-date-evidence.ts';
+import { invalidFactDateEvidence, parseFactDateEvidence } from '../core/repair/fact-date-evidence.ts';
 import { createdBeforeRequired, memberModeRefused } from '../core/repair/open-facts.ts';
 import { isAbsolute } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync, readSync } from 'node:fs';
 
 /** The content-repair lane's command word (#6377): parsed like a kind, dispatched to repair-content.ts, never a RepairKind. */
 export const CONTENT_LANE = 'content';
@@ -615,6 +615,28 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
   }
   if (result.mode === 'dry_run' && result.affected) lines.push(`  apply: ${result.apply_command}`);
   return lines.join('\n');
+}
+
+function readFactDateEvidence(path: string) {
+  const maxBytes = 1024 * 1024;
+  try {
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    try {
+      const file = fstatSync(fd);
+      if (!file.isFile() || file.size > maxBytes) throw invalidFactDateEvidence();
+      const content = Buffer.alloc(file.size + 1);
+      let offset = 0;
+      while (offset < content.length) {
+        const read = readSync(fd, content, offset, content.length - offset, null);
+        if (!read) break;
+        offset += read;
+      }
+      if (offset !== file.size) throw invalidFactDateEvidence();
+      return parseFactDateEvidence(content.subarray(0, offset).toString('utf8'), path);
+    } finally { closeSync(fd); }
+  } catch {
+    throw invalidFactDateEvidence();
+  }
 }
 
 export async function runRepairCommand(engine: BrainEngine, args: string[]): Promise<void> {

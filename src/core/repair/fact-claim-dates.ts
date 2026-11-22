@@ -56,7 +56,7 @@ interface Approved { selection: Selection; page?: PagePlan; facts?: FactsPlan }
 interface ClaimItem extends RepairItem { approved: Approved; hash: string; last: boolean }
 
 interface FactRow { id: number | string; entity_slug: string | null; fact: string; row_num: number | string | null; source_markdown_slug: string | null;
-  valid_from: string; valid_until_day: string | null }
+  valid_from: string; day: string; valid_until_day: string | null }
 
 interface Plan { hash: string; days: BulkFactDay[]; pages: PagePlan[]; facts: FactsPlan[]; residuals: Record<string, number>; listing: RepairListing[] }
 
@@ -138,11 +138,17 @@ async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Sel
   const byPage = new Map<string, Candidate[]>();
   const byEntity = new Map<string, FactsPlan>();
   const addPageRow = (slug: string, candidate: Candidate) => byPage.set(slug, [...(byPage.get(slug) ?? []), candidate]);
-  for (const day of dayList) {
-    const rows = await engine.executeRaw<FactRow>(`SELECT f.id, f.entity_slug, f.fact, f.row_num, f.source_markdown_slug, f.valid_from::text AS valid_from,
-        to_char(f.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS valid_until_day
-      FROM facts f WHERE f.source_id = $1 AND f.expired_at IS NULL AND (f.valid_from AT TIME ZONE 'UTC')::date = $2::date ORDER BY f.id`, [sourceId, day]);
+  const rows = await engine.executeRaw<FactRow>(`SELECT f.id, f.entity_slug, f.fact, f.row_num, f.source_markdown_slug, f.valid_from::text AS valid_from,
+      to_char(f.valid_from AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+      to_char(f.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS valid_until_day
+    FROM facts f WHERE f.source_id = $1 AND f.expired_at IS NULL
+      AND ((f.valid_from AT TIME ZONE 'UTC')::date = ANY($2::date[])
+        OR (f.id = ANY($3::bigint[]) AND f.superseded_by IS NULL AND f.valid_from = date_trunc('milliseconds', f.valid_from)))
+    ORDER BY day,f.id`, [sourceId, dayList, evidence?.rows.map(row => row.id) ?? []]);
+  const evidenceListing: RepairListing[] = [];
+  if (!evidence) {
     for (const row of rows) {
+      const { day } = row;
       const found = claimDate(row.fact, day);
       if ('skip' in found) { count(found.skip); continue; }
       if (row.valid_until_day !== null && row.valid_until_day < found.date) { count('ends_before_claim_date'); continue; }
@@ -156,14 +162,8 @@ async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Sel
         byEntity.set(key, group);
       }
     }
-  }
-  const evidenceListing: RepairListing[] = [];
-  if (evidence) {
-    const checked = await engine.executeRaw<FactRow>(`SELECT f.id, f.entity_slug, f.fact, f.row_num, f.source_markdown_slug,
-        f.valid_from::text AS valid_from, to_char(f.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS valid_until_day
-      FROM facts f WHERE f.source_id = $1 AND f.id = ANY($2::bigint[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
-        AND f.valid_from = date_trunc('milliseconds', f.valid_from)`, [sourceId, evidence.rows.map(row => row.id)]);
-    const byId = new Map(checked.map(row => [Number(row.id), row]));
+  } else {
+    const byId = new Map(rows.map(row => [Number(row.id), row]));
     for (const wanted of evidence.rows) {
       const row = byId.get(wanted.id);
       if (!row || cellInstant(row.valid_from) !== wanted.expected_valid_from ||
