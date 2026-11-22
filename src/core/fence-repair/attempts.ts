@@ -29,7 +29,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { sha256, stableJson } from '../persistence/digest.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'readOpCheckpointRecord' | 'insertOpCheckpointIfAbsent' | 'replaceOpCheckpointAtVersion'>;
 
 export const FENCE_REPAIR_ATTEMPT_OP = 'fence-repair-attempt';
 /** One paid attempt plus at most one corrective re-ask. */
@@ -116,22 +116,15 @@ export function attemptStore(engine: Exec, opts: { now?: () => Date; leaseMs?: n
   const leaseMs = opts.leaseMs ?? DEFAULT_ATTEMPT_LEASE_MS;
 
   const readRecord = async (fingerprint: string): Promise<AttemptRecord | null> => {
-    const [row] = await engine.executeRaw<{ completed_keys: AttemptRecord[] }>(
-      'SELECT completed_keys FROM op_checkpoints WHERE op = $1 AND fingerprint = $2', [FENCE_REPAIR_ATTEMPT_OP, fingerprint]);
-    return row?.completed_keys?.[0] ?? null;
+    const row = await engine.readOpCheckpointRecord(FENCE_REPAIR_ATTEMPT_OP, fingerprint);
+    return (row?.completed_keys as AttemptRecord[] | undefined)?.[0] ?? null;
   };
 
   /** Compare-and-swap: insert when `expected` is null, else replace only the record at version `expected`. */
   const swap = async (fingerprint: string, expected: number | null, record: AttemptRecord): Promise<boolean> => {
-    const value = JSON.stringify([record]);
-    const rows = expected === null
-      ? await engine.executeRaw(
-        'INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at) VALUES ($1, $2, $3::text::jsonb, now()) ON CONFLICT (op, fingerprint) DO NOTHING RETURNING 1',
-        [FENCE_REPAIR_ATTEMPT_OP, fingerprint, value])
-      : await engine.executeRaw(
-        "UPDATE op_checkpoints SET completed_keys = $3::text::jsonb, updated_at = now() WHERE op = $1 AND fingerprint = $2 AND (completed_keys->0->>'v')::int = $4 RETURNING 1",
-        [FENCE_REPAIR_ATTEMPT_OP, fingerprint, value, expected]);
-    return rows.length === 1;
+    return expected === null
+      ? engine.insertOpCheckpointIfAbsent(FENCE_REPAIR_ATTEMPT_OP, fingerprint, [record])
+      : engine.replaceOpCheckpointAtVersion(FENCE_REPAIR_ATTEMPT_OP, fingerprint, [record], expected);
   };
 
   const stamp = (at: Date) => ({ at: at.toISOString(), lease_until: new Date(at.getTime() + leaseMs).toISOString() });

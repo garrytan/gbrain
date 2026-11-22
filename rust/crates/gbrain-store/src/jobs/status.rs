@@ -205,6 +205,21 @@ impl Store {
         Ok(json!(last.map(iso)))
     }
 
+    /// `readLastFinishedJobAt(name)`: the latest `finished_at` of the `completed` rows named `name`,
+    /// as `to_char(.. AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')` (seconds, truncated), or null.
+    pub fn read_last_finished_job_at(&self, name: &str) -> Result<Value> {
+        let read = self.read()?;
+        let last = rows_with_status(&*read, "completed")?
+            .iter()
+            .filter(|r| r.name == name)
+            .filter_map(|r| r.finished_at)
+            .max();
+        Ok(json!(last.map(|at| {
+            let full = iso(at);
+            format!("{}Z", &full[..19])
+        })))
+    }
+
     /// `countTtlCancelledByName`: `cancelled` rows whose `error_text` matches the LIKE pattern and whose
     /// `finished_at` is after `now - within`, counted by name: most first, then by name (bytewise).
     pub fn count_ttl_cancelled_by_name(

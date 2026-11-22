@@ -68,7 +68,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // gbrain migrate --to <engine>: the source-side reads (engine-sql/engine-migration.ts)
   'readEngineMigrationHistory', 'readMigrationRows', 'readMigrationPageColumns', 'listManualLinkTransitions', 'countLiveTimelineEntries',
   // Minion job counts and last-run reads for the status surfaces, lane L5 group B (engine-sql/jobs-status.ts)
-  'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+  'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'readLastFinishedJobAt', 'countTtlCancelledByName',
   'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
   'readEmbedBackfillBySource',
   // doctor job checks
@@ -395,6 +395,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'readRequestEffects', 'listEmbeddingCandidates',
   // The batch 9 segmented-mirror statements (engine-sql/segmented-mirror-effects.ts; test/engine-parity/segmented-mirror-effects.test.ts)
   'insertRemirrorEffects', 'readRemirrorEffects', 'listGlobalPurgeWithdrawals',
+  // The batch 9 fence repair bookkeeping (engine-sql/fence-repair-records.ts; test/engine-parity/repair-fence-records.test.ts)
+  'listSourceCheckpointRecords', 'insertOpCheckpointIfAbsent', 'replaceOpCheckpointAtVersion', 'readOldestSyncHoldAt',
   // The write owner's housekeeping scans (engine-sql/persistence-owner-scans.ts).
   'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads', 'listResumableRefreshes', 'listSourceLastCommits',
   // The effect worker's claim, settle and gate statements (engine-sql/persistence-effect-worker.ts).

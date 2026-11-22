@@ -16,6 +16,7 @@ import * as versions from './versions.ts';
 // One module per planned family (docs/designs/RUST_ENGINE_INTERFACES.md), each listed once so building one edits
 // only its own file.
 import * as pageOps from './page-ops.ts';
+import * as fenceRepairRecords from './fence-repair-records.ts';
 import * as extraction from './extraction.ts';
 import * as aliases from './aliases.ts';
 import * as pageBody from './page-body.ts';
@@ -132,7 +133,7 @@ export const STORE_MEMBERS = {
   getPage: pages.getPage, readPageSnapshot: pages.readPageSnapshot, putPage: pages.putPage, deletePage: pages.deletePage,
   softDeletePage: pages.softDeletePage, restorePage: pages.restorePage, listPages: pages.listPages, resolveSlugs: pages.resolveSlugs,
   // Planned families: a member is served once its family file exports it.
-  ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream, ...dreamJournal,
+  ...pageOps, ...fenceRepairRecords, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream, ...dreamJournal,
   ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...timelineRepairReads, ...keyword,
   ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops, ...loopMutes,
   ...sourceArchive,

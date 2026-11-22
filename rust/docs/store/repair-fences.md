@@ -9,7 +9,15 @@ run through, so they work on a Rust brain. Each has one SQL copy in `src/core/en
 | `readRemirrorEffects` | `segmented-mirror` | `segmented-mirror-effects.ts` | `src/persistence/effects.rs` | A request's effects in kind order: state, error code, whether a recovery is open, whether its data holds `parked`, and its data's `skipped` list (else `[]`). A request id that is not a uuid refuses as `::uuid` does. |
 | `listGlobalPurgeWithdrawals` | `segmented-mirror` (the typed withdrawal overlay, `page-state/snapshot.ts overlayCanonicalBodiesTyped`) | `segmented-mirror-effects.ts` | `src/facts/purge_ledger.rs` | A source's subject-`*` tombstones of the asked claim fingerprints as `{ visibility, fact_hash, withdrawn_at, purged: true }`, world rows only when asked, in (visibility, fingerprint) order. |
 
-The parity cases are in `test/engine-parity/segmented-mirror-effects.test.ts`.
+| `insertOpCheckpointIfAbsent`, `replaceOpCheckpointAtVersion` | `fences` (the attempt store, `fence-repair/attempts.ts`) | `fence-repair-records.ts` | `src/persistence/op_checkpoint.rs` | Store the checkpoint parent only when none exists; replace its records only while the first record's `v` is the expected version (a `v` that is not an integer refuses as `::int` does, a missing one matches nothing). Each is one store write. |
+| `listSourceCheckpointRecords` | `fences` (uncommitted repairs, `fence-repair/uncommitted.ts`) | `fence-repair-records.ts` | `listOpCheckpointRecords` (TS store member) | The first record of each parent of an op whose record names an asked source (every one when none is asked), in fingerprint byte order. |
+| `readOldestSyncHoldAt` | `fences`, `slug-conflicts` (their verification) | `fence-repair-records.ts` | `listOpCheckpointRecords` (TS store member) | The earliest `held_at` of the asked sources' `sync-hold` records with the asked code, or null. |
+| `readLastFinishedJobAt` | the fence hold fixes (`fence-repair/hold-fix.ts`) | `fence-repair-records.ts` | `src/jobs/status.rs` | The latest `finished_at` of the completed jobs of a name, as UTC ISO seconds, or null. |
+
+The parity cases are in `test/engine-parity/segmented-mirror-effects.test.ts`, `repair-fence-records.test.ts` and
+`jobs-status.test.ts`. Until lane 14's fence census and daily budget ledger members (`engine-sql/fence-census.ts`) are on
+this branch, `fences` and `slug-conflicts` stop at plan entry on an engine without raw SQL ("repair fences census";
+`test/engine-parity/repair-fence-kinds.test.ts`).
 
 `missing-tables` and `planner-stats` need no member: their reads are catalog probes
 (`src/core/rust-engine/store-members/catalog.ts`). `readMissingTables` checks PGLite's table list and answers none

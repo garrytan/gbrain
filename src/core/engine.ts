@@ -4797,6 +4797,16 @@ export interface BrainEngine {
   insertWithdrawalEffects(spec: WithdrawalEffectsSpec): Promise<void>;
   /** `gbrain repair segmented-mirror`: queues a re-mirror's `withdrawal-mirror` and `git` effects for request row `requestId` (engine-sql/segmented-mirror-effects.ts); run it in the re-mirror's write transaction. */
   insertRemirrorEffects(requestId: string, sourceId: string, data: Record<string, unknown>): Promise<void>;
+  /** The first record of each `op` checkpoint naming one of `sourceIds` as `source_id` (all when null), in fingerprint byte order (engine-sql/fence-repair-records.ts). */
+  listSourceCheckpointRecords<R>(op: string, sourceIds: readonly string[] | null): Promise<import('./engine-sql/fence-repair-records.ts').SourceCheckpointRecord<R>[]>;
+  /** Stores the checkpoint parent when none exists; true when this call stored it (the fence repair attempt store's claim). */
+  insertOpCheckpointIfAbsent(op: string, fingerprint: string, completedKeys: readonly unknown[]): Promise<boolean>;
+  /** Replaces the parent's records only while its first record's `v` is `expected`; true when this call replaced them. */
+  replaceOpCheckpointAtVersion(op: string, fingerprint: string, completedKeys: readonly unknown[], expected: number): Promise<boolean>;
+  /** The earliest `held_at` of the sources' Git sync holds with hold code `code`, or null (the fences and slug-conflicts verification). */
+  readOldestSyncHoldAt(code: string, sourceIds: readonly string[]): Promise<string | null>;
+  /** The latest `finished_at` of the completed jobs named `name`, as UTC ISO seconds, or null. */
+  readLastFinishedJobAt(name: string): Promise<string | null>;
   /** `gbrain repair segmented-mirror`: the effects of request row `requestId` the apply waits on, in kind order. */
   readRemirrorEffects(requestId: string): Promise<import('./engine-sql/segmented-mirror-effects.ts').RemirrorEffectState[]>;
   /** The withdrawal overlay's `*` purges: the source's subject-`*` purges of claim fingerprints `hashes` as withdrawals, world rows only when `worldOnly` (page-state/snapshot.ts overlayCanonicalBodiesTyped). */

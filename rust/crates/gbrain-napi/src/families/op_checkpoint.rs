@@ -101,6 +101,36 @@ impl Brain {
         self.run(env, move |s| s.list_op_checkpoint_records(&op))
     }
 
+    /// `insertOpCheckpointIfAbsent(op, fingerprint, completedKeys)`: true when this call stored it.
+    #[napi]
+    pub fn insert_op_checkpoint_if_absent<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        completed_keys: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_op_checkpoint_if_absent(&op, &fingerprint, &completed_keys)
+        })
+    }
+
+    /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`: true when this
+    /// call replaced the records at version `expected`.
+    #[napi]
+    pub fn replace_op_checkpoint_at_version<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        completed_keys: Value,
+        expected: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.replace_op_checkpoint_at_version(&op, &fingerprint, &completed_keys, expected)
+        })
+    }
+
     /// `writeOpCheckpointRecord(op, fingerprint, completedKeys)`: the records replaced; null
     /// deletes the parent and its paths.
     #[napi]

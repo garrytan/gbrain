@@ -394,3 +394,53 @@ fn busy_rows_read_cursor_text_and_held_paths() {
     assert!(rows.pending.is_empty());
     assert!(busy("a-src", "stale").cursors.is_empty());
 }
+
+#[test]
+fn an_op_checkpoint_inserts_once_and_replaces_only_at_its_version() {
+    let dir = TempDir::new("op-checkpoint-cas");
+    let store = open(&dir);
+    let op = "fence-repair-attempt";
+    assert!(
+        store
+            .insert_op_checkpoint_if_absent(op, "fp", &json!([{ "v": 1 }]))
+            .unwrap()
+    );
+    assert!(
+        !store
+            .insert_op_checkpoint_if_absent(op, "fp", &json!([{ "v": 9 }]))
+            .unwrap()
+    );
+    assert!(
+        !store
+            .replace_op_checkpoint_at_version(op, "fp", &json!([{ "v": 2 }]), 7)
+            .unwrap()
+    );
+    assert!(
+        store
+            .replace_op_checkpoint_at_version(op, "fp", &json!([{ "v": 2 }]), 1)
+            .unwrap()
+    );
+    assert!(
+        !store
+            .replace_op_checkpoint_at_version(op, "missing", &json!([{ "v": 1 }]), 0)
+            .unwrap()
+    );
+    store
+        .write_op_checkpoint_record(op, "nov", Some(&json!([{ "state": "x" }])))
+        .unwrap();
+    assert!(
+        !store
+            .replace_op_checkpoint_at_version(op, "nov", &json!([{ "v": 1 }]), 0)
+            .unwrap()
+    );
+    store
+        .write_op_checkpoint_record(op, "bad", Some(&json!([{ "v": "x1" }])))
+        .unwrap();
+    assert!(
+        store
+            .replace_op_checkpoint_at_version(op, "bad", &json!([{ "v": 1 }]), 0)
+            .is_err()
+    );
+    let kept = store.read_op_checkpoint_record(op, "fp", None).unwrap();
+    assert_eq!(kept["completed_keys"], json!([{ "v": 2 }]));
+}
