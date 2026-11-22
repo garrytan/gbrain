@@ -381,6 +381,7 @@ import type {
 } from './engine-sql/access-credentials.ts';
 import * as trustScan from './engine-sql/trust-scan.ts';
 import * as doctorJoinImpl from './engine-sql/doctor-join.ts';
+import * as readSharedSources from './engine-sql/read-shared-sources.ts';
 
 export { hasPostgresCancellationCapability } from './postgres-engine/cancellation.ts';
 // Engine-path imports stay static unless a call site carries an explicit
@@ -2243,10 +2244,13 @@ export class PostgresEngine implements BrainEngine {
   deleteOauthClientCodes(clientId: string) { return oauthRevocation.deleteOauthClientCodes(this, clientId); }
   deleteOauthClientRow(clientId: string) { return oauthRevocation.deleteOauthClientRow(this, clientId); }
   setOauthClientRevision(clientId: string, revision: number, revoke: boolean) { return oauthRevocation.setOauthClientRevision(this, clientId, revision, revoke); }
+  setOauthClientReadSharedRevision(clientId: string, revision: number | null) { return oauthRevocation.setOauthClientReadSharedRevision(this, clientId, revision); }
+  readSharedSourceRows() { return readSharedSources.readSharedSourceRows(this); }
   insertOauthGrantAudit(row: OauthGrantAuditInsert) { return oauthRevocation.insertOauthGrantAudit(this, row); }
   readOauthAccessTokenRows(hash: string, rung: OauthTokenRung) { return accessCredentials.readOauthAccessTokenRows(this, hash, rung); }
   lockActiveAccessTokens(target: ActiveTokenTarget) { return accessCredentials.lockActiveAccessTokens(this, target); }
   writeAccessTokenGrant(id: string, write: AccessTokenGrantWrite) { return accessCredentials.writeAccessTokenGrant(this, id, write); }
+  setAccessTokenReadSharedRevision(id: string, revision: number | null) { return accessCredentials.setAccessTokenReadSharedRevision(this, id, revision); }
   writeAccessTokenPrivateGrant(id: string, axis: AccessTokenPrivateAxis, value: string) { return accessCredentials.writeAccessTokenPrivateGrant(this, id, axis, value); }
   lockLegacyAccessTokens() { return accessCredentials.lockLegacyAccessTokens(this); }
   readActiveAccessTokenByHash(hash: string, caller: TokenByHashCaller) { return accessCredentials.readActiveAccessTokenByHash(this, hash, caller); }

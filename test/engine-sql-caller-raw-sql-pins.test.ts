@@ -1082,6 +1082,26 @@ const PINS: Pin[] = [
     texts: ['UPDATE oauth_clients SET grant_revision = $1 WHERE client_id = $2'],
   },
   {
+    from: 'src/core/grants/service.ts stampReadShared and src/core/grants/lifecycle.ts invalidate-tokens (at 3c72fae727)',
+    case: { method: 'setOauthClientReadSharedRevision', variant: 'stamp', run: e => e.setOauthClientReadSharedRevision('client-a', 3) },
+    texts: ['UPDATE oauth_clients SET read_shared_revision = $2 WHERE client_id = $1'],
+  },
+  {
+    from: 'src/core/grants/read-shared.ts sharedRows (at 3c72fae727; its SqlQuery tag sent each ${} as the next $n)',
+    case: { method: 'readSharedSourceRows', variant: 'default', run: e => e.readSharedSourceRows() },
+    texts: [`
+    SELECT s.id, s.config,
+      (COALESCE(s.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = s.id)) AS guest,
+      ARRAY(SELECT ms.member_id FROM access_member_sources ms WHERE ms.source_id = s.id ORDER BY ms.member_id) AS owners,
+      (SELECT btrim(c.value) FROM config c WHERE c.key = $1) AS owner_member
+    FROM sources s WHERE s.archived IS NOT TRUE ORDER BY s.id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/grants/service.ts stampReadShared clear (at 3c72fae727)',
+    case: { method: 'setOauthClientReadSharedRevision', variant: 'clear', run: e => e.setOauthClientReadSharedRevision('client-a', null) },
+    texts: ['UPDATE oauth_clients SET read_shared_revision = $2 WHERE client_id = $1'],
+  },
+  {
     from: 'src/core/grants/lifecycle.ts audit (at d8d9956871)',
     case: { method: 'insertOauthGrantAudit', variant: 'default', run: e => e.insertOauthGrantAudit({ client_id: 'client-a', actor: 'admin', action: 'revoke', revision: 2, before_grant: '{}', after_grant: '{}' }) },
     texts: [`INSERT INTO oauth_grant_audit (client_id, actor, action, revision, before_grant, after_grant)
@@ -1304,6 +1324,11 @@ const PINS: Pin[] = [
     from: 'src/core/grants/legacy-token.ts:321 rescopeInTransaction --private-facts (at 5a32485552)',
     case: { method: 'writeAccessTokenPrivateGrant', variant: 'private_facts', run: e => e.writeAccessTokenPrivateGrant('00000000-0000-4000-8000-0000000000b1', 'private_facts', 'none') },
     texts: ['UPDATE access_tokens SET private_facts = $2 WHERE id = $1::uuid'],
+  },
+  {
+    from: 'src/core/grants/legacy-token.ts:227 writeTokenGrant read-shared re-stamp (at 3c72fae727)',
+    case: { method: 'setAccessTokenReadSharedRevision', variant: 'stamp', run: e => e.setAccessTokenReadSharedRevision('00000000-0000-4000-8000-0000000000b1', 4) },
+    texts: ['UPDATE access_tokens SET read_shared_revision = $2 WHERE id = $1::uuid'],
   },
   {
     from: 'src/core/grants/legacy-token.ts:347 migrateLegacyTokens (at 5a32485552)',

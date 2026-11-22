@@ -33,7 +33,6 @@ import { privatePagesFilterFragmentFast, resolveExcludePrivatePages } from '../s
 import { pageTypesForAllowed } from '../facts/conversation-types.ts';
 import type { PrincipalGrant } from './model.ts';
 import { expandReadShared } from './read-shared.ts';
-import { sqlQueryForEngine } from '../sql-query.ts';
 import { brainServes } from '../access/serves.ts';
 
 export const NOTICE_CODE = 'unscoped_multi_user_token';
@@ -80,7 +79,7 @@ export async function credentialReadSources(engine: BrainEngine, grant: Pick<Pri
   if (!hasScope(grant.scopes, 'read')) return [];
   const stored = await storedReadSources(engine, grant);
   if (grant.readShared !== true || grant.sources.kind === 'none' || (grant.sources.kind === 'default' && grant.principal.kind === 'legacy_token')) return stored;
-  return (await expandReadShared(sqlQueryForEngine(engine), stored, member)).sources;
+  return (await expandReadShared(engine, stored, member)).sources;
 }
 
 async function storedReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'sources'>): Promise<string[]> {

@@ -307,7 +307,7 @@ export async function persistGrant(db: GrantDatabase, before: ClientGrant, after
 export async function stampReadShared(db: GrantDatabase, clientId: string, on: boolean, revision: number, wasOn: boolean): Promise<void> {
   if (!on && !wasOn) return;
   if (typeof db !== 'function') {
-    await db.executeRaw('UPDATE oauth_clients SET read_shared_revision = $2 WHERE client_id = $1', [clientId, on ? revision : null]);
+    await db.setOauthClientReadSharedRevision(clientId, on ? revision : null);
     return;
   }
   await db`UPDATE oauth_clients SET read_shared_revision = ${on ? revision : null} WHERE client_id = ${clientId}`;

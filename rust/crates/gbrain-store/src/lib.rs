@@ -36,6 +36,7 @@ mod page_index;
 mod page_projection;
 mod page_withdrawals;
 pub mod pages;
+pub mod read_shared;
 pub mod redb_kv;
 pub mod search;
 pub mod shared_skill_catalog;

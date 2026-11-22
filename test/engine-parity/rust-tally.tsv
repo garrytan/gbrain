@@ -133,6 +133,8 @@ test/engine-parity/purge-plan.test.ts	12	0
 test/engine-parity/purge-writes.test.ts	5	0
 test/engine-parity/put-source-fork.test.ts	2	1
 test/engine-parity/raw-sql.test.ts	0	4
+test/engine-parity/read-shared-revision.test.ts	3	0
+test/engine-parity/read-shared-sources.test.ts	3	0
 test/engine-parity/reads-privacy.test.ts	51	1
 test/engine-parity/reason-tombstones.test.ts	2	0
 test/engine-parity/relational-reads.test.ts	4	0

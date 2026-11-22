@@ -30,7 +30,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { assertAllowedScopes, hasScope, operationScopesAllowed } from '../scope.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
+import type { SqlQuery } from '../sql-query.ts';
 import { sharedReadSources } from './read-shared.ts';
 import { TOKEN_ID_RE } from '../token-mint.ts';
 import { isUndefinedColumnError } from '../utils.ts';
@@ -224,7 +224,7 @@ async function writeTokenGrant(tx: BrainEngine, row: Record<string, unknown>, gr
   // GST-2898: re-stamp the read-shared switch at the new revision (or clear it) in the same transaction. A brain
   // without the column (migration pending) can only be cleared, which it already is.
   if (readShared || row.read_shared_revision != null) {
-    await tx.executeRaw('UPDATE access_tokens SET read_shared_revision = $2 WHERE id = $1::uuid', [String(row.id), readShared ? Number(written) : null]);
+    await tx.setAccessTokenReadSharedRevision(String(row.id), readShared ? Number(written) : null);
   }
   return Number(written);
 }
@@ -358,7 +358,7 @@ async function readsChange(tx: BrainEngine, row: Record<string, unknown>, before
   const member = typeof row.member_id === 'string' ? row.member_id : null;
   const [was, now] = [await credentialReadSources(tx, before, member), await credentialReadSources(tx, after, member)];
   const shared = after.readShared === true && after.sources.kind !== 'none' && hasScope(after.scopes, 'read')
-    ? await sharedReadSources(sqlQueryForEngine(tx), member).catch(() => undefined) : undefined;
+    ? await sharedReadSources(tx, member).catch(() => undefined) : undefined;
   return { before: was, after: now, stops_reading: was.filter(s => !now.includes(s)), ...(shared ? { shared_now: shared } : {}) };
 }
 

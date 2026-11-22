@@ -3,6 +3,7 @@ import type {
   BodyManifestOutline,
 } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type * as ReadSharedSourcesSql from './engine-sql/read-shared-sources.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as SynopsisTierSql from './engine-sql/synopsis-tier.ts';
@@ -5676,6 +5677,10 @@ export interface BrainEngine {
   deleteOauthClientRow(clientId: string): Promise<void>;
   /** Set the client's grant revision; `revoke` also stamps `deleted_at` when the client is not already revoked. */
   setOauthClientRevision(clientId: string, revision: number, revoke: boolean): Promise<void>;
+  /** GST-2898: stamps the client's read_shared_revision at `revision`, or clears it with null (engine-sql/oauth-revocation.ts). */
+  setOauthClientReadSharedRevision(clientId: string, revision: number | null): Promise<void>;
+  /** GST-2898: every live source with its config, guest flag, bound members and the owner member (engine-sql/read-shared-sources.ts). */
+  readSharedSourceRows(): Promise<ReadSharedSourcesSql.ReadSharedSourceRow[]>;
   /** Append one row to the OAuth grant audit (the grant documents are JSON text). */
   insertOauthGrantAudit(row: OauthGrantAuditInsert): Promise<void>;
   /** The bearer check's OAuth token read at one rung of its degrade ladder. */
@@ -5685,6 +5690,8 @@ export interface BrainEngine {
   /** `auth rescope`'s grant writes: the grant columns and mirror (one more revision; null for no token), a private grant column, and the legacy-shape tokens locked FOR UPDATE, oldest first. */
   writeAccessTokenGrant(id: string, write: AccessTokenGrantWrite): Promise<number | null>;
   writeAccessTokenPrivateGrant(id: string, axis: AccessTokenPrivateAxis, value: string): Promise<void>;
+  /** GST-2898: stamps token `id`'s read_shared_revision at `revision`, or clears it with null (engine-sql/access-credentials.ts). */
+  setAccessTokenReadSharedRevision(id: string, revision: number | null): Promise<void>;
   lockLegacyAccessTokens(): Promise<Record<string, unknown>[]>;
   /** The bearer check's whole row (`SELECT *`) of the token not revoked with this hash, or null. */
   readActiveAccessTokenByHash(hash: string, caller: TokenByHashCaller): Promise<Record<string, unknown> | null>;

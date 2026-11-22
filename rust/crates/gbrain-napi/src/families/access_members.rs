@@ -223,4 +223,11 @@ impl Brain {
             s.list_access_member_links(member_id.as_deref())
         })
     }
+
+    /// `readSharedSourceRows()`: every live source with its config, guest flag, bound members and
+    /// the owner member, in byte order of the id.
+    #[napi]
+    pub fn read_shared_source_rows<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_shared_source_rows())
+    }
 }

@@ -40,6 +40,7 @@ there is no reverse index.
 | `insertAccessMemberLink(system, externalId, memberId)` | null | `INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)` |
 | `deleteAccessMemberLink(system, externalId)` | null; nothing for no such link | `DELETE FROM access_member_links WHERE system = $1 AND external_id = $2` |
 | `listAccessMemberLinks(memberId \| null)` | every link, or the links of exactly that member, by member id, system and external id, each in byte order | `SELECT ... ORDER BY member_id COLLATE "C", system COLLATE "C", external_id COLLATE "C"` (`gbrain access member links`) |
+| `readSharedSourceRows()` | every source not archived, in byte order of its id, as `{ id, config, guest, owners, owner_member }`: `guest` is `config->>'guest' = 'true'` (the store has no `guest_sources` table), `owners` is empty (it keeps no `access_member_sources` bindings), `owner_member` is the `access.owner_member` config value trimmed of spaces, or null (`read_shared.rs`) | `engine-sql/read-shared-sources.ts` `READ_SHARED_SOURCE_ROWS_SQL`, the shared set of the read-shared switch (`grants/read-shared.ts`) |
 
 Each write is one `Store::write`, so a refused statement leaves nothing of the call behind, as the Postgres transaction
 does.

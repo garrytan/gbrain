@@ -590,6 +590,7 @@ export const TOKEN_GRANT_WRITE_SQL = {
      WHERE id = $1::uuid RETURNING grant_revision`,
   private_pages: 'UPDATE access_tokens SET private_pages = $2 WHERE id = $1::uuid',
   private_facts: 'UPDATE access_tokens SET private_facts = $2 WHERE id = $1::uuid',
+  read_shared: 'UPDATE access_tokens SET read_shared_revision = $2 WHERE id = $1::uuid',
   lock_legacy: 'SELECT * FROM access_tokens WHERE revoked_at IS NULL AND source_grant IS NULL ORDER BY created_at, id FOR UPDATE',
 } as const;
 
@@ -614,6 +615,11 @@ export async function writeAccessTokenGrant(tx: Raw, id: string, write: AccessTo
     [id, c.source_grant, c.source_id, lit(c.federated_read), lit(c.allowed_operations), lit(c.takes_holders), write.scopes === null ? null : `{${write.scopes.join(',')}}`],
     [write.permissions]);
   return row ? Number(row.grant_revision) : null;
+}
+
+/** GST-2898: stamp token `id`'s (a UUID) read-shared switch at `revision`, or clear it with null (grants/legacy-token.ts rescope). */
+export async function setAccessTokenReadSharedRevision(tx: Raw, id: string, revision: number | null): Promise<void> {
+  await tx.executeRaw(TOKEN_GRANT_WRITE_SQL.read_shared, [id, revision]);
 }
 
 /** Set one private grant column of token `id` (a UUID) to `value` ('none' or 'granted_sources'; the table refuses others). */

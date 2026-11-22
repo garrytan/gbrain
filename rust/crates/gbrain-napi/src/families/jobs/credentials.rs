@@ -207,6 +207,19 @@ impl Brain {
         })
     }
 
+    /// `setAccessTokenReadSharedRevision(id, revision)`: stamps one token's read-shared switch; a null revision clears it.
+    #[napi]
+    pub fn set_access_token_read_shared_revision<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        revision: Option<i32>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.set_access_token_read_shared_revision(&id, revision)
+        })
+    }
+
     /// `lockLegacyAccessTokens()`: the whole rows of the active tokens with no source grant, oldest first, without hashes.
     #[napi]
     pub fn lock_legacy_access_tokens<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
