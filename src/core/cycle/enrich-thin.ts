@@ -110,7 +110,8 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     if (raw != null && ['off', 'unlimited', 'none'].includes(raw.trim().toLowerCase())) {
       return Infinity;
     }
-    return parseFloatOrDefault(raw, fallback);
+    const n = raw == null ? NaN : parseFloat(raw);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
   };
   const parseIntOrDefault = (raw: string | null, fallback: number): number => {
     if (raw == null) return fallback;
