@@ -32,5 +32,7 @@ brain with no members.
 their `config->>'g_account'`, by id in byte order. The store keeps no personal-source bindings
 (`access_member_sources`), so `members` is null for every source, as SQL's `array_agg` over no rows is.
 
+Store tests: `crates/gbrain-store/tests/doctor_join.rs` (both scans, and the owner-only mark state of `owner_only_marks.rs`).
+
 Statement bounds: the SQL engines run the two page scans with the check's `timeoutMs`. The store has no statement to
 bound, so it reads them to the end and never reports a partial scan.
