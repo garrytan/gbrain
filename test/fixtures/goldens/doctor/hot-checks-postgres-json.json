@@ -4272,15 +4272,7 @@
               "docs": "docs/guides/repair.md#unindexed-files",
               "sources": [
                 {
-                  "source_id": "default",
-                  "state": "missing"
-                },
-                {
                   "source_id": "notes",
-                  "state": "missing"
-                },
-                {
-                  "source_id": "plain",
                   "state": "missing"
                 }
               ]
@@ -4292,12 +4284,12 @@
                 "gbrain",
                 "sources",
                 "retry-held",
-                "default",
+                "notes",
                 "--unindexed",
                 "--brain",
                 "host"
               ],
-              "command": "gbrain sources retry-held default --unindexed --brain host",
+              "command": "gbrain sources retry-held notes --unindexed --brain host",
               "consent": [],
               "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
               "next": "run",
@@ -4308,12 +4300,12 @@
                   "gbrain",
                   "sync",
                   "--source",
-                  "default",
+                  "notes",
                   "--no-pull",
                   "--brain",
                   "host"
                 ],
-                "command": "gbrain sync --source default --no-pull --brain host",
+                "command": "gbrain sync --source notes --no-pull --brain host",
                 "consent": [],
                 "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
                 "next": "run",
@@ -4329,7 +4321,7 @@
                     "host"
                   ]
                 },
-                "why": "The sync re-screens the scheduled files of default: each one that passes imports, each one that refuses is recorded as a hold that gbrain sources status default lists."
+                "why": "The sync re-screens the scheduled files of notes: each one that passes imports, each one that refuses is recorded as a hold that gbrain sources status notes lists."
               },
               "verify": {
                 "argv": [
@@ -4342,9 +4334,9 @@
                   "host"
                 ]
               },
-              "why": "Finds the committed files of default with no page and no hold (bounded; it continues an incomplete scan), schedules them for a re-screen and stores the result this check reads."
+              "why": "Finds the committed files of notes with no page and no hold (bounded; it continues an incomplete scan), schedules them for a re-screen and stores the result this check reads."
             },
-            "message": "Unindexed files are not known for default (not computed yet), notes (not computed yet), plain (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run gbrain sources retry-held <id> --unindexed.",
+            "message": "Unindexed files are not known for notes (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run gbrain sources retry-held <id> --unindexed.",
             "name": "unindexed_files",
             "readiness_state": "unknown",
             "severity": "info",
@@ -9849,15 +9841,7 @@
               "docs": "docs/guides/repair.md#unindexed-files",
               "sources": [
                 {
-                  "source_id": "default",
-                  "state": "missing"
-                },
-                {
                   "source_id": "notes",
-                  "state": "missing"
-                },
-                {
-                  "source_id": "plain",
                   "state": "missing"
                 }
               ]
@@ -9869,12 +9853,12 @@
                 "gbrain",
                 "sources",
                 "retry-held",
-                "default",
+                "notes",
                 "--unindexed",
                 "--brain",
                 "host"
               ],
-              "command": "gbrain sources retry-held default --unindexed --brain host",
+              "command": "gbrain sources retry-held notes --unindexed --brain host",
               "consent": [],
               "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
               "next": "run",
@@ -9885,12 +9869,12 @@
                   "gbrain",
                   "sync",
                   "--source",
-                  "default",
+                  "notes",
                   "--no-pull",
                   "--brain",
                   "host"
                 ],
-                "command": "gbrain sync --source default --no-pull --brain host",
+                "command": "gbrain sync --source notes --no-pull --brain host",
                 "consent": [],
                 "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
                 "next": "run",
@@ -9906,7 +9890,7 @@
                     "host"
                   ]
                 },
-                "why": "The sync re-screens the scheduled files of default: each one that passes imports, each one that refuses is recorded as a hold that gbrain sources status default lists."
+                "why": "The sync re-screens the scheduled files of notes: each one that passes imports, each one that refuses is recorded as a hold that gbrain sources status notes lists."
               },
               "verify": {
                 "argv": [
@@ -9919,9 +9903,9 @@
                   "host"
                 ]
               },
-              "why": "Finds the committed files of default with no page and no hold (bounded; it continues an incomplete scan), schedules them for a re-screen and stores the result this check reads."
+              "why": "Finds the committed files of notes with no page and no hold (bounded; it continues an incomplete scan), schedules them for a re-screen and stores the result this check reads."
             },
-            "message": "Unindexed files are not known for default (not computed yet), notes (not computed yet), plain (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run gbrain sources retry-held <id> --unindexed.",
+            "message": "Unindexed files are not known for notes (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run gbrain sources retry-held <id> --unindexed.",
             "name": "unindexed_files",
             "readiness_state": "unknown",
             "severity": "info",
