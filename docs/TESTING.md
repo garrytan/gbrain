@@ -566,7 +566,8 @@ GBRAIN_TEST_RUST_ARM=1 bun test test/engine-parity/search.test.ts   # one file; 
   a brain whose config says `engine: 'rust'`, both filled from `test/fixtures/rust-cli-parity-brain/`. A command ends
   `equal`, `refused` with the typed `engine_capability_missing`, or `diverged` (another answer or an untyped error),
   and only `diverged` fails. It needs the addon from `bun run rust:build` and skips without it;
-  `GBRAIN_TEST_RUST_ADDON_REQUIRED=1` makes a missing addon an error, which the Rust engine workflow sets.
+  `GBRAIN_TEST_REQUIRE_RUST_ADDON=1` makes a missing addon an error, which the Rust engine workflow sets for this test
+  and `test/rust-cli-source-target.test.ts`.
 
 ### Native writer locks
 
