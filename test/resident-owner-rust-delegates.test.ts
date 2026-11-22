@@ -6,8 +6,8 @@
  *    administration delegates (sync over the persistence socket, embed --facts, extract --stale, sources refresh,
  *    reindex-code) hand their work to it over its persistence socket, as they do for a PGLite serve; and a Rust owner
  *    that cannot take it (no `persistence_journal`, not a serve, or no persistence socket yet) leaves every command on
- *    the engine path it takes today, with no new `owner_unavailable`. The sync-trigger and sweep delegates stay on the
- *    engine path until a Rust serve binds its hook socket.
+ *    the engine path it takes today, with no new `owner_unavailable`. The sync, sync-trigger and sweep delegates stay on
+ *    the engine path until a Rust serve's hook socket answers, and sync trigger is recorded through it once it does.
  * 2. Fails on: a delegate gate that still admits PGLite only; administration delegation that refuses a Rust owner
  *    after the gate admitted it (the command would end `owner_unavailable` instead of running); a gate that admits a
  *    Rust owner the persistence path cannot serve.
@@ -37,6 +37,9 @@ import { maybeDelegateReindexCode } from '../src/commands/reindex-code-delegate.
 import { maybeDelegateSyncToServe, maybeTriggerThroughServe } from '../src/commands/sync-delegate.ts';
 import { maybeDelegateSweepToServe } from '../src/commands/sweep-delegate.ts';
 import { setStdoutCapture } from '../src/core/cli-force-exit.ts';
+import { createServer, type Server } from 'node:net';
+import { ensureIpcSecret, resolveSocketPath } from '../src/core/context/resolve-ipc.ts';
+import { prepareLocalIpcPath } from '../src/core/context/ipc-path.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'gbrain-rust-delegates-'));
@@ -169,5 +172,42 @@ describe('sync trigger and sweep through a Rust serve wait for its hook socket',
     expect(await captured(() => maybeDelegateSweepToServe(dbDir, ['--once'], 'rust'))).toBe(false);
     expect(out).toBe('');
     expect(received).toEqual([]);
+  }), 30_000);
+
+  // Value: protects=a secret alone does not make a Rust serve take sync, sync trigger or sweep; its hook socket must answer; fails_when=the live-listener check is dropped, so the delegates refuse or hang on a dead socket; why_new=the case above stops at the missing secret; seam=real owner socket around a stand-in; no_claim=hook handlers
+  test('a Rust serve with a secret but no hook listener: sync, sync trigger and sweep still fall through', () => inHome(async () => {
+    await startRustOwner({ capabilities: ['persistence_journal'], serve: true, persistenceSocket: true });
+    ensureIpcSecret(dbDir);
+    expect(await captured(() => maybeDelegateSyncToServe(dbDir, ['--source', 'default'], 'rust'))).toBe(false);
+    expect(await captured(() => maybeTriggerThroughServe(rustConfig(), ['--source', 'default']))).toBe(false);
+    expect(await captured(() => maybeDelegateSweepToServe(dbDir, ['--once'], 'rust'))).toBe(false);
+    expect(out).toBe('');
+  }), 30_000);
+
+  // Value: protects=once a Rust serve binds its hook socket, sync trigger is recorded through it, as for a PGLite serve; fails_when=the Rust hook probe never admits a serve (always null) or picks the PGLite holder; why_new=no test reached a Rust serve's hook socket; seam=real owner socket around a stand-in plus a hook listener that answers sync_nudge; no_claim=a Rust serve binding that socket in production (the trunk does)
+  test('a Rust serve whose hook socket answers: sync trigger is recorded through it', () => inHome(async () => {
+    await startRustOwner({ capabilities: ['persistence_journal'], serve: true, persistenceSocket: false });
+    const secret = ensureIpcSecret(dbDir);
+    const nudges: Array<Record<string, unknown>> = [];
+    const hook: Server = createServer(socket => {
+      let buffered = '';
+      socket.on('data', chunk => {
+        buffered += chunk.toString();
+        const end = buffered.indexOf('\n');
+        if (end === -1) return;
+        const request = JSON.parse(buffered.slice(0, end)) as Record<string, unknown>;
+        nudges.push(request);
+        socket.end(JSON.stringify({ ok: request.secret === secret, protocol: 2, acked: true, notifier: true, resident: 'serve',
+          marker: { source_id: 'default', intent: 'freshness', generation: 4, wanted_head: null } }) + '\n');
+      });
+    });
+    const hookPath = prepareLocalIpcPath(resolveSocketPath(dbDir), true);
+    await new Promise<void>(resolve => hook.listen(hookPath, resolve));
+    try {
+      expect(await captured(() => maybeTriggerThroughServe(rustConfig(), ['--source', 'default', '--json']))).toBe(true);
+    } finally { await new Promise<void>(resolve => hook.close(() => resolve())); }
+    expect(nudges.map(n => [n.kind, n.sourceId])).toEqual([['sync_nudge', 'default']]);
+    expect(out).toContain('"action":"nudged"');
+    expect(out).toContain(`"pid":${process.pid}`);
   }), 30_000);
 });
