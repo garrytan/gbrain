@@ -49,4 +49,4 @@ async function runTopologyRecoveryStopped(ctx: DoctorContext): Promise<Check[]> 
   return checks;
 }
 
-export const topologyRecoveryStoppedEntry: DoctorEntry = { name: 'topology_recovery_stopped', emits: ['topology_recovery_stopped'], run: runTopologyRecoveryStopped };
+export const topologyRecoveryStoppedEntry: DoctorEntry = { name: 'topology_recovery_stopped', emits: ['topology_recovery_stopped'], tier: 'ops', run: runTopologyRecoveryStopped };
