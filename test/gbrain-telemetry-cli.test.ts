@@ -41,6 +41,14 @@ describe('gbrain telemetry CLI', () => {
     expect(readdirSync(join(home, '.gbrain', 'telemetry')).sort()).toEqual(['settings.json']);
   }, 120_000);
 
+  // Value: protects=an unknown telemetry subcommand exits non-zero with unknown_command and changes nothing; fails_when=the fallthrough is removed and it silently runs status; why_new=no CLI test passes a bad subcommand; seam=none; no_claim=none beyond protects
+  test('an unknown subcommand fails with unknown_command', async () => {
+    const home = join(ROOT, 'unknown');
+    const r = await runCli(['telemetry', 'bogus', '--json'], { home });
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('unknown_command');
+  }, 120_000);
+
   test('privacy: no canary from a page, a fact, a slug, a harness or an error reaches the queue or the wire', async () => {
     const home = join(ROOT, 'canary');
     const posts: string[] = [];

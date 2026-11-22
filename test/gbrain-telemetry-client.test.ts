@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { telemetryEndpoint } from '../src/core/telemetry/endpoint.ts';
@@ -8,6 +8,7 @@ import {
   flushCounts, forgetInstallation, noteRunVersion, readSettings, recordDoctor, recordEvent, sanitize, scoreBand, setTier, shouldSpawnSync,
   sizeBand, syncTelemetry, telemetryDir, telemetryStatus,
 } from '../src/core/telemetry/client.ts';
+import { telemetryAfterCli } from '../src/cli/telemetry-hook.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -272,5 +273,75 @@ describe('gbrain telemetry client: sending', () => {
         s.stop();
       }
     }
+  });
+});
+
+/**
+ * Coverage audit additions (gstack /ship Step 7).
+ */
+describe('gbrain telemetry client: queue bounds and locks', () => {
+  // Value: protects=queued events expire after 30 days and the queue keeps at most 500; fails_when=the TTL filter or the 500 cap in recordEvent is removed; why_new=no test ages or overfills the queue; seam=none; no_claim=none beyond protects
+  it('recording drops events older than 30 days and keeps at most 500', () => {
+    setTier('anonymous');
+    const p = join(telemetryDir(), 'events.jsonl');
+    const old = new Date(Date.now() - 31 * 86_400_000).toISOString();
+    const fresh = new Date().toISOString();
+    const rows = [{ qid: 'old', ts: old, event_type: 'setup', gbrain_version: '0.1.0' }];
+    for (let i = 0; i < 520; i++) rows.push({ qid: `f${i}`, ts: fresh, event_type: 'setup', gbrain_version: '0.1.0' });
+    writeFileSync(p, rows.map(r => JSON.stringify(r)).join('\n') + '\n');
+    recordEvent({ event_type: 'setup', outcome: 'success' });
+    const q = queue();
+    expect(q.length).toBe(500);
+    expect(q.some(e => e.qid === 'old')).toBe(false);
+    expect(q.at(-1).outcome).toBe('success');
+  });
+
+  // Value: protects=a stale queue.lock is broken and a live one makes recording skip without throwing; fails_when=stale-lock recovery or the never-throw guard breaks; why_new=no test holds the lock; seam=none; no_claim=no real cross-process race (one process, file lock simulated)
+  it('a stale queue lock is broken; a fresh one skips the write without throwing', () => {
+    setTier('anonymous');
+    const lock = join(telemetryDir(), 'queue.lock');
+    const before = queue().length;
+    writeFileSync(lock, '');
+    expect(() => recordEvent({ event_type: 'setup', outcome: 'success' })).not.toThrow();
+    expect(queue().length).toBe(before);
+    const past = new Date(Date.now() - 60_000);
+    utimesSync(lock, past, past);
+    recordEvent({ event_type: 'setup', outcome: 'success' });
+    expect(queue().length).toBe(before + 1);
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  // Value: protects=a community settings file without an id gets one minted at send time and sent; fails_when=the mint-on-sync branch in syncTelemetry is removed; why_new=setTier always mints, so this branch is untested; seam=none; no_claim=server acceptance (local stand-in)
+  it('community without an install id mints one at sync and sends it', async () => {
+    const s = standIn([200]);
+    try {
+      await withEnv({ GBRAIN_TELEMETRY_URL: s.url }, async () => {
+        setTier('community');
+        const p = join(telemetryDir(), 'settings.json');
+        const { installation_id: _drop, ...rest } = readSettings();
+        writeFileSync(p, JSON.stringify(rest));
+        expect(await syncTelemetry({ force: true })).toMatchObject({ status: 'sent' });
+        const id = readSettings().installation_id;
+        expect(id).toMatch(/^[0-9a-f-]{36}$/);
+        expect((s.posts[0] as Array<Record<string, unknown>>).every(e => e.installation_id === id)).toBe(true);
+      });
+    } finally {
+      s.stop();
+    }
+  });
+
+  // Value: protects=a failed upgrade records an upgrade error event and an unknown command records nothing; fails_when=the UPGRADE_COMMANDS branch or the known-command guard in telemetryAfterCli breaks; why_new=CLI tests cover setup only; seam=none; no_claim=no spawned child or real upgrade (direct call)
+  it('the CLI seam records a failed upgrade and ignores unknown commands', () => {
+    setTier('anonymous');
+    const before = queue().length;
+    telemetryAfterCli(0, undefined, ['zz-not-a-command']);
+    expect(queue().length).toBe(before);
+    expect(existsSync(join(telemetryDir(), 'counts'))).toBe(false);
+    telemetryAfterCli(1, undefined, ['apply-migrations']);
+    const up = queue().filter(e => e.event_type === 'upgrade');
+    expect(up.length).toBe(1);
+    expect(up[0]).toMatchObject({ outcome: 'error' });
+    telemetryAfterCli(1, undefined, ['apply-migrations', '--dry-run']);
+    expect(queue().filter(e => e.event_type === 'upgrade').length).toBe(1);
   });
 });
