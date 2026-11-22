@@ -1770,4 +1770,4 @@ storeDecideQualification	decide_store	yes	3	no	yes	yes	serves
 listDecideCalibrations	decide_store	yes	9	no	yes	yes	serves
 getDecideCalibration	decide_store	yes	6	no	yes	yes	serves
 setDecideCalibrationRetired	decide_store	yes	4	no	yes	yes	serves
-ownerOnlyMarkTriggers	owner_only	yes	3	no	yes	yes	serves
+ownerOnlyMarkTriggers	owner_only	yes	4	no	yes	yes	serves
