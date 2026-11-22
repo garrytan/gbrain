@@ -718,7 +718,9 @@ fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
     while !rest.is_empty() {
         let close = rest.find(')').ok_or_else(bad)?;
         let range = &rest[..close];
-        let (open, body) = range.split_at(1);
+        // An empty range (`{)}`) or one that opens with a multi-byte character has no one-byte bracket.
+        let open = range.get(..1).ok_or_else(bad)?;
+        let body = &range[1..];
         let (lower, upper) = body.split_once(',').ok_or_else(bad)?;
         let lower = match (open, lower) {
             ("(", "") | ("[", "") => None,
@@ -1887,6 +1889,20 @@ mod tests {
         assert!(canonical_multirange("{[2021-01-01,2022-01-01]}").is_err());
         assert!(canonical_multirange("[2021-01-01,)").is_err());
         assert!(canonical_multirange("{[2021-13-01,)}").is_err());
+    }
+
+    #[test]
+    fn a_malformed_multirange_is_refused_never_a_panic() {
+        // Postgres refuses each of these with `malformed multirange literal: "<text>"`.
+        for text in ["{)}", "{ )}", "{é)}", "{[)}", "{()}", "{,)}"] {
+            let err = canonical_multirange(text).unwrap_err();
+            assert_eq!(
+                err.message,
+                format!("malformed multirange literal: \"{text}\"")
+            );
+            assert!(!multirange_overlaps(text, "2020-01-01", "2021-01-01"));
+            assert!(!multirange_contains(text, "2020-01-01"));
+        }
     }
 
     #[test]
