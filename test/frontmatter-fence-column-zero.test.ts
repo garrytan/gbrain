@@ -60,6 +60,21 @@ describe('an indented --- inside frontmatter does not close it', () => {
   });
 });
 
+describe('a ---yaml, ---yml or ---json opener starts frontmatter, as the parser reads it', () => {
+  for (const page of [
+    "---yaml\ntitle: Example\nprivate: alice-example's phone\n---\nBody\n",
+    "--- yml\ntitle: Example\nprivate: alice-example's phone\n---\nBody\n",
+    '---json\n{"title": "Example", "private": "alice-example\'s phone"}\n---\nBody\n',
+  ]) {
+    test(page.split('\n')[0]!, () => {
+      expect(page.slice(frontmatterBodyOffset(page))).toBe(parseDataFrontmatter(page).content);
+      const out = makeShareable(page);
+      expect(out).not.toContain('alice-example');
+      expect(out.trim()).toBe('Body');
+    });
+  }
+});
+
 describe('callers of frontmatterBodyOffset read the real body', () => {
   test('the back-link fixer writes into the body, never into a frontmatter block scalar', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'fence-col0-'));
