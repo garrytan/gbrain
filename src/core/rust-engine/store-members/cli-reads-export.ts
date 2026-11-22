@@ -29,8 +29,8 @@ export const readExportWithdrawalLedgerBytes: StoreMember<[sourceId: string], nu
   storeCall({ member: 'readExportWithdrawalLedgerBytes', sourceId }, () => brain.readExportWithdrawalLedgerBytes(sourceId));
 
 /**
- * The source's withdrawals by visibility, fact hash and subject (`cli_reads::export::list_export_withdrawals`). The store
- * keeps no purge tombstones, so every row has `purged` false. `withdrawn_at` comes back a Date, as on PGLite.
+ * The source's withdrawals and fact purge tombstones (`purged` true) by visibility, fact hash and subject
+ * (`cli_reads::export::list_export_withdrawals`). `withdrawn_at` comes back a Date, as on PGLite.
  */
 export const listExportWithdrawals: StoreMember<[sourceId: string], ExportWithdrawalRow[]> = async (brain, sourceId) => {
   const rows: ExportWithdrawalRow[] = await storeCall({ member: 'listExportWithdrawals', sourceId }, () => brain.listExportWithdrawals(sourceId));

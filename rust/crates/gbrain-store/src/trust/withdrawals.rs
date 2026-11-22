@@ -239,36 +239,44 @@ pub(crate) fn withdrawal_hash_under(
     Ok(found)
 }
 
-/// The withdrawals of `[source, visibility, subject]`: each fact_hash with its withdrawal time
-/// (micros), in fact_hash order (the snapshot ledger, `page_withdrawals.rs`).
-pub(crate) fn under_subject(
+/// The withdrawals a page snapshot carries (`snapshot.withdrawals` of `readPageSnapshot`,
+/// src/core/page-state/snapshot.ts): the source's withdrawals whose subject is `*` or the page's
+/// slug, one per (visibility, fact_hash) at the earliest time, ordered by visibility then
+/// fact_hash, as `{ visibility, fact_hash, withdrawn_at }`. The overlay of a segmented page's lead
+/// reads these to strike a claim a person withdrew. (`fact_purges` rows, which the SQL snapshot
+/// also lists, have no ledger here.)
+pub(crate) fn page_withdrawals(
     read: &dyn KvRead,
     source_id: &str,
-    visibility: &str,
-    subject: &str,
-) -> Result<Vec<(String, i64)>> {
-    let mut prefix = key(&[source_id, visibility, subject]);
-    prefix.push(0);
-    let len = prefix.len();
-    let mut rows = Vec::new();
-    let mut failed = None;
-    scan_prefix(read, &prefix, false, &mut |k, v| {
-        let hash = String::from_utf8_lossy(&k[len..]).into_owned();
-        match serde_json::from_slice::<WithdrawalRecord>(v) {
-            Ok(r) => rows.push((hash, r.withdrawn_at_us)),
-            Err(e) => {
-                failed = Some(e);
-                return false;
-            }
+    slug: &str,
+) -> Result<Vec<serde_json::Value>> {
+    let prefix = source_prefix(source_id);
+    let mut rows: Vec<(String, String, String)> = Vec::new();
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        if let Some((visibility, subject, hash)) = split(k, prefix.len())
+            && (subject == "*" || subject == slug)
+        {
+            rows.push((visibility, hash, subject));
         }
         true
     })?;
-    if let Some(e) = failed {
-        return Err(StoreError::invalid(format!(
-            "fact_withdrawals: corrupt record: {e}"
-        )));
+    let mut earliest: BTreeMap<(String, String), i64> = BTreeMap::new();
+    for (visibility, hash, subject) in rows {
+        if let Some(when) = at(read, &[source_id, &visibility, &subject, &hash])? {
+            let slot = earliest.entry((visibility, hash)).or_insert(when);
+            *slot = (*slot).min(when);
+        }
     }
-    Ok(rows)
+    Ok(earliest
+        .into_iter()
+        .map(|((visibility, fact_hash), when)| {
+            serde_json::json!({
+                "visibility": visibility,
+                "fact_hash": fact_hash,
+                "withdrawn_at": iso(when),
+            })
+        })
+        .collect())
 }
 
 /// Removes every withdrawal of a source, for the source delete.

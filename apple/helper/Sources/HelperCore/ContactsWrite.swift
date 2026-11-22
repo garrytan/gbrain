@@ -10,10 +10,14 @@ public struct DateValue: Codable, Equatable {
     public var year: Int?
     public var month: Int?
     public var day: Int?
-    public init(year: Int? = nil, month: Int? = nil, day: Int? = nil) {
+    public var calendar: String?
+    public var leapMonth: Bool?
+    public init(year: Int? = nil, month: Int? = nil, day: Int? = nil, calendar: String? = nil, leapMonth: Bool? = nil) {
         self.year = year
         self.month = month
         self.day = day
+        self.calendar = calendar
+        self.leapMonth = leapMonth
     }
 }
 
@@ -46,6 +50,7 @@ public struct FullCard: Codable, Equatable {
     public var social: [Labeled<SocialValue>] = []
     public var instantMessages: [Labeled<SocialValue>] = []
     public var birthday: DateValue?
+    public var nonGregorianBirthday: DateValue?
     public var imageData: String?
     public var groups: [String] = []
     public init() {}
@@ -216,9 +221,10 @@ public struct JournalRow: Codable, Equatable {
     public var requestedBy: String
     public var instruction: String?
     public var at: String
+    public var removed: [Labeled<String>]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case batch, key, op, phase, id, field, value, label, group, prior, before, reason, instruction, at
+        case batch, key, op, phase, id, field, value, label, group, prior, before, reason, instruction, at, removed
         case requestedBy = "requested_by"
     }
 }
@@ -487,7 +493,7 @@ public final class ContactsWriter {
         var steps: [ChangeResult] = []
         for row in done.reversed() {
             let step = try undoStep(row)
-            guard let edit = step.edit else {
+            guard !step.edits.isEmpty else {
                 steps.append(ChangeResult(key: row.key, op: row.op, status: "skipped", id: row.id, reason: step.why))
                 continue
             }
@@ -499,7 +505,8 @@ public final class ContactsWriter {
                                     label: row.label, group: row.group, prior: nil, before: step.before, reason: nil, requestedBy: "owner_mac",
                                     instruction: nil, at: Self.stamp(now()))
             try append(record, to: path)
-            let id = try store.save(edit)
+            var id = row.id ?? ""
+            for edit in step.edits { id = try store.save(edit) }
             record.phase = "done"
             record.id = id
             try append(record, to: path)
@@ -508,35 +515,36 @@ public final class ContactsWriter {
         return RestoreReply(batch: batch, dryRun: dryRun, steps: steps)
     }
 
-    func undoStep(_ row: JournalRow) throws -> (edit: CardEdit?, why: String?, before: FullCard?) {
+    func undoStep(_ row: JournalRow) throws -> (edits: [CardEdit], why: String?, before: FullCard?) {
         func live() throws -> FullCard? { try row.id.flatMap { try store.card($0, image: true)?.card } }
         switch row.op {
         case "fill", "set":
-            guard let id = row.id, let field = row.field.flatMap(ScalarField.init(rawValue:)), let current = try live() else { return (nil, "card is gone", nil) }
-            guard field.get(current) == row.value else { return (nil, "the field changed since; left as it is", nil) }
-            return (.setField(id: id, field: field, value: row.prior ?? ""), nil, current)
+            guard let id = row.id, let field = row.field.flatMap(ScalarField.init(rawValue:)), let current = try live() else { return ([], "card is gone", nil) }
+            guard field.get(current) == row.value else { return ([], "the field changed since; left as it is", nil) }
+            return ([.setField(id: id, field: field, value: row.prior ?? "")], nil, current)
         case "add_value":
-            guard let id = row.id, let field = row.field.flatMap(ListField.init(rawValue:)), let value = row.value, let current = try live() else { return (nil, "card is gone", nil) }
-            guard field.values(current).contains(where: { $0.value == value }) else { return (nil, "the value is no longer on the card", nil) }
-            return (.removeValue(id: id, field: field, value: value, countryCode: "0"), nil, current)
+            guard let id = row.id, let field = row.field.flatMap(ListField.init(rawValue:)), let value = row.value, let current = try live() else { return ([], "card is gone", nil) }
+            guard field.values(current).contains(where: { $0.value == value }) else { return ([], "the value is no longer on the card", nil) }
+            return ([.removeValue(id: id, field: field, value: value, countryCode: "0")], nil, current)
         case "remove_value":
-            guard let id = row.id, let field = row.field.flatMap(ListField.init(rawValue:)), let value = row.value, try live() != nil else { return (nil, "card is gone", nil) }
-            return (.addValue(id: id, field: field, label: row.label ?? "", value: value), nil, nil)
+            guard let id = row.id, let field = row.field.flatMap(ListField.init(rawValue:)), let value = row.value, try live() != nil else { return ([], "card is gone", nil) }
+            let entries = row.removed ?? [Labeled(label: row.label ?? "", value: value)]
+            return (entries.map { .addValue(id: id, field: field, label: $0.label, value: $0.value) }, nil, nil)
         case "group_add":
-            guard let id = row.id, let group = row.group, try live() != nil else { return (nil, "card is gone", nil) }
-            return (.removeFromGroup(id: id, group: group), nil, nil)
+            guard let id = row.id, let group = row.group, try live() != nil else { return ([], "card is gone", nil) }
+            return ([.removeFromGroup(id: id, group: group)], nil, nil)
         case "group_remove":
-            guard let id = row.id, let group = row.group, try live() != nil else { return (nil, "card is gone", nil) }
-            return (.addToGroup(id: id, group: group, create: false), nil, nil)
+            guard let id = row.id, let group = row.group, try live() != nil else { return ([], "card is gone", nil) }
+            return ([.addToGroup(id: id, group: group, create: false)], nil, nil)
         case "create":
-            guard let id = row.id, let current = try live() else { return (nil, "card is already gone", nil) }
-            return (.delete(id: id), "removes the card this batch made", current)
+            guard let id = row.id, let current = try live() else { return ([], "card is already gone", nil) }
+            return ([.delete(id: id)], "removes the card this batch made", current)
         case "delete":
-            guard let before = row.before else { return (nil, "no saved copy", nil) }
-            if let id = row.id, try store.card(id, image: false) != nil { return (nil, "card still exists", nil) }
-            return (.create(before), "puts the card back as a new card; its note, if it had one, was not readable", nil)
+            guard let before = row.before else { return ([], "no saved copy", nil) }
+            if let id = row.id, try store.card(id, image: false) != nil { return ([], "card still exists", nil) }
+            return ([.create(before)], "puts the card back as a new card; its note, if it had one, was not readable", nil)
         default:
-            return (nil, "nothing to undo", nil)
+            return ([], "nothing to undo", nil)
         }
     }
 
@@ -564,10 +572,10 @@ public final class ContactsWriter {
         }
 
         func row(_ change: ChangeRequest, phase: String, id: String?, field: String? = nil, value: String? = nil, label: String? = nil, group: String? = nil,
-                 prior: String? = nil, before: FullCard? = nil, reason: String? = nil) -> JournalRow {
+                 prior: String? = nil, before: FullCard? = nil, reason: String? = nil, removed: [Labeled<String>]? = nil) -> JournalRow {
             JournalRow(batch: batch, key: change.key, op: change.op, phase: phase, id: id, field: field ?? change.field, value: value ?? change.value,
                        label: label ?? change.label, group: group ?? change.group, prior: prior, before: before, reason: reason, requestedBy: requestedBy,
-                       instruction: instruction, at: ContactsWriter.stamp(writer.now()))
+                       instruction: instruction, at: ContactsWriter.stamp(writer.now()), removed: removed)
         }
 
         func apply(_ changes: [ChangeRequest]) -> [ChangeResult] {
@@ -693,9 +701,10 @@ public final class ContactsWriter {
                                       intent: row(change, phase: "intent", id: card.card.id, value: value)) { field.holds($0 ?? FullCard(), value, countryCode: self.country) }
                 }
                 guard held else { return reconcile ? ChangeResult(key: change.key, op: change.op, status: "replayed", id: change.id, reason: nil) : skip(change, "not_present") }
-                let existing = field.values(card.card).first { field.key($0.value, countryCode: country) == field.key(value, countryCode: country) }
+                let wanted = field.key(value, countryCode: country)
+                let matched = field.values(card.card).filter { $0.value == value || field.key($0.value, countryCode: country) == wanted }
                 return try commit(change, .removeValue(id: card.card.id, field: field, value: value, countryCode: country),
-                                  intent: row(change, phase: "intent", id: card.card.id, value: existing?.value ?? value, label: existing?.label)) {
+                                  intent: row(change, phase: "intent", id: card.card.id, value: matched.first?.value ?? value, label: matched.first?.label, removed: matched)) {
                     !field.holds($0 ?? FullCard(), value, countryCode: self.country)
                 }
             case "group_add", "group_remove":
@@ -759,7 +768,7 @@ public final class ContactsWriter {
                 carry("name_suffix", \.nameSuffix, ""); carry("phonetic_given_name", \.phoneticGivenName, ""); carry("phonetic_middle_name", \.phoneticMiddleName, "")
                 carry("phonetic_family_name", \.phoneticFamilyName, ""); carry("phonetic_organization_name", \.phoneticOrganizationName, ""); carry("department", \.department, "")
                 carry("urls", \.urls, []); carry("postal_addresses", \.postal, []); carry("dates", \.dates, []); carry("relations", \.relations, [])
-                carry("social_profiles", \.social, []); carry("instant_messages", \.instantMessages, []); carry("birthday", \.birthday, nil); carry("photo", \.imageData, nil)
+                carry("social_profiles", \.social, []); carry("instant_messages", \.instantMessages, []); carry("birthday", \.birthday, nil); carry("non_gregorian_birthday", \.nonGregorianBirthday, nil); carry("photo", \.imageData, nil)
                 guard uncarried.isEmpty else {
                     return skip(change, "bad_change: merge can't carry the other card's " + uncarried.joined(separator: ", ") + "; nothing was changed (this helper can't read notes, so a note on that card isn't checked)")
                 }

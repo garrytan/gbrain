@@ -343,7 +343,8 @@ export function noticeBlock(n: RenderedNotice): string {
 
 const HTTP_DROP_KEYS = new Set(['pid', 'lock_owner', 'path', 'data_dir', 'database_path', 'asset']);
 const ABS_PATH_RE = /(?:^|(?<=[\s'"`(=]))(?:\/(?:home|Users|root|tmp|var|private|opt|srv|mnt|etc)\/[^\s'"`)]*|[A-Za-z]:\\[^\s'"`)]*|~\/[^\s'"`)]*)/g;
-const PID_RE = /\b(PID|pid)\s*[:=]?\s*\d+/g;
+// No letter or digit before it, so `owner_pid=123` in a detail is redacted too (`\b` does not break after `_`).
+const PID_RE = /(?<![A-Za-z0-9])(PID|pid)\s*[:=]?\s*\d+/g;
 const KEY_NAME_RE = /\b[A-Z][A-Z0-9]*_(?:API_KEY|TOKEN|SECRET)\b/g;
 
 function redactString(s: string): string {

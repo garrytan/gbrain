@@ -19,7 +19,7 @@ I did not execute the pipeline, the tests, or any benchmark. The eval repo (`gbr
 | `think` gather | `think/gather.ts:182-210` | bare `hybridSearch`, expansion off | off | mode | n/a |
 
 
-`query`'s `autocut` param text says "Default on", but the resolved default is off in every bundle (see section 9).
+`query`'s `autocut` param text used to say "Default on"; the resolved default is off in every bundle, and the param text now says so (see section 9).
 
 ## 2. Mode bundles (`search/mode.ts:488`, `MODE_BUNDLES`)
 
@@ -326,7 +326,7 @@ Order (`dedupResults`, `:107-146`): L1 keep top 3 chunks per page (`dedupBySourc
 
 ## 9. Discrepancies between docs and code
 
-1. `query` param text says autocut is "Default on" (`ops/search.ts:943`). Resolved default is off in all three bundles (`mode.ts`), and `pagePlanHits` only forces off (`page-plan-hits.ts:10-14`). Code wins.
+1. `query` param text said autocut is "Default on" (`ops/search.ts:943`). Resolved default is off in all three bundles (`mode.ts`), and `pagePlanHits` only forces off (`page-plan-hits.ts:10-14`). Code wins; the param text has since been corrected to say off.
 2. RETRIEVAL.md calls the keyword arm "BM25". The code uses `ts_rank` with default weights and no normalization (`keyword-statement.ts:74`). Not BM25.
 3. The `hybrid.ts:1-10` header says the compiled-truth boost is always 2.0x. Code applies it only to explicit `detail: 'low'` (1.2x for auto), `hybrid.ts:92-108`.
 4. The keyword arm does not wrap the query in `gbrain_fts_input`; indexing and the title arm do. [inferred] An ASCII token that index-time splitting breaks (the doc's `Redis7` example) may miss on the keyword arm. Not run.
@@ -383,7 +383,7 @@ Order (`dedupResults`, `:107-146`): L1 keep top 3 chunks per page (`dedupBySourc
 
 1. Should the rewrite keep `ts_rank` default weights (D 0.1, C 0.2, B 0.4, A 1.0) and no normalization, or move to BM25 as the doc describes? This changes every keyword score and every boost that multiplies one.
 2. Is the keyword arm's missing `gbrain_fts_input` on the query side intentional? Confirm with a test on a CJK-adjacent ASCII token before porting.
-3. Which `query` default is authoritative for autocut: the param text ("Default on") or the bundles (off)?
+3. Which `query` default is authoritative for autocut: the param text ("Default on") or the bundles (off)? Answered: the bundles (off); the param text now matches.
 4. The facts arm, facts block and temporal reserve run only in `query` (RETRIEVAL.md). Confirm before porting the op surface.
 5. The HNSW walk/escalation machinery targets a 25k-chunk planner cliff. What is the target brain size for the Rust engine? That decides whether a flat scan is acceptable.
 6. Do the title-arm and CJK path need separate CJK title matching? The title arm uses `websearch_to_tsquery` and unlikely matches unspaced CJK titles [inferred, not run].

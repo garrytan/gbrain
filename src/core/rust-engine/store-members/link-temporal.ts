@@ -187,7 +187,10 @@ export const projectionRebuildProgress: StoreMember<[scope: ProjectionReadinessS
   return storeCall({ member: 'projectionRebuildProgress' }, () => brain.projectionRebuildProgress(input));
 };
 
-/** The brain and its commit sequence: every commit advances it, so the probe's cached answer lasts until the next write. */
+/**
+ * The brain and its commit sequence: every commit advances it, so the probe's cached answer lasts until the next write.
+ * Null inside a transaction, whose own writes the sequence does not count yet, so the probe there is never cached.
+ */
 export const readProjectionReadinessGeneration: StoreMember<[], string | null> = async (brain) =>
   storeCall({ member: 'readProjectionReadinessGeneration' }, () => brain.readProjectionReadinessGeneration());
 

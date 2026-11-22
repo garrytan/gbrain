@@ -27,7 +27,7 @@ writes the rows the builder returns.
 | `brain.countSearchVectorRows()` | `{ pages, chunks }`: every page (deleted ones too) and every chunk | `countSearchVectorRows` |
 | `brain.countPendingProjectionPages({ scope, relevance })` | `{ total, could_affect, capped, top_counted?, could_affect_images }`: the live pages in scope whose text projection waits and needs work, at most 1000 | `countPendingProjectionPages` |
 | `brain.projectionRebuildProgress(scope)` | `{ done, total, pages_per_second }` while `protocol_activation` jobs are queued, else null | `projectionRebuildProgress` |
-| `brain.readProjectionReadinessGeneration()` | `<brain id>/<commit sequence>`: every commit advances it, so a cached probe answer lasts until the next write | `readProjectionReadinessGeneration` |
+| `brain.readProjectionReadinessGeneration()` | `<brain id>/<commit sequence>`: every commit advances it, so a cached probe answer lasts until the next write; null inside a transaction | `readProjectionReadinessGeneration` |
 | `brain.readProjectionReadiness(scope)` | `{ pending, by_design }`: whether a waiting page in scope needs work, and when none does, whether protected images wait | `readProjectionReadiness` |
 
 ## Rules
@@ -44,6 +44,9 @@ writes the rows the builder returns.
 - `applyLinkTemporalRows` replaces the origin's derived transitions: the old rows go before the new rows are written. On
   Postgres the SQL statements are pipelined, which keeps their order only on one connection, so the Postgres member opens a
   transaction when its caller has none (`test/e2e/link-temporal-apply-order-postgres.test.ts`).
+- A transition row needs its origin page (`origin_page_id REFERENCES pages(id)`): when a row would be inserted and the
+  origin page does not exist in any deletion state, the write refuses with the foreign key's message
+  (`link_transitions_origin_page_id_fkey`) and writes nothing. A soft-deleted origin page still exists.
 
 ## The call sites and what they run on the Rust engine
 
@@ -88,7 +91,9 @@ language is refused with `engine_capability_missing` (`keyword_search`) at the f
   (`docs/designs/RUST_ENGINE_INTERFACES.md`, link_temporal).
 - The stale-relationship sweep itself refuses on Rust (it runs in `maintenanceTransaction`).
 - `readProjectionReadinessGeneration` is the store's commit sequence. Any commit advances it, so the cached probe answer
-  is dropped after a write the SQL engines' generation ignores. A cached answer is never stale.
+  is dropped after a write the SQL engines' generation ignores. Inside a transaction it is null, as the SQL answer is while
+  a transaction is in flight: the transaction reads its own writes, which the sequence does not count until it commits.
+  A cached answer is never stale.
 - `projectionRebuildProgress` is null unless `protocol_activation` jobs are queued, and no store writer queues them yet
   (an upgrade's activation runs only on the SQL engines), so on a store it is null in practice.
 - A coverage read applies `pageEligibleSql`'s trust part: `minTrust` drops a page whose stamped tier ranks below the

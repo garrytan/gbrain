@@ -574,7 +574,7 @@ mod tests {
         let clock = Arc::new(Clock(std::sync::atomic::AtomicI64::new(
             1_800_000_000_000_000,
         )));
-        let store = crate::test_support::store_on(clock.clone());
+        let store = crate::test_support::store_with_env(clock.clone());
         let incarnation = crate::sources::read_source(&*store.read().unwrap(), "default")
             .unwrap()
             .unwrap()
@@ -704,7 +704,7 @@ mod tests {
         let clock = Arc::new(Clock(std::sync::atomic::AtomicI64::new(
             1_800_000_000_123_456,
         )));
-        let store = crate::test_support::store_on(clock.clone());
+        let store = crate::test_support::store_with_env(clock.clone());
         // Writes `slug`, soft-deletes it and returns its id and `deleted_at`.
         let deleted = |slug: &str| -> (u64, i64) {
             let input: PageInput = serde_json::from_value(

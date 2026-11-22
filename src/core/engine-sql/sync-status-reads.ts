@@ -30,6 +30,8 @@ export interface SyncStatusSourceRow<P = Record<string, unknown>, W = Record<str
   writeback_failed: string | null; refresh: F | string | null;
   /** GST-3256: the apple-contacts identity-review and pending-delete checkpoint values of the source (`completed_keys`), null when none. */
   identity_reviews: unknown; held_deletes: unknown;
+  /** GST-3329: the source's `config` column, whose `syncEnabled` the status reports as `automatic_sync`. */
+  config: unknown;
 }
 
 /** The source read of one live (not archived) source, or null. */

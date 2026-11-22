@@ -415,6 +415,8 @@ pub(crate) fn insert_withdrawal_effects_in(
     spec: &WithdrawalEffectsSpec,
 ) -> Result<Vec<String>> {
     uuid_cast(&spec.request_id)?;
+    // The id as Postgres stores a uuid (canonical lowercase), so the mirror gate and the order index find it.
+    let request_id = spec.request_id.to_ascii_lowercase();
     if spec.data.is_null() {
         return Err(violation(
             "null value in column \"data\" of relation \"persistence_effects\" violates not-null constraint",
@@ -425,11 +427,11 @@ pub(crate) fn insert_withdrawal_effects_in(
     };
     let mut missing = Vec::new();
     for kind in WITHDRAWAL_EFFECT_KINDS {
-        if get_json::<EffectRecord>(&*tx, &effect_key(&spec.request_id, kind))?.is_none() {
+        if get_json::<EffectRecord>(&*tx, &effect_key(&request_id, kind))?.is_none() {
             missing.push(kind);
         }
     }
-    if !missing.is_empty() && request_by_id(&*tx, &spec.request_id)?.is_none() {
+    if !missing.is_empty() && request_by_id(&*tx, &request_id)?.is_none() {
         return Err(violation(format!(
             "insert or update on table \"persistence_effects\" violates foreign key constraint \"persistence_effects_request_id_fkey\": request {} is not present",
             spec.request_id
@@ -441,7 +443,7 @@ pub(crate) fn insert_withdrawal_effects_in(
         next_id += 1;
         let record = EffectRecord {
             id: next_id,
-            request_id: spec.request_id.clone(),
+            request_id: request_id.clone(),
             kind: (*kind).into(),
             revision: None,
             data: spec.data.clone(),
@@ -460,12 +462,12 @@ pub(crate) fn insert_withdrawal_effects_in(
             recovery_bytes: 0,
             claim_owner: None,
         };
-        put_json(tx, &effect_key(&spec.request_id, kind), &record)?;
+        put_json(tx, &effect_key(&request_id, kind), &record)?;
         put_json(
             tx,
             &order_key(next_id),
             &OrderEntry {
-                request_id: spec.request_id.clone(),
+                request_id: request_id.clone(),
                 kind: (*kind).into(),
             },
         )?;

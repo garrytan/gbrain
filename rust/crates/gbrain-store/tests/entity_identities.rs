@@ -234,3 +234,71 @@ fn a_nul_byte_is_refused_before_any_write() {
     assert!(err.to_string().contains("linkEntityIdentityRow"), "{err}");
     assert!(b.members().is_empty());
 }
+
+#[test]
+fn a_non_finite_confidence_is_kept_exactly_and_never_breaks_a_listing() {
+    let b = Brain::new("ei-non-finite");
+    let values = [
+        ("people/a-nan", f64::NAN),
+        ("people/b-inf", f64::INFINITY),
+        ("people/c-neg-inf", f64::NEG_INFINITY),
+        ("people/d-finite", 0.1 + 0.2),
+    ];
+    for (slug, confidence) in values {
+        b.page("default", slug);
+        assert!(
+            b.store
+                .link_entity_identity(&IdentityLink {
+                    entity_id: "g".into(),
+                    slug: slug.into(),
+                    source_id: "default".into(),
+                    confidence,
+                    established_by: "manual".into(),
+                    canonical: None,
+                })
+                .unwrap()
+        );
+    }
+    // Postgres keeps every float8 and lists it back; JSON has no number for NaN or ±Infinity, so the row carries the
+    // text Postgres prints for them, and a finite value round-trips bit for bit.
+    let rows = b
+        .store
+        .list_entity_identities(&IdentityFilter::default())
+        .unwrap();
+    let got: Vec<(String, Value)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r["slug"].as_str().unwrap().to_string(),
+                r["confidence"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("people/a-nan".to_string(), json!("NaN")),
+            ("people/b-inf".to_string(), json!("Infinity")),
+            ("people/c-neg-inf".to_string(), json!("-Infinity")),
+            ("people/d-finite".to_string(), json!(0.1 + 0.2)),
+        ]
+    );
+    assert_eq!(
+        rows[3]["confidence"].as_f64().unwrap().to_bits(),
+        (0.1f64 + 0.2).to_bits()
+    );
+}
+
+#[test]
+fn a_link_sent_with_a_non_finite_confidence_as_text_decodes_and_bad_text_is_refused() {
+    let link: IdentityLink = de(
+        json!({ "entity_id": "g", "slug": "s", "source_id": "default",
+        "confidence": "-Infinity", "established_by": "manual", "canonical": null }),
+    );
+    assert_eq!(link.confidence, f64::NEG_INFINITY);
+    let bad = serde_json::from_value::<IdentityLink>(
+        json!({ "entity_id": "g", "slug": "s", "source_id": "default",
+        "confidence": "high", "established_by": "manual", "canonical": null }),
+    );
+    assert!(bad.is_err());
+}

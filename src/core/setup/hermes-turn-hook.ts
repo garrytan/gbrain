@@ -184,6 +184,27 @@ export function syncHermesHook(opts: { hermesHome: string; lane: HermesHookLane;
   }
 }
 
+/**
+ * Run `fn`, a Hermes CLI call that rewrites config.yaml as plain YAML (dropping comments, gbrain's markers among
+ * them), with gbrain's block taken out, then put the block back unchanged, so a later run still finds its markers.
+ * If Hermes wrote a top-level `hooks:` key of its own, the block stays out (a second key would be a duplicate) and
+ * the next `gbrain setup hermes` prints the hook to add.
+ */
+export function withHermesHookBlockSetAside<T>(hermesHome: string, fn: () => T): T {
+  const path = join(hermesHome, 'config.yaml');
+  const text = existsSync(path) ? readFileSync(path, 'utf8') : '';
+  const probe = probeBlock(MARKERS, text);
+  if (probe.state !== 'present') return fn();
+  writeUnlessChanged(path, text, false, removeBlock(MARKERS, text).text);
+  try {
+    return fn();
+  } finally {
+    const missing = !existsSync(path);
+    const now = missing ? '' : readFileSync(path, 'utf8');
+    if (!/^hooks\s*:/m.test(now)) writeUnlessChanged(path, now, missing, spliceBlock(MARKERS, now, probe.interior!));
+  }
+}
+
 /** Strip the hook and its approval (decline or --remove). Never throws. */
 export function removeHermesTurnHook(opts: { hermesHome: string; dryRun: boolean }): HermesTurnHookOutcome {
   return removeHermesHook({ ...opts, lane: 'turn-rule' });

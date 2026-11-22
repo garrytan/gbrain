@@ -343,6 +343,23 @@ describe('engine parity: entity identities', () => {
       return out;
     },
   );
+
+  parityTest(
+    'a NaN or infinite confidence is stored and listed back as the SQL engines keep it, and never breaks a listing',
+    { methods: ['putPage', 'linkEntityIdentityRow', 'listEntityIdentityRows'] },
+    async (engine) => {
+      const values: Array<[string, number]> = [['people/a-nan', NaN], ['people/b-inf', Infinity], ['people/c-neg-inf', -Infinity], ['people/d-finite', 0.1 + 0.2]];
+      for (const [slug, confidence] of values) {
+        await engine.putPage(slug, page(slug));
+        await link(engine, 'g-float', 'default', slug, null, confidence);
+      }
+      const rows = await list(engine, { entityId: 'g-float' });
+      const shown = rows.map(r => `${r.slug} ${typeof r.confidence} ${String(r.confidence)}`);
+      expect(shown).toEqual(['people/a-nan number NaN', 'people/b-inf number Infinity', 'people/c-neg-inf number -Infinity', 'people/d-finite number 0.30000000000000004']);
+      // The JSON a CLI or MCP answer prints: JSON has no NaN or Infinity, so all three print as null.
+      return { shown, json: JSON.stringify(rows.map(r => ({ slug: r.slug, confidence: r.confidence }))) };
+    },
+  );
 });
 
 describe('entity identity union: a refused Rust read is not "no identity"', () => {

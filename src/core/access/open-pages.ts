@@ -2,8 +2,8 @@
  * GST-2670 (GBRA-502): the pages every member's key can read on a brain that serves several people. A page is open
  * when no readable_by names readers and no applied or pending folder or page rule covers it: a key bound to a member
  * reads it like an unbound one (requester-scope.ts gates who may ask; only labels decide what a member reads). The
- * count is the read path's own floor (accessAllowedSql with an empty identity, built outside any caller record, so it
- * never depends on who asks), split into the pages members read and the visibility: private pages they do not
+ * count is the read path's own floor (accessAllowedSql with an empty identity, built outside any caller record except
+ * the brain's schema version, so it never depends on who asks), split into the pages members read and the visibility: private pages they do not
  * (unless this process sees remote privacy relaxed, or a reading member's grant opens that source's private pages). "Members" are the enabled members other than the owner;
  * a labelled-only member reads no open page, and each other member reads the sources its bound tokens and OAuth
  * clients read. Read-only and best effort everywhere it is shown: access serves several (preview and receipt),
@@ -13,7 +13,7 @@
  * withOpenScope, openPageSql and membersReadOpen.
  */
 import type { BrainEngine } from '../engine.ts';
-import { accessAllowedSql, privacyPartSql, readHonorAliases, remotePrivacyRelaxed, withoutCallerAccess } from '../search/private-visibility.ts';
+import { accessAllowedSql, privacyPartSql, readHonorAliases, remotePrivacyRelaxed, schemaVersionNow, withCallerAccess, withoutCallerAccess } from '../search/private-visibility.ts';
 import { credentialReadSources, SENSITIVE_PAGE_TYPES, stdioReadSources } from '../grants/shared-exposure.ts';
 import { grantFromClient, grantFromRow, grantFromTokenRow, privatePagesSources, type PrincipalGrant } from '../grants/model.ts';
 import { stdioMemberId } from './caller.ts';
@@ -168,7 +168,10 @@ export async function withOpenScope<T>(engine: BrainEngine, opts: OpenPagesOptio
     if (sources.length) await readHonorAliases(engine);
     const relaxed = sources.length ? await remotePrivacyRelaxed(engine) : false;
     const scope: OpenScope = { owner, members: { reading: reading.length, counted: reads.size }, sources, relaxed, privateSources: [...privateSources].sort() };
-    return read(scope, fn => bounded(engine, fn));
+    // Only the brain's schema version, as a remote read carries it: without it the owner-only test takes its closed form,
+    // and on a brain that has (or once had) an owner-only source every page would read as owner-only, unlike real reads.
+    const remotePolicy = { privacyRelaxed: false, restricted: true, ...await schemaVersionNow(engine) };
+    return withCallerAccess({ remotePolicy }, () => read(scope, fn => bounded(engine, fn)));
   });
 }
 

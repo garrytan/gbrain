@@ -13,6 +13,7 @@ Keys (tag `i`, `keys::ENTITY_IDENTITY`):
 - `i 0x01 <page id u64 BE>` holds the page's one membership as JSON: `entity_id`, `source_id`, `confidence`,
   `established_by`, `established_at_us`, `canonical`. The table's unique key is `(source_id, page_id)`, and a page has
   one source, so the page id alone keys it.
+- `confidence` keeps every float8 value, as Postgres and PGLite do: a finite value is a JSON number, and NaN, Infinity and -Infinity are stored as that text, because JSON has no number for them. The shell sends a non-finite value as the same text and turns it back into a number on the way out, so `listEntityIdentityRows` answers NaN, Infinity or -Infinity as the SQL engines do. A record an older store wrote for a non-finite value holds null; it reads as NaN.
 - `i 0x02 <entity_id> 0x00 <page id u64 BE>` is empty: the group index, one key per member.
 
 A group has at most one canonical member, as the partial unique index on `entity_id WHERE canonical` keeps it. A

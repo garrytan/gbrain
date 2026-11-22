@@ -112,6 +112,7 @@ export const readSyncStatusSourceRow: StoreMember<[sourceId: string], SyncStatus
     writeback_failed: null, refresh: null,
     identity_reviews: (await readRow(brain, member, APPLE_CONTACTS_REVIEW_OP, sourceId))?.completed_keys ?? null,
     held_deletes: (await readRow(brain, member, APPLE_CONTACTS_PENDING_DELETES_OP, sourceId))?.completed_keys ?? null,
+    config: detail.config,
   };
 };
 

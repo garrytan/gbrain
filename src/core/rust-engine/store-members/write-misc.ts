@@ -80,11 +80,11 @@ export const listActiveAccessMembers: StoreMember<[], string[]> = async () => []
 export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false;
 
 /**
- * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
- * among them, so a memoized health answer is reused only while nothing was written since it was read.
+ * The store's brain id and commit sequence (`readHealthMemoClock`). Every commit advances it, a page write among them, so a
+ * memoized health answer is reused only while nothing was written since it was read.
  */
 export const readHealthMemoClock: StoreMember<[], string> = async (brain) =>
-  storeCall({ member: 'readHealthMemoClock' }, () => brain.readProjectionReadinessGeneration());
+  storeCall({ member: 'readHealthMemoClock' }, () => brain.readHealthMemoClock());
 
 /**
  * The store keeps no source contextual-retrieval mode (only `sources` admin raw SQL writes it, refused on this engine),

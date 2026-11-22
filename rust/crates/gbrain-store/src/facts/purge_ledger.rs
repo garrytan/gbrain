@@ -248,6 +248,52 @@ pub(crate) fn refuse_purged(
     Ok(())
 }
 
+/// One tombstone of a source (`fact_purges` row) as the export lists it.
+pub(crate) struct SourcePurgeRow {
+    pub visibility: String,
+    pub subject: String,
+    pub fact_hash: String,
+    pub purged_at_us: i64,
+}
+
+/// Every tombstone of `source_id`, in key order (visibility, subject, fact_hash): the
+/// `SELECT visibility,fact_hash,purged_at,subject FROM fact_purges WHERE source_id=$1` half of the
+/// export's withdrawal list.
+pub(crate) fn source_purges(read: &dyn KvRead, source_id: &str) -> Result<Vec<SourcePurgeRow>> {
+    let prefix = key(&[source_id]);
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        // The rest of the key is `visibility \0 subject \0 fact_hash \0`.
+        let parts: Vec<&[u8]> = k[prefix.len()..].split(|b| *b == 0).collect();
+        let [visibility, subject, fact_hash, ..] = parts.as_slice() else {
+            return true;
+        };
+        let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        match serde_json::from_slice::<PurgeRecord>(v) {
+            Ok(r) => {
+                rows.push(SourcePurgeRow {
+                    visibility: text(visibility),
+                    subject: text(subject),
+                    fact_hash: text(fact_hash),
+                    purged_at_us: r.purged_at_us,
+                });
+                true
+            }
+            Err(e) => {
+                failed = Some(e);
+                false
+            }
+        }
+    })?;
+    match failed {
+        Some(e) => Err(StoreError::invalid(format!(
+            "fact purges: corrupt record: {e}"
+        ))),
+        None => Ok(rows),
+    }
+}
+
 /// Removes every tombstone of a source, for the source delete.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     let mut doomed = Vec::new();
