@@ -317,6 +317,10 @@ describe('a local caller\'s own writes on a Rust brain still reach the owner', (
     expect(calls).toContainEqual(admissionRefusal);
     expect(calls.filter(call => call.outcome !== 'sent' && call.member !== 'transaction')).toEqual([]);
     expect(writesReachedOwner()).not.toContain('transaction');
+    // The refusal a client's write meets says it cannot run from this process; it no longer claims the write is sent.
+    const refusal = await client.transaction(async () => undefined).then(() => null, (error: unknown) => error as OperationError);
+    expect(refusal?.why).toContain('cannot run from this process yet');
+    expect(refusal?.why).not.toContain('sent to the owner as one request');
   }), 60_000);
 
   // Value: protects=the Apple Contacts person-fact sync on a Rust brain's second process calls `remember` as a local caller (its context says remote: false), so the write stops on the transactions refusal and writes no fact; fails_when=the sync's context stops naming remote: false, or the mark reads an explicit local context as remote; why_new=the review of the remote mark named person-facts.ts as a caller that builds its own context and was not checked; seam=the real syncPersonFacts and remember handler on an owner-client stand-in, real PGLite owner on a real socket; no_claim=a written fact, which needs journaled writes to reach the owner
