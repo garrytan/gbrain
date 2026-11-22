@@ -11,13 +11,14 @@
 import { describe, expect, test } from 'bun:test';
 import { PAGE_CHILD_FK_TARGETS, orphanPredicate } from '../src/core/repair/orphan-children.ts';
 import { pageChildOrphanSql, type PageChildTarget } from '../src/core/engine-sql/doctor-reads.ts';
+import { renderFragment } from '../src/core/engine-sql/fragment.ts';
 
 describe('doctor reads SQL text', () => {
   test('each page-child target has the statement orphanPredicate built', () => {
     const targets = PAGE_CHILD_FK_TARGETS.filter((t) => !(t.table === 'content_chunks' && t.col === 'page_id'));
     expect(targets.length).toBe(9);
     for (const t of targets) {
-      expect(pageChildOrphanSql(`${t.table}.${t.col}` as PageChildTarget)).toBe(`SELECT COUNT(*)::int AS n FROM ${t.table} WHERE ${orphanPredicate(t)}`);
+      expect(pageChildOrphanSql(`${t.table}.${t.col}` as PageChildTarget)).toBe(`SELECT COUNT(*)::int AS n FROM ${t.table} WHERE ${renderFragment(orphanPredicate(t)).text}`);
     }
   });
 
