@@ -681,6 +681,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_agent_word_split_uses_pglite_space_class() {
+        // `(^|[[:space:]])agent([[:space:]]|$)` in the SQL (src/core/grants/schema.ts).
+        let mismatches = crate::fingerprint_fixture::space_mismatches(is_posix_space);
+        assert_eq!(mismatches, Vec::<String>::new());
+    }
+
+    #[test]
     fn budget_text_prints_two_decimals_with_the_sign() {
         assert_eq!(budget_text(500), "5.00");
         assert_eq!(budget_text(29), "0.29");

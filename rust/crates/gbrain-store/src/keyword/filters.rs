@@ -414,3 +414,16 @@ pub(super) fn row_count(value: f64, what: &str) -> Result<usize> {
     }
     Ok(value.min(usize::MAX as f64) as usize)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_message_id_trim_uses_pglite_space_class() {
+        // `regexp_replace(message_id, '^[[:space:]]+|[[:space:]]+$', '', 'g')` in the SQL
+        // (src/core/search/keyword-chunk-match.ts).
+        let mismatches = crate::fingerprint_fixture::space_mismatches(is_space);
+        assert_eq!(mismatches, Vec::<String>::new());
+    }
+}
