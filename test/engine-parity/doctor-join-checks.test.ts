@@ -137,12 +137,12 @@ describe('engine parity: doctor checks from the main join', () => {
       await createSource(engine, backend, 'diary', { owner_only: true });
       await engine.putPage('notes/diary-example', note('Diary'), { sourceId: 'diary' });
       const held = await check(engine, ownerOnlyMarksTriggersEntry);
-      const state = await engine.ownerOnlyMarkTriggers();
+      // `role` is left out: it is the database login (gbrain_test on CI Postgres, postgres elsewhere), which only the
+      // fix line of a missing trigger prints.
+      const { role: _role, ...state } = await engine.ownerOnlyMarkTriggers();
       expect(fresh).toMatchObject({ status: 'ok', details: { closed: false } });
       expect(held).toEqual(fresh);
-      expect({ missing: state.missing, closed: state.closed, rowSecurity: state.rowSecurity, held: state.held, unflagged: state.unflagged,
-        deniedLogins: state.deniedLogins, closedLogins: state.closedLogins }).toEqual({
-        missing: [], closed: false, rowSecurity: false, held: true, unflagged: false, deniedLogins: [], closedLogins: [] });
+      expect(state).toEqual({ missing: [], closed: false, rowSecurity: false, held: true, unflagged: false, deniedLogins: [], closedLogins: [] });
       return { fresh, held, state };
     });
 });
