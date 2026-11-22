@@ -48,6 +48,12 @@ export function pickerKey(provider: PickerProvider, home: string, env: NodeJS.Pr
   } catch { return null; } // silent-read-ok: no readable config.json key means no key; the turn reports router.fallback missing_key
 }
 
+/** Usage from a provider's counts, or null unless every count is a finite number of at least 0, so a partial or malformed report settles at the reservation. */
+function counts(input: unknown, output: unknown, cacheRead: unknown = 0, cacheWrite: unknown = 0): PickerReply['usage'] {
+  const ok = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x) && x >= 0;
+  return ok(input) && ok(output) && ok(cacheRead) && ok(cacheWrite) ? { input, cacheRead, cacheWrite, output } : null;
+}
+
 const base = (env: NodeJS.ProcessEnv, name: string, fallback: string) => (env[name] || fallback).replace(/\/+$/, '').replace(/\/v1(beta)?$/, '');
 
 async function post(url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal): Promise<Record<string, any>> {
@@ -68,7 +74,7 @@ export async function pickerChat(req: PickerRequest, key: string, env: NodeJS.Pr
     }, req.signal);
     const u = j.usage;
     return { text: (j.content ?? []).filter((b: any) => b?.type === 'text').map((b: any) => b.text).join(''), refused: j.stop_reason === 'refusal',
-      usage: u ? { input: u.input_tokens ?? 0, cacheRead: u.cache_read_input_tokens ?? 0, cacheWrite: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 } : null };
+      usage: counts(u?.input_tokens, u?.output_tokens, u?.cache_read_input_tokens ?? 0, u?.cache_creation_input_tokens ?? 0) };
   }
   if (provider === 'compat') {
     const j = await post(`${(req.baseUrl ?? '').replace(/\/+$/, '')}/chat/completions`, key ? { authorization: `Bearer ${key}` } : {}, {
@@ -78,7 +84,7 @@ export async function pickerChat(req: PickerRequest, key: string, env: NodeJS.Pr
     const cached = u?.prompt_tokens_details?.cached_tokens ?? 0;
     const choice = j.choices?.[0];
     return { text: typeof choice?.message?.content === 'string' ? choice.message.content : '', refused: choice?.finish_reason === 'content_filter' || Boolean(choice?.message?.refusal),
-      usage: u ? { input: Math.max(0, (u.prompt_tokens ?? 0) - cached), cacheRead: cached, cacheWrite: 0, output: u.completion_tokens ?? 0 } : null };
+      usage: counts(u?.prompt_tokens - cached, u?.completion_tokens, cached) };
   }
   if (provider === 'openai') {
     const j = await post(`${base(env, 'OPENAI_BASE_URL', 'https://api.openai.com')}/v1/responses`, { authorization: `Bearer ${key}` }, {
@@ -87,7 +93,7 @@ export async function pickerChat(req: PickerRequest, key: string, env: NodeJS.Pr
     const u = j.usage;
     const cached = u?.input_tokens_details?.cached_tokens ?? 0;
     const text = (j.output ?? []).flatMap((o: any) => o?.content ?? []).filter((c: any) => c?.type === 'output_text').map((c: any) => c.text).join('');
-    return { text, refused: (j.output ?? []).some((o: any) => (o?.content ?? []).some((c: any) => c?.type === 'refusal')), usage: u ? { input: Math.max(0, (u.input_tokens ?? 0) - cached), cacheRead: cached, cacheWrite: 0, output: u.output_tokens ?? 0 } : null };
+    return { text, refused: (j.output ?? []).some((o: any) => (o?.content ?? []).some((c: any) => c?.type === 'refusal')), usage: counts(u?.input_tokens - cached, u?.output_tokens, cached) };
   }
   const j = await post(`${base(env, 'GOOGLE_GENERATIVE_AI_BASE_URL', 'https://generativelanguage.googleapis.com')}/v1beta/models/${encodeURIComponent(model)}:generateContent`, { 'x-goog-api-key': key }, {
     systemInstruction: { parts: [{ text: req.system }] }, contents: [{ role: 'user', parts: [{ text: req.message }] }],
@@ -97,5 +103,5 @@ export async function pickerChat(req: PickerRequest, key: string, env: NodeJS.Pr
   const cand = j.candidates?.[0];
   const cached = u?.cachedContentTokenCount ?? 0;
   return { text: (cand?.content?.parts ?? []).map((p: any) => p?.text ?? '').join(''), refused: cand?.finishReason === 'SAFETY' || Boolean(j.promptFeedback?.blockReason),
-    usage: u ? { input: Math.max(0, (u.promptTokenCount ?? 0) - cached), cacheRead: cached, cacheWrite: 0, output: u.candidatesTokenCount ?? 0 } : null };
+    usage: counts(u?.promptTokenCount - cached, u?.candidatesTokenCount + (u?.thoughtsTokenCount ?? 0), cached) };
 }

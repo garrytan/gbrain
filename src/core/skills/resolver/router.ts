@@ -38,7 +38,7 @@ export const PICKER_MAX_OUTPUT_TOKENS = 200;
 export const ROUTER_DEFAULT_MODELS = ['anthropic:claude-haiku-5-5', 'openai:gpt-6-luna', 'google:gemini-3.5-flash-lite'] as const;
 const LEDGER_FILE = 'router-spend.json';
 const LEDGER_LEASE_MS = 2_000;
-/** Tokens a request adds around its text (roles, separators). The reservation counts one token per UTF-8 byte of text, a ceiling for byte-level tokenizers, at the cache-write rate. */
+/** Tokens a request adds around its text (roles, separators). The reservation counts one token per UTF-8 byte of text, a ceiling for byte-level tokenizers, at the highest input rate (cache writes cost the most). */
 const PICKER_OVERHEAD_TOKENS = 64;
 
 export const routerTimeoutMs = (harness: string | undefined, s: RouterSettings): number => s.timeoutMs ?? (harness === 'claude-code' ? 1500 : 2000);
@@ -90,10 +90,16 @@ async function readLedger(home: string): Promise<{ day: string; charged: number 
   } catch { return { day: '', charged: 0 }; } // silent-read-ok: no readable ledger means nothing charged yet
 }
 
-/** Today's charged spend (0 on a new day or with no ledger). */
+/** The day spend counts against: a stored day at most one day ahead of the clock (a clock set back keeps its spend), else today. */
+const ledgerDay = (stored: string, now: number) => {
+  const today = utcDay(now);
+  return /^\d{4}-\d{2}-\d{2}$/.test(stored) && stored > today && stored <= utcDay(now + 86_400_000) ? stored : today;
+};
+
+/** The current day's charged spend (0 on a new day or with no ledger). */
 export async function readRouterSpend(home: string, now = Date.now()): Promise<{ day: string; charged_usd: number }> {
-  const day = utcDay(now);
   const d = await readLedger(home);
+  const day = ledgerDay(d.day, now);
   return { day, charged_usd: d.day === day ? d.charged : 0 };
 }
 
@@ -108,7 +114,7 @@ async function withLedger<T>(home: string, fn: (stored: { day: string; charged: 
   if (!lease) return null;
   try {
     const r = fn(await readLedger(home));
-    if (r.write) writeFileAtomic(ledgerPath(home), `${JSON.stringify({ v: 1, day: r.write.day, charged_usd: Math.max(0, r.write.charged) } satisfies LedgerDoc)}\n`);
+    if (r.write && Number.isFinite(r.write.charged)) writeFileAtomic(ledgerPath(home), `${JSON.stringify({ v: 1, day: r.write.day, charged_usd: Math.max(0, r.write.charged) } satisfies LedgerDoc)}\n`);
     return r.result;
   } catch { return null; } finally { await releaseLeaseAsync(lease); } // silent-read-ok: null is the typed outcome; callPicker reports ledger_unavailable and makes no call
 }
@@ -140,15 +146,16 @@ async function callPicker(home: string, message: string, skills: readonly Picker
   const { model, key } = routerModel(s, home, env);
   if (!model || key === null) return { ok: false, code: 'missing_key', model, usd: 0 };
   const compat = model.startsWith('compat:');
-  const price = compat ? (s.usdPerMtok ? { input: s.usdPerMtok[0], output: s.usdPerMtok[1] } : null) : (await import('../../model-pricing.ts')).canonicalLookup(model);
+  const price: { input: number; output: number; cache_read?: number; cache_write?: number } | null | undefined = compat ? (s.usdPerMtok ? { input: s.usdPerMtok[0], output: s.usdPerMtok[1] } : null) : (await import('../../model-pricing.ts')).canonicalLookup(model);
   if (!price) return { ok: false, code: 'no_pricing', model, usd: 0 };
+  const readRate = price.cache_read ?? price.input;
+  const writeRate = price.cache_write ?? price.input;
   if (s.maxUsdPerDay <= 0) return { ok: false, code: 'daily_cap', model, usd: 0, detail: 'router_max_usd_per_day is 0' };
   const system = pickerPrompt(skills);
-  const estimate = round6(((Buffer.byteLength(system) + Buffer.byteLength(message) + PICKER_OVERHEAD_TOKENS) * price.input * 1.25 + PICKER_MAX_OUTPUT_TOKENS * price.output) / 1e6);
+  const estimate = round6(((Buffer.byteLength(system) + Buffer.byteLength(message) + PICKER_OVERHEAD_TOKENS) * Math.max(price.input, readRate, writeRate) + PICKER_MAX_OUTPUT_TOKENS * price.output) / 1e6);
   if (signal.aborted) return { ok: false, code: 'timeout', model, usd: 0 };
   const reserved = await withLedger<{ ok: boolean; spent: number; day: string }>(home, stored => {
-    const today = utcDay(now());
-    const day = stored.day > today ? stored.day : today;
+    const day = ledgerDay(stored.day, now());
     const charged = stored.day === day ? stored.charged : 0;
     return charged + estimate > s.maxUsdPerDay
       ? { result: { ok: false, spent: charged, day } }
@@ -168,9 +175,8 @@ async function callPicker(home: string, message: string, skills: readonly Picker
     return { ok: false, code: signal.aborted ? 'timeout' : 'provider_error', model, usd: estimate };
   }
   const u = res.usage;
-  const actual = u && u.input + u.cacheRead + u.cacheWrite + u.output > 0
-    ? round6((u.input * price.input + u.cacheRead * price.input * 0.1 + u.cacheWrite * price.input * 1.25 + u.output * price.output) / 1e6)
-    : estimate;
+  const cost = u && u.input + u.cacheRead + u.cacheWrite + u.output > 0 ? round6((u.input * price.input + u.cacheRead * readRate + u.cacheWrite * writeRate + u.output * price.output) / 1e6) : NaN;
+  const actual = Number.isFinite(cost) && cost >= 0 ? cost : estimate;
   await settle(actual);
   if (res.refused) return { ok: false, code: 'provider_error', model, usd: actual };
   const parsed = parsePickerReply(res.text, new Set(skills.map(x => x.id)));

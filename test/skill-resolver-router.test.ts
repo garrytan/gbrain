@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { __setPickerTransportForTests, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
 import { parsePickerReply, PICKER_DESCRIPTION_CHARS, readRouterSpend } from '../src/core/skills/resolver/router.ts';
+import { canonicalLookup } from '../src/core/model-pricing.ts';
 
 const scratch: string[] = [];
 const tmp = (p = 'skrouter-') => { const d = mkdtempSync(join(tmpdir(), p)); scratch.push(d); return d; };
@@ -182,6 +183,11 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     const path = new URL(req.url).pathname;
     seen.push({ path, auth: req.headers.get('authorization'), body: await req.json() });
     if (path.startsWith('/hop/')) return new Response(null, { status: 307, headers: { location: '/v1/chat/completions' } });
+    if (path.startsWith('/g/')) return Response.json({ candidates: [{ content: { parts: [{ text: '{"needed": true, "skills": ["gbrain:people"]}' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 10, thoughtsTokenCount: 150 } });
+    const answer = '"choices": [{"message": {"content": "{\\"needed\\": true, \\"skills\\": [\\"gbrain:people\\"]}"}, "finish_reason": "stop"}]';
+    if (path.startsWith('/huge/')) return new Response('{' + answer + ', "usage": {"prompt_tokens": 1e400, "completion_tokens": 10}}', { headers: { 'content-type': 'application/json' } });
+    if (path.startsWith('/partial/')) return new Response('{' + answer + ', "usage": {"completion_tokens": 10}}', { headers: { 'content-type': 'application/json' } });
+    if (path.startsWith('/cached/')) return new Response('{' + answer + ', "usage": {"prompt_tokens": 1000, "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 900}}}', { headers: { 'content-type': 'application/json' } });
     return Response.json({ choices: [{ message: { content: '{"needed": true, "skills": ["gbrain:people"]}' }, finish_reason: 'stop' }], ...(path.startsWith('/nousage/') ? {} : { usage: { prompt_tokens: 1000, completion_tokens: 10 } }) });
   } });
   afterAll(() => server.stop(true));
@@ -242,6 +248,34 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     expect(spend).toBeCloseTo(r.output.router!.est_usd, 6);
   });
 
+  test('partial or non-finite token counts keep the whole reservation, and the ledger stays a number', async () => {
+    for (const route of ['partial', 'huge']) {
+      const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/${route}/v1`, router_usd_per_mtok: [1, 2] }));
+      const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+      expect(r.output.router?.answered_by).toBe('picker');
+      const doc = JSON.parse(readFileSync(join(h, 'skill-index', 'router-spend.json'), 'utf8'));
+      expect(typeof doc.charged_usd).toBe('number');
+      expect(doc.charged_usd).toBeGreaterThan(0.00102);
+      expect(doc.charged_usd).toBeCloseTo(r.output.router!.est_usd, 6);
+    }
+  });
+
+  test('cached tokens on a compat endpoint are charged at its one input rate', async () => {
+    const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/cached/v1`, router_usd_per_mtok: [1, 2] }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+    expect(r.output.router?.est_usd).toBe(0.00102);
+    expect((await readRouterSpend(h)).charged_usd).toBe(0.00102);
+  });
+
+  test('Gemini thinking tokens are charged as output', async () => {
+    const h = await home({ router: true, router_model: 'google:gemini-3.5-flash-lite' });
+    const genv = { ...process.env, GOOGLE_GENERATIVE_AI_BASE_URL: `http://127.0.0.1:${server.port}/g`, GEMINI_API_KEY: 'k-test' };
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env: genv });
+    const price = canonicalLookup('google:gemini-3.5-flash-lite')!;
+    expect(r.output.router?.answered_by).toBe('picker');
+    expect(r.output.router!.est_usd).toBeCloseTo((1000 * price.input + 160 * price.output) / 1e6, 6);
+  });
+
   test('a cap of 0 stops a free model too, before any call', async () => {
     seen.length = 0;
     const h = await home(compat({ router_usd_per_mtok: [0, 0], router_max_usd_per_day: 0 }));
@@ -292,14 +326,35 @@ describe('the daily spend cap', () => {
     expect(reserved).toBeGreaterThanOrEqual(settled);
   });
 
-  test('a ledger already on a later day is never rewritten to an earlier one', async () => {
+  test('a ledger already on the next day is never rewritten to an earlier one', async () => {
     const h = await home({ router: true });
     const file = join(h, 'skill-index', 'router-spend.json');
-    writeFileSync(file, JSON.stringify({ v: 1, day: '2999-01-01', charged_usd: 0.01 }));
+    const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    writeFileSync(file, JSON.stringify({ v: 1, day: tomorrow, charged_usd: 0.01 }));
     reply('{"needed": true, "skills": ["gbrain:people"]}');
     expect((await turn(h, 'zzqx')).output.router?.fallback).toBeNull();
     const doc = JSON.parse(readFileSync(file, 'utf8'));
-    expect(doc.day).toBe('2999-01-01');
+    expect(doc.day).toBe(tomorrow);
     expect(doc.charged_usd).toBeGreaterThan(0.01);
+  });
+
+  test('a far-future or malformed ledger day does not hold the cap past today', async () => {
+    for (const day of ['2999-01-01', 'zzzz-bad']) {
+      const h = await home({ router: true });
+      writeFileSync(join(h, 'skill-index', 'router-spend.json'), JSON.stringify({ v: 1, day, charged_usd: 999 }));
+      reply('{"needed": true, "skills": ["gbrain:people"]}');
+      expect((await turn(h, 'zzqx')).output.router?.fallback).toBeNull();
+      expect((await readRouterSpend(h)).day).toBe(new Date().toISOString().slice(0, 10));
+    }
+  });
+
+  test("negative token counts cannot erase the day's spend", async () => {
+    const h = await home({ router: true });
+    __setPickerTransportForTests(async () => ({ text: '{"needed": true, "skills": ["gbrain:people"]}', refused: false, usage: { input: 100, cacheRead: 0, cacheWrite: 0, output: -99 } }));
+    await turn(h, 'zzqx');
+    const first = (await readRouterSpend(h)).charged_usd;
+    await turn(h, 'zzqx');
+    expect(first).toBeGreaterThan(0);
+    expect((await readRouterSpend(h)).charged_usd).toBeGreaterThan(first);
   });
 });
