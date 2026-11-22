@@ -8,7 +8,7 @@ open-page count) returns each row as `SELECT *` does. The bearer check stamps `l
 (`touchAccessTokenLastUsed`), and `private_pages` and `private_facts` stay `'none'` (no store member changes them yet). The SQL for the PGLite
 and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts`, `write-misc.ts` (the list) and `access-setup.ts`
 (the member-key setup of `gbrain access serves several`); the store serves the same members. The other readers and
-writers of the table (verify, revoke by name, rescope, rotate, the grant reads) are still raw SQL and stop on a Rust
+writers of the table (revoke by name, rescope, rotate, the grant reads) are still raw SQL and stop on a Rust
 brain.
 
 | Member | Returns |
