@@ -68,16 +68,21 @@ export function validateSessionTokenBudget(v: unknown, where: string): number {
     { suggestion: `Set ${where} to 0 or a value from ${MIN_SESSION_TOKEN_BUDGET} to ${MAX_SESSION_TOKEN_BUDGET} (default ${DEFAULT_SESSION_TOKEN_BUDGET}).` });
 }
 
-export function readResolverSettings(home: string, env: NodeJS.ProcessEnv = process.env): ResolverSettings {
-  let section: Record<string, unknown> = {};
+/** The skills.resolver object of <home>/config.json ({} when the file or the object is missing or unreadable). */
+export function readResolverSection(home: string): Record<string, unknown> {
   const path = join(home, 'config.json');
   try {
     if (statSync(path).size <= CONFIG_CAP) {
       const cfg = JSON.parse(readFileSync(path, 'utf8')) as { skills?: { resolver?: Record<string, unknown> } };
       const r = cfg?.skills?.resolver;
-      if (r && typeof r === 'object') section = r;
+      if (r && typeof r === 'object') return r;
     }
   } catch { /* no config or not JSON: defaults */ }
+  return {};
+}
+
+export function readResolverSettings(home: string, env: NodeJS.ProcessEnv = process.env): ResolverSettings {
+  const section = readResolverSection(home);
   const budget = section.session_token_budget === undefined ? DEFAULT_SESSION_TOKEN_BUDGET
     : validateSessionTokenBudget(section.session_token_budget, 'skills.resolver.session_token_budget');
   const autoRebuild = env.GBRAIN_SKILLS_NO_AUTOREBUILD === '1' ? false : section.auto_rebuild !== false;

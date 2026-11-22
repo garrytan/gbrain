@@ -273,6 +273,44 @@ rm skills/_output-rules.md
 
 You own the files. There's no manifest to update, no fence to rebuild.
 
+## Moved skills
+
+Some bundled skills are moving out of gbrain to another skill catalog. Which
+ones is listed in `skills/moved-skills.json`. Until a move is announced,
+gbrain keeps shipping those skills and the commands below behave as they
+always have, with one exception: `gbrain check-resolvable` and `gbrain
+doctor` already accept a `RESOLVER.md` row (or `manifest.json` entry) for
+one of those skills that your skills folder lacks when another catalog
+provides it: a skill catalog built with `gbrain skills index build`, or a
+folder of that name in a directory configured under
+`skills.resolver.per_harness.<harness>.dirs`.
+
+Once a move is announced (in a stable release's upgrade notice and release
+notes), gbrain keeps its own copy of each moved skill for at least 14 days
+and two stable releases, and tells you where the skill went:
+
+- `gbrain skillpack scaffold <name>` (and `--all`, `--harness`) still copies
+  gbrain's copy, then prints where the skill moved and the command that
+  installs it from there.
+- `gbrain skillpack reference <name>` (and `--harness`) prints the same
+  notice.
+- `gbrain skillpack status` marks the skill `moved` next to its
+  new / drifted / current state, and lists moved skills under each harness
+  bridge, stub pointers included.
+- `gbrain skillpack reference --update-untouched` stops updating a moved
+  skill (it is skipped with the reason `moved`); `pin` and `unpin` say it
+  moved.
+- `gbrain bundled-skill <name>` serves gbrain's copy while it ships one, with
+  the notice on stderr; after the copy is removed it prints the notice and
+  exits 0.
+- `gbrain check-resolvable` and `gbrain doctor` report a row for a moved
+  skill that nothing here provides as moved (a warning with the notice)
+  rather than as a broken row.
+
+A copy you already scaffolded stays in your `skills/` folder; it is yours.
+
+**Say to your agent:** *"Which of my skills moved out of gbrain, and where do I get them now?"*
+
 ## The harness bridge: `scaffold --harness`
 
 Workspace scaffolds serve agent repos. The HARNESS lane installs a
