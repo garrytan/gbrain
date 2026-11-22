@@ -1,6 +1,8 @@
 import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
+import type * as LinkSlugReadsSql from './engine-sql/link-slug-reads.ts';
+import type * as FederationExposureSql from './engine-sql/federation-exposure.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
 import type * as SynopsisTierSql from './engine-sql/synopsis-tier.ts';
 import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
@@ -1470,6 +1472,12 @@ export interface BrainEngine {
    * a problem).
    */
   updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean>;
+  /** Replaces the source's whole config; false for an unknown source, which changes nothing (engine-sql/sources.ts). */
+  replaceSourceConfig(sourceId: string, config: Record<string, unknown>): Promise<boolean>;
+  /** Sets the source's display name; false for an unknown source, which changes nothing (engine-sql/sources.ts). */
+  renameSource(sourceId: string, name: string): Promise<boolean>;
+  /** The remote-written pages of a source that name no readers, first five by slug, for the federation warning (engine-sql/federation-exposure.ts). */
+  readFederationExposedPages(sourceId: string, hidePrivate: boolean): Promise<FederationExposureSql.FederationExposedRow[]>;
 
   /** One source row (id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides), or null when no source has that id. */
   getSource(sourceId: string): Promise<SourceDetailRow | null>;
@@ -2111,6 +2119,10 @@ export interface BrainEngine {
   readEntityAliasRows(sourceId: string, slugs: readonly string[]): Promise<EntityAliasRow[]>;
   /** Every `slug_aliases` row of the source, for link extraction's renamed-slug map (no order). */
   listSlugAliases(sourceId: string): Promise<SlugAliasRow[]>;
+  /** Link preparation's live alias targets among `targets`: alias with no live page, live canonical page (engine-sql/link-slug-reads.ts). */
+  readLiveSlugAliases(sourceId: string, targets: readonly string[]): Promise<LinkSlugReadsSql.LiveSlugAliasRow[]>;
+  /** Link preparation's slug fingerprint of a source and the slugs above `afterId` (engine-sql/link-slug-reads.ts). */
+  readSourceSlugProbe(sourceId: string, afterId: number): Promise<LinkSlugReadsSql.SourceSlugProbe>;
 
   // Chunks
   /**

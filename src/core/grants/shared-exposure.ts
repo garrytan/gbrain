@@ -100,15 +100,29 @@ async function storedReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant
  * not. Tokens with no source list and switched keys read it; clients with no source list and explicit lists without
  * the switch do not, unless they name it.
  */
+/** Byte order of two column values read as text, as the C collation compares them. */
+const byText = (a: unknown, b: unknown): number => {
+  const x = String(a ?? ''), y = String(b ?? '');
+  return x < y ? -1 : x > y ? 1 : 0;
+};
+
 export async function federateReaders(engine: BrainEngine, sourceId: string): Promise<{ tokens: { read: string[]; not: string[] }; clients: { read: string[]; not: string[] } }> {
   const { grantFromTokenRow, grantFromRow, grantFromClient } = await import('./model.ts');
   const out = { tokens: { read: [] as string[], not: [] as string[] }, clients: { read: [] as string[], not: [] as string[] } };
   const member = (row: Record<string, unknown>) => typeof row.member_id === 'string' ? row.member_id : null;
-  for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE revoked_at IS NULL ORDER BY name, id')) {
+  // The live tokens by name then id (`WHERE revoked_at IS NULL ORDER BY name, id`), through the typed token listing.
+  const tokens = (await engine.listAccessTokens() as unknown as Array<Record<string, unknown>>)
+    .filter(row => row.revoked_at == null)
+    .sort((a, b) => byText(a.name, b.name) || byText(a.id, b.id));
+  for (const row of tokens) {
     const reads = await credentialReadSources(engine, grantFromTokenRow(row), member(row));
     out.tokens[reads.includes(sourceId) ? 'read' : 'not'].push(String(row.name));
   }
-  for (const row of await engine.executeRaw<Record<string, unknown>>("SELECT * FROM oauth_clients WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL ORDER BY client_name, client_id")) {
+  // The clients not deleted, by name then id, through the typed client listing.
+  const clients = (await engine.listOauthClients() as unknown as Array<Record<string, unknown>>)
+    .filter(row => row.deleted_at == null)
+    .sort((a, b) => byText(a.client_name, b.client_name) || byText(a.client_id, b.client_id));
+  for (const row of clients) {
     const grant = grantFromRow(row);
     const reads = await credentialReadSources(engine, grantFromClient(grant), member(row));
     out.clients[reads.includes(sourceId) ? 'read' : 'not'].push(grant.clientName || grant.clientId);

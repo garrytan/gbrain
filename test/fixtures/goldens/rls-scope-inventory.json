@@ -5014,6 +5014,28 @@
         ],
         "flagOnScopes": []
       },
+      "readFederationExposedPages#hidden": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readFederationExposedPages#relaxed": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readFenceHoldFiles#default": {
         "flagOffLanes": [
           "pool"
@@ -5433,6 +5455,17 @@
         "flagOnScopes": []
       },
       "readLiveMember#stdio-config": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readLiveSlugAliases#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -5933,6 +5966,17 @@
         ],
         "flagOnScopes": []
       },
+      "readSourceSlugProbe#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readTakePreimages#by-id": {
         "flagOffLanes": [
           "pool"
@@ -6252,6 +6296,17 @@
         ],
         "flagOnScopes": []
       },
+      "renameSource#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "renewEffectClaim#default": {
         "flagOffLanes": [
           "pool"
@@ -6336,6 +6391,17 @@
         "flagOnScopes": [
           "src-a"
         ]
+      },
+      "replaceSourceConfig#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
       },
       "requeueEffectRow#default": {
         "flagOffLanes": [
@@ -8664,6 +8730,7 @@
         "readFactWithdrawnRow": "none",
         "readFactsEmbeddingColumn": "none",
         "readFactsFtsIndexState": "none",
+        "readFederationExposedPages": "none",
         "readFenceHoldFiles": "none",
         "readFenceOriginGone": "none",
         "readFenceOverlayRows": "none",
@@ -8738,6 +8805,7 @@
         "readLivePageIdBySlug": "none",
         "readLivePageTypes": "none",
         "readLivePagesByIds": "none",
+        "readLiveSlugAliases": "none",
         "readLiveSlugs": "none",
         "readLiveStoredBody": "none",
         "readLiveSyncPassRows": "none",
@@ -8869,6 +8937,7 @@
         "readSourcePurgeEpoch": "none",
         "readSourcePurgeFlags": "none",
         "readSourceRow": "none",
+        "readSourceSlugProbe": "none",
         "readSourceState": "none",
         "readSourceWriteRow": "none",
         "readStoredBodyBytes": "none",
@@ -8967,6 +9036,7 @@
         "removeTimelineRows": "none",
         "removeWakeCron": "none",
         "renameBeliefLifetime": "none",
+        "renameSource": "none",
         "renewConsumerRow": "none",
         "renewDeferredReplacementClaim": "none",
         "renewEffectClaim": "none",
@@ -8982,6 +9052,7 @@
         "replaceDerivedLinksBatch": "none",
         "replaceGitHoldRow": "none",
         "replaceSearchVectorTriggerFunction": "none",
+        "replaceSourceConfig": "none",
         "replaceVersionChangeReasons": "none",
         "replaceWantedLinkRows": "none",
         "replayPagePurges": "none",

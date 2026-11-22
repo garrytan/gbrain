@@ -281,6 +281,7 @@ test/engine-parity/projection-rebuild-steps.test.ts
 test/engine-parity/purge-dry-run.test.ts
 test/engine-parity/purge-plan.test.ts
 test/engine-parity/purge-writes.test.ts
+test/engine-parity/put-page-missing-link.test.ts
 test/engine-parity/put-source-fork.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
@@ -327,6 +328,7 @@ test/engine-parity/segmented-purge-writes.test.ts
 test/engine-parity/source-admin-writes.test.ts
 test/engine-parity/source-archive.test.ts
 test/engine-parity/source-delete.test.ts
+test/engine-parity/source-federate-writes.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/source-verify-reads.test.ts
 test/engine-parity/spend-log.test.ts

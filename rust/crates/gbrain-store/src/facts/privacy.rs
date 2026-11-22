@@ -560,6 +560,12 @@ fn stamped_rules(read: &dyn KvRead, page: &PageRecord) -> Result<Vec<AccessRuleR
     folder_rules(read, &page.source_id, &page.slug)
 }
 
+/// The short member-access form `page_readers IS NULL AND folder_rule_ids IS NULL`: the page names no readers and no
+/// folder rule is stamped on it.
+pub(crate) fn names_no_readers_or_rules(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    Ok(!names_readers(page) && stamped_rules(read, page)?.is_empty())
+}
+
 /// v305's restricted origin: it names readers, a stamped rule that covers derived pages
 /// (`gbrain_access_lineage_rules(...) IS NOT NULL`) covers it, or a pending prefix covers it.
 fn origin_closed(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {

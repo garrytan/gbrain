@@ -1,6 +1,9 @@
-/** Source members (BrainEngine listAllSources, updateSourceConfig, markSourceSynced, getSource, listSourceLocalPaths, countRepoBoundSources, getSourceStrictness). */
+/** Source members (BrainEngine listAllSources, updateSourceConfig, replaceSourceConfig, renameSource, markSourceSynced, readLiveSlugAliases, readSourceSlugProbe, getSource, listSourceLocalPaths, countRepoBoundSources, getSourceStrictness). */
 import type { SourceDetailRow, SourceRow } from '../../engine.ts';
 import type { SourceSyncStampOptions } from '../../engine-sql/sources.ts';
+import type { LiveSlugAliasRow, SourceSlugProbe } from '../../engine-sql/link-slug-reads.ts';
+import type { FederationExposedRow } from '../../engine-sql/federation-exposure.ts';
+import { privacyAliasSql, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
 import { toSource, withDates } from '../store-codec.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 
@@ -12,6 +15,31 @@ export const listAllSources: StoreMember<[opts?: { includeArchived?: boolean; lo
 
 export const updateSourceConfig: StoreMember<[sourceId: string, patch: Record<string, unknown>], boolean> = (brain, sourceId, patch) =>
   storeCall({ member: 'updateSourceConfig', sourceId }, () => brain.updateSourceConfig(sourceId, patch));
+
+/** Replaces the source's whole config; false for an unknown source, which changes nothing. */
+export const replaceSourceConfig: StoreMember<[sourceId: string, config: Record<string, unknown>], boolean> = (brain, sourceId, config) =>
+  storeCall({ member: 'replaceSourceConfig', sourceId }, () => brain.replaceSourceConfig(sourceId, config));
+
+/** Sets the source's display name; false for an unknown source, which changes nothing. */
+export const renameSource: StoreMember<[sourceId: string, name: string], boolean> = (brain, sourceId, name) =>
+  storeCall({ member: 'renameSource', sourceId }, () => brain.renameSource(sourceId, name));
+
+/**
+ * The federation warning's exposed pages. `honorAliases` is read off the rendered snapshot filter, the process setting
+ * the SQL engines render into `privacyPartSql`; the store keeps no access tokens, so a token writer binds no member.
+ */
+export const readFederationExposedPages: StoreMember<[sourceId: string, hidePrivate: boolean], FederationExposedRow[]> = (brain, sourceId, hidePrivate) => {
+  const honorAliases = privateSnapshotFilterFragment('p').includes(privacyAliasSql('p'));
+  return storeCall({ member: 'readFederationExposedPages', sourceId }, () => brain.readFederationExposedPages(sourceId, hidePrivate, honorAliases)) as Promise<FederationExposedRow[]>;
+};
+
+/** Link preparation's live alias targets; the store answers in alias byte order (the SQL states no order). */
+export const readLiveSlugAliases: StoreMember<[sourceId: string, targets: readonly string[]], LiveSlugAliasRow[]> = async (brain, sourceId, targets) =>
+  targets.length ? storeCall({ member: 'readLiveSlugAliases', sourceId }, () => brain.readLiveSlugAliases(sourceId, [...targets])) as Promise<LiveSlugAliasRow[]> : [];
+
+/** Link preparation's slug fingerprint; the store's hash is its own (a sum of per-slug FNV-1a hashes), as the caller only compares it with itself. */
+export const readSourceSlugProbe: StoreMember<[sourceId: string, afterId: number], SourceSlugProbe> = (brain, sourceId, afterId) =>
+  storeCall({ member: 'readSourceSlugProbe', sourceId }, () => brain.readSourceSlugProbe(sourceId, afterId)) as Promise<SourceSlugProbe>;
 
 /** Sets the source's last sync time to the store clock; false for an unknown source (or another incarnation), which changes nothing. */
 export const markSourceSynced: StoreMember<[sourceId: string, opts?: SourceSyncStampOptions], boolean> = (brain, sourceId, opts) =>

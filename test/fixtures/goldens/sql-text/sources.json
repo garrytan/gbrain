@@ -391,6 +391,32 @@
           }
         ]
       },
+      "renameSource": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET name = $1 WHERE id = $2",
+            "textSha256": "67b41777daeecbbdac63ef611282bde4d53b20c1481c1b835372ab61a4c83496"
+          }
+        ]
+      },
+      "replaceSourceConfig": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "json",
+              "string"
+            ],
+            "sql": "UPDATE sources SET config = $1 WHERE id = $2",
+            "textSha256": "e2c2f5cf00fb4f067fccd4cc3b1fcb6a4c74201d7cab9ee02a188b4a2b89fd4f"
+          }
+        ]
+      },
       "setSourceChunkerVersion": {
         "default": [
           {
