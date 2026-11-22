@@ -6,6 +6,7 @@
  * and failback (`--to postgres|pglite`) come with S5b; this build refuses them with `invalid_params`.
  *
  * Exit codes: 0 plan shown (READY or NOT READY); 1 `engine_swap_refused` before any criterion (`refresh_unsettled`);
+ * 3 `engine_swap_refused` for a mounted brain (`team_brain`) or managed storage (`managed_storage`);
  * 2 usage. `--json` prints one document on stdout.
  */
 import { existsSync, readdirSync, readFileSync, statfsSync } from 'node:fs';

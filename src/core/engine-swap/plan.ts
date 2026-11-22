@@ -3,15 +3,16 @@
  * back"). Nothing here writes: one read of the refresh journal and the shadow status; the caller passes the
  * environment and service definitions by name and the free disk space.
  *
- * Order: the refresh gate (row L7-1) runs before any readiness criterion is read, and refuses with
- * `engine_swap_refused` / `refresh_unsettled`. Every other blocker is a NOT READY verdict in a plan that can be read
+ * Order: the managed-storage gate and then the refresh gate (row L7-1) run before any readiness criterion is read,
+ * and refuse with `engine_swap_refused` / `managed_storage` or `refresh_unsettled`. Every other blocker is a NOT READY verdict in a plan that can be read
  * but not run.
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { readManagedMode } from '../persistence/managed-mode.ts';
 import { activeWorktreeRefreshes } from '../persistence/worktree-refresh.ts';
 import { evaluateReadiness, type ReadinessVerdict, type ShadowStatus } from './readiness.ts';
-import { refreshUnsettledError, type SwapRefusalReason, type UnsettledRefresh } from './refusals.ts';
+import { managedStorageError, refreshUnsettledError, type SwapRefusalReason, type UnsettledRefresh } from './refusals.ts';
 
 /** Environment variables that can select the current engine or its database (names only; values are never read out). */
 export const ENGINE_SELECTING_ENV = ['GBRAIN_DATABASE_URL', 'DATABASE_URL', 'GBRAIN_HOME', 'GBRAIN_BRAIN_ID'] as const;
@@ -83,6 +84,13 @@ export async function assertRefreshesSettled(engine: BrainEngine): Promise<void>
   if (rows.length) throw refreshUnsettledError(rows);
 }
 
+/** Throws `engine_swap_refused` / `managed_storage` when the brain uses managed storage, which Rust never holds. A
+ * persistence state that is missing or malformed refuses `storage_error` (readManagedMode), never reads as unmanaged. */
+export async function assertNotManaged(engine: BrainEngine): Promise<void> {
+  const managed = await readManagedMode(engine, { refusal: { subject: 'The engine swap plan', consequence: 'the swap refuses rather than guess whether the brain uses managed storage' } });
+  if (managed) throw managedStorageError();
+}
+
 /** The plan hash binds what a run would act on, never volatile readings (time, free space). */
 function planHash(p: Omit<SwapPlan, 'plan_hash'>): string {
   const bound = {
@@ -92,8 +100,9 @@ function planHash(p: Omit<SwapPlan, 'plan_hash'>): string {
   return createHash('sha256').update(JSON.stringify(bound)).digest('hex').slice(0, 16);
 }
 
-/** Builds the read-only plan. Throws `engine_swap_refused` (`refresh_unsettled`) before reading any criterion. */
+/** Builds the read-only plan. Throws `engine_swap_refused` (`managed_storage`, `refresh_unsettled`) before reading any criterion. */
 export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs = {}): Promise<SwapPlan> {
+  await assertNotManaged(engine);
   await assertRefreshesSettled(engine);
   const status = deps.readShadowStatus ? await deps.readShadowStatus() : null;
   const readiness = evaluateReadiness(status, deps.now ?? new Date());
