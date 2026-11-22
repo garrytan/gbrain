@@ -112,7 +112,7 @@ const PINS: Pin[] = [
         FROM sources
        WHERE ($1 OR archived IS NOT TRUE)
          AND ($2 OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest'))
-       ORDER BY (id = 'default') DESC, id COLLATE "C"
+       ORDER BY (id = 'default') DESC, id
     `],
   },
   {
