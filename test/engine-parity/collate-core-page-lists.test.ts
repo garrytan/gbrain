@@ -215,14 +215,14 @@ describe('storage shelf and fact pool lists', () => {
     }
   }
 
-  parityTest('poolEntityPairs lists the fact pool pairs by (source, entity slug) byte order', { methods: ['insertFact', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('poolEntityPairs lists the fact pool pairs by (source, entity slug) byte order', { methods: ['insertFact', 'listPoolEntityPairs'] }, async (engine, backend) => {
     await seedFacts(engine, backend);
     const pairs = (await poolEntityPairs(engine, scope, {})).map(r => [r.source_id, r.entity_slug]);
     expect(pairs).toEqual(BYTE_SOURCES.flatMap(id => BYTE_SLUGS.map(slug => [id, slug])));
     return pairs;
   });
 
-  parityTest('poolUnbackedKeys keeps the byte-first unbacked pairs under its limit', { methods: ['insertFact', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('poolUnbackedKeys keeps the byte-first unbacked pairs under its limit', { methods: ['insertFact', 'listPoolUnbackedKeys'] }, async (engine, backend) => {
     await seedFacts(engine, backend);
     const pairs = (await poolUnbackedKeys(engine, scope, MIXED_SLUGS, 4)).map(r => [r.source_id, r.entity_slug]);
     expect(pairs).toEqual(BYTE_SOURCES.flatMap(id => BYTE_SLUGS.map(slug => [id, slug])).slice(0, 4));

@@ -25,6 +25,7 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/engine-sql/persistence-housekeeping.ts': { count: 2, why: 'the compaction listing writes out terminal-classify.ts supersessionSql (test/persistence-journal-statements.test.ts pins the copy): the same two lists and the same decision' },
   'src/core/engine-sql/dream-cycle.ts': { count: 1, why: 'cycle producer, never deferred (listLaterPersistenceRequests, moved from cycle/synthesize-postprocess.ts)' },
   'src/core/engine-sql/facts-trust.ts': { count: 1, why: 'facts producer, never deferred (readPendingWriteReceipt, moved from facts/absorb-log.ts)' },
+  'src/core/rust-engine/store-members/facts-write-path.ts': { count: 1, why: 'the store copy of readPendingWriteReceipt (engine-sql/facts-trust.ts): the same facts-producer list, never deferred' },
   'src/core/generations/managed-retire.ts': { count: 1, why: 'maintenance producer, never deferred' },
   'src/core/minions/handlers/subagent-oneshot.ts': { count: 1, why: 'receipt state' },
   'src/core/minions/tool-write-identity.ts': { count: 1, why: 'receipt state' },

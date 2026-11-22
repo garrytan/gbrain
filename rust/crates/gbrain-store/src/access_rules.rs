@@ -305,6 +305,33 @@ pub(crate) fn pending_covers(read: &dyn KvRead, source_id: &str, slug: &str) -> 
     Ok(found)
 }
 
+/// Whether `source_id` holds a rule or a pending prefix whose prefix is exactly `prefix`
+/// (`EXISTS (SELECT 1 FROM access_rules ...) OR EXISTS (SELECT 1 FROM access_pending_coverage ...)`
+/// on `prefix = $2`).
+pub(crate) fn has_exact_prefix(read: &dyn KvRead, source_id: &str, prefix: &str) -> Result<bool> {
+    let mut found = false;
+    each(
+        read,
+        &source_prefix(RULE, source_id),
+        |r: AccessRuleRecord| {
+            found = r.prefix == prefix;
+            !found
+        },
+    )?;
+    if found {
+        return Ok(true);
+    }
+    each(
+        read,
+        &source_prefix(COVERAGE, source_id),
+        |c: PendingCoverageRecord| {
+            found = c.prefix == prefix;
+            !found
+        },
+    )?;
+    Ok(found)
+}
+
 /// Whether a page at `slug` carries folder rules (`pages.folder_rule_ids IS NOT NULL`): its
 /// source holds access state and a rule covers the slug.
 pub(crate) fn stamped(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<bool> {

@@ -135,6 +135,11 @@ fn read_all<T: serde::de::DeserializeOwned>(read: &dyn KvRead, prefix: &[u8]) ->
         .collect()
 }
 
+/// Every supersede proposal, in id order (the claim-pair and contested-pair reads filter them).
+pub(crate) fn all_proposals(read: &dyn KvRead) -> Result<Vec<ProposalRecord>> {
+    read_all(read, &tagged(PROPOSAL))
+}
+
 fn id_at(bytes: &[u8]) -> Result<u64> {
     keys::be8(bytes).ok_or_else(|| StoreError::new(crate::error::STORE_CORRUPT, "bad proposal id"))
 }

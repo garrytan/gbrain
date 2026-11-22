@@ -35,6 +35,13 @@ export const listFactsForPage: Member<'listFactsForPage'> = async (brain, source
   return rows.map((row) => withDates(row, ['valid_from', 'valid_until', 'expired_at'])) as unknown as Awaited<ReturnType<BrainEngine['listFactsForPage']>>;
 };
 
+export const readPageFileOrigin: Member<'readPageFileOrigin'> = (brain, sourceId, slug, opts) =>
+  storeCall({ member: 'readPageFileOrigin' }, () => brain.readPageFileOrigin({ sourceId, slug, includeDeleted: opts?.includeDeleted ?? false }));
+
+/** The store's writer gate is the row lock (a `transaction` holds it), so `lock` asks the store for nothing more. */
+export const readLiveStoredBody: Member<'readLiveStoredBody'> = (brain, sourceId, slug) =>
+  storeCall({ member: 'readLiveStoredBody' }, () => brain.readLiveStoredBody({ sourceId, slug }));
+
 export const countLegacyFactsPending: Member<'countLegacyFactsPending'> = (brain, sourceId) =>
   storeCall({ member: 'countLegacyFactsPending' }, () => brain.countLegacyFactsPending(sourceId));
 

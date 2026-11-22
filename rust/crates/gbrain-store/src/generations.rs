@@ -1284,70 +1284,51 @@ fn source_records(read: &dyn KvRead, source_id: &str) -> Result<Vec<GenerationRe
     }
 }
 
-/// Every `derived_generations` row with its items, in id order, in the shape `facts::generations`
-/// reads for `listUnwithdrawnFacts` (the repair classifier of retired fence rows).
-pub(crate) fn ledger_generations(
+/// One `derived_generations` row with its `derived_generation_items`, as other families read the
+/// ledger (`facts::generations`, `listUnwithdrawnFacts`).
+pub(crate) struct GenerationView {
+    pub id: u64,
+    pub owner_key: String,
+    pub generation: i32,
+    pub state: String,
+    pub created_at_us: i64,
+    pub items: Vec<GenerationItemView>,
+}
+
+/// One `derived_generation_items` row of a [`GenerationView`].
+pub(crate) struct GenerationItemView {
+    pub action: String,
+    pub preimage: Option<Value>,
+}
+
+/// The generation rows of `source_id` of `kind` with their items, in id order and item key
+/// order: the one read of this ledger outside this module.
+pub(crate) fn source_generation_views(
     read: &dyn KvRead,
-) -> Result<Vec<(u64, crate::facts::generations::GenerationRecord)>> {
-    let mut rows = Vec::new();
-    let mut failure = None;
-    scan_prefix(
-        read,
-        &[keys::DERIVED_GENERATION, RECORD],
-        false,
-        &mut |_, v| match serde_json::from_slice::<GenerationRecord>(v) {
-            Ok(record) => {
-                rows.push(record);
-                true
-            }
-            Err(e) => {
-                failure = Some(StoreError::from(e));
-                false
-            }
-        },
-    )?;
-    if let Some(e) = failure {
-        return Err(e);
-    }
-    let mut out = Vec::with_capacity(rows.len());
-    for record in rows {
-        let prefix = item_prefix(record.id);
-        let mut items = Vec::new();
-        let mut failure = None;
-        scan_prefix(
-            read,
-            &prefix,
-            false,
-            &mut |k, v| match serde_json::from_slice::<ItemRecord>(v) {
-                Ok(item) => {
-                    items.push(crate::facts::generations::ItemRecord {
-                        item_key: String::from_utf8_lossy(&k[prefix.len()..]).into_owned(),
-                        action: item.action,
-                        preimage: item.preimage,
-                    });
-                    true
-                }
-                Err(e) => {
-                    failure = Some(StoreError::from(e));
-                    false
-                }
-            },
-        )?;
-        if let Some(e) = failure {
-            return Err(e);
+    source_id: &str,
+    kind: &str,
+) -> Result<Vec<GenerationView>> {
+    let mut out = Vec::new();
+    for record in source_records(read, source_id)? {
+        if record.kind != kind {
+            continue;
         }
-        out.push((
-            record.id,
-            crate::facts::generations::GenerationRecord {
-                source_id: record.source_id,
-                kind: record.kind,
-                owner_key: record.owner_key,
-                generation: record.generation,
-                state: record.state,
-                created_at_us: record.created_at_us,
-                items,
-            },
-        ));
+        let mut items = Vec::new();
+        for (_, v) in collect_prefix(read, &item_prefix(record.id), false, usize::MAX)? {
+            let item: ItemRecord = serde_json::from_slice(&v)?;
+            items.push(GenerationItemView {
+                action: item.action,
+                preimage: item.preimage,
+            });
+        }
+        out.push(GenerationView {
+            id: record.id,
+            owner_key: record.owner_key,
+            generation: record.generation,
+            state: record.state,
+            created_at_us: record.created_at_us,
+            items,
+        });
     }
     Ok(out)
 }

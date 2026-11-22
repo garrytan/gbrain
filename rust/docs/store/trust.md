@@ -151,7 +151,8 @@ request, the single-fact prepare, the repair and review lanes), and the meta-hoo
 `gbrain_preserve_fact_withdrawal` is built: every fact write (`write_fact`) saves a row that is not expired and matches a
 withdrawal of its claim as expired at the earliest such withdrawal, with `valid_until` no later than it
 (`facts::purge::earliest_withdrawal`; a member-page row matches only its page's withdrawals, an unbacked name key any
-subject but an owned memory page).
+subject but an owned memory page). The repair members that set a watched column on a row they can leave active also run
+it before `write_fact` (`facts/withdrawal_guard.rs`; facts.md, "Captured-facts and rehome repair").
 
 Rust guesses and gaps (1x parity):
 
@@ -180,7 +181,7 @@ key of their own. The `derivation_inputs` edges are not kept on this store line:
 | --- | --- | --- |
 | `lowerTrustTier` | `lower_trust_tier`: pages only (the member refuses `takes` and `timeline_entries`); lowers each listed page, soft-deleted included, whose stored rank is above the tier; keeps the revision; returns the ids lowered by id | `UPDATE pages SET trust_tier=$2,write_origin=$3::text::jsonb WHERE id=ANY($1::bigint[]) AND rank > rank RETURNING id` |
 | `countDerivedRowTaint` | `count_derived_row_taint`: pages, takes or timeline entries whose `write_origin` holds a `taint_inputs` key (jsonb `?`), and of those the ones stored `external_untrusted` | `SELECT count(*) FILTER (…) … FROM <table>` |
-| `countDerivedFactTaint` | `count_derived_fact_taint`: the same count on facts | `SELECT count(*) FILTER (…) … FROM facts` |
+| `countDerivedFactTaint` | `count_derived_fact_taint` in `facts/trust_owner.rs` (rust/docs/store/facts.md): the same count on facts | `SELECT count(*) FILTER (…) … FROM facts` |
 | `stampPageFrontmatter` | `stamp_page_frontmatter`: merges `retired_by`/`retired_at` into soft-deleted pages, or `source_hash` into live `atom` pages; a page the merge leaves unchanged is not written | `UPDATE pages SET frontmatter=frontmatter\|\|jsonb_build_object(…) WHERE …` |
 
 Rust guesses and gaps (1x parity):

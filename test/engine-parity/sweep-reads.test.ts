@@ -15,8 +15,8 @@
  *    fence also reads the purge tombstones (facts/purge-overlay.ts), a different path from the sweep. The sweep is the
  *    real runMaintenanceSweep.
  *
- * Known stop on Rust: past these reads pass 1 still reaches raw SQL, in the held-fact move
- * (cycle/extract-facts.ts moveHeldFacts -> facts/held-fact-move.ts planHeldMoves). The sweep catches the refusal and
+ * Known stop on Rust: past the held-fact move reads (served) pass 1 still reaches a member the store does not serve:
+ * `listDeletedPageSlugsWithActiveFacts`, the deleted-page expiry's read (cycle/extract-facts.ts). The sweep catches the refusal and
  * skips the pass, so on Rust the first case pins the exact skip list and then ends on the refusal it caught: the
  * harness counts it stopped, and the pin fails as soon as pass 1 runs, so the list must shrink with the fix. Pass 2
  * (links and timeline) runs on every arm; the second case holds it equal.
@@ -45,10 +45,10 @@ const FENCED_BODY = [
 ].join('\n');
 const FENCED_TIMELINE = '- **2025-02-03** | joined [[companies/widget-co]] as an advisor';
 
-/** The passes the sweep still skips on Rust, each on a raw-SQL refusal it caught (see the known stop above). */
+/** The passes the sweep still skips on Rust, each on a refusal it caught (see the known stop above). */
 const RUST_KNOWN_STOP = ['facts_fence_error'];
 
-/** `engine`, keeping every raw-SQL refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
+/** `engine`, keeping every raw-SQL or facts-capability refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
 function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {
   return new Proxy(engine, {
     get(target, prop, receiver) {
@@ -62,7 +62,7 @@ function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine 
         const result = (value as (...a: unknown[]) => unknown).apply(target, args);
         if (!(result instanceof Promise)) return result;
         return result.catch((error: unknown) => {
-          if (isCapabilityRefusal(error, 'raw_sql')) refusals.push(error);
+          if (isCapabilityRefusal(error, 'raw_sql') || (error as { code?: unknown })?.code === 'engine_capability_missing') refusals.push(error);
           throw error;
         });
       };
@@ -90,7 +90,7 @@ async function importAll(engine: BrainEngine, pages: Array<{ slug: string; conte
 describe('engine parity: maintenance sweep reads', () => {
   parityTest(
     'sweep --once after import extracts every link and timeline entry and reconciles the facts fence, with no error skip',
-    { methods: ['putPage', 'getLinks', 'getTimeline'], timeout: 120_000 },
+    { methods: ['putPage', 'getLinks', 'getTimeline', 'listDeletedPageSlugsWithActiveFacts'], timeout: 120_000 },
     async (engine, backend) => {
       const pages = fixturePages();
       await importAll(engine, pages);

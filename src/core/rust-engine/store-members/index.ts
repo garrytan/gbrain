@@ -30,6 +30,7 @@ import * as codeEdges from './code-edges.ts';
 import * as salience from './salience.ts';
 import * as stats from './stats.ts';
 import * as rawFiles from './raw-files.ts';
+import * as filesOps from './files-ops.ts';
 import * as linkQueries from './link-queries.ts';
 import * as timelineQueries from './timeline-queries.ts';
 import * as keyword from './keyword.ts';
@@ -44,6 +45,8 @@ import * as trustWriteGate from './trust-write-gate.ts';
 import * as cliSources from './cli-sources.ts';
 import * as filesSources from './files-sources.ts';
 import * as dreamConfig from './dream-config.ts';
+import * as factsHeld from './facts-held.ts';
+import * as factsRest from './facts-rest.ts';
 import * as factsHoldingPurges from './facts-holding-purges.ts';
 import * as cliReadsImport from './cli-reads-import.ts';
 import * as cliReadsOps from './cli-reads-ops.ts';
@@ -63,11 +66,17 @@ import * as factsPurge from './facts-purge.ts';
 import * as purgePlan from './purge-plan.ts';
 import * as projectionRebuild from './projection-rebuild.ts';
 import * as factsRepair from './facts-repair.ts';
+import * as ontologyRepair from './ontology-repair.ts';
 import * as factsTrust from './facts-trust.ts';
+import * as factsForget from './facts-forget.ts';
 import * as factsRecall from './facts-recall.ts';
+import * as factsQuoted from './facts-quoted.ts';
+import * as schemaDetect from './schema-detect.ts';
+import * as edgeProposals from './edge-proposals.ts';
+import * as factsWritePath from './facts-write-path.ts';
+import * as factsRemember from './facts-remember.ts';
 import * as derivationTrust from './derivation-trust.ts';
 import * as chronicleEvents from './chronicle-events.ts';
-import * as factsQuoted from './facts-quoted.ts';
 import * as factsTrustReads from './facts-trust-reads.ts';
 import * as factsProvenance from './facts-provenance.ts';
 import * as factsTrustOwner from './facts-trust-owner.ts';
@@ -141,20 +150,24 @@ export const STORE_MEMBERS = {
   softDeletePage: pages.softDeletePage, restorePage: pages.restorePage, listPages: pages.listPages, resolveSlugs: pages.resolveSlugs,
   // Planned families: a member is served once its family file exports it.
   ...pageOps, ...extraction, ...aliases, ...pageBody, ...facts, ...ontology, ...takes, ...contradictions, ...dream,
-  ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...linkQueries, ...timelineQueries, ...keyword,
+  ...evalCapture, ...codeEdges, ...salience, ...stats, ...rawFiles, ...filesOps, ...linkQueries, ...timelineQueries, ...keyword,
   ...chunkQueries, ...vectors, ...embeddings, ...transactions, ...writeContext, ...relations, ...wantedLinks, ...trustWithdrawals, ...trustWriteGate, ...openLoops,
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
-  ...cliSources, ...filesSources, ...dreamConfig, ...factsHoldingPurges,
+  ...cliSources, ...filesSources, ...dreamConfig, ...factsHeld, ...factsRest, ...factsHoldingPurges,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages, ...sweepReads,
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
   ...cliReadsExport,
   ...cliEntities, ...reflexReads, ...briefReads,
   // Group 5 facts statements (docs/research/rust-cli-contract-map.md).
-  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...projectionRebuild, ...factsRepair, ...factsTrust, ...factsRecall, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factsProvenance, ...factsQuoted, ...factRelinkAttempts,
+  ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...projectionRebuild, ...factsRepair, ...ontologyRepair, ...factsTrust, ...factsRecall, ...derivationTrust, ...factsForget, ...factsRemember, ...factsWritePath, ...factsTrustReads, ...factsTrustOwner, ...factsProvenance, ...factsQuoted, ...factRelinkAttempts,
   ...factRelinkWrites,
+  // The `gbrain schema detect` page-shape reads (rust/docs/store/schema_detect.md).
+  ...schemaDetect,
+  // The edge-contradictions dream phase and its proposal ledger (rust/docs/store/edge_proposals.md).
+  ...edgeProposals,
   // The Life Chronicle event statements (rust/crates/gbrain-store/src/generations/chronicle_events.rs).
   ...chronicleEvents,
   // Typed reads of stamped trust tiers (rust/docs/store/trust.md, "Tier reads").

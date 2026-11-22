@@ -1,7 +1,8 @@
 //! Raw source data and files attached to pages: the `raw_data` and `files` tables of the PGLite
 //! engine.
 //!
-//! Members: putRawData, getRawData, upsertFile, getFile, listFilesForPage.
+//! Members: putRawData, getRawData, upsertFile, getFile, listFilesForPage; the files commands and file operations
+//! are in `ops.rs`.
 //!
 //! Keys (every record starts with `keys::RAW_FILES`, `r`):
 //! - `r 0x01 <page id u64 BE> 0x00 <source name>` -> `RawRecord` (JSON). One per (page, source),
@@ -36,6 +37,8 @@ use crate::sources::{all_sources, read_source};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+mod ops;
 
 const RAW: u8 = 0x01;
 const FILE: u8 = 0x02;

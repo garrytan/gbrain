@@ -2,21 +2,39 @@
  * Group 5 facts members, recall's candidate-pool reads (src/core/engine-sql/facts-recall.ts), served from the facts store
  * (rust/crates/gbrain-store/src/facts/recall.rs). A member not exported here refuses with `engine_capability_missing`.
  *
- * Served: `listSlotRows`, which search/slot-ends.ts reads to end a slot value a later one replaced. It reads under the
- * pool's read policy, which `poolArgs` (fact-pool.ts) resolves as it does for `listFactsForRelevance`: the store answers
- * it exactly when the visibility and privacy policies are ones it serves; anything else refuses. The other five pool reads
- * (`readFactsEmbeddingColumn`, `listNearestFacts`, `listPoolUnbackedKeys`, `listCallOffCueFacts`, `listPoolEntityPairs`)
- * are served on rust-5a and refuse here.
+ * Served: `readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`, `listPoolUnbackedKeys`, `listCallOffCueFacts` and
+ * `listPoolEntityPairs`. Each reads under the pool's read policy, which `poolArgs` (fact-pool.ts) resolves as it does for
+ * `listFactsForRelevance`: the store answers it exactly when the visibility and privacy policies are ones it serves;
+ * anything else refuses. `listNearestFacts` also refuses a vector-typed
+ * column (the store keeps `halfvec`); its `hnswIterativeScan` only changes the plan, so the store ignores it.
+ * `listFactRowsByIds` is served by facts-remember.ts.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { withDates } from '../store-codec.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { poolArgs } from './fact-pool.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type Row = Record<string, unknown>;
 
 const POOL_DATES = ['valid_from', 'valid_until', 'created_at'] as const;
+const rows = <T>(list: Row[]): T[] => list.map(row => withDates(row, POOL_DATES)) as unknown as T[];
+
+export const readFactsEmbeddingColumn: Member<'readFactsEmbeddingColumn'> = async brain =>
+  storeCall({ member: 'readFactsEmbeddingColumn' }, () => brain.readFactsEmbeddingColumn());
+
+export const listNearestFacts: Member<'listNearestFacts'> = async (brain, q) => {
+  const member = 'listNearestFacts';
+  if (q.vector.type !== 'halfvec') refuseMember(member, 'a vector-typed facts embedding column');
+  const pool = poolArgs(member, q.scope, q.filters);
+  const found: Row[] = await storeCall({ member }, () => brain.listNearestFacts({
+    pool,
+    vector: { literal: q.vector.literal, model: q.vector.model, dims: q.vector.dims },
+    declared: q.declared,
+    limit: q.limit,
+  }));
+  return rows(found);
+};
 
 export const listSlotRows: Member<'listSlotRows'> = async (brain, scope, slots) => {
   const member = 'listSlotRows';
@@ -25,5 +43,27 @@ export const listSlotRows: Member<'listSlotRows'> = async (brain, scope, slots) 
     pool,
     slots: slots.map(s => ({ sourceId: s.source_id, entitySlug: s.entity_slug, dimension: s.dimension })),
   }));
-  return found.map(row => withDates(row, POOL_DATES)) as unknown as Awaited<ReturnType<BrainEngine['listSlotRows']>>;
+  return rows(found);
+};
+
+export const listPoolUnbackedKeys: Member<'listPoolUnbackedKeys'> = async (brain, scope, keys, limit) => {
+  const member = 'listPoolUnbackedKeys';
+  const pool = poolArgs(member, scope, undefined);
+  return storeCall({ member }, () => brain.listPoolUnbackedKeys({ pool, keys: [...keys], limit }));
+};
+
+export const listCallOffCueFacts: Member<'listCallOffCueFacts'> = async (brain, scope, pairs) => {
+  const member = 'listCallOffCueFacts';
+  const pool = poolArgs(member, scope, undefined);
+  const found: Row[] = await storeCall({ member }, () => brain.listCallOffCueFacts({
+    pool,
+    pairs: pairs.map(p => ({ sourceId: p.source_id, entitySlug: p.entity_slug })),
+  }));
+  return rows(found);
+};
+
+export const listPoolEntityPairs: Member<'listPoolEntityPairs'> = async (brain, scope, filters) => {
+  const member = 'listPoolEntityPairs';
+  const pool = poolArgs(member, scope, filters);
+  return storeCall({ member }, () => brain.listPoolEntityPairs({ pool }));
 };

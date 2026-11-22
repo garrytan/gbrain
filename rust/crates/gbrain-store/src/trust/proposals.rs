@@ -32,6 +32,7 @@ use crate::trust::TrustTable;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use std::collections::HashSet;
 
 const PROPOSAL: u8 = 0x06;
 const PENDING: u8 = 0x07;
@@ -377,6 +378,24 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// The fact pairs a pending `supersede_fact` proposal between two facts covers, both ways round (the claim-conflict
+/// read leaves them out: `trust_proposals` with `status = 'pending'`, `target_table` and `related_table` `facts`).
+pub(crate) fn pending_fact_supersessions(read: &dyn KvRead) -> Result<HashSet<(i64, i64)>> {
+    let mut pairs = HashSet::new();
+    for p in all_records(read)? {
+        if p.status == "pending"
+            && p.action == "supersede_fact"
+            && p.target_table == "facts"
+            && p.related_table.as_deref() == Some("facts")
+            && let Some(related) = p.related_id
+        {
+            pairs.insert((p.target_id, related));
+            pairs.insert((related, p.target_id));
+        }
+    }
+    Ok(pairs)
 }
 
 /// The contested reference of one fact or take row (eligibility/sql.ts `contestedRefSql`): the

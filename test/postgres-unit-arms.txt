@@ -231,6 +231,7 @@ test/engine-parity/extract-takes-reads.test.ts
 test/engine-parity/extract-takes.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/fact-future-order.test.ts
+test/engine-parity/fact-insert-guard.test.ts
 test/engine-parity/fact-pool-widening.test.ts
 test/engine-parity/fact-provenance.test.ts
 test/engine-parity/fact-purge-commit.test.ts
@@ -239,6 +240,7 @@ test/engine-parity/fact-purge-sites.test.ts
 test/engine-parity/fact-relink-attempts.test.ts
 test/engine-parity/fact-relink-writes.test.ts
 test/engine-parity/fact-trajectory-widening.test.ts
+test/engine-parity/fact-update-guard.test.ts
 test/engine-parity/fact-visibility-widening.test.ts
 test/engine-parity/facts-conversation-sites.test.ts
 test/engine-parity/facts-cycle-sites.test.ts
@@ -252,6 +254,7 @@ test/engine-parity/facts-repair.test.ts
 test/engine-parity/facts-rest-sites.test.ts
 test/engine-parity/facts-trust-owner.test.ts
 test/engine-parity/facts-trust.test.ts
+test/engine-parity/facts-unique-violation.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/family-tail-sites.test.ts
 test/engine-parity/fence-overlay.test.ts
@@ -260,9 +263,12 @@ test/engine-parity/field-usage.test.ts
 test/engine-parity/files-ops-sites.test.ts
 test/engine-parity/first-due.test.ts
 test/engine-parity/forget-commit.test.ts
+test/engine-parity/forget-fence-path.test.ts
+test/engine-parity/forget-members.test.ts
 test/engine-parity/forget-reach-reads.test.ts
 test/engine-parity/forget-rebuild.test.ts
 test/engine-parity/forget-remember.test.ts
+test/engine-parity/forget-whole.test.ts
 test/engine-parity/generation-output-parity.test.ts
 test/engine-parity/generation-page-rows-order.test.ts
 test/engine-parity/generation-write-parity.test.ts
@@ -303,6 +309,7 @@ test/engine-parity/oauth-http.test.ts
 test/engine-parity/oauth-lifecycle.test.ts
 test/engine-parity/oauth-revocation.test.ts
 test/engine-parity/ontology-propose.test.ts
+test/engine-parity/ontology-repair-sites.test.ts
 test/engine-parity/op-checkpoint.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/open-pages.test.ts
@@ -328,9 +335,12 @@ test/engine-parity/put-source-fork.test.ts
 test/engine-parity/raw-sql.test.ts
 test/engine-parity/reads-privacy.test.ts
 test/engine-parity/reason-tombstones.test.ts
+test/engine-parity/recall-members.test.ts
 test/engine-parity/referrer-reads.test.ts
 test/engine-parity/relational-reads.test.ts
+test/engine-parity/remember-members.test.ts
 test/engine-parity/remember-meta.test.ts
+test/engine-parity/remember-supersede.test.ts
 test/engine-parity/remember-whole.test.ts
 test/engine-parity/remote-policy.test.ts
 test/engine-parity/request-tools-persist.test.ts
@@ -338,6 +348,7 @@ test/engine-parity/resolve-reads.test.ts
 test/engine-parity/restriction-flag-reads.test.ts
 test/engine-parity/retrieval-coverage.test.ts
 test/engine-parity/retrieval-reflex.test.ts
+test/engine-parity/schema-detect.test.ts
 test/engine-parity/search-cjk.test.ts
 test/engine-parity/search-deep-query.test.ts
 test/engine-parity/search-privacy-retention.test.ts
@@ -346,6 +357,7 @@ test/engine-parity/search-private-fence.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/segmented-fence-staging.test.ts
 test/engine-parity/session-state-cap.test.ts
 test/engine-parity/session-state.test.ts
 test/engine-parity/shared-skill-members.test.ts

@@ -122,6 +122,7 @@ language is refused with `engine_capability_missing` (`keyword_search`) at the f
 - `lineGrammar` publication checks the generation config value but takes no `FOR SHARE` lock: the store's write
   transaction is serial.
 - `edgeValidityCounts` reports counts on every store (the SQL arm returns null when the tables are absent, which never
-  happens on a store), and `proposals` is always zero: the store keeps no `link_edge_proposals` rows.
+  happens on a store). `proposals` counts the stored proposals by status within the source scope
+  (`edge_proposals::proposal_counts`, see [edge_proposals.md](edge_proposals.md)).
 - The `temporal` read option of a link read (`LinkReadScope.temporal`) still refuses (`links`): the store reads link
   rows as they are, with no point-in-time view. See [link_queries.md](link_queries.md), "Refusals".

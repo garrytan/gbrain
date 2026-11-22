@@ -39,6 +39,7 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
+import { itemSetHash } from '../../src/core/generations/publish.ts';
 import {
   archiveRustSource, createRustSource, newRustBrain, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
@@ -454,31 +455,34 @@ export async function recordFactsReconcile(
 }
 
 /**
- * Fixture: a facts-fence generation of page `slug` that retired the fact `factId`, as `publishFenceGeneration`
- * (generations/fence.ts) writes it. The fence writer has no typed member, so this is harness-only SQL behind the
- * backend switch; the Rust store reads the ledger but no member writes it, and the same SQL stops on the engine's typed
- * raw_sql refusal. `preimage` overrides the item's preimage fields (the retired row as it stood); the preimage binds as
- * text and the cast parses it. The state defaults to `superseded`, since a page holds one live and one held generation
- * at most. Returns the generation id.
+ * Fixture: a facts-fence generation of page `slug` that retired the fact `factId`, written through the typed ledger
+ * writer the fence publish uses (`activateGenerationRows`, generations/publish.ts `activateGeneration`): it
+ * supersedes the page's live generation and records one `retired` item whose preimage is the row as it stood, with the
+ * completeness and item set hash `publishFenceGeneration` (generations/fence.ts) writes for a fence that parsed empty.
+ * `preimage` overrides the preimage fields. `state: 'held'` records the page's held row instead
+ * (`recordHeldGenerationRow`, publish.ts `recordHeld`), which, as in production, records no item.
  */
 export async function recordFenceRetirement(
-  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, factId: number,
-  opts: { fact: string; visibility: string; state?: 'live' | 'held' | 'superseded'; generation?: number; preimage?: Record<string, unknown> },
-): Promise<number> {
-  switch (backend) {
-    case 'rust':
-    case 'pglite':
-    case 'postgres': {
-      const preimage = { id: factId, fact: opts.fact, visibility: opts.visibility, row_num: 1, expired_at: null, ...opts.preimage };
-      const [g] = await engine.executeRaw<{ id: number | string }>(`INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, operation_id, item_set_hash)
-        VALUES ($1, 'fact_fence', 'page:' || $2, $3, $4, 'parity', 'h') RETURNING id`, [sourceId, slug, opts.generation ?? 1, opts.state ?? 'superseded']);
-      await engine.executeRaw(`INSERT INTO derived_generation_items (generation_id, item_key, identity_hash, action, preimage)
-        VALUES ($1, $2, 'i', 'retired', $3::text::jsonb)`, [g!.id, `fact:${factId}`, JSON.stringify(preimage)]);
-      return Number(g!.id);
-    }
-    default:
-      return assertNever(backend);
+  engine: BrainEngine, sourceId: string, slug: string, factId: number,
+  opts: { fact: string; visibility: string; state?: 'live' | 'held'; generation?: number; preimage?: Record<string, unknown> },
+): Promise<void> {
+  const key = { sourceId, kind: 'fact_fence', ownerKey: `page:${slug}` };
+  const setHash = itemSetHash([]);
+  if (opts.state === 'held') {
+    const context = { slug, fence: 'facts', writer: 'parity', read: 'absent', rows: 1, partial: false };
+    await engine.transaction(tx => tx.recordHeldGenerationRow(key, { holdId: `parity-hold-${factId}`, runId: null, inputPin: null, inputSize: null,
+      setHash, reason: 'fence_absent', context: JSON.stringify(context), proposal: '[]', proposalBytes: 2 }));
+    return;
   }
+  const preimage = { id: factId, fact: opts.fact, visibility: opts.visibility, row_num: 1, expired_at: null, ...opts.preimage };
+  const completeness = { complete: true, writer: 'parity', proof: 'fenceParsedEmpty', fence: null, fence_bytes: null };
+  await engine.transaction(async tx => {
+    const live = await tx.readLiveGenerationRow(key);
+    await tx.activateGenerationRows(key, live?.id ?? null, { generation: opts.generation ?? 1, runId: null, operationId: `parity-fence-${factId}`,
+      inputPin: null, inputSize: null, completeness: JSON.stringify(completeness), setHash, restoreOf: null, activationId: null, locator: null },
+    [{ item_key: `fact:${factId}`, identity_hash: `fact-identity-${factId}`, action: 'retired', preimage,
+      preimage_bytes: Buffer.byteLength(JSON.stringify(preimage), 'utf8'), pending: false }]);
+  });
 }
 
 /** Wrap an engine so every direct method call on the handle is recorded. */

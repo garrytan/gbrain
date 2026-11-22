@@ -16,9 +16,9 @@
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
  *  - Seam: page_purges rows are written through the typed upsertPagePurges the page purge sweep uses, on every arm.
- *    recordFenceRetirement (harness.ts) writes a facts-fence generation with SQL, as the fence writer does; the Rust arm
- *    stops there on the typed raw_sql refusal, because no member writes that ledger on Rust. Every fact, page, loop and
- *    withdrawal is seeded through the typed members. The write journal behind listExtractorFactsForClassification's receipts (persistence_requests) has no
+ *    recordFenceRetirement (harness.ts) writes a facts-fence generation through the typed ledger writers the fence
+ *    publish uses (activateGenerationRows, recordHeldGenerationRow), so every arm runs the listUnwithdrawnFacts cases.
+ *    Every fact, page, loop and withdrawal is seeded through the typed members. The write journal behind listExtractorFactsForClassification's receipts (persistence_requests) has no
  *    typed writer that can complete a request at a fact's expiry instant, so its case asserts the answer with no receipt;
  *    the receipt join is pinned by the store test rust/crates/gbrain-store/tests/facts_extractor_classify.rs. Generated
  *    values (ids) are compared by relation, never by value.
@@ -437,6 +437,16 @@ describe('engine parity: group 5 facts repair statements', () => {
     return { counted, capped: { total: total(capped), capped: capped.capped }, elsewhere };
   });
 
+  parityTest('listExtractorFactsForClassification marks a fact with no page as not on a deleted page', {
+    methods: ['insertFacts', 'expireFact', 'listExtractorFactsForClassification'],
+  }, async (engine) => {
+    const orphan = await fenced(engine, 'orphan fact', { source: EXTRACTOR, visibility: 'private', source_markdown_slug: 'chats/never', row_num: null });
+    expect(await engine.expireFact(orphan)).toBe(true);
+    const rows = await engine.listExtractorFactsForClassification(['default'], null);
+    expect(rows.map(r => ({ id: Number(r.id), page_id: r.page_id, page_deleted: r.page_deleted }))).toEqual([{ id: orphan, page_id: null, page_deleted: false }]);
+    return rows.map(({ id: _id, expired_at: _at, ...r }) => r);
+  });
+
   parityTest('countPurgedPageFacts counts no fact of a page that was never purged', { methods: ['putPage', 'insertFacts', 'countPurgedPageFacts'] }, async (engine) => {
     await engine.putPage('notes/open', note('Open', 'a page'));
     await fenced(engine, 'a fact', { source: 'mcp:put_page', context: 'notes/open', visibility: 'private' });
@@ -575,7 +585,8 @@ describe('engine parity: group 5 facts repair statements', () => {
   });
 
   parityTest('listUnwithdrawnFacts lists the expired facts a fence generation retired, by source and page in C order, with withdrawal and duplicate', {
-    methods: ['putPage', 'softDeletePage', 'insertFact', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'listUnwithdrawnFacts'],
+    methods: ['putPage', 'softDeletePage', 'insertFact', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'transaction', 'readLiveGenerationRow',
+      'activateGenerationRows', 'recordHeldGenerationRow', 'listUnwithdrawnFacts'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     await engine.putPage('notes/bb', note('BB', 'a page'));
@@ -583,12 +594,12 @@ describe('engine parity: group 5 facts repair statements', () => {
     await engine.putPage('notes/gone', note('Gone', 'a page'));
     await engine.softDeletePage('notes/gone');
     const retire = async (slug: string, text: string, opts: { visibility?: string; extra?: Record<string, unknown>; expire?: boolean; sourceId?: string;
-      state?: 'live' | 'held' | 'superseded'; preimage?: Record<string, unknown> } = {}) => {
+      state?: 'live' | 'held'; preimage?: Record<string, unknown> } = {}) => {
       const visibility = opts.visibility ?? 'world';
       const sourceId = opts.sourceId ?? 'default';
       const id = await fact(engine, text, { visibility, source_markdown_slug: slug, ...opts.extra }, sourceId);
       if (opts.expire !== false) expect(await engine.expireFact(id)).toBe(true);
-      await recordFenceRetirement(engine, backend, sourceId, slug, id, { fact: text, visibility, state: opts.state, preimage: opts.preimage });
+      await recordFenceRetirement(engine, sourceId, slug, id, { fact: text, visibility, state: opts.state, preimage: opts.preimage });
       return id;
     };
     await retire('notes/bb', 'retired on bb');
@@ -596,7 +607,7 @@ describe('engine parity: group 5 facts repair statements', () => {
     await retire('notes/b-c', 'withdrawn on b-c', { visibility: 'private' });
     expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn on b-c', '*', null)).toBe(true);
     await retire('notes/bb', 'still active', { expire: false });
-    await retire('notes/bb', 'held generation', { state: 'held' });
+    await retire('notes/held', 'held generation', { state: 'held' });
     await retire('notes/bb', 'expired in the preimage', { preimage: { expired_at: '2026-01-01T00:00:00Z' } });
     await retire('notes/bb', 'no row number in the preimage', { preimage: { row_num: null } });
     await retire('notes/bb', 'changed text', { preimage: { fact: 'other text' } });
@@ -607,7 +618,7 @@ describe('engine parity: group 5 facts repair statements', () => {
     const twin = await retire('notes/bb', 'has an active twin');
     await fenced(engine, 'has an active twin', { source_markdown_slug: 'notes/bb' });
     const newer = await retire('notes/b-c', 'retired twice');
-    await recordFenceRetirement(engine, backend, 'default', 'notes/b-c', newer, { fact: 'retired twice', visibility: 'world', generation: 7, state: 'live' });
+    await recordFenceRetirement(engine, 'default', 'notes/b-c', newer, { fact: 'retired twice', visibility: 'world', generation: 7, state: 'live' });
     const view = (rows: Awaited<ReturnType<BrainEngine['listUnwithdrawnFacts']>>) => rows.map(r => ({
       source: r.source_id, slug: r.slug, fact: r.fact, visibility: r.visibility, superseded: r.superseded, generation: Number(r.generation),
       same_id: Number(r.preimage.id) === Number(r.id), withdrawn: r.withdrawn, active_duplicate: r.active_duplicate, history_gap: r.history_gap,

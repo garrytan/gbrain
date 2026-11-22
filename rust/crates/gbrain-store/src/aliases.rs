@@ -236,7 +236,11 @@ fn scan_tails(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<Stri
 }
 
 /// The `(alias_norm, origin)` rows of the page at `(source, slug)`.
-fn page_alias_rows(read: &dyn KvRead, source: &str, slug: &str) -> Result<Vec<(String, String)>> {
+pub(crate) fn page_alias_rows(
+    read: &dyn KvRead,
+    source: &str,
+    slug: &str,
+) -> Result<Vec<(String, String)>> {
     Ok(
         scan_tails(read, &prefix(PAGE_ALIAS_BY_SLUG, &[source, slug]))?
             .into_iter()

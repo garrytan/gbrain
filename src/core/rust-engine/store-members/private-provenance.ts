@@ -49,6 +49,7 @@ import {
   privateFactFilterForCaller,
   remoteProvenanceFloorSql,
   remoteReadFloorSql,
+  readPolicyFragment,
 } from '../../search/private-visibility.ts';
 import type { ReflexPrivacy } from '../../engine-sql/reflex-reads.ts';
 import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
@@ -195,6 +196,28 @@ export function storeFloorPolicy(member: string): StorePrivacyPolicy {
   });
   if (policy) return policy;
   refuseMember(member, 'the remote provenance floor for a caller whose labelled-only grant or owner read changes it');
+}
+
+/**
+ * The store policy for the page policy of a page's member, `readPolicyFragment('pp', identity, true, satisfied)`: what
+ * `readMemberPageWithdrawal` judges the provenance and entity pages by, for the member whose page a save lands on (not
+ * the caller's own record). The store serves it for a member that is not the brain owner and meets no folder rule: the
+ * owner read (`lineageAccessSql`, `ownerReadPolicyFragment`) and a satisfied folder rule are not modelled, so both refuse.
+ * The text is compared with the same fragment for a fresh record of the caller's remote policy (the one that picks the
+ * owner-only and concept-input forms), under the short member-access form when the caller renders it (`open`). An
+ * identity the fragment drops as invalid (`validIdentity`) refuses, as the store would apply it as written.
+ */
+export function storeMemberReadPolicy(member: string, q: { owner: boolean; identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
+  if (q.owner) refuseMember(member, 'the owner read of a member page (lineage access is not modelled)');
+  if (q.satisfied.length > 0) refuseMember(member, 'a member page whose reader meets a folder rule');
+  const text = normalizeConceptInputs(readPolicyFragment('p', q.identity, true, q.satisfied));
+  const open = currentCallerAccess().restricted === false;
+  const reference = renderForStoreCaller(open ? { restricted: false } : {}, () => readPolicyFragment('p', q.identity, true, []));
+  const named = open || q.identity.every(id => text.includes(`'${id}'`));
+  if (text === normalizeConceptInputs(reference) && named) {
+    return { ...pagePolicyFlags(reference), identity: [...q.identity], ...(open ? { open: true } : {}) };
+  }
+  refuseMember(member, 'a member page read whose policy is not the one the store models');
 }
 
 /** The process-setting flags of a rendered fact policy, and its owner-only form. */

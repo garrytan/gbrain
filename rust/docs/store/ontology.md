@@ -57,17 +57,26 @@ These do not show in the parity cases. Each is a documented edge, not a normalis
 
 ## Ontology re-key and repair statements (`src/core/engine-sql/ontology-repair.ts`)
 
-Six members for the statements `src/core/facts/ontology-rekey.ts` and `src/core/repair/ontology-facts.ts` ran as raw SQL:
-`listRekeyLosers`, `repointSupersededToKept`, `clearOntologySlots`, `deleteRekeyLosers`, `listOntologyFactCandidates` and
-`restoreOntologyFact`. (`listSourceIncarnations` is the existing facts-repair member.) None is served on Rust today: each is
-absent from `store-members/*`, so it refuses with `engine_capability_missing` naming the member (the capability in
-`members.ts` is `facts`). The caller sees the refusal; no member changes behaviour. What the store would need:
+Six members for the statements `src/core/facts/ontology-rekey.ts` and `src/core/repair/ontology-facts.ts` ran as raw SQL are
+served from `facts/ontology_repair.rs`: `listRekeyLosers`, `repointSupersededToKept`, `clearOntologySlots`,
+`deleteRekeyLosers`, `listOntologyFactCandidates` and `restoreOntologyFact`. (`listSourceIncarnations` is the facts-repair
+member, `facts/captured.rs`.) Every method takes one JSON object in `camelCase` and refuses an unknown key. The writes
+go through the fact writer, so the trust stamp, the purge guard and the unique indexes run.
 
-| Members | Reads or writes | The store would need |
-| --- | --- | --- |
-| `listRekeyLosers` | the rows a re-key move would duplicate, for six where shapes, three entity shapes and three sms shapes | the fact slot index to find a row already at the target slot; the member takes the shape as SQL text validated against closed lists, and a text outside them throws before any statement is sent, so the store would key on the shape |
-| `repointSupersededToKept`, `clearOntologySlots`, `deleteRekeyLosers` | repoint `superseded_by`, clear the slot columns, delete the losers | the three writes over the fact records and their slot index entries |
-| `listOntologyFactCandidates` | the fenced and retired rows with their class, and whether another row duplicates them | a scan of the fact records for fenced and expired rows with the duplicate check |
-| `restoreOntologyFact` | restore a row only as previewed (class and expiry unchanged), returning whether it applied and the `expired` flag evaluated after the update | a conditional update that compares the previewed state |
+| Method | Result |
+| --- | --- |
+| `listRekeyLosers` `{ sourceId, where, entity, sms, params }` | `[{ id, keep }]` by id: of each set of rows that would share `(entity, page, dimension, value_hash, valid_from)` once the move applies (the moving rows plus the rows already at the target key), every row but the survivor. The survivor is the one that is not a conversation slot, then the active one, then the one already at the target, then the lowest id. A row with no target entity, page, hash or `valid_from` is never ranked. |
+| `repointSupersededToKept` `{ ids, keeps }` | Rows that name `ids[i]` as `superseded_by` name `keeps[i]` instead, or none when the row is `keeps[i]`. A repeated id keeps its first survivor. Lists of different lengths pad with nulls as `unnest` does. Answers null. |
+| `clearOntologySlots` `{ ids }` | The named conversation slots (`cli:extract-conversation-facts`) lose `dimension`, `value`, `value_hash` and `dim_status` and keep their row. Any other row is left alone. |
+| `deleteRekeyLosers` `{ ids }` | Deletes the named facts that hold a `dimension`. An id below 1 names nothing. |
+| `listOntologyFactCandidates` `{ sourceIds }` | The ontology rows with an entity of these sources that are fence-held (`row_num`) or whose page is not their `source`, and are not conversation slots, by id: `{ id, source_id, entity_slug, dimension, source, page, row_num, expired_at, withdrawn, consolidated, duplicate }`. `expired_at` is UTC microsecond text. `duplicate` is another row of the entity with the key this one would have on its own provenance. |
+| `restoreOntologyFact` `{ id, sourceId, rowNum, page, expiredAt }` | Sets `row_num` null, the page to the row's `source` and `expired_at` null, only while the row, source, row number, page and expiry text are as given, it holds a slot, is not a conversation slot and duplicates nothing. Runs the withdrawal guard, so a withdrawal that landed since expires the row again. Answers `[{ id, expired }]`, none when nothing matched. |
 
-The conversation-slot and not-conversation-slot predicates are Postgres text only.
+A re-key move is one of the closed shapes `engine-sql/ontology-repair.ts` lists (`REKEY_WHERE_SHAPES`,
+`REKEY_ENTITY_SHAPES`, `REKEY_SMS_SHAPES`). The TypeScript member sends each by name (`where`: `entity_unfenced`,
+`unbacked_id`, `entity_off_page`, `entity`, `page`, `page_live`; `entity`: `param3`, `own`, `param2`; `sms`: `own`,
+`param3`, `param2`) and `params` as text or null, and refuses any other text with the SQL module's message. A bigint
+parameter that is not an integer refuses with `invalid_argument`.
+
+The conversation-slot and not-conversation-slot predicates are Postgres text only; the store reads them as the fact's
+`conversation_slot()`.

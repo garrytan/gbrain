@@ -531,7 +531,7 @@ src/core/persistence/managed-sync-orphans.ts	execute_raw	7
 src/core/persistence/manual-links.ts	execute_raw	8
 src/core/persistence/memory-prepare.ts	execute_raw	2
 src/core/persistence/memory-proposals.ts	execute_raw	9
-src/core/persistence/mirror-read-only.ts	execute_raw	3
+src/core/persistence/mirror-read-only.ts	execute_raw	2
 src/core/persistence/moved-pages.ts	execute_raw	7
 src/core/persistence/noop-kernel.ts	execute_raw	2
 src/core/persistence/onboarding.ts	execute_raw	1
@@ -738,7 +738,6 @@ src/core/schema-migrations/v275-rls-backfill-unguarded-tables.ts	execute_raw	4
 src/core/schema-migrations/v281-derived-state-maintainers-fail-closed.ts	execute_raw	1
 src/core/schema-migrations/v302-link-transitions-source.ts	execute_raw	5
 src/core/schema-missing-tables.ts	execute_raw	1
-src/core/schema-pack/detect.ts	execute_raw	3
 src/core/schema-pack/engine-resolution.ts	execute_raw	1
 src/core/schema-pack/entity-types.ts	execute_raw	1
 src/core/schema-pack/lint-rules.ts	execute_raw	3
@@ -854,7 +853,7 @@ src/core/verbs/entity-references.ts	execute_raw	1
 src/core/verbs/entity-source.ts	execute_raw	1
 src/core/verbs/entity-variants.ts	execute_raw	4
 src/core/write-gate-scan.ts	execute_raw	2
-src/core/write-through.ts	execute_raw	2
+src/core/write-through.ts	execute_raw	1
 src/eval/brainbench/adapters/codex.ts	execute_raw	1
 src/eval/brainbench/metrics/continuity.ts	execute_raw	1
 src/eval/brainbench/metrics/deletion.ts	execute_raw	2

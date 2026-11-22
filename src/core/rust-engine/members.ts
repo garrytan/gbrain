@@ -101,6 +101,9 @@ export const RUST_ENGINE_MEMBERS = {
   listPages: 'pages',
   findPages: 'pages',
   countPagesBy: 'pages',
+  pageTypeTotals: 'pages',
+  pagePrefixSamples: 'pages',
+  countPagesByTypeForSource: 'pages',
   resolveSlugs: 'pages',
   getAllSlugs: 'pages',
   listAllPageRefs: 'pages',
@@ -1083,20 +1086,24 @@ export const RUST_ENGINE_MEMBERS = {
   putContradictionCacheEntry: 'contradictions',
   sweepContradictionCache: 'contradictions',
 
-  // contradictions: the edge-contradictions phase, the scoped reader and the eval reads (engine-sql/contradictions-cycle.ts)
-  listEdgeContradictionCandidates: 'links',
-  listKnownEdgeProposals: 'links',
+  // contradictions: the edge-contradictions phase, the scoped reader and the eval reads (engine-sql/contradictions-cycle.ts).
+  // The edge-proposal ledger (link_edge_proposals), the phase's candidate scan and its closure check belong to the phase
+  // and are served (store-members/edge-proposals.ts), as is readLastContradictionsPromptVersion
+  // (store-members/contradictions.ts), so 'contradictions' is reported. listLinkContexts is a plain read of the links
+  // table and is served, so 'links' stays reported (test/rust-engine-capability-classes.test.ts).
+  listEdgeContradictionCandidates: 'contradictions',
+  listKnownEdgeProposals: 'contradictions',
   listLinkContexts: 'links',
-  recordEdgeProposal: 'links',
-  readEdgeProposal: 'links',
-  edgeClosureLanded: 'links',
-  readEdgeProposalEvidence: 'links',
-  readEdgeProposalHash: 'links',
-  markEdgeProposalStale: 'links',
-  setEdgeProposalStatus: 'links',
-  rejectOpenEdgeProposal: 'links',
-  markEdgeProposalUndone: 'links',
-  markRevertedEdgeProposals: 'links',
+  recordEdgeProposal: 'contradictions',
+  readEdgeProposal: 'contradictions',
+  edgeClosureLanded: 'contradictions',
+  readEdgeProposalEvidence: 'contradictions',
+  readEdgeProposalHash: 'contradictions',
+  markEdgeProposalStale: 'contradictions',
+  setEdgeProposalStatus: 'contradictions',
+  rejectOpenEdgeProposal: 'contradictions',
+  markEdgeProposalUndone: 'contradictions',
+  markRevertedEdgeProposals: 'contradictions',
   listLiveChunksByIds: 'chunks',
   listLiveTakesByIds: 'takes',
   readLastContradictionsPromptVersion: 'contradictions',
