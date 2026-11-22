@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1308/1315
+# covered: 1309/1317
 # lifecycle: 9/9
 # pages: 59/59
 # search: 7/7
@@ -64,6 +64,7 @@
 # salience_enrich: 6/6
 # trust: 29/29
 # open_loops: 4/4
+# content_setup: 1/2
 # entity_identities: 5/5
 # cli_reads_import: 15/15
 # wanted_links: 2/2
@@ -492,7 +493,7 @@ unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	7	no	yes	yes	serves
-readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
+readManagedModeRows	import_guards	yes	3	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	2	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	7	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	6	no	yes	yes	serves
@@ -1190,6 +1191,8 @@ upsertOpenLoop	open_loops	yes	12	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	7	no	yes	yes	serves
 listOpenLoops	open_loops	yes	4	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	2	no	yes	yes	serves
+readFreshContentDatabase	content_setup	no	0	no	-	-	-
+readContentSetupSource	content_setup	yes	1	no	yes	yes	serves
 linkEntityIdentityRow	entity_identities	yes	10	no	yes	yes	serves
 unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	8	no	yes	yes	serves

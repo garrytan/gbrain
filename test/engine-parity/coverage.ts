@@ -298,6 +298,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listTrustAllowRuleRows'],
   // open_loops: the loop upsert, list and close statements (engine-sql/open-loops.ts)
   open_loops: ['upsertOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'closeOpenLoop'],
+  // content_setup: the source reads of gbrain init's content setup (engine-sql/content-setup.ts)
+  content_setup: ['readFreshContentDatabase', 'readContentSetupSource'],
   // entity_identities: the identity link, unlink and group reads (engine-sql/entity-identities.ts)
   entity_identities: ['linkEntityIdentityRow', 'unlinkEntityIdentityRow', 'listEntityIdentityRows', 'readEntityIdentityIdsForPages', 'readCanonicalTwin'],
   cli_reads_import: ['listSourceRecords', 'readSourceIncarnation', 'readSyncDispatchRow', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
