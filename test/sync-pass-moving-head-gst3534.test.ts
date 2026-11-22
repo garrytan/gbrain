@@ -2,29 +2,22 @@
  * GST-3534: a managed pass while other writers keep committing.
  *
  * Before: every round of a pass read the level at the current HEAD, and a round at a commit its previous round had not read
- * re-read the source's whole `I⋈P` (pages joined with import records). A writer committing during every round kept each
- * round finding the new commit's paths, so the pass used its four rounds and ended `not_converged` every time, however
- * little was left, and each restart read the whole level again.
+ * re-read the source's whole `I⋈P` (pages joined with import records), as did every restart. A writer committing during
+ * every round made each round and each restart pay for the whole read.
  *
  * Protects:
- * - A pass whose last round finds only paths the commits since its previous round changed stamps that previous round's
- *   commit (`synced`, `last_commit` there, `settled_behind` naming the newer HEAD) instead of ending `not_converged`;
- *   the next plain sync imports the rest, whether the stamp is folded or drained (a round that also deletes). Rounds after the first patch the previous round's `I⋈P` (checked against a whole
- *   read by GBRAIN_SYNC_LEVEL_REUSE_VERIFY), and `sync status`'s `convergence.levels` counts the heads and reads.
+ * - Rounds after the first patch the previous round's `I⋈P` even when HEAD moved (checked against a whole read by
+ *   GBRAIN_SYNC_LEVEL_REUSE_VERIFY), `sync status`'s `convergence.levels` counts the heads and reads, and the plain sync
+ *   after a pass that ended `not_converged` checkpoints the newest commit.
  * - A pass that stops resumable (a slice's writer_yield) keeps its `I⋈P` for the next pass, whose first round patches it.
- * - The stamp-behind check refuses when one unsettled path is not a path the newer commits changed, when nothing is
- *   unsettled, and when Git cannot diff the two commits: the pass then ends `not_converged` as before.
  * Real PGLite (and Postgres when DATABASE_URL is set), real managed syncs and real Git.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
-import type { ShadowPath } from '../src/core/persistence/sync-pass.ts';
-import { onlyMovedSince } from '../src/core/persistence/sync-pass-run.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { __resetTreeReuseForTests } from '../src/core/persistence/sync-tree-reuse.ts';
@@ -41,26 +34,6 @@ const SEEDED = 120;
 type Round = { round: number; head: string; patched: boolean };
 
 afterEach(() => { installFaultHook(undefined); __resetTreeReuseForTests(); });
-
-describe('GST-3534: onlyMovedSince', () => {
-  test('true only when every unsettled path changed between the two commits', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'gbrain-gst3534-'));
-    try {
-      mkdirSync(join(root, 'notes')); git(root, 'init', '-q');
-      for (const name of ['a', 'b']) writeFileSync(join(root, `notes/${name}.md`), note(name, 'one'));
-      git(root, 'add', '-A'); git(root, 'commit', '-qm', 'one');
-      const from = git(root, 'rev-parse', 'HEAD');
-      writeFileSync(join(root, 'notes/a.md'), note('a', 'two')); writeFileSync(join(root, 'notes/c.md'), note('c', 'two'));
-      git(root, 'add', '-A'); git(root, 'commit', '-qm', 'two');
-      const to = git(root, 'rev-parse', 'HEAD');
-      const paths = (...names: string[]) => names.map(name => ({ path: `notes/${name}.md` }) as ShadowPath);
-      expect(await onlyMovedSince(root, from, to, '', paths('a', 'c'))).toBe(true);
-      expect(await onlyMovedSince(root, from, to, '', paths('a', 'b'))).toBe(false);
-      expect(await onlyMovedSince(root, from, to, '', [])).toBe(false);
-      expect(await onlyMovedSince(root, from, '0'.repeat(40), '', paths('a'))).toBe(false);
-    } finally { rmSync(root, { recursive: true, force: true }); }
-  });
-});
 
 for (const backend of testBackends()) describe(`[${backend}] GST-3534: a pass while HEAD keeps moving`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
@@ -82,9 +55,8 @@ for (const backend of testBackends()) describe(`[${backend}] GST-3534: a pass wh
   };
   const slugs = async (engine: BrainEngine) => (await engine.executeRaw<{ slug: string }>(
     "SELECT slug FROM pages WHERE source_id='default' AND deleted_at IS NULL AND slug LIKE 'notes/w%' ORDER BY slug")).map(row => row.slug);
-  const lastCommit = async (engine: BrainEngine) => (await engine.executeRaw<{ c: string }>("SELECT last_commit AS c FROM sources WHERE id='default'"))[0]!.c;
 
-  test('a writer committing during every round: the pass stamps the last commit it settled, not not_converged, and the next sync imports the rest', () => brain(async ({ engine, root }) => {
+  test('a writer committing during every round: each later round patches the previous read, and the next sync checkpoints the newest commit', () => brain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     write(root, 'w0');
     const seen: Round[] = [];
@@ -97,38 +69,17 @@ for (const backend of testBackends()) describe(`[${backend}] GST-3534: a pass wh
     installFaultHook(undefined);
     expect(seen.map(r => r.round)).toEqual([1, 2, 3, 4]);
     expect(new Set(seen.map(r => r.head)).size).toBe(4);
-    expect({ status: pass.status, reason: pass.reason ?? null, round: pass.pass?.round, toCommit: pass.toCommit })
-      .toEqual({ status: 'synced', reason: null, round: 4, toCommit: seen[2]!.head });
+    expect({ status: pass.status, reason: pass.reason ?? null }).toEqual({ status: 'partial', reason: 'not_converged' });
     // Rounds 2-4 read a commit their previous round had not, and patched its I⋈P (the verify mode compared each with a whole read).
     expect(seen.map(r => r.patched)).toEqual([seen[0]!.patched, true, true, true]);
-    expect(await lastCommit(engine)).toBe(seen[2]!.head);
-    // Rounds 1-3 imported w0-w2; w3, committed for round 4, is the next pass's.
-    expect(await slugs(engine)).toEqual(['notes/w0', 'notes/w1', 'notes/w2']);
-    const status = await readSyncStatus(engine, 'default');
-    const convergence = status.convergence as { outcome: string; levels: unknown; settled_behind: string | null; converged_target: string | null };
-    expect({ outcome: convergence.outcome, levels: convergence.levels, settled_behind: convergence.settled_behind, converged_target: convergence.converged_target })
-      .toEqual({ outcome: 'synced', levels: { heads: 4, whole: seen[0]!.patched ? 0 : 1, patched: seen[0]!.patched ? 4 : 3 }, settled_behind: seen[3]!.head, converged_target: seen[2]!.head });
+    const convergence = (await readSyncStatus(engine, 'default')).convergence as { outcome: string; levels: unknown };
+    expect({ outcome: convergence.outcome, levels: convergence.levels })
+      .toEqual({ outcome: 'resumable', levels: { heads: 4, whole: seen[0]!.patched ? 0 : 1, patched: seen[0]!.patched ? 4 : 3 } });
     const next = await performManagedSync(engine, OPTS);
-    expect({ status: next.status, toCommit: next.toCommit }).toEqual({ status: 'synced', toCommit: seen[3]!.head });
+    // Round 4 already imported w3, so the next plain sync finds nothing left and only checkpoints the newest commit.
+    expect({ status: next.status, toCommit: next.toCommit }).toEqual({ status: 'up_to_date', toCommit: seen[3]!.head });
     expect(await slugs(engine)).toEqual(['notes/w0', 'notes/w1', 'notes/w2', 'notes/w3']);
     expect((await performManagedSync(engine, OPTS)).status).toBe('up_to_date');
-  }), 300_000);
-
-  test('a writer that also deletes during every round: the stamp behind HEAD still records settled_behind', () => brain(async ({ engine, root }) => {
-    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
-    const rewrite = (i: number) => { rmSync(join(root, `notes/n${i}.md`)); write(root, `w${i}`); };
-    rewrite(0);
-    const seen: Round[] = [];
-    let writes = 0;
-    installFaultHook((point, detail) => {
-      if (point === 'sync:round_start' && (detail.round ?? 0) > 1) rewrite(++writes);
-      if (point === 'sync:level_read' && detail.level) seen.push(roundOf(detail));
-    });
-    const pass = await performManagedSync(engine, OPTS);
-    installFaultHook(undefined);
-    expect({ status: pass.status, toCommit: pass.toCommit, heads: new Set(seen.map(r => r.head)).size }).toEqual({ status: 'synced', toCommit: seen[2]!.head, heads: 4 });
-    const convergence = (await readSyncStatus(engine, 'default')).convergence as { settled_behind: string | null; converged_target: string | null };
-    expect({ settled_behind: convergence.settled_behind, converged_target: convergence.converged_target }).toEqual({ settled_behind: seen[3]!.head, converged_target: seen[2]!.head });
   }), 300_000);
 
   test('a pass that stops resumable keeps its I⋈P: the next pass\'s first round patches it', () => brain(async ({ engine, root }) => {
