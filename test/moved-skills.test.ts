@@ -250,6 +250,21 @@ describe('check-resolvable and doctor: a resolver row naming a moved skill', () 
     expect(about(checkResolvable(workspace(), { resolverHome: staleHome }), 'briefing').map(i => i.type)).toEqual(['missing_file']);
   });
 
+  test('a catalog entry whose SKILL.md is a directory, or a JSON entry with no SKILL.md path, does not make the row present', async () => {
+    const indexed = tmp('moved-indexed-');
+    write(indexed, { 'briefing/SKILL.md': '---\nname: briefing\ndescription: A morning briefing.\n---\n# briefing\n' });
+    const home = tmp('moved-home-');
+    await buildSkillIndex({ catalog: 'other-catalog', dirs: [indexed] }, { home });
+    rmSync(join(indexed, 'briefing', 'SKILL.md'));
+    mkdirSync(join(indexed, 'briefing', 'SKILL.md'));
+    expect(about(checkResolvable(workspace(), { resolverHome: home }), 'briefing').map(i => i.type)).toEqual(['missing_file']);
+    const jsonHome = tmp('moved-home-');
+    const listing = join(tmp('moved-json-'), 'skills.json');
+    writeFileSync(listing, JSON.stringify([{ id: 'briefing', name: 'briefing', description: 'A morning briefing.' }]));
+    await buildSkillIndex({ catalog: 'json-catalog', fromJson: listing }, { home: jsonHome });
+    expect(about(checkResolvable(workspace(), { resolverHome: jsonHome }), 'briefing').map(i => i.type)).toEqual(['missing_file']);
+  });
+
   test('a catalog receipt with no source does not stop the check', async () => {
     const home = tmp('moved-home-');
     const elsewhere = tmp('moved-elsewhere-');

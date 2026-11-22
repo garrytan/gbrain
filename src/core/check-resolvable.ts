@@ -309,8 +309,8 @@ export function extractDelegationTargets(content: string): DelegationRef[] {
 /**
  * Whether a moved skill (skillpack/moved.ts) that the skills dir lacks is
  * available from another catalog: a built skill-resolver catalog under the
- * resolver home that indexes a skill of that name whose SKILL.md is still
- * there, or a skill directory configured for a harness
+ * resolver home that indexes a skill of that name whose SKILL.md is still a
+ * file there, or a skill directory configured for a harness
  * (skills.resolver.per_harness.<harness>.dirs) that holds <name>/SKILL.md. A catalog built from gbrain's own bundled
  * skills (--bundled) never counts: it holds the copies the skills dir lacks.
  */
@@ -322,7 +322,7 @@ export function movedSkillAvailableElsewhere(name: string, home: string): boolea
       reader = IndexReader.open(catalogFile(home, catalog, 'index.bin'));
       for (let doc = 0; doc < reader.n; doc++) {
         const meta = reader.meta(doc);
-        if ((meta.name === name || meta.id === name) && (!meta.path || existsSync(meta.path))) return true;
+        if ((meta.name === name || meta.id === name) && meta.path && (() => { try { return statSync(meta.path).isFile(); } catch { return false; } })()) return true;
       }
     } catch { /* an unreadable or incompatible index provides nothing */ } finally {
       reader?.close();

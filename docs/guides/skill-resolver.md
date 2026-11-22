@@ -392,8 +392,8 @@ gbrain skills pin remove deploy-example --catalog openclaw-main
 
 A pin must name a skill in that catalog (`skill_resolver_pin_unknown`
 otherwise), its line is at most 100 characters with no `<` or `>`, a catalog
-holds at most 64 pins, and the rendered block is capped at 600 tokens (pins
-past it are listed as cut). A pinned skill is never also suggested, except on
+holds at most 64 pins, and the rendered block is capped at 600 tokens (a pin
+that doesn't fit is listed as cut, and the pins after it still render). A pinned skill is never also suggested, except on
 Claude Code and Codex, whose pins arrive at session start. Pins live
 in config.json under `skills.resolver.pins.<catalog>`, so turning the resolver
 off keeps them; an OpenClaw agent uses a change from its next turn, and Claude

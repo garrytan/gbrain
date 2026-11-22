@@ -14,6 +14,7 @@
  * which keeps the host's prompt cache warm.
  */
 import { estimateTokens, loadLine, quoted } from './block.ts';
+import { realpathSync } from 'node:fs';
 import { sep } from 'node:path';
 import { IndexReader } from './index-format.ts';
 import { catalogFile, validCatalogName } from './paths.ts';
@@ -77,12 +78,12 @@ export function renderPinnedBlock(pins: readonly Pin[], opts: { harness?: string
   const lines = valid.map((p) => `- id: ${quoted(p.name)}${p.line ? ` when: ${quoted(p.line)}` : ''}${opts.paths?.get(p.name) ? ` path: ${quoted(opts.paths.get(p.name)!)}` : ''}`);
   const pathed = opts.harness === 'claude-code' && valid.some((p) => opts.paths?.get(p.name));
   const head = `Always-available skills, chosen by this agent's operator, whether or not a skill list shows them. ${loadLine(opts.harness)}${pathed ? ' A skill listed with a path is outside Claude Code\'s skills folder: read the SKILL.md at its path instead.' : ''}`;
-  for (let kept = lines.length; kept > 0; kept--) {
-    const block = ['<pinned_skills>', head, ...lines.slice(0, kept), '</pinned_skills>'].join('\n');
-    const tokens = estimateTokens(block);
-    if (tokens <= cap) return { block, tokens, ids: valid.slice(0, kept).map((p) => p.name), unknown, cut: valid.slice(kept).map((p) => p.name) };
-  }
-  return { block: '', tokens: 0, ids: [], unknown, cut: valid.map((p) => p.name) };
+  const wrap = (body: string[]) => ['<pinned_skills>', head, ...body, '</pinned_skills>'].join('\n');
+  const kept: number[] = [];
+  lines.forEach((line, i) => { if (estimateTokens(wrap([...kept.map((k) => lines[k]), line])) <= cap) kept.push(i); });
+  if (!kept.length) return { block: '', tokens: 0, ids: [], unknown, cut: valid.map((p) => p.name) };
+  const block = wrap(kept.map((k) => lines[k]));
+  return { block, tokens: estimateTokens(block), ids: kept.map((k) => valid[k].name), unknown, cut: valid.filter((_, i) => !kept.includes(i)).map((p) => p.name) };
 }
 
 /**
@@ -94,7 +95,8 @@ export function sessionStartPinnedBlock(home: string, harness: 'claude-code' | '
   const catalog = `${harness}-user`;
   const paths = catalogSkillPaths(home, catalog);
   if (harness === 'claude-code') {
-    const native = claudeUserSkillsDir() + sep;
+    const dir = claudeUserSkillsDir();
+    const native = (() => { try { return realpathSync(dir); } catch { return dir; } })() + sep;
     const outside = paths ? new Map([...paths].filter(([, path]) => path && !path.startsWith(native))) : null;
     return renderPinnedBlock(pins, { harness, known: paths ? new Set(paths.keys()) : null, ...(outside?.size ? { paths: outside } : {}) });
   }

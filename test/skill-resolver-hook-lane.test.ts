@@ -24,7 +24,7 @@
  * mid-session stays suggestible, and an outdated install is told to rerun setup.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -34,6 +34,7 @@ import { HOOK_FIELD_CAP, readHookFields, readJsonFields } from '../src/core/skil
 import { historyShrank, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { MESSAGE_CAP_BYTES } from '../src/core/skills/resolver/resolve.ts';
 import { dailyLogFile, LANE_LOG } from '../src/core/skills/resolver/daily-log.ts';
+import { renderPinnedBlock } from '../src/core/skills/resolver/pinned-block.ts';
 
 setDefaultTimeout(60_000);
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -824,9 +825,29 @@ describe('skill-resolver lane: pins and session_start at SessionStart', () => {
     expect((await cli(b, ['skills', 'pin', 'add', 'triage-extra', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
     expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
     const context = startContext(await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE));
-    expect(context).toContain(`id: "triage-extra" path: ${JSON.stringify(join(extra, 'triage-extra', 'SKILL.md'))}`);
+    expect(context).toContain(`id: "triage-extra" path: ${JSON.stringify(join(realpathSync(extra), 'triage-extra', 'SKILL.md'))}`);
     expect(context).toContain('read the SKILL.md at its path instead');
     expect(context).toMatch(/id: "deploy-widget"\n/);
+  });
+
+  test('a Claude Code skills folder reached through a symlink still loads its pins by name', async () => {
+    const b = box();
+    const real = join(b.home, 'dotfiles', 'claude-skills');
+    seedSkills(real);
+    mkdirSync(join(b.home, '.claude'), { recursive: true });
+    symlinkSync(real, claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    const context = startContext(await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE));
+    expect(context).toMatch(/id: "deploy-widget"\n/);
+    expect(context).not.toContain('read the SKILL.md at its path instead');
+  });
+
+  test('a pin line too long for the cap is skipped and the pins after it still render', () => {
+    const r = renderPinnedBlock([{ name: 'long-path' }, { name: 'deploy-widget' }], { harness: 'codex', known: new Set(['long-path', 'deploy-widget']), paths: new Map([['long-path', `/${'a'.repeat(3000)}/SKILL.md`], ['deploy-widget', '/skills/deploy-widget/SKILL.md']]) });
+    expect(r.ids).toEqual(['deploy-widget']);
+    expect(r.cut).toEqual(['long-path']);
+    expect(r.block).toContain('id: "deploy-widget" path: "/skills/deploy-widget/SKILL.md"');
   });
 
   test('a pin added mid-session stays suggestible on the next turn, before any SessionStart shows it', async () => {
