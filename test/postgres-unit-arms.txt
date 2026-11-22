@@ -744,6 +744,7 @@ test/search-transcript-quote-tiers.test.ts
 test/search-transcript-quote.test.ts
 test/search-vector-scope-parity.test.ts
 test/search/page-rank-cut.test.ts
+test/search/rebuild-progress-steady-state.test.ts
 test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
 test/secret-store-backup.test.ts
