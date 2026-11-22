@@ -92,7 +92,7 @@ transaction	lifecycle	yes	147	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	131	yes	yes	yes	serves
+getPage	pages	yes	132	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
@@ -416,11 +416,11 @@ listLiveTakesByIds	contradictions	yes	1	no	yes	yes	refuses:takes
 readLastContradictionsPromptVersion	contradictions	yes	1	no	yes	yes	refuses:contradictions
 listEvalCandidateQueries	contradictions	yes	1	no	yes	yes	refuses:eval_capture
 insertFact	facts	yes	95	yes	yes	yes	serves
-insertFacts	facts	yes	137	no	yes	yes	serves
+insertFacts	facts	yes	138	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	61	no	yes	yes	serves
 listFactsByEntity	facts	yes	37	yes	yes	yes	serves
-listFactsSince	facts	yes	27	yes	yes	yes	serves
+listFactsSince	facts	yes	28	yes	yes	yes	serves
 listFactsKeyset	facts	yes	10	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
@@ -446,7 +446,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	36	no	yes	yes	serves
+createVersion	versions	yes	37	no	yes	yes	serves
 getVersions	versions	yes	17	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
@@ -1008,7 +1008,7 @@ listEntityHintPages	facts_conversation	yes	1	no	yes	yes	refuses:facts
 lockPageById	facts_conversation	yes	1	no	yes	yes	refuses:facts
 listClearedRelinkedFacts	facts_conversation	yes	1	no	yes	yes	refuses:facts
 countEmbeddedFactsAmong	facts_conversation	yes	1	no	yes	yes	refuses:facts
-listCorePageRows	trust_tier_reads	yes	9	no	yes	yes	serves
+listCorePageRows	trust_tier_reads	yes	10	no	yes	yes	serves
 listTrustScanRows	trust_tier_reads	yes	2	no	yes	yes	serves
 countUnscannedTrustRows	trust_tier_reads	yes	2	no	yes	yes	serves
 readBeliefHistoryRows	trust_tier_reads	yes	1	no	yes	yes	serves
@@ -1017,7 +1017,7 @@ listVersionTrustTiers	trust_tier_reads	yes	1	no	yes	yes	serves
 listVersionReasonWriters	trust_tier_reads	yes	1	no	yes	yes	serves
 listPageRefsByIds	trust_tier_reads	yes	1	no	yes	yes	serves
 listValidTimeIdentities	trust_tier_reads	yes	4	no	yes	yes	serves
-pickValidTimeEdition	trust_tier_reads	yes	9	no	yes	yes	serves
+pickValidTimeEdition	trust_tier_reads	yes	10	no	yes	yes	serves
 listAmendmentsNotApplied	trust_tier_reads	yes	3	no	yes	yes	serves
 readPageVersionEdition	trust_tier_reads	yes	3	no	yes	yes	serves
 readCursorEdition	trust_tier_reads	yes	1	no	yes	yes	serves
@@ -1174,7 +1174,7 @@ lockAccessPolicy	write_misc	yes	1	no	yes	yes	serves
 listAccessRules	write_misc	yes	1	no	yes	yes	serves
 readAccessPolicyRevisions	write_misc	yes	1	no	yes	yes	serves
 listAccessCoverage	write_misc	yes	1	no	yes	yes	serves
-applyAccessRuleChanges	write_misc	yes	3	no	yes	yes	serves
+applyAccessRuleChanges	write_misc	yes	4	no	yes	yes	serves
 restampAccessWindow	write_misc	yes	1	no	yes	yes	serves
 finishAccessRestamp	write_misc	yes	1	no	yes	yes	serves
 insertAccessPolicyRevision	write_misc	yes	2	no	yes	yes	serves

@@ -100,7 +100,7 @@ export interface StorePrivacyPolicy {
  * must carry, and the flags the store reads. Empty for a caller that is not labelled-only. A labelled-only caller with
  * lineage or an audience never matches a reference (none renders them), so it still refuses.
  */
-function labelledRecord(): { record: { labelledOnly?: true }; flags: { labelledOnly?: true; labelledMember?: string } } {
+export function labelledRecord(): { record: { labelledOnly?: true }; flags: { labelledOnly?: true; labelledMember?: string } } {
   const access = currentCallerAccess();
   if (!access.labelledOnly) return { record: {}, flags: {} };
   const lone = access.audienceIdentities.length ? undefined : access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
@@ -111,7 +111,7 @@ function labelledRecord(): { record: { labelledOnly?: true }; flags: { labelledO
  * The caller's folder access as a reference record carries it (satisfied rules, folder coverage) and the flags the store
  * reads; the record's coverage is then the whole pending test (`callerRecord`). Empty when the caller has neither.
  */
-function callerFolders(): { record: { satisfiedRuleIds?: string[]; folderCoverage?: CallerAccess['folderCoverage'] }; flags: Partial<StorePrivacyPolicy> } {
+export function callerFolders(): { record: { satisfiedRuleIds?: string[]; folderCoverage?: CallerAccess['folderCoverage'] }; flags: Partial<StorePrivacyPolicy> } {
   const access = currentCallerAccess();
   if (!access.satisfiedRuleIds.length && !access.folderCoverage.length) return { record: {}, flags: {} };
   const satisfiedRuleIds = [...access.satisfiedRuleIds];
@@ -335,9 +335,12 @@ export function judgeWidenedCaller<T>(judge: (readers: StoreCallerReaders) => T 
  * with hidePrivate on): the reference storePageTextPolicy serves a `callerReaders` family under, as `page_hidden` in
  * privacy.rs reads it.
  */
-export function callerReadersPagePolicy(readers: StoreCallerReaders): StorePrivacyPolicy {
-  const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p'));
-  return { ...pagePolicyFlags(canonical), ...readers };
+export function callerReadersPagePolicy(
+  readers: StoreCallerReaders,
+  extra: { record: Partial<CallerAccess>; flags: Partial<StorePrivacyPolicy> } = { record: {}, flags: {} },
+): StorePrivacyPolicy {
+  const canonical = renderForStoreCaller({ ...readers, ...extra.record, hidePrivate: true }, () => privatePagesFilterForCaller('p'));
+  return { ...pagePolicyFlags(canonical), ...readers, ...extra.flags };
 }
 
 /**

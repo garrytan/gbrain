@@ -57,6 +57,58 @@ async function as<T>(engine: BrainEngine, member: string, read: () => Promise<T>
 const corePages = async (engine: BrainEngine) =>
   (await engine.listCorePageRows({ excludePrivate: true, forCaller: true, limit: 50 })).map(r => r.slug).sort();
 
+/** A labelled-only caller captured before a rule moves, read after the move and before the restamp. */
+async function pendingRuleMove(engine: BrainEngine) {
+  await seed(engine);
+  await engine.setConfig('mcp.stdio_member', 'alice-example');
+  const captured = await remoteCallerAccess(engine, undefined, [], 'stdio');
+  await engine.applyAccessRuleChanges('default', {
+    remove: ['deals'], insert: [{ rule_id: 'deals', prefix: 'core/', readable_by: ['member:alice-example'], covers_derived: true }],
+    pending: ['core/'], revision: 2, actor: 'test',
+  });
+  // Only core/ is the case: the moved rule's old pages are not under a pending prefix, and no restamp has run.
+  const alice = (await withCallerAccess(captured, () => corePages(engine))).filter(slug => slug.startsWith('core/'));
+  expect(alice).toEqual(['core/for-alice', 'core/for-team']);
+  return alice;
+}
+
+/** A world-only fact list (what remote recall sends) for a labelled-only member and for a member without the grant or a folder rule. */
+async function worldOnlyFactList(engine: BrainEngine) {
+  await seed(engine);
+  await engine.putPage('memory/members/alice-example', core('Alice memory', { readable_by: ['member:alice-example'] }), { sourceId: 'default' });
+  const fact = (text: string, page: string, visibility: string, row: number) =>
+    ({ fact: text, entity_slug: 'people/carol-example', kind: 'fact', visibility, source: 'fence', row_num: row, source_markdown_slug: page });
+  await engine.insertFacts([
+    fact('Carol likes tea', 'core/open', 'world', 1),
+    fact('Carol joined in May', 'core/for-alice', 'private', 2),
+    fact('Carol is a mentor', 'memory/members/alice-example', 'private', 3),
+  ] as never, { source_id: 'default' });
+  const read = async () => (await engine.listFactsSince('default', new Date(Date.UTC(2000, 0, 1)), { activeOnly: true, limit: 50, visibility: ['world'], excludePrivate: true } as never)).map(f => f.fact).sort();
+  // dan names no folder rule, so the store serves his world-only list as the no-grant caller's.
+  await addMember(engine, 'dan-example');
+  const alice = await as(engine, 'alice-example', read);
+  const dan = await as(engine, 'dan-example', read);
+  expect({ alice, dan }).toEqual({ alice: ['Carol is a mentor'], dan: ['Carol likes tea'] });
+  return { alice, dan };
+}
+
+/** The valid-time pick (get_page as_of) for a labelled-only member over a page that names it and one that does not. */
+async function pageInForceOnADate(engine: BrainEngine) {
+  await seed(engine);
+  const write = (validFrom: string) => engine.putPage('core/for-alice', core('For alice', { readable_by: ['alice-example'], valid_from: validFrom }), { sourceId: 'default' });
+  await write('2026-01-01');
+  await engine.createVersion('core/for-alice', { sourceId: 'default' });
+  await write('2026-06-01');
+  const pick = async (slug: string, asOf: string) => {
+    const pageId = (await engine.getPage(slug, { sourceId: 'default' }))!.id;
+    const row = await engine.pickValidTimeEdition({ pageId, asOf, excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 });
+    return row && { visible: row.visible, chosen: row.chosen, valid_from: row.valid_from };
+  };
+  const alice = await as(engine, 'alice-example', async () => ({ named: await pick('core/for-alice', '2026-03-01'), open: await pick('core/open', '2026-03-01') }));
+  expect(alice.named).toMatchObject({ visible: true });
+  return alice;
+}
+
 describe('engine parity: the labelled-only page policy', () => {
   // The read-side leak, first: a labelled-only member never reads an unlabelled page or a page kept to someone else.
   parityTest('a labelled-only member reads only the pages that name it, by readers or by a folder rule', {
@@ -69,6 +121,12 @@ describe('engine parity: the labelled-only page policy', () => {
     expect(bob).toEqual(['core/for-bob', 'core/open', 'deals/q4']);
     return { alice, bob };
   });
+
+  // A caller record captured before a rule move keeps reading by the stamps its pages carry: the moved rule has not
+  // restamped core/open yet (its folder_rule_ids is still empty), so the page is still unlabelled for the caller.
+  parityTest('a pending rule move does not label an unstamped page for a labelled-only caller captured before it', {
+    methods: ['listCorePageRows', 'applyAccessRuleChanges'],
+  }, pendingRuleMove);
 
   parityTest('a labelled-only member reads the facts of its own member page only', {
     methods: ['insertFacts', 'listFactsByEntity'],
@@ -89,6 +147,16 @@ describe('engine parity: the labelled-only page policy', () => {
     expect({ alice, bob }).toEqual({ alice: ['Carol is a mentor'], bob: ['Carol likes tea'] });
     return { alice, bob };
   });
+
+  // The two reads that put a snapshot or a visibility list in front of the store's labelled-only test: the Rust adapter
+  // compares each with a reference text, so a reference that omits the labelled-only record refuses a caller PGLite serves.
+  parityTest('a world-only fact list admits a labelled-only member\'s own member-page facts and no other', {
+    methods: ['insertFacts', 'listFactsSince'],
+  }, worldOnlyFactList);
+
+  parityTest('a labelled-only member reads the page in force on a date, over the page and its versions', {
+    methods: ['createVersion', 'getPage', 'pickValidTimeEdition'],
+  }, pageInForceOnADate);
 });
 
 describe('the Rust arm serves the labelled-only page policy', () => {
@@ -101,6 +169,20 @@ describe('the Rust arm serves the labelled-only page policy', () => {
     await seed(rust.engine);
     expect(await as(rust.engine, 'alice-example', () => corePages(rust.engine))).toEqual(['core/for-alice', 'core/for-team', 'deals/q4']);
   });
+
+  // The same three scenarios as parity cases, run on the Rust arm alone so a typed refusal cannot pass for a read.
+  for (const [name, scenario] of [
+    ['a rule move that has not restamped a page does not label it for a caller captured before', pendingRuleMove],
+    ['a world-only fact list reads the labelled-only member\'s own member-page facts', worldOnlyFactList],
+    ['the valid-time pick reads a labelled-only member\'s page', pageInForceOnADate],
+  ] as const) {
+    test(`${name} on Rust`, async () => {
+      const rust = arms().find((arm) => arm.backend === 'rust');
+      if (!rust) return;
+      await resetArm(rust);
+      await scenario(rust.engine);
+    });
+  }
 });
 
 describe('the Rust arm refuses what it does not serve yet (rows 32e-2 and 32e-3), and shows nothing', () => {

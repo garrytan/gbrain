@@ -12,14 +12,15 @@
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
  *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is neither the no-caller one nor the
  *    canonical one for its reader identity and private-readable sources (the remote floor: for no readers), such as
- *    a lineage read or a labelled-only, owner or audience caller;
+ *    a lineage read or an owner or audience caller (a labelled-only caller is served, row 32e);
  *  - the trust scan over `takes` and `timeline_entries`, which the store does not stamp yet;
  *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`, always and before any store call: the store keeps no
  *    belief ledger (every `belief_events` and `belief_page_lifetimes` write goes through `executeRaw`), so a read could
  *    only answer an empty list where PGLite has events (TODOS.md `rust-belief-ledger`);
  *  - `listValidTimeIdentities` under `excludePrivate`, and `pickValidTimeEdition` always, for a caller whose page or
  *    snapshot policy is neither the no-caller one nor the canonical one for its reader identity and private-readable
- *    sources (a labelled-only, owner, audience or lineage caller; the pick reports every row's visibility);
+ *    sources, or the labelled-only one for a labelled-only caller (an owner, audience or lineage caller refuses; the pick
+ *    reports every row's visibility);
  *  - `pickValidTimeEdition` on a date that is not `YYYY-MM-DD`, rather than guess at Postgres's text order. The store
  *    prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same retained history, each version's
  *    change reason and `successor_pruned` mark, and the page's `version_history_gap_at`;
@@ -29,7 +30,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import {
-  callerReadersAllowedSql, privacyForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment,
+  callerReadersAllowedSql, currentCallerAccess, privacyForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateSnapshotFilterFragment,
   remoteReadFloorSql, withoutCallerAccess,
 } from '../../search/private-visibility.ts';
 import { validDate } from '../../valid-time.ts';
@@ -37,7 +38,7 @@ import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { judgeWidenedCaller, renderForStoreCaller, storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
+import { judgeWidenedCaller, labelledRecord, renderForStoreCaller, storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -141,7 +142,10 @@ export const pickValidTimeEdition: Member<'pickValidTimeEdition'> = async (brain
   const snapshotServed = judgeWidenedCaller(() => {
     const text = snapshotVisibleSql();
     if (text === withoutCallerAccess(snapshotVisibleSql)) return true;
-    return text === renderForStoreCaller({ ...readers, hidePrivate: true }, snapshotVisibleSql) || undefined;
+    // A labelled-only caller's snapshot text names its satisfied rules (labelledOnlySql over the live page): row 32e.
+    const labelled = labelledRecord().record.labelledOnly
+      ? { labelledOnly: true, satisfiedRuleIds: [...currentCallerAccess().satisfiedRuleIds] } : {};
+    return text === renderForStoreCaller({ ...readers, ...labelled, hidePrivate: true }, snapshotVisibleSql) || undefined;
   });
   if (!snapshotServed) refuseMember(member, 'a caller whose snapshot policy is not the canonical one for its readers');
   const got = await storeCall({ member }, () => brain.pickValidTimeEdition({

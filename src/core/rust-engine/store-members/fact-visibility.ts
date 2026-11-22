@@ -15,7 +15,7 @@
 import { callerMember, factVisibilitySql } from '../../access/member-facts.ts';
 import { currentCallerAccess, privateFactSources } from '../../search/private-visibility.ts';
 import { refuseMember } from './common.ts';
-import { callerReadersPagePolicy, judgeWidenedCaller, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
+import { callerFolders, callerReadersPagePolicy, judgeWidenedCaller, labelledRecord, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
 
 /** What the store reads to widen a visibility list without 'private' (`VisibilityWidening` in widen.rs). */
 export interface StoreVisibilityWidening {
@@ -44,13 +44,18 @@ export function storeVisibility(member: string, visibility: readonly string[] | 
   // A caller on a brain that never named readers renders the member page's policy in the short form, which hides
   // every page that names readers (storePrivacyPolicy); its member page policy carries `open` to match.
   const openFlag = currentCallerAccess().restricted === false ? { open: true } : {};
+  // A labelled-only caller's member page is judged under its labelled-only and folder record too (row 32e); any other
+  // caller keeps the readers-only reference, so a folder-rule caller still refuses here.
+  const labelled = labelledRecord();
+  const folders = labelled.record.labelledOnly ? callerFolders() : { record: {}, flags: {} };
+  const extra = { record: { ...folders.record, ...labelled.record }, flags: { ...folders.flags, ...labelled.flags } };
   const widen = judgeWidenedCaller<StoreVisibilityWidening>((readers) => {
     const text = factVisibilitySql('facts', visibility);
-    const fresh = { ...readers, privateFactSources: [...privateFactSources()], hidePrivate: true };
+    const fresh = { ...readers, ...extra.record, privateFactSources: [...privateFactSources()], hidePrivate: true };
     const canonical = renderForStoreCaller(fresh, () => ({ sql: factVisibilitySql('facts', visibility), member: callerMember() }));
     if (text !== canonical.sql) return undefined;
     return {
-      ...(canonical.member ? { member: canonical.member, memberPagePolicy: { ...callerReadersPagePolicy(readers), ...openFlag } } : {}),
+      ...(canonical.member ? { member: canonical.member, memberPagePolicy: { ...callerReadersPagePolicy(readers, extra), ...openFlag } } : {}),
       privateFactSources: fresh.privateFactSources,
     };
   });

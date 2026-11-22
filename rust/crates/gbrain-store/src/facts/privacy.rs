@@ -395,7 +395,19 @@ fn labelled_for(read: &dyn KvRead, page: &PageRecord, policy: &PrivacyPolicy) ->
     if named {
         return Ok(true);
     }
-    Ok(stamped_rules(read, page)?.iter().any(|r| {
+    rule_labelled(read, page, policy)
+}
+
+/// A stamped rule of `page` the caller satisfies (`folder_rule_ids && satisfied`). The rules are the
+/// ones the page's last stamp kept while the caller's record holds a pending prefix over it (SQL reads the
+/// persisted `folder_rule_ids`, as `readers_allowed` does), else the live rules covering it.
+fn rule_labelled(read: &dyn KvRead, page: &PageRecord, policy: &PrivacyPolicy) -> Result<bool> {
+    let rules = if policy.caller_record && pending_covers(read, &page.source_id, &page.slug)? {
+        kept_rules(read, &page.source_id, page.id)?
+    } else {
+        stamped_rules(read, page)?
+    };
+    Ok(rules.iter().any(|r| {
         policy
             .satisfied_rule_ids
             .iter()
@@ -414,12 +426,7 @@ pub(crate) fn page_rule_labelled(
     if !policy.labelled_only {
         return Ok(false);
     }
-    Ok(stamped_rules(read, page)?.iter().any(|r| {
-        policy
-            .satisfied_rule_ids
-            .iter()
-            .any(|id| id.split_once(':') == Some((r.source_id.as_str(), r.rule_id.as_str())))
-    }))
+    rule_labelled(read, page, policy)
 }
 
 /// The labelled-only snapshot conjunct (`callerReadersAllowedSql(pv, 'snapshot')`): the version's own
@@ -1398,6 +1405,40 @@ mod tests {
             &policy,
             false
         ));
+    }
+
+    #[test]
+    fn a_rule_moved_over_an_unstamped_page_does_not_label_it_for_a_record_captured_before() {
+        let store = crate::test_support::store();
+        let page = put(&store, "notes/open");
+        store.put_access_policy_state("default").unwrap();
+        // The rule the caller satisfies now covers notes/, which holds a restamp the page has not had yet: its
+        // last stamp kept no rule, so SQL (`folder_rule_ids && satisfied`) does not label it.
+        store
+            .put_access_rule(rule("deals", "notes/", true))
+            .unwrap();
+        store
+            .put_access_pending_coverage(crate::access_rules::PendingCoverageRecord {
+                source_id: "default".into(),
+                prefix: "notes/".into(),
+                reason: "pending".into(),
+                revision: None,
+                detail: None,
+            })
+            .unwrap();
+        let read = store.read().unwrap();
+        let record = PrivacyPolicy {
+            identity: vec!["member:alice-example".into()],
+            satisfied_rule_ids: vec!["default:deals".into()],
+            labelled_only: true,
+            caller_record: true,
+            ..PrivacyPolicy::default()
+        };
+        assert!(
+            page_hidden(&*read, &page, &record).unwrap(),
+            "a page the last stamp left unlabelled stays hidden"
+        );
+        assert!(!page_rule_labelled(&*read, &page, &record).unwrap());
     }
 
     #[test]
