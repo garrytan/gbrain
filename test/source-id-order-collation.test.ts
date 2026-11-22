@@ -24,6 +24,8 @@ const SRC = join(REPO_ROOT, 'src');
 
 /** `file|ORDER BY clause start` → why the sort may stay in the server collation. */
 const EXEMPT: Record<string, string> = {
+  'src/core/engine-sql/synopsis-tier.ts|ORDER BY id':
+    'sorts the union output column id, which the first branch already selects as `id COLLATE "C"`.',
   'src/core/engine-sql/sources.ts|ORDER BY id LIMIT 2':
     'readSoleSourceId only checks that exactly one row exists; the order picks nothing (ruling C keeps its SQL).',
   'src/commands/sources-git-gap.ts|ORDER BY 1':
@@ -32,13 +34,13 @@ const EXEMPT: Record<string, string> = {
     'sorts minion_jobs ids; sources is only a subquery.',
   'src/core/persistence/sync-movement.ts|ORDER BY started_at, id LIMIT 1':
     'sorts minion_jobs ids; sources is only a subquery.',
-  'src/core/belief/state.ts|ORDER BY 1) = ARRAY(SELECT unnest($6::te':
+  'src/core/engine-sql/belief-state.ts|ORDER BY 1) = ARRAY(SELECT unnest(${[...':
     'sorts page keys on both sides of an equality; the order is never output.',
-  'src/core/belief/state.ts|ORDER BY 1) AS ok), known_fp AS (SELECT':
+  'src/core/engine-sql/belief-state.ts|ORDER BY 1) AS ok), known_fp AS (SELECT':
     'sorts page keys on both sides of an equality; the order is never output.',
-  'src/core/persistence/admin-intent.ts|ORDER BY id) FROM persistence_worktrees)':
+  'src/core/engine-sql/writer-admin.ts|ORDER BY id) FROM persistence_worktrees)':
     'sorts worktree ids, not source ids.',
-  'src/core/repair/stale-atoms.ts|ORDER BY CASE class WHEN \'origin_gone\' T':
+  'src/core/engine-sql/stale-atom-reads.ts|ORDER BY CASE class WHEN \'origin_gone\' T':
     'sorts atom ids, not source ids.',
 };
 
