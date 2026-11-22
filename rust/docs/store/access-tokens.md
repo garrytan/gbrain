@@ -21,8 +21,8 @@ brain.
 | `brain.readLiveAccessToken(name)` | `{ member_id, token_hash, source_grant, source_id, federated_read, permissions }` of the live token with this name (the oldest when several), or null; the setup compares the key file's hash to it |
 | `brain.recordTokenSetupReads(name, reads)` | null. Sets `setup_reads` in the `permissions` object of each live token with this name; a token whose `permissions` is not an object is left alone |
 | `brain.listKeysReadingSource(sourceId)` | `[{ name, member_id, federated_read }]` of the live member-bound `federated` keys whose write source is another source and whose read list holds `sourceId`, by name in byte order |
-| `brain.readActiveAccessTokenByHash(hash)` | the whole row of the live token with this hash, or null: the bearer checks' read (`readActiveAccessTokenByHash`; `gbrain serve --http` sign-in) |
-| `brain.touchAccessTokenLastUsed(id, unified)` | null. Stamps `last_used_at` with the store clock once per token per 60 seconds; with `unified`, only a row whose `source_grant` is set |
+| `brain.readActiveAccessTokenByHash(hash)` | the whole row of the live token with this hash, or null: the bearer checks' read (`readActiveAccessTokenByHash`; `gbrain serve --http` sign-in). A record that cannot be read is skipped; one that could be the token asked for fails the read |
+| `brain.touchAccessTokenLastUsed(id, unified)` | null. Stamps `last_used_at` with the store clock once per token per 60 seconds; with `unified`, only a row whose `source_grant` is set. It reads first and opens no write transaction when nothing is due |
 | `brain.revokeAccessToken(id)` | the name of the live token with this id it revoked, or null (`revokeAccessTokenById`) |
 
 ## Callers
@@ -61,6 +61,13 @@ the table.
 Differences from PGLite and PostgreSQL:
 
 - `private_pages` and `private_facts` are kept at `'none'`, which no store member changes yet.
+- `readActiveAccessTokenByHash` skips a record it cannot read, so one corrupt record does not refuse every other
+  legacy-token sign-in. A record that could be the token asked for fails the read closed: its `token_hash` is the hash,
+  or (when it is not JSON) its bytes hold the hash. Every other reader of the table (`listAccessTokens` and the rest)
+  stays strict and refuses on an unreadable record.
+- `touchAccessTokenLastUsed` reads the record first and returns without a write transaction for a missing id, a
+  `unified` touch of a row with no `source_grant`, and a `last_used_at` within 60 seconds; otherwise it opens the write
+  and re-checks inside it, so two racing requests stamp once. SQL runs the statement and the filter in one step.
 - The store keeps no OAuth tokens (row 32d-2), so the bearer check's OAuth read (`readOauthAccessTokenRows`) finds none
   here and the check reads the legacy token.
 - Not kept: the `trust_generation_update` trigger and the secondary indexes.

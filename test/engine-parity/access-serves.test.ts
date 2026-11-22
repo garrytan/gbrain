@@ -16,7 +16,7 @@
  *  - Seam: none. The run goes through labelSeveral with GBRAIN_HOME in a temp dir; pages through putPage.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSource, parityArms, resetArm } from './harness.ts';
@@ -26,7 +26,8 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { keysStillReading, labelSeveral, type ServesReceipt } from '../../src/commands/access-serves.ts';
 import { remoteCallerAccess } from '../../src/core/access/caller.ts';
-import { addMember } from '../../src/core/access/members.ts';
+import { addMember, listMembers } from '../../src/core/access/members.ts';
+import { currentFolderRules } from '../../src/commands/access-rules.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest, arms } = parityArms(testBackends());
@@ -162,5 +163,33 @@ describe('the Rust arm serves gbrain access serves several', () => {
     expect(receipt.completed).toContain('keys');
     expect(await readAs(rust.engine, 'bob-example')).toEqual(['notes/open', 'people/bob-example/notes']);
     expect((await rust.engine.listAccessTokens()).map(r => r.name).sort()).toEqual(['member-alice-example', 'member-bob-example']);
+  });
+});
+
+describe('gbrain access serves several, a kept key that needs more reads', () => {
+  // A parity case counts a typed refusal as a pass, so this reads every arm's own engine. The second run adds a member,
+  // a rule and a key AND widens the two kept keys (the company source now exists). A SQL brain does all of it. A Rust
+  // brain cannot widen a kept key yet (row 32k), so it must refuse before it writes any of the rest.
+  const stored = async (engine: BrainEngine, dir: string) => JSON.stringify({
+    members: await listMembers(engine, { includeRemoved: true }), rules: await currentFolderRules(engine, 'default'),
+    tokens: await engine.listAccessTokens(), sources: await engine.listAllSources({ includeArchived: true }),
+    serves: await engine.getConfig('access.serves'), files: readdirSync(dir, { recursive: true }).sort(),
+  });
+  test('Rust refuses before any write and a SQL brain finishes', async () => {
+    for (const arm of arms()) {
+      await resetArm(arm);
+      await seed(arm.engine);
+      const dir = home();
+      await run(arm.engine, true, dir);
+      await createSource(arm.engine, arm.backend, 'company');
+      const before = await stored(arm.engine, dir);
+      const outcome = await withEnv({ GBRAIN_HOME: dir, GBRAIN_SETUP_ABORT_AFTER: undefined }, () =>
+        labelSeveral(arm.engine, ['alice-example', 'bob-example', 'carol-example'], 'default', true, true))
+        .then(r => `ran: ${r.completed.join(',')}${r.error ? `, stopped: ${r.error.code}` : ''}`, (e: { code?: string }) => e.code);
+      const changed = (await stored(arm.engine, dir)) !== before;
+      expect({ backend: arm.backend, outcome, changed }).toEqual(arm.backend === 'rust'
+        ? { backend: 'rust', outcome: 'engine_capability_missing', changed: false }
+        : { backend: arm.backend, outcome: 'ran: members,rules,keys,config', changed: true });
+    }
   });
 });

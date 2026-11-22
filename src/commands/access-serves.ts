@@ -31,6 +31,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { configDir } from '../core/config.ts';
 import { hashToken } from '../core/utils.ts';
 import { opError } from '../core/ops/contract.ts';
+import { capabilityMissing } from '../core/rust-engine/errors.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { normalizeRule, ruleIdForPrefix, type FolderRule } from '../core/access/folder-rules.ts';
@@ -293,11 +294,13 @@ function abortAfter(step: string): void {
   if (process.env.GBRAIN_SETUP_ABORT_AFTER === step) throw new Error(`GBRAIN_SETUP_ABORT_AFTER=${step}: stopped on purpose after ${step}.`);
 }
 
-/** Plans, and with `apply` writes, the several-people labelling; a failure is reported in the receipt, never thrown. */
+/** Plans, and with `apply` writes, the several-people labelling; a failure is reported in the receipt, never thrown (except the refusal before any write below). */
 export async function labelSeveral(engine: BrainEngine, roster: string[], sourceId: string, apply: boolean, json: boolean, opts: { labelledOnly?: boolean; owner?: string } = {}): Promise<ServesReceipt> {
   const labelledOnly = opts.labelledOnly === true;
   const receipt = await plan(engine, roster, sourceId, labelledOnly, opts.owner);
   if (!apply || blocked(receipt)) return receipt;
+  // Widening a kept key runs raw SQL (legacy-token.ts, row 32k), which a Rust brain refuses: refuse before the first write.
+  if (engine.capabilities?.has('raw_sql') === false && receipt.keys.some(k => k.action === 'keep' && k.adds?.length)) throw capabilityMissing('raw_sql', 'gbrain access serves several --yes with a kept key that needs more reads (row 32k)');
   receipt.applied = true;
   try {
     for (const m of receipt.members.filter(x => x.action === 'add')) await addMember(engine, m.id, { beforeWrite: () => rescopeArchiveBefore(engine, m.id, 'add') });

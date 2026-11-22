@@ -680,7 +680,7 @@ readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
 readOauthClient	minion_queue	yes	8	no	yes	yes	serves
 listOauthClients	minion_queue	yes	2	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
-insertAccessToken	minion_queue	yes	12	no	yes	yes	serves
+insertAccessToken	minion_queue	yes	13	no	yes	yes	serves
 findActiveAccessTokens	minion_queue	yes	2	no	yes	yes	serves
 setAccessTokenMinTrust	minion_queue	yes	2	no	yes	yes	serves
 insertLeasePressure	minion_queue	yes	2	no	yes	yes	serves
@@ -1202,8 +1202,8 @@ countCompanyPages	write_misc	yes	1	no	yes	yes	serves
 revokeAccessTokenById	write_misc	yes	2	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
 readOauthAccessTokenRows	write_misc	yes	1	no	yes	yes	serves
-readActiveAccessTokenByHash	write_misc	yes	1	no	yes	yes	serves
-touchAccessTokenLastUsed	write_misc	yes	1	no	yes	yes	serves
+readActiveAccessTokenByHash	write_misc	yes	2	no	yes	yes	serves
+touchAccessTokenLastUsed	write_misc	yes	2	no	yes	yes	serves
 readFolderAccess	write_misc	yes	5	no	yes	yes	serves
 readWriteAttributionNames	write_attribution	yes	4	no	yes	yes	serves
 readPageRevisionAttribution	write_attribution	yes	2	no	yes	yes	serves

@@ -107,6 +107,23 @@ describe('engine parity: the bearer members', () => {
     });
     return { provider, transport, unknown, stamped, oauth };
   });
+
+  // A token still on the legacy shape (no source_grant) is left to its first-read conversion by the unified stamp every
+  // sign-in uses; only the non-unified statement stamps it.
+  parityTest('the unified last-use stamp never stamps a legacy token that has no source_grant', {
+    methods: ['insertAccessToken', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed'],
+  }, async (engine) => {
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+    const { id } = await engine.insertAccessToken({ name: 'old', token_hash: 'hash-old', scopes: ['read'], permissions: {}, source_grant: null,
+      source_id: null, federated_read: null, allowed_operations: null, takes_holders: null });
+    const used = async () => (await engine.readActiveAccessTokenByHash('hash-old', 'provider'))?.last_used_at != null;
+    await engine.touchAccessTokenLastUsed(id, true);
+    const unified = await used();
+    await engine.touchAccessTokenLastUsed(id, false);
+    const plain = await used();
+    expect({ unified, plain }).toEqual({ unified: false, plain: true });
+    return { unified, plain };
+  });
 });
 
 describe('engine parity: legacy-token sign-in over the serve --http legacy transport', () => {
