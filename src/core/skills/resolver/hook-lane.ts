@@ -38,7 +38,10 @@
  * with serve down and with no brain, and it always fails open: every path
  * exits 0, and a path that cannot deliver a block prints nothing.
  *
- * Deadline (50 ms from lane entry): the main thread does only async I/O (the
+ * Deadline (LANE_DEADLINE_MS for the turn, from the moment the worker has
+ * loaded, after at most LANE_WORKER_START_MS from lane entry for that load,
+ * which on a cold machine alone can take most of the turn's 50 ms; the
+ * load time is logged as worker_ms): the main thread does only async I/O (the
  * config, stdin, the carriers, the commit) and every synchronous step (index
  * and session reads, ranking, rendering) runs in a worker thread
  * (hook-worker.ts) that checks the deadline inside each stage. The worker is
@@ -86,7 +89,7 @@
  *
  * Lane log: <home>/skill-index/logs/lane-<UTC day>.jsonl (daily-log.ts, kept
  * 14 days), one line per turn that got past the on/off check (outcome, error
- * code, duration, catalogs; never turn text); doctor's skill_resolver check
+ * code, duration, worker_ms, catalogs; never turn text); doctor's skill_resolver check
  * reads the last day of it.
  */
 import { createHash } from 'node:crypto';
@@ -106,12 +109,13 @@ import { assertCatalogName, catalogFile, CLAUDE_PLUGINS_CATALOG, logsDir, resolv
 import { type CommitHold, commitSessionAsync, historyShrank, LANE_GC_FILES, sessionGcSettled, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
 import type { LaneWorkerPins, LaneWorkerTurn } from './hook-worker.ts';
-import { laneWorkerFailed, startLaneWorker } from './lane-worker.ts';
+import { laneWorkerFailed, laneWorkerReady, startLaneWorker } from './lane-worker.ts';
 import { releaseLease } from './lock.ts';
 
 export { WORKER_SRC_PATH } from './lane-worker.ts';
 
 export const LANE_DEADLINE_MS = 50;
+export const LANE_WORKER_START_MS = 250;
 export const LANE_STDIN_CAP_BYTES = 256 * 1024;
 export const LANE_PAYLOAD_CHARS_DEFAULT = 4000;
 export const LANE_PAYLOAD_CHARS_MIN = 500;
@@ -198,7 +202,7 @@ export async function readLaneSettings(home: string, env: NodeJS.ProcessEnv): Pr
   };
 }
 
-export interface LaneLogLine { at: string; harness: string; event: string; outcome: string; code?: string; ms: number; catalogs?: string[]; dropped_chars?: number }
+export interface LaneLogLine { at: string; harness: string; event: string; outcome: string; code?: string; ms: number; worker_ms?: number; catalogs?: string[]; dropped_chars?: number }
 
 async function appendLaneLog(home: string, line: LaneLogLine): Promise<void> {
   try {
@@ -299,16 +303,31 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   let home: string;
   try { home = resolverHome(env); } catch { return 0; }
   const deadlineMs = io.deadlineMs ?? (Number(env.GBRAIN_TEST_SKILL_LANE_DEADLINE_MS) || LANE_DEADLINE_MS);
+  const startMs = Number(env.GBRAIN_TEST_SKILL_LANE_START_MS) || LANE_WORKER_START_MS;
   const elapsed = () => performance.now() - t0;
   const ctl: LaneCtl = { expired: false, worker: null, logged: false, commit: {} };
   ctl.worker = startLaneWorker(env);
-  const line = (t: Turn): LaneLogLine => ({ at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: Math.round(elapsed() * 10) / 10, ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}) });
+  const turnLeft = () => deadlineMs - (ctl.turnStart === undefined ? 0 : elapsed() - ctl.turnStart);
+  const tenths = (ms: number) => Math.round(ms * 10) / 10;
+  const line = (t: Turn): LaneLogLine => ({ at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: tenths(elapsed()), ...(ctl.workerMs !== undefined ? { worker_ms: tenths(ctl.workerMs) } : {}), ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}) });
   const log = (t: Turn) => appendLaneLog(home, line(t));
 
   const exit = io.exit ?? ((c: number) => process.exit(c));
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<'deadline'>((resolve) => { timer = setTimeout(() => resolve('deadline'), deadlineMs); });
-  const work = laneTurn(event, harness, home, env, io, ctl, elapsed, deadlineMs).catch((): Turn => ({ outcome: 'error', code: 'skill_resolver_internal' }));
+  let fired = false;
+  const deadline = new Promise<'deadline'>((resolve) => {
+    const arm = (ms: number) => { clearTimeout(timer); timer = setTimeout(() => { fired = true; resolve('deadline'); }, ms); };
+    if (!ctl.worker) { ctl.turnStart = 0; arm(deadlineMs); return; }
+    arm(startMs);
+    void laneWorkerReady().then((loaded) => {
+      if (fired || elapsed() >= startMs) return;
+      ctl.turnStart = elapsed();
+      if (loaded) ctl.workerMs = ctl.turnStart;
+      arm(deadlineMs);
+    });
+    if (env.GBRAIN_TEST_SKILL_LANE_STALL === 'start-race') { const end = performance.now() + startMs + 300; while (performance.now() < end) { /* forced main-thread stall past the start bound */ } }
+  });
+  const work = laneTurn(event, harness, home, env, io, ctl, turnLeft).catch((): Turn => ({ outcome: 'error', code: 'skill_resolver_internal' }));
   const result = await Promise.race([work, deadline]);
   if (result === 'deadline') {
     ctl.expired = true;
@@ -331,9 +350,10 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   return 0;
 }
 
-interface LaneCtl { expired: boolean; worker: Worker | null; logged: boolean; commit: CommitHold }
+/** turnStart: ms after lane entry when the turn deadline started (the worker was ready, or failed); workerMs: when it was ready. */
+interface LaneCtl { expired: boolean; worker: Worker | null; logged: boolean; commit: CommitHold; turnStart?: number; workerMs?: number }
 
-async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHarness, home: string, env: NodeJS.ProcessEnv, io: LaneIo, ctl: LaneCtl, elapsed: () => number, deadlineMs: number): Promise<Turn> {
+async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHarness, home: string, env: NodeJS.ProcessEnv, io: LaneIo, ctl: LaneCtl, turnLeft: () => number): Promise<Turn> {
   const settings = await readLaneSettings(home, env);
   if (settings.state === 'absent') return { outcome: 'off' };
   if (settings.state === 'unreadable') { ctl.logged = true; return { outcome: 'error', code: 'skill_resolver_config_unreadable' }; }
@@ -392,7 +412,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
 
   const worker = ctl.worker;
   if (!worker || laneWorkerFailed()) return { outcome: 'error', code: 'skill_resolver_internal', catalogs };
-  const posted = await askWorker(worker, { input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}), ...(reset ? { reset_session: true } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) });
+  const posted = await askWorker(worker, { input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}), ...(reset ? { reset_session: true } : {}) }, home, catalogs, deadlineMs: Math.max(1, turnLeft() - COMMIT_RESERVE_MS) });
   if (posted.error || !posted.output) return { outcome: 'error', code: posted.error?.code ?? 'skill_resolver_internal', catalogs };
   const out = posted.output;
   if (out.meta.index_stale && settings.autoRebuild) await scheduleStaleRebuilds(home, catalogs, spawnFn);
@@ -408,7 +428,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   const stall = env.GBRAIN_TEST_SKILL_LANE_STALL;
   if (stall === 'commit-held' || stall === 'commit-written') ctl.commit.at = (stage) => (`commit-${stage}` === stall ? new Promise(() => {}) : Promise.resolve());
   if (posted.pending && !ctl.expired) {
-    const gc = { files: LANE_GC_FILES, until: performance.now() + deadlineMs - elapsed() - GC_RESERVE_MS };
+    const gc = { files: LANE_GC_FILES, until: performance.now() + turnLeft() - GC_RESERVE_MS };
     await commitSessionAsync(home, posted.pending.key, { ...posted.pending.delta, ...(hookEvent.history !== undefined ? { history: hookEvent.history } : {}) }, ctl.commit, gc);
   }
   return { outcome, catalogs };
@@ -416,10 +436,11 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
 
 interface WorkerReply { output?: TurnOutput; pending?: { key: string; delta: TurnDelta } | null; pinned?: string; error?: { code: string } }
 
-/** Post one message to the lane's worker and await its one reply (an error when the thread fails or exits first). */
+/** Post one message to the lane's worker and await its one reply, skipping its ready message (an error when the thread fails or exits first). */
 function askWorker(worker: Worker, message: LaneWorkerTurn | LaneWorkerPins): Promise<WorkerReply> {
   return new Promise((resolve) => {
-    worker.once('message', resolve);
+    const onMessage = (m: WorkerReply & { ready?: boolean }) => { if (m?.ready === true) return; worker.off('message', onMessage); resolve(m); };
+    worker.on('message', onMessage);
     worker.once('error', () => resolve({ error: { code: 'skill_resolver_internal' } }));
     worker.once('exit', () => resolve({ error: { code: 'skill_resolver_internal' } }));
     worker.postMessage(message);
