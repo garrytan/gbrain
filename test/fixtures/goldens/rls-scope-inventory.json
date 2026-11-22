@@ -177,6 +177,17 @@
         ],
         "flagOnScopes": []
       },
+      "advanceSyncCheckpoint#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "applyAccessRuleChanges#default": {
         "flagOffLanes": [
           "pool"
@@ -7924,6 +7935,7 @@
         "advanceEffectRow": "none",
         "advanceSourceCommit": "none",
         "advanceSourcePurgeEpoch": "none",
+        "advanceSyncCheckpoint": "none",
         "ageOutSessionState": "none",
         "aliasCanonicalRefs": "none",
         "aliasFanoutRead": "none",

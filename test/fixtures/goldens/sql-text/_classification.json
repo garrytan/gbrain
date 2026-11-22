@@ -122,7 +122,7 @@
       "out-of-scope:writer-versions (born in engine-sql/writer-versions.ts; pinned by test/engine-parity/writer-versions.test.ts)": 3,
       "pages": 41,
       "salience": 5,
-      "sources": 33,
+      "sources": 34,
       "tags": 3,
       "takes": 20,
       "timeline": 8
@@ -154,6 +154,7 @@
       "advanceEffectRow": "out-of-scope:persistence-effect-worker (born in engine-sql/persistence-effect-worker.ts; pinned by test/engine-parity/persistence.test.ts)",
       "advanceSourceCommit": "sources",
       "advanceSourcePurgeEpoch": "sources",
+      "advanceSyncCheckpoint": "sources",
       "ageOutSessionState": "out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)",
       "aliasCanonicalRefs": "out-of-scope:search-reads (born in engine-sql/search-reads.ts; pinned by test/engine-parity/search-reads.test.ts)",
       "aliasFanoutRead": "out-of-scope:internal-helper (private; exercised through public callers)",

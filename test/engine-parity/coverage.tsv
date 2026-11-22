@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1709/1716
+# covered: 1711/1718
 # lifecycle: 9/9
-# pages: 68/68
+# pages: 70/70
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 15/15
@@ -116,17 +116,17 @@ transaction	lifecycle	yes	258	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	171	yes	yes	yes	serves
+getPage	pages	yes	172	yes	yes	yes	serves
 readPageSnapshot	pages	yes	49	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	5	no	yes	yes	serves
-putPage	pages	yes	943	yes	yes	yes	serves
+putPage	pages	yes	944	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	33	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	262	yes	yes	yes	serves
+softDeletePage	pages	yes	263	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	13	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	5	no	yes	yes	serves
@@ -144,8 +144,8 @@ listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	refuses:pages
 applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	3	yes	yes	yes	serves
 listAllSources	pages	yes	13	no	yes	yes	serves
-updateSourceConfig	pages	yes	13	no	yes	yes	serves
-getSource	pages	yes	15	no	yes	yes	serves
+updateSourceConfig	pages	yes	14	no	yes	yes	serves
+getSource	pages	yes	22	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	2	no	yes	yes	serves
@@ -160,12 +160,14 @@ listSourceIds	pages	yes	3	no	yes	yes	serves
 readSoleSourceId	pages	yes	1	no	yes	yes	serves
 readFirstSourceId	pages	yes	1	no	yes	yes	serves
 lockAllSourceRows	pages	yes	1	no	yes	yes	serves
-readSourceRow	pages	yes	1	no	yes	yes	serves
+readSourceRow	pages	yes	3	no	yes	yes	serves
 lockSourceRow	pages	yes	5	no	yes	yes	serves
 advanceSourceCommit	pages	yes	7	no	yes	yes	serves
 writeSourceSyncHeartbeat	pages	yes	1	no	yes	yes	serves
 writeSourceUpstreamObservation	pages	yes	1	no	yes	yes	serves
 readPageIdentity	pages	yes	2	no	yes	yes	serves
+markSourceSynced	pages	yes	4	no	yes	yes	serves
+advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	1	no	yes	yes	serves
 insertSource	pages	yes	5	no	yes	yes	serves
 readPageSizeRows	pages	yes	4	no	yes	yes	serves
@@ -720,7 +722,7 @@ completeWriteRow	persistence_journal	yes	22	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	3	no	yes	yes	serves
 insertPublicationEffects	persistence_journal	yes	9	no	yes	yes	serves
 insertWithdrawalEffects	persistence_journal	yes	4	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	75	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	79	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	2	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	2	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	5	no	yes	yes	serves
@@ -1505,7 +1507,7 @@ unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	9	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
-listSourceRecords	cli_reads_import	yes	8	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	11	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	4	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves

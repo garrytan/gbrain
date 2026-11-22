@@ -222,6 +222,7 @@ test/engine-parity/stats-vectors.test.ts	3	0
 test/engine-parity/stats.test.ts	9	0
 test/engine-parity/sweep-reads.test.ts	2	1
 test/engine-parity/sync-aliases.test.ts	10	0
+test/engine-parity/sync-checkpoint.test.ts	2	0
 test/engine-parity/sync-requests.test.ts	3	0
 test/engine-parity/sync-route.test.ts	6	0
 test/engine-parity/sync-run.test.ts	1	0

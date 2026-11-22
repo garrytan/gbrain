@@ -4,7 +4,9 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::error::INVALID_ARGUMENT;
-use gbrain_store::sources::{ListSourcesOptions, SourceInput, SourceSyncStampOptions};
+use gbrain_store::sources::{
+    ListSourcesOptions, SourceInput, SourceSyncStampOptions, SyncCheckpointAdvance,
+};
 use gbrain_store::{DEFAULT_SCHEMA_VERSION, OpenOptions, Store};
 use serde_json::json;
 
@@ -597,4 +599,60 @@ fn mark_source_synced_with_a_newest_content_time_sets_it_and_null_keeps_it() {
         newest(&store).as_deref(),
         Some("2026-05-06T07:08:09.000000Z")
     );
+}
+
+#[test]
+fn the_sync_checkpoint_advances_only_from_its_commit_and_keeps_a_pinned_mode() {
+    let dir = TempDir::new("src-checkpoint");
+    let store = open(&dir);
+    store.upsert_source(&input("repo", Some("/r"))).unwrap();
+    let incarnation = store.get_source_by_id("repo").unwrap().unwrap().incarnation;
+    let run = |commit: &str, from: Option<&str>, accept: bool, mode: &str, keep: bool| {
+        store
+            .advance_sync_checkpoint(&SyncCheckpointAdvance {
+                source_id: "repo".into(),
+                incarnation: incarnation.clone(),
+                commit: commit.into(),
+                from: from.map(str::to_string),
+                accept_at_commit: accept,
+                slug_mode: mode.into(),
+                keep_pinned_slug_mode: keep,
+            })
+            .unwrap()
+    };
+    assert_eq!(run("c1", None, false, "git-root", false)["advanced"], true);
+    let source = store.get_source("repo").unwrap().unwrap();
+    assert_eq!(source.last_commit.as_deref(), Some("c1"));
+    assert_eq!(source.config["slug_root_mode"], "git-root");
+    // No live page: newest_content_at stays empty.
+    assert!(
+        store
+            .list_source_records()
+            .unwrap()
+            .iter()
+            .find(|r| r.id == "repo")
+            .unwrap()
+            .newest_content_at
+            .is_none()
+    );
+    // A moved checkpoint changes nothing.
+    assert_eq!(
+        run("c2", Some("c0"), false, "git-root", false)["advanced"],
+        false
+    );
+    assert_eq!(
+        run("c1", Some("c0"), true, "git-root", false)["advanced"],
+        true
+    );
+    // A pinned mode refuses another mode and names itself; an empty scope keeps it.
+    let refused = run("c3", Some("c1"), false, "source-root", false);
+    assert_eq!(refused["advanced"], false);
+    assert_eq!(refused["pinnedSlugMode"], "git-root");
+    assert_eq!(
+        run("c3", Some("c1"), false, "source-root", true)["advanced"],
+        true
+    );
+    let source = store.get_source("repo").unwrap().unwrap();
+    assert_eq!(source.last_commit.as_deref(), Some("c3"));
+    assert_eq!(source.config["slug_root_mode"], "git-root");
 }

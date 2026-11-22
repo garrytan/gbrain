@@ -51,6 +51,38 @@
           }
         ]
       },
+      "advanceSyncCheckpoint": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "boolean",
+              "string",
+              "string",
+              "string",
+              "string",
+              "string",
+              "null",
+              "boolean",
+              "string",
+              "boolean",
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now(), config = jsonb_set(( WITH RECURSIVE root_layers(value, depth) AS ( SELECT COALESCE(config, '{}'::jsonb), 0 UNION ALL SELECT gbrain_try_jsonb(value #>> '{}'), depth + 1 FROM root_layers WHERE depth < 10 AND jsonb_typeof(value) = 'string' AND gbrain_try_jsonb(value #>> '{}') IS NOT NULL ), root(value) AS ( SELECT value FROM root_layers ORDER BY depth DESC LIMIT 1 ), fragment_seeds(ordinality, value) AS ( SELECT 0::bigint, value FROM root WHERE jsonb_typeof(value) = 'object' UNION ALL SELECT item.ordinality, item.value FROM root, LATERAL jsonb_array_elements( CASE WHEN jsonb_typeof(root.value) = 'array' THEN root.value ELSE '[]'::jsonb END ) WITH ORDINALITY AS item(value, ordinality) ), fragment_layers(ordinality, value, depth) AS ( SELECT ordinality, value, 0 FROM fragment_seeds UNION ALL SELECT ordinality, gbrain_try_jsonb(value #>> '{}'), depth + 1 FROM fragment_layers WHERE depth < 10 AND jsonb_typeof(value) = 'string' AND gbrain_try_jsonb(value #>> '{}') IS NOT NULL ), fragments AS ( SELECT DISTINCT ON (ordinality) ordinality, value FROM fragment_layers ORDER BY ordinality, depth DESC ) SELECT COALESCE( jsonb_object_agg(entry.key, entry.value ORDER BY fragments.ordinality), '{}'::jsonb ) FROM fragments CROSS JOIN LATERAL jsonb_each( CASE WHEN jsonb_typeof(fragments.value) = 'object' THEN fragments.value ELSE '{}'::jsonb END ) AS entry(key, value) ), '{slug_root_mode}', to_jsonb(CASE WHEN $2::boolean THEN COALESCE(config->>'slug_root_mode', $3::text) ELSE $4::text END)), newest_content_at = (SELECT MAX(updated_at) FROM pages WHERE source_id = $5 AND deleted_at IS NULL) WHERE id = $6 AND incarnation = $7::uuid AND (last_commit IS NOT DISTINCT FROM $8::text OR ($9::boolean AND last_commit = $10)) AND ($11::boolean OR config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode' = $12) RETURNING id",
+            "textSha256": "bdb8f7b046edc4679ecd2cfe0a61cb635a40c90f856048fb75ab6603c456c39c"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1 AND incarnation = $2::uuid",
+            "textSha256": "10ed52243782f97daef79a8c784a013afe71b7554e93102fbb36a4448150b9df"
+          }
+        ]
+      },
       "countDefaultSourceSplit": {
         "default": [
           {

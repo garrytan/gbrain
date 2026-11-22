@@ -5122,6 +5122,28 @@
           }
         ]
       },
+      "advanceSyncCheckpoint": {
+        "default": [
+          {
+            "paramCount": 12,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          },
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "countDefaultSourceSplit": {
         "default": [
           {

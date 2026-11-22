@@ -123,7 +123,7 @@ import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '
 import type { LedgerSource } from './engine-sql/belief.ts';
 import type { EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow } from './engine-sql/entity-reads.ts';
 import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourceSyncStampOptions } from './engine-sql/sources.ts';
+import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourceSyncStampOptions, SyncCheckpointAdvance } from './engine-sql/sources.ts';
 import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from './engine-sql/reflex-reads.ts';
 import type * as BriefReadsSql from './engine-sql/brief-reads.ts';
 import type {
@@ -1609,6 +1609,8 @@ export interface BrainEngine {
   readSourceLastCommit(sourceId: string): Promise<string | null>;
   /** Sets the source's last sync time to now; false for an unknown source, which changes nothing (engine-sql/sources.ts). */
   markSourceSynced(sourceId: string, opts?: SourceSyncStampOptions): Promise<boolean>;
+  /** The managed sync checkpoint (persistence/sync-prepare.ts): an incarnation- and from-guarded anchor advance (engine-sql/sources.ts). */
+  advanceSyncCheckpoint(input: SyncCheckpointAdvance): Promise<{ advanced: boolean; pinnedSlugMode: string | null }>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
