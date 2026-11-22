@@ -750,18 +750,18 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       AND NOT ${openedFactRowSql('f', '$3')}`, [sourceId, slug, incoming, ids]);
     // #6574: every fence row's fields refresh in one statement, not one round trip per row.
     const fieldRows = JSON.stringify([...new Map(factRows.map(fact => [fact.row_num, fact])).values()].map(fact => ({ row_num: fact.row_num, kind: fact.kind, notability: fact.notability,
-      context: fact.context, valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null,
+      context: fact.context, set_valid_from: fact.valid_from !== undefined, valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null,
       expired_at: fact.expired_at?.toISOString() ?? null, source: fact.source, confidence: fact.confidence, claim_metric: fact.claim_metric ?? null,
       claim_value: fact.claim_value ?? null, claim_unit: fact.claim_unit ?? null, claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null })));
     const factFields = () => factRows.length ? tx.executeRaw(`UPDATE facts f SET kind=r.kind,notability=r.notability,context=r.context,
-        valid_from=COALESCE(r.valid_from::timestamptz,f.valid_from),valid_until=r.valid_until::timestamptz,expired_at=r.expired_at::timestamptz,
+        valid_from=CASE WHEN r.set_valid_from THEN r.valid_from::timestamptz ELSE f.valid_from END,valid_until=r.valid_until::timestamptz,expired_at=r.expired_at::timestamptz,
         source=r.source,confidence=r.confidence,claim_metric=r.claim_metric,claim_value=r.claim_value,claim_unit=r.claim_unit,
         claim_period=r.claim_period,attributed_to=r.attributed_to
-      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer,kind text,notability text,context text,valid_from text,valid_until text,
+      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer,kind text,notability text,context text,set_valid_from boolean,valid_from text,valid_until text,
         expired_at text,source text,confidence real,claim_metric text,claim_value double precision,claim_unit text,claim_period text,attributed_to text)
       WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num=r.row_num
         AND (f.kind,f.notability,f.context,f.valid_from,f.valid_until,f.expired_at,f.source,f.confidence,f.claim_metric,f.claim_value,f.claim_unit,
-          f.claim_period,f.attributed_to) IS DISTINCT FROM (r.kind,r.notability,r.context,COALESCE(r.valid_from::timestamptz,f.valid_from),
+          f.claim_period,f.attributed_to) IS DISTINCT FROM (r.kind,r.notability,r.context,CASE WHEN r.set_valid_from THEN r.valid_from::timestamptz ELSE f.valid_from END,
           r.valid_until::timestamptz,r.expired_at::timestamptz,r.source,r.confidence,r.claim_metric,r.claim_value,r.claim_unit,r.claim_period,r.attributed_to)`,
       [sourceId, slug, fieldRows]) : Promise.resolve([]);
     const checkTakes = () => refuseCollisions(tx, id);

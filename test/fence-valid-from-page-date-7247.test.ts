@@ -26,9 +26,9 @@ const fence = (validFrom: string) => [
   '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
   `| 1 | Acme Example ARR was 100 units | fact | 1.0 | private | medium | ${validFrom} |  | test |  |`,
   '<!--- gbrain:facts:end -->', ''].join('\n');
-async function validFromOf(slug: string): Promise<string> {
-  const [r] = await engine.executeRaw<{ valid_from: Date | string }>('SELECT valid_from FROM facts WHERE source_markdown_slug = $1', [slug]);
-  return new Date(r!.valid_from).toISOString().slice(0, 10);
+async function validFromOf(slug: string): Promise<string | null> {
+  const [r] = await engine.executeRaw<{ valid_from: Date | string | null }>('SELECT valid_from FROM facts WHERE source_markdown_slug = $1', [slug]);
+  return r!.valid_from == null ? null : new Date(r!.valid_from).toISOString().slice(0, 10);
 }
 
 for (const backend of testBackends()) {
@@ -61,15 +61,34 @@ for (const backend of testBackends()) {
     });
 
     describe('#7247 a creation date is not an event date', () => {
-      test('a page dated only by created: leaves blank cells at the recorded time (projection and extract_facts)', async () => {
-        const today = new Date().toISOString().slice(0, 10);
+      test('a page dated only by created leaves the event date unknown through both projections', async () => {
         await call('put_page', { slug: 'companies/acme-example', content: `---\ntitle: Acme Example\ntype: company\ncreated: 2024-01-01\n---\n# Acme Example\n\n${fence('')}` });
-        expect(await validFromOf('companies/acme-example')).toBe(today);
+        expect(await validFromOf('companies/acme-example')).toBeNull();
         await engine.executeRaw('DELETE FROM facts WHERE source_markdown_slug = $1', ['companies/acme-example']);
         const { runExtractFacts } = await import('../src/core/cycle/extract-facts.ts');
         await runExtractFacts(engine, { sourceId: 'default', slugs: ['companies/acme-example'] });
-        expect(await validFromOf('companies/acme-example')).toBe(today);
+        expect(await validFromOf('companies/acme-example')).toBeNull();
       });
+      test('an explicit unknown overrides both the page date and a formerly known date for the same fact', async () => {
+        const slug = 'companies/acme-example';
+        const page = (date: string) => `---\ntitle: Acme Example\ntype: company\ndate: 2025-05-01\n---\n# Acme Example\n\n${fence(date)}`;
+        expect((await call('put_page', { slug, content: page('2025-02-01') })).isError).toBe(false);
+        const identity = () => engine.executeRaw<{ id: number; created_at: string }>(
+          'SELECT id, created_at::text FROM facts WHERE source_markdown_slug=$1', [slug]);
+        const original = [...await identity()];
+        expect(original).toHaveLength(1);
+        const current = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+        const put = await call('put_page', { slug, content: page('unknown'), expected_revision: current!.revision });
+        expect(put.isError, JSON.stringify(put.body)).toBe(false);
+        expect(await validFromOf(slug)).toBeNull();
+        expect([...await identity()]).toEqual(original);
+        await engine.executeRaw('DELETE FROM facts WHERE source_markdown_slug=$1', [slug]);
+        const { runExtractFacts } = await import('../src/core/cycle/extract-facts.ts');
+        const rebuilt = await runExtractFacts(engine, { sourceId: 'default', slugs: [slug] });
+        expect(rebuilt.factsInserted).toBe(1);
+        expect(await validFromOf(slug)).toBeNull();
+      });
+
       test('extract_facts uses a stated page date for blank cells', async () => {
         await call('put_page', { slug: 'companies/acme-example', content: `---\ntitle: Acme Example\ntype: company\ndate: 2025-05-01\n---\n# Acme Example\n\n${fence('')}` });
         await engine.executeRaw('DELETE FROM facts WHERE source_markdown_slug = $1', ['companies/acme-example']);

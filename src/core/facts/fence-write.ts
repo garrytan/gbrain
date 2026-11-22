@@ -48,7 +48,7 @@ import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesy
 import { gbrainPath } from '../config.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../brain-repo-durability.ts';
-import { upsertFactRow, parseFactsFence, formatFenceDate } from '../facts-fence.ts';
+import { upsertFactRow, parseFactsFence, formatFenceDate, formatFenceFactStart } from '../facts-fence.ts';
 import { withHeldFactsFence } from './unfenced-facts.ts';
 import { unparsedFenceRefusal } from '../fence-repair/refusal.ts';
 import type { OperationError } from '../ops/contract.ts';
@@ -532,7 +532,7 @@ export async function writeFactsToFence(
           confidence:  f.confidence ?? 1.0,
           visibility:  f.visibility,
           notability:  f.notability ?? 'medium',
-          validFrom:   formatFenceDate(f.validFrom ?? new Date()),
+          validFrom:   formatFenceFactStart(f.validFrom),
           // MEMORY_VERBS v1 (c5): remember's ttl threads through to the fence
           // cell — was hard-coded undefined, which silently dropped expiry on
           // this path. extractFactsFromFenceText derives the DB column from it.

@@ -58,7 +58,7 @@ async function newestFacts(engine: BrainEngine, sourceId: string, slugs: string[
         AND f.source != ALL($3::text[])
         ${visibility}
         AND ${projectionEligibleSql('facts', 'f', { floor: opts.minTrust })}
-      ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
+      ORDER BY (CASE WHEN f.valid_from IS NULL OR f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
       LIMIT ${SAVED_FACTS_COLLAPSE_WINDOW}`,
     [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
   // GST-3170: a slot value a later one ended at read time is no longer current (slot-ends.ts).

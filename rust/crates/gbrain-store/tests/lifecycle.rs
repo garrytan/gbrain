@@ -56,7 +56,10 @@ fn an_unknown_format_is_refused_before_the_records_are_touched() {
     let records = brain.join("records.redb");
     let before = std::fs::read(&records).unwrap();
     let format = std::fs::read_to_string(brain.join("FORMAT")).unwrap();
-    let newer = format.replace("\"format_version\": 1", "\"format_version\": 99");
+    let newer = format.replace(
+        &format!("\"format_version\": {FORMAT_VERSION}"),
+        "\"format_version\": 99",
+    );
     assert_ne!(newer, format);
     std::fs::write(brain.join("FORMAT"), &newer).unwrap();
     let error = Store::open_dir(&brain, OpenOptions::default())

@@ -648,7 +648,7 @@ export interface FactRow {
    */
   notability: 'high' | 'medium' | 'low';
   context: string | null;
-  valid_from: Date;
+  valid_from: Date | null;
   valid_until: Date | null;
   expired_at: Date | null;
   superseded_by: number | null;
@@ -688,7 +688,7 @@ export interface NewFact {
   entity_slug?: string | null;
   visibility?: FactVisibility;          // default 'private'
   context?: string | null;
-  valid_from?: Date;                   // default now()
+  valid_from?: Date | null;
   valid_until?: Date | null;
   /**
    * v0.46 (#3014) — explicit expiry timestamp. When set, the row is
@@ -758,7 +758,7 @@ export interface FactListOpts {
   sessionId?: string;
   /**
    * When true, `listFactsSince`'s `since` comparison and ORDER BY use
-   * COALESCE(valid_from, created_at) — event time — instead of creation
+   * known valid_from (excluding undated facts) instead of creation
    * time. Batch backfill (e.g. `extract-conversation-facts` run over many
    * pages at once) inserts many facts with the same `created_at` (the
    * batch's run time), which makes creation-time ordering useless for
@@ -769,6 +769,8 @@ export interface FactListOpts {
    * creation-time semantics unchanged.
    */
   eventTime?: boolean;
+  /** Include undated facts by recording time in an unbounded recency list. */
+  includeUndated?: boolean;
   /**
    * When true, exclude the durable audit checkpoint rows that
    * extract-conversation-facts writes into the facts table

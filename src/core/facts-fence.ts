@@ -115,7 +115,7 @@ export interface ParsedFact {
   confidence: number;     // 0..1; out-of-range cells are FACTS_TABLE_MALFORMED
   visibility: FactVisibility;
   notability: FactNotability;
-  validFrom?: string;     // ISO date 'YYYY-MM-DD' (or empty)
+  validFrom?: string;     // ISO date or timestamp, 'unknown', or empty
   validUntil?: string;
   source?: string;
   context?: string;
@@ -508,6 +508,13 @@ export function formatFenceDate(d: Date): string {
   const iso = d.toISOString();
   if (iso.endsWith('T00:00:00.000Z')) return iso.slice(0, 10);
   return iso.replace(/\.\d{3}Z$/, 'Z');
+}
+
+/** An intentionally unknown event date does not inherit the page date. */
+export const UNKNOWN_FACT_START = 'unknown';
+
+export function formatFenceFactStart(date: Date | null | undefined): string {
+  return date == null ? UNKNOWN_FACT_START : formatFenceDate(date);
 }
 
 function formatConfidence(c: number): string {

@@ -1,4 +1,5 @@
 import { isConnectorSourceKind } from './connector-identity.ts';
+import type { ObservationDate } from '../ai/date-grounding.ts';
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { FactsBackstopCtx } from '../facts/backstop.ts';
@@ -49,7 +50,7 @@ export interface ManagedFactsResult {
 export interface ManagedFactsRefusal { slug: string; code: string; request_id: string }
 export interface ManagedFactOrigin { slug: string; pageId: number; revision: string; }
 export type FrozenExtractedFact = Omit<NewFact, 'embedding' | 'valid_from' | 'valid_until' | 'expired_at'> & {
-  embedding: number[] | null; valid_from: string; valid_until: string | null;
+  embedding: number[] | null; valid_from: string | null; valid_until: string | null;
   /** #5836: a write-time inferred subject dedups exact text only, never superseding or dropping a similar fact. */
   entity_inferred?: InferredVia;
 };
@@ -212,7 +213,8 @@ export async function assertManagedFactsEmbedding(engine: BrainEngine, config: G
 }
 
 export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
-  input: { turnText: string; pageSlug?: string }, derivation?: { trust: WriteTrust; inputs: readonly TaintInput[] }): Promise<ManagedFactsSession | null> {
+  input: { turnText: string; pageSlug?: string | null; observationDate?: ObservationDate | null },
+  derivation?: { trust: WriteTrust; inputs: readonly TaintInput[] }): Promise<ManagedFactsSession | null> {
   const engine = ctx.engine;
   if (!(await managedPersistenceEnabled(engine))) return null;
   assertPersistenceAccepting(engine);
@@ -301,8 +303,12 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
   if (!writeThrough) authority.databaseOnlyReason = 'disabled_by_config';
   else if (connectorDatabase) authority.databaseOnlyReason = 'connector_database';
   else if (!binding) authority.databaseOnlyReason = 'no_repo_configured';
+  // Old backstops promoted an observation to validFrom before hashing the request.
+  // Preserve that fingerprint for retries without passing the observation to the fact writer.
+  const receiptDate = ctx.validFrom?.toISOString()
+    ?? (input.observationDate ? `${input.observationDate.date}T00:00:00.000Z` : null);
   const inputDigest = digest(ctx.requestIntent ?? { text: sha256(input.turnText), source: ctx.source, sessionId: ctx.sessionId, entityHints: ctx.entityHints ?? [],
-    visibility: ctx.visibility ?? null, validFrom: ctx.validFrom?.toISOString() ?? null, sourceSlug: ctx.sourceSlug ?? null,
+    visibility: ctx.visibility ?? null, validFrom: receiptDate, sourceSlug: ctx.sourceSlug ?? null,
     model: ctx.model ?? null, filter: ctx.notabilityFilter ?? 'all' });
   const seed = ctx.persistenceRequestId ?? (ctx.requestId ? requireUuid(ctx.requestId) : inputDigest);
   const batchKey = digest(['managed-facts-v1', authority.principal, source.incarnation, seed]);
@@ -639,7 +645,7 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
     // #5836: an inferred subject carries its provenance note into the fence cell and the row.
     group.push({ ...fact, entity_slug: attributed, visibility, context: fact.entity_inferred ? appendContextNote(context, inferenceNote(fact.entity_inferred)) : context,
       embedding: fact.embedding ? Array.from(fact.embedding) : null,
-      valid_from: (factEventTime(fact, ctx) ?? new Date()).toISOString(), valid_until: fact.valid_until?.toISOString() ?? null });
+      valid_from: factEventTime(fact, ctx)?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null });
     groups.set(slug, group);
   }
   const inputs: ManagedFactsEntityInput[] = [];

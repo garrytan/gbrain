@@ -312,7 +312,7 @@ impl Store {
                     "id": r.id, "fact": r.fact, "source": r.source, "row_num": r.row_num,
                     "superseded_by": r.superseded_by, "expired_at": time(r.expired_at_us),
                     "kind": r.kind, "visibility": r.visibility, "notability": r.notability,
-                    "context": r.context, "valid_from": iso(r.valid_from_us), "valid_until": time(r.valid_until_us),
+                    "context": r.context, "valid_from": time(r.valid_from_us), "valid_until": time(r.valid_until_us),
                     "confidence": real(r.confidence), "claim_metric": r.claim_metric,
                     "claim_value": r.claim_value, "claim_unit": r.claim_unit, "claim_period": r.claim_period,
                     "has_embedding": r.embedding.is_some(),
@@ -421,9 +421,11 @@ impl Store {
             let total = active.len() as i64;
             let mut days: BTreeMap<String, Vec<&FactRecord>> = BTreeMap::new();
             for row in &active {
-                days.entry(iso(row.valid_from_us)[..10].to_string())
-                    .or_default()
-                    .push(row);
+                if let Some(from) = row.valid_from_us {
+                    days.entry(iso(from)[..10].to_string())
+                        .or_default()
+                        .push(row);
+                }
             }
             for (day, rows) in days {
                 let n = rows.len() as i64;

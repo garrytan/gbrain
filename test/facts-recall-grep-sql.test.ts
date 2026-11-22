@@ -50,9 +50,10 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  const eventTime = Date.now() - 5 * 60_000;
 
   await engine.insertFact(
-    { fact: NEEDLE_FACT, kind: 'preference', entity_slug: ENTITY, source: 'test', source_session: SESSION },
+    { fact: NEEDLE_FACT, kind: 'preference', entity_slug: ENTITY, source: 'test', source_session: SESSION, valid_from: new Date(eventTime) },
     { source_id: 'default' },
   );
   // A literal-wildcard row for the escaping test: '100%' must be matched
@@ -63,7 +64,7 @@ beforeAll(async () => {
   );
   for (let i = 0; i < FILLER_COUNT; i++) {
     await engine.insertFact(
-      { fact: `alice filler fact number ${i}`, kind: 'fact', entity_slug: ENTITY, source: 'test', source_session: SESSION },
+      { fact: `alice filler fact number ${i}`, kind: 'fact', entity_slug: ENTITY, source: 'test', source_session: SESSION, valid_from: new Date(eventTime + 1000 * (i + 1)) },
       { source_id: 'default' },
     );
   }

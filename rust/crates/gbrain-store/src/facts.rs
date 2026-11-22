@@ -134,7 +134,7 @@ pub(crate) struct FactRecord {
     pub visibility: String,
     pub notability: String,
     pub context: Option<String>,
-    pub valid_from_us: i64,
+    pub valid_from_us: Option<i64>,
     pub valid_until_us: Option<i64>,
     pub expired_at_us: Option<i64>,
     pub superseded_by: Option<u64>,
@@ -241,7 +241,7 @@ impl FactRecord {
         out.insert("visibility".into(), json!(self.visibility));
         out.insert("notability".into(), json!(self.notability));
         out.insert("context".into(), json!(self.context));
-        out.insert("valid_from".into(), json!(iso(self.valid_from_us)));
+        out.insert("valid_from".into(), json!(time(self.valid_from_us)));
         out.insert("valid_until".into(), json!(time(self.valid_until_us)));
         out.insert("expired_at".into(), json!(time(self.expired_at_us)));
         out.insert("superseded_by".into(), json!(self.superseded_by));
@@ -359,14 +359,15 @@ fn index_keys(r: &FactRecord) -> Vec<(Vec<u8>, Option<&'static str>)> {
     if let Some(target) = r.superseded_by {
         out.push((with_id(refs_prefix(target), r.id), None));
     }
-    if let (Some(dim), Some(entity), Some(hash), Some(slug)) = (
+    if let (Some(dim), Some(entity), Some(hash), Some(slug), Some(from)) = (
         &r.dimension,
         &r.entity_slug,
         &r.value_hash,
         &r.source_markdown_slug,
+        r.valid_from_us,
     ) {
         let mut key = text_key(STINT, &[&r.source_id, entity, dim, hash, slug]);
-        key.extend_from_slice(&time_bytes(r.valid_from_us));
+        key.extend_from_slice(&time_bytes(from));
         out.push((key, Some(STINT_INDEX)));
     }
     out
@@ -466,8 +467,11 @@ pub(crate) fn stint_holder(
     dimension: &str,
     value_hash: &str,
     slug: &str,
-    valid_from_us: i64,
+    valid_from_us: Option<i64>,
 ) -> Result<Option<u64>> {
+    let Some(valid_from_us) = valid_from_us else {
+        return Ok(None);
+    };
     let mut key = text_key(STINT, &[source_id, entity, dimension, value_hash, slug]);
     key.extend_from_slice(&time_bytes(valid_from_us));
     Ok(read.get(&key)?.as_deref().and_then(keys::be8))
@@ -875,8 +879,8 @@ fn js_number(n: f64) -> String {
 // ---------------------------------------------------------------------------------------------
 // Arguments.
 
-/// One `NewFact` (plus the fence columns `insertFacts` reads). Times are ISO text; the
-/// TypeScript member fills `valid_from` and computes `value_hash`.
+/// One `NewFact` (plus the fence columns `insertFacts` reads). Times are ISO text when known.
+/// The TypeScript member computes `value_hash`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NewFactInput {
@@ -974,6 +978,7 @@ pub struct FactQuery {
     pub offset: f64,
     pub since: Option<String>,
     pub event_time: bool,
+    pub include_undated: bool,
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
@@ -1087,12 +1092,16 @@ fn fact_by_number(read: &dyn KvRead, op: &str, what: &str, id: f64) -> Result<Op
 /// `valid_until` of a row a successor starting at `successor` closes: the successor's start when
 /// it falls inside the row's window, else the window's end clipped to now
 /// (src/core/facts/supersede-interval.ts).
-fn closed_until(row: &FactRecord, successor: i64, now: i64) -> i64 {
+fn closed_until(row: &FactRecord, successor: Option<i64>, now: i64) -> i64 {
     let end = row.valid_until_us.unwrap_or(now);
-    if row.valid_from_us < successor && successor < end {
+    if let Some(successor) = successor
+        && row.valid_from_us.is_none_or(|from| from < successor)
+        && successor < end
+    {
         successor
     } else {
-        row.valid_from_us.max(end.min(now))
+        row.valid_from_us
+            .map_or(end.min(now), |from| from.max(end.min(now)))
     }
 }
 
@@ -1135,7 +1144,7 @@ fn new_record(
         visibility: input.visibility.clone().unwrap_or_else(|| "private".into()),
         notability: input.notability.clone().unwrap_or_else(|| "medium".into()),
         context: input.context.clone(),
-        valid_from_us: opt_time(op, "valid_from", &input.valid_from)?.unwrap_or(now),
+        valid_from_us: opt_time(op, "valid_from", &input.valid_from)?,
         valid_until_us: opt_time(op, "valid_until", &input.valid_until)?,
         source,
         source_session: input.source_session.clone(),
@@ -1489,7 +1498,7 @@ impl Store {
                 new.superseded_by = Some(by as u64);
             }
             if let Some(successor) = successor {
-                new.valid_until_us = Some(closed_until(&old, successor, now));
+                new.valid_until_us = Some(closed_until(&old, Some(successor), now));
             }
             write_fact(tx, trust, Some(&old), &new)?;
             Ok(true)
@@ -1555,11 +1564,24 @@ impl Store {
         self.write(|tx| delete_for_page(tx, trust, "deleteFactsForPage", args))
     }
 
-    /// `listFactsByEntity`: `valid_from DESC, id DESC`.
+    /// `listFactsByEntity`: eligible event time, falling back to recording time for unknown or future events.
     pub fn list_facts_by_entity(&self, q: &FactQuery) -> Result<Vec<Value>> {
         const OP: &str = "listFactsByEntity";
         let offset = count_arg(OP, "offset", q.offset)?;
-        self.list_facts(OP, q, |r| r.valid_from_us, true, offset, |_| true, false)
+        let now = self.env.now_micros();
+        self.list_facts(
+            OP,
+            q,
+            |r| {
+                r.valid_from_us
+                    .filter(|from| *from <= now)
+                    .unwrap_or(r.created_at_us)
+            },
+            true,
+            offset,
+            |_| true,
+            false,
+        )
     }
 
     /// `listFactsSince`: rows at or after `since` on `created_at` (or `valid_from` with
@@ -1571,12 +1593,22 @@ impl Store {
         let event_time = q.event_time;
         let time = move |r: &FactRecord| {
             if event_time {
-                r.valid_from_us
+                r.valid_from_us.unwrap_or(r.created_at_us)
             } else {
                 r.created_at_us
             }
         };
-        self.list_facts(OP, q, time, true, offset, move |r| time(r) >= since, false)
+        self.list_facts(
+            OP,
+            q,
+            time,
+            true,
+            offset,
+            move |r| {
+                (!event_time || q.include_undated || r.valid_from_us.is_some()) && time(r) >= since
+            },
+            false,
+        )
     }
 
     /// `listFactsKeyset`: rows after the `(created_at, id)` keyset, oldest first, each with
@@ -1812,6 +1844,9 @@ impl Store {
                 continue;
             }
             for row in entity_rows(&*read, source, &q.entity_slug)? {
+                let Some(from) = row.valid_from_us else {
+                    continue;
+                };
                 if row.expired_at_us.is_some()
                     || (q.world_only && row.visibility != "world")
                     || q.metric
@@ -1819,8 +1854,8 @@ impl Store {
                         .is_some_and(|m| row.claim_metric.as_ref() != Some(m))
                     || (kind == "metric" && row.claim_metric.is_none())
                     || (kind == "event" && row.event_type.is_none())
-                    || since.is_some_and(|s| row.valid_from_us < s)
-                    || until.is_some_and(|u| row.valid_from_us > u)
+                    || since.is_some_and(|s| from < s)
+                    || until.is_some_and(|u| from > u)
                     || hidden_by_deleted_page(&*read, &row)?
                     || hidden_by_quarantine(&*read, &row)?
                     || hidden_by_policy(&*read, &row, &q.exclude_private)?
@@ -1830,14 +1865,20 @@ impl Store {
                 rows.push(row);
             }
         }
-        let mut newest = page_of(rows, |r| r.valid_from_us, true, 0, limit);
+        let mut newest = page_of(
+            rows,
+            |r| r.valid_from_us.unwrap_or(i64::MIN),
+            true,
+            0,
+            limit,
+        );
         newest.reverse();
         Ok(newest
             .iter()
             .map(|r| {
                 json!({
                     "fact_id": r.id,
-                    "valid_from": iso(r.valid_from_us),
+                    "valid_from": r.valid_from_us.map(iso),
                     "valid_until": r.valid_until_us.map(iso),
                     "metric": r.claim_metric,
                     "value": r.claim_value,
@@ -2013,7 +2054,7 @@ fn drop_rekey_duplicates(
             sms?,
             r.dimension.clone()?,
             r.value_hash.clone()?,
-            r.valid_from_us,
+            r.valid_from_us?,
         ))
     };
     let moving_ids: HashSet<u64> = moving.iter().map(|r| r.id).collect();

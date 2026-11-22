@@ -9,9 +9,9 @@ use std::io::Write;
 use std::path::Path;
 
 /// The store format this build reads and writes.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

@@ -356,7 +356,7 @@ function freezeRow(row: ConversationFactRow, entryVisibility: 'private' | 'world
   return {
     ...(row.visibility === 'private' && entryVisibility === 'world' && !OUTCOME_SOURCES.has(row.source) ? { visibility: 'private' as const } : {}),
     fact: row.fact, kind: row.kind ?? 'fact', entity_slug: row.entity_slug ?? null, context: row.context ?? null,
-    valid_from: (row.valid_from ?? new Date()).toISOString(), valid_until: row.valid_until ? row.valid_until.toISOString() : null,
+    valid_from: row.valid_from?.toISOString() ?? null, valid_until: row.valid_until ? row.valid_until.toISOString() : null,
     source: row.source, source_session: row.source_session ?? null, confidence: row.confidence ?? 1.0,
     notability: row.notability ?? 'medium', embedding: row.embedding ? Array.from(row.embedding) : null,
     embedding_model: row.embedding ? row.embedding_model ?? null : null,
@@ -429,7 +429,7 @@ function entryProblem(entry: ConversationPageEntry): string | null {
   for (const fact of entry.rows) {
     if (typeof fact.fact !== 'string' || !fact.fact.trim() || typeof fact.source !== 'string' || !fact.source.startsWith(CONVERSATION_FACTS_SOURCE_PREFIX)
       || !ALL_FACT_KINDS.includes((fact.kind ?? 'fact') as never) || (fact.source_session != null && !String(fact.source_session).startsWith(CONVERSATION_FACTS_SOURCE_PREFIX))
-      || Number.isNaN(Date.parse(fact.valid_from)) || (fact.valid_until != null && Number.isNaN(Date.parse(fact.valid_until)))) {
+      || (fact.valid_from !== null && (typeof fact.valid_from !== 'string' || Number.isNaN(Date.parse(fact.valid_from)))) || (fact.valid_until != null && Number.isNaN(Date.parse(fact.valid_until)))) {
       return 'a row falls outside the conversation extractor\'s provenance or fact kinds';
     }
     if (OUTCOME_SOURCES.has(fact.source) && fact.source_session !== `${fact.source}:${entry.slug}:${entry.version_token}`) return 'it carries an outcome for another page version';
@@ -609,8 +609,8 @@ async function insertConversationFacts(tx: BrainEngine, sourceId: string, slug: 
 async function insertableSlots(tx: BrainEngine, sourceId: string, slug: string, rows: UnnumberedFact[]): Promise<UnnumberedFact[]> {
   if (!rows.some(row => row.dimension)) return rows;
   const key = (entity: string, dimension: string, hash: string, validFrom: Date | string | null | undefined) =>
-    [entity, dimension, hash, validFrom == null ? 'now' : new Date(validFrom).getTime()].join('\u0000');
-  const held = await tx.executeRaw<{ entity_slug: string; dimension: string; value_hash: string; valid_from: Date | string }>(
+    [entity, dimension, hash, validFrom == null ? 'unknown' : new Date(validFrom).getTime()].join('\u0000');
+  const held = await tx.executeRaw<{ entity_slug: string; dimension: string; value_hash: string; valid_from: Date | string | null }>(
     'SELECT entity_slug, dimension, value_hash, valid_from FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND dimension IS NOT NULL', [sourceId, slug]);
   const taken = new Set(held.map(h => key(h.entity_slug, h.dimension, h.value_hash, h.valid_from)));
   return rows.map(({ dimension, value, ...row }) => {
@@ -715,7 +715,7 @@ async function applyEntry(tx: BrainEngine, row: WriteRequest, entry: Conversatio
   const merges = await mergedEntities(tx, row.source_id, entry.rows.map(fact => fact.entity_slug).filter((s): s is string => !!s));
   const rows = entry.rows.map(fact => ({
     ...fact, visibility: OUTCOME_SOURCES.has(fact.source) || fact.visibility === 'private' ? 'private' as const : entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
-    valid_from: new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
+    valid_from: fact.valid_from == null ? null : new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
     embedding: vectors && fact.embedding ? new Float32Array(fact.embedding) : null,
     embedding_model: vectors && fact.embedding ? entry.embedding!.model : null,
   }));

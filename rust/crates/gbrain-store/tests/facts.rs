@@ -596,7 +596,7 @@ fn a_trajectory_point_carries_its_vector_only_from_the_brain_model() {
         insert(
             &b,
             json!({ "fact": fact, "source": "s", "entity_slug": "companies/t", "claim_metric": "arr",
-                "claim_value": 1, "embedding": literal(&[0.1]), "embedding_model": model }),
+                "valid_from": iso(T0), "claim_value": 1, "embedding": literal(&[0.1]), "embedding_model": model }),
         );
         b.clock.advance(10);
     }

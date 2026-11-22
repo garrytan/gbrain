@@ -149,17 +149,17 @@ impl Store {
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
         let existing = format::read(dir)?;
         let kv = redb_kv::RedbKv::open_path(&dir.join(format::RECORDS_FILE))?;
-        let store = Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), options.clone())?;
+        let expected_brain = existing.as_ref().map(|format| format.brain_id.as_str());
+        let store = Store::open_kv_for_brain(
+            Arc::new(kv),
+            Arc::new(SystemEnv),
+            options.clone(),
+            expected_brain,
+        )?;
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
         // file) and repaired when it is behind the records.
         let record = store.format_record(&options)?;
         match existing {
-            Some(on_disk) if on_disk.brain_id != record.brain_id => {
-                return Err(StoreError::new(
-                    error::STORE_CORRUPT,
-                    "FORMAT names a different brain than the record file",
-                ));
-            }
             Some(on_disk) if on_disk == record => {}
             _ => format::write(dir, &record)?,
         }
@@ -169,31 +169,61 @@ impl Store {
     /// Opens a brain on any `Kv`: the entry point for the simulation and for tests that run the
     /// store on a fault-injecting disk. Creates the brain's records when the store is empty.
     pub fn open_kv(kv: Arc<dyn Kv>, env: Arc<dyn Env>, options: OpenOptions) -> Result<Store> {
+        Self::open_kv_for_brain(kv, env, options, None)
+    }
+
+    fn open_kv_for_brain(
+        kv: Arc<dyn Kv>,
+        env: Arc<dyn Env>,
+        options: OpenOptions,
+        expected_brain: Option<&str>,
+    ) -> Result<Store> {
         let snapshot = kv.snapshot()?;
-        let stored: Option<StoredFormat> = get_json(&*snapshot, &keys::meta("format"))?;
+        let key = keys::meta("format");
+        let stored: Option<StoredFormat> = get_json(&*snapshot, &key)?;
         drop(snapshot);
-        let (stored, created) = match stored {
-            Some(stored) => {
-                format::check_version(stored.format_version)?;
-                (stored, false)
+        let check = |stored: Option<&StoredFormat>| -> Result<()> {
+            if expected_brain
+                .is_some_and(|expected| stored.is_none_or(|value| value.brain_id != expected))
+            {
+                return Err(StoreError::new(
+                    error::STORE_CORRUPT,
+                    "FORMAT names a different brain than the record file",
+                ));
             }
-            None => {
-                let fresh = StoredFormat {
-                    format_version: FORMAT_VERSION,
-                    brain_id: env.new_uuid(),
-                    created_at_us: env.now_micros(),
-                };
+            if let Some(stored) = stored {
+                format::check_version(stored.format_version)?;
+            }
+            Ok(())
+        };
+        check(stored.as_ref())?;
+        let (stored, created) = match stored {
+            Some(stored) if stored.format_version == FORMAT_VERSION => (stored, false),
+            _ => {
                 let mut tx = kv.begin_write()?;
-                // Another handle may have created the brain between the read and this write.
-                if let Some(raced) = get_json::<StoredFormat>(&*tx, &keys::meta("format"))? {
-                    format::check_version(raced.format_version)?;
-                    drop(tx);
-                    (raced, false)
-                } else {
-                    put_json(&mut *tx, &keys::meta("format"), &fresh)?;
-                    seed(&mut *tx, &*env, &options)?;
-                    tx.commit()?;
-                    (fresh, true)
+                let existing: Option<StoredFormat> = get_json(&*tx, &key)?;
+                check(existing.as_ref())?;
+                match existing {
+                    Some(stored) if stored.format_version == FORMAT_VERSION => (stored, false),
+                    Some(mut legacy) => {
+                        // Old dates are JSON numbers, also readable as Some(date). Commit the format
+                        // fence before an undated fact can be stored; a crash may leave FORMAT to repair.
+                        legacy.format_version = FORMAT_VERSION;
+                        put_json(&mut *tx, &key, &legacy)?;
+                        tx.commit()?;
+                        (legacy, false)
+                    }
+                    None => {
+                        let fresh = StoredFormat {
+                            format_version: FORMAT_VERSION,
+                            brain_id: env.new_uuid(),
+                            created_at_us: env.now_micros(),
+                        };
+                        put_json(&mut *tx, &key, &fresh)?;
+                        seed(&mut *tx, &*env, &options)?;
+                        tx.commit()?;
+                        (fresh, true)
+                    }
                 }
             }
         };

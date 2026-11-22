@@ -27,6 +27,7 @@ import { operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 const page = (over: Partial<ParsedPage> = {}): ParsedPage => ({ type: 'person', title: 'Example', compiled_truth: 'Line one.\nLine two.',
@@ -126,7 +127,7 @@ const isolated = (fn: (engine: BrainEngine) => Promise<void>) => withEnv({ GBRAI
 });
 const local = <T>(engine: BrainEngine, registration: LocalRegistration, fn: () => Promise<T>) => withVerifiedLocalRegistration(engine, registration, fn);
 
-const STORED = `---\ntype: person\ntitle: Example\naccess: private\nvisibility: private\ncontacts:\n  - alice-example\n  - bob-example\nphone_last_used: '2026-01-01'\nupdated: '2026-01-01'\n---\nA synthetic biography.\n\nWorks at [[companies/acme-example]].\n\n## Timeline\n\n- **2026-01-01** | meeting — Met [[people/alice-example]] about the plan.\n`;
+const STORED = `---\ntype: person\ntitle: Example\ndate: '2025-02-04'\naccess: private\nvisibility: private\ncontacts:\n  - alice-example\n  - bob-example\nphone_last_used: '2026-01-01'\nupdated: '2026-01-01'\n---\nA synthetic biography.\n\nWorks at [[companies/acme-example]].\n\n## Timeline\n\n- **2026-01-01** | meeting — Met [[people/alice-example]] about the plan.\n`;
 
 /** Two drifted pages: an insertion-only superset and one whose stored line was replaced. */
 async function fixture(engine: BrainEngine) {
@@ -200,11 +201,32 @@ test('the reporter\'s additive page reconciles under --auto-additive; a replaced
     expect(reconciled.page.frontmatter).toMatchObject({ access: 'private', visibility: 'private', phone_last_used: '2026-02-02',
       contacts: ['alice-example', 'bob-example', 'carol-example', 'alice-example'] });
 
-    const saved = await operationsByName.remember!.handler(ctx, { fact, provenance, entity: slug, visibility: 'private', request_id: randomUUID() }) as Record<string, unknown>;
+    const params = { fact, provenance, entity: slug, visibility: 'private', request_id: randomUUID() };
+    const saved = await operationsByName.remember!.handler(ctx, params) as Record<string, unknown>;
     expect(saved).toMatchObject({ status: 'inserted', state: 'committed' });
     const current = (await engine.readPageSnapshot(slug, { sourceId: f.id }))!;
-    expect(parseFactsFence(current.page.compiled_truth).facts).toEqual(expect.arrayContaining([expect.objectContaining({ claim: fact, visibility: 'private' })]));
-    expect(parseMarkdown(readFileSync(file, 'utf8'), slug).compiled_truth).toBe(current.page.compiled_truth);
+    const fileBytes = readFileSync(file, 'utf8');
+    const canonical = parseMarkdown(fileBytes, slug);
+    expect(canonical.compiled_truth).toBe(current.page.compiled_truth);
+    expect(parseFactsFence(canonical.compiled_truth).facts.find(row => row.claim === fact)?.validFrom).toBe('unknown');
+    const timeline = () => engine.executeRaw<{ id: number; valid_from: string | null; created_at: string }>(
+      'SELECT id, valid_from::text, created_at::text FROM facts WHERE source_id=$1 AND fact=$2', [f.id, fact]);
+    const original = [...await timeline()];
+    expect(original).toHaveLength(1);
+    expect(Number(original[0].id)).toBe(Number(saved.id));
+    expect(original[0].valid_from).toBeNull();
+    expect(Number.isFinite(Date.parse(original[0].created_at))).toBe(true);
+    const [journal] = await engine.executeRaw<{ state: string; frozen_date: string }>(
+      "SELECT state, jsonb_typeof(intent->'valid_from') AS frozen_date FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid",
+      [f.id, params.request_id]);
+    expect(journal).toEqual({ state: 'committed', frozen_date: 'null' });
+    await disposePersistenceConsumer(engine);
+    expect(await operationsByName.remember!.handler(ctx, params)).toEqual(saved);
+    expect(readFileSync(file, 'utf8')).toBe(fileBytes);
+    expect([...await timeline()]).toEqual(original);
+    const reconcile = await runExtractFacts(engine, { sourceId: f.id, slugs: [slug] });
+    expect(reconcile.pagesFailed).toBe(0);
+    expect([...await timeline()]).toEqual(original);
 
     const read = await dispatchToolCall(engine, 'get_page', { slug, source_id: f.id }, { remote: false, sourceId: f.id, config: { engine: engine.kind },
       logger: { info() {}, warn() {}, error() {} } });

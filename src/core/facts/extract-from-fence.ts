@@ -50,7 +50,7 @@ import { computeEffectiveDate } from '../effective-date.ts';
  * was. A held row (GST-2492: its entity has no page yet, on a strict source) projects the entity its cell names.
  */
 export { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
-import { isHoldingSlug } from '../facts-fence.ts';
+import { isHoldingSlug, UNKNOWN_FACT_START } from '../facts-fence.ts';
 
 export const FACT_DATE_SOURCES: ReadonlySet<string> = new Set(['event_date', 'date', 'published', 'filename']);
 
@@ -148,9 +148,9 @@ export interface ExtractFromFenceOpts {
    * that date instead of "the import timestamp".
    *
    * Precedence chain:
-   *   1. Explicit `validFrom:` in the fence row (today's behavior, preserved).
-   *   2. `pageEffectiveDate` when set.
-   *   3. `undefined` → engine.insertFact defaults to now() at insert time.
+   *   1. The fence row's explicit date or explicit 'unknown'.
+   *   2. `pageEffectiveDate` when the row leaves the cell empty.
+   *   3. An unspecified date inserts as null and preserves an existing date.
    *
    * Optional because `facts/fence-write.ts` calls this from a context
    * with no `Page` object available (Codex F6). Null and undefined are
@@ -252,9 +252,7 @@ export function extractFactsFromFenceText(
   const pageDateFallback = opts.pageEffectiveDate ?? undefined;
 
   return facts.map(f => {
-    // v0.35.4 (D-ENG-1) valid_from precedence: fence > pageEffectiveDate > engine default (now).
-    const fenceDate = parseValidDate(f.validFrom);
-    const validFrom = fenceDate ?? pageDateFallback ?? undefined;
+    const validFrom = f.validFrom === UNKNOWN_FACT_START ? null : parseValidDate(f.validFrom) ?? pageDateFallback;
 
     // valid_until derivation. Three branches:
     //   1. Explicit validUntil in the fence → honor as-is.

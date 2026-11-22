@@ -57,7 +57,7 @@ import { pruneHoldingPageVersions } from '../page-state/versions.ts';
 
 export type FenceFactAppendInput = {
   /** The facts row to publish; `row_num` and `source_markdown_slug` are the helper's. kind and visibility default as insertFacts does. */
-  fact: NewFact & { valid_from: Date };
+  fact: NewFact;
   /** The tier the new row's chunks are cut at until its facts row exists (`withPendingFenceRows`); append only. */
   pendingTier: TrustTier;
 } & (
@@ -99,7 +99,7 @@ async function insertFenceFactRow(tx: BrainEngine, row: WriteRequest, rowNum: nu
 /** One fact as its fence cell at `rowNum` (`fenceRowOf`, the one renderer); on a holding page a held fact names its entity (GST-2492). */
 function fenceCellFor(fact: FenceFactAppendInput['fact'], rowNum: number, slug: string): ReturnType<typeof fenceRowOf> {
   const entity = isHoldingSlug(slug) && fact.entity_slug ? { entity: fact.entity_slug } : {};
-  return { ...entity, ...fenceRowOf({ kind: (fact.kind ?? 'fact') as FenceRowInput['kind'], visibility: fact.visibility ?? 'private', context: fact.context ?? null, valid_from: fact.valid_from,
+  return { ...entity, ...fenceRowOf({ kind: (fact.kind ?? 'fact') as FenceRowInput['kind'], visibility: fact.visibility ?? 'private', context: fact.context ?? null, valid_from: fact.valid_from ?? null,
     valid_until: fact.valid_until ?? null, source: fact.source, claim_metric: fact.claim_metric ?? null, claim_value: fact.claim_value ?? null,
     claim_unit: fact.claim_unit ?? null, claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null,
     notability: fact.notability ?? null, confidence: fact.confidence ?? null }, rowNum, fact.fact) };
@@ -111,7 +111,7 @@ function fenceCellFor(fact: FenceFactAppendInput['fact'], rowNum: number, slug: 
  * write created first makes this attempt conflict, and the retry appends to it. File before facts row, as an append.
  */
 export async function prepareFenceFactCreate(engine: BrainEngine, row: WriteRequest, config: GBrainConfig,
-  input: { fact: NewFact & { valid_from: Date }; pendingTier: TrustTier; frontmatter: string; heading: string; storedVisibility?: string }, signal?: AbortSignal): Promise<FenceFactAppend> {
+  input: { fact: NewFact; pendingTier: TrustTier; frontmatter: string; heading: string; storedVisibility?: string }, signal?: AbortSignal): Promise<FenceFactAppend> {
   const page = { sourceId: row.source_id, slug: row.slug };
   const [indexedMax] = await engine.executeRaw<{ n: number }>('SELECT COALESCE(MAX(row_num),0)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, row.slug]);
   const rowNum = (indexedMax?.n ?? 0) + 1;

@@ -169,7 +169,7 @@ function factCellsDiffer(stored: ExistingPageFact, desired: FenceExtractedFact):
     || numbersDiffer(stored.claim_value, desired.claim_value)
     || (stored.claim_unit ?? null) !== (desired.claim_unit ?? null)
     || (stored.claim_period ?? null) !== (desired.claim_period ?? null)
-    || (desired.valid_from != null && timeOf(stored.valid_from) !== desired.valid_from.getTime())
+    || (desired.valid_from !== undefined && timeOf(stored.valid_from) !== timeOf(desired.valid_from))
     || (stored.expired_at == null) !== desiredActive
     || (desiredActive && timeOf(stored.valid_until) !== timeOf(desired.valid_until));
 }
@@ -547,7 +547,7 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
   for (const f of plan.updates) {
     await tx.executeRaw(
       `UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
-          valid_from = COALESCE($7::timestamptz, valid_from),
+          valid_from = CASE WHEN $17::boolean THEN $7::timestamptz ELSE valid_from END,
           valid_until = CASE WHEN $8::boolean THEN $9::timestamptz ELSE valid_until END,
           expired_at = CASE WHEN $10::timestamptz IS NULL THEN NULL ELSE COALESCE(expired_at, $10::timestamptz) END,
           source = $11, confidence = $12,
@@ -556,7 +556,7 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
       [plan.matched.get(f.row_num)!.id, sourceId, f.kind ?? 'fact', f.visibility ?? 'private', f.notability ?? 'medium',
         f.context ?? null, f.valid_from?.toISOString() ?? null, f.expired_at == null,
         f.valid_until?.toISOString() ?? null, f.expired_at?.toISOString() ?? null, f.source, f.confidence ?? 1.0,
-        f.claim_metric ?? null, f.claim_value ?? null, f.claim_unit ?? null, f.claim_period ?? null],
+        f.claim_metric ?? null, f.claim_value ?? null, f.claim_unit ?? null, f.claim_period ?? null, f.valid_from !== undefined],
     );
   }
   await moveKeptRows(tx, sourceId, slug, plan.kept, writes.inserts.map(f => f.row_num));

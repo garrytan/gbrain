@@ -183,7 +183,10 @@ impl<'a> Pool<'a> {
         {
             return Ok(false);
         }
-        if self.since.is_some_and(|since| row.valid_from_us < since) {
+        if self
+            .since
+            .is_some_and(|since| row.valid_from_us.is_none_or(|from| from < since))
+        {
             return Ok(false);
         }
         if let Some(pattern) = &a.grep
@@ -225,7 +228,7 @@ fn pool_row(row: &FactRecord, similarity: Value) -> Value {
         "entity_slug": row.entity_slug,
         "source_id": row.source_id,
         "source": row.source,
-        "valid_from": iso(row.valid_from_us),
+        "valid_from": row.valid_from_us.map(iso),
         "valid_until": row.valid_until_us.map(iso),
         "created_at": iso(row.created_at_us),
         "claim_metric": row.claim_metric,
@@ -337,6 +340,7 @@ impl Store {
         // Postgres sorts `real` with NaN above every number, as `total_cmp` does for a positive NaN.
         ranked.sort_by(|(sa, a), (sb, b)| {
             sb.total_cmp(sa)
+                .then(a.valid_from_us.is_some().cmp(&b.valid_from_us.is_some()))
                 .then(b.valid_from_us.cmp(&a.valid_from_us))
                 .then(b.id.cmp(&a.id))
         });

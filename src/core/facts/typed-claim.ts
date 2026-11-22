@@ -137,7 +137,7 @@ export function claimBucketSql(alias: string): string {
   return "(CASE " + whens.join(' ') + " ELSE to_char(" + at + ", 'YYYY-MM-DD') END)";
 }
 
-interface SlotRow { claim_metric?: string | null; claim_unit?: string | null; claim_period?: string | null; valid_from: Date | string }
+interface SlotRow { claim_metric?: string | null; claim_unit?: string | null; claim_period?: string | null; valid_from: Date | string | null }
 
 /**
  * Whether two facts state a claim for the same slot: both untyped, or the same
@@ -148,5 +148,6 @@ interface SlotRow { claim_metric?: string | null; claim_unit?: string | null; cl
 export function sameClaimSlot(a: SlotRow, b: SlotRow): boolean {
   if (!a.claim_metric && !b.claim_metric) return true;
   return a.claim_metric === b.claim_metric && (a.claim_unit ?? null) === (b.claim_unit ?? null)
-    && (a.claim_period ?? null) === (b.claim_period ?? null) && claimBucket(a.claim_period, a.valid_from) === claimBucket(b.claim_period, b.valid_from);
+    && (a.claim_period ?? null) === (b.claim_period ?? null) && a.valid_from !== null && b.valid_from !== null
+    && claimBucket(a.claim_period, a.valid_from) === claimBucket(b.claim_period, b.valid_from);
 }

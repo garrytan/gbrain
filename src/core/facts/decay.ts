@@ -49,7 +49,7 @@ export function effectiveConfidence(fact: FactRow, now: Date = new Date()): numb
   if (fact.expired_at && fact.expired_at.getTime() <= now.getTime()) return 0;
   if (fact.valid_until && fact.valid_until.getTime() <= now.getTime()) return 0;
 
-  const ageMs = now.getTime() - fact.valid_from.getTime();
+  const ageMs = now.getTime() - (fact.valid_from ?? fact.created_at).getTime();
   if (ageMs < 0) return clamp01(fact.confidence);
 
   const ageDays = ageMs / MS_PER_DAY;

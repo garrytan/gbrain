@@ -217,7 +217,7 @@ impl Store {
                 kind: "fact".into(),
                 visibility: obs.visibility.clone(),
                 notability: "medium".into(),
-                valid_from_us: valid_from.unwrap_or(now),
+                valid_from_us: Some(valid_from.unwrap_or(now)),
                 valid_until_us: valid_until,
                 source: obs.source.clone(),
                 confidence: real_arg(OP, obs.confidence)?,
@@ -231,7 +231,7 @@ impl Store {
             };
             if let Some(cur) = &current
                 && cur.value_hash.as_deref() == Some(&obs.value_hash)
-                && valid_from.is_none_or(|from| from >= cur.valid_from_us)
+                && valid_from.is_none_or(|from| cur.valid_from_us.is_none_or(|old| from >= old))
             {
                 let seen = rows.iter().filter(same_dimension).any(|r| {
                     r.value_hash.as_deref() == Some(&obs.value_hash)
@@ -259,7 +259,7 @@ impl Store {
             let mut superseded = None;
             if let Some(cur) = &current
                 && obs.status == ACTIVE
-                && valid_from.is_none_or(|from| from >= cur.valid_from_us)
+                && valid_from.is_none_or(|from| cur.valid_from_us.is_none_or(|old| from >= old))
                 && let Some(old) = crate::facts::read_fact(tx, cur.id)?
                 && old.valid_until_us.is_none()
                 // ONTOLOGY_SUPERSEDE_GUARD: a writer closes only a row no more trusted than it
@@ -293,7 +293,7 @@ impl Store {
                 continue;
             };
             if !slot_row(&r)
-                || r.valid_from_us > asof
+                || r.valid_from_us.is_some_and(|from| from > asof)
                 || r.valid_until_us.is_some_and(|until| until <= asof)
                 || !(q.include_quarantined || status_active(&r))
                 || !q.admits(&*read, &r)?
@@ -315,7 +315,7 @@ impl Store {
                     "value": r.value,
                     "confidence": real(r.confidence),
                     "source": r.source_markdown_slug,
-                    "valid_from": iso(r.valid_from_us),
+                    "valid_from": r.valid_from_us.map(iso),
                     "valid_to": r.valid_until_us.map(iso),
                     "status": r.dim_status.as_deref().unwrap_or(ACTIVE),
                     "fact_id": r.id,
@@ -431,7 +431,7 @@ fn free_key(
             && old.dimension.as_deref() == Some(&obs.dimension)
             && old.value_hash.as_deref() == Some(&obs.value_hash)
             && old.source_markdown_slug.as_deref() == Some(&obs.source)
-            && old.valid_from_us == from
+            && old.valid_from_us == Some(from)
         {
             let mut new = old.clone();
             new.dimension = None;
@@ -578,7 +578,7 @@ mod tests {
                 (4, false, true, None, Some(3)),
             ]
         );
-        assert_eq!(rows[0].valid_until_us, rows[2].valid_from_us.into());
+        assert_eq!(rows[0].valid_until_us, rows[2].valid_from_us);
 
         let q = |asof: Option<&str>| OntologyQuery {
             entity_slug: "people/s".into(),
@@ -703,7 +703,7 @@ mod tests {
                 kind: "fact".into(),
                 visibility: "private".into(),
                 notability: "medium".into(),
-                valid_from_us: parse_iso("2024-01-01T00:00:00.000Z").unwrap(),
+                valid_from_us: parse_iso("2024-01-01T00:00:00.000Z"),
                 source: "cli:extract-conversation-facts:v3".into(),
                 confidence: 1.0,
                 source_markdown_slug: Some("meetings/a".into()),

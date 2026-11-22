@@ -689,10 +689,8 @@ async function runPipelineWithBody(
   // never throw BudgetExhausted (cost/runtime gates need a cap); the
   // pipeline's failure surface is unchanged. An ambient tracker (cycle
   // phases, transcripts ingest) wins — no double scope, labels preserved.
-  // Observation time (date-grounding.ts): a dated page's facts default to the
-  // page's own date, never the sync/run time. Precedence stays extractor-stated
-  // event date > caller validFrom > observation date > now (resolveValidFrom).
-  if (!ctx.validFrom && input.observationDate) ctx = { ...ctx, validFrom: new Date(`${input.observationDate.date}T00:00:00.000Z`) };
+  // The page's observation date grounds the extraction prompt. Event time
+  // comes from the extracted fact or an explicit caller time.
   const { getCurrentBudgetTracker, withBudgetTracker } = await import('../ai/gateway.ts');
   if (!getCurrentBudgetTracker()) {
     const { BudgetTracker } = await import('../budget/budget-tracker.ts');
@@ -1048,8 +1046,8 @@ async function runPipelineBodyInner(
       visibility,
       confidence: f.confidence,
       // #4206: extractor-derived date wins; then the caller's event time
-      // (historical imports); then import time.
-      validFrom: factEventTime(f, ctx) ?? new Date(),
+      // (historical imports). In the absence of either, the fence records an unknown date.
+      validFrom: factEventTime(f, ctx),
       embedding: f.embedding ?? null,
       embedding_model: f.embedding_model ?? null, attributedTo: f.attributed_to ?? undefined,
       sessionId: f.source_session ?? null,

@@ -60,7 +60,7 @@ import { sanitizeText } from '../batch-rows.ts';
 import { isDurabilityHardened } from '../brain-repo-durability.ts';
 import { factsFenceHeld } from '../generations/fence-evidence.ts';
 import { readFenceBlocks } from '../generations/fence.ts';
-import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, isHoldingSlug, type FactAttribution, type ParsedFact } from '../facts-fence.ts';
+import { fenceCellReadBackProblem, formatFenceDate, formatFenceFactStart, normalizeClaimWhitespace, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, isHoldingSlug, type FactAttribution, type ParsedFact } from '../facts-fence.ts';
 import { FENCE_SOURCE_DEFAULT } from './extract-from-fence.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
@@ -95,7 +95,7 @@ export interface UnfencedFactRow {
   visibility: 'private' | 'world';
   notability: 'high' | 'medium' | 'low';
   context: string | null;
-  valid_from: Date;
+  valid_from: Date | string | null;
   valid_until: Date | null;
   source: string;
   confidence: number;
@@ -181,7 +181,7 @@ export type FenceRowInput = Pick<UnfencedFactRow, 'kind' | 'visibility' | 'conte
  * attributed_to) render only when present.
  */
 export function fenceRowOf(row: FenceRowInput, rowNum: number, claim: string): ParsedFact {
-  const validFromStr = formatFenceDate(row.valid_from instanceof Date ? row.valid_from : new Date(row.valid_from));
+  const validFromStr = formatFenceFactStart(row.valid_from == null ? null : new Date(row.valid_from));
   const validUntilStr = row.valid_until
     ? formatFenceDate(row.valid_until instanceof Date ? row.valid_until : new Date(row.valid_until))
     : undefined;
