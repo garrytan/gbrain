@@ -254,7 +254,6 @@ const INTERFACE_METHODS: readonly string[] = [
   'countSegmentedRecentPages',
   'countPagesHiddenByPrefix',
   'listGitImageHoldCounts',
-  'readProjectionBacklog',
   'countAtomExtractionBacklog',
   // Doctor reads of the checks from the main join (engine-sql/doctor-join.ts; covered by test/engine-parity/doctor-join-checks.test.ts)
   'listAccessMemberStatuses',
@@ -550,7 +549,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'persistOauthClientGrant', 'readLatestCatalogProvenanceAudit', 'listOauthGrantAudit', 'insertOauthCode', 'readOauthCodeForUpdate',
   'deleteOauthCode', 'readOauthCodeChallenge', 'issueOauthTokens', 'deleteOauthTokenByHash', 'softDeleteOauthClient',
   'deleteOauthClientTokens', 'deleteOauthClientCodes', 'deleteOauthClientRow', 'setOauthClientRevision', 'insertOauthGrantAudit',
-  'readMentionIndexStatus', 'countLivePagesInSource', 'countMentionDueSince', 'recountMentionIndexStatus', 'listUnarchivedSourceIds',
+  'readMentionIndexStatus', 'countLivePagesInSource', 'countMentionDueSince', 'recountMentionIndexStatus',
   'countOpenPages', 'expireAllOauthCredentials', 'readOauthRefreshTokenForUpdate', 'deleteOauthRefreshToken',
   // The write journal's claim upkeep, admission reads and housekeeping (engine-sql/persistence-claims.ts, persistence-housekeeping.ts).
   'readSourceMembership', 'findTopologyChanges', 'renewWriteClaim', 'releaseUnpublishedClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'selectClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',

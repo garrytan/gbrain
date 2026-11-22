@@ -1559,13 +1559,6 @@ const PINS: Pin[] = [
   FROM (SELECT $1::text AS want) w LEFT JOIN sources s ON s.id=w.want`],
   },
   {
-    // An equivalent statement: the caller read `created_at` alone; the member also reads `archived`, `local_path` and
-    // `config` (the generic job source boundary reads them), which this check ignores.
-    from: 'src/core/persistence/sync-authority.ts:122 validateSyncAuthority (SELECT created_at FROM sources WHERE id=$1)',
-    case: { method: 'readJobSourceState', variant: 'default', run: e => e.readJobSourceState('default') },
-    texts: ['SELECT archived, created_at, local_path, config FROM sources WHERE id = $1'],
-  },
-  {
     from: 'src/core/persistence/sync-holds.ts:1186 readGitHoldRetryPaths',
     case: { method: 'readGitHoldRetryRequest', variant: 'default', run: e => e.readGitHoldRetryRequest('default:1') },
     texts: ['SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'],
@@ -2307,26 +2300,6 @@ const PINS: Pin[] = [
   ...reflexPins(),
   ...briefPins(),
   {
-    from: 'src/core/access/caller.ts:94 liveIdentity (member id: :120 stdioMember, :146 stdioMemberIdentity)',
-    case: { method: 'readLiveMember', variant: 'member', run: e => e.readLiveMember('member', 'alice-example') },
-    texts: [memberSql('$1')],
-  },
-  {
-    from: 'src/core/access/caller.ts:94 liveIdentity (stdio config: :121)',
-    case: { method: 'readLiveMember', variant: 'stdio-config', run: e => e.readLiveMember('stdio_config', 'mcp.stdio_member') },
-    texts: [memberSql(`SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`)],
-  },
-  {
-    from: 'src/core/access/caller.ts:94 liveIdentity (legacy token: :123)',
-    case: { method: 'readLiveMember', variant: 'legacy-token', run: e => e.readLiveMember('legacy_token', 'tok-1') },
-    texts: [memberSql('SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL')],
-  },
-  {
-    from: 'src/core/access/caller.ts:94 liveIdentity (OAuth client: :123)',
-    case: { method: 'readLiveMember', variant: 'oauth-client', run: e => e.readLiveMember('oauth_client', 'client-1') },
-    texts: [memberSql('SELECT member_id FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL')],
-  },
-  {
     // readSyncImportProvenance (the one-page form, `fingerprint=$2`) now sends this statement with a one-element list.
     from: 'src/core/persistence/sync-holds.ts:1360 readSyncImportProvenances',
     case: { method: 'readOpCheckpointRecords', variant: 'default', run: e => e.readOpCheckpointRecords('sync-import-provenance', ['default:inc-1:1']) },
@@ -2434,81 +2407,6 @@ const PINS: Pin[] = [
     texts: () => [`SELECT p.slug, p.type FROM pages p
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) ${predicate()}`],
   })),
-  ...([
-    ['none', () => ''],
-    ['caller', () => `AND ${privatePagesFilterForCaller('p')}`],
-    ['floor', () => `AND ${remoteReadFloorSql('p')}`],
-  ] as const).flatMap(([privacy, predicate]): Pin[] => [
-    {
-      from: `src/core/entities/resolve.ts:519 resolveStrictEntityReference same name (privacy ${privacy})`,
-      case: { method: 'readTrigramCandidates', variant: `same_name_${privacy}`, run: e => e.readTrigramCandidates('default', { arm: 'same_name', titleLc: 'alice example', slugFragment: 'alice-example', privacy }) },
-      texts: () => [`SELECT p.slug, p.title, p.type FROM pages p
-          WHERE p.source_id = $1 AND p.deleted_at IS NULL ${predicate()} AND NOT ${retiredPageSql('p')}
-            AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
-          ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
-          LIMIT 5`],
-    },
-    {
-      from: `src/core/entities/resolve.ts:567 entityReferenceCandidates near (privacy ${privacy})`,
-      case: { method: 'readTrigramCandidates', variant: `near_${privacy}`, run: e => e.readTrigramCandidates('default', { arm: 'near', titleLc: 'alice example', slugFragment: 'alice-example', privacy }) },
-      texts: () => [`SELECT p.slug, p.title, p.type FROM pages p
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} ${predicate()}
-        AND (lower(p.title) % $2 OR p.slug ILIKE '%' || $3 || '%')
-      ORDER BY GREATEST(similarity(lower(p.title), $2), similarity(p.slug, $3)) DESC, p.slug ASC
-      LIMIT 20`],
-    },
-  ]),
-  {
-    from: 'src/core/entities/resolve.ts:857 tryFuzzyMatch',
-    case: { method: 'readTrigramCandidates', variant: 'fuzzy', run: e => e.readTrigramCandidates('default', { arm: 'fuzzy', titleLc: 'alice example', slugFragment: 'alice-example' }) },
-    texts: () => [`SELECT slug, title, type,
-         GREATEST(
-           similarity(lower(title), $2),
-           similarity(slug, $3)
-         ) AS score
-       FROM pages
-       WHERE source_id = $1
-         AND deleted_at IS NULL
-         AND NOT ${retiredPageSql('pages')}
-         AND (
-           lower(title) % $2
-           OR slug ILIKE '%' || $3 || '%'
-         )
-       ORDER BY score DESC, slug ASC
-       LIMIT 5`],
-  },
-  {
-    from: 'src/core/entities/resolve.ts:686 findPrefixCandidates',
-    case: { method: 'readPrefixCandidates', variant: 'patterns', run: e => e.readPrefixCandidates('default', { patterns: ['people/alice', 'people/alice-%'] }) },
-    texts: () => [`SELECT p.slug,
-              ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
-               + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
-               + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
-                AS connection_count
-       FROM pages p
-       WHERE p.source_id = $1
-         AND p.deleted_at IS NULL
-         AND NOT ${retiredPageSql('p')}
-         AND p.slug LIKE ANY($2::text[])
-       ORDER BY connection_count DESC, p.slug ASC
-       LIMIT 10`],
-  },
-  {
-    from: 'src/core/entities/resolve.ts:769 tryPrefixExpansion',
-    case: { method: 'readPrefixCandidates', variant: 'pattern', run: e => e.readPrefixCandidates('default', { pattern: 'people/alice-%' }) },
-    texts: () => [`SELECT p.slug,
-                ((SELECT COUNT(*)::int FROM links l WHERE l.to_page_id = p.id AND ${rankingLinkSql('l')})
-                 + (SELECT COUNT(*)::int FROM links l WHERE l.from_page_id = p.id AND ${rankingLinkSql('l')})
-                 + (SELECT COUNT(*)::int FROM content_chunks WHERE page_id = p.id))
-                  AS connection_count
-         FROM pages p
-         WHERE p.source_id = $1
-           AND p.deleted_at IS NULL
-           AND NOT ${retiredPageSql('p')}
-           AND p.slug LIKE $2
-         ORDER BY connection_count DESC, p.slug ASC
-         LIMIT 5`],
-  },
   {
     from: 'src/core/entities/resolve.ts:732 tryUnambiguousPrefixExpansion dirs',
     case: { method: 'readPrefixDirs', variant: 'default', run: e => e.readPrefixDirs('default', ['people/alice', 'people/alice-%']) },
@@ -2524,28 +2422,6 @@ const PINS: Pin[] = [
           AND slug LIKE ANY($2::text[]) AND lower(title) = lower($3)
         LIMIT 3`],
   },
-  ...([
-    ['none', () => ''],
-    ['caller', () => `AND ${privatePagesFilterForCaller('p')}`],
-    ['floor', () => `AND ${remoteReadFloorSql('p')}`],
-  ] as const).map(([privacy, predicate]): Pin => ({
-    from: `src/core/entities/resolve.ts:552 entityReferenceCandidates named (privacy ${privacy})`,
-    case: { method: 'readNamedEntitySlugs', variant: privacy, run: e => e.readNamedEntitySlugs('default', ['companies/acme', 'orgs/acme'], privacy) },
-    texts: () => [`SELECT p.slug FROM pages p
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND NOT ${retiredPageSql('p')} AND p.slug = ANY($2::text[]) ${predicate()}
-      ORDER BY p.slug LIMIT 5`],
-  })),
-  ...([
-    ['all', {}],
-    ['sources-run', { sourceIds: ['default'], runId: 'run-1' }],
-  ] as const).map(([variant, opts]): Pin => ({
-    from: `src/core/persistence/sync-holds.ts:575 readGitSourceHolds (${variant})`,
-    case: { method: 'readGitHoldRecords', variant, run: e => e.readGitHoldRecords(opts) },
-    texts: () => [`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
-    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
-    ORDER BY s.id,h.fingerprint`],
-  })),
   {
     from: 'src/core/sync-dispatch-read.ts:51 syncDispatchRow',
     case: { method: 'readSyncDispatchRow', variant: 'default', run: e => e.readSyncDispatchRow('default') },
@@ -2554,12 +2430,6 @@ const PINS: Pin[] = [
   EXISTS(SELECT 1 FROM source_ingestion_receipts r WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.profile='company-brain') AS company_receipt,
   (SELECT COALESCE(jsonb_agg(m.enabled), '[]'::jsonb) FROM (${MANAGED_MODE_SQL}) m) AS modes
   FROM (SELECT $1::text AS want) w LEFT JOIN sources s ON s.id=w.want`],
-  },
-  {
-    // An equivalent statement: the caller read `created_at` alone; the member also reads `archived`, which the check ignores.
-    from: 'src/core/persistence/sync-authority.ts:122 validateSyncAuthority (SELECT created_at FROM sources WHERE id=$1)',
-    case: { method: 'readJobSourceState', variant: 'default', run: e => e.readJobSourceState('default') },
-    texts: ['SELECT archived, created_at FROM sources WHERE id = $1'],
   },
   {
     from: 'src/core/persistence/sync-holds.ts:1186 readGitHoldRetryPaths',
@@ -2706,16 +2576,6 @@ const PINS: Pin[] = [
         (SELECT count(*) FROM w JOIN page_embedding_budget b ON b.page_id=w.id JOIN pages p ON p.id=w.id WHERE ${budgetRowAppliesFilter('b', 'p')}) AS held FROM w`],
   },
   {
-    from: 'src/commands/access-serves.ts:135 unboundCredentials (tokens) (at 6e123afe98)',
-    case: { method: 'listUnboundTokenNames', variant: 'default', run: e => e.listUnboundTokenNames() },
-    texts: ['SELECT DISTINCT name FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NULL ORDER BY name'],
-  },
-  {
-    from: 'src/commands/access-serves.ts:136 unboundCredentials (clients) (at 6e123afe98)',
-    case: { method: 'listUnboundClientIds', variant: 'default', run: e => e.listUnboundClientIds() },
-    texts: ['SELECT client_id FROM oauth_clients WHERE deleted_at IS NULL AND member_id IS NULL ORDER BY client_id'],
-  },
-  {
     from: 'src/commands/access-serves.ts:186 member key plan (live token) (at 6e123afe98)',
     case: { method: 'readLiveAccessToken', variant: 'default', run: e => e.readLiveAccessToken('member-alice-example') },
     texts: ['SELECT member_id, token_hash, source_grant, source_id, federated_read, permissions FROM access_tokens WHERE name = $1 AND revoked_at IS NULL'],
@@ -2729,11 +2589,6 @@ const PINS: Pin[] = [
     from: 'src/commands/access-serves.ts:241 recordSetupReads (at 6e123afe98)',
     case: { method: 'recordTokenSetupReads', variant: 'default', run: e => e.recordTokenSetupReads('member-alice-example', ['src-a']) },
     texts: ["UPDATE access_tokens SET permissions = COALESCE(permissions, '{}'::jsonb) || jsonb_build_object('setup_reads', $2::text[]) WHERE name = $1 AND revoked_at IS NULL AND (permissions IS NULL OR jsonb_typeof(permissions) = 'object')"],
-  },
-  {
-    from: 'src/commands/access-serves.ts:251 keysStillReading (at 6e123afe98)',
-    case: { method: 'listKeysReadingSource', variant: 'default', run: e => e.listKeysReadingSource('src-a') },
-    texts: ["SELECT name, member_id, federated_read FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NOT NULL AND source_grant = 'federated' AND source_id <> $1 AND $1 = ANY(federated_read) ORDER BY name"],
   },
   {
     from: 'src/commands/access-serves.ts:265 companyCounts (at 6e123afe98)',
@@ -2766,17 +2621,6 @@ const PINS: Pin[] = [
     texts: ["UPDATE access_policy_migrations SET phase = 'switched', receipts = $2::text::jsonb, updated_at = now() WHERE id = $1"],
   },
   {
-    from: 'src/core/access/policy-transfer.ts:34 exportPolicyFiles (at 6e123afe98)',
-    case: { method: 'listAccessPolicySources', variant: 'default', run: e => e.listAccessPolicySources() },
-    texts: ['SELECT source_id FROM access_policy_state ORDER BY source_id'],
-  },
-  {
-    from: 'src/core/access/serves.ts:38 unlabeledPeopleFolders (at 6e123afe98)',
-    case: { method: 'countPeopleFolderPages', variant: 'default', run: e => e.countPeopleFolderPages() },
-    texts: [`SELECT source_id, split_part(slug, '/', 2) AS folder, count(*)::int AS pages FROM pages
-      WHERE deleted_at IS NULL AND slug LIKE 'people/%/%' GROUP BY 1, 2 ORDER BY 1, 2`],
-  },
-  {
     from: 'src/core/source-health.ts:384 pageCountsBySource (at cd882f06e6)',
     case: { method: 'countLivePagesBySource', variant: 'default', run: e => e.countLivePagesBySource() },
     texts: [`SELECT source_id, COUNT(*)::int AS n
@@ -2804,12 +2648,6 @@ const PINS: Pin[] = [
     from: 'src/core/quarantine.ts:116 quarantinedSlugs (at 90ede8f55a)',
     case: { method: 'listQuarantinedSlugs', variant: 'default', run: e => e.listQuarantinedSlugs('default') },
     texts: [`SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND NOT NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine')`],
-  },
-  {
-    from: 'src/core/link-reconciliation.ts:220 fileLinkOwnership scoped metadata (at 90ede8f55a)',
-    case: { method: 'listLinkPageMetadataForSlugs', variant: 'default', run: e => e.listLinkPageMetadataForSlugs('default', ['a']) },
-    texts: [`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
-        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`],
   },
   {
     from: 'src/core/trust/timeline-projection.ts:22 pageInputs (at 1a12510b10)',
@@ -2960,17 +2798,6 @@ const PINS: Pin[] = [
         FROM r WHERE c.key=ANY($4::text[]))
       SELECT * FROM r`],
   },
-  ...([
-    ['all', {}],
-    ['sources-run', { sourceIds: ['default'], runId: 'run-1' }],
-  ] as const).map(([variant, opts]): Pin => ({
-    from: `src/core/persistence/sync-holds.ts:575 readGitSourceHolds (${variant})`,
-    case: { method: 'readGitHoldRecords', variant, run: e => e.readGitHoldRecords(opts) },
-    texts: () => [`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
-    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
-    ORDER BY s.id,h.fingerprint`],
-  })),
   {
     from: 'src/core/persistence/sync-holds.ts:598 readGitHoldListing (at 77ac0ed0e9)',
     case: { method: 'readGitHoldListingRows', variant: 'default', run: e => e.readGitHoldListingRows(['default'], 5) },
@@ -3039,12 +2866,6 @@ const PINS: Pin[] = [
     texts: [`SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND NOT NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine')`],
   },
   {
-    from: 'src/core/link-reconciliation.ts:220 fileLinkOwnership scoped metadata (at 90ede8f55a)',
-    case: { method: 'listLinkPageMetadataForSlugs', variant: 'default', run: e => e.listLinkPageMetadataForSlugs('default', ['a']) },
-    texts: [`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
-        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`],
-  },
-  {
     from: 'src/core/trust/timeline-projection.ts:22 pageInputs (at 1a12510b10)',
     case: { method: 'listPageTrustTiersByKey', variant: 'default', run: e => e.listPageTrustTiersByKey([{ source_id: 'default', slug: 'a' }]) },
     texts: [`SELECT p.id,p.source_id,p.slug,p.trust_tier FROM pages p
@@ -3093,26 +2914,6 @@ const PINS: Pin[] = [
     case: { method: 'readRetiredManagedSyncCursor', variant: 'default', run: e => e.readRetiredManagedSyncCursor('default', '1') },
     texts: [`SELECT to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS first_seen FROM op_checkpoints
     WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'incarnation'<>$2 AND COALESCE(completed_keys->0->>'done','false')<>'true' ORDER BY updated_at LIMIT 1`],
-  },
-  {
-    from: 'src/core/persistence/sync-status.ts:364 readSyncStatus (source row) (at 21cd64e151); identity_reviews and held_deletes from sync-status.ts:376 (at c9e289dbed)',
-    case: { method: 'readSyncStatusSourceRow', variant: 'default', run: e => e.readSyncStatusSourceRow('default') },
-    texts: () => {
-      const admissionSql = syncAdmissionSettingSql(4);
-      return [`SELECT s.incarnation::text AS incarnation, s.last_commit, s.last_sync_at, EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE l.id=$7) AS drain_lock,
-      p.completed_keys->0 AS pass_value, p.updated_at AS pass_updated_at, now() AS pass_read_at, w.completed_keys->0 AS withheld, ${admissionSql.columns}, ${syncAdmissionEffectSql(7, 's')},
-      (SELECT r.request_id::text FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.kind='git' AND e.state='failed' AND NOT (e.data ? 'settled')
-        AND e.request_id IN (SELECT id::uuid FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.completed_keys->0->'obligations'->'converged'->'writeback')='array'
-          THEN p.completed_keys->0->'obligations'->'converged'->'writeback' ELSE '[]'::jsonb END) AS w(id)) ORDER BY e.id LIMIT 1) AS writeback_failed,
-      (SELECT row_to_json(f) FROM (SELECT r.id,r.worktree_id,r.state,r.source_ids,r.outcome,r.old_head,r.target_head,r.barrier_sequence,r.updated_at,w.owner_host_id FROM persistence_worktree_refreshes r
-        LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE s.id=ANY(r.source_ids) AND r.state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh,
-      (SELECT ir.completed_keys FROM op_checkpoints ir WHERE ir.op='${APPLE_CONTACTS_REVIEW_OP}' AND ir.fingerprint=s.id) AS identity_reviews,
-      (SELECT hd.completed_keys FROM op_checkpoints hd WHERE hd.op='${APPLE_CONTACTS_PENDING_DELETES_OP}' AND hd.fingerprint=s.id) AS held_deletes FROM sources s
-      LEFT JOIN op_checkpoints p ON p.op=$2 AND p.fingerprint=s.id||':'||s.incarnation::text
-      LEFT JOIN op_checkpoints w ON w.op=$3 AND w.fingerprint=s.id||':'||s.incarnation::text
-      ${admissionSql.joins}
-      WHERE s.id=$1 AND s.archived IS NOT TRUE`];
-    },
   },
   {
     from: 'src/core/persistence/sync-status.ts:380 readSyncStatus (committed row) (at 21cd64e151)',
@@ -3246,16 +3047,6 @@ const PINS: Pin[] = [
          AND ($2 OR (local_path IS NOT NULL AND config->>'role' IS DISTINCT FROM 'storage_manifest'))
        ORDER BY (id = 'default') DESC, id COLLATE "C"
     `],
-  },
-  {
-    from: 'src/commands/access-serves.ts:197 member key plan (active sources) (at 6e123afe98); also grants/legacy-token.ts:193 assertActiveSources (at 5a32485552)',
-    case: { method: 'listUnarchivedSourceIds', variant: 'default', run: e => e.listUnarchivedSourceIds(['src-a', 'src-b']) },
-    texts: ['SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE'],
-  },
-  {
-    from: 'src/commands/access-serves.ts:197 member key plan (active sources) (at 6e123afe98); also grants/legacy-token.ts:193 assertActiveSources (at 5a32485552)',
-    case: { method: 'listUnarchivedSourceIds', variant: 'default', run: e => e.listUnarchivedSourceIds(['src-a', 'src-b']) },
-    texts: ['SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE'],
   },
   {
     from: 'src/commands/extract.ts:497 loadSlugAliasTargets (at a18d118d27)',

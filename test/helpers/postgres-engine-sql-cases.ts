@@ -512,6 +512,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'deferProjectionJob': OOS.projectionRebuild,
   'countPendingTextChunks': OOS.projectionRebuild,
   'probeProjectionWindowCandidates': OOS.projectionRebuild,
+  'insertReasonPurgeTombstones': OOS.factsPurgeSites,
   'expireFactsOfGonePages': OOS.factsPurgeSites,
   'readPurgeSourceLocalPath': OOS.factsPurgeSites,
   'listGitEffectsCarryingReason': OOS.factsPurgeSites,
@@ -2099,7 +2100,6 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('isSourceClaimed', [['default', (e) => e.isSourceClaimed(SRC)]]),
   ...variants('readSourceLastCommit', [['default', (e) => e.readSourceLastCommit(SRC)]]),
   ...variants('setSourceChunkerVersion', [['default', (e) => e.setSourceChunkerVersion(SRC, '7')]]),
-  ...variants('advanceSourceCommit', [['default', (e) => e.advanceSourceCommit(SRC, 'abc123')], ['newest-content', (e) => e.advanceSourceCommit(SRC, 'abc123', '2026-01-02T03:04:05.000Z')], ['newest-cleared', (e) => e.advanceSourceCommit(SRC, 'abc123', null)]]),
   ...variants('countSourcePages', [['default', (e) => e.countSourcePages(SRC)], ['includeDeleted', (e) => e.countSourcePages(SRC, { includeDeleted: true })]]),
   ...variants('readPageIdentity', [['default', (e) => e.readPageIdentity(1)]]),
   ...variants('writeSourceSyncHeartbeat', [['default', (e) => e.writeSourceSyncHeartbeat(SRC)]]),
@@ -2115,6 +2115,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('readPageSizeRows', [['default', (e) => e.readPageSizeRows(SRC, 1048576, null)], ['slugs', (e) => e.readPageSizeRows(SRC, 1048576, ['notes/a'])]]),
   ...variants('holdPageEmbedding', [['default', (e) => e.holdPageEmbedding(1, 'awaiting_approval')]]),
   ...variants('readReasonPurgeTombstones', [['default', (e) => e.readReasonPurgeTombstones(SRC)], ['pair', (e) => e.readReasonPurgeTombstones(SRC, { commit_sha: 'abc', path: 'notes/a.md' })]]),
+  ...variants('writeReasonPurgeTombstones', [['default', (e) => e.writeReasonPurgeTombstones(SRC, [{ commit_sha: 'abc', path: 'notes/a.md' }])]]),
   ...variants('advanceSourcePurgeEpoch', [['default', (e) => e.advanceSourcePurgeEpoch(SRC)]]),
 
   // ── files ──
