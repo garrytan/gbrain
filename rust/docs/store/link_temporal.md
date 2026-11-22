@@ -44,6 +44,9 @@ writes the rows the builder returns.
 - `applyLinkTemporalRows` replaces the origin's derived transitions: the old rows go before the new rows are written. On
   Postgres the SQL statements are pipelined, which keeps their order only on one connection, so the Postgres member opens a
   transaction when its caller has none (`test/e2e/link-temporal-apply-order-postgres.test.ts`).
+- A transition row needs its origin page (`origin_page_id REFERENCES pages(id)`): when a row would be inserted and the
+  origin page does not exist in any deletion state, the write refuses with the foreign key's message
+  (`link_transitions_origin_page_id_fkey`) and writes nothing. A soft-deleted origin page still exists.
 
 ## The call sites and what they run on the Rust engine
 

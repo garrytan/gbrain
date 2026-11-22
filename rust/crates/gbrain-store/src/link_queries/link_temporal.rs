@@ -1384,6 +1384,9 @@ impl Store {
                 tx.delete(&key)?;
             }
             let mut inserted = Vec::new();
+            // `origin_page_id REFERENCES pages(id)`: an inserted row needs its origin page to exist (in any deletion
+            // state), read once, when the first row reaches the insert.
+            let mut origin_exists = None;
             for t in &input.transitions {
                 let (Some(from), Some(to)) = (
                     live_page(&*tx, &input.source_id, &t.from_slug)?,
@@ -1391,6 +1394,16 @@ impl Store {
                 ) else {
                     continue;
                 };
+                let exists = match origin_exists {
+                    Some(known) => known,
+                    None => *origin_exists.insert(read_page_by_id(&*tx, page_id)?.is_some()),
+                };
+                if !exists {
+                    return Err(crate::takes::fk_failed(
+                        "link_transitions",
+                        "link_transitions_origin_page_id_fkey",
+                    ));
+                }
                 let record = TransitionRecord {
                     id: 0,
                     source_id: input.source_id.clone(),

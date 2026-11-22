@@ -96,13 +96,13 @@ getPage	pages	yes	135	yes	yes	yes	serves
 readPageSnapshot	pages	yes	36	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	612	yes	yes	yes	serves
+putPage	pages	yes	613	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	174	yes	yes	yes	serves
+softDeletePage	pages	yes	175	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	5	no	yes	yes	serves
@@ -173,8 +173,8 @@ readLinkRelationshipEvidence	link_temporal	yes	3	no	yes	yes	serves
 writeLinkRelationshipState	link_temporal	yes	2	no	yes	yes	serves
 linkRelationshipKeysForPages	link_temporal	yes	2	no	yes	yes	serves
 staleLinkRelationshipKeys	link_temporal	yes	2	no	yes	yes	serves
-linkRelationshipKeysForOrigin	link_temporal	yes	2	no	yes	yes	serves
-applyLinkTemporalRows	link_temporal	yes	1	no	yes	yes	serves
+linkRelationshipKeysForOrigin	link_temporal	yes	3	no	yes	yes	serves
+applyLinkTemporalRows	link_temporal	yes	2	no	yes	yes	serves
 writeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
 removeManualLinkTransitions	link_temporal	yes	1	no	yes	yes	serves
 listRelationshipNoteRows	link_temporal	yes	9	no	yes	yes	serves
