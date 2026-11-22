@@ -7,7 +7,7 @@
  */
 import type { OpenPageCount, OpenPageExclusion, WhoCanReadPageRow } from '../../engine-sql/access-setup.ts';
 import type { OwnerOnlyForm } from '../../access/owner-only.ts';
-import { accessAllowedSql, callerAccessAllowedSql, currentCallerAccess, privacyPartSql } from '../../search/private-visibility.ts';
+import { accessAllowedSql, callerAccessAllowedSql, currentCallerAccess, privacyPartSql, satisfiedFor } from '../../search/private-visibility.ts';
 import { validIdentity } from '../../access/principals.ts';
 import type { AccessRuleRow } from '../../engine-sql/access-policy.ts';
 import { ruleCovers, validPrefix, validQualifiedRuleId } from '../../access/folder-rules.ts';
@@ -91,8 +91,10 @@ export const readPageAdmitsCaller: StoreMember<[sourceId: string, slug: string, 
   const text = accessAllowedSql('p', identity);
   const reference = renderForStoreCaller({ identity: [...identity], owner: access.owner, restricted: true, ...folders.record }, () => accessAllowedSql('p', identity));
   if (text !== reference) refuseMember('readPageAdmitsCaller', 'a member-access floor rendered outside a restricted caller record');
-  // SQL empties an identity or satisfied list with an invalid entry (readersAllowedSql, folderRulesAllowedSql).
-  const satisfied = (folders.flags.satisfiedRuleIds ?? []).every(validQualifiedRuleId) ? folders.flags.satisfiedRuleIds : undefined;
+  // The satisfied rules SQL renders for this identity (satisfiedFor: the record's own only when the argument is the
+  // record's identity); SQL empties a satisfied list with an invalid entry (folderRulesAllowedSql).
+  const own = [...satisfiedFor(identity)];
+  const satisfied = own.length && own.every(validQualifiedRuleId) ? own : undefined;
   const policy: StorePrivacyPolicy = {
     honorAliases: false, entityPrivacy: false, identity: validIdentity(identity) ? [...identity] : [], ownerOnly: ownerOnlyFormIn(text, 'pages', 'p'),
     ...(satisfied ? { satisfiedRuleIds: satisfied } : {}), ...(folders.flags.folderCoverage ? { folderCoverage: folders.flags.folderCoverage } : {}), callerRecord: true,

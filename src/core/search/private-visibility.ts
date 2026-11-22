@@ -166,7 +166,7 @@ function coverageSql(alias: string): string {
 }
 
 /** The satisfied rule ids for `identity`: the current record's set when it is the record's identity, else none. */
-function satisfiedFor(identity: readonly string[]): readonly string[] {
+export function satisfiedFor(identity: readonly string[]): readonly string[] {
   const access = currentCallerAccess();
   if (!identity.length || identity.length !== access.identity.length) return [];
   const sorted = [...identity].sort();

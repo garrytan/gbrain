@@ -251,13 +251,24 @@ async function admits(engine: BrainEngine, backend: ParityBackend): Promise<Reco
       out[`${source}:${slug}`]!.push(await withCallerAccess(record as never, () => engine.readPageAdmitsCaller(source, slug, identity)));
     }
   }
+  // An identity argument that is not the record's own (here a principal listed twice) gets no satisfied rule: SQL's
+  // satisfiedFor compares it with the record's identity, so a folder page stays closed even in a record whose rules
+  // admit it. Row: [alice's argument in bob's record on bob's ops/ page, alice's own argument doubled on deals/].
+  const record = async (id: string, groups: readonly string[]) => {
+    const identity = identityFor(id, groups);
+    return { identity, ...await folderAccessFor(engine, identity), restricted: true, owner: id === 'bob-example', remotePolicy };
+  };
+  out['duplicate identity'] = [
+    await withCallerAccess(await record('bob-example', []) as never, () => engine.readPageAdmitsCaller('default', 'ops/plan', ['member:bob-example', 'member:bob-example'])),
+    await withCallerAccess(await record('alice-example', ['team-a']) as never, () => engine.readPageAdmitsCaller('default', 'deals/q4', ['member:alice-example', 'member:alice-example', 'group:team-a'])),
+  ];
   return out;
 }
 
 const ADMITS = {
   'default:notes/open': [true, true], 'default:notes/alice-only': [true, false], 'default:notes/bob-only': [false, true], 'default:notes/team': [true, false],
   'default:deals/q4': [true, false], 'default:ops/plan': [false, true], 'default:pend/x': [false, false], 'imsg:chats/dm': [false, true],
-  'default:gone/page': [true, true], 'default:nowhere/page': [false, false],
+  'default:gone/page': [true, true], 'default:nowhere/page': [false, false], 'duplicate identity': [false, false],
 };
 
 describe('one page row against one member\'s member-access floor', () => {
