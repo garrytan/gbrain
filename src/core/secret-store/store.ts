@@ -131,6 +131,22 @@ export async function occurrencesOf(engine: BrainEngine, id: string): Promise<Oc
     FROM secret_store_occurrence WHERE entry_id=$1 ORDER BY id`, [id]);
 }
 
+/**
+ * The slugs of pages that hold a page occurrence of entry `id` this caller may count toward a reveal (GST-3065). A commit
+ * occurrence names a file in git, never a page, so its slug is not counted. An occurrence redacted from a take, timeline or
+ * fact row counts only when that row passes `rowAllowed` for its table (the caller's owner-only lineage test, empty for
+ * the owner); a row that is gone no longer counts.
+ */
+export async function revealableSlugs(engine: BrainEngine, id: string, sourceId: string, rowAllowed: { takes: string; timeline: string; facts: string }): Promise<string[]> {
+  const row = (table: string, alias: string, allowed: string) =>
+    `WHEN o.field ~ '^${table}/[0-9]+/' THEN EXISTS (SELECT 1 FROM ${table} ${alias} WHERE ${alias}.id = split_part(o.field, '/', 2)::bigint${allowed})`;
+  const rows = await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT o.slug FROM secret_store_occurrence o
+    WHERE o.entry_id=$1 AND o.source_id=$2 AND o.slug IS NOT NULL AND o.commit_sha IS NULL
+      AND CASE ${row('takes', 'rt', rowAllowed.takes)} ${row('timeline_entries', 'rl', rowAllowed.timeline)} ${row('facts', 'rf', rowAllowed.facts)} ELSE TRUE END`,
+  [id, sourceId]);
+  return rows.map(r => r.slug);
+}
+
 export interface RevealResult { id: string; source_id: string; rule: string; status: EntryStatus; value: string; occurrences: Occurrence[] }
 
 /** The original value of one entry with where it was redacted. The caller decides who may call it (ops/secrets.ts). */

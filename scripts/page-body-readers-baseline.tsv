@@ -671,6 +671,7 @@ src/core/search/safe-chunks.ts	protectedBodyFilter	sql	META	segmented page: body
 src/core/search/safe-chunks.ts	protectedTakesFilter	sql	META	segmented page: body_flags.has_protected decides, missing flag counts as protected (fail closed)
 src/core/secret-store/marker-sql.ts	pageHoldsSql	sql	INLINE	presence check on inline columns in SQL; a segmented body is not read here, and restore reads its segments through readSegmentedBody
 src/core/secret-store/restore.ts	previewRestore	sql	INLINE	presence check on inline columns in SQL; a segmented page counts as a hit and the apply reads it whole
+src/core/secret-store/store.ts	revealableSlugs	field	NONE	not the page body: secret_store_occurrence.field names the redacted field, and the row tests read takes, timeline_entries and facts ids
 src/core/shared-skills/migration-export.ts	exportInventory	call:serializeMarkdown	INLINE	
 src/core/shared-skills/migration-export.ts	exportInventory	field	INLINE	
 src/core/shared-skills/migration-projection.ts	assertExportProjectionRoundtrip	field	INLINE	

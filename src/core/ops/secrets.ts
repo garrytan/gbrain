@@ -3,7 +3,10 @@
  * `gbrain secrets reveal <id>`. A remote caller needs two things: a grant whose operation snapshot names
  * `reveal_secret` (an explicit approval: a grant with no snapshot, or a refresh of one, never reaches it; see
  * execution-prerequisites.ts), and read access to a page that holds a recorded occurrence of the entry, checked through
- * get_page with the caller's own context, so page visibility, source scope and member rules apply unchanged. Every
+ * get_page with the caller's own context, so page visibility, source scope and member rules apply unchanged. Only page
+ * occurrences count (a commit occurrence names a git file, not a page), and one redacted from a take, timeline or fact
+ * row counts only when that row passes the caller's owner-only lineage test (GST-3065), so a non-owner never reveals an
+ * original redacted from an owner-only row on a page it can read. Every
  * reveal is written to the `secrets` audit log without the value.
  */
 import { opError, type Operation, type OperationContext } from './contract.ts';
@@ -32,7 +35,7 @@ const reveal_secret: Operation = {
   mutating: false,
   handler: async (ctx, p) => {
     const id = String(p.id ?? '');
-    const { entryRow, occurrencesOf, reveal } = await import('../secret-store/store.ts');
+    const { entryRow, revealableSlugs, reveal } = await import('../secret-store/store.ts');
     let actor = 'local-cli';
     if (ctx.remote !== false) {
       const allowed = ctx.auth?.allowedOperations;
@@ -41,7 +44,9 @@ const reveal_secret: Operation = {
           `The brain owner grants it to this token from the brain host: gbrain auth rescope --token ${ctx.auth?.clientName ?? 'TOKEN_NAME'} --refresh-operations --add reveal_secret (preview without --add first).`);
       }
       const row = await entryRow(ctx.engine, id);
-      const slugs = [...new Set((await occurrencesOf(ctx.engine, id)).filter(o => o.slug && o.source_id === row.source_id).map(o => o.slug!))];
+      const { ownerOnlyTakeAllowedSql, ownerOnlyTimelineAllowedSql, ownerOnlyFactAllowedSql } = await import('../search/private-visibility.ts');
+      const slugs = await revealableSlugs(ctx.engine, id, row.source_id,
+        { takes: ownerOnlyTakeAllowedSql('rt'), timeline: ownerOnlyTimelineAllowedSql('rl'), facts: ownerOnlyFactAllowedSql('rf') });
       if (!slugs.length || !(await callerCanRead(ctx, row.source_id, slugs))) {
         throw opError('secret_reveal_forbidden', 'None of the pages holding this marker is readable by this connection, so its original is not returned.',
           'Ask the brain owner; only a caller that can read a page holding the marker can reveal it.');

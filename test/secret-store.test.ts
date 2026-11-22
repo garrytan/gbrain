@@ -15,7 +15,8 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { currentKey, exportKeyEscrow, importKeyEscrow, keyById, keyringDir, keyringStatus } from '../src/core/secret-store/keyring.ts';
-import { isAllowed, listEntries, reveal, seal } from '../src/core/secret-store/store.ts';
+import { isAllowed, listEntries, recordOccurrence, reveal, seal } from '../src/core/secret-store/store.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { applyRestore, previewRestore } from '../src/core/secret-store/restore.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { resolveGrantProfile } from '../src/core/grants/service.ts';
@@ -184,4 +185,42 @@ describe('reveal_secret stays approved by name in profile grants', () => {
     expect(resolveGrantProfile({ profile: 'memory-reader', sourceId: 'default', existing: named }).allowedOperations).toContain('reveal_secret');
     expect(resolveGrantProfile({ profile: 'memory-reader', sourceId: 'default', existing: unnamed }).allowedOperations).not.toContain('reveal_secret');
   });
+});
+
+describe('reveal_secret and owner-only rows (GST-3065)', () => {
+  test('a non-owner with a reveal grant is refused an original redacted from an owner-only take or timeline row, or held only by a commit occurrence; the owner and the local CLI still reveal', () => withEnv({ GBRAIN_HOME: home, GBRAIN_SECRET_STORE_KEY: undefined }, async () => {
+    for (const { name, engine } of engines) {
+      const op = operationsByName.reveal_secret!;
+      await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('oo-src', 'oo-src', '{"owner_only":true}'::jsonb) ON CONFLICT (id) DO NOTHING`);
+      await importFromContent(engine, 'notes/oo-chat', '---\ntitle: Chat\n---\nPrivate chat.\n', { sourceId: 'oo-src' });
+      await importFromContent(engine, 'notes/shared-plan', '---\ntitle: Shared plan\n---\nShared plan.\n', { sourceId: 'default' });
+      const pageOf = async (slug: string, sourceId: string) => Number((await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug=$1 AND source_id=$2', [slug, sourceId]))[0]!.id);
+      const chatId = await pageOf('notes/oo-chat', 'oo-src');
+      const pageId = await pageOf('notes/shared-plan', 'default');
+      const values = { open: 'AKIA' + 'OPENROWVALUE0001', take: 'AKIA' + 'OWNERONLYTAKE001', timeline: 'AKIA' + 'OWNERONLYTIME001', commit: 'AKIA' + 'COMMITONLYVAL001' };
+      const ids = Object.fromEntries(await Promise.all(Object.entries(values).map(async ([k, v]) => [k, (await seal(engine, { sourceId: 'default', rule: 'aws_access_key', value: v })).id]))) as Record<keyof typeof values, string>;
+      const marker = (id: string) => `<REDACTED:aws_access_key:${id}>`;
+      const [take] = await engine.executeRaw<{ id: number }>(`INSERT INTO takes (page_id, row_num, claim, kind, holder) VALUES ($1, 1, $2, 'take', 'world') RETURNING id`, [pageId, 'Plan ' + marker(ids.take)]);
+      const [row] = await engine.executeRaw<{ id: number }>(`INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-06-14', $2) RETURNING id`, [pageId, 'Met ' + marker(ids.timeline)]);
+      await engine.executeRaw(`INSERT INTO derivation_inputs (derived_table, derived_id, input_table, input_id, source_id) VALUES
+        ('takes', $1, 'pages', $3, 'default'), ('timeline_entries', $2, 'pages', $3, 'default')`, [String(take!.id), String(row!.id), String(chatId)]);
+      const at = { sourceId: 'default', pageId, slug: 'notes/shared-plan', origin: 'repair' as const };
+      await recordOccurrence(engine, { ...at, entryId: ids.open, field: 'compiled_truth' });
+      await recordOccurrence(engine, { ...at, entryId: ids.take, field: `takes/${take!.id}/claim` });
+      await recordOccurrence(engine, { ...at, entryId: ids.timeline, field: `timeline_entries/${row!.id}/summary` });
+      await recordOccurrence(engine, { ...at, pageId: null, entryId: ids.commit, field: 'compiled_truth', origin: 'publish_rebuild', commit: 'a'.repeat(40), path: 'notes/shared-plan.md', line: 3 });
+
+      const nonOwner = remoteCtx(engine, ['get_page', 'reveal_secret']);
+      expect(await op.handler(nonOwner, { id: ids.open }), name).toMatchObject({ value: values.open });
+      for (const k of ['take', 'timeline', 'commit'] as const) {
+        await expect(op.handler(nonOwner, { id: ids[k] }), `${name} ${k}`).rejects.toMatchObject({ code: 'secret_reveal_forbidden' });
+      }
+      for (const k of ['take', 'timeline'] as const) {
+        expect(await withCallerAccess({ owner: true }, () => op.handler(nonOwner, { id: ids[k] })), `${name} owner ${k}`).toMatchObject({ value: values[k] });
+      }
+      for (const k of ['take', 'timeline', 'commit'] as const) {
+        expect(await op.handler({ engine, config: {}, logger, dryRun: false, remote: false } as unknown as OperationContext, { id: ids[k] }), `${name} local ${k}`).toMatchObject({ value: values[k] });
+      }
+    }
+  }), 120_000);
 });
