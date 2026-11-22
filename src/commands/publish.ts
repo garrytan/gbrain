@@ -14,7 +14,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, realpathSync, statSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
-import { dirname, basename, resolve } from 'path';
+import { dirname, basename } from 'path';
 import { frontmatterBodyOffset, validatorFrontmatterFence } from '../core/markdown.ts';
 import { FRONTMATTER_SCHEMA, FrontmatterLanguageError, loadBoundedYaml, scanDataFrontmatter } from '../core/data-frontmatter.ts';
 import { GUEST_WARNING_LINE_RE } from '../core/guests/marker.ts';
@@ -539,7 +539,7 @@ export async function runPublish(args: string[]) {
 
   if (markdownOnly) {
     const outPath = outIdx >= 0 ? args[outIdx + 1] : basename(inputPath, '.md') + '.shared.md';
-    if (resolve(outPath) === resolve(inputPath)) throw opError('invalid_params', `--out ${outPath} is the page itself, so the stripped copy would replace it; nothing was written.`, 'Pass a different --out path.');
+    refuseOutOverPage(inputPath, outPath);
     mkdirSync(dirname(outPath), { recursive: true });
     try {
       writeFileSync(outPath, cleaned + '\n', { flag: outIdx >= 0 ? 'w' : 'wx' });

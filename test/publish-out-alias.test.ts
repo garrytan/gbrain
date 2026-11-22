@@ -1,6 +1,6 @@
 /**
  * gbrain publish wrote its output wherever --out pointed, so an --out that named the page itself through a symlink, a
- * hard link or the same path replaced the page with the published copy. It now refuses with invalid_params when --out
+ * hard link or the same path replaced the page with the published copy, in HTML and --markdown mode alike. It now refuses with invalid_params when --out
  * resolves to the page (same real path, or the same file by device and inode) and writes nothing.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -48,6 +48,24 @@ describe('gbrain publish never writes over the page itself', () => {
     const alias = join(dir, 'alias');
     symlinkSync(dir, alias);
     expect({ error: await publish([page, '--out', join(alias, 'page.md')]), page: readFileSync(page, 'utf8') }).toEqual({ error: refused, page: PAGE });
+  });
+
+  test('--markdown --out through a symlink to the page is refused and the page is unchanged', async () => {
+    const link = join(dir, 'link.md');
+    symlinkSync(page, link);
+    expect({ error: await publish([page, '--markdown', '--out', link]), page: readFileSync(page, 'utf8') }).toEqual({ error: refused, page: PAGE });
+  });
+
+  test('--markdown --out through a hard link to the page is refused and the page is unchanged', async () => {
+    const hard = join(dir, 'hard.md');
+    linkSync(page, hard);
+    expect({ error: await publish([page, '--markdown', '--out', hard]), page: readFileSync(page, 'utf8') }).toEqual({ error: refused, page: PAGE });
+  });
+
+  test('a normal --markdown --out still writes the stripped page', async () => {
+    const out = join(dir, 'nested', 'page.shared.md');
+    expect(await publish([page, '--markdown', '--out', out])).toBeNull();
+    expect({ stripped: readFileSync(out, 'utf8').includes('alice-example'), page: readFileSync(page, 'utf8') }).toEqual({ stripped: false, page: PAGE });
   });
 
   test('a normal --out still writes the published page', async () => {
