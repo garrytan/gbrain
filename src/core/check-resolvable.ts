@@ -30,7 +30,7 @@ import {
 import { parseSkillFrontmatter } from './skill-frontmatter.ts';
 import { SKILLS_BLOCK_BEGIN, SKILLS_BLOCK_END } from './skills/index-block.ts';
 import { isMovedSkill, movedSkillNotice } from './skillpack/moved.ts';
-import { listCatalogs } from './skills/resolver/catalog-files.ts';
+import { listCatalogs, readReceipt } from './skills/resolver/catalog-files.ts';
 import { configuredSkillDirs, readResolverSection } from './skills/resolver/config.ts';
 import { IndexReader } from './skills/resolver/index-format.ts';
 import { catalogFile, resolverHome } from './skills/resolver/paths.ts';
@@ -311,10 +311,12 @@ export function extractDelegationTargets(content: string): DelegationRef[] {
  * available from another catalog: a built skill-resolver catalog under the
  * resolver home that indexes a skill of that name, or a skill directory
  * configured for a harness (skills.resolver.per_harness.<harness>.dirs) that
- * holds a folder of that name.
+ * holds a folder of that name. A catalog built from gbrain's own bundled
+ * skills (--bundled) never counts: it holds the copies the skills dir lacks.
  */
 export function movedSkillAvailableElsewhere(name: string, home: string): boolean {
   for (const catalog of listCatalogs(home)) {
+    if (readReceipt(home, catalog)?.catalog.source.kind === 'bundled') continue;
     let reader: IndexReader | null = null;
     try {
       reader = IndexReader.open(catalogFile(home, catalog, 'index.bin'));

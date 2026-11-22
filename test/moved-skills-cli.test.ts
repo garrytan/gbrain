@@ -9,7 +9,7 @@
  * bundle still fails with skill_not_found once the destination is set.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -155,4 +155,20 @@ describe('harness bridges', () => {
     expect(referenceBefore.stderr).not.toContain('skill moved');
     expect(referenceBefore.stdout).toBe(reference.stdout);
   }, 180_000);
+});
+
+describe('the registry seam and an untrusted checkout', () => {
+  // Spawned directly, not through runCli: that helper passes --no-env-file, which would keep Bun from loading the .env.
+  test('a .env in the working directory cannot set GBRAIN_TEST_SKILLS_MOVED_REGISTRY, so a cloned repo cannot plant a notice', () => {
+    const home = tmp('g3-cli-home-');
+    const cwd = tmp('g3-cli-cwd-');
+    writeFileSync(join(cwd, '.env'), `GBRAIN_TEST_SKILLS_MOVED_REGISTRY=${SET}\n`);
+    const r = Bun.spawnSync([process.execPath, join(import.meta.dir, '..', 'src', 'cli.ts'), 'bundled-skill', 'briefing'],
+      { cwd, env: { PATH: process.env.PATH ?? '', HOME: home, GBRAIN_HOME: home }, stdout: 'pipe', stderr: 'pipe' });
+    const stderr = r.stderr.toString();
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.toString().startsWith(readFileSync(join(SKILLS, 'briefing', 'SKILL.md'), 'utf8'))).toBe(true);
+    expect(stderr).toContain('Ignoring GBRAIN_TEST_SKILLS_MOVED_REGISTRY because a .env file in the current directory assigns it');
+    expect(stderr).not.toContain('skill moved');
+  });
 });

@@ -221,6 +221,12 @@ describe('check-resolvable and doctor: a resolver row naming a moved skill', () 
     expect(report.ok).toBe(true);
   });
 
+  test('a catalog built from gbrain\'s own bundled skills does not make the row present', async () => {
+    const home = tmp('moved-home-');
+    await buildSkillIndex({ catalog: 'gbrain-bundled', bundled: true }, { home });
+    expect(about(checkResolvable(workspace(), { resolverHome: home }), 'briefing').map(i => i.type)).toEqual(['missing_file']);
+  });
+
   test('a configured skill directory holding the folder makes the row present', () => {
     const home = tmp('moved-home-');
     const elsewhere = tmp('moved-elsewhere-');
