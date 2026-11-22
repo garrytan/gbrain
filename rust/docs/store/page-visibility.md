@@ -41,7 +41,7 @@ member-access part alone (the page's readers, and the origin of a derived page):
   (`test/engine-parity/unrestricted-member-page-reads.test.ts`).
 - `listWhoCanReadPages(slug, sourceId, form)` (`src/core/rust-engine/store-members/access-reports.ts`) passes
   `closed` through and reads `fn` and `mode` as `fn`: the store keeps no owner-only read mode, so `mode` never widens
-  the test. The capability is `pages`.
+  the test. The capability is `access_control`.
 - `readPageAdmitsCaller(sourceId, slug, identity)` renders `accessAllowedSql('p', identity)` and compares it with the same call in a
   fresh record of the identity argument and the caller record's satisfied rules, folder coverage and owner flag with `restricted: true`
   (`callerFolders`); only an equal text is served, as `callerRecord` (the record's coverage is the whole pending test),
@@ -52,7 +52,7 @@ member-access part alone (the page's readers, and the origin of a derived page):
   form, or asking about an identity that is not the record's own while the record has satisfied rules (the reference
   renders those rules for the argument, the call renders none) renders another text and refuses with
   `engine_capability_missing`, which fails closed.
-  The capability is `pages`.
+  The capability is `access_control`.
 - `readWriterSlugFence(principal)` reads a `local_cli` or `local_stdio` writer's stored grant ceiling
   (`brain.readLocalWriter`) and returns its `slugPrefixes`, or `null`. Another kind, other than an OAuth client,
   carries no fence and reads nothing. The capability is `persistence_journal`.
