@@ -6,7 +6,7 @@
  *     observable results are unchanged: the lock file keeps master's fields, release removes it, a dead holder is
  *     reported as not held and is taken over;
  *   - the sidecar write is best-effort and off the critical path: a write that fails, an identity read that fails or
- *     hangs, never delays or fails a serve start, a reconnect or a lock release, and a reconnect sends no statement to
+ *     stalls in the database, never fails a serve start, a reconnect or a lock release, and a reconnect sends no statement to
  *     the database; no failure line carries the persistence identity.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -158,29 +158,45 @@ describe('the brain_ref write is best-effort and off the critical path', () => {
 
   test('an identity read that fails, its message holding the identity, is logged by code only', async () => {
     const lines: string[] = [];
-    const failing = { readPersistenceBrainId: async () => { throw Object.assign(new Error(`read failed for ${brainId}`), { code: 'EFAKE' }); } };
-    // The served engine opened the datastore; a failing reader stands in for its identity read.
-    const proxy = Object.assign(Object.create(engine), failing);
-    await recordServeBrainRefAtStart(proxy, line => lines.push(line));
+    let calls = 0;
+    Object.assign(engine, { readPersistenceBrainId: async () => { calls++; throw Object.assign(new Error(`read failed for ${brainId}`), { code: 'EFAKE' }); } });
+    try {
+      await recordServeBrainRefAtStart(engine, line => lines.push(line));
+    } finally {
+      delete (engine as unknown as Record<string, unknown>).readPersistenceBrainId;
+    }
+    expect(calls).toBe(1);
+    expect(lines).toEqual(['[gbrain serve] brain_ref not recorded for engine status (EFAKE)']);
     noIdentity(lines.join('\n'));
   });
 
-  test('an identity read that hangs delays neither a reconnect nor the lock release', async () => {
+  test('after a failed first write, a reconnect admits no identity query, so a stalled one cannot delay reconnect or release', async () => {
+    const path = brainRefSidecarPath(dataDir);
+    rmSync(path, { recursive: true, force: true });
+    mkdirSync(path); // the first write fails
     const lines: string[] = [];
-    const original = engine.readPersistenceBrainId.bind(engine);
-    Object.assign(engine, { readPersistenceBrainId: async () => { await Bun.sleep(3_000); return original(); } });
-    rmSync(brainRefSidecarPath(dataDir), { force: true });
+    await recordServeBrainRefAtStart(engine, line => lines.push(line));
+    expect(lines.length).toBe(1);
+    rmSync(path, { recursive: true, force: true });
+    let reads = 0;
+    // A read that reaches the database and stalls there: close drains admitted statements before it releases the lock.
+    Object.assign(engine, { readPersistenceBrainId: async () => {
+      reads++;
+      await engine.executeRaw('SELECT pg_sleep(3)');
+      return brainId;
+    } });
     try {
-      const pending = recordServeBrainRefAtStart(engine, line => lines.push(line)); // serve never awaits it
       let started = performance.now();
       await engine.reconnect();
+      await new Promise(resolve => setImmediate(resolve));
+      await Bun.sleep(50);
       expect(performance.now() - started).toBeLessThan(2_500);
       started = performance.now();
       await engine.disconnect();
       expect(performance.now() - started).toBeLessThan(2_500);
       expect(inspectLockHolder(dataDir)).toEqual({ held: false });
-      await pending;
-      noIdentity(lines.join('\n'));
+      expect(reads).toBe(0);
+      expect(readServeBrainRef(dataDir).brain_ref).toBeNull();
     } finally {
       delete (engine as unknown as Record<string, unknown>).readPersistenceBrainId;
       await engine.connect({ engine: 'pglite', database_path: dataDir });
