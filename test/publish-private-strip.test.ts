@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { spawnSync } from 'child_process';
 import { makeShareable, runPublish } from '../src/commands/publish.ts';
 
 const SECRET = 'private log entry';
@@ -16,6 +17,7 @@ describe('makeShareable drops every private section, whatever comes before it (#
     ['<!--timeline--> sentinel', '# Test\n\nBody.\n\n<!--timeline-->\n- 2026-01-01 ' + SECRET + '\n'],
     ['--- timeline --- sentinel', '# Test\n\nBody.\n\n--- timeline ---\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['--- timeline --- sentinel with trailing whitespace', '# Test\n\nBody.\n\n--- timeline --- \t\n\n- 2026-01-01 ' + SECRET + '\n'],
+    ['--- timeline --- sentinel with non-breaking spaces', '# Test\n\nBody.\n\n---\u00a0timeline\u00a0---\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['bold heading', '# Test\n\nBody.\n\n## **Timeline**\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['heading with an emoji', '# Test\n\nBody.\n\n## \u{1F4C5} Timeline\n\n- 2026-01-01 ' + SECRET + '\n'],
     ['plural heading', '# Test\n\nBody.\n\n## Timelines\n\n- 2026-01-01 ' + SECRET + '\n'],
@@ -112,6 +114,33 @@ describe('gbrain publish --markdown writes the stripped page for other renderers
       const page = join(dir, 'page.md');
       writeFileSync(page, '# Test\n\nBody.\n');
       await expect(runPublish([page, '--markdown', '--password', 'pw', '--out', join(dir, 'x.md')])).rejects.toThrow(/--password/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('refuses an --out that is the page itself, and leaves the page whole', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'publish-md-'));
+    try {
+      const page = join(dir, 'page.md');
+      const input = '# Test\n\nBody.\n\n## Timeline\n\n- 2026-01-01 ' + SECRET + '\n';
+      writeFileSync(page, input);
+      await expect(runPublish([page, '--markdown', '--out', join(dir, '.', 'page.md')])).rejects.toThrow(/is the page itself/);
+      expect(readFileSync(page, 'utf8')).toBe(input);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('without --out, never replaces an existing <name>.shared.md', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'publish-md-'));
+    try {
+      writeFileSync(join(dir, 'page.md'), '# Test\n\nBody.\n');
+      writeFileSync(join(dir, 'page.shared.md'), 'an existing page\n');
+      const r = spawnSync(process.execPath, [join(import.meta.dir, '..', 'src', 'cli.ts'), 'publish', 'page.md', '--markdown'], { cwd: dir, encoding: 'utf-8' });
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain('already exists');
+      expect(readFileSync(join(dir, 'page.shared.md'), 'utf8')).toBe('an existing page\n');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

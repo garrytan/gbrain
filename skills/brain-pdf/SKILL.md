@@ -84,7 +84,9 @@ if [ -n "$BRAIN_DIR" ] && [ -f "$BRAIN_DIR/$SLUG.md" ]; then
   RAW="$BRAIN_DIR/$SLUG.md"
 else
   RAW="$WORK/page.md"
-  gbrain get "$SLUG" > "$RAW" || exit 1   # prints the page as markdown with frontmatter
+  gbrain get "$SLUG" > "$WORK/get.md" || exit 1   # prints the page as markdown with frontmatter
+  # A guest page opens with an attribution warning line before its frontmatter; drop it so the strip finds the frontmatter.
+  awk 'NR==1 && /^\[outside guest /{next} {print}' "$WORK/get.md" > "$RAW"
 fi
 
 # 3. Strip private sections exactly as gbrain publish does. A page whose

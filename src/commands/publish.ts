@@ -14,7 +14,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
-import { dirname, basename } from 'path';
+import { dirname, basename, resolve } from 'path';
 import { frontmatterBodyOffset } from '../core/markdown.ts';
 import { opError } from '../core/ops/contract.ts';
 
@@ -25,7 +25,7 @@ import MARKED_JS from '../../vendor/marked/marked.umd.js' with { type: 'text' };
 // ── Content stripping ──────────────────────────────────────────────
 
 const TIMELINE_MARKER = /<!--+\s*timeline\s*-*-->/i;
-const TIMELINE_LINE = /^(?:[ \t]*-{3,}[ \t]*timeline[ \t]*-{3,}[ \t]*$|[ \t]*#{1,6}[ \t][^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
+const TIMELINE_LINE = /^(?:[^\S\n]*-{3,}[^\S\n]*timeline[^\S\n]*-{3,}[^\S\n]*$|[ \t]*#{1,6}[ \t][^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
 const MANAGED_BLOCK_END = /<!--+\s*gbrain:([a-z0-9_-]+):end\b[^>]*>/gi;
 const MANAGED_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
 
@@ -457,8 +457,14 @@ export async function runPublish(args: string[]) {
 
   if (markdownOnly) {
     const outPath = outIdx >= 0 ? args[outIdx + 1] : basename(inputPath, '.md') + '.shared.md';
+    if (resolve(outPath) === resolve(inputPath)) throw opError('invalid_params', `--out ${outPath} is the page itself, so the stripped copy would replace it; nothing was written.`, 'Pass a different --out path.');
     mkdirSync(dirname(outPath), { recursive: true });
-    writeFileSync(outPath, cleaned + '\n');
+    try {
+      writeFileSync(outPath, cleaned + '\n', { flag: outIdx >= 0 ? 'w' : 'wx' });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw opError('invalid_params', `${outPath} already exists, so nothing was written.`, 'Pass --out to choose the file to write.');
+      throw e;
+    }
     console.log(`Stripped markdown: ${outPath}`);
     return;
   }

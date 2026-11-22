@@ -92,6 +92,12 @@ for (const skill of ['skills/brain-pdf/SKILL.md', 'plugin/skills/brain-pdf/SKILL
       expect(r.rendered).toBe('# X\n\nBody.\n');
     });
 
+    test('a guest page leaves out its attribution warning and frontmatter', () => {
+      const r = run(skill, "[outside guest · alice-example · group-a · 2026-01-01 · not the owner's words, not verified]\n---\ntitle: X\nreadable_by: [alice-example]\n---\n# X\n\nBody.\n");
+      expect(r.status).toBe(0);
+      expect(r.rendered).toBe('# X\n\nBody.\n');
+    });
+
     test('work files and the PDF live in a private directory, not a shared /tmp path', () => {
       const r = run(skill, '# X\n\nBody.\n');
       expect(r.status).toBe(0);
