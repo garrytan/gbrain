@@ -16,7 +16,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acquireKernelLockOnly, acquireLock, pgliteLockDirFor, releaseLock } from '../src/core/pglite-lock.ts';
+import { guardMissingBrainAtLock, isMissingBrainRefusal } from '../src/commands/doctor/missing-brain.ts';
+import { acquireKernelLockOnly, acquireLock, canonicalPath, installPgliteCreateGuard, pgliteLockDirFor, releaseLock } from '../src/core/pglite-lock.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 
 let home: string;
@@ -76,4 +77,55 @@ describe('the datastore moves while doctor waits for the lock', () => {
       if (existsSync(moved)) { rmSync(store, { recursive: true, force: true }); renameSync(moved, store); }
     }
   }, 180_000);
+});
+
+describe('the guard seam, with no timing involved', () => {
+  const withHome = async (run: () => Promise<void>) => {
+    const saved = { HOME: process.env.HOME, GBRAIN_HOME: process.env.GBRAIN_HOME };
+    process.env.HOME = home; process.env.GBRAIN_HOME = home;
+    try { await run(); } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  };
+
+  test('acquireLock runs an installed guard under the held lock, before it creates the folder, and releases the lock when it throws', async () => {
+    const dir = join(home, 'seam', 'brain.pglite');
+    const seen: string[] = [];
+    const remove = installPgliteCreateGuard((d) => { seen.push(d); throw new Error('refused by guard'); });
+    try {
+      await expect(acquireLock(dir, { timeoutMs: 0 })).rejects.toThrow('refused by guard');
+    } finally { remove(); }
+    expect(seen).toEqual([canonicalPath(dir)]);
+    expect(existsSync(dir)).toBe(false);
+    const free = await acquireKernelLockOnly(dir, { lockDir: pgliteLockDirFor(dir), timeoutMs: 0 });
+    await releaseLock(free);
+    const ok = await acquireLock(dir, { timeoutMs: 0 }); // the guard is gone: an ordinary acquire creates the folder again
+    await releaseLock(ok);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  test('the datastore moves while a second acquirer waits behind the first: the waiter is refused with brain_missing, nothing is created', async () => {
+    await withHome(async () => {
+      const moved = `${store}.moved`;
+      const holder = await acquireLock(store);
+      const remove = guardMissingBrainAtLock('host');
+      try {
+        const waiter = acquireLock(store, { timeoutMs: 20_000 }); // cannot get the lock while the holder has it
+        renameSync(store, moved);
+        await releaseLock(holder);
+        const refusal = await waiter.then(() => null, (e: unknown) => e);
+        expect(isMissingBrainRefusal(refusal)).toBe(true);
+        expect((refusal as { reason?: string }).reason).toBe('missing_brain');
+        expect(existsSync(store)).toBe(false);
+        await releaseLock(await acquireKernelLockOnly(store, { lockDir: pgliteLockDirFor(store), timeoutMs: 0 }));
+        // A lock on some other folder is not this guard's to judge.
+        const other = join(home, 'elsewhere.pglite');
+        await releaseLock(await acquireLock(other, { timeoutMs: 0 }));
+        expect(existsSync(other)).toBe(true);
+      } finally {
+        remove();
+        if (existsSync(moved)) { rmSync(store, { recursive: true, force: true }); renameSync(moved, store); }
+      }
+    });
+  });
 });

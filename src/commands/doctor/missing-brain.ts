@@ -10,7 +10,8 @@ import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { getMountsPath, loadMounts } from '../../core/brain-registry.ts';
 import { configPath, gbrainPath, loadConfig } from '../../core/config.ts';
-import { opError, type OperationError } from '../../core/ops/contract.ts';
+import { opError, OperationError } from '../../core/ops/contract.ts';
+import { canonicalPath, installPgliteCreateGuard } from '../../core/pglite-lock.ts';
 import { probeStatus, statusFix, type StatusModeState } from '../../mcp/status-mode.ts';
 
 /**
@@ -56,7 +57,28 @@ function missingState(brainId: string): MissingState | null {
 /** The refusal to render, or null when the selected brain is not configured-but-missing. */
 export function missingBrainRefusal(brainId = 'host'): OperationError | null {
   const found = missingState(brainId);
-  if (!found) return null;
+  return found ? refusalFor(found) : null;
+}
+
+/** True for the refusal this module builds (`brain_missing`), however it reached the caller. */
+export function isMissingBrainRefusal(e: unknown): e is OperationError {
+  return e instanceof OperationError && e.code === 'brain_missing';
+}
+
+/**
+ * Doctor's second look, for as long as the returned function has not been called. Connecting waits for the datastore's
+ * kernel lock, and the folder can be moved or unmounted during that wait; `acquireLock` runs this once it holds the
+ * lock and before it creates anything, so the datastore the selected brain would open is judged again and a missing one
+ * is refused (the lock is released on the throw). Locks on any other folder are not this guard's to judge.
+ */
+export function guardMissingBrainAtLock(brainId = 'host'): () => void {
+  return installPgliteCreateGuard((lockedDir) => {
+    const found = missingState(brainId);
+    if (found?.brain_path && canonicalPath(found.brain_path) === lockedDir) throw refusalFor(found);
+  });
+}
+
+function refusalFor(found: MissingState): OperationError {
   const state = { reason: 'missing_brain' as const, config_path: found.config_path, brain_path: found.brain_path, checked_at: Date.now() };
   const where = state.brain_path ?? 'its configured path';
   const { fix } = statusFix({ ...state, recovered: false }, 'http');
