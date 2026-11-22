@@ -14,6 +14,7 @@ import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { agentFix, checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
 import { scanDeadline } from '../budget.ts';
+import { isMissingSchemaObject } from '../../../core/utils.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
 
 /** Oversized pages `oversized_pages` lists before it reports a floor. */
@@ -307,8 +308,10 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
         : 'No quarantined pages',
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    checks.push({ name: 'quarantined_pages', status: 'ok', message: `Skipped (${msg})` });
+    // Only a missing pages table is a clean skip; any other failure (#9924) is not a clean result.
+    checks.push(isMissingSchemaObject(err, 'table', 'pages')
+      ? { name: 'quarantined_pages', status: 'ok', message: 'Skipped (pages table unavailable)' }
+      : checkError('quarantined_pages', 'count quarantined pages', err));
   }
 
   progress.heartbeat('flagged_pages');
@@ -327,8 +330,9 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
         : 'No flagged pages',
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    checks.push({ name: 'flagged_pages', status: 'ok', message: `Skipped (${msg})` });
+    checks.push(isMissingSchemaObject(err, 'table', 'pages')
+      ? { name: 'flagged_pages', status: 'ok', message: 'Skipped (pages table unavailable)' }
+      : checkError('flagged_pages', 'count flagged pages', err));
   }
 
   // issue #160: extraction quarantine lane review nudge.

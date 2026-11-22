@@ -69,6 +69,43 @@ for (const backend of testBackends()) {
     expect(await body(engine, 'notes/b')).toContain('Edited in the database.');
   }, { databaseUrl, setup }), 240_000);
 
+  test(`[${backend}] the earlier version a record-less page holds is found by the file's own history, however many other commits came since`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await unrecorded(engine);
+    edit(root, ['notes/a'], 'A first Git edit'); git(root, 'commit', '-qam', 'first edit');
+    for (let i = 0; i < 55; i++) { writeFileSync(join(root, 'log.txt'), `entry ${i}\n`); git(root, 'add', 'log.txt'); git(root, 'commit', '-qm', `log ${i}`); }
+    edit(root, ['notes/a'], 'A second Git edit'); git(root, 'commit', '-qam', 'second edit');
+    await coordinated(engine, "UPDATE sources SET last_commit='0123456789abcdef0123456789abcdef01234567' WHERE id='default'");
+    await performManagedSync(engine, OPTS);
+    expect(await held(engine)).toEqual([]);
+    expect(await body(engine, 'notes/a')).toContain('A second Git edit of notes/a.');
+  }, { databaseUrl, setup }), 240_000);
+
+  test(`[${backend}] the preview and sync compare the same earlier versions after a merge that kept one side`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await unrecorded(engine);
+    let at = 1_800_000_000;
+    const commit = (message: string) => execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', '-c', 'commit.gpgsign=false',
+      'commit', '-qam', message], { env: { ...process.env, GIT_AUTHOR_DATE: `${at} +0000`, GIT_COMMITTER_DATE: `${at++} +0000` } });
+    const main = git(root, 'rev-parse', '--abbrev-ref', 'HEAD');
+    edit(root, ['notes/a'], 'A main edit'); commit('main edit');
+    git(root, 'checkout', '-q', '-b', 'side', 'HEAD~1');
+    for (const n of [1, 2, 3]) { edit(root, ['notes/a'], `Side edit ${n}`); commit(`side ${n}`); }
+    git(root, 'checkout', '-q', main);
+    execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'merge', '-q', '-s', 'ours', '--no-edit', 'side'],
+      { env: { ...process.env, GIT_AUTHOR_DATE: `${at} +0000`, GIT_COMMITTER_DATE: `${at++} +0000` } });
+    edit(root, ['notes/a'], 'A last main edit'); commit('last main edit');
+    await coordinated(engine, "UPDATE sources SET last_commit='0123456789abcdef0123456789abcdef01234567' WHERE id='default'");
+    await performManagedSync(engine, OPTS);
+    const preview = await withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () =>
+      (await repairRunner(engine, { apply: false, logger })).run('file-drift', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', held: true, side: 'unknown' }));
+    const listed = preview.listing!.find(entry => entry.item === 'default:notes/a');
+    // The read follows every parent, so the three versions before HEAD are the side's, and neither sync nor the preview
+    // reaches the page's own (older) version: sync keeps the page held and the preview does not promise the retry route.
+    expect(await held(engine)).toEqual(['notes/a.md']);
+    expect(String(listed!.detail)).not.toContain('an earlier version');
+  }, { databaseUrl, setup }), 240_000);
+
   test(`[${backend}] a hold the current screen wrote is screened against earlier versions after retry-held, and the preview says so first`, () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     const original = await body(engine, 'notes/a');
@@ -92,6 +129,32 @@ for (const backend of testBackends()) {
     expect(await body(engine, 'notes/a')).toContain('A first Git edit of notes/a.');
     expect(await held(engine)).toEqual(['notes/b.md']);
   }, { databaseUrl, setup }), 240_000);
+
+  test(`[${backend}] a source rooted in a subdirectory of its checkout gets the same preview and retry route`, () => managedBrain(async ({ engine, root }) => {
+    const pages = join(root, 'brain');
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    const original = await body(engine, 'notes/a');
+    await unrecorded(engine, ['notes/a', 'notes/b']);
+    edit(pages, ['notes/a', 'notes/b'], 'A first Git edit'); git(root, 'commit', '-qam', 'first edit');
+    await performManagedSync(engine, OPTS);
+    expect(await held(engine)).toHaveLength(2);
+    await coordinated(engine, "UPDATE pages SET compiled_truth = $1, knowledge_revision = $2::uuid WHERE source_id='default' AND slug='notes/a'", [original, randomUUID()]);
+
+    const preview = await withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () =>
+      (await repairRunner(engine, { apply: false, logger })).run('file-drift', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', held: true, side: 'unknown' }));
+    const listed = (slug: string) => preview.listing!.find(entry => entry.item === `default:${slug}`)!;
+    expect(String(listed('notes/a').detail)).toContain('an earlier version, so only the file moved since (Git is the parent): gbrain sources retry-held default re-screens it');
+    expect(String(listed('notes/b').detail)).not.toContain('retry-held');
+
+    await retryHeld(engine, 'default');
+    await performManagedSync(engine, OPTS);
+    expect(await body(engine, 'notes/a')).toContain('A first Git edit of notes/a.');
+    expect(await held(engine)).toHaveLength(1);
+  }, { databaseUrl, sourceDir: 'brain', setup: ({ root }) => {
+    mkdirSync(join(root, 'brain', 'notes'), { recursive: true }); git(root, 'init', '-q');
+    for (const slug of ['notes/a', 'notes/b', 'notes/c']) writeFileSync(join(root, 'brain', `${slug}.md`), note(slug, `The committed body of ${slug}.`));
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'notes');
+  } }), 240_000);
 
   test(`[${backend}] a record-less page with an older import's stored keys and a schema-pack retype stamp still imports the Git edit when it equals an earlier version`, () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
@@ -119,6 +182,21 @@ for (const backend of testBackends()) {
     const live = await liveFileDrift(engine, 'default', 'notes/a');
     expect(live).toMatchObject({ still_present: null, reason: 'invalid_params' });
     expect(live.message).toContain('valid UTF-8');
+  }, { databaseUrl, setup }), 240_000);
+
+  test(`[${backend}] on a read-only mirror the held preview names why it could not read a held file, not only the error code`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await unrecorded(engine, ['notes/a']);
+    edit(root, ['notes/a'], 'A first Git edit'); git(root, 'commit', '-qam', 'first edit');
+    await performManagedSync(engine, OPTS);
+    expect(await held(engine)).toEqual(['notes/a.md']);
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"mirror_read_only": true}'::jsonb WHERE id='default'`);
+    writeFileSync(join(root, 'notes/a.md'), Buffer.concat([Buffer.from(note('notes/a', 'Bytes that are not ')), Buffer.from([0xff, 0xfe])]));
+    const preview = await withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), async () =>
+      (await repairRunner(engine, { apply: false, logger })).run('file-drift', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', held: true, side: 'unknown' }));
+    const listed = preview.listing!.find(entry => entry.item === 'default:notes/a')!;
+    expect(listed.class).toBe('unknown');
+    expect(String(listed.detail)).toContain('invalid_params: The canonical file must contain valid UTF-8.');
   }, { databaseUrl, setup }), 240_000);
 }
 

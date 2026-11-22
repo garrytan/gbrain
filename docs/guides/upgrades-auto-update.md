@@ -281,8 +281,10 @@ autopilot and every MCP server on the old build while one-shot commands and job
 children run the new one. `gbrain upgrade` therefore restarts every gbrain
 process this brain runs on the host, or refuses before it installs anything:
 
-1. **Before the swap** it lists the processes (`ps`, on Linux only processes
-   whose `GBRAIN_HOME` is this brain's, with the build each one loaded from
+1. **Before the swap** it lists the processes (`ps`, only processes whose
+   `GBRAIN_HOME`, else `HOME`, is this brain's: Linux reads it from `/proc`,
+   macOS from `ps -E`, so another brain's serve on the same host is never
+   restarted or waited for; with the build each one loaded from
    the consumer heartbeat rows on Postgres, the supervisor PID file and the
    worker registry; a record whose pid `ps` does not show as gbrain is stale
    and ignored) and checks that each one can be restarted: serve and autopilot
@@ -301,7 +303,18 @@ process this brain runs on the host, or refuses before it installs anything:
    (only when it starts autopilot again within 5 minutes of it exiting). The
    restart stops that autopilot (only the daemon this brain's autopilot lock
    names, and only while `ps` still shows the same process; SIGTERM drains it)
-   and waits for the launcher. A serve or worker started by
+   and waits for the launcher. A serve that gbrain's serve service does not
+   run is restarted through what does run it once you declare it with
+   `gbrain config set self_upgrade.serve_launcher external`: a systemd unit
+   of your own (found from the serve's cgroup, any name, when the unit's main
+   process is serve or its parent) is restarted with
+   `systemctl --user restart -- <unit>`, and any other supervisor (a container's
+   process manager, a wrapper) has to start serve again within 5 minutes of
+   it exiting: the restart stops serve (while `ps` still shows the same
+   process) and waits for it. Either way it acts only on a serve whose
+   environment shows this brain's home, and a stopped serve that does not
+   come back is reported with the command line it was started with. Undeclared, the refusal names that unit's restart command or that
+   command line. A serve or worker started by
    hand, an autopilot started any other way, a running `gbrain sync`, or an MCP server an agent
    harness started refuses the upgrade with `restart_refused` (exit 3), naming
    the exact step for each process; nothing is installed. For MCP servers the
@@ -341,12 +354,21 @@ and wait until `gbrain jobs list --status active --json` returns no jobs, so no
 job runs half on each build; resume with `gbrain autopilot resume` once the
 checks below pass ([the order](../../skills/gbrain-upgrade/SKILL.md#always-on-hosts-pause-drain-upgrade-verify-resume)).
 
-The autopilot `--swap-only` channel exits for its own supervisor to relaunch.
+The autopilot `--swap-only` channel exits for its own supervisor to relaunch:
+its launchd or systemd service, this brain's gbrain cron line, or a launcher
+declared with `self_upgrade.autopilot_launcher external`. When nothing would
+relaunch it (the ephemeral-container start script runs autopilot once at
+container boot; a daemon started by hand has no launcher), it starts itself
+again instead: a detached shell waits for the old process to exit and runs
+the same command line, which takes the autopilot lock the exit frees. If even
+that cannot be set up, it keeps running its old build and logs why, and
+doctor's `runtime_build_skew` reports it.
 Once the relaunched autopilot runs the new build, it checks the serve that the
 installed serve service runs (`com.gbrain.serve` under launchd,
 `gbrain-serve.service` under systemd). If that serve is on an older build, the
 autopilot restarts it through the service and verifies that it came back on
-the new build. It tries once per installed build (`serve-restart-attempt.json`
+the new build; with `self_upgrade.serve_launcher external` it restarts the
+serve that unit or supervisor runs the same way `gbrain upgrade` does. It tries once per installed build (`serve-restart-attempt.json`
 remembers the attempt across autopilot relaunches), under the swap's own
 auto-mode, quiet-hours and idle gates, and records it in the self-upgrade
 audit as `restart_serve` (`applied`, or `skipped` with `manual` or
