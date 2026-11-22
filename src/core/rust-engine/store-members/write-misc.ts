@@ -80,11 +80,11 @@ export const listActiveAccessMembers: StoreMember<[], string[]> = async () => []
 export const hasLabelledOnlyMember: StoreMember<[], boolean> = async () => false;
 
 /**
- * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
- * among them, so a memoized health answer is reused only while nothing was written since it was read.
+ * The store's brain id and commit sequence. Every commit advances it, a page write among them, so a memoized health
+ * answer is reused only while nothing was written since it was read.
  */
 export const readHealthMemoClock: StoreMember<[], string> = async (brain) =>
-  storeCall({ member: 'readHealthMemoClock' }, () => brain.readProjectionReadinessGeneration());
+  storeCall({ member: 'readHealthMemoClock' }, () => brain.readHealthMemoClock());
 
 /**
  * The sources that are not archived and whose own contextual-retrieval mode (`sources set-cr-mode`, source_cr_mode.rs)

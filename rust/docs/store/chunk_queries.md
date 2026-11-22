@@ -135,7 +135,8 @@ the page projection, repair contextual-mode and evidence delivery. Each answers 
   of their chunks.
 - `resolveFrozenHits` answers one row per hit in scope and per joined chunk, in hit order. A positive chunk id joins
   that chunk, any other id joins chunk index 0, and a page that holds no such chunk gives a row with NULL chunk
-  columns.
+  columns. Only a chunk of the live body joins (`chunkGenerationFilter`): a chunk whose occurrence a deferred retire
+  closed has no live manifest row, so a hit on it reads no chunk.
 - `readSegmentRegions` takes `{ pageId, chunkId }` hits and answers `{ chunk_id, byte_start }` per hit whose chunk is
   visible at its page's live body generation on a segmented page that is sealed or carries the activation projection
   revision, with `byte_start` the stored start of the chunk's live occurrence, in chunk-id order. Each hit names its

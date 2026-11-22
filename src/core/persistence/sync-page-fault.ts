@@ -44,7 +44,7 @@ import { KEEP_DISK_ABANDONED_PREFIX } from './verb-errors.ts';
 
 export { HOLD_ATTEMPTS_NEEDS_HUMAN } from './sync-fault-class.ts';
 
-type HoldEntry = Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action'>;
+type HoldEntry = Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action' | 'driftHistoryUnread'>;
 
 /**
  * The working-tree bytes of `path` when they are exactly what HEAD commits for it (their blob id equals
@@ -155,7 +155,7 @@ export function fileDriftHold(entry: HoldEntry, slug: string, pageId: number | n
     : `${by} since the file was last imported and ${observed.sides === 'unknown' ? 'there is no import record to tell whether the file changed too' : file}`;
   return base(entry, slug, pageId, 'file_drift',
     `${entry.path}: ${held}, so sync held the import instead of overwriting the database version; the rest of the source synced.`,
-    intent.content ?? null, intent.blobOid, { sides: observed.sides, drift_version: FILE_DRIFT_VERSION, ...(observed.sides !== 'database' ? { side: observed.sides } : {}), ...(observed.revision ? { page_revision: observed.revision } : {}),
+    intent.content ?? null, intent.blobOid, { sides: observed.sides, drift_version: FILE_DRIFT_VERSION, ...(entry.driftHistoryUnread ? { history_unread: true as const } : {}), ...(observed.sides !== 'database' ? { side: observed.sides } : {}), ...(observed.revision ? { page_revision: observed.revision } : {}),
       ...(observed.proof ? { competing_request_id: observed.proof.request_id, competing_operation: observed.proof.operation } : {}),
       ...(observed.sharedOrigin ? { shared_origin: true as const } : {}) });
 }

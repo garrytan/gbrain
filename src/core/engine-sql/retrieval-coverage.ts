@@ -15,7 +15,7 @@
  * JIT-off option; the probe keeps its cache and its hints.
  */
 import { budgetRowAppliesFilter } from '../page-size-policy.ts';
-import { projectionClassSql } from '../page-state/projection-class.ts';
+import { projectionClassSql, textClassSql } from '../page-state/projection-class.ts';
 import { servedTextProjectionFilter, waitingTextProjectionFilter } from '../search/safe-chunks.ts';
 import {
   COVERAGE_COUNT_CAP, type CoverageRelevance, type ProjectionRebuildProgress, type ScopedCount,
@@ -94,12 +94,14 @@ export function countEmbeddingHeldPages(exec: Exec, scope: ProjectionReadinessSc
  */
 export async function projectionRebuildProgress(exec: Exec, scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null> {
   try {
-    const [row] = await rows<{ seconds: number | null; total: number; done: number }>(exec, sqlFragment`WITH started AS (SELECT EXTRACT(EPOCH FROM now() - min(updated_at))::float8 AS seconds FROM page_projection_jobs WHERE reason = 'protocol_activation')
-      SELECT started.seconds, count(p.id)::int AS total,
-        count(p.id) FILTER (WHERE p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision)::int AS done
-      FROM started LEFT JOIN (pages p JOIN sources s ON s.id = p.source_id) ON started.seconds IS NOT NULL AND p.deleted_at IS NULL
-        AND ${trustedSql(projectionClassSql('p', 's'))} NOT IN ('protected','archived') AND ${scopeFilter(scope)}
-      GROUP BY started.seconds`);
+    const filter = scopeFilter(scope);
+    const [row] = await rows<{ seconds: number | null; total: number; done: number }>(exec, sqlFragment`WITH started AS (SELECT EXTRACT(EPOCH FROM now() - min(j.updated_at))::float8 AS seconds
+        FROM page_projection_jobs j JOIN sources s ON s.incarnation = j.source_incarnation JOIN pages p ON p.source_id = s.id AND p.slug = j.slug
+        WHERE j.reason = 'protocol_activation' AND p.deleted_at IS NULL AND ${trustedSql(textClassSql('p', 's'))} AND ${filter})
+      SELECT started.seconds, c.total, c.done FROM started, LATERAL (SELECT count(p.id)::int AS total,
+          count(p.id) FILTER (WHERE p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision)::int AS done
+        FROM pages p JOIN sources s ON s.id = p.source_id
+        WHERE started.seconds IS NOT NULL AND p.deleted_at IS NULL AND ${trustedSql(projectionClassSql('p', 's'))} NOT IN ('protected','archived') AND ${filter}) c`);
     if (row?.seconds === null || row?.seconds === undefined) return null;
     const done = Number(row.done), total = Number(row.total), seconds = Number(row.seconds);
     return { done, total, pages_per_second: seconds > 0 && done > 0 ? done / seconds : null };

@@ -181,6 +181,8 @@ export interface GitHoldMeta {
   sides?: 'database' | 'both' | 'unknown';
   /** GBRA-133 `file_drift`: the drift screen that held it; an unknown-side hold from an older screen is re-screened (#7340). */
   drift_version?: number;
+  /** GST-3328 follow-up `file_drift`: the pass's history budget ran out before it read this file's earlier versions in full, so the next sync screens it again. */
+  history_unread?: true;
   /**
    * #6712 PR 4b `file_drift`: which side a Decision is about (design v3.2 §4): `both` (the file and the page moved), `unknown`
    * (no import record says which), `deleted` (one side is a deletion, named by `state`). Absent on holds an older gbrain
@@ -687,7 +689,7 @@ export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, re
     || (record.code === 'invalid_fence' && (record.meta.quote_version ?? 0) < QUOTE_SCREEN_VERSION)
     // GBRA-133: an unknown-side drift held before #7340's baseline rule (a Git edit to a page with no import record) imports
     // now when the page still holds its file at the baseline commit, so it is screened once more.
-    || (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown' && (record.meta.drift_version ?? 0) < FILE_DRIFT_VERSION)
+    || (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown' && ((record.meta.drift_version ?? 0) < FILE_DRIFT_VERSION || record.meta.history_unread === true))
     // GST-2568: a live page's drift held before version 3 may differ from its file only by a schema-pack retype's stamp, so it is screened once more.
     || (record.code === 'file_drift' && fileDriftSide(record.meta) !== 'deleted' && (record.meta.drift_version ?? 0) < 3)
     // #8007: a deletion held while gbrain.yml's storage section was invalid is decided again by every sync, so a fixed file settles it.

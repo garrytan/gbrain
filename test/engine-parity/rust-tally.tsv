@@ -10,7 +10,7 @@ test/engine-parity/belief-ledger.test.ts	11	0
 test/engine-parity/belief-purge-probes.test.ts	6	0
 test/engine-parity/calibration-profiles.test.ts	5	0
 test/engine-parity/chronicle-publish-parity.test.ts	2	1
-test/engine-parity/chunk-page-segmented.test.ts	7	0
+test/engine-parity/chunk-page-segmented.test.ts	8	0
 test/engine-parity/chunk-reads.test.ts	12	0
 test/engine-parity/chunk-safe-fence.test.ts	3	0
 test/engine-parity/chunk-vector-overflow.test.ts	1	0
@@ -101,7 +101,7 @@ test/engine-parity/large-page.test.ts	2	0
 test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-read-options.test.ts	17	0
 test/engine-parity/link-reads.test.ts	14	0
-test/engine-parity/link-temporal.test.ts	18	0
+test/engine-parity/link-temporal.test.ts	19	0
 test/engine-parity/links.test.ts	38	0
 test/engine-parity/loop-mutes.test.ts	4	1
 test/engine-parity/memory-mutation-reads.test.ts	6	0
@@ -162,7 +162,7 @@ test/engine-parity/request-tools-persist.test.ts	1	0
 test/engine-parity/resident-projection.test.ts	2	0
 test/engine-parity/resolve-reads.test.ts	7	0
 test/engine-parity/restriction-flag-reads.test.ts	3	0
-test/engine-parity/retrieval-coverage.test.ts	13	0
+test/engine-parity/retrieval-coverage.test.ts	14	0
 test/engine-parity/search-cjk.test.ts	7	0
 test/engine-parity/search-deep-query.test.ts	1	0
 test/engine-parity/search-privacy-retention.test.ts	5	0
