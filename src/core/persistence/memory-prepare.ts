@@ -36,7 +36,7 @@ function conflict(row: WriteRequest): never {
 }
 function candidateState(value: Awaited<ReturnType<typeof decideSingleFact>>): string {
   const c = value.candidate;
-  return JSON.stringify([value.status, c?.id, c?.fact, c?.kind, c?.visibility,
+  return JSON.stringify([value.status, c?.id, c?.fact, c?.kind, c?.visibility, c?.entity_slug, c?.attributed_to, storedClaim(c),
     c?.valid_until ? new Date(c.valid_until).toISOString() : null, c?.source_markdown_slug, c?.row_num, c?.trust_tier ?? null]);
 }
 export const NO_ENTITY_HINT = 'Saved without an entity, so entity-scoped recall will not find it. To link it, remember the same claim again with `entity` (the person, company or project it is about): that replaces this copy, so there is nothing to forget. Do not forget it: a claim forgotten without an entity is withdrawn for every entity and cannot be saved again.';
@@ -133,6 +133,12 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   // supersedes nothing until the brain owner confirms it.
   const heldFor = p.share === true && typeof p.share_held === 'string' && input.visibility === 'world' ? p.share_held : null;
   const status = contested || heldFor ? 'inserted' : decision.status;
+  const preserveSpeaker = p.preserve_third_party_speaker === true;
+  if (preserveSpeaker && (status !== 'superseded' || replaces === null || row.authority.remote !== false ||
+    input.visibility !== 'private' || p.explicit_event_date !== true || decision.candidate?.attributed_to !== 'other')) {
+    throw opError('revision_conflict', 'The original third-party speaker cannot be preserved for this correction.',
+      'Read the original fact and its source again before preparing a new correction.');
+  }
   // Without a fact vector the slot has no cosine; a lexical same-subject match still contests a more trusted fact (never supersedes).
   const lexical = (tx: BrainEngine) => decision.status === 'inserted' && !dedupEmbedding && replaces === null ? lexicalContestCandidate(tx, row.source_id, input, writerTier) : Promise.resolve(null);
   const lexicalOld = await lexical(engine);
@@ -159,6 +165,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const context = p.entity_inferred ? appendContextNote(null, inferenceNote(p.entity_inferred as InferredVia)) : undefined;
   const fact: NewFact & { valid_from: Date } = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
     confidence: 1, embedding, embedding_model, source_session: typeof p.session_id === 'string' ? p.session_id : null,
+    ...(preserveSpeaker ? { attributed_to: 'other' as const } : {}),
     ...(context ? { context } : {}), ...claimColumns(p) };
   // #5575 B3: the row-level write gate at the request's declared tier (ENG-18); a held fact inserts nothing.
   const gate = decideFactWrite({ fact: input.fact, context: context ?? null, source: fact.source }, { sourceId: row.source_id, slug: row.slug,
@@ -166,6 +173,11 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       valid_from: validFrom.toISOString(), valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session, ...claimColumns(p) },
     input: gateInput(requestChannelTrust(row) ?? { tier: 'unknown', origin: null }, row.id), cfg: await loadWriteGateConfig(engine) });
   if (gate.action === 'reject') throw writeGateRejectedError(gate.assessment);
+  // The existing hold release path can only verify attribution on a verbatim restatement.
+  if (preserveSpeaker && gate.action === 'hold') {
+    throw opError('invalid_params', 'correction_needs_review: The write gate requires review for this third-party correction. The original fact remains active.',
+      'Review the source and the proposed correction with the brain owner before preparing a new write.');
+  }
   if (gate.action === 'hold') return { observedRevision, noop: true, validate, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
   const retiredUntil = status === 'superseded' ? supersededValidUntil(decision.candidate!, validFrom) : null;
   // The fact is published as a row of its entity page's facts fence, file before facts row (facts/fence-fact-append.ts).
@@ -214,7 +226,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     const flagged = gateField(gate.assessment, `f${id}`, await recordFlaggedRow(tx, gate, { table: 'facts', id, sourceId: row.source_id }));
     const superseded = status === 'superseded' ? decision.candidate! : undefined;
     return { ...outcome(id, status, input.entity_slug, validUntil, degraded, p, superseded?.id,
-      superseded !== undefined && superseded.entity_slug == null && input.entity_slug !== null), ...claimColumns(p), ...fence?.fencesNormalized,
+      superseded !== undefined && superseded.entity_slug == null && input.entity_slug !== null && !preserveSpeaker), ...claimColumns(p), ...fence?.fencesNormalized,
       ...(contestedBy ?? widenedBy ? { contested: contestedBy ?? widenedBy } : {}), ...(flagged ? { gate: flagged } : {}),
       ...(held ? { status_text: `held as fact #${id}: it is about member ${held.member}, so it stays private until the brain owner shares it (gbrain trust confirm ${held.proposal_ref})`, held } : {}),
       ...(pageReceipt?.size_state ? { size_state: pageReceipt.size_state } : {}) };

@@ -226,8 +226,18 @@ async function inferRememberTarget(ctx: OperationContext, sourceId: string, sour
   }
 }
 
+export function assertThirdPartyCorrectionParams(ctx: OperationContext, params: Record<string, unknown>, visibilityDefaulted = false): void {
+  if (params.preserve_third_party_speaker === true && (ctx.remote !== false || visibilityDefaulted || params.visibility !== 'private' || params.content_origin !== 'tool_output' ||
+      typeof params.valid_from !== 'string' || params.replaces == null || params.share === true)) {
+    throw verbError('invalid_params', 'preserve_third_party_speaker requires a local, private correction with tool provenance.',
+      'Use the local CLI with an explicit private visibility, content_origin: tool_output, valid_from and replaces.');
+  }
+}
+
 export async function submitRememberMutation(ctx: OperationContext, params: Record<string, unknown>, waitMs?: number,
   opts: { visibilityDefaulted?: boolean } = {}): Promise<Record<string, unknown>> {
+  assertThirdPartyCorrectionParams(ctx, params, opts.visibilityDefaulted);
+  const preserveSpeaker = params.preserve_third_party_speaker === true;
   registerMutationPreparer('remember', prepareMemoryMutation);
   const { visibility: _defaulted, ...withoutDefault } = params;
   const sub = await submission(ctx, 'remember', params, opts.visibilityDefaulted ? withoutDefault : params);
@@ -283,15 +293,19 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.
   if (p.replaces !== undefined && p.replaces !== null) {
     // Fail fast on an invalid target; the coordinator re-checks it under the row lock before publishing.
-    await decideReplacement(ctx.engine, sourceId, factIntent, Number(p.replaces),
+    const decision = await decideReplacement(ctx.engine, sourceId, factIntent, Number(p.replaces),
       { pageSlug: slug, remote: ctx.remote !== false, excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote), slugPrefixes: authority.slugPrefixes });
+    if (preserveSpeaker && (decision.status !== 'superseded' || decision.candidate?.attributed_to !== 'other')) {
+      throw verbError('invalid_params', 'The predecessor is not an active third-party statement being replaced.',
+        'Use an active fact attributed to the same third-party speaker.');
+    }
   }
   await assertFactNotWithdrawn(ctx.engine, sourceId, factIntent, { excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote), remote: ctx.remote !== false });
   const row = await admitWrite(ctx.engine, { origin: ctx.admissionOrigin, principal, operation: 'remember', sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId, callerIntent,
     // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records
     // it, so recall's session_id filter finds single facts too. Identity only — never a trust surface.
-    intent: { ...callerIntent, entity_slug: entitySlug, fence, valid_from: typeof p.valid_from === 'string' ? new Date(p.valid_from).toISOString() : new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
+    intent: { ...callerIntent, entity_slug: entitySlug, fence, explicit_event_date: typeof p.valid_from === 'string', valid_from: typeof p.valid_from === 'string' ? new Date(p.valid_from).toISOString() : new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
       visibility, ...(call.visibilityDefaulted ? { visibility_defaulted: true } : {}), ...(scopePage ? { scope_page: true } : memberPage ? { member_page: true } : {}),
       ...(linked ? { entity_inferred: linked.via } : {}), ...(inference && 'warning' in inference ? { entity_warning: inference.warning } : {}),
       session_id: ctx.sessionId ?? null, share_held: heldFor ?? undefined },

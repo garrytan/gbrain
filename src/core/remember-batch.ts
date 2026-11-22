@@ -63,6 +63,10 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
     throw verbError('invalid_params', 'replaces names one fact, so it cannot apply to a whole batch.',
       'Put replaces on the item it belongs to: items: [{ "fact": "...", "replaces": "<fact_id>" }].');
   }
+  if (p.preserve_third_party_speaker !== undefined) {
+    throw verbError('invalid_params', 'preserve_third_party_speaker applies to a single correction, not a batch.',
+      'Pass fact and replaces for one correction without items.');
+  }
   const sharedClaim = CLAIM_KEYS.filter(key => p[key] !== undefined);
   if (sharedClaim.length) {
     throw verbError('invalid_params', `${sharedClaim.join(', ')} describe one fact, so they cannot apply to a whole batch.`,

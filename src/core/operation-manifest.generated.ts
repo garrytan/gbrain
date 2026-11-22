@@ -105,6 +105,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "description": "fact_id this fact replaces (same entity, or none).",
         "fullSurfaceOnly": true
       },
+      "preserve_third_party_speaker": {
+        "type": "boolean",
+        "fullSurfaceOnly": true,
+        "description": "Local CLI, one fact. Keep the original third-party speaker in a private correction with valid_from and replaces."
+      },
       "claim_metric": {
         "type": "string",
         "description": "Typed claim metric, e.g. mrr (with claim_value).",

@@ -254,8 +254,9 @@ export function segmentedRememberRefusal(slug: string, sourceId: string, inferre
 const PURGED_SUGGESTION = 'Do not retry the same content. If it is still true, write it in new words; only the owner can clear a purge tombstone on the brain host.';
 
 /** `remember` refusals decided at preparation (withdrawal, `replaces` under the target row lock) keep their code and next step. */
-const MEMORY_REFUSAL = /^(fact_withdrawn|target_superseded|target_withdrawn|target_expired|replaces_entity_mismatch|replaces_cross_page|replaces_duplicate): /;
+const MEMORY_REFUSAL = /^(fact_withdrawn|target_superseded|target_withdrawn|target_expired|replaces_entity_mismatch|replaces_cross_page|replaces_duplicate|correction_needs_review): /;
 const MEMORY_REFUSAL_SUGGESTION: Record<string, string> = {
+  correction_needs_review: 'Review the source and the proposed correction with the brain owner before preparing a new write.',
   fact_withdrawn: FACT_WITHDRAWN_SUGGESTION,
   target_superseded: 'Recall the entity to check the current fact, then pass replaces with the fact id named here if the new claim replaces that one.',
   target_withdrawn: 'Remember the new claim without replaces; the forgotten claim stays withdrawn.',

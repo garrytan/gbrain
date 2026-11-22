@@ -115,6 +115,10 @@ const remember: Operation = {
       fullSurfaceOnly: true,
     },
     replaces: { type: 'string', description: 'fact_id this fact replaces (same entity, or none).', fullSurfaceOnly: true },
+    preserve_third_party_speaker: {
+      type: 'boolean', fullSurfaceOnly: true,
+      description: 'Local CLI, one fact. Keep the original third-party speaker in a private correction with valid_from and replaces.',
+    },
     claim_metric: { type: 'string', description: 'Typed claim metric, e.g. mrr (with claim_value).', fullSurfaceOnly: true },
     claim_value: { type: 'number', description: 'Typed claim value (finite number).', fullSurfaceOnly: true },
     claim_unit: { type: 'string', description: 'Typed claim unit, e.g. USD.', fullSurfaceOnly: true },
@@ -229,6 +233,10 @@ const remember: Operation = {
       );
     }
     if (ctx.dryRun) {
+      if (p.preserve_third_party_speaker === true) {
+        const { assertThirdPartyCorrectionParams } = await import('./persistence/memory-mutations.ts');
+        assertThirdPartyCorrectionParams(ctx, { ...p, replaces });
+      }
       parseTtlParam(p.ttl); // Dry runs still validate without admitting intent.
       return {
         dry_run: true,
