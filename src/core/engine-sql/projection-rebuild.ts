@@ -6,14 +6,17 @@
  * placeholders are numbered in text order; every other text is unchanged.
  * `test/projection-rebuild-sql-pin.test.ts` pins each statement and its binds against the ones recorded before the
  * move. The deferred chunk replacement's statements (continueDeferredProjectionStep), the rebuild loop's queue
- * stamps, the re-seal's pending count (resealSafeChunks) and the resident's window probe (selectWindowJobs) are members too; the continuation's claim release, the queue insert and the backlog, preview and drained
- * reads stay raw in projections.ts.
+ * stamps, the re-seal's pending count (resealSafeChunks), the resident's window probe (selectWindowJobs), the continuation's
+ * claim release, the queue insert (queuePageProjection) and the drain's backlog, preview, clock, work probe and row estimate
+ * are members too, so projections.ts sends no raw SQL.
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
-import { projectionRetryReadyFragment, segmentedProjectionClaimedFragment } from './persistence-housekeeping.ts';
-import { sealableImageSql } from '../page-state/projection-class.ts';
-import { ACTIVATION_SERVED_REVISION, movableChunkSql } from '../search/safe-chunks.ts';
+import { projectionRetryReadyFragment, SEGMENTED_JOB_PROBES_SQL, segmentedProjectionClaimedFragment } from './persistence-housekeeping.ts';
+import { projectionClassSql, sealableImageSql } from '../page-state/projection-class.ts';
+import { pageReadFilter } from '../search/read-policy-sql.ts';
+import type { PageReadScope } from '../types.ts';
+import { ACTIVATION_SERVED_REVISION, chunkGenerationFilter, movableChunkSql } from '../search/safe-chunks.ts';
 import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
 
@@ -150,6 +153,53 @@ export async function hasDrainableProjectionJob(raw: EngineRawRead, opts: { medi
       WHERE j.reason<>'rebuild_failed' LIMIT 1`)).length > 0;
 }
 
+/** The queue's class counts (projectionClassSql) as the backlog statement reads them. */
+export type ProjectionBacklogRow = Record<'pending' | 'failed' | 'sealable' | 'sealable_with_visual' | 'reimport' | 'ocr_required' | 'protected' | 'archived', number>
+  & { oldest: number | null; as_of: string };
+
+/** Every class of the queue in one aggregate, within `scope` (pageReadFilter), with the oldest working row's age and the clock. */
+export async function readProjectionBacklog(raw: EngineRawRead, scope: PageReadScope = {}): Promise<ProjectionBacklogRow | undefined> {
+  const params: unknown[] = [];
+  const read = pageReadFilter('p', scope, params);
+  const [row] = await raw<ProjectionBacklogRow>(`SELECT COUNT(*) FILTER (WHERE k.cls='text')::int AS pending,
+      COUNT(*) FILTER (WHERE k.cls='text' AND j.reason='rebuild_failed')::int AS failed,
+      COUNT(*) FILTER (WHERE k.cls='sealable')::int AS sealable,
+      COUNT(*) FILTER (WHERE k.cls='sealable' AND EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND c.embedding_image IS NOT NULL
+        AND ${chunkGenerationFilter('p', 'c')}))::int AS sealable_with_visual,
+      COUNT(*) FILTER (WHERE k.cls='reimport')::int AS reimport,
+      COUNT(*) FILTER (WHERE k.cls='reimport' AND p.chunker_version < 0)::int AS ocr_required,
+      COUNT(*) FILTER (WHERE k.cls='protected')::int AS protected,
+      COUNT(*) FILTER (WHERE k.cls='archived')::int AS archived,
+      EXTRACT(EPOCH FROM now()-MIN(j.updated_at) FILTER (WHERE k.cls IN ('text','sealable','reimport')))::float8 AS oldest,
+      now()::text AS as_of
+    FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
+    JOIN pages p ON p.source_id=s.id AND p.slug=j.slug AND p.deleted_at IS NULL
+    CROSS JOIN LATERAL (SELECT ${projectionClassSql('p', 's')} AS cls) k
+    WHERE ${read}`, params);
+  return row;
+}
+
+/** One row of the drain preview. */
+export interface ProjectionDrainPreviewRow { source_id: string; slug: string; page_kind: string; reason: string; updated_at: string }
+
+/** The rows a media drain takes, images last, then pages answered from their pre-upgrade index, oldest first, at most `limit`. */
+export async function listProjectionDrainPreview(raw: EngineRawRead, limit: number): Promise<ProjectionDrainPreviewRow[]> {
+  return raw<ProjectionDrainPreviewRow>(`SELECT s.id AS source_id,j.slug,p.page_kind,j.reason,j.updated_at::text AS updated_at
+    FROM page_projection_jobs j ${projectionJobProbes({ media: true })}
+    ORDER BY CASE WHEN p.page_kind NOT IN ('markdown','code') THEN 1
+      WHEN EXISTS (SELECT 1 FROM pages q WHERE q.source_id=s.id AND q.slug=j.slug AND q.text_projection_revision='${ACTIVATION_SERVED_REVISION}'::uuid) THEN 2
+      ELSE 0 END,j.updated_at,j.source_incarnation,j.slug COLLATE "C" LIMIT $1`, [limit]);
+}
+
+/**
+ * Whether a queue row of any reason names a live inline page of an active source (with `media`, or a sealable image)
+ * or a live segmented page of one: the work a limited drain left.
+ */
+export async function hasQueuedProjectionWork(raw: EngineRawRead, opts: { media?: boolean } = {}): Promise<boolean> {
+  return (await raw(`SELECT 1 FROM page_projection_jobs j ${projectionJobProbes({ media: opts.media })}
+      UNION ALL SELECT 1 FROM page_projection_jobs j ${SEGMENTED_JOB_PROBES_SQL} LIMIT 1`)).length > 0;
+}
+
 /** #7172: `<claim>:<token>`, the reason while a continuation holds a deferred chunk replacement (renewed each step). */
 export const DEFERRED_CHUNK_CLAIM = 'chunk_replacement_continuing';
 /** #7172: the queue reason of a revision whose publication left its chunk replacement to `continueDeferredProjection`. */
@@ -257,6 +307,31 @@ export async function renewDeferredReplacementClaim(raw: EngineRawRead, job: Pro
  */
 export async function releaseDeferredReplacementClaim(raw: EngineRawRead, slug: string, claim: string): Promise<void> {
   await raw(`UPDATE page_projection_jobs SET reason=$1 WHERE slug=$2 AND reason=$3`, [DEFERRED_CHUNK_REPLACEMENT, slug, claim]);
+}
+
+/** The planner's estimate of the pages table's rows (0 before statistics); the drain's statistics debt is sized by it. */
+export async function readPagesRowEstimate(raw: EngineRawRead): Promise<number> {
+  const [pages] = await raw<{ rows: number }>("SELECT GREATEST(reltuples,0)::float8 AS rows FROM pg_class WHERE oid='pages'::regclass");
+  return Number(pages?.rows ?? 0);
+}
+
+/** The drain's run start: the database clock as `now()::text`. */
+export async function readDrainRunStart(raw: EngineRawRead): Promise<string> {
+  const [{ runStart }] = await raw<{ runStart: string }>('SELECT now()::text AS "runStart"');
+  return runStart;
+}
+
+/** Whether the database clock is past `runStart` (a coarse clock repeats a time, so the drain waits for this). */
+export async function isDrainClockPast(raw: EngineRawRead, runStart: string): Promise<boolean> {
+  return (await raw<{ passed: boolean }>('SELECT now()>$1::text::timestamptz AS passed', [runStart]))[0]?.passed === true;
+}
+
+/** Queues the live page at its knowledge revision with `reason` at now, or moves its queued row there (queuePageProjection). */
+export async function queuePageProjectionJob(raw: EngineRawRead, sourceId: string, slug: string, reason: string): Promise<void> {
+  await raw(`INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
+    SELECT s.incarnation,p.slug,p.knowledge_revision,$3 FROM pages p JOIN sources s ON s.id=p.source_id
+    WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL
+    ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now()`, [sourceId, slug, reason]);
 }
 
 /** Whether the page is a live segmented page. */

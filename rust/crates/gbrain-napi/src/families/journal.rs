@@ -1149,6 +1149,66 @@ impl Brain {
         })
     }
 
+    /// `readProjectionBacklog(scope)`: the class counts, `oldest`, `as_of` and `undecided`.
+    #[napi]
+    pub fn read_projection_backlog<'env>(
+        &self,
+        env: &'env Env,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let scope: gbrain_store::persistence::BacklogScope =
+                required(scope, "readProjectionBacklog scope")?;
+            s.read_projection_backlog(&scope)
+        })
+    }
+
+    /// `listProjectionDrainPreview(limit)`: `{ rows, undecided }`.
+    #[napi]
+    pub fn list_projection_drain_preview<'env>(
+        &self,
+        env: &'env Env,
+        limit: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_projection_drain_preview(limit))
+    }
+
+    /// `hasQueuedProjectionWork()`.
+    #[napi]
+    pub fn has_queued_projection_work<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_queued_projection_work())
+    }
+
+    /// `readDrainRunStart()`: the store clock as `now()::text`.
+    #[napi]
+    pub fn read_drain_run_start<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_drain_run_start())
+    }
+
+    /// `isDrainClockPast(runStart)`.
+    #[napi]
+    pub fn is_drain_clock_past<'env>(
+        &self,
+        env: &'env Env,
+        run_start: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.is_drain_clock_past(&run_start))
+    }
+
+    /// `queuePageProjectionJob(sourceId, slug, reason)`.
+    #[napi]
+    pub fn queue_page_projection_job<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        reason: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.queue_page_projection_job(&source_id, &slug, &reason)
+        })
+    }
+
     /// `releaseDeferredReplacementClaim(slug, claim)`.
     #[napi]
     pub fn release_deferred_replacement_claim<'env>(

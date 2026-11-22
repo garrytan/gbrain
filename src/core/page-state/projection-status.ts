@@ -22,7 +22,7 @@ export interface ProjectionStatusCache {
   stop(): void;
 }
 
-export function startProjectionStatusCache(engine: Pick<BrainEngine, 'executeRaw'>, opts: { now?: () => number; checkMs?: number } = {}): ProjectionStatusCache {
+export function startProjectionStatusCache(engine: Pick<BrainEngine, 'executeRaw' | 'readProjectionBacklog'>, opts: { now?: () => number; checkMs?: number } = {}): ProjectionStatusCache {
   const now = opts.now ?? Date.now;
   let counted: { at: number; signal: string; value: Required<ProjectionBacklog> } | null = null;
   let inflight: Promise<void> | null = null;

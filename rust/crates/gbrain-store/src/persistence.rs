@@ -104,8 +104,8 @@ pub use projection_queue::{
 };
 pub(crate) use projection_queue::{activation_started_us, queue_page_projection};
 pub use projection_rebuild::{
-    ProjectionJobKey, ProjectionWindowCandidate, QueuedProjectionFilter, QueuedProjectionKey,
-    QueuedProjectionPages,
+    BacklogScope, ProjectionJobKey, ProjectionWindowCandidate, QueuedProjectionFilter,
+    QueuedProjectionKey, QueuedProjectionPages,
 };
 pub use purge_effects::{
     GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,

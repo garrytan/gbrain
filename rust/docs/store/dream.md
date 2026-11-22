@@ -51,3 +51,24 @@ Return shapes are the raw row shapes the callers read; timestamps come back as t
 (a `Date` or text), and the callers normalise them. The SQL text and bound parameters are byte-identical to
 the statements they replaced (`test/dream-cycle-sites-sql-pin.test.ts`); behaviour on PGLite and Postgres is
 pinned by `test/engine-parity/dream-cycle-sites.test.ts`.
+
+## Projection drain reads and the queue insert
+
+The projection drain's own statements (src/core/page-state/projections.ts, SQL in
+`src/core/engine-sql/projection-rebuild.ts`), served from `persistence/projection_queue.rs` and
+`persistence/projection_rebuild.rs`. The rest of the projection queue is in [persistence.md](persistence.md).
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.queuePageProjectionJob(sourceId, slug, reason)` | `null`; queues the live page at its knowledge revision with `reason` at now, or moves its queued job there. A missing or deleted page queues nothing | `queuePageProjectionJob` |
+| `brain.readDrainRunStart()` | the store clock as `now()::text` (`2026-11-18 02:37:05.215+00`); in a transaction, its start | `readDrainRunStart` |
+| `brain.isDrainClockPast(runStart)` | whether the store clock is past `runStart` (`now()::text` or ISO); other text is `invalid_argument` | `isDrainClockPast` |
+| `brain.hasQueuedProjectionWork()` | whether any job, whatever its reason, names a live Markdown or code page or a live segmented page of an active source; the TypeScript member refuses `media` | `hasQueuedProjectionWork` |
+| `brain.readProjectionBacklog({ sourceId?, sourceIds? })` | the class counts of the jobs of live pages in scope (`pending`, `failed`, `protected`, `archived`; `sealable`, `sealable_with_visual`, `reimport` and `ocr_required` 0), `oldest` (seconds since the oldest job that needs work, or null), `as_of` (`now()::text`) and `undecided` | `readProjectionBacklog` |
+| `brain.listProjectionDrainPreview(limit)` | `{ rows, undecided }`: the jobs of live Markdown and code pages of active sources, pages answered from their pre-upgrade index last, then by time, incarnation and slug (byte order), at most `limit` | `listProjectionDrainPreview` |
+
+- An image page that is neither protected nor in an archived source is `sealable` or `reimport`, which the store
+  cannot tell apart. The backlog and the preview count it in `undecided`, and the TypeScript members refuse an answer
+  that has one, as `hasDrainableProjectionJob` refuses `media`.
+- `readPagesRowEstimate` has no store method: the store keeps no planner statistics, so the TypeScript member answers 0.
+- The backlog's scope is `pageReadFilter`'s source clause; a privacy, trust or flag filter refuses in TypeScript.

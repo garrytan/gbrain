@@ -701,6 +701,30 @@ fn update_job_at_revision(
     Ok(true)
 }
 
+/// `queuePageProjectionJob`: queues the live page `slug` of `source_id` at its knowledge revision with
+/// `reason` at now, or moves its queued job there (`ON CONFLICT ... DO UPDATE`). A missing, deleted or
+/// sourceless page queues nothing.
+pub(crate) fn queue_page_projection_job_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slug: &str,
+    reason: &str,
+) -> Result<()> {
+    let Some(page) = read_page(&*tx, source_id, slug)?.filter(|p| p.deleted_at_us.is_none()) else {
+        return Ok(());
+    };
+    let Some(source) = read_source(&*tx, source_id)? else {
+        return Ok(());
+    };
+    let now = write_now()?;
+    let record = JobRecord {
+        revision: page.knowledge_revision.clone(),
+        reason: reason.to_owned(),
+        updated_at_us: now,
+    };
+    put_job(tx, &job_key(&source.incarnation, &page.slug), &record)
+}
+
 /// `renewDeferredReplacementClaim`: the job gets reason `claim` at now.
 pub(crate) fn renew_deferred_replacement_claim_in(
     tx: &mut dyn KvWrite,
@@ -896,6 +920,20 @@ impl Store {
         self.write(|tx| release_deferred_replacement_claim_in(tx, slug, claim))
     }
 
+    /// `queuePageProjectionJob(sourceId, slug, reason)`.
+    pub fn queue_page_projection_job(
+        &self,
+        source_id: &str,
+        slug: &str,
+        reason: &str,
+    ) -> Result<()> {
+        crate::links::no_nul(
+            "queuePageProjectionJob",
+            &[("sourceId", source_id), ("slug", slug), ("reason", reason)],
+        )?;
+        self.write(|tx| queue_page_projection_job_in(tx, source_id, slug, reason))
+    }
+
     /// `rekeyProjectionJob(job, revision)`.
     pub fn rekey_projection_job(&self, job: &ProjectionJobRef, revision: &str) -> Result<()> {
         self.write(|tx| rekey_projection_job_in(tx, job, revision))
@@ -930,6 +968,19 @@ impl Store {
     ) -> Result<bool> {
         let now = self.env.now_micros();
         deferred_replacement_held_in(&*self.read()?, now, source_id, slug, revision, claim)
+    }
+
+    /// `readDrainRunStart()`: the store clock as `now()::text` (in a transaction, its start, as
+    /// Postgres's `now()`).
+    pub fn read_drain_run_start(&self) -> Result<String> {
+        Ok(crate::cli_reads::pg_text::timestamptz_text(
+            self.env.now_micros(),
+        ))
+    }
+
+    /// `isDrainClockPast(runStart)`: whether the store clock is past `runStart` (`now()::text` or ISO).
+    pub fn is_drain_clock_past(&self, run_start: &str) -> Result<bool> {
+        Ok(self.env.now_micros() > parse_timestamptz(run_start, "runStart")?)
     }
 
     /// Whether the page projection queue holds no job.
@@ -969,6 +1020,51 @@ mod tests {
                 crate::pages::write_page(tx, &page)
             })
             .unwrap();
+    }
+
+    #[test]
+    fn a_queue_insert_queues_a_live_page_and_moves_its_job() {
+        let store = crate::test_support::store();
+        put(&store, "notes/a");
+        let jobs = |store: &Store| all_jobs(&*store.read().unwrap()).unwrap();
+        // Drop the job the write queued, so the insert has to queue it again.
+        store
+            .write(|tx| {
+                let key = job_key(&jobs(&store)[0].incarnation, "notes/a");
+                tx.delete(&key)
+            })
+            .unwrap();
+        assert!(jobs(&store).is_empty());
+        store
+            .queue_page_projection_job("default", "notes/a", "safe_chunk_reseal")
+            .unwrap();
+        store
+            .queue_page_projection_job("default", "notes/missing", "safe_chunk_reseal")
+            .unwrap();
+        store
+            .queue_page_projection_job("no-such-source", "notes/a", "safe_chunk_reseal")
+            .unwrap();
+        let queued = jobs(&store);
+        assert_eq!(queued.len(), 1);
+        let page = read_page(&*store.read().unwrap(), "default", "notes/a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                queued[0].record.revision.as_str(),
+                queued[0].record.reason.as_str()
+            ),
+            (page.knowledge_revision.as_str(), "safe_chunk_reseal")
+        );
+        store
+            .queue_page_projection_job("default", "notes/a", "trust_tier_changed")
+            .unwrap();
+        assert_eq!(jobs(&store)[0].record.reason, "trust_tier_changed");
+        assert!(
+            store
+                .queue_page_projection_job("default", "notes/\0a", "x")
+                .is_err()
+        );
     }
 
     #[test]

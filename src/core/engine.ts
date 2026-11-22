@@ -4148,6 +4148,20 @@ export interface BrainEngine {
   renewDeferredReplacementClaim(job: ProjectionRebuildSql.ProjectionJobKey, claim: string): Promise<void>;
   /** Hands a continuation's claim back: every job of `slug` whose reason is still `claim` gets the deferred replacement reason, its time unchanged. */
   releaseDeferredReplacementClaim(slug: string, claim: string): Promise<void>;
+  /** Every class of the projection queue in one aggregate within `scope`, with the oldest working row's age (seconds) and the clock as `now()::text`. */
+  readProjectionBacklog(scope?: PageReadScope): Promise<ProjectionRebuildSql.ProjectionBacklogRow | undefined>;
+  /** The rows a media drain takes, images last, then pages answered from their pre-upgrade index, oldest first, at most `limit`. */
+  listProjectionDrainPreview(limit: number): Promise<ProjectionRebuildSql.ProjectionDrainPreviewRow[]>;
+  /** Whether a queue row of any reason names a live inline page (with `media`, or a sealable image) or a live segmented page of an active source. */
+  hasQueuedProjectionWork(opts?: { media?: boolean }): Promise<boolean>;
+  /** The planner's estimate of the pages table's rows (0 before statistics, and on an engine without planner statistics). */
+  readPagesRowEstimate(): Promise<number>;
+  /** The drain's run start: the database clock as `now()::text`. */
+  readDrainRunStart(): Promise<string>;
+  /** Whether the database clock is past `runStart`. */
+  isDrainClockPast(runStart: string): Promise<boolean>;
+  /** Queues the live page at its knowledge revision with `reason` at now, or moves its queued row there. */
+  queuePageProjectionJob(sourceId: string, slug: string, reason: string): Promise<void>;
   /** Whether the page is a live segmented page. */
   hasSegmentedPage(sourceId: string, slug: string): Promise<boolean>;
   /** Moves the job still queued at `job.revision` to `revision` at now. */

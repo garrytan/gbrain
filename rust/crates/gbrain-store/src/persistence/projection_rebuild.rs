@@ -79,6 +79,27 @@ pub struct ProjectionWindowCandidate {
     pub slug: String,
 }
 
+/// The source part of `pageReadFilter` a backlog reads (`readProjectionBacklog`): the sources when
+/// non-empty, else the source, else every source.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BacklogScope {
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub source_ids: Option<Vec<String>>,
+}
+
+impl BacklogScope {
+    fn admits(&self, source_id: &str) -> bool {
+        match (&self.source_ids, &self.source_id) {
+            (Some(ids), _) if !ids.is_empty() => ids.iter().any(|id| id == source_id),
+            (_, Some(id)) if !id.is_empty() => id == source_id,
+            _ => true,
+        }
+    }
+}
+
 /// A job's exact key (`ProjectionJobKey`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -433,6 +454,147 @@ impl Store {
             .is_some_and(|p| p.deleted_at_us.is_none() && segmented(&p)))
     }
 
+    /// `readProjectionBacklog(scope)`: every class of the queue (`projectionClassSql`) over the jobs
+    /// of live pages in `scope` (a source or sources), with the age of the oldest job that needs work
+    /// and the store clock as `now()::text`. An image page that is neither protected nor archived is
+    /// `sealable` or `reimport`, which the store cannot tell apart; it is counted in `undecided`, and
+    /// the TypeScript member refuses a backlog that has one.
+    pub fn read_projection_backlog(&self, scope: &BacklogScope) -> Result<Value> {
+        let read = self.read()?;
+        let read = &*read;
+        let now = self.env.now_micros();
+        let sources = sources_by_incarnation(read)?;
+        let (mut pending, mut failed, mut protected, mut archived, mut undecided) = (0, 0, 0, 0, 0);
+        let mut oldest: Option<i64> = None;
+        for job in all_jobs(read)? {
+            let Some(source) = sources.get(&job.incarnation) else {
+                continue;
+            };
+            if !scope.admits(&source.id) {
+                continue;
+            }
+            let Some(page) =
+                read_page(read, &source.id, &job.slug)?.filter(|p| p.deleted_at_us.is_none())
+            else {
+                continue;
+            };
+            let needs_work = if source.archived {
+                archived += 1;
+                false
+            } else if page.page_kind != "image" || segmented(&page) {
+                pending += 1;
+                if job.record.reason == "rebuild_failed" {
+                    failed += 1;
+                }
+                true
+            } else if crate::pages::has_protected_text(&page.compiled_truth)
+                || crate::pages::has_protected_text(&page.timeline)
+            {
+                protected += 1;
+                false
+            } else {
+                undecided += 1;
+                true
+            };
+            if needs_work {
+                oldest = Some(oldest.map_or(job.record.updated_at_us, |o| {
+                    o.min(job.record.updated_at_us)
+                }));
+            }
+        }
+        Ok(json!({
+            "pending": pending, "failed": failed, "sealable": 0, "sealable_with_visual": 0,
+            "reimport": 0, "ocr_required": 0, "protected": protected, "archived": archived,
+            "oldest": oldest.map(|o| (now - o) as f64 / 1_000_000.0),
+            "as_of": timestamptz_text(now),
+            "undecided": undecided,
+        }))
+    }
+
+    /// `listProjectionDrainPreview(limit)`: the jobs a media drain would take (`projectionJobProbes`
+    /// with `media`: live inline pages of active sources, or sealable images), images last, then
+    /// pages search answers for from their pre-upgrade index, then by time, incarnation and slug
+    /// (byte order), at most `limit`. A queued image page that is neither protected nor in an
+    /// archived source may be sealable, which the store cannot tell: `undecided` counts them, and the
+    /// TypeScript member refuses a preview that has one.
+    pub fn list_projection_drain_preview(&self, limit: f64) -> Result<Value> {
+        let read = self.read()?;
+        let read = &*read;
+        let sources = sources_by_incarnation(read)?;
+        let mut undecided = 0;
+        let mut rows = Vec::new();
+        for job in all_jobs(read)? {
+            let Some(source) = sources.get(&job.incarnation).filter(|s| !s.archived) else {
+                continue;
+            };
+            let Some(page) =
+                read_page(read, &source.id, &job.slug)?.filter(|p| p.deleted_at_us.is_none())
+            else {
+                continue;
+            };
+            if page.page_kind == "image"
+                && !segmented(&page)
+                && !crate::pages::has_protected_text(&page.compiled_truth)
+                && !crate::pages::has_protected_text(&page.timeline)
+            {
+                undecided += 1;
+                continue;
+            }
+            if drainable_page(read, Some(source), &job)?.is_none() {
+                continue;
+            }
+            let rank = u8::from(
+                page.text_projection_revision.as_deref() == Some(ACTIVATION_SERVED_REVISION),
+            ) * 2;
+            rows.push((
+                rank,
+                job.record.updated_at_us,
+                job.incarnation.clone(),
+                job.slug.clone(),
+                source.id.clone(),
+                page.page_kind.clone(),
+                job.record.reason.clone(),
+            ));
+        }
+        rows.sort_by(|a, b| {
+            (a.0, a.1, &a.2, a.3.as_bytes()).cmp(&(b.0, b.1, &b.2, b.3.as_bytes()))
+        });
+        let take = if limit.is_finite() && limit >= 1.0 {
+            limit as usize
+        } else {
+            1
+        };
+        let rows: Vec<Value> = rows
+            .into_iter()
+            .take(take)
+            .map(|(_, at, _, slug, source_id, page_kind, reason)| {
+                json!({ "source_id": source_id, "slug": slug, "page_kind": page_kind, "reason": reason, "updated_at": timestamptz_text(at) })
+            })
+            .collect();
+        Ok(json!({ "rows": rows, "undecided": undecided }))
+    }
+
+    /// `hasQueuedProjectionWork()`: whether any job, whatever its reason, names a live inline page
+    /// of an active source (`projectionJobProbes`) or a live segmented page of one
+    /// (`SEGMENTED_JOB_PROBES`): the work a limited drain left.
+    pub fn has_queued_projection_work(&self) -> Result<bool> {
+        let read = self.read()?;
+        let read = &*read;
+        let sources = sources_by_incarnation(read)?;
+        for job in all_jobs(read)? {
+            let Some(source) = sources.get(&job.incarnation).filter(|s| !s.archived) else {
+                continue;
+            };
+            if read_page(read, &source.id, &job.slug)?.is_some_and(|p| {
+                p.deleted_at_us.is_none()
+                    && (segmented(&p) || p.page_kind == "markdown" || p.page_kind == "code")
+            }) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// `hasDrainableProjectionJob()`: whether a job of a live inline page of an active source is
     /// queued with a reason other than `rebuild_failed`.
     pub fn has_drainable_projection_job(&self) -> Result<bool> {
@@ -483,6 +645,49 @@ mod tests {
 
     fn slugs(rows: &[Value]) -> Vec<&str> {
         rows.iter().map(|r| r["slug"].as_str().unwrap()).collect()
+    }
+
+    #[test]
+    fn the_drain_reads_count_the_queue_and_list_its_rows() {
+        let store = crate::test_support::store();
+        for slug in ["a", "b"] {
+            put(&store, slug);
+        }
+        let backlog = store
+            .read_projection_backlog(&BacklogScope::default())
+            .unwrap();
+        assert_eq!(
+            (backlog["pending"].as_i64(), backlog["undecided"].as_i64()),
+            (Some(2), Some(0))
+        );
+        assert!(backlog["oldest"].as_f64().is_some_and(|o| o >= 0.0));
+        assert!(
+            backlog["as_of"]
+                .as_str()
+                .is_some_and(|t| t.ends_with("+00"))
+        );
+        let other: BacklogScope = serde_json::from_value(json!({ "sourceId": "other" })).unwrap();
+        let none = store.read_projection_backlog(&other).unwrap();
+        assert_eq!(
+            (none["pending"].as_i64(), none["oldest"].clone()),
+            (Some(0), Value::Null)
+        );
+        let preview = store.list_projection_drain_preview(1.0).unwrap();
+        assert_eq!(slugs(preview["rows"].as_array().unwrap()), ["a"]);
+        assert_eq!(
+            store.list_projection_drain_preview(0.0).unwrap()["rows"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(store.has_queued_projection_work().unwrap());
+        // The drain clock: a run start reads back as `now()::text`, and the clock is not past a later time.
+        let start = store.read_drain_run_start().unwrap();
+        assert!(start.ends_with("+00"));
+        assert!(!store.is_drain_clock_past("2999-01-01 00:00:00+00").unwrap());
+        assert!(store.is_drain_clock_past("2000-01-01T00:00:00Z").unwrap());
+        assert!(store.is_drain_clock_past("not a time").is_err());
     }
 
     #[test]

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1355/1363
+# covered: 1362/1370
 # lifecycle: 9/9
 # pages: 59/59
 # search: 7/7
@@ -49,7 +49,7 @@
 # facts_cycle_sites: 34/34
 # facts_purge: 86/86
 # purge_plan: 4/4
-# projection_rebuild: 20/21
+# projection_rebuild: 27/28
 # facts_repair: 25/25
 # facts_trust: 49/49
 # facts_recall: 7/7
@@ -95,7 +95,7 @@ disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	2	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	165	no	yes	yes	serves
+transaction	lifecycle	yes	166	no	yes	yes	serves
 transactionDirect	lifecycle	yes	13	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -103,13 +103,13 @@ getPage	pages	yes	143	yes	yes	yes	serves
 readPageSnapshot	pages	yes	35	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	9	no	yes	yes	serves
-putPage	pages	yes	650	yes	yes	yes	serves
+putPage	pages	yes	655	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	25	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	184	yes	yes	yes	serves
+softDeletePage	pages	yes	185	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -226,7 +226,7 @@ listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	4	no	yes	yes	serves
 upsertChunks	chunks	yes	50	yes	yes	yes	serves
 sealChunks	chunks	yes	71	no	yes	yes	serves
-getChunks	chunks	yes	53	yes	yes	yes	serves
+getChunks	chunks	yes	54	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
 countStaleChunks	chunks	yes	8	no	yes	yes	serves
@@ -621,8 +621,8 @@ selectProjectionWindowJobs	persistence_journal	yes	7	no	yes	yes	serves
 claimSegmentedProjection	persistence_journal	yes	2	no	yes	yes	serves
 renewSegmentedProjectionClaim	persistence_journal	yes	1	no	yes	yes	serves
 releaseSegmentedProjectionClaim	persistence_journal	yes	2	no	yes	yes	serves
-deleteProjectionJob	persistence_journal	yes	9	no	yes	yes	serves
-markProjectionRebuildFailed	persistence_journal	yes	2	no	yes	yes	serves
+deleteProjectionJob	persistence_journal	yes	10	no	yes	yes	serves
+markProjectionRebuildFailed	persistence_journal	yes	5	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	1	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	4	no	yes	yes	serves
@@ -990,8 +990,8 @@ listRequestsCarryingClaim	purge_plan	yes	1	no	yes	yes	serves
 listRequestsHoldingStagings	purge_plan	yes	1	no	yes	yes	serves
 countPurgeProbe	purge_plan	yes	5	no	yes	yes	serves
 listPurgeProbeItems	purge_plan	yes	2	no	yes	yes	serves
-listQueuedPageProjections	projection_rebuild	yes	13	no	yes	yes	serves
-readProjectionJobReason	projection_rebuild	yes	9	no	yes	yes	serves
+listQueuedPageProjections	projection_rebuild	yes	18	no	yes	yes	serves
+readProjectionJobReason	projection_rebuild	yes	10	no	yes	yes	serves
 readChunkKeepState	projection_rebuild	yes	2	no	yes	yes	serves
 clearUnkeptChunkVectors	projection_rebuild	yes	2	no	yes	yes	serves
 setProjectionChunkerVersion	projection_rebuild	yes	1	no	yes	yes	serves
@@ -1002,10 +1002,17 @@ listStaleChunkVectors	projection_rebuild	yes	1	no	yes	yes	serves
 clearChunkVectors	projection_rebuild	yes	1	no	yes	yes	serves
 countPendingTextChunks	projection_rebuild	yes	2	no	yes	yes	serves
 probeProjectionWindowCandidates	projection_rebuild	yes	3	no	yes	yes	serves
-readProjectionHead	projection_rebuild	yes	6	no	yes	yes	serves
+readProjectionHead	projection_rebuild	yes	7	no	yes	yes	serves
 isDeferredReplacementHeld	projection_rebuild	yes	5	no	yes	yes	serves
 renewDeferredReplacementClaim	projection_rebuild	yes	6	no	yes	yes	serves
 releaseDeferredReplacementClaim	projection_rebuild	yes	2	no	yes	yes	serves
+readProjectionBacklog	projection_rebuild	yes	3	no	yes	yes	serves
+listProjectionDrainPreview	projection_rebuild	yes	1	no	yes	yes	serves
+hasQueuedProjectionWork	projection_rebuild	yes	2	no	yes	yes	serves
+readPagesRowEstimate	projection_rebuild	yes	1	no	yes	yes	serves
+readDrainRunStart	projection_rebuild	yes	2	no	yes	yes	serves
+isDrainClockPast	projection_rebuild	yes	2	no	yes	yes	serves
+queuePageProjectionJob	projection_rebuild	yes	2	no	yes	yes	serves
 hasSegmentedPage	projection_rebuild	yes	1	no	yes	yes	serves
 rekeyProjectionJob	projection_rebuild	yes	1	no	yes	yes	serves
 stampDeferredProjectionJob	projection_rebuild	yes	1	no	yes	yes	serves
