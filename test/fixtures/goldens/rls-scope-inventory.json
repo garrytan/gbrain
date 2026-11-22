@@ -8841,6 +8841,7 @@
         "readRepairBusyRows": "none",
         "readReplacementTarget": "none",
         "readRequestEffects": "none",
+        "readRetainedSources": "none",
         "readRetiredManagedSyncCursor": "none",
         "readRetirementHop": "none",
         "readReviewAcceptedMark": "none",

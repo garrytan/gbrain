@@ -10,6 +10,57 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.759.0] - 2026-11-21
+
+**Sync now finds the earlier committed version a held note still matches by looking through that file's own history, so the `gbrain sources retry-held` route clears what `gbrain repair file-drift --held` says it will. On a read-only mirror, the preview also says why it couldn't read a held file.**
+
+### Fixed
+- To check whether a note with no import record still holds an earlier version of its file, sync used to read the file at each of the last 50 commits of the whole repository. On a busy repository, the version a note matched was often thousands of commits back, so sync kept the note held even though `gbrain repair file-drift --held` listed it as "an earlier version" that `retry-held` would clear. Sync now reads the versions from the last 50 commits that changed that file, as the preview does.
+- When a held note's file on a read-only mirror can't be read losslessly (invalid UTF-8, or frontmatter YAML that only parses through recovery), the preview now shows the reason after the code, such as `invalid_params: Canonical file metadata cannot be parsed losslessly; repair its syntax before previewing.`, instead of `invalid_params` alone.
+- The preview no longer says a committed sync leaves a file with uncommitted bytes in place. It says sync holds such a file `worktree_dirty` until the bytes are committed or restored.
+
+## [0.60.758.0] - 2026-11-21
+
+**Conversation fact extraction no longer skips short transcripts whose answers lead many lines with bold text, and one window the model declines no longer fails its page.**
+
+### Fixed
+- A transcript in the documented `**Speaker** (YYYY-MM-DD h:mm AM): text` shape with few turns and a long answer full of bold headings or `**Label:**` lines was skipped as unparsed: every line starting with `**` counted against the format, so two turns over 45 bold lines scored under the 5% floor. Only lines that open like a turn (`**Name** (`) count now, and the rest read as part of the answer.
+- A window the extraction model still declines after its retry as two halves (a refusal or a content-filter stop) is now left out instead of failing the page. The page completes with the facts of every other window, on managed brains too, which before published nothing for such a page. It is not counted in `pages_failed`, the next run doesn't pay to read it again, and `--json` lists each declined span in `declined_windows` and counts them in the new `windows_declined` (also in the backfill cycle's details). `--force` on the page tries a declined window again. A page where every window declined still stays unfinished and retries next run.
+- Each `--json` `unparsed_pages` entry now carries a `reason` code (`no_format_line`, `below_floor`, `label_list`, `no_formats` or `no_message_lines`) beside its `cause`, so scripts can count why pages were skipped without parsing the sentence.
+
+**Clearer errors for bad search, timeline and import input, and honest doctor and halt reporting.**
+
+### Fixed
+- `gbrain doctor` no longer reports the quarantined pages, flagged pages and autopilot fan-out checks as passing when the check itself fails. It now shows a warning with the error, and skips quietly only when the table it reads doesn't exist yet. (#9924)
+- Search reads a negative limit as the default and a negative offset as 0, instead of returning the wrong rows or failing. (#9921)
+- The timeline lookup refuses a date that isn't a YYYY-MM-DD calendar date (a full timestamp included) and a negative or fractional limit with a clear invalid-input error naming the field, instead of a database error. (#9920)
+- `gbrain jobs cancel --group <id> --json` exits 1 with a `not_found` error when the group has no jobs, as it already did without `--json`. A script that read the old empty success output now sees the error. (#9919)
+- `gbrain access rule import --file <path>` names a missing file as invalid input and writes nothing. (#9889)
+- Concept synthesis records a run stopped by a provider-wide sign-in or rate-limit failure under that reason, instead of as an ordinary item error. (#9962)
+
+Thanks to @Masashi-Ono0611 and @Kkkkkuro for the reports.
+
+**Lands #9963, #9932 and #9954 together, and conversation fact extraction now keeps a claim private when the "keep this quiet" request for it sits in the other half of a window the model refused.**
+
+**Connector syncs run as jobs now stop at the job's deadline and save their place, and a recovery_required stop with nothing left to recover no longer shows the connector as stopped.**
+
+<!-- behavior-change: connector_job_deadline_9968 -->
+
+### Fixed
+- A managed connector sync run by autopilot or a sync job ignored the job's deadline, so a long Gmail backfill ran until the job was killed at its timeout (`aborted: timeout`), every time. The killed run recorded nothing, not even its pending writes, its last position or its counts. With the sync job drain on (the default; `sync.job_drain false` turns the deadline off too), it now stops at the job's deadline less its reserve, ends `partial` with reason `timeout`, records its run and saves the newest backfill position whose mail has already been written, so the job completes and the next sync continues below that position. Mail already imported is not imported again, and the position never moves past mail that is not yet written. The first database-only pass of a large GitHub import still runs to the job timeout; a follow-up fixes that. (#9968)
+- `sources status` and `sync status` kept showing a connector as `stopped` on a `recovery_required` failure recorded before an upgrade, because only a complete run cleared it and the killed runs recorded nothing. When no request of the source still holds a recovery record, the failure now shows `recovery_settled: true` and `stopped: false`, and the next sync that ends without an error clears it. A source with a real retained publication keeps the stop. (#9968)
+- The `recovery_required` refusal of a connector sync now names the retained request, its state and its `blocked_reason`, and its `fix` reads that receipt (`gbrain write-request -- <request id>`); `sources status` names the same request. Its wait for the publication to settle never runs past the caller's deadline. (#9968)
+- `gbrain sources writer status` now lists a request that has ended but still holds a recovery record, which blocks its worktree; before, it listed only queued, running and recovering requests and blocked ones. Reported and first fixed by @Masashi-Ono0611 (#9969).
+
+Nothing to run after upgrading. The next sync of an affected source stops at its deadline, records its run and clears a settled `recovery_required` record by itself.
+
+**The `query` tool's `autocut` description now says autocut is off by default, which is what every search mode does.**
+
+### Fixed
+- The `autocut` parameter on `query` told agents it was on by default and never empty. It has been off in every search mode (`conservative`, `balanced`, `tokenmax`) since the ranker wave, so an agent that left it unset already got the full top results. The description now says so: autocut is off unless you pass `autocut: true` or set `gbrain config set search.autocut true`, and turning it on trims the results at the steepest score drop, which can drop relevant results on questions with more than one part. Search behavior is unchanged; a new PGLite test pins that `query` without `autocut` returns the full reranked set in `balanced` and `tokenmax`.
+
+<!-- public-surface: no-behavior-change: the query tool autocut description text is corrected to match existing behavior; no flag, tool or default changes -->
+
 ## [0.60.757.0] - 2026-11-21
 
 **gbrain installs and connects to Hermes without changing Hermes's security settings: `gbrain setup hermes` now registers the MCP server through Hermes's own `hermes mcp add`, and the install docs add a release-binary route Hermes's command scanner allows.**

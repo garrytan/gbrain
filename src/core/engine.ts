@@ -1618,6 +1618,8 @@ export interface BrainEngine {
   readSourceIncarnation(sourceId: string): Promise<SourceIncarnationRow | null>;
   /** A single-source sync's routing row: the source's columns (null when unknown), its claim and company-brain receipt, and the persistence mode rows (engine-sql/sync-dispatch.ts). */
   readSyncDispatchRow(sourceId: string): Promise<SyncDispatchRow | undefined>;
+  /** #9968: the ids among `sourceIds` whose bound worktree still holds a recovery record, in byte order. */
+  readRetainedSources(sourceIds: readonly string[]): Promise<string[]>;
   /** Whether the source's current incarnation has a company-brain ingestion receipt. */
   hasCompanyBrainReceipt(sourceId: string): Promise<boolean>;
   /** The source's guest_sources row and whether row-level security hides guest_sources; throws the missing-table error on an old schema. */

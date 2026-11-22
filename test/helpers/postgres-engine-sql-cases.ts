@@ -475,6 +475,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readSourceCheckoutRoot': OOS.callerRawSql,
   'readUnembeddedPageSummary': OOS.callerRawSql,
   'readSyncDispatchRow': OOS.callerRawSql,
+  'readRetainedSources': OOS.cliReadsImport,
   'hasCompanyBrainReceipt': OOS.cliReadsImport,
   'readGuestSourceRow': OOS.cliReadsImport,
   'listGuestSourceIds': OOS.cliReadsImport,
