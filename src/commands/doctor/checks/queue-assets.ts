@@ -7,7 +7,6 @@
  * src/commands/doctor/registry.ts and src/core/doctor-categories.ts.
  */
 
-import * as db from '../../../core/db.ts';
 import { startHeartbeat } from '../../../core/progress.ts';
 import { computeQueueHealthCheck } from './queue-jobs.ts';
 import { checkSubagentCapability } from './search-eval.ts';
@@ -98,7 +97,7 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
 
   // 12. Index audit (opt-in via --index-audit). v0.13.1 follow-up to #170.
-  // Reports indexes with zero recorded scans on Postgres. Informational only;
+  // Reports zero recorded scans and unusable live indexes on Postgres;
   // we DO NOT auto-drop. On #170's brain, idx_pages_frontmatter and
   // idx_pages_trgm showed 0 scans — the suggestion there is "consider
   // investigating on YOUR brain," not "drop these globally." Zero scans on a
@@ -114,28 +113,41 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
       });
     } else {
       try {
-        const sql = db.getConnection();
-        const rows = await sql`
-          SELECT schemaname, relname AS table, indexrelname AS index,
-                 idx_scan, pg_size_pretty(pg_relation_size(indexrelid)) AS size
-            FROM pg_stat_user_indexes
-           WHERE schemaname = 'public'
-             AND idx_scan = 0
-           ORDER BY pg_relation_size(indexrelid) DESC
-           LIMIT 21
-        `;
+        const rows = await engine.executeRaw<{
+          name: string; size: string; unusable: boolean; total: number; finding_count: number; unusable_count: number;
+        }>(`
+          WITH findings AS (
+            SELECT c.oid AS index_id, c.relname AS name, s.idx_scan = 0 AS zero_scan,
+                   i.indislive AND NOT (i.indisvalid AND i.indisready) AS unusable
+              FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+              LEFT JOIN pg_stat_user_indexes s ON s.indexrelid = i.indexrelid
+             WHERE c.relnamespace = 'public'::regnamespace
+               AND (s.idx_scan = 0 OR (i.indislive AND NOT (i.indisvalid AND i.indisready)))
+          )
+          SELECT name, pg_size_pretty(pg_relation_size(index_id)) AS size, unusable,
+                 (count(*) FILTER (WHERE zero_scan) OVER ())::int AS total,
+                 count(*) OVER ()::int AS finding_count,
+                 (count(*) FILTER (WHERE unusable) OVER ())::int AS unusable_count
+            FROM findings
+           ORDER BY unusable DESC, pg_relation_size(index_id) DESC, name
+           LIMIT 20
+        `);
         if (rows.length === 0) {
           checks.push({ name: 'index_audit', status: 'ok', message: 'All public indexes have recorded scans' });
         } else {
-          // #7145: 21 rows means more than the 20 listed.
-          const list = rows.slice(0, 20).map((r: any) => `${r.index}(${r.size})`).join(', ');
+          const { total, finding_count, unusable_count } = rows[0]!;
+          const unusable = rows.filter(r => r.unusable).map(r => ({ name: r.name, size: r.size }));
+          const unusableMessage = unusable_count
+            ? `${unusable_count} live public index(es) are invalid or not ready. Verify ongoing index builds before repair. `
+            : '';
+          const list = rows.map(r => `${r.name}(${r.size}${r.unusable ? ', invalid or not ready' : ''})`).join(', ');
           checks.push({
             name: 'index_audit',
             status: 'warn',
-            details: { exact: rows.length <= 20 },
-            message: `${rows.length > 20 ? '20+' : rows.length} zero-scan index(es): ${list}. ` +
-                     `Consider investigating whether they're used on YOUR workload (fresh brains naturally show zero scans until queries accumulate). ` +
-                     `Do not drop without confirming.`,
+            details: { exact: finding_count === rows.length,
+                       zero_scan_total: total, unusable_count, unusable_indexes: unusable },
+            message: unusableMessage + `${total} zero-scan index(es). Sample: ${list}. ` +
+                     `Review actual workload before changing indexes. Do not drop without confirming.`,
           });
         }
       } catch (e) {

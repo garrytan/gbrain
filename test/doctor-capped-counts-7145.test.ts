@@ -12,6 +12,7 @@ import { markdownBodyEntry } from '../src/commands/doctor/checks/data-integrity.
 import { contentSanityEntry } from '../src/commands/doctor/checks/content-quality.ts';
 import { checkJunkEntityHubs } from '../src/commands/doctor/checks/graph-embedding.ts';
 import { computeQueueHealthCheck } from '../src/commands/doctor/checks/queue-jobs.ts';
+import { indexAuditEntry } from '../src/commands/doctor/checks/queue-assets.ts';
 import { edgeValidityVerdict } from '../src/commands/doctor/checks/edge-validity.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -66,6 +67,42 @@ for (const kind of testBackends()) describe(`doctor capped counts are floors (${
   }));
 
   if (kind === 'postgres') {
+    test('index_audit finds a live invalid partitioned index with no scan counter', async () => {
+      const audit = async () => {
+        const result = await indexAuditEntry.run({ engine, progress, args: ['--index-audit'] } as never);
+        if (!Array.isArray(result) || result.length !== 1) throw new Error('Expected one index audit result');
+        return result[0]!;
+      };
+      const baseline = await audit();
+      expect(baseline).toMatchObject({ status: 'warn', details: { unusable_count: 0, exact: false } });
+
+      await engine.executeRaw('CREATE TABLE audit_partition (id int) PARTITION BY RANGE (id)');
+      try {
+        await engine.executeRaw('CREATE TABLE audit_partition_child PARTITION OF audit_partition FOR VALUES FROM (0) TO (10)');
+        await engine.executeRaw('CREATE INDEX audit_partition_incomplete_idx ON ONLY audit_partition (id)');
+        const [catalog] = await engine.executeRaw<{ valid: boolean; indexed: boolean }>(`
+          SELECT i.indisvalid AS valid, s.indexrelid IS NOT NULL AS indexed
+            FROM pg_index i LEFT JOIN pg_stat_user_indexes s USING (indexrelid)
+           WHERE i.indexrelid = 'audit_partition_incomplete_idx'::regclass
+        `);
+        expect(catalog).toEqual({ valid: false, indexed: false });
+
+        const check = await audit();
+        expect(check).toMatchObject({
+          status: 'warn',
+          details: {
+            exact: false,
+            zero_scan_total: baseline.details?.zero_scan_total,
+            unusable_count: 1,
+            unusable_indexes: [{ name: 'audit_partition_incomplete_idx' }],
+          },
+        });
+        expect(check.message).toContain('1 live public index(es) are invalid or not ready');
+      } finally {
+        await engine.executeRaw('DROP TABLE audit_partition');
+      }
+    });
+
     test('queue_health counts every stalled job and finds the no-worker queue behind five with workers', async () => {
       await engine.executeRaw(`INSERT INTO minion_jobs (submission_authority, name, queue, status, started_at) SELECT '{}'::jsonb, 'example-job', 'q-stall', 'active', now() - interval '2 hours' FROM generate_series(1, 7)`);
       await engine.executeRaw(`INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at)
