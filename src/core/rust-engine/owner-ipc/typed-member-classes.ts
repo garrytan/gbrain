@@ -250,7 +250,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readFenceOriginGone', 'readGenerationActivationState', 'readGenerationFenceBlocks', 'readGenerationItemsByIds',
   'readGenerationPageRows', 'readGenerationRestored', 'readGenerationValve', 'readHeldGenerationContext',
   'readHeldGenerationProposal', 'readLiveGenerationId', 'readLiveGenerationRow', 'readTakePreimages',
-  // Ours (the page purge port), not yet reconciled with main's list:
+  // The page purge port's own typed reads (each reads only: its engine-sql function and the store function it calls):
   'countPageCascadeRows', 'countPageManifestRows', 'factsOrAliasesMayMatch', 'isConceptStillHeld', 'listActiveWorktreeRefreshRows', 'listBlockingEffectRows',
   'listCatalogForeignKeys', 'listCatalogRelations', 'listCheckoutFiles', 'listConceptIncomingLinks', 'listDerivationClaimForms', 'listHorizonScanRows',
   'listLatestTakeGrades', 'listLiveConceptMemberRevisions', 'listOnboardingSources', 'listOriginDependents', 'listPageLinkStreams', 'listPageMirrorFacts',
@@ -485,7 +485,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   insertWriteRequestGroup: 'readWriteRequestsByRequestIds for those requests',
   claimNotifierLease: 'readNotifierLease for that host',
   releaseNotifierLease: 'readNotifierLease for that host',
-  // Ours (the page purge port), not yet reconciled with main's table:
+  // The page purge port's own typed writes and the read that confirms each:
   writePageLabelGuard: 'nothing: it sets the page\'s guard to the one tier it was given (or removes it), so running it again leaves the same guard; only the time it was set moves',
   insertPageFactPurges: 'nothing: a tombstone whose source, visibility, subject and claim fingerprint already exist is kept as it is (ON CONFLICT DO NOTHING), so running it again adds no tombstone',
   deletePagePurgeTombstones: 'listPagePurgeTombstones for that slug',
@@ -532,8 +532,6 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   recordAccessMigrationPhase: 'readUnfinishedAccessMigration for that source',
   switchAccessMigration: 'readUnfinishedAccessMigration for that source',
   setEffectTransactionLimits: nothingSetting,
-  writerAdminStore: nothingSetting,
-  worktreeClaimStore: nothingLock,
   lockAccessPolicy: nothingLock,
   declareSyncImportPageCursor: nothingCursor,
   fetchSyncImportPageCursor: nothingCursor,
@@ -615,7 +613,10 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   releasePurgeRedactionsForField: 'readBeliefRedactions',
   replayPagePurges: 'readBeliefRedactions',
   writeOpCheckpointRecord: 'readOpCheckpointRecord for that operation',
-  // Ours (the page purge port), not yet reconciled with main's table:
+  // The page purge port's own typed writes and the read that confirms each (continued):
+  // Ember's ruling B (option 2): the day row is shared by parallel extractions, so no read confirms one delta (see the note in
+  // confirming-reads.ts and docs/designs/RUST_ENGINE.md); the rollup writer never reruns a call whose reply was lost.
+  upsertExtractRollupDay: 'a read of that day\'s extract_rollup_7d row for that kind and source (the row doctor\'s extract_health reads; no typed member lists it yet)',
   insertTakeGrade: 'readTakeGrade for that key',
   deleteTakeGrade: 'readTakeGrade for that key',
   upsertTakeHorizon: 'listTakeHorizons for that take',

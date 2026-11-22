@@ -50,7 +50,7 @@ import { PURGE_DUE, PURGE_OWNERS, entryStops, type PurgePathEntry, type PurgePat
 export type FactPurgeEntryPoint = 'purge' | 'continue';
 export type FactPurgeEntry = PurgePathEntry<'purge'>;
 
-const { ours, ledgerScrub, beliefProbe, factContextProbe, receiptReads, factPurgeTx, segmentedRewrite, segmentedPurgeWrites, purgeTerminal } = PURGE_OWNERS;
+const { ours, beliefProbe, factContextProbe, receiptReads, factPurgeTx, segmentedRewrite } = PURGE_OWNERS;
 const { nov23, nov24, nov25 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): FactPurgeEntry[] => members.map(member => ({ member, owner }));
 const tx = (member: keyof BrainEngine & string, stop: string, reached: 'purge' | 'purge and continue' = 'purge'): FactPurgeEntry =>
@@ -89,17 +89,9 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   tx('softDeleteDerivedPages', 'hiding a derived page is not served'),
   tx('markNeedsRederive', 'the re-derive queue is not served'),
   // The deletes of the purge itself.
-  tx('deletePurgedTakes', 'the delete of the claim\'s verbatim takes is not served'),
-  tx('deletePurgeTrustProposals', 'the delete of the trust proposals that name the facts or takes is not served'),
-  tx('deletePurgeOpenLoops', 'the delete of the open loops that name the facts is not served'),
-  tx('deletePurgeWriteGateHolds', 'the delete of the held writes that carry the claim is not served'),
-  tx('deletePurgeWriteGateReceipts', 'the delete of the gate receipts that name purged rows is not served'),
   tx('deletePurgeTakeProposals', 'the delete of the take proposals that carry the claim is not served'),
-  tx('blankPurgeCoreEditNotices', 'the blanking of the core edit notices that quote the claim is not served'),
-  tx('deletePurgedFacts', 'the delete of the fact rows is not served'),
   // rewritePageBodies: the pages that held the claim lose its fence rows. A segmented page publishes a new generation
   // (rewriteLiveSegmentedFences, then a version of the old revision); an inline page is versioned first, then rewritten.
-  tx('listPagesForPurgeRewrite', 'the read of the pages to rewrite is not served'),
   { site: 'rewriteLiveSegmentedFences (page-body/segment-rewrite.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
     stop: 'rewriting a segmented page\'s live fences reads the page and restores its deleted_at through raw SQL (segment-rewrite.ts:174, :194); typed and served on Rust by segmented-staging-2' },
   { site: 'occurrencesWithoutChunks (page-body/ingest.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
@@ -108,35 +100,13 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
     stop: 'the reuse of the retired segments\' chunk vectors is raw SQL; typed on segmented-staging-2' },
   { site: 'hasStaleChunks (page-body/projection.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
     stop: 'the stale segment chunk probe is raw SQL; typed (hasStaleSegmentChunks) on segmented-staging-2' },
-  { site: 'applySegmentedBody (persistence/segmented-apply.ts)', owner: segmentedPurgeWrites, due: nov25, entry: 'purge',
-    stop: 'the flip that publishes the rewritten generation locks the staging and deletes chunks through raw SQL (segmented-apply.ts); still raw on every rust-engine branch' },
-  { site: 'deleteRewrittenDerivations (page-body/segment-derive.ts)', owner: segmentedPurgeWrites, due: nov25, entry: 'purge',
-    stop: 'the delete of the derivation rows a rewritten segment may hold is raw SQL; still raw on every rust-engine branch' },
-  { site: 'insertSegmentedVersion (page-state/versions.ts)', owner: segmentedPurgeWrites, due: nov25, entry: 'purge',
-    stop: 'createPageVersion of a segmented page inserts the version through raw SQL; still raw on every rust-engine branch' },
-  { site: 'pruneSegmentedVersions (page-state/versions.ts)', owner: segmentedPurgeWrites, due: nov25, entry: 'purge',
-    stop: 'createPageVersion of a segmented page prunes its old versions through raw SQL; still raw on every rust-engine branch' },
-  { site: '<anonymous> (page-state/versions.ts)', owner: segmentedPurgeWrites, due: nov25, entry: 'purge',
-    stop: 'createPageVersion, which the purge calls for the pre-purge version of each inline page it rewrites, inserts into page_versions through raw SQL; the Rust engine serves the typed createVersion, but facts/purge.ts does not call it' },
-  tx('updatePageBodyForPurge', 'the rewrite of a page body is not served'),
-  tx('deletePurgedChunks', 'the delete of the rewritten pages\' chunks is not served'),
   // redactPageVersions: the change reasons first, then the inline versions, then the segmented ones.
   tx('redactVersionChangeReasons', 'the redaction of change reasons that quote the claim is not served'),
-  {
-    site: 'rewriteVersionBodies (facts/purge.ts)', owner: segmentedPurgeWrites, due: nov25, entry: 'purge',
-    stop: 'the version-body SELECT (WHERE, column list and lock clause built from the purge and the held-fact move) is raw SQL with no constant text to type; rust-5a does not serve it',
-  },
   tx('setPurgeVersionBody', 'the rewrite of a saved version body is not served'),
   tx('listSegmentedVersionsForPurge', 'the read of the segmented versions to rewrite is not served'),
   { site: 'rewriteSegmentedGeneration (page-body/segment-rewrite.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
     stop: 'rebuilding a retained generation of a segmented page locks the page and rewrites its manifest through raw SQL (segment-rewrite.ts:216-244); typed and served on Rust by segmented-staging-2' },
-  // The generation ledger.
-  { site: 'scrubGenerationLedger (generations/ledger-scrub.ts)', owner: ledgerScrub, due: nov25, entry: 'purge', stop: 'the generation-ledger scrub runs through raw SQL' },
   // purgeSegmentStorage: the writes that would publish a staged body are cancelled, the stagings aborted, the texts deleted.
-  { site: 'cancelRequestsHoldingStagings (persistence/intent-redaction.ts)', owner: purgeTerminal, due: nov25, entry: 'purge',
-    stop: 'cancelling the queued writes that would publish a staged body that holds the claim locks them through raw SQL (intent-redaction.ts:222); still raw on every rust-engine branch' },
-  { site: 'finishTerminal (persistence/journal.ts)', owner: purgeTerminal, due: nov25, entry: 'purge',
-    stop: 'completing such a cancelled write with purged_content compacts its stored intent through raw SQL (journal.ts finishTerminal); still raw on every rust-engine branch' },
   tx('abortPurgedStagings', 'aborting the uncommitted stagings that hold the claim is not served'),
   tx('deletePurgedStagingParts', 'the delete of those stagings\' upload parts is not served'),
   tx('deletePageViewDigests', 'the delete of the rewritten pages\' cached view digests is not served'),
@@ -175,7 +145,10 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
     'readSourceRow', 'readTopologyChange', 'readTransactionSettings', 'readWithdrawalDiscovery', 'readWriteRequest',
     'recordDerivationPurgeRow', 'redactWriteRequestRow', 'relationExists', 'releaseTerminalBytes', 'requireSynchronousCommit',
     'restorePageTrust', 'setProjectionChunkerVersion', 'setPurgeProbeTimeout', 'setWriteContext', 'sweepSegments', 'transaction',
-    'upsertChunks', 'writeTextProjectionSeal'
+    'upsertChunks', 'writeTextProjectionSeal',
+    // served on Rust by main's batch 9: the purge's writes (purge_writes.rs), the segmented purge writes (lane 1), the terminal
+    // compaction (lane 5) and the generation ledger's typed text scrub
+    'deletePurgedTakes', 'deletePurgeTrustProposals', 'deletePurgeOpenLoops', 'deletePurgeWriteGateHolds', 'deletePurgeWriteGateReceipts', 'blankPurgeCoreEditNotices', 'deletePurgedFacts', 'listPagesForPurgeRewrite', 'updatePageBodyForPurge', 'deletePurgedChunks', 'compactTerminalIntent', 'createVersion', 'deleteRewrittenSegmentDerivations', 'deleteUnstagedSegmentChunks', 'listPurgeVersionBodies', 'scrubGenerationTextRows'
   ),
   ...GUARDED_SITES,
 ];

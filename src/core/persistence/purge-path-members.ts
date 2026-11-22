@@ -48,12 +48,8 @@ export const PURGE_OWNERS = {
   requestIndexes: 'lane 14 (doctor-checks-3 b78e56edb9, contains 8d4d809039)',
   /** The fact purge's transaction statements and receipt counts: rust-engine/rust-5a bc4cc890fe serves them (not merged here); see fact-purge-path-members.ts. */
   factPurgeTx: 'lane 4 (rust-5a bc4cc890fe)',
-  /** The segmented purge writes (the flip, the segmented version insert and prune, the derivation delete, the inline version insert, the version-body read): Ember's ruling, Nov 21. */
-  segmentedPurgeWrites: 'lane 1 (rust-engine/segmented-purge-writes)',
   /** The segmented rewrite statements and their chunk probes, typed and served on Rust by segmented-staging-2 (34fa27c472): Ember's ruling, Nov 21. */
   segmentedRewrite: 'trunk (segment-pending-stamp f71c844551, contains 34fa27c472)',
-  /** The cancellation of a staged write and its terminal compaction (cancelRequestsHoldingStagings, finishTerminal): Ember's ruling, Nov 21. */
-  purgeTerminal: 'lane 5 (rust-engine/journal-purge-terminal)',
 } as const;
 
 /**
