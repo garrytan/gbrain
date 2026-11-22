@@ -61,7 +61,8 @@ describe('gbrain publish on a guest page saved from gbrain get', () => {
   test('only the exact warning line, first and followed by frontmatter, is dropped', () => {
     expect(makeShareable(`${LINE}\n${FRONTMATTER}${BODY}`).trim()).toBe(BODY.trim());
     expect(makeShareable(`${LINE}\n${BODY}`)).toContain(`${LINE}\n# A note`);
-    expect(makeShareable(`${BODY}${LINE}\n---\nkept: yes\n---\n`)).toContain(LINE);
+    expect(makeShareable(`${BODY}${LINE}\nkept: yes\n`)).toContain(LINE);
+    expect(() => makeShareable(`${BODY}${LINE}\n---\nkept: yes\n---\n`)).toThrow(expect.objectContaining({ code: 'invalid_frontmatter' }));
   });
 
   test('a saved_at outside YYYY-MM-DD still drops the line and strips the frontmatter', () => {
