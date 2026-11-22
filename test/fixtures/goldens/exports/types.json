@@ -8117,6 +8117,13 @@
       },
       {
         "kind": "function",
+        "name": "liveHolderToken",
+        "signature": [
+          "(dataDir: string | undefined) => string | null"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "msSinceLastReap",
         "signature": [
           "(dataDir: string | undefined) => number | null"

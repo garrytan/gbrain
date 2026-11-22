@@ -24,6 +24,8 @@ const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 let home: string;
 let dataDir: string;
 let brainId: string;
+/** The value the engine swap override reads for this brain, through the same shared function. */
+let sharedRef: string | null;
 
 function childEnv(): Record<string, string> {
   return keylessBrainEnv(process.env, home, {
@@ -52,18 +54,19 @@ function expectNoIdentity(text: string): void {
   }
 }
 
-async function openBrain<T>(fn: (engine: PGLiteEngine) => Promise<T>): Promise<T> {
-  const engine = new PGLiteEngine();
-  await engine.connect({ engine: 'pglite', database_path: dataDir });
-  try { return await fn(engine); } finally { await engine.disconnect(); }
-}
-
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'gbrain-brain-ref-'));
   const init = await gbrain(['init', '--pglite', '--no-embedding', '--json']);
   if (init.status !== 0) throw new Error(`init failed:\n${init.stdout}\n${init.stderr}`);
   dataDir = JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf8')).database_path;
-  brainId = (await openBrain(engine => engine.readPersistenceBrainId()))!;
+  const engine = new PGLiteEngine();
+  await engine.connect({ engine: 'pglite', database_path: dataDir });
+  try {
+    brainId = (await engine.readPersistenceBrainId())!;
+    sharedRef = await readBrainRef(engine);
+  } finally {
+    await engine.disconnect();
+  }
   expect(brainId).toMatch(/^[0-9a-f-]{36}$/);
 }, 180_000);
 
@@ -86,8 +89,7 @@ describe('gbrain engine status --probe prints brain_ref', () => {
     const report = JSON.parse(r.stdout.slice(r.stdout.indexOf('{')));
     expect(report.probe.ok).toBe(true);
     expect(report.probe.brain_ref).toBe(brainRefFor(brainId));
-    // The same value the engine swap override reads for this brain through the same function.
-    expect(await openBrain(engine => readBrainRef(engine))).toBe(report.probe.brain_ref);
+    expect(sharedRef).toBe(report.probe.brain_ref);
     expectNoIdentity(r.stdout + r.stderr);
   }, 120_000);
 
@@ -132,7 +134,9 @@ describe('while gbrain serve holds the brain', () => {
     const report = JSON.parse(r.stdout.slice(r.stdout.indexOf('{')));
     expect(report.probe.note).toBe('locked_by_serve');
     expect(report.probe.brain_ref).toBe(brainRefFor(brainId));
-    expectNoIdentity(r.stdout + r.stderr + serveErr);
+    expectNoIdentity(r.stdout + r.stderr);
+    // The serve's own brain_ref lines; its managed content path, which predates this field, is outside this pin.
+    expectNoIdentity(serveErr.split('\n').filter(line => line.includes('brain_ref')).join('\n'));
   }, 120_000);
 
   test('the recorded file is 0600 and holds the reference, never the identity', () => {
@@ -156,4 +160,14 @@ describe('while gbrain serve holds the brain', () => {
       writeFileSync(path, kept, { mode: 0o600 });
     }
   }, 120_000);
+});
+
+describe('recordServeBrainRef', () => {
+  test('writes nothing for a brain this process does not hold', async () => {
+    const { recordServeBrainRef } = await import('../src/commands/serve-brain-ref.ts');
+    const other = join(home, 'not-held.pglite');
+    const read = { readPersistenceBrainId: async () => brainId };
+    expect(await recordServeBrainRef(read, other)).toBe('skipped');
+    expect(existsSync(brainRefSidecarPath(other))).toBe(false);
+  });
 });

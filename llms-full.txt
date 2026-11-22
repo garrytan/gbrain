@@ -5248,6 +5248,17 @@ holding the single-writer data-dir lock reports `locked_by_serve`
 brain as broken. A failed probe returns a classified diagnosis (reason +
 remediation), not a raw error.
 
+A probe that reaches the brain also prints `brain_ref` (JSON `probe.brain_ref`, human line `Ref:`): a 16-character
+one-way digest of the brain's persistence identity (`persistence_brain.brain_id`), which a reviewed policy uses to
+name one brain, such as the engine swap's dated readiness override. The digest cannot be turned back into the
+identity, and the command never prints the identity itself. While `gbrain serve` holds a PGLite brain, the probe
+reads the reference that serve recorded at start (`<data dir>.gbrain-brain-ref.json`, 0600, holding the reference and
+a digest of the serve's lock token, never the identity); a file another lock holder wrote is refused
+(`brain_ref_note: serve_brain_ref_stale`). Other notes, with `brain_ref: null`: `no_persistence_identity`,
+`brain_ref_unreadable`, `locked_by_other_process`, `serve_brain_ref_missing` (a serve from before this field).
+
+**Say to your agent:** *"Give me my brain's brain_ref from gbrain engine status, not its id."*
+
 ### `gbrain db-repair [--yes] [--apply-rewrites] [--json] [--force] [--undo-last-rewrite] [--dry-run]`
 
 Engine-free Postgres-access repair, the sibling of `gbrain pglite-repair`
