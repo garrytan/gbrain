@@ -18,8 +18,9 @@ gbrain sends no usage data unless you say yes. With no answer, or after
 Every event carries the gbrain version, OS, CPU architecture, Bun's major and
 minor version, how gbrain was installed, the kind of brain (local PGLite, local
 Postgres, a thin client of a hosted or self-hosted brain, or an HTTP server), and
-whether the event came from a test, CI or a live install. Times are rounded down
-to the hour.
+whether the event came from a test, CI or a live install (`GBRAIN_TELEMETRY_SOURCE`
+can label it `eval`, `capy` or `other` instead). Times are rounded down to the
+hour.
 
 - **setup:** which harness `gbrain setup` or `gbrain init` ran for, whether it
   worked, the error code if it failed, how long it took, and whether an embedding
@@ -44,6 +45,7 @@ gbrain telemetry anonymous  # or: community
 gbrain telemetry off        # stop and delete the local queue
 gbrain telemetry forget     # delete this install's data on the server, then the local id and queue
 gbrain telemetry pulse      # the public aggregate of everyone's opt-in data
+gbrain telemetry sync       # send now instead of waiting (--force skips the 6-hour window)
 ```
 
 Add `--json` for one JSON document. `pulse` exits non-zero with
@@ -59,8 +61,11 @@ under the old id goes out under a new one. It leaves your tier as it was:
 Events wait in `~/.gbrain/telemetry/` (under `GBRAIN_HOME` when set), with
 file mode 0600. At most once every 6 hours a background process posts up to 100
 events and 45,000 bytes, with a 10-second timeout, so no command waits on the
-network. It never starts from a `--json` run, a hook or a server. A failed send
-keeps the events for the next try; events older than 30 days are dropped.
+network. It never starts from a `--json` run, a hook or a server. A send that
+hits a 429, a server error or no connection keeps the events for the next try;
+a batch the server refuses with any other 4xx is dropped on the third such
+refusal.
+Events older than 30 days are dropped.
 
 Data goes to gbrain's own tables in the Supabase project gbrain shares with
 gstack, through one validated endpoint. The publishable key in the code can call
