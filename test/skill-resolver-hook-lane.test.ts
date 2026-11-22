@@ -7,7 +7,9 @@
  * Protects: the block names each skill with the harness's own load line
  * (Codex adds the SKILL.md path); dedupe and the compaction reset; the 50 ms
  * deadline, measured from outside the process, for a blocking, hung and late
- * worker (exit 0, no output, no dedupe commit); a brainless install stays
+ * worker (exit 0, no output, no dedupe commit), counted from the worker's
+ * ready message, so a slow worker start still delivers and a worker that
+ * never starts ends at the start bound; a brainless install stays
  * brainless; an unreadable config fails open with its code; a block over the
  * payload budget is dropped whole and counted; one owner per event; the
  * project catalog (Claude Code's .claude/skills, Codex's .agents/skills from the
@@ -25,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { runCli } from './helpers/cli-spawn.ts';
-import { CLAUDE_PLUGINS_CATALOG, LANE_DEADLINE_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
+import { CLAUDE_PLUGINS_CATALOG, LANE_DEADLINE_MS, LANE_WORKER_START_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
 import { HOOK_FIELD_CAP, readHookFields, readJsonFields } from '../src/core/skills/resolver/hook-input.ts';
 import { historyShrank, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { MESSAGE_CAP_BYTES } from '../src/core/skills/resolver/resolve.ts';
@@ -197,6 +199,34 @@ describe('skill-resolver lane: deadline, measured outside the process', () => {
       expect(sessions(b).some((s) => readFileSync(join(b.home, '.gbrain', 'skill-index', 'sessions', s), 'utf8').includes('deploy-widget'))).toBe(false);
     });
   }
+
+  test('slow-start: a worker that starts slower than the turn deadline still delivers; the deadline counts the turn, not the start', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const cmd = wired(b, 'claude-code');
+    const r = await hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: 'sess-slow' }, { GBRAIN_TEST_SKILL_LANE_STALL: 'slow-start', GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '1000', GBRAIN_TEST_SKILL_LANE_START_MS: '10000' });
+    expect(r.exitCode).toBe(0);
+    expect(contextOf(r)).toContain('id: "deploy-widget"');
+    const last = laneLog(b).at(-1);
+    expect(last).toMatchObject({ outcome: 'delivered' });
+    expect(last.worker_ms).toBeGreaterThanOrEqual(1400);
+  });
+
+  test('start-hang: a worker that never starts ends the turn at the start budget with no output', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const cmd = wired(b, 'claude-code');
+    const r = await hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: 'sess-sh' }, { GBRAIN_TEST_SKILL_LANE_STALL: 'start-hang' });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    const last = laneLog(b).at(-1);
+    expect(last).toMatchObject({ outcome: 'timeout', code: 'skill_resolve_timeout' });
+    expect(last.worker_ms).toBeUndefined();
+    expect(last.ms).toBeGreaterThanOrEqual(LANE_WORKER_START_MS - 1);
+    expect(last.ms).toBeLessThan(LANE_WORKER_START_MS + 250);
+  });
 
   for (const stall of ['load-error', 'exit'] as const) {
     test(`${stall}: a worker that fails before answering is logged as skill_resolver_internal, not as a timeout`, async () => {
