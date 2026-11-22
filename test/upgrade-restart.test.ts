@@ -189,7 +189,7 @@ describe('collectHostProcesses', () => {
       { pid: 10, ppid: null, role: 'serve', version: OLD, started_ms: 500, ancestors: [SERVE_PID], args: ['serve', '--http'], install_version: null, install_root: null },
       { pid: 20, ppid: null, role: 'supervisor', version: OLD, started_ms: 600, ancestors: [], args: ['jobs', 'supervisor', 'start', '--queue', 'ingest'], install_version: null, install_root: null },
       { pid: 21, ppid: 20, role: 'worker', version: OLD, started_ms: 700, ancestors: [22, 20], args: ['jobs', 'work', '--queue', 'ingest'], install_version: NEW, install_root: '/usr/local/lib/gbrain' },
-      { pid: 30, ppid: null, role: 'mcp', version: null, started_ms: 800, ancestors: [99], args: ['serve'], install_version: null, install_root: null },
+      { pid: 30, ppid: null, role: 'mcp', version: null, started_ms: 800, ancestors: [99], args: ['serve'], install_version: null, install_root: null, home_unread: true },
     ]);
   });
 
