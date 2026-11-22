@@ -10,9 +10,11 @@ import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.t
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { notQuiescedError } from './blocking-effects.ts';
 import { NOT_PAGE_EMBEDDING_LEASE } from '../page-embedding-lease.ts';
+import { requireManagedActivation } from '../rust-engine/errors.ts';
 
 export async function activateSharedSkillPersistence(engine: BrainEngine,
   options: { confirmQuiesced?: boolean; dryRun?: boolean; expectedState?: string } = {}): Promise<{ activated: boolean; protocol_version: 2; filesystem_sources: number; drift_audit?: ActivationReport['drift_audit'] }> {
+  requireManagedActivation(engine, 'activateSharedSkillPersistence');
   const quiescence = () => new OperationError('writer_not_quiesced',
     'Stop and exclude older canonical writers and direct-file skill servers before enabling shared skill publication.',
     'Run this activation on every canonical owner only after verifying process shutdown and canonical-root write access.');

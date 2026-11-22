@@ -18,6 +18,7 @@ import { isConnectorSourceKind } from './connector-identity.ts';
 import { gitDurabilityPolicy, gitDurabilityState } from './git-durability-policy.ts';
 import { writeThroughConfigured } from './switches.ts';
 import { DATABASE_ONLY_SOURCES_KEY, unboundBindCommand } from './unbound-source.ts';
+import { requireManagedActivation } from '../rust-engine/errors.ts';
 
 export interface ActivationReport {
   enabled: boolean;
@@ -172,6 +173,7 @@ async function validatedBindings(engine: BrainEngine, sources: SourceRoot[], hos
 
 /** Explicit coordinated-upgrade boundary. Refusal records become durable before enabled does. */
 export async function activatePersistence(engine: BrainEngine, opts: { confirmQuiesced?: boolean; dryRun?: boolean; expectedState?: string; cleanupDeadLocalLocks?: boolean } = {}): Promise<ActivationReport> {
+  requireManagedActivation(engine, 'activatePersistence');
   if (opts.confirmQuiesced !== true) throw quiescence();
   if (Number(await engine.getConfig('version')) < 157) {
     throw opError('writer_upgrade_required', 'Apply the canonical writer guard, outbox, and source lifecycle migrations before activation.',

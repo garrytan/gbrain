@@ -71,6 +71,21 @@ export function requireRawSqlPublication(engine: object, step: string, why: stri
 }
 
 /**
+ * The named refusal of turning managed mode on (`activatePersistence`, `activateSharedSkillPersistence`) on an engine
+ * without `raw_sql` (the Rust engine). A managed brain sends its import, sources add and extract work through raw SQL
+ * that engine refuses, so activation refuses first, before it reads or writes anything, and managed mode stays off.
+ * The capability named is `raw_sql`, the one a managed brain would need: the Rust engine reports `managed_persistence`
+ * (its worktree-bound writes are served), so naming that would contradict its own capability report. It leaves this
+ * check when those paths are typed (the "managed persistence on Rust" rows of the landing table). PGLite, Postgres and
+ * transaction handles (no capability set) pass.
+ */
+export function requireManagedActivation(engine: object, step: string): void {
+  if (!reports(engine, 'raw_sql')) {
+    throw capabilityMissing('raw_sql', `${step} (managed mode: a managed brain's import, sources add and extract run raw SQL on this engine, so it stays off)`);
+  }
+}
+
+/**
  * Whether `engine` can hold managed-checkout state at all. Without `managed_persistence` no worktree, refresh or
  * worktree-owned write can exist (their admission refuses above), so an owner scan over them has nothing to find and
  * returns empty instead of reading. PGLite, Postgres and transaction handles (no capability set) answer true.
