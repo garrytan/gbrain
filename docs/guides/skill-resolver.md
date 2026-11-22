@@ -486,7 +486,7 @@ With `--session <id>` the resolver remembers which skills it suggested:
   trigger or routing match at least 10 turns after it was last suggested;
   whenever the turn names it;
 - the session's blocks share a budget, `skills.resolver.session_token_budget`
-  in `config.json` (default 2,000 tokens; 0 silences the resolver, otherwise
+  in `config.json` (default 8,000 tokens; 0 silences the resolver, otherwise
   100-50,000). k drops to 3 once half is spent and to 1 at 80%; after half,
   only a turn whose top result matched on name, triggers or routing spends
   any. When it is spent, `budget_exhausted` is true on every turn (an

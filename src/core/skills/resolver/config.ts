@@ -4,7 +4,7 @@
  * environment. Nothing here opens a brain.
  *
  *   skills.resolver.session_token_budget  block tokens one session may receive
- *     (default 2000). 0 turns the resolver silent: every block is empty and
+ *     (default 8000). 0 turns the resolver silent: every block is empty and
  *     budget_exhausted is true. Otherwise 100..50000; anything else refuses
  *     with skill_resolver_config_invalid. Only a compaction (or
  *     reset_session) resets a session's spend.
@@ -39,7 +39,7 @@ import { HARNESSES } from './block.ts';
 import { ResolverError } from './errors.ts';
 import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, TOP_GATE_DEFAULT, TOP_GATE_MAX, TOP_K_MAX } from './limits.ts';
 
-export const DEFAULT_SESSION_TOKEN_BUDGET = 2000;
+export const DEFAULT_SESSION_TOKEN_BUDGET = 8000;
 export const MIN_SESSION_TOKEN_BUDGET = 100;
 export const MAX_SESSION_TOKEN_BUDGET = 50_000;
 const CONFIG_CAP = 1024 * 1024;
