@@ -2761,15 +2761,16 @@ async function completeEngineStartup(engine: BrainEngine, opts: EngineConnectOpt
       : { status: 'not_needed' as const };
     if (result.status === 'persistent') {
       writeCliNotice(migrationsNotice('Schema migrations are pending: another process attempted them but they did not complete within the retry window (usually transient). If it persists, check `gbrain doctor` for stale advisory locks and `gbrain jobs supervisor status` for crashed migration workers.'));
-    } else if (result.status === 'error') {
+    } else if (result.status === 'error' && !(await import('../core/rust-engine/errors.ts')).isCapabilityMissing(result.error)) {
       // Non-deadlock error during initSchema. Surface the message and continue;
       // subsequent operations will resurface the real schema error in context.
+      // A capability refusal (no migrations to run) is no notice: reads refuse typed.
       writeCliNotice(migrationsNotice(`Schema probe failed: ${result.error.message}`));
     }
     // 'ok', 'not_needed', 'race_resolved' → silent (the common-case outcomes).
   } catch (err) {
     // Last-resort defense in case the helper itself throws unexpectedly.
-    writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`));
+    if (!(await import('../core/rust-engine/errors.ts')).isCapabilityMissing(err)) writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`));
   }
 
   const pendingUpgrade = await pendingUpgradeMigrationsNotice(engine, dispatchedCommand, VERSION);

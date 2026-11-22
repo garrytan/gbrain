@@ -16,7 +16,7 @@ src/commands/agent.ts	execute_raw	1
 src/commands/auth-client-rows.ts	execute_raw	6
 src/commands/auth-read-shared.ts	execute_raw	2	reads sources (ids that exist and are not archived) and oauth_clients.member_id for the auth CLI read-set lines (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/commands/auth.ts	execute_raw	1
-src/commands/auth.ts	sql_template	6
+src/commands/auth.ts	sql_template	5
 src/commands/autopilot-daemon.ts	execute_raw	1
 src/commands/autopilot-dispatch.ts	execute_raw	4
 src/commands/autopilot-fanout.ts	execute_raw	2
@@ -259,12 +259,11 @@ src/commands/sources.ts	execute_raw	15
 src/commands/status.ts	execute_raw	7
 src/commands/storage.ts	execute_raw	1
 src/commands/sweep.ts	execute_raw	2
-src/commands/sync/connector.ts	execute_raw	1
 src/commands/sync/full.ts	execute_raw	2
 src/commands/sync/holds.ts	execute_raw	5
 src/commands/sync/perform.ts	execute_raw	1
 src/commands/sync/plain-directory.ts	execute_raw	2
-src/commands/sync/preflight.ts	execute_raw	4
+src/commands/sync/preflight.ts	execute_raw	3
 src/commands/sync/rename-collision.ts	execute_raw	2
 src/commands/sync/rename-reconcile.ts	execute_raw	1
 src/commands/sync/renames.ts	execute_raw	1
@@ -572,7 +571,6 @@ src/core/guests/stamp-readable.ts	execute_raw	1
 src/core/harness/client-setup.ts	execute_raw	1
 src/core/harness/client-setup.ts	sql_template	1
 src/core/heal-audit.ts	execute_raw	3
-src/core/health-memo.ts	execute_raw	1
 src/core/held-embedding.ts	execute_raw	2
 src/core/identity/owner.ts	execute_raw	4	GST-3216 PR 1: the owner identity resolver reads members, member links, member source bindings and Google source accounts across the access tables in one derived pass with no cache; it moves behind a typed access read when the access tables get engine methods
 src/core/identity/speaker-owner.ts	execute_raw	2	GST-3216 PR 2: the speaker-owner trust read joins a page's live revision to its write request, source kind and member bindings in one statement, and the connector stamp reads a source's bound members; both move behind typed reads when the access and journal tables get engine methods
@@ -591,7 +589,7 @@ src/core/link-single-value.ts	execute_raw	2
 src/core/link-source-check-repair.ts	execute_raw	3
 src/core/link-temporal-apply.ts	execute_raw	8
 src/core/links-fence-projection.ts	execute_raw	8
-src/core/loops/loops-store.ts	execute_raw	15
+src/core/loops/loops-store.ts	execute_raw	11
 src/core/maintenance/run.ts	execute_raw	1
 src/core/maintenance/status.ts	execute_raw	1
 src/core/mcp-request-log-retention.ts	execute_raw	4
@@ -707,7 +705,6 @@ src/core/page-body/segment-ledger.ts	execute_raw	1
 src/core/page-body/segment-rewrite.ts	execute_raw	9
 src/core/page-body/segmented-embedding.ts	execute_raw	8
 src/core/page-body/splice.ts	execute_raw	2
-src/core/page-body/streamed-import.ts	execute_raw	1
 src/core/page-body/tail-digest.ts	execute_raw	1
 src/core/page-embedding-budget.ts	execute_raw	13
 src/core/page-embedding-lease.ts	execute_raw	4
@@ -1231,7 +1228,7 @@ src/core/wakeshift/terms.ts	execute_raw	2
 src/core/wanted-links-store.ts	execute_raw	6
 src/core/write-gate-scan.ts	execute_raw	2
 src/core/write-gate-store.ts	execute_raw	8
-src/core/write-through.ts	execute_raw	3
+src/core/write-through.ts	execute_raw	2
 src/eval/brainbench/adapters/codex.ts	execute_raw	1
 src/eval/brainbench/metrics/continuity.ts	execute_raw	1
 src/eval/brainbench/metrics/deletion.ts	execute_raw	2
