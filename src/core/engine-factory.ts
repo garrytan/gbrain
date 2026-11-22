@@ -3,6 +3,7 @@ import type { EngineConfig } from './types.ts';
 import { registerChatUsageSink, makeEngineChatUsageSink } from './ai/chat-usage.ts';
 import { constructEngine } from './engine-construct.ts';
 import { shadowStateFor } from '../shadow/state.ts';
+import { captureStateFor } from '../shadow/capture-state.ts';
 
 /**
  * Create an engine instance based on config.
@@ -31,10 +32,16 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
   // Rust engine shadow mode (docs/ENGINES.md "Rust engine shadow mode"): off unless `gbrain engine shadow start`
   // turned it on for this brain. Off costs one existsSync.
   const shadow = shadowStateFor(config);
+  let out: BrainEngine = engine;
   if (shadow) {
     const { attachShadow } = await import('../shadow/attach.ts');
-    return attachShadow(engine, shadow.dir, shadow.state);
+    out = attachShadow(engine, shadow.dir, shadow.state);
   }
-
-  return engine;
+  // Shadow replay capture (docs/guides/shadow-replay.md): off unless `gbrain engine shadow capture on --yes`.
+  const capture = captureStateFor(config);
+  if (capture) {
+    const { attachCapture } = await import('../shadow/capture.ts');
+    out = attachCapture(out, capture.cap);
+  }
+  return out;
 }

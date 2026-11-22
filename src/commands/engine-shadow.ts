@@ -48,6 +48,8 @@ Usage:
   gbrain engine shadow stop [--delete]
   gbrain engine shadow report [--json]
   gbrain engine shadow seed [--json] [--reseed]
+  gbrain engine shadow capture on --yes | off | status [--json] | delete --yes
+  gbrain engine shadow replay [--json] [--budget-minutes <n>]
 
 Shadow mode is off by default. When on, a sample of reads this brain answers is sent, after the answer, to a
 supervised child process that runs the same read on the Rust engine and records match, diff or why it could not
@@ -56,6 +58,9 @@ brain repo; everything lives in <gbrain home>/shadow/<brain>/. stop --delete rem
 
 seed copies this brain into the Rust store once, in one read-only snapshot, before shadow mode compares answers.
 It writes nothing to the brain. A store is seeded once: to seed again, delete the shadow directory first.
+
+capture records every engine call (reads and writes) into owner-only files; replay plays each night's recording on
+private PGLite, Rust and (optional) local Postgres copies and compares them (docs/guides/shadow-replay.md).
 
 The report is provisional and always says NOT READY.`;
 
@@ -146,6 +151,11 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
         return 0;
       });
       return await run(dir);
+    }
+    if (sub === 'capture' || sub === 'replay' || sub === '__replay-child') {
+      const { runShadowReplayCommand } = await import('./engine-shadow-replay.ts');
+      const brain = sub === '__replay-child' ? { key: '', dir: '', engine: '' } : resolveBrain(deps);
+      return await runShadowReplayCommand(sub, rest, { out, err, now, brain, config: deps.config ?? (() => loadConfig()), openPrimary: deps.openPrimary ?? openConfiguredPrimary });
     }
     const brain = resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
