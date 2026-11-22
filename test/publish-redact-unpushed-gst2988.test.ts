@@ -16,6 +16,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { commitAndPush } from '../src/core/git/commit-push.ts';
 import { redactUnpushed, spoolSealer, type RedactOutcome, type RedactPreview } from '../src/core/git/redact-unpushed.ts';
+import * as redactModule from '../src/core/git/redact-unpushed.ts';
+const realRedact = redactModule.redactUnpushed;
 import { addSpoolOccurrences, allowedLocally, drainSpool, openSpooled, readSpool, refreshAllowedCache, spoolValue, undrainedCount } from '../src/core/secret-store/spool.ts';
 import { currentKey, macKeyOf } from '../src/core/secret-store/keyring.ts';
 import { backgroundPublish } from '../src/core/git/background-publish.ts';
@@ -278,6 +280,21 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(preview.rules.github_token).toMatchObject({ values: 1000, hits: 1000 });
   }, 120_000);
+
+  test('the first scan and the redaction share one deadline: the redaction gets what is left of the publish budget, not a fresh one', async () => {
+    const r = repo();
+    commit(r.root, 'notes.md', `token ${token}\n`);
+    const deadlines: Array<number | undefined> = [], calledAt: number[] = [];
+    const spy = spyOn(redactModule, 'redactUnpushed').mockImplementation((root, opts) => { deadlines.push(opts.deadline); calledAt.push(Date.now()); return realRedact(root, opts); });
+    try {
+      const started = Date.now();
+      expect((await inHome(r, () => commitAndPush({ repo: r.root, cwd: r.root, paths: [], pushOnly: true, scanTimeoutMs: 60_000 }))).outcome).toBe('pushed');
+      expect(deadlines).toHaveLength(1);
+      expect(deadlines[0]).toBeGreaterThan(started);
+      expect(deadlines[0]).toBeLessThan(calledAt[0]! + 60_000);
+    } finally { spy.mockRestore(); }
+    expectRemoteClean(r);
+  }, 60_000);
 
   test('secrets.on_push refuse keeps the refusal and writes nothing', async () => {
     const r = repo();
