@@ -81,7 +81,7 @@ export const GUEST_WARNING_LINE_RE = /^\[outside guest · (?:unattributed|[^\p{C
 /** What the remote quote fence names instead of "conversation excerpt" for a guest page (search/transcript-quote.ts). */
 export function guestQuoteLabel(guest: GuestStamp): string {
   if (!attributed(guest)) return `outside guest note, unattributed, ${NOT_OWNER}`;
-  return `outside guest note from ${escapeGuestLabel(guest.sender)} in ${escapeGuestLabel(guest.group)}, saved ${guest.saved_at ?? 'undated'}, ${NOT_OWNER}`;
+  return `outside guest note from ${escapeGuestLabel(guest.sender)} in ${escapeGuestLabel(guest.group)}, saved ${escapeGuestLabel(guest.saved_at ?? 'undated')}, ${NOT_OWNER}`;
 }
 
 /** The fixed line gbrain appends to a think answer built from guest notes; the model never writes it. */
