@@ -63,7 +63,7 @@ test/engine-parity/forget-reach-reads.test.ts	4	1
 test/engine-parity/forget-remember.test.ts	2	0
 test/engine-parity/harness-consumer-stop.test.ts	2	0
 test/engine-parity/held-fence-cells.test.ts	5	0
-test/engine-parity/holding-page-purges.test.ts	2	0
+test/engine-parity/holding-page-purges.test.ts	3	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
 test/engine-parity/import-members.test.ts	9	0
 test/engine-parity/import-path.test.ts	5	3
@@ -91,7 +91,7 @@ test/engine-parity/open-loops.test.ts	6	0
 test/engine-parity/owner-only-marks.test.ts	0	2
 test/engine-parity/owner-only-reads.test.ts	3	0
 test/engine-parity/owner-recovery-scans.test.ts	5	0
-test/engine-parity/page-embedding-budget.test.ts	4	0
+test/engine-parity/page-embedding-budget.test.ts	5	0
 test/engine-parity/page-read-options.test.ts	3	0
 test/engine-parity/page-snapshot-alias.test.ts	2	0
 test/engine-parity/page-vector-flip.test.ts	1	0
@@ -138,7 +138,7 @@ test/engine-parity/trust-fence.test.ts	7	0
 test/engine-parity/trust-proposals.test.ts	5	0
 test/engine-parity/trust-reads.test.ts	13	0
 test/engine-parity/trust-tier-reads.test.ts	18	2
-test/engine-parity/trust-withdrawals.test.ts	7	0
+test/engine-parity/trust-withdrawals.test.ts	8	0
 test/engine-parity/trust-write-gate.test.ts	5	1
 test/engine-parity/typed-config-reads.test.ts	2	0
 test/engine-parity/unrestricted-caller-reads.test.ts	2	0
