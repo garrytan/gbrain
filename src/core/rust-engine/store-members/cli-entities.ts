@@ -18,7 +18,7 @@ export const readMentionLastPass: StoreMember<[sourceId?: string | null], string
 export const countPagesDueForMentions: StoreMember<[q: MentionDueQuery], number> = async (brain, q) => {
   const opts = takeOptions('countPagesDueForMentions', q, ['sourceId', 'mentionVersion', 'aliases']);
   return Number(await storeCall({ member: 'countPagesDueForMentions', sourceId: q.sourceId ?? undefined }, () =>
-    brain.countPagesDueForMentions({ sourceId: opts.sourceId ?? null })));
+    brain.countPagesDueForMentions({ sourceId: opts.sourceId ?? null, mentionVersion: opts.mentionVersion, aliases: opts.aliases ?? null })));
 };
 
 export const readIdentitySiblingCandidates: StoreMember<[sourceId: string, q: SiblingCandidateQuery], SiblingCandidateRow[]> = (brain, sourceId, q) => {

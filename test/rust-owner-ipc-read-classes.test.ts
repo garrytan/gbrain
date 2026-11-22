@@ -28,6 +28,7 @@
  * LOCK_ONLY_READS below and this test checks the list is complete, so the header stays true:
  * getTrustProposal, listFenceFactRows, listGitEffectsCarryingReason, listGuardedTakeRows, listHeldRows,
  * listConnectorSources, listPageGitEffectsForStrip, lockBodyStagingState, lockLivePagesByKey, readConfigForUpdate, readFactSnapshots, readLoopFactState, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget,
+ * readMentionGenerations, readMentionPageRevisions, readPageRevisionForShare,
  * readLiveStoredBody, readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget,
  * readSourceMembership, readSourceState, readWorktreeAdmission, readWriterAdminState, selectClaimableEffect,
  * selectClaimableWrite.
@@ -48,7 +49,7 @@ const ROOT = join(import.meta.dir, '..');
 const LOCK_ONLY_READS: readonly string[] = [
   'getTrustProposal', 'listFenceFactRows', 'listGitEffectsCarryingReason', 'listGuardedTakeRows', 'listHeldRows',
   'listConnectorSources', 'listPageGitEffectsForStrip', 'lockBodyStagingState', 'lockLivePagesByKey', 'readConfigForUpdate', 'readFactSnapshots', 'readLoopFactState', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget',
-  'readLiveStoredBody', 'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget',
+  'readMentionGenerations', 'readMentionPageRevisions', 'readPageRevisionForShare', 'readLiveStoredBody', 'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget',
   'readSourceMembership', 'readSourceState', 'readWorktreeAdmission', 'readWriterAdminState', 'selectClaimableEffect',
   'selectClaimableWrite',
 ];

@@ -609,6 +609,137 @@ fn live_page(read: &dyn KvRead, source: &str, slug: &str) -> Result<Option<PageR
     Ok((!archived).then_some(page))
 }
 
+/// Every derived (`declared`, `subject`) row of `source`: `(slug, alias_norm, origin, value)`, in key order.
+pub(crate) fn source_derived_alias_rows(
+    read: &dyn KvRead,
+    source: &str,
+) -> Result<Vec<(String, String, String, DerivedAliasValue)>> {
+    if has_nul(&[source]) {
+        return Ok(Vec::new());
+    }
+    let p = prefix(PAGE_ALIAS_BY_SLUG, &[source]);
+    let mut out = Vec::new();
+    let mut bad = None;
+    scan_prefix(read, &p, false, &mut |k, v| {
+        if let [slug, alias, origin] = tail(k, p.len()).as_slice()
+            && DERIVED.contains(&origin.as_str())
+        {
+            match serde_json::from_slice::<DerivedAliasValue>(v) {
+                Ok(value) => out.push((slug.clone(), alias.clone(), origin.clone(), value)),
+                Err(e) => bad = Some(e),
+            }
+        }
+        bad.is_none()
+    })?;
+    if let Some(e) = bad {
+        return Err(e.into());
+    }
+    Ok(out)
+}
+
+/// One `page_aliases` row: `(source, slug, alias_norm, origin, value)`.
+pub(crate) type AliasRow = (String, String, String, String, DerivedAliasValue);
+
+/// Every `page_aliases` row of every source, in key order.
+/// A frontmatter row reads the column defaults (`false`, NULL).
+pub(crate) fn all_alias_rows(read: &dyn KvRead) -> Result<Vec<AliasRow>> {
+    let p = vec![keys::ALIAS, PAGE_ALIAS_BY_SLUG];
+    let mut out = Vec::new();
+    let mut bad = None;
+    scan_prefix(read, &p, false, &mut |k, v| {
+        if let [source, slug, alias, origin] = tail(k, p.len()).as_slice() {
+            let value = if origin == FRONTMATTER || v.is_empty() {
+                Ok(DerivedAliasValue {
+                    case_sensitive: false,
+                    alias_text: None,
+                })
+            } else {
+                serde_json::from_slice::<DerivedAliasValue>(v)
+            };
+            match value {
+                Ok(value) => out.push((
+                    source.clone(),
+                    slug.clone(),
+                    alias.clone(),
+                    origin.clone(),
+                    value,
+                )),
+                Err(e) => bad = Some(e),
+            }
+        }
+        bad.is_none()
+    })?;
+    if let Some(e) = bad {
+        return Err(e.into());
+    }
+    Ok(out)
+}
+
+/// `DELETE FROM page_aliases WHERE source_id = $1 AND slug = $2 AND origin IN ('declared','subject')`.
+pub(crate) fn delete_page_derived_aliases(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    slug: &str,
+) -> Result<()> {
+    if has_nul(&[source, slug]) {
+        return Ok(());
+    }
+    for (alias, origin) in page_alias_rows(&*tx, source, slug)? {
+        if DERIVED.contains(&origin.as_str()) {
+            delete_page_alias(tx, source, &alias, slug, &origin)?;
+        }
+    }
+    Ok(())
+}
+
+/// Every derived row of `source` (`DELETE FROM page_aliases WHERE source_id = $1 AND origin IN (...)`).
+pub(crate) fn delete_source_derived_aliases(tx: &mut dyn KvWrite, source: &str) -> Result<()> {
+    for (slug, alias, origin, _) in source_derived_alias_rows(&*tx, source)? {
+        delete_page_alias(tx, source, &alias, &slug, &origin)?;
+    }
+    Ok(())
+}
+
+/// One derived row (`INSERT ... ON CONFLICT DO NOTHING`): a row already present keeps its value.
+pub(crate) fn insert_derived_alias_row(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    slug: &str,
+    alias: &str,
+    origin: &str,
+    case_sensitive: bool,
+    alias_text: Option<&str>,
+) -> Result<()> {
+    const MEMBER: &str = "insertDerivedAliasRows";
+    refuse_nul(
+        MEMBER,
+        &[source, slug, alias, origin, alias_text.unwrap_or("")],
+    )?;
+    if !ORIGINS.contains(&origin) {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "new row for relation \"page_aliases\" violates check constraint \"page_aliases_origin_check\"",
+        ));
+    }
+    let by_slug = key(PAGE_ALIAS_BY_SLUG, &[source, slug, alias, origin]);
+    if tx.get(&by_slug)?.is_some() {
+        return Ok(());
+    }
+    require_source(&*tx, source)?;
+    put_page_alias(tx, source, alias, slug, origin)?;
+    if origin != FRONTMATTER {
+        put_json(
+            tx,
+            &by_slug,
+            &DerivedAliasValue {
+                case_sensitive,
+                alias_text: alias_text.map(str::to_owned),
+            },
+        )?;
+    }
+    Ok(())
+}
+
 /// [`Store::replace_derived_aliases`] in the caller's write transaction.
 pub(crate) fn replace_derived_aliases_in(
     tx: &mut dyn KvWrite,

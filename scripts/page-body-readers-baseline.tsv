@@ -28,9 +28,9 @@ src/commands/doctor/checks/derived-visibility.ts	derivedVisibilityCheck	sql	NONE
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
-src/commands/extract-mentions-explain.ts	explainMention	sql	STREAM	
-src/commands/extract-mentions-explain.ts	pageNames	sql	STREAM	
-src/commands/extract-mentions-explain.ts	rejectedDeclaration	sql	STREAM	
+src/core/engine-sql/mention-reads.ts	readExplainScanPage	sql	STREAM	moved from src/commands/extract-mentions-explain.ts explainMention, same statement
+src/core/engine-sql/mention-reads.ts	readPageNameText	sql	STREAM	moved from src/commands/extract-mentions-explain.ts pageNames, same statement
+src/core/engine-sql/mention-reads.ts	listRejectedDeclarationPages	sql	STREAM	moved from src/commands/extract-mentions-explain.ts rejectedDeclaration, same statement
 src/commands/extract-timeline-db.ts	extractTimelineFromDB	field	STREAM	
 src/commands/extract-timeline-db.ts	plannedTimeline	field	STREAM	
 src/commands/extract.ts	extractFromDB	field	STREAM	
@@ -362,9 +362,10 @@ src/core/markdown.ts	serializePageToMarkdown	call:serializeMarkdown	SEGW
 src/core/markdown.ts	serializePageToMarkdown	field	STREAM	
 src/core/mentions/aliases.ts	deriveEntityAliases	field	STREAM	
 src/core/mentions/pass.ts	pageMentions	field	INLINE	inline arm; a segmented page is scanned block by block
-src/core/mentions/pass.ts	pagesMatchingNames	sql	STREAM	segmented pages are selected by id without a body (each is a candidate; pageMentions streams it)
-src/core/mentions/pass.ts	reconcileSource	sql	INLINE	reads body_storage; a segmented row is scanned block by block (pageMentions)
-src/core/mentions/pass.ts	refreshAliases	sql	STREAM	segmented pages excluded in SQL
+src/core/engine-sql/mention-pass.ts	MENTION_CANDIDATES_MATCHING_SQL	sql	STREAM	moved from src/core/mentions/pass.ts pagesMatchingNames, same statement. segmented pages are selected by id without a body (each is a candidate; pageMentions streams it)
+src/core/engine-sql/mention-pass.ts	MENTION_CANDIDATES_ALL_SQL	sql	STREAM	moved from src/core/mentions/pass.ts pagesMatchingNames, same statement. segmented pages are selected by id without a body (each is a candidate; pageMentions streams it)
+src/core/engine-sql/mention-pass.ts	MENTION_DUE_PAGES_SQL	sql	INLINE	moved from src/core/mentions/pass.ts reconcileSource, same statement. reads body_storage; a segmented row is scanned block by block (pageMentions)
+src/core/engine-sql/mention-pass.ts	listAliasDuePages	sql	STREAM	moved from src/core/mentions/pass.ts refreshAliases, same statement. segmented pages excluded in SQL
 src/core/minions/handlers/facts-absorb.ts	makeFactsAbsorbHandler	field	STREAM	
 src/core/minions/handlers/subagent-oneshot.ts	planOneshotWrites	call:serializeMarkdown	SEGW	
 src/core/ops/admin.ts	get_versions	field	SEGW	lane 1e: segmented versions return metadata only

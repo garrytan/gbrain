@@ -256,6 +256,7 @@ test/engine-parity/links.test.ts
 test/engine-parity/loop-mutes.test.ts
 test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
+test/engine-parity/mention-pass.test.ts
 test/engine-parity/migrate-engine-source.test.ts
 test/engine-parity/notifier-freshness.test.ts
 test/engine-parity/notifier.test.ts
@@ -395,6 +396,7 @@ test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
 test/extract-facts-fence-failure-health-8758.test.ts
+test/extract-mentions-engines.serial.test.ts
 test/extract-stale-frontmatter-loop-9295.test.ts
 test/extract-stale-managed-signal-gbra438.test.ts
 test/extract-timeline-from-meetings-managed.test.ts

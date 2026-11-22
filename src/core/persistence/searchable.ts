@@ -30,8 +30,7 @@ export function segmentedOutcome(segmented: { complete: boolean } | undefined, q
 
 /** Whether search sees a segmented page now: its text projection is sealed at its current revision. */
 export async function segmentedPageSearchable(engine: OperationContext['engine'], sourceId: string, slug: string): Promise<true | 'pending'> {
-  const [page] = await engine.executeRaw<{ sealed: boolean }>(`SELECT text_projection_revision=knowledge_revision AS sealed FROM pages
-    WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, [sourceId, slug]);
+  const [page] = await engine.readSegmentedPageSealed(sourceId, slug);
   return page?.sealed ? true : 'pending';
 }
 
