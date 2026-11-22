@@ -184,6 +184,7 @@ test/engine-parity/traversal-cache.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/engine-swap-managed-storage.test.ts
 test/engine-swap-refresh-drain.test.ts
 test/entity-company-auto-link.test.ts
 test/entity-dedupe-decisions.test.ts
