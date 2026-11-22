@@ -89,6 +89,67 @@ pub(crate) fn has_fact_purges(read: &dyn KvRead, source_id: &str) -> Result<bool
 /// gbrain_fact_fingerprint(claim) AND (subject = '*' OR subject = entity)`: a tombstone at
 /// `visibility` names the claim's fingerprint under subject `*` or `entity`; a None entity matches
 /// only `*`. The fence overlay passes the page as the entity.
+/// `listGlobalPurgeWithdrawals(sourceId, hashes, worldOnly)` (engine-sql/segmented-mirror-effects.ts):
+/// the source's subject `*` tombstones whose `fact_hash` is one of `hashes` (world rows only when
+/// `world_only`), as `{ visibility, fact_hash, withdrawn_at, purged: true }` in (visibility, fact_hash)
+/// order. The key is the table's primary key, so each (visibility, hash) has one row and `min(purged_at)`
+/// is its own time.
+pub(crate) fn global_purge_withdrawals(
+    read: &dyn KvRead,
+    source_id: &str,
+    hashes: &[String],
+    world_only: bool,
+) -> Result<Vec<serde_json::Value>> {
+    let wanted: std::collections::BTreeSet<&str> = hashes.iter().map(String::as_str).collect();
+    let mut found: Vec<(String, String, i64)> = Vec::new();
+    let mut bad = None;
+    let prefix = key(&[source_id]);
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        // The rest of the key is `visibility \0 subject \0 fact_hash \0`.
+        let mut parts = k[prefix.len()..].split(|b| *b == 0);
+        let (Some(vis), Some(subject), Some(hash)) = (parts.next(), parts.next(), parts.next())
+        else {
+            return true;
+        };
+        if subject != b"*" || (world_only && vis != b"world") {
+            return true;
+        }
+        let (vis, hash) = (
+            String::from_utf8_lossy(vis).into_owned(),
+            String::from_utf8_lossy(hash).into_owned(),
+        );
+        if !wanted.contains(hash.as_str()) {
+            return true;
+        }
+        match serde_json::from_slice::<PurgeRecord>(v) {
+            Ok(record) => found.push((vis, hash, record.purged_at_us)),
+            Err(err) => {
+                bad = Some(err);
+                return false;
+            }
+        }
+        true
+    })?;
+    if let Some(err) = bad {
+        return Err(StoreError::new(
+            crate::error::STORE_CORRUPT,
+            format!("unreadable fact_purges row: {err}"),
+        ));
+    }
+    found.sort_by(|a, b| (a.0.as_bytes(), a.1.as_bytes()).cmp(&(b.0.as_bytes(), b.1.as_bytes())));
+    Ok(found
+        .into_iter()
+        .map(|(visibility, fact_hash, at)| {
+            serde_json::json!({
+                "visibility": visibility,
+                "fact_hash": fact_hash,
+                "withdrawn_at": crate::cli_reads::export::jsonb_timestamptz(at),
+                "purged": true,
+            })
+        })
+        .collect())
+}
+
 pub(crate) fn purged_claim(
     read: &dyn KvRead,
     source_id: &str,
@@ -276,6 +337,17 @@ impl Store {
             ],
         )?;
         purged_claim(&*self.read()?, source_id, visibility, claim, entity_slug)
+    }
+
+    /// `listGlobalPurgeWithdrawals(sourceId, hashes, worldOnly)`: the source's subject `*` tombstones
+    /// of `hashes` as withdrawals, in (visibility, fact_hash) order.
+    pub fn list_global_purge_withdrawals(
+        &self,
+        source_id: &str,
+        hashes: &[String],
+        world_only: bool,
+    ) -> Result<Vec<serde_json::Value>> {
+        global_purge_withdrawals(&*self.read()?, source_id, hashes, world_only)
     }
 
     /// Whether the source has any fact purge tombstone (`readLedgerSource`'s `purgesPossible`).

@@ -22,11 +22,12 @@
 import { existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import type { RemirrorEffectState } from '../engine-sql/segmented-mirror-effects.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
-import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
+import { overlayCanonicalBodiesTyped } from '../page-state/snapshot.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { fileBodyDigests, overlaidFileBodyDigests } from '../page-body/body-digests.ts';
 import { ledgerApplies, type BodyLedger } from '../page-body/segment-ledger.ts';
@@ -83,7 +84,7 @@ async function fileHoldsWithdrawnRows(engine: BrainEngine, snapshot: PageSnapsho
   const file = fileBodyDigests(bytes, reading, snapshot.page.slug, {});
   if (file.kind !== 'ok' || !file.factsFence) return false;
   const ledger = ledgerOf(snapshot);
-  const overlaid = await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodies(engine.executeRaw.bind(engine), text, '',
+  const overlaid = await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodiesTyped(engine, text, '',
     ledger.withdrawals, { sourceId: snapshot.page.source_id, marker: ledger.globalPurges })).compiled_truth,
   fence => fenceTooLargeError(snapshot.page.slug, snapshot.page.source_id, fence));
   return overlaid.truth !== file.digests.truth || overlaid.timeline !== file.digests.timeline;
@@ -170,25 +171,17 @@ async function admitRemirror(ctx: OperationContext, stale: StaleMirror, hash: st
       await tx.lockPageKeys([{ sourceId: stale.source_id, slug: stale.slug }]);
       const snapshot = await tx.readPageSnapshot(stale.slug, { sourceId: stale.source_id });
       if (snapshot?.revision !== stale.revision || Number(snapshot.page.id) !== stale.page_id) throw previewChangedError(hash, previewCommand({ source_ids: [stale.source_id] }));
-      await tx.executeRaw(`INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
-        SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
-        FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
-        CROSS JOIN (VALUES ('withdrawal-mirror'),('git')) AS k(kind)
-        WHERE s.id=$2 ON CONFLICT(request_id,kind) DO NOTHING`, [row.id, stale.source_id, JSON.stringify({ version: 2,
+      await tx.insertRemirrorEffects(row.id, stale.source_id, { version: 2,
         commit_subject: `gbrain: re-mirror segmented page ${stale.slug}`, commit_line: `re-mirror ${stale.slug} without withdrawn rows`,
         targets: [{ slug: stale.slug, page_id: stale.page_id, revision: stale.revision }],
-        approved_file: { slug: stale.slug, file_sha256: stale.file_sha256, expected_sha256: stale.expected_sha256 } })]);
+        approved_file: { slug: stale.slug, file_sha256: stale.file_sha256, expected_sha256: stale.expected_sha256 } });
       return completeWrite(tx, row, 'committed', { segmented_mirror: { ...callerIntent, revision: stale.revision, path: stale.path, effects: ['withdrawal-mirror', 'git'] } });
     }, requestAttribution(row));
   }), undefined, error => engine.reconnect({ error }));
 }
 
-interface EffectState { kind: string; state: string; error_code: string | null; recovering: boolean; parked: boolean; skipped: Array<{ slug?: string; reason?: string }> }
-async function readEffects(engine: BrainEngine, requestRowId: string): Promise<EffectState[]> {
-  const rows = await engine.executeRaw<EffectState>(`SELECT kind,state,error_code,recovery IS NOT NULL AS recovering,data ? 'parked' AS parked,
-    COALESCE(data->'skipped','[]'::jsonb) AS skipped FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind`, [requestRowId]);
-  return rows.map(row => ({ ...row, skipped: typeof row.skipped === 'string' ? JSON.parse(row.skipped) : row.skipped }));
-}
+type EffectState = RemirrorEffectState;
+const readEffects = (engine: BrainEngine, requestRowId: string): Promise<EffectState[]> => engine.readRemirrorEffects(requestRowId);
 const effectSettled = (effect: EffectState) => !effect.recovering && (effect.state === 'committed' || effect.state === 'failed' || effect.parked);
 
 /** Wakes this process's consumer and waits up to `waitMs` for the request's mirror and Git effects to settle. */

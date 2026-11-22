@@ -429,7 +429,7 @@ src/core/page-state/projections.ts	preparePageProjection	call:prepareMarkdownChu
 src/core/page-state/projections.ts	readGuardedProjectionSnapshot	field	STREAM	
 src/core/page-state/projections.ts	sealImportedPage	field	STREAM	
 src/core/page-state/schema.ts	PAGE_STATE_SCHEMA_STATEMENTS	sql	STREAM	revision trigger tuple (lane 1a adds body_generation)
-src/core/page-state/snapshot.ts	overlayCanonicalBodies	field	STREAM	overlays a caller-supplied body string (file bytes), not a stored segmented body
+src/core/page-state/snapshot.ts	overlayWith	field	STREAM	overlays a caller-supplied body string (file bytes), not a stored segmented body (the overlay core both overlayCanonicalBodies and overlayCanonicalBodiesTyped run)
 src/core/page-state/snapshot.ts	overlayCanonicalBodies	sql	STREAM	normalizes the caller-supplied body
 src/core/page-state/snapshot.ts	readSnapshotStatement	field	STREAM	withdrawal overlay runs on inline pages only; segmented page skips it (per-window overlay in PR 2)
 src/core/page-state/snapshot.ts	readSnapshotStatement	sql	STREAM	p.* feeds rowToPage (projects body_storage/body_bytes); the fingerprint over a NULL body is empty

@@ -16,6 +16,7 @@
  * What each member answers and why: rust/docs/store/journal.md ("TypeScript journal members") and
  * rust/docs/store/persistence.md.
  */
+import type { RemirrorEffectState } from '../../engine-sql/segmented-mirror-effects.ts';
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
 import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
@@ -242,6 +243,18 @@ export const insertWithdrawalEffects: StoreMember<[spec: WithdrawalEffectsSpec],
   await storeCall({ member: 'insertWithdrawalEffects' }, () => brain.insertWithdrawalEffects({ requestId: spec.requestId, sourceId: spec.sourceId,
     data: withdrawalEffectsData(spec) }));
 };
+
+/**
+ * Queues a segmented-mirror re-mirror's `withdrawal-mirror` and `git` effects (engine-sql/segmented-mirror-effects.ts), the
+ * withdrawal insert with two kinds; inside `transaction` it is one more statement of the re-mirror's store write.
+ */
+export const insertRemirrorEffects: StoreMember<[requestId: string, sourceId: string, data: Record<string, unknown>], void> = async (brain, requestId, sourceId, data) => {
+  await storeCall({ member: 'insertRemirrorEffects', sourceId }, () => brain.insertRemirrorEffects({ requestId, sourceId, data }));
+};
+
+/** The effects of a re-mirror's request row in kind order, as its apply waits on them. */
+export const readRemirrorEffects: StoreMember<[requestId: string], RemirrorEffectState[]> = (brain, requestId) =>
+  storeCall({ member: 'readRemirrorEffects' }, () => brain.readRemirrorEffects(requestId)) as Promise<RemirrorEffectState[]>;
 
 /** The cancellation in one store write: the read, the check and the completion; null when the row does not exist. */
 export const cancelWriteRow: StoreMember<[cancel: WriteCancellation], WriteCancelResult | null> = async (brain, cancel) => {

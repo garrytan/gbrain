@@ -4795,6 +4795,12 @@ export interface BrainEngine {
   insertPublicationEffects(spec: PublicationEffectsSpec): Promise<string[]>;
   /** Queues a managed-request withdrawal's three effects for its source; an unknown source queues none, a kind already queued is kept. */
   insertWithdrawalEffects(spec: WithdrawalEffectsSpec): Promise<void>;
+  /** `gbrain repair segmented-mirror`: queues a re-mirror's `withdrawal-mirror` and `git` effects for request row `requestId` (engine-sql/segmented-mirror-effects.ts); run it in the re-mirror's write transaction. */
+  insertRemirrorEffects(requestId: string, sourceId: string, data: Record<string, unknown>): Promise<void>;
+  /** `gbrain repair segmented-mirror`: the effects of request row `requestId` the apply waits on, in kind order. */
+  readRemirrorEffects(requestId: string): Promise<import('./engine-sql/segmented-mirror-effects.ts').RemirrorEffectState[]>;
+  /** The withdrawal overlay's `*` purges: the source's subject-`*` purges of claim fingerprints `hashes` as withdrawals, world rows only when `worldOnly` (page-state/snapshot.ts overlayCanonicalBodiesTyped). */
+  listGlobalPurgeWithdrawals(sourceId: string, hashes: readonly string[], worldOnly: boolean): Promise<import('./page-state/types.ts').PageWithdrawal[]>;
   /** Cancels a request still queued as the caller read it, in one step: lock, check, complete, release its counters; null when it does not exist. */
   cancelWriteRow(cancel: WriteCancellation): Promise<WriteCancelResult | null>;
   // Write-claim statements (engine-sql/persistence-claims.ts): the text journal.ts, authority.ts and consumer.ts sent through executeRaw.

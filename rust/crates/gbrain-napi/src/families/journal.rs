@@ -334,6 +334,29 @@ impl Brain {
         })
     }
 
+    /// `insertRemirrorEffects({ requestId, sourceId, data })`: the kinds inserted, in insert order.
+    #[napi]
+    pub fn insert_remirror_effects<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_remirror_effects(&required(spec, "insertRemirrorEffects spec")?)
+        })
+    }
+
+    /// `readRemirrorEffects(requestId)`: the request's effect states the segmented-mirror apply waits
+    /// on, in kind order.
+    #[napi]
+    pub fn read_remirror_effects<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_remirror_effects(&request_id))
+    }
+
     /// `releaseUnpublishedClaim({ id, token, reason, charge })`: `true` when the claim was released.
     #[napi]
     pub fn release_unpublished_claim<'env>(
