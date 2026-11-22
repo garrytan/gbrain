@@ -60,7 +60,7 @@ member-access part alone (the page's readers, and the origin of a derived page):
   (`tests/owner_only_form_contract.rs`).
 
 - **Callers the store does not render.** A caller whose access record adds an audience or a lineage renders a
-  policy the store cannot judge, and so does a labelled-only caller's remote floor. Both page members then refuse
+  policy the store cannot judge, and so does a labelled-only caller's remote floor (loss rows 32e-2 and 32e-3). Both page members then refuse
   with `engine_capability_missing` before any read. Satisfied folder rules (row 32b-1) and the labelled-only grant
   (row 32e: a page passes only when its readers name the caller or it carries a rule the caller satisfies) are
   served ([facts.md](facts.md)).

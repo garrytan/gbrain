@@ -10,6 +10,9 @@
  *    the labelled-only member reads the facts of its own member page only.
  *  - Regression: the Rust store's page policy did not serve a labelled-only caller, so every read such a caller made
  *    refused with engine_capability_missing (docs/designs/RUST_ENGINE.md row 32e).
+ *  - Known losses on Rust (rows 32e-2 and 32e-3): a labelled-only caller's remote read floor, and a labelled-only
+ *    caller with lineage or an audience. The last describe pins each: Rust refuses and shows nothing while PGLite
+ *    serves, so a pin fails when Rust stops refusing and its row must leave the table.
  *  - Why existing coverage misses it: access-members.test.ts reads one core-page list and pins the Rust refusal;
  *    test/access-labelled-only.test.ts runs on the SQL engines only.
  *  - Seam: none. Members through addMember and setMemberLabelledOnly, rules through proposeRevision, pages through
@@ -23,7 +26,7 @@ import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.g
 import { addMember } from '../../src/core/access/members.ts';
 import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
 import { proposeRevision } from '../../src/core/access/policy.ts';
-import { remoteCallerAccess } from '../../src/core/access/caller.ts';
+import { audienceCallerAccess, remoteCallerAccess } from '../../src/core/access/caller.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest, arms } = parityArms(testBackends());
@@ -97,5 +100,68 @@ describe('the Rust arm serves the labelled-only page policy', () => {
     await resetArm(rust);
     await seed(rust.engine);
     expect(await as(rust.engine, 'alice-example', () => corePages(rust.engine))).toEqual(['core/for-alice', 'core/for-team', 'deals/q4']);
+  });
+});
+
+describe('the Rust arm refuses what it does not serve yet (rows 32e-2 and 32e-3), and shows nothing', () => {
+  const refusal = async (run: () => Promise<unknown>) => {
+    try {
+      return { served: await run() };
+    } catch (error) {
+      return { code: (error as { code?: string }).code };
+    }
+  };
+  const armOf = async (backend: string) => {
+    const arm = arms().find((a) => a.backend === backend);
+    if (arm) await resetArm(arm);
+    return arm?.engine;
+  };
+  const STOP = { code: 'engine_capability_missing' };
+
+  test('loss (32e-2): a labelled-only caller\'s remote read floor refuses on Rust', async () => {
+    const rust = await armOf('rust');
+    if (!rust) return;
+    const results: Record<string, unknown> = {};
+    const pages = ['core/open', 'core/for-alice', 'deals/q4', 'memory/members/alice-example'];
+    for (const backend of ['pglite', 'rust']) {
+      const engine = (await armOf(backend))!;
+      await seed(engine);
+      await engine.putPage('memory/members/alice-example', core('Alice memory', { readable_by: ['member:alice-example'] }), { sourceId: 'default' });
+      const { ids } = await engine.insertFacts(pages.map((page, i) => ({ fact: `Carol fact ${i}`, entity_slug: 'people/carol-example', kind: 'fact', visibility: 'world', source: 'fence', row_num: i + 1, source_markdown_slug: page })) as never, { source_id: 'default' });
+      const floor = (who = 'alice-example') => as(engine, who, async () => Promise.all(pages.map(async (_, i) => [
+        (await engine.findActiveSingleFact({ sourceId: 'default', entitySlug: 'people/carol-example', visibility: 'world', fact: `Carol fact ${i}`, attributedTo: null, pageSlug: null, remoteFloor: true }))?.id ?? null,
+        await engine.readRemoteForgetTier({ factId: ids[i]!, sourceId: 'default', remoteFloor: true }),
+      ])));
+      results[backend] = { alice: await refusal(() => floor()), bob: await refusal(() => floor('bob-example')) };
+    }
+    // bob, who is not labelled-only, reads the open page's fact under the floor on both. On PGLite the labelled-only
+    // floor hides every one of alice's (the plain page fragment hides named pages, her conjunct every unnamed one);
+    // Rust refuses before the read instead.
+    const bob = { served: [[expect.any(Number), 'unknown'], [null, null], [null, null], [null, null]] };
+    expect(results.pglite).toEqual({ alice: { served: pages.map(() => [null, null]) }, bob });
+    expect(results.rust).toEqual({ alice: STOP, bob });
+  });
+
+  test('loss (32e-3): a labelled-only caller with lineage or an audience refuses on Rust', async () => {
+    const rust = await armOf('rust');
+    if (!rust) return;
+    const results: Record<string, Record<string, unknown>> = {};
+    for (const backend of ['pglite', 'rust']) {
+      const engine = (await armOf(backend))!;
+      await seed(engine);
+      await engine.setConfig('mcp.stdio_member', 'alice-example');
+      const audience = await audienceCallerAccess(engine, undefined, [], 'stdio', ['member:alice-example', 'member:bob-example'], [['member:alice-example', 'group:team-a'], ['member:bob-example']]);
+      await engine.setConfig('access.members_read_lineage', '1');
+      const lineage = await remoteCallerAccess(engine, undefined, [], 'stdio', null, undefined, true);
+      expect([backend, lineage.labelledOnly, lineage.lineage, audience.labelledOnly]).toEqual([backend, true, true, true]);
+      results[backend] = {
+        lineage: await refusal(() => withCallerAccess(lineage, () => corePages(engine))),
+        audience: await refusal(() => withCallerAccess(audience, () => corePages(engine))),
+      };
+    }
+    // PGLite: with lineage alice reads her labelled pages; the audience of alice and bob reads only the page both are
+    // named on (the folder rule). Rust refuses both before the read.
+    expect(results.pglite).toEqual({ lineage: { served: ['core/for-alice', 'core/for-team', 'deals/q4'] }, audience: { served: ['deals/q4'] } });
+    expect(results.rust).toEqual({ lineage: STOP, audience: STOP });
   });
 });
