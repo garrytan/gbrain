@@ -469,7 +469,7 @@ describe('the committed manifest', () => {
     for (const c of ['gbrain skills index build', 'gbrain skills index status', 'gbrain skills index remove', 'gbrain skills resolve', 'gbrain skills library', 'gbrain skills pin', 'gbrain bundled-skill', 'gbrain skillpack health', 'gbrain skillpack doctor']) expect(m['cli-command']).toContain(c);
     for (const f of ['gbrain skills index --dir', 'gbrain skills index --claude-plugins', 'gbrain skills index --harness', 'gbrain skills resolve --input-json', 'gbrain skills resolve --top-gate', 'gbrain skills resolve --top-k', 'gbrain skills resolve --session', 'gbrain skills resolve --fail-open', 'gbrain skills resolve --json', 'gbrain setup --skill-loading']) expect(m['cli-flag']).toContain(f);
     for (const k of ['skills.resolver.top_k', 'skills.resolver.top_gate', 'skills.resolver.pinned', 'skills.resolver.pins.<catalog>', 'skills.resolver.session_token_budget', 'skills.resolver.per_harness.<harness>.dirs']) expect(m['config-key']).toContain(k);
-    expect(m['json-field']).toEqual(['gbrain skills resolve --json .block', 'gbrain skills resolve --json .no_skill', 'gbrain skills resolve --json .suggestions[].id']);
+    expect(m['json-field']).toEqual(['gbrain bundled-skill --json .skills_root', 'gbrain skills resolve --json .block', 'gbrain skills resolve --json .no_skill', 'gbrain skills resolve --json .suggestions[].id']);
     for (const t of ['list_skills', 'get_skill']) expect(m['mcp-tool']).toContain(t);
   });
 

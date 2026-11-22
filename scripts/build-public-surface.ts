@@ -66,7 +66,7 @@ function skillResolverSurface() {
   const configKeys = [...leaves.map(l => `skills.resolver.${l}`), 'skills.resolver.pins.<catalog>'];
   const turnFields: Array<keyof TurnOutput> = ['block', 'no_skill'];
   const suggestionFields: Array<keyof Suggestion> = ['id'];
-  const jsonFields = [...turnFields.map(f => `gbrain skills resolve --json .${f}`), ...suggestionFields.map(f => `gbrain skills resolve --json .suggestions[].${f}`)];
+  const jsonFields = [...turnFields.map(f => `gbrain skills resolve --json .${f}`), ...suggestionFields.map(f => `gbrain skills resolve --json .suggestions[].${f}`), 'gbrain bundled-skill --json .skills_root'];
   return { commands, flags, configKeys, jsonFields };
 }
 

@@ -3226,6 +3226,7 @@
     "wrong_account_consented": 1
   },
   "json-field": [
+    "gbrain bundled-skill --json .skills_root",
     "gbrain skills resolve --json .block",
     "gbrain skills resolve --json .no_skill",
     "gbrain skills resolve --json .suggestions[].id"
