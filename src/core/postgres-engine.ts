@@ -3028,12 +3028,11 @@ export class PostgresEngine implements BrainEngine {
   async getConfig(key: string): Promise<string | null> {
     const held = await requestConfigValue(this, key);
     if (held !== undefined) return held;
-    throwIfRequestAborted(); // the notifier status read replaced an executeRaw call, which refused a cancelled request before its statement
     // #1603: a transient pooler drop on this read used to throw / fall through
     // to defaults silently — which on remote Postgres surfaces as the wrong
     // search mode/knobs and empty-stdout queries.
     return this.connRetry(async () => {
-      const rows = await this.sql`SELECT value FROM config WHERE key = ${key}`;
+      throwIfRequestAborted(); const rows = await this.sql`SELECT value FROM config WHERE key = ${key}`; // refuse a cancelled request before the statement, as executeRaw did (the notifier status read)
       return rows.length > 0 ? (rows[0].value as string) : null;
     });
   }
