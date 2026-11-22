@@ -76,39 +76,40 @@ describe('upstream observation after a failed fetch (#9933)', () => {
 });
 
 describe('a recorded observation never moves back for the same upstream commit (#9933)', () => {
-  test('a failed fetch after a recorded no-change fetch keeps the newer check time', async () => {
-    const engine = new PGLiteEngine();
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
     await engine.connect({ database_url: '' });
     await engine.initSchema();
+  }, 60_000);
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('a failed fetch after a recorded no-change fetch keeps the newer check time', async () => {
+    const fetchHead = join(work, '.git', 'FETCH_HEAD');
+    const reflog = join(work, '.git', 'logs', 'refs', 'remotes', 'origin', 'main');
+    await engine.executeRaw("INSERT INTO sources (id, name, local_path) VALUES ('source-a', 'source-a', $1)", [work]);
+    const checkedAt = async () => (await engine.executeRaw<{ upstream_checked_at: Date }>(
+      "SELECT upstream_checked_at FROM sources WHERE id = 'source-a'"))[0]!.upstream_checked_at;
+    const seed = join(dir, 'seed');
+    writeFileSync(join(seed, 'c.md'), 'c\n');
+    git(seed, 'add', 'c.md');
+    git(seed, 'commit', '-q', '-m', 'three');
+    git(seed, 'push', '-q', remote, 'main');
+    git(work, 'fetch', '-q');
+    expect(statSync(reflog).size).toBeGreaterThan(0);
+    age([fetchHead, reflog], 48 * HOUR);
+    git(work, 'fetch', '-q');
+    await recordUpstreamObservation(engine, 'source-a');
+    const recorded = new Date(await checkedAt()).getTime();
+    expect(Date.now() - recorded).toBeLessThan(HOUR);
+    renameSync(remote, `${remote}.gone`);
     try {
-      const fetchHead = join(work, '.git', 'FETCH_HEAD');
-      const reflog = join(work, '.git', 'logs', 'refs', 'remotes', 'origin', 'main');
-      await engine.executeRaw("INSERT INTO sources (id, name, local_path) VALUES ('source-a', 'source-a', $1)", [work]);
-      const checkedAt = async () => (await engine.executeRaw<{ upstream_checked_at: Date }>(
-        "SELECT upstream_checked_at FROM sources WHERE id = 'source-a'"))[0]!.upstream_checked_at;
-      const seed = join(dir, 'seed');
-      writeFileSync(join(seed, 'c.md'), 'c\n');
-      git(seed, 'add', 'c.md');
-      git(seed, 'commit', '-q', '-m', 'three');
-      git(seed, 'push', '-q', remote, 'main');
-      git(work, 'fetch', '-q');
-      expect(statSync(reflog).size).toBeGreaterThan(0);
-      age([fetchHead, reflog], 48 * HOUR);
-      git(work, 'fetch', '-q');
-      await recordUpstreamObservation(engine, 'source-a');
-      const recorded = new Date(await checkedAt()).getTime();
-      expect(Date.now() - recorded).toBeLessThan(HOUR);
-      renameSync(remote, `${remote}.gone`);
-      try {
-        expect(spawnSync('git', ['-C', work, 'fetch', '-q'], { stdio: 'ignore' }).status).not.toBe(0);
-      } finally {
-        renameSync(`${remote}.gone`, remote);
-      }
-      expect(statSync(fetchHead).size).toBe(0);
-      await recordUpstreamObservation(engine, 'source-a');
-      expect(new Date(await checkedAt()).getTime()).toBe(recorded);
+      expect(spawnSync('git', ['-C', work, 'fetch', '-q'], { stdio: 'ignore' }).status).not.toBe(0);
     } finally {
-      await engine.disconnect();
+      renameSync(`${remote}.gone`, remote);
     }
+    expect(statSync(fetchHead).size).toBe(0);
+    await recordUpstreamObservation(engine, 'source-a');
+    expect(new Date(await checkedAt()).getTime()).toBe(recorded);
   }, 60_000);
 });
