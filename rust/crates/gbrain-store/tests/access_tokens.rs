@@ -1,4 +1,4 @@
-//! The `access_tokens` members (`insertAccessToken`, `findActiveAccessTokens`, `setAccessTokenMinTrust`). What the parity
+//! The `access_tokens` members (`insertAccessToken`, `findActiveAccessTokens`, `setAccessTokenMinTrust`, `readLiveAccessTokenScope`). What the parity
 //! file cannot see lives here: the stored message of each refusal (the TypeScript member turns it into SQLSTATE 23514 /
 //! 23505 and the constraint name), that a refused write leaves the table as it was, and the generated ids.
 
@@ -720,7 +720,9 @@ fn the_migration_read_finds_the_active_tokens_with_no_source_grant_oldest_first_
 }
 
 #[test]
-fn the_scope_read_answers_a_live_tokens_creation_time_and_null_for_a_revoked_or_missing_token() {
+fn the_scope_read_answers_a_live_tokens_stored_opt_out_and_creation_time_and_null_for_a_revoked_or_missing_token()
+ {
+    use gbrain_store::jobs::CredentialKind;
     let b = brain("tokens-scope");
     let live = insert(&b, token("live", "h1", json!({}))).unwrap();
     let gone = insert(
@@ -733,9 +735,27 @@ fn the_scope_read_answers_a_live_tokens_creation_time_and_null_for_a_revoked_or_
     )
     .unwrap();
     let scope = b.read_live_access_token_scope(&live).unwrap();
-    assert_eq!(scope["reads_unscoped"], Value::Null);
+    assert_eq!(
+        scope["reads_unscoped"],
+        Value::Null,
+        "a minted token has not opted out"
+    );
     let created = scope["created_at"].as_str().unwrap();
     assert!(created.ends_with('Z') && created.len() == 27, "{created}");
+    b.write_credential_reads_unscoped(CredentialKind::Token, &live, true)
+        .unwrap();
+    let opted = b.read_live_access_token_scope(&live).unwrap();
+    let stamp = opted["reads_unscoped"]
+        .as_str()
+        .expect("the stored opt-out time");
+    assert!(stamp.ends_with('Z') && stamp.len() == 27, "{stamp}");
+    b.write_credential_reads_unscoped(CredentialKind::Token, &live, false)
+        .unwrap();
+    assert_eq!(
+        b.read_live_access_token_scope(&live).unwrap()["reads_unscoped"],
+        Value::Null,
+        "a cleared opt-out reads null again"
+    );
     assert_eq!(b.read_live_access_token_scope(&gone).unwrap(), Value::Null);
     assert_eq!(
         b.read_live_access_token_scope("00000000-0000-4000-8000-000000000000")

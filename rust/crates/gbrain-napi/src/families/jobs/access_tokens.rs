@@ -1,4 +1,4 @@
-//! Jobs: `access_tokens` (the mint insert, the active-token find, the write grant read, the live-token scope read, the read floor) (rust/docs/store/access-tokens.md).
+//! Jobs: `access_tokens` (the mint insert, the active-token find, the live-token scope read, the read floor) (rust/docs/store/access-tokens.md).
 
 use gbrain_store::jobs::TokenInsert;
 use napi::Env;

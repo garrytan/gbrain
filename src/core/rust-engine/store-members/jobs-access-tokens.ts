@@ -6,7 +6,7 @@
  * engine-sql/access-credentials.ts, and so are the bearer check reads and the OAuth token insert (the store keeps the table:
  * rust/docs/store/oauth-tokens.md); no store call returns a token hash.
  */
-import type { AccessTokenInsert, ActiveAccessTokenRow, AccessTokenScopeRow } from '../../engine-sql/access-tokens.ts';
+import type { AccessTokenInsert, AccessTokenScopeRow, ActiveAccessTokenRow } from '../../engine-sql/access-tokens.ts';
 import { normalizeOauthClientRow, type OauthClientRow } from '../../engine-sql/oauth-clients.ts';
 import { normalizeAccessTokenListRow, type AccessTokenGrantWrite, type AccessTokenListRow, type AccessTokenPrivateAxis, type ActiveTokenGrantField, type LegacyTokenGrantColumns, type OauthTokenInsert, type OauthTokenRung, type TokenByHashCaller, type ActiveTokenTarget, normalizeOauthCodeRow, type OauthCodeInsert, type OauthCodeRow, normalizeOauthTokenRow, type OauthTokenRow } from '../../engine-sql/access-credentials.ts';
 import { withDates, uuidText } from '../store-codec.ts';
@@ -167,11 +167,10 @@ export const lockLegacyAccessTokens: StoreMember<[], Record<string, unknown>[]> 
 };
 
 /**
- * A live token's requester-scope fields. The store keeps no `reads_unscoped` column and mints no token that opts out, so
- * it answers null there (read as not opted out); `created_at` crosses as ISO text and is returned as a Date, as the SQL
- * engines return it.
+ * A live token's requester-scope fields: its `--reads-unscoped` opt-out and its creation time, both crossing as ISO text
+ * and returned as Dates (or null), as the SQL engines return the two timestamp columns; null for a revoked or missing token.
  */
 export const readLiveAccessTokenScope: StoreMember<[id: string], AccessTokenScopeRow | null> = async (brain, id) => {
   const row = await storeCall({ member: 'readLiveAccessTokenScope' }, () => brain.readLiveAccessTokenScope(id)) as AccessTokenScopeRow | null;
-  return row ? withDates(row, ['created_at']) : null;
+  return row ? withDates(row, ['created_at', 'reads_unscoped']) : null;
 };
