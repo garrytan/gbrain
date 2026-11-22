@@ -76,24 +76,29 @@ gbrain get "$SLUG" > /dev/null || { echo "Page $SLUG not found" >&2; exit 1; }
 
 # 2. Get the raw markdown. Two paths: read from the brain repo (if user
 #    syncs locally) OR ask gbrain for the body via the API.
+#    Work files go in a private directory (mktemp -d makes it 0700), never a
+#    fixed /tmp path another user could read or create first.
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/brain-pdf-XXXXXX") || exit 1
 BRAIN_DIR=$(gbrain config get sync.repo_path 2>/dev/null || echo)
 if [ -n "$BRAIN_DIR" ] && [ -f "$BRAIN_DIR/$SLUG.md" ]; then
   RAW="$BRAIN_DIR/$SLUG.md"
 else
-  RAW=$(mktemp /tmp/brain-page-XXXXXX.md)
-  gbrain get "$SLUG" > "$RAW"   # prints the page as markdown with frontmatter
+  RAW="$WORK/page.md"
+  gbrain get "$SLUG" > "$RAW" || exit 1   # prints the page as markdown with frontmatter
 fi
 
 # 3. Strip private sections exactly as gbrain publish does. A page whose
 #    frontmatter never closes is refused; stop and report it.
-CLEAN=$(mktemp /tmp/brain-page-clean-XXXXXX.md)
+CLEAN="$WORK/clean.md"
 gbrain publish "$RAW" --markdown --out "$CLEAN" || exit 1
 [ -n "$(tr -d '[:space:]' < "$CLEAN")" ] || { echo "brain-pdf: nothing to render for $SLUG after removing private sections" >&2; exit 1; }
 
 # 4. Render. NO --cover, NO --toc by default — they look corporate
 #    and waste space. Add them only if explicitly requested.
-OUT="/tmp/$(basename "$SLUG").pdf"
-CONTAINER=1 "$P" generate "$CLEAN" "$OUT"
+#    Report success only when make-pdf succeeded and wrote the file.
+OUT="$WORK/$(basename "$SLUG").pdf"
+CONTAINER=1 "$P" generate "$CLEAN" "$OUT" || { echo "brain-pdf: make-pdf failed for $SLUG; no PDF was written" >&2; exit 1; }
+[ -s "$OUT" ] || { echo "brain-pdf: make-pdf wrote no PDF for $SLUG" >&2; exit 1; }
 
 echo "Rendered: $OUT"
 ```
@@ -141,7 +146,7 @@ Debian/Ubuntu containers).
 
 After rendering, deliver via the agent's preferred channel:
 
-- **Telegram:** use the `message` tool with `filePath="/tmp/<slug>.pdf"`
+- **Telegram:** use the `message` tool with `filePath="$OUT"` (the path the Rendered: line printed)
   attachment. NEVER use raw `MEDIA:` tags — they fail silently.
 - **Email:** attach via the host's email tool.
 - **Direct file response:** print the PDF path; the user can pull it
