@@ -426,7 +426,7 @@ What it does on each turn:
 |---|---|---|
 | `skills.resolver.router` | `false` | turns the picker on |
 | `skills.resolver.router_model` | Claude Haiku 5.5 with an Anthropic key, else `openai:gpt-6-luna`, else `google:gemini-3.5-flash-lite` | an `anthropic:`, `openai:` or `google:` model id, or `compat:` (below) |
-| `skills.resolver.router_timeout_ms` | 1500 in Claude Code, 2000 elsewhere | the longest a turn waits (200-2500); Claude Code's hook limit is 3 seconds |
+| `skills.resolver.router_timeout_ms` | 1500 in Claude Code, 2000 elsewhere | the longest a turn waits (200-2500); Claude Code waits at most 2000, inside its 3-second hook limit |
 | `skills.resolver.router_max_usd_per_day` | 0.50 | the daily spend cap in USD (0-100; 0 stops every call) |
 
 **Your own model.** Any model behind an OpenAI-compatible Chat Completions
@@ -468,7 +468,7 @@ text to route: only skill ids from your catalog are kept from the reply.
 ### router_fallback: timeout
 
 The picker did not answer within `router_timeout_ms`. Occasional timeouts are
-normal; many mean a slow provider or network. Raise the wait (at most 2500)
+normal; many mean a slow provider or network. Raise the wait (at most 2500, or 2000 in Claude Code)
 with `gbrain config set skills.resolver.router_timeout_ms 2000`, or pick a
 faster model with `skills.resolver.router_model`.
 
@@ -496,7 +496,9 @@ if it repeats, the model may not suit the prompt: try the default model.
 
 ### router_fallback: no_known_ids
 
-The reply named no skill in your catalog. One-off failures are harmless; if it
+The reply named no skill in your catalog, or, with more than 150 skills, no
+skill shared a word with the message, so there was nothing to offer and no call
+was made. One-off failures are harmless; if it
 repeats, rebuild the catalog (`gbrain skills index build`) so the picker sees
 current ids.
 

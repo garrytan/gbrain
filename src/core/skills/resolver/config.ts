@@ -76,6 +76,8 @@ export interface ResolverSettings {
 
 export const ROUTER_TIMEOUT_MS_MIN = 200;
 export const ROUTER_TIMEOUT_MS_MAX = 2500;
+/** The most a Claude Code turn waits for the picker, whatever router_timeout_ms says: worker start, deadline, margin and process boot must fit Claude Code's 3 s hook limit. */
+export const ROUTER_TIMEOUT_MS_CLAUDE_CODE_MAX = 2000;
 export const ROUTER_MAX_USD_PER_DAY_DEFAULT = 0.5;
 export const ROUTER_MAX_USD_PER_DAY_MAX = 100;
 const ROUTER_MODEL_RE = /^(?:(?:anthropic|openai|google):[A-Za-z0-9][\w.\-]{0,127}|compat:[A-Za-z0-9][\w.\-/:]{0,127})$/;

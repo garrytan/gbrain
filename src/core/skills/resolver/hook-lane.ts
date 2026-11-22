@@ -73,8 +73,9 @@
  * Model picker (skills.resolver.router, Claude Code and Codex only; never
  * Hermes): the turn may call it, so once the lane reads the setting on, its
  * deadline grows by the picker's wait (router.ts routerTimeoutMs: 1.5 s in
- * Claude Code, 2 s in Codex, at most ROUTER_TIMEOUT_MS_MAX) plus
- * LANE_ROUTER_MARGIN_MS, which keeps Claude Code inside its 3 s hook limit.
+ * Claude Code, 2 s in Codex; at most ROUTER_TIMEOUT_MS_CLAUDE_CODE_MAX in
+ * Claude Code and ROUTER_TIMEOUT_MS_MAX elsewhere) plus LANE_ROUTER_MARGIN_MS,
+ * so Claude Code stays inside its 3 s hook limit.
  * The lane log line then carries router: who answered, the fallback code and
  * the wait.
  *

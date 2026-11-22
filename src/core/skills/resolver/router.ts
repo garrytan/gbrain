@@ -20,11 +20,11 @@
  */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { RouterSettings } from './config.ts';
+import { ROUTER_TIMEOUT_MS_CLAUDE_CODE_MAX, type RouterSettings } from './config.ts';
 import { writeFileAtomic } from './fsutil.ts';
 import { releaseLeaseAsync, tryAcquireLeaseAsync } from './lock.ts';
 import { skillIndexRoot } from './paths.ts';
-import { pickerChat, pickerKey, providerOf, type PickerReply } from './router-http.ts';
+import { PickerHttpError, pickerChat, pickerKey, providerOf, type PickerReply } from './router-http.ts';
 
 export const ROUTER_FALLBACK_CODES = ['timeout', 'provider_error', 'missing_key', 'daily_cap', 'parse_failed', 'no_known_ids', 'config_invalid', 'no_pricing', 'ledger_unavailable'] as const;
 export type RouterFallbackCode = (typeof ROUTER_FALLBACK_CODES)[number];
@@ -41,7 +41,7 @@ const LEDGER_LEASE_MS = 2_000;
 /** Tokens a request adds around its text (roles, separators). The reservation counts one token per UTF-8 byte of text, a ceiling for byte-level tokenizers, at the highest input rate (cache writes cost the most). */
 const PICKER_OVERHEAD_TOKENS = 64;
 
-export const routerTimeoutMs = (harness: string | undefined, s: RouterSettings): number => s.timeoutMs ?? (harness === 'claude-code' ? 1500 : 2000);
+export const routerTimeoutMs = (harness: string | undefined, s: RouterSettings): number => harness === 'claude-code' ? Math.min(s.timeoutMs ?? 1500, ROUTER_TIMEOUT_MS_CLAUDE_CODE_MAX) : s.timeoutMs ?? 2000;
 
 /** One skill as the picker sees it: a project skill (names only) has no description. */
 export interface PickerSkill { id: string; description: string }
@@ -136,13 +136,14 @@ export async function pickSkills(home: string, message: string, skills: readonly
   if (s.invalid) return { ok: false, code: 'config_invalid', model: null, usd: 0, detail: s.invalid };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const abort = new AbortController();
-  const late = new Promise<PickOutcome>(resolve => { timer = setTimeout(() => { abort.abort(); resolve({ ok: false, code: 'timeout', model: s.model, usd: 0 }); }, Math.max(1, timeoutMs)); });
+  const sent = { usd: 0 };
+  const late = new Promise<PickOutcome>(resolve => { timer = setTimeout(() => { abort.abort(); resolve({ ok: false, code: 'timeout', model: s.model, usd: sent.usd }); }, Math.max(1, timeoutMs)); });
   try {
-    return await Promise.race([callPicker(home, message, skills, s, abort.signal, env, now), late]);
+    return await Promise.race([callPicker(home, message, skills, s, abort.signal, env, now, sent), late]);
   } finally { clearTimeout(timer); }
 }
 
-async function callPicker(home: string, message: string, skills: readonly PickerSkill[], s: RouterSettings, signal: AbortSignal, env: NodeJS.ProcessEnv, now: () => number): Promise<PickOutcome> {
+async function callPicker(home: string, message: string, skills: readonly PickerSkill[], s: RouterSettings, signal: AbortSignal, env: NodeJS.ProcessEnv, now: () => number, sent: { usd: number }): Promise<PickOutcome> {
   const { model, key } = routerModel(s, home, env);
   if (!model || key === null) return { ok: false, code: 'missing_key', model, usd: 0 };
   const compat = model.startsWith('compat:');
@@ -169,9 +170,14 @@ async function callPicker(home: string, message: string, skills: readonly Picker
     return { ok: false, code: 'timeout', model, usd: 0 };
   }
   let res: PickerReply;
+  sent.usd = estimate;
   try {
     res = await pickerChat({ model, system, message, maxTokens: PICKER_MAX_OUTPUT_TOKENS, signal, ...(compat && s.baseUrl ? { baseUrl: s.baseUrl } : {}) }, key, env);
-  } catch {
+  } catch (e) {
+    if (e instanceof PickerHttpError && e.status >= 400 && e.status < 500) {
+      await settle(0);
+      return { ok: false, code: 'provider_error', model, usd: 0 };
+    }
     return { ok: false, code: signal.aborted ? 'timeout' : 'provider_error', model, usd: estimate };
   }
   const u = res.usage;

@@ -56,9 +56,14 @@ function counts(input: unknown, output: unknown, cacheRead: unknown = 0, cacheWr
 
 const base = (env: NodeJS.ProcessEnv, name: string, fallback: string) => (env[name] || fallback).replace(/\/+$/, '').replace(/\/v1(beta)?$/, '');
 
+/** A provider's HTTP error answer, with its status. */
+export class PickerHttpError extends Error {
+  constructor(readonly status: number) { super(`provider answered HTTP ${status}`); }
+}
+
 async function post(url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal): Promise<Record<string, any>> {
   const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal, redirect: 'error' });
-  if (!res.ok) throw new Error(`provider answered HTTP ${res.status}`);
+  if (!res.ok) throw new PickerHttpError(res.status);
   return await res.json() as Record<string, any>;
 }
 
