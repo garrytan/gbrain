@@ -29,7 +29,8 @@ migrating it, reads the worktree refresh journal and the shadow status, and list
 - the environment variables set on this machine that can select the current engine (`GBRAIN_DATABASE_URL`,
   `DATABASE_URL`, `GBRAIN_HOME`, `GBRAIN_BRAIN_ID`), by name only, never their values;
 - the launchd and systemd user service definitions with `gbrain` in their name, and which of those variables each one
-  sets, by name only;
+  sets, by name only. A definition the plan could not read is marked `unread: "read_failed"` in the JSON plan and
+  "unreadable, names unknown" in the text plan; it is not listed as setting none, so read it yourself;
 - the free disk space where the brain lives;
 - a plan hash that binds the verdict, each criterion's state and the routes, and ignores the time and the free space.
 
