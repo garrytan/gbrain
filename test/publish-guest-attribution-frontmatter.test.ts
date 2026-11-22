@@ -64,6 +64,13 @@ describe('gbrain publish on a guest page saved from gbrain get', () => {
     expect(makeShareable(`${BODY}${LINE}\n---\nkept: yes\n---\n`)).toContain(LINE);
   });
 
+  test('a saved_at outside YYYY-MM-DD still drops the line and strips the frontmatter', () => {
+    for (const saved_at of ['+010000-01', '2026-11-13T10:00:00Z', '', '2026-11-13] · x\nprivate: y']) {
+      const out = makeShareable(`${guestWarningLine({ ...GUEST, saved_at })}\n${FRONTMATTER}${BODY}`);
+      expect({ saved_at, leaked: out.includes('alice-example') }).toEqual({ saved_at, leaked: false });
+    }
+  });
+
   test('the pattern matches every line guestWarningLine writes, escaped labels included', () => {
     const wide: GuestStamp = { ...GUEST, sender: '[x] · <y> "z"; ' + 'w'.repeat(80), group: 'team\u0007-b', saved_at: null };
     for (const stamp of [GUEST, wide, unattributedGuest()]) expect(GUEST_WARNING_LINE_RE.test(`${guestWarningLine(stamp)}\n`)).toBe(true);
