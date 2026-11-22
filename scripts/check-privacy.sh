@@ -176,6 +176,9 @@ ALLOW_LIST=(
   # it's NOT in the qrels fixture. Same meta-rule-enforcement exception
   # as the other test entries above.
   'test/eval-replay-gate.test.ts'
+  # The skills/ arm of check-fixture-privacy.sh is tested by feeding it the
+  # banned literal and asserting it fails. Same meta-rule exception.
+  'test/check-fixture-privacy-skills.test.ts'
 )
 
 is_allowed() {

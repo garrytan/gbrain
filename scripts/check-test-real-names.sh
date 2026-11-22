@@ -68,6 +68,7 @@ ALLOWLIST=(
   "test/skillpack-harvest.test.ts:Wintermute"
   "test/skillpack-harvest-lint.test.ts:Wintermute"
   "test/skillpack-flow.test.ts:Wintermute"
+  "test/check-fixture-privacy-skills.test.ts:Wintermute" # proves check-fixture-privacy.sh rejects the literal in skills/ (structural)
   # v0.40.1.0 Track D: eval-replay-gate.test.ts has a privacy-grep regression
   # guard whose block list necessarily SPELLS the real names so the test can
   # assert they're NOT in the qrels fixture. Same meta-rule exception as the
