@@ -52,7 +52,6 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/persistence/types.ts': { count: 1, why: 'the public receipt states, where deferred reads as queued' },
   'src/core/persistence/worktree-refresh.ts': { count: 1, why: 'the drain counts released deferred rows through RELEASED_DEFERRED' },
   'src/core/rust-engine/store-members/managed-sync-orphans.ts': { count: 1, why: 'managed sync (the Rust members mirror engine-sql/managed-sync-orphans.ts)' },
-  'src/core/rust-engine/store-members/dream-journal.ts': { count: 1, why: 'cycle producer, never deferred (the Rust listLaterPersistenceRequests mirrors engine-sql/dream-cycle.ts)' },
   'src/core/shared-skills/retention.ts': { count: 1, why: 'skill bundles are never deferred' },
 };
 
