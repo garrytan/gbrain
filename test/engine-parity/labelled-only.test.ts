@@ -20,7 +20,7 @@
  *    putPage, facts through insertFacts; each caller is the stdio server bound to the member (mcp.stdio_member).
  */
 import { describe, expect, test } from 'bun:test';
-import { parityArms, resetArm } from './harness.ts';
+import { createSource, parityArms, resetArm, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
@@ -131,6 +131,126 @@ async function pageInForceOnADate(engine: BrainEngine) {
   return alice;
 }
 
+const since = new Date(Date.UTC(2000, 0, 1));
+const factRow = (text: string, entity: string, page: string, row: number, visibility = 'private') =>
+  ({ fact: text, entity_slug: entity, kind: 'fact', visibility, source: 'fence', row_num: row, source_markdown_slug: page });
+const factsIn = async (engine: BrainEngine, sourceId: string) =>
+  (await engine.listFactsSince(sourceId, since, { activeOnly: true, limit: 50, excludePrivate: true } as never)).map(f => f.fact).sort();
+const aliceMemory = (engine: BrainEngine, sourceId = 'default') =>
+  engine.putPage('memory/members/alice-example', core('Alice memory', { readable_by: ['member:alice-example'] }), { sourceId });
+
+/** C10: a fact on alice's own member page still needs its entity page to pass the page policy, judged without the grant. */
+async function ownFactsKeepEntityAccess(engine: BrainEngine) {
+  await seed(engine);
+  await aliceMemory(engine);
+  await engine.putPage('people/open-example', core('Open person'), { sourceId: 'default' });
+  await engine.putPage('people/bob-only-example', core('Bob only', { readable_by: ['bob-example'] }), { sourceId: 'default' });
+  await engine.putPage('people/alice-named-example', core('Alice named', { readable_by: ['alice-example'] }), { sourceId: 'default' });
+  await engine.insertFacts([
+    factRow('about an open person', 'people/open-example', 'memory/members/alice-example', 1),
+    factRow('about a page kept to bob', 'people/bob-only-example', 'memory/members/alice-example', 2),
+    factRow('about a page naming alice', 'people/alice-named-example', 'memory/members/alice-example', 3),
+    factRow('about a person with no page', 'people/no-page-example', 'memory/members/alice-example', 4),
+  ] as never, { source_id: 'default' });
+  const alice = await as(engine, 'alice-example', () => factsIn(engine, 'default'));
+  expect(alice).toEqual(['about a page naming alice', 'about a person with no page', 'about an open person']);
+  return alice;
+}
+
+/** C11: alice's member page must sit in the fact's own source; one in another source admits nothing. */
+async function ownMemberPageInTheFactsSource(engine: BrainEngine, backend: ParityBackend) {
+  await seed(engine);
+  await createSource(engine, backend, 'team');
+  await aliceMemory(engine);
+  await engine.insertFacts([factRow('kept in team', 'people/carol-example', 'memory/members/alice-example', 1)] as never, { source_id: 'team' });
+  await engine.insertFacts([factRow('kept in default', 'people/carol-example', 'memory/members/alice-example', 1)] as never, { source_id: 'default' });
+  const read = async () => ({ default: await factsIn(engine, 'default'), team: await factsIn(engine, 'team') });
+  const before = await as(engine, 'alice-example', read);
+  await aliceMemory(engine, 'team');
+  const after = await as(engine, 'alice-example', read);
+  expect({ before, after }).toEqual({
+    before: { default: ['kept in default'], team: [] },
+    after: { default: ['kept in default'], team: ['kept in team'] },
+  });
+  return { before, after };
+}
+
+/**
+ * C12: a held fact (on memory/unattributed) reads as its entity's page would under a folder rule: only for a caller
+ * that satisfies every covering rule, and for nobody while a pending prefix covers the entity. bob satisfies deals;
+ * dan satisfies no rule; a second rule over deals/acme names only alice.
+ */
+async function heldFactsUnderRealRules(engine: BrainEngine) {
+  await seed(engine);
+  await addMember(engine, 'dan-example');
+  await engine.putPage('deals/acme', core('Acme'), { sourceId: 'default' });
+  await engine.putPage('memory/unattributed', core('Unattributed'), { sourceId: 'default' });
+  await engine.insertFacts([factRow('Acme closed', 'deals/acme', 'memory/unattributed', 1, 'world')] as never, { source_id: 'default' });
+  const read = async () => ({
+    bob: await as(engine, 'bob-example', () => factsIn(engine, 'default')),
+    dan: await as(engine, 'dan-example', () => factsIn(engine, 'default')),
+  });
+  const allSatisfied = await read();
+  await proposeRevision(engine, 'default', [
+    { id: 'deals', prefix: 'deals/', readable_by: ['member:alice-example', 'member:bob-example'] },
+    { id: 'acme', prefix: 'deals/acme', readable_by: ['member:alice-example'] },
+  ], { origin: 'cli', store: 'database' });
+  const ruleMissing = await read();
+  await engine.applyAccessRuleChanges('default', { remove: ['acme'], insert: [], pending: ['deals/'], revision: 3, actor: 'test' });
+  const pending = await read();
+  expect({ allSatisfied, ruleMissing, pending }).toEqual({
+    allSatisfied: { bob: ['Acme closed'], dan: [] },
+    ruleMissing: { bob: [], dan: [] },
+    pending: { bob: [], dan: [] },
+  });
+  return { allSatisfied, ruleMissing, pending };
+}
+
+/** The pick's policy-facing fields: what it shows and why. Counts and version ids are raw engine values (bigint on Postgres). */
+const PICK_FIELDS = ['visible', 'chosen', 'valid_from', 'valid_until', 'reason', 'introduced_because', 'successor_pruned', 'tier', 'successor_tier'] as const;
+const pickFields = (row: Record<string, unknown> | null) => row && Object.fromEntries(PICK_FIELDS.map(k => [k, row[k]]));
+
+/** C18: a page the caller reads by a live rule (deals/q4) shows its versions and its edition in force. */
+async function versionsByLiveRule(engine: BrainEngine) {
+  await seed(engine);
+  const write = (validFrom: string) => engine.putPage('deals/q4', core('Q4', { valid_from: validFrom }), { sourceId: 'default' });
+  await write('2026-01-01');
+  await engine.createVersion('deals/q4', { sourceId: 'default' });
+  await write('2026-06-01');
+  const read = async () => {
+    const pageId = (await engine.getPage('deals/q4', { sourceId: 'default' }))!.id;
+    const pick = (asOf: string) => engine.pickValidTimeEdition({ pageId, asOf, excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 });
+    return {
+      versions: (await engine.getVersions('deals/q4', { sourceId: 'default', excludePrivate: true, includeBody: false })).length,
+      march: pickFields(await pick('2026-03-01')),
+      july: pickFields(await pick('2026-07-01')),
+    };
+  };
+  const alice = await as(engine, 'alice-example', read);
+  expect([alice.versions, alice.march?.visible, alice.march?.valid_from, alice.july?.visible, alice.july?.valid_from]).toEqual([1, true, '2026-01-01', true, '2026-06-01']);
+  return alice;
+}
+
+/** C19: a dated edition that named no reader stays hidden from the labelled-only caller once the page names it. */
+async function datedUnlabelledEdition(engine: BrainEngine) {
+  await seed(engine);
+  await engine.putPage('core/was-open', core('Was open', { valid_from: '2026-01-01' }), { sourceId: 'default' });
+  await engine.createVersion('core/was-open', { sourceId: 'default' });
+  await engine.putPage('core/was-open', core('Was open', { valid_from: '2026-06-01', readable_by: ['alice-example'] }), { sourceId: 'default' });
+  const alice = await as(engine, 'alice-example', async () => {
+    const pageId = (await engine.getPage('core/was-open', { sourceId: 'default' }))!.id;
+    const pick = (asOf: string) => engine.pickValidTimeEdition({ pageId, asOf, excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 });
+    return {
+      versions: (await engine.getVersions('core/was-open', { sourceId: 'default', excludePrivate: true, includeBody: false })).length,
+      march: pickFields(await pick('2026-03-01')),
+      july: pickFields(await pick('2026-07-01')),
+    };
+  });
+  // The snapshot named no reader and core/ carries no rule, so it stays hidden; the current page names alice.
+  expect([alice.versions, alice.march?.visible, alice.march?.valid_from, alice.july?.visible, alice.july?.valid_from]).toEqual([0, false, '2026-01-01', true, '2026-06-01']);
+  return alice;
+}
+
 describe('engine parity: the labelled-only page policy', () => {
   // The read-side leak, first: a labelled-only member never reads an unlabelled page or a page kept to someone else.
   parityTest('a labelled-only member reads only the pages that name it, by readers or by a folder rule', {
@@ -180,6 +300,28 @@ describe('engine parity: the labelled-only page policy', () => {
   parityTest('a labelled-only member reads the page in force on a date, over the page and its versions', {
     methods: ['createVersion', 'getPage', 'pickValidTimeEdition'],
   }, pageInForceOnADate);
+
+  // Coverage of the store policy's other branches: entity access on own facts, the fact's own source, held facts under
+  // real rules, and versions and as-of editions by live rule or by the snapshot's own readers.
+  parityTest('a labelled-only member\'s own member-page facts still need their entity page', {
+    methods: ['insertFacts', 'listFactsSince'],
+  }, ownFactsKeepEntityAccess);
+
+  parityTest('a labelled-only member\'s own member page counts only in the fact\'s own source', {
+    methods: ['insertFacts', 'listFactsSince'],
+  }, ownMemberPageInTheFactsSource);
+
+  parityTest('a held fact reads only for a caller that satisfies every covering rule, and for nobody while pending', {
+    methods: ['insertFacts', 'listFactsSince', 'applyAccessRuleChanges'],
+  }, heldFactsUnderRealRules);
+
+  parityTest('a labelled-only member reads the versions and editions of a page a live rule labels', {
+    methods: ['createVersion', 'getVersions', 'pickValidTimeEdition'],
+  }, versionsByLiveRule);
+
+  parityTest('a dated edition that named no reader stays hidden from a labelled-only member', {
+    methods: ['createVersion', 'getVersions', 'pickValidTimeEdition'],
+  }, datedUnlabelledEdition);
 });
 
 describe('the Rust arm serves the labelled-only page policy', () => {
@@ -198,12 +340,17 @@ describe('the Rust arm serves the labelled-only page policy', () => {
     ['a rule move that has not restamped a page does not label it for a caller captured before', pendingRuleMove],
     ['a world-only fact list reads the labelled-only member\'s own member-page facts', worldOnlyFactList],
     ['the valid-time pick reads a labelled-only member\'s page', pageInForceOnADate],
+    ['own member-page facts still need their entity page', ownFactsKeepEntityAccess],
+    ['the own member page counts only in the fact\'s own source', ownMemberPageInTheFactsSource],
+    ['a held fact reads only under every satisfied rule', heldFactsUnderRealRules],
+    ['versions and editions of a page a live rule labels', versionsByLiveRule],
+    ['a dated edition that named no reader stays hidden', datedUnlabelledEdition],
   ] as const) {
     test(`${name} on Rust`, async () => {
       const rust = arms().find((arm) => arm.backend === 'rust');
       if (!rust) return;
       await resetArm(rust);
-      await scenario(rust.engine);
+      await scenario(rust.engine, 'rust');
     });
   }
 });
@@ -304,3 +451,4 @@ describe('the Rust arm refuses or hides what it does not serve yet (rows 32e-2 t
     expect(results.rust).toEqual({ pages, versions: { ...core, 'deals/q4': 0 } });
   });
 });
+
