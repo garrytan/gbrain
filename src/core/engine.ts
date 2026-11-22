@@ -1,3 +1,4 @@
+import type * as DoctorJoinSql from './engine-sql/doctor-join.ts';
 import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
@@ -5333,6 +5334,19 @@ export interface BrainEngine {
    * one source or every source; `aliases` also counts pages of those types whose derived aliases are behind.
    */
   countPagesDueForMentions(q: MentionDueQuery): Promise<number>;
+  // Doctor reads of the checks from the rust-engine/main join (engine-sql/doctor-join.ts): access_pages_read_by_nobody and owner_identity.
+  /** Every access member by id, with its status: removed (tombstoned), disabled, or enabled. */
+  listAccessMemberStatuses(): Promise<DoctorJoinSql.AccessMemberStatusRow[]>;
+  /** Every group membership, in no defined order. */
+  listAccessGroupMemberships(): Promise<DoctorJoinSql.AccessGroupMembershipRow[]>;
+  /** The live pages whose readers name none of `live` and not the nobody marker, member pages left out; no defined order. */
+  listPagesReadByNobody(live: readonly string[], opts: { timeoutMs: number }): Promise<DoctorJoinSql.PageReadersRow[]>;
+  /** The live pages a folder rule at `prefix` of `sourceId` covers that none of the `admitted` principals reads; no defined order. */
+  listRulePagesReadByNobody(sourceId: string, prefix: string, admittedCount: number, admitted: readonly string[], opts: { timeoutMs: number }): Promise<DoctorJoinSql.PageReadersRow[]>;
+  /** The Google sources that are not archived, by id in byte order, with their account and bound members. */
+  listGoogleSourceMembers(): Promise<DoctorJoinSql.GoogleSourceMembersRow[]>;
+  /** One member's external ids (access_member_links), by system and external id. */
+  listOwnerMemberLinks(memberId: string): Promise<DoctorJoinSql.OwnerMemberLinkRow[]>;
   /**
    * Live pages of one source of the given types whose lowercased title is `subject` or ends with `: ` and it, by slug,
    * at most `limit`, with frontmatter `identity` as text. `excludePrivate` and `excludeQuarantined` filter candidates.

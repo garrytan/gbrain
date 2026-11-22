@@ -3,6 +3,7 @@
  * prototype (rust-engine.ts); a member in `RUST_ENGINE_MEMBERS` that is not here refuses with `engine_capability_missing`.
  */
 import type { BrainEngine } from '../../engine.ts';
+import * as doctorJoin from './doctor-join.ts';
 import * as chunks from './chunks.ts';
 import * as config from './config.ts';
 import * as graph from './graph.ts';
@@ -138,6 +139,8 @@ import * as remoteLinks from './remote-links.ts';
 import * as factsBackstop from './facts-backstop.ts';
 
 export const STORE_MEMBERS = {
+  // Doctor reads of the checks from the main join (rust/docs/store/cli-reads-doctor-join.md).
+  ...doctorJoin,
   initSchema,
   ...config, ...sources, ...tags, ...versions, ...chunks, ...search, ...links, ...graph, ...timeline,
   getPage: pages.getPage, readPageSnapshot: pages.readPageSnapshot, putPage: pages.putPage, deletePage: pages.deletePage,

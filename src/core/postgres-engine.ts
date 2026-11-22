@@ -355,6 +355,7 @@ import { KeywordTimeoutNegativeCache, keywordRerunPoolIdle } from './postgres-en
 import * as titlesImpl from './engine-sql/titles.ts';
 import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import * as entityReadsImpl from './engine-sql/entity-reads.ts';
+import * as doctorJoinImpl from './engine-sql/doctor-join.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
 import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
 import type { CjkKeywordCtx } from './search/cjk-keyword-sql.ts';
@@ -1959,6 +1960,14 @@ export class PostgresEngine implements BrainEngine {
   readLiveMember(via: LiveMemberVia, key: string): Promise<LiveMemberRow | null> { return this.ownRawRead(exec => accessControlImpl.readLiveMember(exec, via, key)); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return this.preparationRead(exec => entityReadsImpl.readMentionLastPass(unscopedExecutor(exec, 'entities: mention pass time ran unscoped through executeRaw'), sourceId)); }
+  listAccessMemberStatuses() { return doctorJoinImpl.listAccessMemberStatuses(this.executeRaw.bind(this)); }
+  listAccessGroupMemberships() { return doctorJoinImpl.listAccessGroupMemberships(this.executeRaw.bind(this)); }
+  listPagesReadByNobody(live: readonly string[], opts: { timeoutMs: number }) { return doctorJoinImpl.listPagesReadByNobody(this.executeRaw.bind(this), live, opts); }
+  listRulePagesReadByNobody(sourceId: string, prefix: string, admittedCount: number, admitted: readonly string[], opts: { timeoutMs: number }) {
+    return doctorJoinImpl.listRulePagesReadByNobody(this.executeRaw.bind(this), sourceId, prefix, admittedCount, admitted, opts);
+  }
+  listGoogleSourceMembers() { return doctorJoinImpl.listGoogleSourceMembers(this.executeRaw.bind(this)); }
+  listOwnerMemberLinks(memberId: string) { return doctorJoinImpl.listOwnerMemberLinks(this.executeRaw.bind(this), memberId); }
   countPagesDueForMentions(q: entityReadsImpl.MentionDueQuery) { return this.preparationRead(exec => entityReadsImpl.countPagesDueForMentions(unscopedExecutor(exec, 'entities: mention-due count ran unscoped through executeRaw'), q)); }
   readIdentitySiblingCandidates(sourceId: string, q: entityReadsImpl.SiblingCandidateQuery) { return this.preparationRead(exec => entityReadsImpl.readIdentitySiblingCandidates(unscopedExecutor(exec, 'entities: sibling candidates ran unscoped through executeRaw'), sourceId, q)); }
   findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }) { return this.preparationRead(exec => entityReadsImpl.findExactSlug(unscopedExecutor(exec, 'entities: exact slug ran unscoped through executeRaw'), sourceId, slugs, opts)); }

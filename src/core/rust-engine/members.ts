@@ -1421,6 +1421,14 @@ export const RUST_ENGINE_MEMBERS = {
   // pages: entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts)
   readMentionLastPass: 'pages',
   countPagesDueForMentions: 'pages',
+  // Doctor reads of the checks from the main join (engine-sql/doctor-join.ts), served from the store's access members,
+  // groups, pages, folder rules, sources and member links (store-members/doctor-join.ts).
+  listAccessMemberStatuses: 'access_control',
+  listAccessGroupMemberships: 'access_control',
+  listPagesReadByNobody: 'access_control',
+  listRulePagesReadByNobody: 'access_control',
+  listGoogleSourceMembers: 'access_control',
+  listOwnerMemberLinks: 'access_control',
   readIdentitySiblingCandidates: 'pages',
   findExactSlug: 'pages',
   readLiveSlugs: 'pages',

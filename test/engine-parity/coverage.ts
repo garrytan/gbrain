@@ -194,6 +194,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'probeNoopEmbeddingSettle', 'lockNoopEmbeddingWindow', 'readNoopEmbeddingCandidates', 'settleNoopEmbeddingRows',
     'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads', 'listResumableRefreshes', 'listSourceLastCommits',
     'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions'],
+  doctor_join: ['listAccessMemberStatuses', 'listAccessGroupMemberships', 'listPagesReadByNobody', 'listRulePagesReadByNobody', 'listGoogleSourceMembers', 'listOwnerMemberLinks'],
   entity_reads: ['readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'findFuzzyEntityCandidates', 'findExactBasenameCandidates', 'readRetirementHop', 'readEntityCardRows',
       'readLiveSlugs', 'readLivePageTypes', 'readTrigramCandidates', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches', 'readNamedEntitySlugs',
     'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages'],

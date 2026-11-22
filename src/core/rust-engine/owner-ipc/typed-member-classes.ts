@@ -16,6 +16,13 @@
 
 /** Typed members that only read (lookups, counts, listings, probes, and the planning reads of a purge or a relink). */
 export const OWNER_IPC_TYPED_READS: readonly string[] = [
+  // The doctor-join reads (engine-sql/doctor-join.ts): SELECT only.
+  'listAccessMemberStatuses',
+  'listAccessGroupMemberships',
+  'listPagesReadByNobody',
+  'listRulePagesReadByNobody',
+  'listGoogleSourceMembers',
+  'listOwnerMemberLinks',
   'closedLoopWithActiveFact', 'codeChunksExist', 'computeFactFingerprints', 'countActiveConversationFacts',
   'countAtomFacts', 'countChunkVectorCoverage', 'countClaimConflictPairs', 'countCoalescibleSynthJobs',
   'countCodeChunkPages', 'countConversationFactsOutsideWindows', 'countConversationPagesToExtract',
@@ -261,6 +268,9 @@ const nothingLock = 'nothing: the lock is released when the call ends, so runnin
 
 /** Typed writes and the read that confirms each. */
 export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> = {
+  // With ensure it creates missing owner-only delete triggers and sets the held flag (engine-sql/owner-only-marks.ts);
+  // the rust store reads its mark state only and ignores ensure.
+  ownerOnlyMarkTriggers: 'ownerOnlyMarkTriggers() without ensure (missing lists what is still absent; held shows the flag)',
   // Measured by what each member executes, not by its name: it marks the unread messages read (engine-sql/jobs-queue.ts:467,
   // rust jobs/inbox.rs `read_job_inbox`). No read shows another message's read mark; readChildCompletions lists the child_done
   // messages whether or not they were marked read, so a lost answer still leaves those recoverable.

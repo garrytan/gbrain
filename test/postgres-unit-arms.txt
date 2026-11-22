@@ -177,6 +177,7 @@ test/engine-parity/cycle-locks.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
 test/engine-parity/delegated-grant.test.ts
+test/engine-parity/doctor-join-checks.test.ts
 test/engine-parity/dream-config-members.test.ts
 test/engine-parity/dream-cycle-sites.test.ts
 test/engine-parity/effect-scans.test.ts

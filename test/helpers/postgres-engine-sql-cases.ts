@@ -1217,6 +1217,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readMentionLastPass': OOS.entityReads, 'countPagesDueForMentions': OOS.entityReads, 'readIdentitySiblingCandidates': OOS.entityReads,
   'findExactSlug': OOS.entityReads, 'findFuzzyEntityCandidates': OOS.entityReads, 'findExactBasenameCandidates': OOS.entityReads, 'readExtractionLagCounts': OOS.entityReads, 'readIgnoredPrivacyLabelPages': OOS.entityReads,
   'readSourceMembership': OOS.journal, 'findTopologyChanges': OOS.journal, 'renewWriteClaim': OOS.journal, 'releaseUnpublishedClaim': OOS.journal, 'expireStaleWriteClaims': OOS.journal,
+  'listAccessMemberStatuses': OOS.callerRawSql, 'listAccessGroupMemberships': OOS.callerRawSql, 'listPagesReadByNobody': OOS.callerRawSql, 'listRulePagesReadByNobody': OOS.callerRawSql, 'listGoogleSourceMembers': OOS.callerRawSql, 'listOwnerMemberLinks': OOS.callerRawSql,
   'readRetirementHop': OOS.callerRawSql, 'readEntityCardRows': OOS.callerRawSql,
   'readLiveSlugs': OOS.callerRawSql, 'readLivePageTypes': OOS.callerRawSql, 'readTrigramCandidates': OOS.callerRawSql, 'readPrefixCandidates': OOS.callerRawSql, 'readPrefixDirs': OOS.callerRawSql, 'readPrefixTitleMatches': OOS.callerRawSql, 'readNamedEntitySlugs': OOS.callerRawSql,
   'hasClaimableWrite': OOS.journal, 'selectClaimableWrite': OOS.journal, 'directRawSql': OOS.helper,
@@ -2283,6 +2284,13 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['floor', (e) => e.readRetirementHop(SRC, SLUG, 'floor')],
     ['member_access', (e) => e.readRetirementHop(SRC, SLUG, 'member_access')],
   ]),
+  // Doctor reads of the checks from the main join (engine-sql/doctor-join.ts).
+  ...variants('listAccessMemberStatuses', [['default', (e) => e.listAccessMemberStatuses()]]),
+  ...variants('listAccessGroupMemberships', [['default', (e) => e.listAccessGroupMemberships()]]),
+  ...variants('listPagesReadByNobody', [['default', (e) => e.listPagesReadByNobody(['member:alice-example', 'group:team-a'], { timeoutMs: 5000 })]]),
+  ...variants('listRulePagesReadByNobody', [['default', (e) => e.listRulePagesReadByNobody(SRC, 'people/', 1, ['member:alice-example'], { timeoutMs: 5000 })]]),
+  ...variants('listGoogleSourceMembers', [['default', (e) => e.listGoogleSourceMembers()]]),
+  ...variants('listOwnerMemberLinks', [['default', (e) => e.listOwnerMemberLinks('alice-example')]]),
   ...variants('readEntityCardRows', [
     ['name', (e) => e.readEntityCardRows(SRC, { titleLc: 'alice example', slugs: [SLUG], slugLike: '%/alice-example' })],
     ['name+private', (e) => e.readEntityCardRows(SRC, { titleLc: 'alice example', slugs: [SLUG], slugLike: '%/alice-example' }, { excludePrivate: true })],

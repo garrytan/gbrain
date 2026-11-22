@@ -358,6 +358,7 @@ import { searchKeywordCJK } from './engine-sql/cjk-search.ts';
 import * as titlesImpl from './engine-sql/titles.ts';
 import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import * as entityReadsImpl from './engine-sql/entity-reads.ts';
+import * as doctorJoinImpl from './engine-sql/doctor-join.ts';
 import * as pageEmbeddingBudgetImpl from './engine-sql/page-embedding-budget.ts';
 import * as embeddingInstallImpl from './engine-sql/embedding-install.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
@@ -2273,6 +2274,14 @@ export class PGLiteEngine implements BrainEngine {
   readLiveMember(via: LiveMemberVia, key: string): Promise<LiveMemberRow | null> { return accessControlImpl.readLiveMember(this, via, key); }
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return entityReadsImpl.readMentionLastPass(unscopedExecutor(this.engineSql, 'entities: mention pass time ran unscoped through executeRaw'), sourceId); }
+  listAccessMemberStatuses() { return doctorJoinImpl.listAccessMemberStatuses(this.rawRead); }
+  listAccessGroupMemberships() { return doctorJoinImpl.listAccessGroupMemberships(this.rawRead); }
+  listPagesReadByNobody(live: readonly string[], opts: { timeoutMs: number }) { return doctorJoinImpl.listPagesReadByNobody(this.rawRead, live, opts); }
+  listRulePagesReadByNobody(sourceId: string, prefix: string, admittedCount: number, admitted: readonly string[], opts: { timeoutMs: number }) {
+    return doctorJoinImpl.listRulePagesReadByNobody(this.rawRead, sourceId, prefix, admittedCount, admitted, opts);
+  }
+  listGoogleSourceMembers() { return doctorJoinImpl.listGoogleSourceMembers(this.rawRead); }
+  listOwnerMemberLinks(memberId: string) { return doctorJoinImpl.listOwnerMemberLinks(this.rawRead, memberId); }
   countPagesDueForMentions(q: entityReadsImpl.MentionDueQuery) { return entityReadsImpl.countPagesDueForMentions(unscopedExecutor(this.engineSql, 'entities: mention-due count ran unscoped through executeRaw'), q); }
   readIdentitySiblingCandidates(sourceId: string, q: entityReadsImpl.SiblingCandidateQuery) { return entityReadsImpl.readIdentitySiblingCandidates(unscopedExecutor(this.engineSql, 'entities: sibling candidates ran unscoped through executeRaw'), sourceId, q); }
   findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }) { return entityReadsImpl.findExactSlug(unscopedExecutor(this.engineSql, 'entities: exact slug ran unscoped through executeRaw'), sourceId, slugs, opts); }
