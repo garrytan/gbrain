@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { sha256 } from '../persistence/digest.ts';
+import { findLinks } from '../line-grammar.ts';
+import { stripCodeBlocks } from '../markdown-code.ts';
 import { claimDate } from './bulk-days.ts';
 
 export const FACT_DATE_VERIFICATION = 'verify_fact_date';
@@ -27,7 +29,6 @@ export function matchesDatedExcerpt(proof: FactDateProof, archived: DateExcerpt 
   if (!archived || Array.from(archived.text).length !== proof.excerpt_length ||
       sha256(archived.text) !== proof.excerpt_sha256 || !/\p{L}/u.test(archived.text)) return false;
   const tokens = [...archived.text.matchAll(/[0-9]{4}-[0-9]{2}-[0-9]{2}/g)];
-  if (!tokens.length || tokens.some(token => token[0] !== proof.utc_day)) return false;
   const nextDay = proof.utc_day === '9999-12-31' ? '9999-12-32'
     : new Date(Date.parse(proof.utc_day) + 86_400_000).toISOString().slice(0, 10);
   const date = claimDate(proof.utc_day, nextDay);
@@ -39,7 +40,21 @@ export function matchesDatedExcerpt(proof: FactDateProof, archived: DateExcerpt 
   const before = archived.before.slice(previousLine + 1);
   const line = before + archived.text + (nextLine < 0 ? archived.after : archived.after.slice(0, nextLine));
   const references = [...line.matchAll(ARCHIVE_REFERENCE)];
-  return tokens.every(token => {
+  // A complete wiki page path is a locator. Its label and any prose around it still have to agree with the event day.
+  const prose = stripCodeBlocks(archived.before + archived.text + archived.after)
+    .slice(previousLine + 1, previousLine + 1 + line.length);
+  const targets = findLinks(prose).flatMap(link => {
+    if (!link.text.startsWith('[[') || line[link.index - 1] === '\\') return [];
+    const target = link.text.slice(2, -2).split('|', 1)[0]!;
+    if (!/^[a-z0-9_-]+(?:\/[a-z0-9_-]+)+$/i.test(target)) return [];
+    return [{ start: link.index + 2, end: link.index + 2 + target.length }];
+  });
+  const eventDates = tokens.filter(token => {
+    const start = before.length + token.index;
+    return !targets.some(target => start >= target.start && start + token[0].length <= target.end);
+  });
+  return eventDates.length > 0 && eventDates.every(token => {
+    if (token[0] !== proof.utc_day) return false;
     const start = before.length + token.index;
     const suffix = line.slice(start + date.date.length);
     return !/[0-9]/.test(line.charAt(start - 1)) && !/^[0-9]|^[ \t]*[「『《“]/.test(suffix) &&

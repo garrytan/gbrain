@@ -3305,9 +3305,10 @@ stable `request_id` UUID and an `evidence` object with these fields.
 | `excerpt_sha256` | Lowercase SHA-256 of the exact archived substring as UTF-8, including any whitespace in the selection |
 
 The read-only preview checks all rows. Each excerpt must name the proposed day,
-and every ISO date in it must be that same day. For example, a log may date
-several entries on that day individually. Select words that describe the event
-along with its date. A date alone or in a citation target does not qualify.
+and every ISO date in its prose must be that same day. For example, a log may
+date several entries on that day individually. Select words that describe the
+event along with its date. Dates in complete wiki page paths are references
+and cannot supply the event date. A date alone or in a citation target does not qualify.
 The preview hash binds the source incarnation,
 registered writer, active facts and evidence to the reviewed request IDs.
 Apply validates the whole manifest again and rechecks each fact in its

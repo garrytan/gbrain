@@ -20,7 +20,7 @@ const source = 'default';
 const day = '2025-04-10';
 const factSlug = 'fixtures/fact';
 const originalSlug = 'fixtures/original';
-const quote = '记者于 2025-04-10 登记交接完成。\n收件人于 2025-04-10 签收。';
+const quote = '记者于 2025-04-10 登记交接完成。\n收件人于 2025-04-10 签收，参见 [[records/2025-04-11-followup|后续记录]]。';
 const reference = 'See [the earlier handover](records/2025-04-10) for context.';
 const otherReferences = ['See <https://example.invalid/log/2025-04-10> for the record.',
   '[retained log]: archives/2025-04-10'];
@@ -41,6 +41,13 @@ test('repeated event days in one excerpt still form one date', () => {
   expect(matches(repeated.replace(`${day} 13:06`, '2025-04-09 13:06'))).toBe(false);
   expect(matches(repeated.replace(`${day} 13:06`, '2025-04-11 13:06'))).toBe(false);
   expect(matches(`${repeated}\nEarlier entry: [source](logs/${day}).`)).toBe(false);
+  expect(matches(`${repeated}\nFollow-up: [[logs/2025-04-11-next|later entry]].`)).toBe(true);
+  expect(matches(`Follow-up: [[logs/${day}-next|later entry]].`)).toBe(false);
+  expect(matches(`${repeated}\nFollow-up: [[logs/2025-04-11-next|2025-04-11]].`)).toBe(false);
+  expect(matches(`${repeated}\nFollow-up: [[logs/2025-04-11-next.`)).toBe(false);
+  expect(matches(`${repeated}\nFollow-up: \\\\[[logs/2025-04-11-next]].`)).toBe(false);
+  expect(matches(`${repeated}\nFollow-up: \x60[[logs/2025-04-11-next]]\x60.`)).toBe(false);
+  expect(matches(`${repeated}\n\x60\x60\x60md\nFollow-up: [[logs/2025-04-11-next]].\n\x60\x60\x60`)).toBe(false);
   expect(matches(`${day} 13:05: the first file was delivered.\nThe second file was delivered on ${day}`, '', '0')).toBe(false);
   expect(matches(`${repeated}\nThe ${day} “Message Archive” contains both files.`)).toBe(false);
 });
