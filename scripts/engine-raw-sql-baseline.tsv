@@ -31,7 +31,6 @@ src/commands/decide/claims-sweep.ts	execute_raw	1
 src/commands/decide/proposals.ts	execute_raw	2
 src/commands/diag.ts	execute_raw	4
 src/commands/doctor/checks/access-lineage.ts	execute_raw	2
-src/commands/doctor/checks/access-pages-read-by-nobody.ts	execute_raw	5	GBRA-582 item 9 (handover PR 2): set-based read-by-nobody scan over pages.page_readers and access_group_members; no typed engine method exists yet
 src/commands/doctor/checks/atom-body-recheck.ts	execute_raw	3
 src/commands/doctor/checks/atom-retirements.ts	execute_raw	2
 src/commands/doctor/checks/attest-read-access.ts	execute_raw	1
@@ -410,7 +409,6 @@ src/core/guests/stamp-readable.ts	execute_raw	1
 src/core/harness/client-setup.ts	sql_template	1
 src/core/heal-audit.ts	execute_raw	3
 src/core/held-embedding.ts	execute_raw	2
-src/core/identity/owner.ts	execute_raw	4	GST-3216 PR 1: the owner identity resolver reads members, member links, member source bindings and Google source accounts across the access tables in one derived pass with no cache; it moves behind a typed access read when the access tables get engine methods
 src/core/identity/speaker-owner.ts	execute_raw	2	GST-3216 PR 2: the speaker-owner trust read joins a page's live revision to its write request, source kind and member bindings in one statement, and the connector stamp reads a source's bound members; both move behind typed reads when the access and journal tables get engine methods
 src/core/imessage/imessage-source.ts	execute_raw	3	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
 src/core/import-chunk-reuse.ts	execute_raw	1
