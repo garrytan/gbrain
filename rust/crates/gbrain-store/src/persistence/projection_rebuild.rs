@@ -81,27 +81,6 @@ pub struct ProjectionWindowCandidate {
     pub slug: String,
 }
 
-/// The source part of `pageReadFilter` a backlog reads (`readProjectionBacklog`): the sources when
-/// non-empty, else the source, else every source.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BacklogScope {
-    #[serde(default)]
-    pub source_id: Option<String>,
-    #[serde(default)]
-    pub source_ids: Option<Vec<String>>,
-}
-
-impl BacklogScope {
-    fn admits(&self, source_id: &str) -> bool {
-        match (&self.source_ids, &self.source_id) {
-            (Some(ids), _) if !ids.is_empty() => ids.iter().any(|id| id == source_id),
-            (_, Some(id)) if !id.is_empty() => id == source_id,
-            _ => true,
-        }
-    }
-}
-
 /// A job's exact key (`ProjectionJobKey`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,17 +94,6 @@ pub struct ProjectionJobKey {
 const SAFE_FENCE_CHUNKER_VERSION: i16 = 4;
 /// `BOUNDED_PREFIX_BYTES` (page-window/document.ts): `left()` counts code points.
 const BOUNDED_PREFIX_CHARS: usize = 64 * 1024;
-
-/// The class of an unsealed projection (`projectionClassSql`): `text`, `archived`, `protected`,
-/// `sealable` or `reimport`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PageClass {
-    Text,
-    Archived,
-    Protected,
-    Sealable,
-    Reimport,
-}
 
 /// `importerChunkSql`: the page's live chunks are exactly one, at index 0, an `image_asset` chunk of
 /// modality `image`, shorter than the bounded prefix and equal to the page's bounded body prefix
@@ -161,27 +129,6 @@ fn importer_chunk(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
 fn protected_body(page: &PageRecord) -> bool {
     crate::pages::has_protected_text(&page.compiled_truth)
         || crate::pages::has_protected_text(&page.timeline)
-}
-
-/// `projectionClassSql(p, s)` of a live page of a source that is `archived` or not.
-pub(crate) fn page_class(
-    read: &dyn KvRead,
-    page: &PageRecord,
-    archived: bool,
-) -> Result<PageClass> {
-    Ok(if archived {
-        PageClass::Archived
-    } else if page.page_kind != "image" || segmented(page) {
-        PageClass::Text
-    } else if protected_body(page) {
-        PageClass::Protected
-    } else if page.chunker_version.unwrap_or(0) >= SAFE_FENCE_CHUNKER_VERSION
-        && importer_chunk(read, page)?
-    {
-        PageClass::Sealable
-    } else {
-        PageClass::Reimport
-    })
 }
 
 /// `sealableImageSql`: a live, unprotected inline image page the importer sealed at or after the
@@ -701,14 +648,6 @@ mod tests {
         image("sealable", "Photo of a heron", "Photo of a heron", 4);
         image("changed", "Photo of an ibex", "an older caption", 4);
         image("pre-fence", "Photo of a lynx", "Photo of a lynx", 3);
-        let class = |slug: &str| {
-            let read = store.read().unwrap();
-            let page = read_page(&*read, "default", slug).unwrap().unwrap();
-            page_class(&*read, &page, false).unwrap()
-        };
-        assert_eq!(class("sealable"), PageClass::Sealable);
-        assert_eq!(class("changed"), PageClass::Reimport);
-        assert_eq!(class("pre-fence"), PageClass::Reimport);
         let backlog = store
             .read_projection_backlog(&crate::link_queries::CoverageScope::default())
             .unwrap();
