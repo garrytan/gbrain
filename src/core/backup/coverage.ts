@@ -121,10 +121,9 @@ async function brainMaturity(engine: BrainEngine): Promise<BackupStatus['maturit
 
 async function countLivePages(engine: BrainEngine): Promise<number | null> {
   try {
-    // A non-numeric count is UNESTABLISHED (null), not zero — returning 0 would
-    // fabricate a "no pages at risk" all-clear and skip the degraded flag.
-    const n = await engine.countLivePages();
-    return typeof n === 'number' && Number.isFinite(n) ? n : null;
+    // An empty rowset / non-numeric n is UNESTABLISHED (null), not zero — returning 0
+    // would fabricate a "no pages at risk" all-clear and skip the degraded flag.
+    return await engine.countBrainLivePages();
   } catch {
     return null;
   }

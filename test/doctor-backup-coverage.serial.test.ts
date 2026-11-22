@@ -27,8 +27,7 @@ import {
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
-import { countLivePages as countLivePagesSql } from '../src/core/engine-sql/doctor-pages.ts';
+import { countBrainLivePages as countBrainLivePagesSql, readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
 
 const ENV_KEYS = ['GBRAIN_HOME', 'GBRAIN_BACKUP_CHECK', 'GBRAIN_BACKUP_CHECK_DAYS'] as const;
 
@@ -106,10 +105,9 @@ function makeEngine(sourcePaths: Array<{ id: string; local_path: string }>, page
   }));
   return {
     kind: 'pglite',
-    // loadAllSources and countLivePages read typed members.
+    // loadAllSources reads the typed member; the page count still runs executeRaw.
     listSourceRecords: async () => sources(),
-    // The live-page count is the typed doctor-pages member, run on this stub's executeRaw.
-    countLivePages() { const e = this as unknown as { executeRaw(sql: string, params?: unknown[]): Promise<never[]> }; return countLivePagesSql((sql, params) => e.executeRaw(sql, params)); },
+    countBrainLivePages() { return countBrainLivePagesSql(this as never); },
     readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => {
       if (/FROM sources/i.test(sql)) return sources().map((s) => ({ ...s, config: '{}' }));
@@ -220,12 +218,10 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
   test('degraded compute with no assets leads with the unreadable database', async () => {
     const engine = {
       kind: 'pglite',
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
       readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async (sql: string) => {
         if (/FROM sources/i.test(sql)) return [];
-        throw new Error('pages unreadable');
-      },
-      countLivePages: async () => {
         throw new Error('pages unreadable');
       },
     } as unknown as BrainEngine;
@@ -364,8 +360,7 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
     // to, getBackupStatus rethrows and the checker's try/catch owns it.
     const throwing = {
       kind: 'pglite',
-      // The live-page count is the typed doctor-pages member, run on this stub's executeRaw.
-      countLivePages() { const e = this as unknown as { executeRaw(sql: string, params?: unknown[]): Promise<never[]> }; return countLivePagesSql((sql, params) => e.executeRaw(sql, params)); },
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
       readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throw new Error('engine down');
@@ -398,8 +393,7 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
     saveBackupStatus(cache);
     const throwing = {
       kind: 'pglite',
-      // The live-page count is the typed doctor-pages member, run on this stub's executeRaw.
-      countLivePages() { const e = this as unknown as { executeRaw(sql: string, params?: unknown[]): Promise<never[]> }; return countLivePagesSql((sql, params) => e.executeRaw(sql, params)); },
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
       readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throw new Error('engine down');
@@ -419,14 +413,13 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
 
 // ── GBRA-585 item 7: the young-brain count and the full-backup fix per engine ─
 
-/** Engine stub answering the typed maturity member beside the sources/pages listings. */
+/** Engine stub answering the maturity count before the sources/pages listings (its SQL names both tables). */
 function makeCountingEngine(kind: 'pglite' | 'postgres', sources: Array<{ id: string; local_path: string }>, pages: number, facts: number): BrainEngine {
   const listing = makeEngine(sources, pages);
   return {
     kind,
     listSourceRecords: listing.listSourceRecords,
-    // The live-page count is the typed doctor-pages member, run on this stub's executeRaw.
-    countLivePages() { const e = this as unknown as { executeRaw(sql: string, params?: unknown[]): Promise<never[]> }; return countLivePagesSql((sql, params) => e.executeRaw(sql, params)); },
+    countBrainLivePages() { return countBrainLivePagesSql(this as never); },
     readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => {
       if (/AS pages/i.test(sql)) return [{ pages, facts, since: new Date(Date.now() - 60_000).toISOString() }];

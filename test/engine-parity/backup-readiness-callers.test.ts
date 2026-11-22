@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — the callers of the typed backup and readiness reads, not the members alone:
  * computeBackupCoverage (backup/coverage.ts brainMaturity + countLivePages, through readBrainMaturity and
- * countLivePages) and the readiness worker and sync probes (readiness.ts workerProbe + syncProbe, through
+ * countBrainLivePages) and the readiness worker and sync probes (readiness.ts workerProbe + syncProbe, through
  * countWaitingJobs and countRepoBoundSources). Three arms, each checked against its own named expectation:
  * PGLite always, Postgres with DATABASE_URL, Rust through test/engine-parity/harness.ts (GBRAIN_TEST_RUST_ARM=1).
  *
@@ -92,7 +92,7 @@ const WORKER_FIX: Record<ParityBackend, WorkerFixSeen> = {
 
 describe('engine parity: backup coverage and readiness probes, driven through their callers', () => {
   parityTest('computeBackupCoverage counts the pages a database-only brain holds, with the arm\'s placement verdict',
-    { methods: ['countLivePages', 'readBrainMaturity'] },
+    { methods: ['countBrainLivePages', 'readBrainMaturity'] },
     async (engine: BrainEngine, backend) => {
       await engine.putPage('notes/one', NOTE);
       await engine.putPage('notes/two', NOTE);
@@ -105,7 +105,7 @@ describe('engine parity: backup coverage and readiness probes, driven through th
       expect({ arm: backend, observed }).toEqual({ arm: backend, observed: COVERAGE[backend] });
       // Postgres differs by design (see COVERAGE) and never asks for the maturity; the arms agree on what both reads hold.
       const maturity = await engine.readBrainMaturity();
-      return { pages_counted: await engine.countLivePages(), maturity_pages: Number(maturity?.pages), maturity_facts: Number(maturity?.facts) };
+      return { pages_counted: await engine.countBrainLivePages(), maturity_pages: Number(maturity?.pages), maturity_facts: Number(maturity?.facts) };
     });
 
   parityTest('the readiness worker and sync probes read the queue and the bound sources, not probe_failed',

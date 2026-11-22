@@ -30,8 +30,7 @@ import {
   saveBackupStatus,
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
-import { readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
-import { countLivePages as countLivePagesSql } from '../src/core/engine-sql/doctor-pages.ts';
+import { countBrainLivePages as countBrainLivePagesSql, readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
 
 const ENV_KEYS = ['GBRAIN_HOME', 'GBRAIN_BACKUP_CHECK', 'GBRAIN_BACKUP_CHECK_DAYS'] as const;
 
@@ -122,13 +121,12 @@ function makeEngine(opts: { sources?: SourceFixture[]; pageCount?: number } = {}
   }));
   const engine = {
     kind: 'pglite',
-    // loadAllSources and countLivePages read typed members.
+    // loadAllSources reads the typed member; the page count still runs executeRaw.
     listSourceRecords: async () => {
       calls.push('listSourceRecords');
       return sources();
     },
-    // The live-page count is the typed doctor-pages member, run on this stub's executeRaw.
-    countLivePages() { const e = this as unknown as { executeRaw(sql: string, params?: unknown[]): Promise<never[]> }; return countLivePagesSql((sql, params) => e.executeRaw(sql, params)); },
+    countBrainLivePages() { return countBrainLivePagesSql(this as never); },
     readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => {
       calls.push(sql);
@@ -261,8 +259,7 @@ describe('collectBackupCoverage remote (remote:true)', () => {
     saveBackupStatus(warnCache());
     // Remote must never touch the engine (cache-only read).
     const engine = {
-      // The live-page count is the typed doctor-pages member, run on this stub's executeRaw.
-      countLivePages() { const e = this as unknown as { executeRaw(sql: string, params?: unknown[]): Promise<never[]> }; return countLivePagesSql((sql, params) => e.executeRaw(sql, params)); },
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
       readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throw new Error('remote collect must not query the engine');
@@ -512,8 +509,7 @@ describe('collectBackupCoverage — GBRAIN_BACKUP_CHECK=0', () => {
 
     // Any engine touch (compute attempt) blows the test up.
     const throwing = {
-      // The live-page count is the typed doctor-pages member, run on this stub's executeRaw.
-      countLivePages() { const e = this as unknown as { executeRaw(sql: string, params?: unknown[]): Promise<never[]> }; return countLivePagesSql((sql, params) => e.executeRaw(sql, params)); },
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
       readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throw new Error('disabled collect must not query the engine');
