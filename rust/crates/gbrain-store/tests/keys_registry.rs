@@ -44,13 +44,10 @@ fn family_constants(src: &str) -> Vec<(String, Option<u8>)> {
         .filter_map(|line| {
             let (_, rest) = line.trim().split_once("const ")?;
             let (name, value) = rest.split_once(": [u8; 2] = family_tag(")?;
-            let arg = value.split_once(')').map(|(a, _)| a)?;
-            let byte = match arg
-                .strip_prefix("b'")
-                .and_then(|a| a.strip_suffix('\''))
-                .map(str::as_bytes)
-            {
-                Some([b]) if b.is_ascii_graphic() => Some(*b),
+            // Read the literal before the closing delimiter, so a family byte of `)` is not cut short. An escape
+            // (`b'\0'`, `b'\''`) or any other argument is unreadable and reported.
+            let byte = match value.strip_prefix("b'").map(str::as_bytes) {
+                Some([b, b'\'', b')', ..]) if b.is_ascii_graphic() && *b != b'\\' => Some(*b),
                 _ => None,
             };
             Some((name.trim().to_string(), byte))
@@ -367,4 +364,15 @@ fn a_commented_or_unreadable_family_tag_a_digit_approved_for_another_byte_and_du
             "missing {want:?} in {found:?}"
         );
     }
+}
+
+/// Round-2 review case: a family byte that is itself `)` is read as a byte literal, not cut at the delimiter, so a
+/// registered `family_tag(b')')` passes.
+#[test]
+fn a_registered_family_tag_whose_byte_is_a_closing_paren_passes() {
+    let keys = "pub const FAMILY_ESCAPE: u8 = b'~';\npub const FAM_P: [u8; 2] = family_tag(b')'); // paren\n";
+    let doc = "Reserved tags:\n\n| Family | Tag | Constant | Cascade |\n|---|---|---|---|\n| esc | `~` | `FAMILY_ESCAPE` | no |\n\n\
+        ### Tag registry\n\n| Tag | Constant | Owner | Status |\n|---|---|---|---|\n| `~)` | `FAM_P` | core | main |\n\n\
+        | Sub-tag | Constant | Table |\n|---|---|---|\n";
+    assert_eq!(problems(keys, doc), Vec::<String>::new());
 }
