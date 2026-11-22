@@ -37,7 +37,7 @@ export const archiveAtomPinSql = sqlFragment`encode(sha256(convert_to(jsonb_buil
   ${archiveTruth}, ${archiveTimeline}, archive.title, archive.type, archive.frontmatter, archive.tags,
   archive.trust_tier, archive.content_hash, archive.archived_write_request_id, archive.is_deleted)::text, 'UTF8')), 'hex')`;
 
-/** Source-scoped preimages of committed remember writes with any prior completed scan. */
+/** Source-scoped preimages of retained publications with any prior completed scan. */
 export async function readAtomScanRevisionCandidates(exec: ScopedRead, opts: AtomScanRevisionQuery): Promise<AtomScanRevisionCandidate[]> {
   const currentTruth = trustedSql(boundedBodyPrefixSql('p', 'truth'));
   const currentTimeline = trustedSql(boundedBodyPrefixSql('p', 'timeline'));
@@ -52,12 +52,12 @@ export async function readAtomScanRevisionCandidates(exec: ScopedRead, opts: Ato
     JOIN persistence_requests current_write ON current_write.id=p.revision_write_request_id
       AND current_write.source_id=s.id AND current_write.source_incarnation=s.incarnation
       AND current_write.page_id=p.id AND current_write.slug=p.slug
-      AND current_write.operation='remember' AND current_write.state='committed'
+      AND current_write.operation IN ('remember','put_page') AND current_write.state='committed'
     JOIN page_versions archive ON archive.page_id=p.id
     JOIN persistence_requests archived_by ON archived_by.id=archive.archived_write_request_id
       AND archived_by.source_id=s.id AND archived_by.source_incarnation=s.incarnation
       AND archived_by.page_id=p.id AND archived_by.slug=p.slug
-      AND archived_by.operation='remember' AND archived_by.state='committed'
+      AND archived_by.operation IN ('remember','put_page') AND archived_by.state='committed'
     WHERE p.deleted_at IS NULL AND p.type=ANY(${opts.types}::text[]) ${scope} ${slugs}
       AND (p.id,archive.id)>(${opts.afterPageId}::integer,${opts.afterVersionId}::integer)
       AND archive.is_deleted=false AND p.title=archive.title AND p.type=archive.type

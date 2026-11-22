@@ -64,7 +64,7 @@ export function excludeEquivalentAtomScans(parameter: number): string {
   )`;
 }
 
-/** A completed managed scan can still answer for a private fact write with identical projected input. */
+/** A completed managed scan can still answer for a later publication with identical projected input. */
 export async function equivalentAtomScanRevisions(engine: BrainEngine, sourceId: string | undefined,
   types: string[], slugs?: string[], signal?: AbortSignal): Promise<string> {
   const finished = new Map<string, Revision & { version_id: number; archive_hash: string; old_hash: string }>();

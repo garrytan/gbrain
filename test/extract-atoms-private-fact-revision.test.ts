@@ -2,10 +2,11 @@ import { expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 import { countExtractAtomsBacklog, discoverExtractablePages, runPhaseExtractAtoms } from '../src/core/cycle/extract-atoms.ts';
+import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
-import { WORLD_PAGE_BODY as BODY } from './helpers/world-fence-page.ts';
+import { PRIVATE_ROW, WORLD_PAGE_BODY as BODY } from './helpers/world-fence-page.ts';
 
 const SOURCE = 'default';
 const SLUG = 'meetings/input-review';
@@ -61,6 +62,17 @@ for (const backend of testBackends()) {
       const scanner2 = scanner();
       await runPhaseExtractAtoms(engine, { sourceId: SOURCE, _chat: scanner2.chat, _transcripts: [] });
       expect(scanner2.prompts).toHaveLength(0);
+      expect(await activeAtoms(engine)).toEqual(atoms);
+
+      // Canonical fact-date repair publishes its edited fence with a normal put_page.
+      const preimage = (await engine.readPageSnapshot(SLUG, { sourceId: SOURCE }))!;
+      const editedTruth = preimage.page.compiled_truth.replace(PRIVATE_ROW, 'A revised private review detail is available.');
+      expect(editedTruth).not.toBe(preimage.page.compiled_truth);
+      const edited = await dispatchToolCall(engine, 'put_page', { slug: SLUG, expected_revision: preimage.revision,
+        content: serializePageToMarkdown({ ...preimage.page, compiled_truth: editedTruth }, preimage.tags) },
+      { remote: false, sourceId: SOURCE, config: { engine: engine.kind, embedding_disabled: true } });
+      if (edited.isError) throw new Error(edited.content[0]!.text);
+      expect(await countExtractAtomsBacklog(engine, SOURCE)).toBe(0);
       expect(await activeAtoms(engine)).toEqual(atoms);
 
       await remember(engine, 'The public review takes place every Thursday.', 'world');
