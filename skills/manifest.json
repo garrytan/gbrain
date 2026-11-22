@@ -232,7 +232,7 @@
     {
       "name": "brain-pdf",
       "path": "brain-pdf/SKILL.md",
-      "description": "Generate a publication-quality PDF from any brain page via the gstack make-pdf binary; strips frontmatter, sanitizes emoji, applies running headers."
+      "description": "Generate a publication-quality PDF from any brain page via the gstack make-pdf binary; strips private sections the way gbrain publish does, sanitizes emoji, applies running headers."
     },
     {
       "name": "voice-note-ingest",
