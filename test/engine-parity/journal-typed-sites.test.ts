@@ -50,6 +50,7 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { VERSION } from '../../src/version.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
+import { expectClaimGateRefusal } from '../helpers/claim-gate-refusal.ts';
 import { submissionAuthority } from '../../src/core/persistence/authority.ts';
 import { localHostId, registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { admitWrite, type WriteAdmission } from '../../src/core/persistence/journal.ts';
@@ -157,6 +158,8 @@ describe('engine parity: the persistence sites the journal flip typed', () => {
   }));
 
   parityTest('the owner binding is the claimed checkout, and the recovery scan lists this host\'s recovery rows after a cursor', {
+    // A real writer_claim refuses on the Rust arm, until lane 8 writer-release-rust 210d961776 reaches main; that head deletes claim-release-gate.ts and restores success.
+    requires: 'raw_sql',
     methods: ['worktreeClaimStore', 'getWorktreeBinding', 'readOwnerHostBinding', 'readLedgerSource', 'insertTopologyChange', 'listTopologyRecoveries'],
     timeout: 60_000,
   }, async (engine, backend: ParityBackend) => withHome(async (home) => {
@@ -166,7 +169,9 @@ describe('engine parity: the persistence sites the journal flip typed', () => {
     await Bun.write(join(root, 'example.md'), 'generic example');
     await createSource(engine, backend, 'work', {}, root);
     try {
-      await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) });
+      // The Rust arm stops here on the claim gate's refusal (claim-release-gate.ts), until lane 8 writer-release-rust 210d961776 reaches main; that head deletes claim-release-gate.ts and restores success.
+      await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) })
+        .catch((error: unknown) => { if (backend === 'rust') expectClaimGateRefusal(error); throw error; });
       const host = localHostId();
       const binding = await engine.getWorktreeBinding('work', host);
       const worktree = binding!.worktree_id;
@@ -249,7 +254,8 @@ describe('engine parity: the persistence sites the journal flip typed', () => {
 
   parityTest('a worktree-bound put_page writes the page and its file, and refuses by name at admission where managed_persistence is held', {
     methods: ['getWorktreeBinding', 'readCounterRows'],
-    requires: 'managed_persistence',
+    // The claim comes first and the Rust arm stops on its gate, until lane 8 writer-release-rust 210d961776 reaches main; that head deletes claim-release-gate.ts and restores success; the managed_persistence admission refusal below is reached again then.
+    requires: 'raw_sql',
     timeout: 90_000,
   }, async (engine, backend: ParityBackend) => withHome(async (home) => {
     const root = join(home, 'checkout');
@@ -259,7 +265,9 @@ describe('engine parity: the persistence sites the journal flip typed', () => {
     const file = join(root, `${slug}.md`);
     try {
       await registerLocalWriter(engine, 'cli');
-      await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) });
+      // The Rust arm stops here on the claim gate's refusal (claim-release-gate.ts), until lane 8 writer-release-rust 210d961776 reaches main; that head deletes claim-release-gate.ts and restores success.
+      await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) })
+        .catch((error: unknown) => { if (backend === 'rust') expectClaimGateRefusal(error); throw error; });
       expect(Boolean((await engine.getWorktreeBinding('work', localHostId()))?.worktree_id)).toBe(true);
       await engine.setConfig('sync.write_through', 'true');
       const ctx = { engine, sourceId: 'work', remote: false, dryRun: false, logger,

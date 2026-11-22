@@ -1192,9 +1192,9 @@ listPurgeMatchCandidates	facts_purge	yes	3	no	yes	yes	serves
 lockPurgeSource	facts_purge	yes	2	no	yes	yes	serves
 insertHoldingPagePurges	facts_purge	yes	4	no	yes	yes	serves
 deletePurgedTakes	facts_purge	yes	3	no	yes	yes	serves
-deletePurgeReviewQueue	facts_purge	yes	4	no	yes	yes	serves
-deletePurgeReviewProposals	facts_purge	yes	4	no	yes	yes	serves
-deletePurgeDecideProposals	facts_purge	yes	4	no	yes	yes	serves
+deletePurgeReviewQueue	facts_purge	yes	6	no	yes	yes	serves
+deletePurgeReviewProposals	facts_purge	yes	6	no	yes	yes	serves
+deletePurgeDecideProposals	facts_purge	yes	5	no	yes	yes	serves
 deletePurgeTrustProposals	facts_purge	yes	3	no	yes	yes	serves
 deletePurgeOpenLoops	facts_purge	yes	3	no	yes	yes	serves
 deletePurgeWriteGateHolds	facts_purge	yes	3	no	yes	yes	serves

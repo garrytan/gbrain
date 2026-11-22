@@ -215,6 +215,30 @@ async function pageState(engine: BrainEngine, s: Seeded) {
 }
 
 describe('engine parity: the page purge sweep, its segment storage and its slug stores', () => {
+  // A NUL byte: Postgres text cannot hold it, so the SQL engines' statements cannot run with one. Main's Rust deletes
+  // (facts/purge_writes.rs) check the source id for NUL but not the refs.
+  const refusal = (run: () => Promise<number>) => run().then(deleted => ({ deleted }), () => ({ refused: true }));
+  parityTest('a NUL byte in the source id of the purge review and decide deletes is refused on every engine', {
+    methods: ['deletePurgeReviewQueue', 'deletePurgeReviewProposals', 'deletePurgeDecideProposals'],
+  }, async (engine) => {
+    const seen = {
+      queue: await refusal(() => engine.deletePurgeReviewQueue('de\0fault', ['5'])),
+      proposals: await refusal(() => engine.deletePurgeReviewProposals('de\0fault', ['5'])),
+      decide: await refusal(() => engine.deletePurgeDecideProposals('de\0fault', [5])),
+    };
+    expect(seen).toEqual({ queue: { refused: true }, proposals: { refused: true }, decide: { refused: true } });
+    return seen;
+  });
+
+  // The ref case: PGLite and Postgres refuse (their text type has no NUL: invalid byte sequence 0x00); the Rust store scans its
+  // keys, matches nothing and answers 0 (test/rust-expected-divergence/page_purge.tsv names the difference).
+  parityTest('a NUL byte in a ref of the purge review deletes is refused by the SQL engines and answers 0 on Rust', {
+    methods: ['deletePurgeReviewQueue', 'deletePurgeReviewProposals'],
+  }, async (engine) => ({
+    queueRef: await refusal(() => engine.deletePurgeReviewQueue(SRC, ['5\0'])),
+    proposalsRef: await refusal(() => engine.deletePurgeReviewProposals(SRC, ['5\0'])),
+  }));
+
   parityTest('sweepPurgedPage removes the proposals, review rows, held writes, gate receipts, facts, file records and journal receipts that name the page, and nothing of another page or source', {
     methods: ['putPage', 'insertFacts', 'insertFact', 'addTakesBatch', 'listTakes', 'insertDecideProposal', 'insertDecideReviewProposal', 'applyDecideReviewQueue', 'insertTrustProposal',
       'upsertWriteGateHold', 'upsertWriteGateReceipt', 'upsertFile', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow',

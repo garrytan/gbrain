@@ -1,0 +1,3 @@
+# Parity cases of the page purge family where the Rust engine is expected to answer differently from PGLite. Edited by hand.
+# Columns (tab separated): parity file, case name, normaliser, why the answer differs (test/rust-expected-divergence/search.tsv).
+test/engine-parity/page-purge-sweep.test.ts	a NUL byte in a ref of the purge review deletes is refused by the SQL engines and answers 0 on Rust	nul-ref-outcome	PGLite and Postgres refuse a ref with a NUL byte (invalid byte sequence for encoding UTF8: 0x00); the Rust store answers 0 deleted, because deletePurgeReviewQueue and deletePurgeReviewProposals (facts/purge_writes.rs) check only the source id for NUL

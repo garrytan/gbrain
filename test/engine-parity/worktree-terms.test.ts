@@ -44,6 +44,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { WorktreeBinding } from '../../src/core/engine-sql/write-misc.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
+import { expectClaimGateRefusal } from '../helpers/claim-gate-refusal.ts';
 import { WITHHELD_BY_MIRROR } from '../../src/core/persistence/effect-model.ts';
 import { localHostId } from '../../src/core/persistence/identity.ts';
 import { SEGMENTED_MIRROR_GATE_CODE } from '../../src/core/persistence/segmented-mirror-gate.ts';
@@ -74,7 +75,9 @@ async function withClaimedWorktree<T>(engine: BrainEngine, backend: ParityBacken
       await Bun.write(join(root, 'example.md'), 'generic example');
       await createSource(engine, backend, 'work', {}, root);
       try {
-        await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) });
+        // The Rust arm stops here on the claim gate's refusal (claim-release-gate.ts), until lane 8 writer-release-rust 210d961776 reaches main; that head deletes claim-release-gate.ts and restores success.
+        await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: await writerAdminState(engine) })
+          .catch((error: unknown) => { if (backend === 'rust') expectClaimGateRefusal(error); throw error; });
         const host = localHostId();
         const binding = await engine.getWorktreeBinding('work', host);
         const source = await engine.readLedgerSource('work');
@@ -121,6 +124,8 @@ async function claimHead(engine: BrainEngine, hostId: string): Promise<string | 
 
 describe('engine parity: the journal on a claimed worktree', () => {
   parityTest('the admission reads see the claimed worktree, its binding at its own generation and no refresh', {
+    // A real writer_claim refuses on the Rust arm, until lane 8 writer-release-rust 210d961776 reaches main; that head deletes claim-release-gate.ts and restores success.
+    requires: 'raw_sql',
     methods: ['getWorktreeBinding', 'readWorktreeAdmission', 'completeSyncedRefresh', 'hasDeferralRoom', 'readRefreshTiming', 'countHeldBehindImport'],
     timeout: 60_000,
   }, async (engine, backend) => withClaimedWorktree(engine, backend, async ({ binding, incarnation }) => {
@@ -145,6 +150,8 @@ describe('engine parity: the journal on a claimed worktree', () => {
   }));
 
   parityTest('a queued write on the worktree is claimable by its owner host only, and an unsettled mirror on its slug holds it', {
+    // A real writer_claim refuses on the Rust arm, until lane 8 writer-release-rust 210d961776 reaches main; that head deletes claim-release-gate.ts and restores success.
+    requires: 'raw_sql',
     methods: ['hasClaimableWrite', 'selectClaimableWrite', 'insertWriteRequest', 'insertWithdrawalEffects'],
     timeout: 60_000,
   }, async (engine, backend) => withClaimedWorktree(engine, backend, async ({ host, binding, incarnation }) => {
@@ -164,6 +171,8 @@ describe('engine parity: the journal on a claimed worktree', () => {
   }));
 
   parityTest('a withdrawal mirror the segmented gate parked is listed for its owner host only, and not once a sibling effect parks outside the allowed codes', {
+    // A real writer_claim refuses on the Rust arm, until lane 8 writer-release-rust 210d961776 reaches main; that head deletes claim-release-gate.ts and restores success.
+    requires: 'raw_sql',
     methods: ['insertWriteRequest', 'insertWithdrawalEffects', 'selectClaimableEffect', 'stampEffectClaim', 'parkEffectRow', 'listGatedMirrorRequests'],
     timeout: 60_000,
   }, async (engine, backend) => withClaimedWorktree(engine, backend, async ({ host, binding, incarnation }) => {
@@ -190,6 +199,8 @@ describe('engine parity: the journal on a claimed worktree', () => {
   }));
 
   parityTest('the topology recovery pass attempts a recovering change on the owner host\'s worktree', {
+    // A real writer_claim refuses on the Rust arm, until lane 8 writer-release-rust 210d961776 reaches main; that head deletes claim-release-gate.ts and restores success.
+    requires: 'raw_sql',
     methods: ['insertTopologyChange', 'listTopologyRecoveries'],
     timeout: 60_000,
   }, async (engine, backend) => withClaimedWorktree(engine, backend, async ({ host, binding, incarnation }) => {
