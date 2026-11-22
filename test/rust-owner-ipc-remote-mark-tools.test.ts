@@ -16,7 +16,10 @@
  * 2. Fails on: a handler that runs outside the mark its context names; a mark that a nested local context clears; a
  *    local path whose context or code reads as remote, so its own writes are refused on a Rust brain.
  *    (e) a local caller's own writes still reach the owner: the CLI's operation context, the cycle a local job runs
- *    and `gbrain dream`'s cycle all write through the owner as local callers.
+ *    and `gbrain dream`'s cycle all write through the owner as local callers. (f) `gbrain bootstrap verify` and the
+ *    Apple Contacts person-fact sync, which build their own operation context, call the owner as local callers too;
+ *    their journaled writes stop at write admission on the `transactions` refusal (admission opens a transaction,
+ *    which does not cross the owner socket), never on the remote-caller refusal.
  * 3. Existing coverage: rust-owner-ipc-remote-scope.test.ts covers dispatch and jobs a remote call queued; nothing ran
  *    a model-chosen tool call outside dispatch.
  * 4. Seam: the owner is the real PGLite engine behind a recording proxy on a real socket; the client is a stand-in
@@ -48,6 +51,8 @@ import { withEnv } from './helpers/with-env.ts';
 import { makeContext } from '../src/cli/main.ts';
 import { runCycle } from '../src/core/cycle.ts';
 import { makeAutopilotCycleHandler } from '../src/core/minions/handlers/autopilot-cycle.ts';
+import { verifyWorkspace } from '../src/core/bootstrap/verify.ts';
+import { syncPersonFacts } from '../src/core/apple-contacts/person-facts.ts';
 
 const sandbox = mkdtempSync(join(tmpdir(), 'gbrain-owner-remote-mark-'));
 const brainHome = join(sandbox, 'home');
@@ -285,5 +290,50 @@ describe('a local caller\'s own writes on a Rust brain still reach the owner', (
     const report = await runCycle(client, { brainDir: null, phases: ['orphans'] });
     expect(report.status).toBe('clean');
     await expectLocalWritesSent();
+  }), 60_000);
+
+  /** Every member the client was asked for went out as a local call; none was refused as a remote caller's. */
+  async function expectNoRemoteCall(): Promise<Array<{ member: string; remote: boolean; outcome: string }>> {
+    const all = await Promise.all(asked.map(async call => ({ member: call.member, remote: call.remote, outcome: await call.outcome })));
+    expect(all.length).toBeGreaterThan(0);
+    expect(all.filter(call => call.remote)).toEqual([]);
+    return all;
+  }
+
+  /** The refusal a journaled write meets on a client today: write admission opens a transaction, which does not cross the socket. */
+  const admissionRefusal = { member: 'transaction', remote: false, outcome: 'engine_capability_missing' };
+
+  // Value: protects=`gbrain bootstrap verify` on a Rust brain's second process calls the owner as a local caller (its localCtx says remote: false), so every check runs and the roundtrip fails only on the transactions refusal; fails_when=localCtx stops naming remote: false, or the mark reads an explicit local context as remote; why_new=the review of the remote mark named verify.ts as a caller that builds its own context and was not checked; seam=the real verifyWorkspace on an owner-client stand-in, real PGLite owner on a real socket; no_claim=a passing roundtrip, which needs journaled writes to reach the owner
+  test('bootstrap verify: every check calls the owner as a local caller; the roundtrip stops on the transactions refusal, not the remote one', () => isolated(async () => {
+    const ws = join(sandbox, 'verify-ws');
+    mkdirSync(join(ws, 'brain'), { recursive: true });
+    const report = await verifyWorkspace(client, ws, { sourceId: 'default', skipHooksSmoke: true, gbrainHomeDir: brainHome, sweepBudgetMs: 2_000 });
+    expect(report.checks.find(c => c.id === 'doctor_green')).toMatchObject({ ok: true });
+    const roundtrip = report.checks.find(c => c.id === 'roundtrip');
+    expect(roundtrip?.ok).toBe(false);
+    expect(roundtrip?.detail).toContain('transaction cannot run from a second process');
+    expect(roundtrip?.detail).not.toContain('remote caller');
+    const calls = await expectNoRemoteCall();
+    expect(calls).toContainEqual(admissionRefusal);
+    expect(calls.filter(call => call.outcome !== 'sent' && call.member !== 'transaction')).toEqual([]);
+    expect(writesReachedOwner()).not.toContain('transaction');
+    // The refusal a client's write meets says it cannot run from this process; it no longer claims the write is sent.
+    const refusal = await client.transaction(async () => undefined).then(() => null, (error: unknown) => error as OperationError);
+    expect(refusal?.why).toContain('cannot run from this process yet');
+    expect(refusal?.why).not.toContain('sent to the owner as one request');
+  }), 60_000);
+
+  // Value: protects=the Apple Contacts person-fact sync on a Rust brain's second process calls `remember` as a local caller (its context says remote: false), so the write stops on the transactions refusal and writes no fact; fails_when=the sync's context stops naming remote: false, or the mark reads an explicit local context as remote; why_new=the review of the remote mark named person-facts.ts as a caller that builds its own context and was not checked; seam=the real syncPersonFacts and remember handler on an owner-client stand-in, real PGLite owner on a real socket; no_claim=a written fact, which needs journaled writes to reach the owner
+  test('Apple Contacts person facts: remember is called as a local caller and stops on the transactions refusal, not the remote one', () => isolated(async () => {
+    const slug = 'people/alice-example';
+    await engine.putPage(slug, { type: 'person', title: 'Alice Example', compiled_truth: 'A person.', timeline: '' } as never);
+    asked.length = 0; reached.length = 0;
+    const ended = await syncPersonFacts(client, 'contacts-a', { source_id: 'default', slug }, ['Works at Acme Example'], () => {})
+      .then(() => 'written', (error: unknown) => error as { reason?: string; message?: string });
+    expect(ended).toMatchObject({ reason: 'transactions' });
+    expect((ended as { message: string }).message).toContain('transaction cannot run from a second process');
+    const calls = await expectNoRemoteCall();
+    expect(calls).toContainEqual(admissionRefusal);
+    expect(await engine.executeRaw(`SELECT fact FROM facts WHERE entity_slug = $1`, [slug])).toEqual([]);
   }), 60_000);
 });
