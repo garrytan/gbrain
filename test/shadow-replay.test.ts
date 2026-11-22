@@ -22,6 +22,7 @@ import {
 } from '../src/shadow/capture.ts';
 import { captureDir, captureOffMarker, writePrivateJson } from '../src/shadow/capture-state.ts';
 import { checkLocalPostgresUrl } from '../src/shadow/replay-copy.ts';
+import { mcpOutcome } from '../src/shadow/replay-ops.ts';
 import {
   buildUnits, childEnv, classify, firstDiff, NormState, runReplayChild, type ArmName, type RunSpec,
 } from '../src/shadow/replay.ts';
@@ -198,6 +199,15 @@ describe('comparison', () => {
     expect(firstDiff({ again: 'aaaaaaaa-0000-4000-8000-000000000001' }, { again: 'cccccccc-0000-4000-8000-000000000001' }, n)).toEqual(['again']);
     expect(firstDiff({ page: stored }, { page: '22222222-2222-4222-8222-222222222222' }, n)).toEqual(['page']);
     expect(firstDiff({ due: '2030-01-01T00:00:00.000Z' }, { due: '2030-01-02T00:00:00.000Z' }, n)).toEqual(['due']);
+  });
+
+  test('a typed MCP refusal counts as capability_missing; any other MCP result is compared whole', () => {
+    const norm = () => new NormState(new Set(), { from: 0, to: 0 });
+    const page = mcpOutcome({ content: [{ type: 'text', text: '{"slug":"a/b"}' }] });
+    const refused = mcpOutcome({ isError: true, content: [{ type: 'text', text: '{"code":"engine_capability_missing","message":"m"}' }] });
+    const other = mcpOutcome({ isError: true, content: [{ type: 'text', text: '{"code":"page_not_found","message":"m"}' }] });
+    expect(classify({ pglite: page, rust: refused }, { rust: norm() }, true).cls).toBe('capability_missing');
+    expect(classify({ pglite: page, rust: other }, { rust: norm() }, true).cls).toBe('differs_seed_loss');
   });
 
   test('three arms split a Rust gap from TypeScript disagreement; two arms only say they differ', () => {

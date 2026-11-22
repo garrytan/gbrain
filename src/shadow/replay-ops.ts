@@ -36,6 +36,19 @@ function errCode(e: unknown): string {
   return typeof c === 'string' ? c : 'error';
 }
 
+const CAPABILITY_CODES = new Set(['engine_capability_missing', 'raw_sql_missing']);
+
+/**
+ * The compared form of an MCP tool result: the whole result, byte for byte, except a typed "this engine cannot do it
+ * yet" refusal, which reads as the same refused outcome a thrown error gives (so it counts as capability_missing).
+ */
+export function mcpOutcome(r: { isError?: boolean; content?: Array<{ type: string; text?: string }> }): Outcome {
+  const content = (r.content ?? []).map(c => (c.type === 'text' ? { type: 'text', text: parsed(c.text ?? '') } : jsonView(c)));
+  const code = r.isError ? (content[0] as { text?: { code?: unknown } } | undefined)?.text?.code : undefined;
+  if (typeof code === 'string' && CAPABILITY_CODES.has(code)) return { ok: false, code };
+  return { ok: true, value: { isError: r.isError ?? false, content } };
+}
+
 /** Renders one recorded operation on `engine`; each entry is one surface's output. */
 export async function renderOperation(engine: BrainEngine, call: OpCall, config: EngineConfig): Promise<Array<{ member: string; out: Outcome }>> {
   const [{ operations }, { dispatchToolCall, buildOperationContext }, { formatResult, normalizeLocalResult }] = await Promise.all([
@@ -47,8 +60,7 @@ export async function renderOperation(engine: BrainEngine, call: OpCall, config:
   const outs: Array<{ member: string; out: Outcome }> = [];
   if (call.surface === 'mcp' || read) {
     try {
-      const r = await dispatchToolCall(engine, call.op, params, { remote: call.remote, transport: call.transport as never, ...scope });
-      outs.push({ member: `op:${call.op}:mcp`, out: { ok: true, value: { isError: r.isError ?? false, content: (r.content ?? []).map(c => (c.type === 'text' ? { type: 'text', text: parsed(c.text) } : jsonView(c))) } } });
+      outs.push({ member: `op:${call.op}:mcp`, out: mcpOutcome(await dispatchToolCall(engine, call.op, params, { remote: call.remote, transport: call.transport as never, ...scope })) });
     } catch (e) { outs.push({ member: `op:${call.op}:mcp`, out: { ok: false, code: errCode(e) } }); }
   }
   if (call.surface === 'cli' || read) {
