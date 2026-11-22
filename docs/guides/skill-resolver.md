@@ -380,6 +380,114 @@ past it are listed as cut). A pinned skill is never also suggested. Pins live
 in config.json under `skills.resolver.pins.<catalog>`, so turning the resolver
 off keeps them; an OpenClaw agent uses a change from its next turn.
 
+## Model picker (opt-in)
+
+The word matcher finds a skill when the message uses the skill's own words
+("look up", "tell me about") and misses when the user just says what they
+want. The model picker fixes that: a small, fast model reads your skill list
+(each skill's id and description) and picks the skills the message needs, or
+none. It is off by default, and nothing changes until you turn it on:
+
+```bash
+gbrain config set skills.resolver.router true
+```
+
+`gbrain setup claude-code --skill-loading resolve` (and `codex`) prints this
+line when a model key is configured.
+
+What it does on each turn:
+
+- **Where it runs.** Only `gbrain skills resolve` and the Claude Code and Codex
+  hook lanes can call it. The OpenClaw plugin, the Pi extension, Hermes and
+  library callers never do, whatever the config says.
+- **What it reads.** Every skill while the catalogs hold up to 150, else the top
+  40 of the word ranking. Descriptions come from `picker.json`, which each
+  build writes beside the index (cut at 400 characters). A project catalog's
+  skills are sent by id only, as their hints are never shown.
+- **What it shows.** Its picks, best first, with `match_strength: "picked"`,
+  under the same rules as any suggestion: `exclude`, the `min_match_strength`
+  floor, the session's no-repeat rule, pacing and the token budget. `top_gate`
+  does not apply to them. When it says the message needs no skill, the block is
+  empty (`no_skill_reason: "no_match"`), except for a skill the turn names.
+- **When it can't answer.** The turn is the word matcher's, byte for byte, and
+  `router.fallback.code` says why (the codes are below). `gbrain doctor` shows
+  the last 24 hours of picker turns, fallbacks by code and today's spend.
+
+| Setting | Default | |
+|---|---|---|
+| `skills.resolver.router` | `false` | turns the picker on |
+| `skills.resolver.router_model` | Claude Haiku 5.5 with an Anthropic key, else `openai:gpt-5.6-luna`, else `google:gemini-3.5-flash-lite` | an `anthropic:`, `openai:` or `google:` model id |
+| `skills.resolver.router_timeout_ms` | 1500 in Claude Code, 2000 elsewhere | the longest a turn waits (200-2500); Claude Code's hook limit is 3 seconds |
+| `skills.resolver.router_max_usd_per_day` | 0.50 | the daily spend cap in USD (0-100; 0 stops every call) |
+
+**Cost and wait.** A turn sends the skill list and the message, about 9,000
+tokens for 75 skills, and gets back under 40 tokens. With Haiku 5.5 that is
+about $0.0001 a turn once the list is cached and $0.001 the first time; a
+typical wait is under a second. Each call is charged to
+`skill-index/router-spend.json` at its largest possible cost before it is
+made and settled to its real cost after, so a call cut off mid-way still
+counts. The cap resets at 00:00 UTC.
+
+**Privacy.** With the picker on, each message and your skills' ids and
+descriptions go to the model's provider (Anthropic, OpenAI or Google), over
+HTTPS, with your key. Keys come from the environment (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY`) or from
+`anthropic_api_key`, `openai_api_key` or `google_api_key` in
+`~/.gbrain/config.json`; `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` and
+`GOOGLE_GENERATIVE_AI_BASE_URL` point it at a proxy. The message is sent as
+text to route: only skill ids from your catalog are kept from the reply.
+
+### router_fallback: timeout
+
+The picker did not answer within `router_timeout_ms`. Occasional timeouts are
+normal; many mean a slow provider or network. Raise the wait (at most 2500)
+with `gbrain config set skills.resolver.router_timeout_ms 2000`, or pick a
+faster model with `skills.resolver.router_model`.
+
+### router_fallback: provider_error
+
+The provider answered with an error, refused, or could not be reached. Check
+the key and the provider's status; the turn used the word matcher.
+
+### router_fallback: missing_key
+
+No key for the picker's model. Set the provider's key (see Privacy above), or
+set `skills.resolver.router_model` to a model whose key you have.
+
+### router_fallback: daily_cap
+
+Today's spend (UTC) reached `router_max_usd_per_day`; the word matcher answers
+until 00:00 UTC. `gbrain doctor` shows the spend and the cap. To raise it:
+`gbrain config set skills.resolver.router_max_usd_per_day 1`.
+
+### router_fallback: parse_failed
+
+The reply was not the JSON the picker asks for. One-off failures are harmless;
+if it repeats, the model may not suit the prompt: try the default model.
+
+### router_fallback: no_known_ids
+
+The reply named no skill in your catalog. One-off failures are harmless; if it
+repeats, rebuild the catalog (`gbrain skills index build`) so the picker sees
+current ids.
+
+### router_fallback: config_invalid
+
+A `skills.resolver.router_*` value is out of range. The turn is not refused:
+the picker stays off until the value is fixed or unset
+(`gbrain config unset skills.resolver.router_timeout_ms`).
+
+### router_fallback: no_pricing
+
+gbrain has no price for `router_model`, so the daily cap could not be
+enforced and no call was made. Use a model gbrain prices (the defaults are).
+
+### router_fallback: ledger_unavailable
+
+The spend ledger (`skill-index/router-spend.json`) could not be locked or
+written, so no call was made. Check that the directory is writable; a lock
+left by a crashed process clears itself after 2 seconds.
+
 ## The contract (schema_version 1)
 
 The JSON Schemas are checked in under `docs/schemas/`:
@@ -389,7 +497,8 @@ The JSON Schemas are checked in under `docs/schemas/`:
   min_match_strength?, top_gate?, shadow?, expected_catalog_hash?, reset_session?}` for
   `--input-json -` or the library.
 - `skill-resolver.v1.turn-output.json`: the `--json` result. Everything outside
-  `meta` is byte-identical for the same index, input and session state.
+  `meta` is byte-identical for the same index, input and session state, except
+  on a turn the model picker answered or was asked, which also carries `router`.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
   `[{id, name, description?, when_to_use?, triggers?, routing?, body?, path?,
   eligible?, disable_model_invocation?}]`. With the same fields a SKILL.md
@@ -404,8 +513,8 @@ Within v1, changes are additive only.
 (`no_skill_reason: "ack"`) or when no word of the turn is in the catalog
 (`"no_match"`). The ranker has no score threshold of its own; `top_gate`
 (below) empties the block when the best match is weak. Each suggestion's `match_strength` says how it matched
-(`named` in the turn, else the first of `name`, `triggers`, `routing`,
-`description`, `body`). `min_match_strength` (`--min-match`) filters
+(`named` in the turn, `picked` by the model picker, else the first of `name`,
+`triggers`, `routing`, `description`, `body`). `min_match_strength` (`--min-match`) filters
 candidates: weaker matches are dropped before the cut to `top_k` and the
 stronger ones still fill the block, so `description` drops body-only matches.
 It is not a gate: in a large catalog some skill almost always matches a
@@ -534,13 +643,16 @@ wins: nothing is published.
 
 ## Privacy and data flow
 
-Nothing leaves the machine. Everything lives under `$GBRAIN_HOME/.gbrain/skill-index/`
+With the model picker off (the default) nothing leaves the machine; see
+[Model picker](#model-picker-opt-in) for what it sends when on. Everything lives under `$GBRAIN_HOME/.gbrain/skill-index/`
 (`~/.gbrain/skill-index/` by default):
 
 | Path | Holds |
 |---|---|
 | `<catalog>/index.bin`, `receipt.json` | the index and its receipt (receipt written last) |
 | `<catalog>/source.json` | the `--from-json` snapshot |
+| `<catalog>/picker.json` | each skill's id and description (up to 400 characters), read only by the model picker |
+| `router-spend.json`, `router-spend.json.lock` | the model picker's spend today (UTC), in USD; no turn text |
 | `<catalog>/fingerprint.json`, `stat-check`, `stale.stamp`, `lock`, `build.log` | freshness, lease and the last build error |
 | `sessions/<key>.json` | skill ids and turn counters; never turn text |
 | `logs/lane-<date>.jsonl`, `logs/resolver-<date>.log` | one line per lane turn, and scrubbed stack traces of unexpected failures; never turn text; one file per day, kept 14 days |

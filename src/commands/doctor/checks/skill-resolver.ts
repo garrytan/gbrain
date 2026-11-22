@@ -183,7 +183,7 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
 
 /** The model picker's problem worth a warning, or null: a fallback that needs the user, or a high fallback rate. */
 function routerProblem(r: SkillResolverRouterView): { code: string; what: string; fix: NonNullable<Check['fix']> } | null {
-  const docs = (code: string) => `docs/guides/skill-resolver.md#router-fallback-${code.replace(/_/g, '-')}`;
+  const docs = (code: string) => `docs/guides/skill-resolver.md#router_fallback-${code}`;
   const base = { requires_exclusive: false, verify: doctorVerify(name) };
   const setup = ROUTER_SETUP_CODES.find(c => r.fallbacks[c]);
   if (setup === 'daily_cap') {
