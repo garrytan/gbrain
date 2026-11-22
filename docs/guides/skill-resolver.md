@@ -48,8 +48,12 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 | gbrain's own skills | `gbrain skills index build --catalog gbrain --bundled` | Rebuilt when the gbrain version changes. |
 
 - `--dir` is repeatable; earlier directories win duplicate ids (the loser is
-  listed in the receipt as `duplicate_id`). Symlinks that leave the root,
-  skills with `disable-model-invocation: true` and JSON entries with
+  listed in the receipt as `duplicate_id`). A symlink that leaves the root
+  is followed only when it points at a skill folder (a directory with a
+  `SKILL.md`) or at a `SKILL.md` file, the way gstack and other installers
+  link skills in from a checkout; the skill is indexed under the link's path.
+  Any other symlink that leaves the root (`symlink_outside_root`), skills
+  with `disable-model-invocation: true` and JSON entries with
   `eligible: false` are never indexed. Dot-entries (harness-owned state such
   as Codex's `.system/` or Hermes's `.usage.json`) and `node_modules` are
   never read, so a harness writing them does not make the index stale.
