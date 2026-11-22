@@ -25,6 +25,7 @@ import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, pa
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
 import { attestedReadMode, scopeReadAccess, scopeReadLabelledOnlyRefused, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
 import { attestedReadScope } from '../core/access/member-sources.ts';
+import { collectReturnedPages, readLogged, readLogMember, recordAccessRead, resultCode } from '../core/access/read-log.ts';
 import { QM_PERSONAL_OPS, qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
@@ -1080,7 +1081,10 @@ export async function dispatchToolCall(
     if (audience || attested?.actor) assertion('accepted');
     const callParams = attested ? attested.params : args;
     return withCallerAccess({ ...access, privateFactSources: privateFactSources && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? privateFactSources : [], ...(access.owner && opts.auth && opts.transport !== 'stdio' && !roomDeclaration && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? { ownerReads: true } : {}) }, async () => {
-      const out = await withRequestIdentityMemo(() => withReadMode(readMode, () => dispatchResolvedCall(engine, name, callParams, scoped)));
+      // GST-2476 gap 1: a member's or audience's read is logged after the response (access/read-log.ts); every other read only pays the test.
+      const logged = readOnly && readLogged(access, opts.enforcedMember);
+      const { value: out, pageIds } = await collectReturnedPages(logged, () => withRequestIdentityMemo(() => withReadMode(readMode, () => dispatchResolvedCall(engine, name, callParams, scoped))));
+      if (logged) recordAccessRead(engine, { member: readLogMember(access), audience: access.audience ? [...access.audience] : null, operation: name, transport: opts.enforcedMember ? 'cli' : opts.transport ?? 'unknown', result_code: resultCode(out), page_ids: pageIds });
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
       try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, scoped.auth, [scoped.sourceId, ...(scoped.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
       if (scopeNotice) {
