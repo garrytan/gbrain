@@ -26,7 +26,7 @@ src/cli/migrations-notice.ts#pendingUpgradeMigrationsNotice	catch_empty	1
 src/cli/op-notices.ts#cliBrainKey	catch_empty	1
 src/commands/access-serves.ts#labelSeveral	capability_refusal_swallowed	1
 src/commands/agent-register.ts#runAgentRegister	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/commands/apple-contacts.ts#runAppleContacts	promise_catch_empty	7
+src/commands/apple-contacts.ts#runAppleContacts	promise_catch_empty	9	raised 7->9: landed on master (#9950) after this guard was written; known debt, fix by a typed degraded marker
 src/commands/apply-migrations-schema.ts#schemaAheadRefusal	catch_empty	1
 src/commands/auth-client-rows.ts#listClientRows	capability_refusal_swallowed	5
 src/commands/auth.ts#registerClient<anon@1>	promise_catch_empty	1
@@ -594,6 +594,7 @@ src/commands/upgrade-restart.ts#installOf	catch_empty	1
 src/commands/upgrade-restart.ts#packageNameAt	catch_empty	1
 src/commands/upgrade-restart.ts#processCwd	catch_empty	1
 src/commands/upgrade-restart.ts#processHome	catch_empty	1
+src/commands/upgrade-restart.ts#processUnit	catch_empty	1	landed on master (#10034) after this guard was written; known debt, fix by a typed degraded marker
 src/commands/upgrade-restart.ts#readAutopilotLockPid	catch_empty	1
 src/commands/upgrade-restart.ts#restartServeAfterSelfUpgrade	catch_empty	1
 src/commands/upgrade-restart.ts#serveRestartAttemptedOnThisBuild	catch_empty	1
@@ -635,6 +636,7 @@ src/core/access/owner-only.ts#ownerOnlySourcesPresent	capability_refusal_swallow
 src/core/access/owner-only.ts#sourceIsOwnerOnly	capability_refusal_swallowed	1
 src/core/access/owner.ts#ownerMemberId	catch_empty	1
 src/core/access/owner.ts#ownerReadsRestrictedOn	catch_empty	1
+src/core/access/read-log.ts#ReadLogWriter.flush<anon@1>	capability_refusal_swallowed	1	landed on master (#10011) after this guard was written; known debt, fix by a typed degraded marker
 src/core/access/requester-scope.ts#credentialScopeFor	capability_refusal_swallowed	1
 src/core/access/requester-scope.ts#credentialScopeFor	catch_empty	1
 src/core/advisor/collect-chronicle.ts#collectChronicle.collect	capability_refusal_swallowed	1
@@ -677,8 +679,11 @@ src/core/ai/openai-latest.ts#stampAttempt	catch_empty	1
 src/core/ai/providers/claude-cli-scratch.ts#claudeCliSelfProjectDirs	catch_empty	1
 src/core/ai/providers/claude-cli-scratch.ts#sweepDeadClaudeCliScratchDirs	catch_empty	1
 src/core/ai/reranker-readiness-engine.ts#rerankerReadinessForEngine	catch_empty	2
+src/core/apple-contacts/apple-contacts-source.ts#runAppleContactsSync	promise_catch_empty	1	landed on master (#9950) after this guard was written; known debt, fix by a typed degraded marker
 src/core/apple-contacts/apple-contacts-source.ts#runInner	capability_refusal_swallowed	2
 src/core/apple-contacts/apple-contacts-source.ts#runInner	promise_catch_empty	2
+src/core/apple-contacts/enrich.ts#proposeEnrichment	promise_catch_empty	1	landed on master (#9950) after this guard was written; known debt, fix by a typed degraded marker
+src/core/apple-contacts/enrich.ts#runAppleContactsEnrichment	promise_catch_empty	3	landed on master (#9950) after this guard was written; known debt, fix by a typed degraded marker
 src/core/apple-contacts/identity-match.ts#decidedDifferent	promise_catch_empty	1
 src/core/apple/contacts-client.ts#readAppleContactsToken	catch_empty	1
 src/core/atomic-write.ts#atomicWriteFileSync	catch_empty	2
@@ -706,8 +711,7 @@ src/core/backfill-effective-date.ts#setCheckpoint	catch_empty	1
 src/core/backfill-registry.ts#emotionalWeightBackfill>compute	promise_catch_empty	1
 src/core/backoff.ts#getMemoryUsage	catch_empty	1
 src/core/backup/coverage.ts#brainMaturity	capability_refusal_swallowed	1
-src/core/backup/coverage.ts#brainMaturity	catch_empty	1	fix in this stream, PR fix/backup-coverage-unread
-src/core/backup/coverage.ts#computeBackupCoverage	catch_empty	3	fix in this stream, PR fix/backup-coverage-unread
+src/core/backup/coverage.ts#computeBackupCoverage	catch_empty	1	fix in this stream, PR fix/backup-coverage-unread
 src/core/backup/coverage.ts#computeBackupCoverage	promise_catch_empty	1	fix in this stream, PR fix/backup-coverage-unread
 src/core/backup/coverage.ts#countLivePages	capability_refusal_swallowed	1
 src/core/backup/coverage.ts#countLivePages	catch_empty	1	fix in this stream, PR fix/backup-coverage-unread
@@ -939,6 +943,7 @@ src/core/cycle.ts#resolveSourceForDir	catch_empty	1
 src/core/cycle.ts#runCycleUnscoped	promise_catch_empty	1
 src/core/cycle/atom-source-date.ts#transcriptAtomSourceDate	promise_catch_empty	1
 src/core/cycle/attribution-checks.ts#attributionChecksEnabled	catch_empty	1
+src/core/cycle/base-phase.ts#BaseCyclePhase.resolveBudgetUsd	promise_catch_empty	1	landed on master (#10033) after this guard was written; known debt, fix by a typed degraded marker
 src/core/cycle/bookkeeping-gc.ts#runPhaseBookkeepingGc	catch_empty	1
 src/core/cycle/budget-meter.ts#loadAllowUnpriced	promise_catch_empty	1
 src/core/cycle/concept-publication.ts#prepareManagedConcept	catch_empty	1
@@ -1157,6 +1162,7 @@ src/core/git/commit-guard.ts#foreignHooks<anon@1>	catch_empty	1
 src/core/git/commit-ledger.ts#headRef	catch_empty	1
 src/core/git/commit-ledger.ts#heldCommits	catch_empty	1
 src/core/git/commit-ledger.ts#ledgerLocation	catch_empty	2
+src/core/git/commit-push.ts#publishHolder	catch_empty	1	landed on master (#10059) after this guard was written; known debt, fix by a typed degraded marker
 src/core/git/commit-push.ts#readCredentialRefusal	catch_empty	1
 src/core/git/commit-push.ts#readIntegrateConflict	catch_empty	1
 src/core/git/commit-push.ts#readPendingFile	catch_empty	1
@@ -1846,6 +1852,7 @@ src/core/search/ignored-privacy-labels.ts#withIgnoredPrivacyLabelNotice	catch_em
 src/core/search/image-vector-presence.ts#brainHasImageVectors	capability_refusal_swallowed	1
 src/core/search/intent-weights.ts#applyAliasMentionBoost	catch_empty	1
 src/core/search/keyword-or-rarity.ts#rankOrFallbackByRarity	promise_catch_empty	1
+src/core/search/keyword-paging.ts#keywordOnlyBounds<anon@2>	promise_catch_empty	1	landed on master (#9981) after this guard was written; known debt, fix by a typed degraded marker
 src/core/search/mode.ts#loadSearchModeConfig>safeGet	catch_empty	1
 src/core/search/modes-report.ts#buildModesReport	catch_empty	1
 src/core/search/page-rank-cut.ts#readConfig	catch_empty	1
@@ -2133,7 +2140,6 @@ src/core/verbs/entity-card.ts#nearMissSuggestions	catch_empty	1
 src/core/verbs/entity-card.ts#readAka	capability_refusal_swallowed	1
 src/core/verbs/entity-card.ts#readAka	promise_catch_empty	1	audit memory-13: the aka read answers empty
 src/core/verbs/entity-card.ts#selectEntityCandidates	capability_refusal_swallowed	2
-src/core/verbs/entity-card.ts#selectEntityCandidates	catch_empty	3	audit contract-01: entity page lookup, alias arm and hydrate answer "No entity found" when the read fails
 src/core/verbs/entity-names.ts#attachReferences	promise_catch_empty	1
 src/core/verbs/entity-names.ts#lookupOne	capability_refusal_swallowed	1
 src/core/verbs/entity-names.ts#lookupOne	promise_catch_empty	1
@@ -2144,7 +2150,6 @@ src/core/verbs/entity-variants.ts#nameVariantsEnabled	promise_catch_empty	1
 src/core/verbs/entity-variants.ts#readPossibleDuplicates	capability_refusal_swallowed	1
 src/core/verbs/entity-variants.ts#readPossibleDuplicates	catch_empty	1
 src/core/verbs/entity-variants.ts#resolveNameVariant	capability_refusal_swallowed	2
-src/core/verbs/entity-variants.ts#resolveNameVariant	promise_catch_empty	1
 src/core/verbs/usage-log.ts#readVerbUsage	catch_empty	1
 src/core/wanted-links.ts#isRemoteWantedPagesEnabled	promise_catch_empty	1
 src/core/wanted-links.ts#isWantedPagesEnabled	promise_catch_empty	1
