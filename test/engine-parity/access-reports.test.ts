@@ -253,7 +253,7 @@ async function admits(engine: BrainEngine, backend: ParityBackend): Promise<Reco
   }
   // An identity argument that is not the record's own (here a principal listed twice) gets no satisfied rule: SQL's
   // satisfiedFor compares it with the record's identity, so a folder page stays closed even in a record whose rules
-  // admit it. Row: [alice's argument in bob's record on bob's ops/ page, alice's own argument doubled on deals/].
+  // admit it. Row: [bob's own argument doubled in bob's record on his ops/ page, alice's own argument doubled on deals/].
   const record = async (id: string, groups: readonly string[]) => {
     const identity = identityFor(id, groups);
     return { identity, ...await folderAccessFor(engine, identity), restricted: true, owner: id === 'bob-example', remotePolicy };
@@ -311,5 +311,31 @@ describe('get_page as of a date, for a member a folder rule does not name', () =
     const none = { error: true, code: 'page_not_found', march: false, july: false };
     expect(seen).toEqual({ danMarch: none, danJuly: none, bobMarch: { error: false, code: undefined, march: true, july: false }, bobJuly: { error: false, code: undefined, march: false, july: true } });
     return seen;
+  });
+});
+
+describe('the Rust arm refuses what it does not serve yet (row 32j), and shows nothing', () => {
+  // Another member's identity asked about in a record that holds satisfied folder rules: SQL renders no satisfied rule
+  // for it (satisfiedFor) and answers by readers alone; the Rust member's reference renders the record's rules for the
+  // argument, the texts differ, and it refuses (fails closed). whoCanRead always passes the record's own identity. The
+  // pin fails when Rust starts to serve it, so row 32j closes on purpose.
+  test('loss (32j): another member\'s identity in a record with satisfied folder rules refuses on Rust', async () => {
+    const results: Record<string, unknown> = {};
+    for (const arm of arms()) {
+      await resetArm(arm);
+      await admits(arm.engine, arm.backend);
+      const remotePolicy = { privacyRelaxed: false, restricted: true, ...await schemaVersionNow(arm.engine) };
+      const bob = identityFor('bob-example', []);
+      const record = { identity: bob, ...await folderAccessFor(arm.engine, bob), restricted: true, owner: true, remotePolicy };
+      const alice = identityFor('alice-example', ['team-a']);
+      const ask = (slug: string) => withCallerAccess(record as never, () => arm.engine.readPageAdmitsCaller('default', slug, alice))
+        .catch(e => (e as { code?: string }).code);
+      results[arm.backend] = { named: await ask('notes/alice-only'), ruled: await ask('deals/q4') };
+    }
+    for (const [backend, got] of Object.entries(results)) {
+      expect([backend, got]).toEqual([backend, backend === 'rust'
+        ? { named: 'engine_capability_missing', ruled: 'engine_capability_missing' }
+        : { named: true, ruled: false }]);
+    }
   });
 });

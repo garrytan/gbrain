@@ -1,4 +1,3 @@
-
 **On the Rust engine, `gbrain access who-can-read` names the same members as PGLite and Postgres.**
 
 ### Fixed
