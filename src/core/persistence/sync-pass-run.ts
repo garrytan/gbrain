@@ -31,7 +31,7 @@ import { OPEN_AT_STAMP_CAP, passFingerprint, readPassRow, SYNC_ORIGIN_DELETED_OP
   type PassKind, type PassOutcome, type SyncSelection } from './sync-pass-row.ts';
 import { readSyncAdmission, type SyncAdmission } from './sync-admission.ts';
 import { faultPoint } from './fault-points.ts';
-import { passFoldBase, passIdleProbe, readShadowLevel, workingIdleChange, type PassLevelCache, type ShadowLevel, type ShadowPath } from './sync-pass.ts';
+import { passFoldBase, passIdleProbe, readLevelHead, readShadowLevel, workingIdleChange, type PassLevelCache, type ShadowLevel, type ShadowPath } from './sync-pass.ts';
 import { ownWritebackCommit, type PassFold } from './sync-pass-fold.ts';
 import { openPassRequests, settleCarried } from './sync-pass-carried.ts';
 import { loopYield } from './sync-yield.ts';
@@ -513,7 +513,8 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   // not idle, unless write capacity still stops them; then the idle tick stays idle instead of re-reading the tree every tick.
   const keepDbOwed = !remote && admission === 'normal' && kindOf.kind === 'idle' && (prior?.value.telemetry.classes?.keep_db_pending?.count ?? 0) > 0
     && !(await keepDbHeadroom(engine));
-  const kind: PassKind = admission === 'classify_only' && kindOf.kind === 'idle' ? 'idle' : (valveOpen || keepDbOwed) && kindOf.kind === 'idle' ? 'full' : kindOf.kind;
+  // GST-3534: a pass that stamped a commit behind HEAD owes the newer commits; the next pass reads in full, never idle, even paused.
+  const kind: PassKind = obligations.stamped_behind ? 'full' : admission === 'classify_only' && kindOf.kind === 'idle' ? 'idle' : (valveOpen || keepDbOwed) && kindOf.kind === 'idle' ? 'full' : kindOf.kind;
   const value: ManagedSyncPassValue = { source_id: sourceId, incarnation, lease_token: lease.token, obligations,
     telemetry: { pass_id: passId, target: head, started_at: startedAt, ended_at: null, kind, round: 0, outcome: 'open', stop_reason: null, candidates: 0, settled: 0, remaining: 0,
       counts: {}, duration_ms: null, timings_ms: {} } };
@@ -642,7 +643,7 @@ async function stampUnchangedPass(engine: BrainEngine, input: SyncPassInput, rou
     const watermark = await readConvergedWatermark(tx, { worktreeId: context.binding.worktree_id, sourceId, incarnation }, null, OPEN_AT_STAMP_CAP, { prior: converged?.writeback });
     value.obligations.converged = { target: head, at, ...watermark, parser_fp: parserFp, pack, selection_fp: selectionFp,
       last_full_at: kind === 'full' || !converged ? at : converged.last_full_at, passes_since_full: kind === 'full' || !converged ? 0 : converged.passes_since_full + 1 };
-    Object.assign(value.obligations, { not_converged_streak: 0, mismatch: {}, stuck_since: null });
+    Object.assign(value.obligations, { not_converged_streak: 0, mismatch: {}, stuck_since: null, stamped_behind: undefined });
     value.telemetry = { ...value.telemetry, outcome: 'up_to_date', ended_at: at, remaining: 0, duration_ms: Date.now() - started, counts: { ...counts, ...passApplyCounts(applied) },
       classes: applied.classes, ...(applied.summary ? { summary: applied.summary } : {}) };
     await writePassRow(tx, value);
@@ -814,6 +815,28 @@ async function readLevelReporting(engine: BrainEngine, levelInput: Parameters<ty
   return level;
 }
 
+/**
+ * GST-3534: a pass's last round, with HEAD moved past `at` (the newest round whose batches all drained, at its commit), first
+ * reads the level at `at` again, after those batches committed. The pass may stamp `at` behind HEAD only when both reads are
+ * committed-mode, no write of the source is open, and every path of the new read triages as a stamp at HEAD takes it (nothing to
+ * import or delete, in flight, owed or mismatched); otherwise null, and the round reads HEAD as before.
+ */
+async function confirmBehind(engine: BrainEngine, levelInput: Parameters<typeof readShadowLevel>[1] & { context: ManagedSyncContext }, at: { head: string; mode: ShadowLevel['mode'] },
+  triage: Pick<Parameters<typeof triageRound>[1], 'S' | 'legacyWaived' | 'readmitted' | 'admission' | 'remote'>, round: number): Promise<{ level: ShadowLevel; seen: string } | null> {
+  const { sourceId, context } = levelInput;
+  if (at.mode !== 'committed') return null;
+  const seen = (await readLevelHead(context.gitRoot, sourceId)).head;
+  if (seen === at.head) return null;
+  const open = await engine.executeRaw(`SELECT 1 FROM persistence_requests WHERE source_id=$1 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) LIMIT 1`, [sourceId]);
+  if (open.length) return null;
+  const level = await readShadowLevel(engine, { ...levelInput, pass: { ...levelInput.pass!, at: at.head } });
+  const left = level?.mode === 'committed' && level.head === at.head && !level.paths.some(entry => entry.state.openWork)
+    ? await triageRound(level, { ...triage, S: new Map(triage.S), readmitted: new Set(triage.readmitted), counts: { pausedDeletes: 0 }, consumeRetry: async () => undefined }) : null;
+  const settled = !!left && Object.values(left).every(paths => !paths.length);
+  await faultPoint('sync:confirm_behind', { sourceId, round, settled, ...(level ? { level: { statements: level.statements, confirm: level.confirm ?? null, shadow: level } } : {}) });
+  return settled ? { level: level!, seen } : null;
+}
+
 export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Promise<SyncResult> {
   const { opts, context, authority, assertActive } = input;
   const { sourceId, incarnation } = context, remote = authority.writer.remote;
@@ -856,7 +879,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
   const sliceBase = { started: performance.now(), pages: 0, committed: (index: number) => { inBatch = index; beat.tick(() => save('open', null, false, true, true)); } };
   let batchNo = 0, waits = 0, candidatesFirst = 0;
   let lastMismatch: ShadowPath[] = [];
-  let lastLevel: ShadowLevel | null = null;
+  let lastLevel: ShadowLevel | null = null, drained: { head: string; mode: ShadowLevel['mode'] } | null = null;
   const heads = new Set<string>(), reads = { whole: 0, patched: 0 };
   const rememberLevel = () => { if (lastLevel?.workingCache) rememberWorkingStatCache(cacheKey, lastLevel.workingCache); };
   const applied = newPassApplyState();
@@ -935,6 +958,16 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
     await finishPassApply(engine, sourceId, applied);
     return result(configured && context.source.last_commit === null ? 'first_sync' : 'synced', configured ? undefined : 'selection_scoped');
   };
+  /** The pass's stamp at `level`'s commit, drained as an empty batch; GST-3534: `behind`, the HEAD it saw past that commit, rides the stamp. */
+  const stampAt = async (level: ShadowLevel, behind?: string): Promise<SyncResult> => {
+    const stamp = { ...await stampFor(level), ...(behind ? { behind } : {}) };
+    await save('open', null);
+    if (behind) await faultPoint('sync:stamp_behind', { sourceId, round: value.telemetry.round });
+    const stopped = await drain([], stamp);
+    if (stopped) return stop(stopped);
+    value.telemetry = { ...value.telemetry, outcome: 'synced', stop_reason: configured ? null : 'selection_scoped', remaining: 0 };
+    return synced(false);
+  };
   const stop = async (drained: SyncResult): Promise<SyncResult> => {
     addCounts(counts, { added: drained.added, modified: drained.modified, deleted: drained.deleted, renamed: drained.renamed, chunks: drained.chunksCreated, waivedImports: drained.waived?.imports,
       waivedDeletes: drained.waived?.deletes, skippedContextualMode: drained.legacySkips?.contextualMode, skippedCanonicalBytes: drained.legacySkips?.canonicalBytes });
@@ -981,6 +1014,10 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       const levelInput = { sourceId, context, workingTree: mode === 'working',
         pass: { noSchemaPack: processingOptions.noSchemaPack, episodeFullId: episode?.full_id ?? null, retryConsumed: round > 1 ? retryConsumed : undefined, exclude: opts.exclude, includeHidden: opts.includeHidden, strategy: opts.strategy, bootstrap: markersOwed(),
           slugMode: value.obligations.slug_mode, cache: levelCache, levelReuse, passId, recorded: applied.recorded, onProgress: () => { value.telemetry.step = { name: 'level_read', at: new Date().toISOString() }; beat.report(); }, assertActive, ...(opts.conversionBinding ? { conversion: opts.conversionBinding } : {}) } };
+      // GST-3534: HEAD moved under the pass; its last round stamps the newest drained round's commit when a read of it now settles.
+      const confirmed = round === PASS_MAX_ROUNDS && drained && !remote && configured && admission !== 'classify_only'
+        ? await confirmBehind(engine, levelInput, drained, { S, legacyWaived, readmitted, admission, remote }, round) : null;
+      if (confirmed) { head = value.telemetry.target = confirmed.level.head; levelSlugMode = confirmed.level.slugMode; lastLevel = confirmed.level; return await stampAt(confirmed.level, confirmed.seen); }
       const level = await readLevelReporting(engine, levelInput, round, opts.onProgress).finally(() => { delete value.telemetry.step; });
       await faultPoint('sync:level_read', { sourceId, round, level: level ? { statements: level.statements, confirm: level.confirm ?? null, reused: level.reused ?? 0, shadow: level, input: levelInput } : undefined });
       assertActive();
@@ -1040,12 +1077,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
         }
         // #6926: a round after a folded stamp that confirmed the level and did nothing more ends on that stamp.
         if (folded?.head === head && level.confirm?.taken && !applied.recorded.size && folded.done === doneKey()) return synced(true);
-        const stamp = await stampFor(level);
-        await save('open', null);
-        const stopped = await drain([], stamp);
-        if (stopped) return stop(stopped);
-        value.telemetry = { ...value.telemetry, outcome: 'synced', stop_reason: configured ? null : 'selection_scoped', remaining: 0 };
-        return synced(false);
+        return await stampAt(level);
       }
       opts.onProgress?.({ phase: 'managed_sync.round_admit', round: { round, target: head, paths: level.paths.length, imports: imports.length, deletes: deletes.length, in_flight: inFlight.length } });
       const built = await batchEntries(engine, level, deletes, imports).catch(async (error: unknown) => {
@@ -1078,6 +1110,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       if (!remote) await sweepLegacy(engine, level, roundInput, applied);
       roundSettled = 0;
       lastMismatch = [];
+      drained = { head, mode: level.mode };
     }
     // Not converged (design §3.1): four rounds, or a settle mismatch or a path this release cannot settle.
     // A path settled in this pass that does not classify settled is a settle mismatch: counted per (path, level) across

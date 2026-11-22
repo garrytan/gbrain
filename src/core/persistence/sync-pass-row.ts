@@ -92,6 +92,11 @@ export interface ManagedSyncPassValue {
     /** #6712 PR 4b (design §2.6): the set hash of a withheld mass delete; with the env valve set the next tick runs a full round to apply it. */
     deletes_withheld?: string | null;
     /**
+     * GST-3534: the pass stamped `commit`, older than the HEAD it saw (`head_seen`), because other writers kept committing. Written and
+     * cleared only by a checkpoint: the next pass reads in full, never idle, and a stamp of the HEAD a pass read clears it.
+     */
+    stamped_behind?: { commit: string; head_seen: string };
+    /**
      * #6694 on the pass: the slug-root mode a subdirectory source's pass admitted pages under before a stamp published it. Later
      * passes read under it, so a pin changed meanwhile is refused `slug_root_mode_mismatch` at the stamp instead of importing the
      * same files again under the other mode's slugs. A configured stamp clears it; keeping the new pin retires it
@@ -237,5 +242,5 @@ export function passHealth(row: PassRow, opts: { head?: string | null; now?: num
     : null;
   const ended = t.outcome === 'synced' || t.outcome === 'up_to_date';
   return { unhealthy: reason !== null, reason, remaining: ended ? 0 : t.remaining,
-    nothing_pending: ended && !!o.converged && (opts.head == null || o.converged.target === opts.head), last_progress_at: row.updated_at };
+    nothing_pending: ended && !!o.converged && !o.stamped_behind && (opts.head == null || o.converged.target === opts.head), last_progress_at: row.updated_at };
 }

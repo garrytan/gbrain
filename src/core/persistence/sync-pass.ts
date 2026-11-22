@@ -82,6 +82,8 @@ export interface PassLevelInput {
   passId?: string;
   /** The pages whose import record the pass's previous round wrote (sync-pass-apply.ts `recorded`). */
   recorded?: ReadonlySet<number>;
+  /** GST-3534: the commit to read instead of HEAD (a confirm read of an older round's commit); the mode is still decided by HEAD. */
+  at?: string;
   /** #7355: called while the read works (its loops' pauses, at most once a second, and the origin history walk), so the drain sees progress before the first commit. */
   onProgress?: () => void;
   /** Throws once the pass must stop (a job deadline, a lost drain lease): checked at the read's pauses and while its origin history walk runs. */
@@ -577,7 +579,7 @@ async function readPassRow(exec: Exec, sourceId: string, incarnation: string): P
 }
 
 /** HEAD's commit and whether HEAD is detached (master's rule, sync-discovery.ts: a detached HEAD forces working mode). */
-async function readLevelHead(gitRoot: string, sourceId: string): Promise<{ head: string; detached: boolean }> {
+export async function readLevelHead(gitRoot: string, sourceId: string): Promise<{ head: string; detached: boolean }> {
   const abbrev = syncGitAsync(gitRoot, ['rev-parse', '--abbrev-ref', 'HEAD']);
   abbrev.catch(() => undefined);
   const head = await revParse(gitRoot, 'HEAD');
@@ -690,7 +692,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
   const step = progressYield(turnYield(), { onProgress: input.pass?.onProgress, assertActive: input.pass?.assertActive });
 
   t = timer();
-  const { head, detached } = await readLevelHead(gitRoot, sourceId);
+  const current = await readLevelHead(gitRoot, sourceId), head = input.pass?.at ?? current.head, detached = current.detached;
   // G3: a strict source's level is its commit, a detached HEAD's too; the working tree never enters it.
   const working = !strict && (detached || (input.workingTree ?? workingConfig === 'true'));
   const mode: 'committed' | 'working' = working ? 'working' : 'committed';

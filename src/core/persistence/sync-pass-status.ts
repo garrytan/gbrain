@@ -53,6 +53,8 @@ export interface PassConvergence {
    * a pass written before them).
    */
   levels: { heads: number; whole: number; patched: number } | null;
+  /** GST-3534: the newest stamp named `commit`, older than the HEAD it saw (`head_seen`), so the next sync owes the newer commits; else null. */
+  stamped_behind: { commit: string; head_seen: string } | null;
 }
 
 /** The live block of one source's pass row (design §9's field table). `holds` are the incarnation's holds the status read. */
@@ -73,7 +75,8 @@ export async function passConvergence(engine: Pick<BrainEngine, 'executeRaw'>, i
     episode: episode ? { full_id: episode.full_id ?? null, opened_at: episode.opened_at, inherited: episode.inherited, selection_fp: digest(episode.selection),
       reserved_usd: o.cost?.reserved_usd ?? null, approved_usd: o.cost?.approved_usd ?? null } : null,
     admission: input.admission, not_converged_streak: o.not_converged_streak ?? 0,
-    duration_ms: t.duration_ms, timings_ms: t.timings_ms, last_full_at: o.converged?.last_full_at ?? null, levels: t.levels ?? null };
+    duration_ms: t.duration_ms, timings_ms: t.timings_ms, last_full_at: o.converged?.last_full_at ?? null, levels: t.levels ?? null,
+    stamped_behind: o.stamped_behind ?? null };
 }
 
 /** GST-2869: the rewrite was the attempt that exhausted a transient hold's retries, so the hold now waits on a person. */
@@ -153,6 +156,7 @@ export function passStatusState(row: PassRow, withheld: DeletesWithheld | null, 
   if (t.outcome === 'open' || (t.outcome === 'resumable' && t.stop_reason !== 'not_converged' && t.stop_reason !== 'admission_paused')) return ['resumable', 'pass_unfinished'];
   if (t.stop_reason === 'admission_paused') return ['resumable', 'admission_paused'];
   if (t.stop_reason === 'not_converged' || (row.value.obligations.not_converged_streak ?? 0) > 0) return ['resumable', 'not_converged'];
+  if (row.value.obligations.stamped_behind) return ['resumable', 'pass_unfinished'];
   if (passHealth(row, { now, stalledMs: Number.POSITIVE_INFINITY }).reason === 'settle_mismatch') return ['resumable', 'settle_mismatch'];
   if (writebackFailed) return ['blocked', 'writeback_failed'];
   if (withheld) return ['blocked', 'deletes_withheld'];
@@ -197,6 +201,7 @@ export function passStatusNext(sourceId: string, reason: PassStatusReason, row: 
       return { ...sync, why: 'The last pass converged at a narrower selection and did not advance last_commit; the plain sync runs the configured selection.' };
     default:
       return { ...sync, why: reason === 'settle_mismatch' ? 'A path keeps settling without reading settled; the next sync re-admits it once and holds it after three passes in a row.'
+        : row.value.obligations.stamped_behind ? `The newest pass stamped ${row.value.obligations.stamped_behind.commit} while other writers kept committing past it; the plain sync imports the newer commits.`
         : 'The newest pass did not finish; the plain sync continues it from the current level.' };
   }
 }
