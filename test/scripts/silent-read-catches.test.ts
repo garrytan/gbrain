@@ -125,6 +125,11 @@ describe('what counts', () => {
     expect(f('if (a) { if (b) return ["x"]; throw err; } return [];')).toEqual([]);
   });
 
+  test('a returned local is the binding visible at the return: a catch parameter is not made empty by a same-named local outside', () => {
+    expect(scan("export async function f(engine: any) { const error: string[] = []; try { await engine.getPage('a'); } catch (error) { try { return await engine.getPage('b'); } catch { return error; } } }")).toEqual([]);
+    expect(scan("export async function f(engine: any) { const error: string[] = []; try { await engine.getPage('a'); } catch (error) { try { return await engine.getPage('b'); } catch { return error; } } return error; }")).toEqual([]);
+  });
+
   test('promise handlers count: arrow and function forms, with a local receiver judged by its initializer', () => {
     expect(scan('export function f(engine: any) { return engine.getLinks("a").catch(() => []); }')).toEqual(['src/x.ts#f promise_catch_empty 1']);
     expect(scan('export function f(engine: any) { return engine.getLinks("a").catch(() => {}); }')).toEqual(['src/x.ts#f promise_catch_empty 1']);
