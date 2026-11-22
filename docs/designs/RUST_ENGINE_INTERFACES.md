@@ -117,7 +117,8 @@ Rules:
   Use a second byte as a sub-table marker when the family has more than one table (for example `F 0x01 <id>` for
   rows and `F 0x02 <source> 0x00 <entity> 0x00 <id>` for an index).
 - **Never reuse, reorder or repurpose a byte.** A family that is not listed takes an unused byte in a reviewed
-  change to the reserved list. Byte `0x00` belongs to the storage engine adapter.
+  change to the reserved list. Byte `0x00` belongs to the storage engine adapter. The one-byte tags are nearly all
+  taken: claim a tag through the "Tag registry" below, and give a new family a two-byte tag (`~` then one byte).
 - **Id counters are family-prefixed:** `M next_<family>_id` through `pages::next_id(tx, "next_fact_id")`.
 - **A family writes only its own tag.** To read another family's records it calls that family's `pub(crate)`
   functions (for pages: `read_page`, `read_page_by_id`, `all_pages`, `scope_sources`, `find_in_scope`). To change
@@ -175,6 +176,7 @@ Reserved tags:
 | reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
 | embedding_holds, a page's `page_embedding_budget` state and reason | `2` | `EMBEDDING_HOLD` | yes (a hard page delete removes it) |
 | access_members | `x` | `ACCESS_MEMBERS` | no |
+| family escape: the first byte of every two-byte family tag (`keys::family_tag`) | `~` | `FAMILY_ESCAPE` | no |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -198,8 +200,40 @@ in its module header:
 `eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
 change to this table and to `keys.rs`.
 
+### Tag registry
+
+The one-byte tags on `rust-engine/main` are the "Key layout" and "Reserved tags" tables above: every capital letter,
+every small letter but `x` and `y`, and the digits `1` and `2`. This table lists every other tag claimed on any
+branch, and the reserved ones, with the owner who claimed it. The rules:
+
+- **Claim before you write.** A branch that adds a one-byte tag adds its row here in the same commit, with status
+  `branch <name>`; the row stays until the constant reaches `rust-engine/main`, and then the "Reserved tags" row is
+  the record. No row may take a byte that another row or a constant of `keys.rs` holds.
+- **The digits `4` to `9` need approval.** A digit tag is claimed only by a row whose status starts with `approved`,
+  which the manager's review grants. Once this rule is on `rust-engine/main`, the trunk refuses any digit `4`-`9`
+  tag in `keys.rs` without an approved row here (the test below fails).
+- **Every later family takes a two-byte tag.** `~` (0x7E, `keys::FAMILY_ESCAPE`) is reserved as an escape and is
+  never a one-byte family. A new family takes `~` then one byte (`keys::family_tag(b'a')` is `~a`), declared in
+  `keys.rs` as `pub const NAME: [u8; 2] = family_tag(b'a');` with a row here. The family owns every byte after the
+  two. `~` sorts after every letter and digit, so each two-byte family is one contiguous range after the one-byte
+  tags, and a prefix scan of `~a` reads family `~a` only. The family byte is never `0x00`. Adding the escape and
+  two-byte tags writes nothing on disk, so `FORMAT_VERSION` does not change.
+
+| Tag | Constant | Owner | Status |
+|---|---|---|---|
+| `x` | `ACCESS_MEMBERS` | interfaces lane (session a9fd5b22) | branch rust-engine/access-rules-rust (row 32a-1) and the access branches stacked on it |
+| `y` | `SESSION_STATE` | not named on the branch; the trunk names it at intake | branch rust-engine/sync-checkpoint and the branches that contain 4601da37e0 |
+| `0` | `GUEST_SOURCE` | not named on the branch; the trunk names it at intake | branch rust-engine/collate-equal |
+| `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
+| `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
+
+Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
+unless a reviewed change to this table names it.
+
 `rust/crates/gbrain-store/tests/keys_registry.rs` fails when two constants of `keys.rs` take one tag byte (or one
-sub-tag of a family), and when these tag tables and `keys.rs` disagree.
+sub-tag of a family), when these tag tables and `keys.rs` disagree, when a Tag registry row takes a byte another
+constant or row holds, when a digit `4`-`9` tag has no approved row, when a constant other than `FAMILY_ESCAPE` takes
+`~`, and when two two-byte family tags share a byte or one has no row.
 
 The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
 `0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), `R` for a

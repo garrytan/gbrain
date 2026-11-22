@@ -2,6 +2,9 @@
 //! within its family, and the tag tables of docs/designs/RUST_ENGINE_INTERFACES.md ("Key layout",
 //! "Reserved tags" and the telemetry sub-tags) name the same bytes as `keys.rs`. Two families once
 //! took the same byte in separate branches and only the merge showed it; this fails at the commit.
+//! The "Tag registry" table lists the tags claimed on branches and the reserved ones: no row may take
+//! a byte another constant or row holds, a digit `4`-`9` needs an approved row, `~` is only the
+//! family escape, and every two-byte family tag (`~` then one byte) is unique and listed.
 
 use std::collections::BTreeMap;
 
@@ -31,6 +34,23 @@ fn constants(src: &str) -> Vec<(String, u8, bool)> {
     }
     out
 }
+
+/// A `pub const NAME: [u8; 2] = family_tag(b'x');` line of `keys.rs`: a two-byte family tag, by its family byte.
+fn family_constants(src: &str) -> Vec<(String, u8)> {
+    src.lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("pub const ")?;
+            let (name, value) = rest.split_once(": [u8; 2] = family_tag(b'")?;
+            match value.strip_suffix("');")?.as_bytes() {
+                [b] => Some((name.to_string(), *b)),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// The escape byte that starts every two-byte family tag (`keys::FAMILY_ESCAPE`).
+const ESCAPE: u8 = b'~';
 
 /// The backticked words of one markdown table cell.
 fn ticked(cell: &str) -> Vec<&str> {
@@ -100,6 +120,13 @@ fn problems(keys_src: &str, doc: &str) -> Vec<String> {
             continue;
         };
         documented.extend(tag.bytes().take(1));
+        // A family claimed on a branch is listed before its constant reaches this tree.
+        let on_branch = table(doc, "### Tag registry").iter().any(|r| {
+            ticked(r[1]).first() == Some(&name) && r.get(3).is_some_and(|s| s.starts_with("branch"))
+        });
+        if on_branch && !by_name.contains_key(name) {
+            continue;
+        }
         if by_name.get(name).copied() != tag.bytes().next() {
             out.push(format!(
                 "registry says {name} is {tag:?}; keys.rs says {:?}",
@@ -115,6 +142,7 @@ fn problems(keys_src: &str, doc: &str) -> Vec<String> {
             ));
         }
     }
+    out.extend(registry_problems(&consts, &family_constants(keys_src), doc));
     let telemetry = table(doc, "| Sub-tag | Constant | Table |");
     let mut listed = Vec::new();
     for row in &telemetry {
@@ -135,6 +163,96 @@ fn problems(keys_src: &str, doc: &str) -> Vec<String> {
     for (name, _, is_tag) in &consts {
         if !is_tag && name.starts_with("TELEMETRY_") && !listed.contains(name) {
             out.push(format!("{name} is not in the telemetry sub-tag table"));
+        }
+    }
+    out
+}
+
+/// The "Tag registry" rule over the one-byte tags and two-byte family tags of `keys.rs`.
+fn registry_problems(
+    consts: &[(String, u8, bool)],
+    families: &[(String, u8)],
+    doc: &str,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let tags: BTreeMap<&str, u8> = consts
+        .iter()
+        .filter(|(_, _, is_tag)| *is_tag)
+        .map(|(n, b, _)| (n.as_str(), *b))
+        .collect();
+    for (name, byte) in &tags {
+        if *byte == ESCAPE && *name != "FAMILY_ESCAPE" {
+            out.push(format!("tag '~' is the family escape and cannot be {name}"));
+        }
+    }
+    let rows = table(doc, "### Tag registry");
+    let mut claimed: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    for row in &rows {
+        let (Some(tag), Some(name), Some(status)) = (
+            ticked(row[0]).first().copied(),
+            ticked(row[1]).first().copied(),
+            row.get(3),
+        ) else {
+            out.push(format!(
+                "tag registry row without a tag, a constant and a status: {row:?}"
+            ));
+            continue;
+        };
+        claimed.entry(tag.to_string()).or_default().push(name);
+        if let [byte] = tag.as_bytes() {
+            if let Some((holder, _)) = tags.iter().find(|(n, b)| *b == byte && *n != &name) {
+                out.push(
+                    format!("registry claims {tag:?} for {name}, which keys.rs gives {holder}")
+                        .replace('"', "'"),
+                );
+            }
+            if (b'4'..=b'9').contains(byte) && !status.starts_with("approved") {
+                out.push(format!("digit tag {tag:?} ({name}) is not approved: a digit 4-9 needs an approved row").replace('"', "'"));
+            }
+        }
+    }
+    for (tag, names) in &claimed {
+        if names.len() > 1 {
+            out.push(format!("tag registry gives {tag:?} to {names:?}"));
+        }
+    }
+    for (name, byte) in &tags {
+        if (b'4'..=b'9').contains(byte)
+            && !rows.iter().any(|r| {
+                ticked(r[1]).first() == Some(name)
+                    && r.get(3).is_some_and(|s| s.starts_with("approved"))
+            })
+        {
+            out.push(format!(
+                "digit tag '{}' ({name}) has no approved Tag registry row",
+                *byte as char
+            ));
+        }
+    }
+    let mut by_family: BTreeMap<u8, Vec<&str>> = BTreeMap::new();
+    for (name, byte) in families {
+        by_family.entry(*byte).or_default().push(name);
+        if *byte == 0 {
+            out.push(format!(
+                "family tag ~0x00 ({name}) uses the storage adapter's byte"
+            ));
+        }
+        let tag = format!("~{}", *byte as char);
+        if !rows.iter().any(|r| {
+            ticked(r[0]).first() == Some(&tag.as_str())
+                && ticked(r[1]).first() == Some(&name.as_str())
+        }) {
+            out.push(format!(
+                "family tag {tag} ({name}) is not in the Tag registry"
+            ));
+        }
+    }
+    for (byte, names) in &by_family {
+        if names.len() > 1 {
+            out.push(format!(
+                "family tag ~{} is taken by {names:?}",
+                *byte as char
+            ));
         }
     }
     out
@@ -181,4 +299,33 @@ fn a_duplicate_tag_an_unlisted_tag_and_a_drifted_row_are_reported() {
             .any(|p| p.contains("TELEMETRY_B is not in the telemetry sub-tag table")),
         "{found:?}"
     );
+}
+
+/// The tag registry rule (RUST_ENGINE_INTERFACES.md, "Tag registry"): a tag claimed on a branch may not take a byte
+/// another constant holds, a digit `4`-`9` needs an approved row, `~` is only the escape, and two-byte family tags are
+/// unique. Each line of this synthetic tree breaks one of them.
+#[test]
+fn a_branch_claim_on_a_held_byte_an_unapproved_digit_and_a_duplicate_family_tag_are_reported() {
+    let keys = "pub const HELD: u8 = b'h';\npub const DIGIT: u8 = b'4';\npub const ODD: u8 = b'~';\n\
+        pub const FAMILY_ESCAPE: u8 = b'~';\n\
+        pub const FAM_A: [u8; 2] = family_tag(b'a');\npub const FAM_B: [u8; 2] = family_tag(b'a');\n";
+    let doc = "### Key layout\n\n| Tag | Records | Owner |\n|---|---|---|\n| `h` | x | core |\n| `4` | x | core |\n\n\
+        Reserved tags:\n\n| Family | Tag | Constant | Cascade |\n|---|---|---|---|\n| esc | `~` | `FAMILY_ESCAPE` | no |\n\n\
+        ### Tag registry\n\n| Tag | Constant | Owner | Status |\n|---|---|---|---|\n\
+        | `h` | `CLAIMED` | lane 9 | branch rust-engine/x |\n| `4` | `DIGIT` | core | requested |\n\
+        | `~a` | `FAM_A` | core | main |\n\n\
+        | Sub-tag | Constant | Table |\n|---|---|---|\n";
+    let found = problems(keys, doc);
+    for want in [
+        "registry claims 'h' for CLAIMED, which keys.rs gives HELD",
+        "digit tag '4' (DIGIT) has no approved Tag registry row",
+        "tag '~' is the family escape and cannot be ODD",
+        "family tag ~a is taken by [\"FAM_A\", \"FAM_B\"]",
+        "family tag ~a (FAM_B) is not in the Tag registry",
+    ] {
+        assert!(
+            found.iter().any(|p| p.contains(want)),
+            "missing {want:?} in {found:?}"
+        );
+    }
 }
