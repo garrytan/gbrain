@@ -422,9 +422,11 @@ unsettled paths are ones the commits since the previous round changed, the
 previous round's commit is converged: the pass stamps it (`synced`), and
 `convergence.settled_behind` names the newer `HEAD`, whose commits the next
 plain sync imports (status reads `commits_waiting` until then). This needs the
-previous round to have left nothing in flight, owed or mismatched; a writer
-whose database write is still in flight keeps the pass ending `not_converged`
-as before. `convergence.levels`
+previous round to have left nothing in flight, owed or mismatched; otherwise
+the pass ends `not_converged` as before. A write still in flight in the last
+round on a path the newer commits changed counts like that commit's other
+paths: the pass stamps behind instead of waiting for it, and the next plain
+sync judges it again. `convergence.levels`
 counts the commits the newest pass read (`heads`) and how many of its rounds
 read the pages whole or patched the previous read (`whole`, `patched`).
 
