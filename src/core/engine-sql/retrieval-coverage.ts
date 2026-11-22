@@ -22,11 +22,12 @@ import {
 } from '../search/retrieval-coverage.ts';
 import type { ProjectionReadinessRow, ProjectionReadinessScope } from '../search/projection-readiness.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
-import type { SqlExecutor } from './executor.ts';
+import type { QueryOpts, Row, SqlExecutor } from './executor.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { readFilter } from './search-reads.ts';
 
-type Exec = Pick<SqlExecutor, 'executeRaw'>;
+/** The raw path of `SqlExecutor`, plus the engine's `jitOff` option (`EngineRawRead`): the engines hand the two JIT-off counts their own `executeRaw`. */
+type Exec = { executeRaw<R = Row>(sql: string, params?: unknown[], opts?: QueryOpts & { jitOff?: boolean }): Promise<R[]> };
 
 /** The read scope over `pages p`: sources, visibility, live pages, kind, types and excluded slug prefixes. */
 function scopeFilter(scope: ProjectionReadinessScope): SqlFragment {
@@ -38,15 +39,18 @@ function scopeFilter(scope: ProjectionReadinessScope): SqlFragment {
   return joinFragments(filters, ' AND ');
 }
 
-/** Render `fragment` and run it on the unscoped raw path, as master did. */
-async function rows<R>(exec: Exec, fragment: SqlFragment): Promise<R[]> {
+/** Render `fragment` and run it on the unscoped raw path, as master did. `jitOff` runs it with JIT off on Postgres (PGLite ignores it). */
+async function rows<R>(exec: Exec, fragment: SqlFragment, jitOff = false): Promise<R[]> {
   const { text, params } = renderFragment(fragment);
-  return exec.executeRaw<R>(text, params);
+  return exec.executeRaw<R>(text, params, jitOff ? { jitOff: true } : undefined);
 }
 
 /**
  * Pages in scope matching `where` (over `pages p` joined to `sources s` and `join`), up to the cap, and how many could affect the query.
  * `classed` also counts the could-affect images in the `sealable` or `reimport` class. Null when the count fails: unknown, never zero.
+ * The classed count runs JIT off, as the readiness probe does (#8033): the class's per-page subplans and a remote caller's
+ * visibility subplans lift its estimate past `jit_above_cost`, and on a large brain compiling them cost more than a second
+ * on every search while the read itself took a fraction of that. The unclassed count stays a plain statement.
  */
 async function countInScope(exec: Exec, scope: ProjectionReadinessScope, relevance: CoverageRelevance,
   join: SqlFragment, where: SqlFragment, classed = false): Promise<ScopedCount | null> {
@@ -64,7 +68,7 @@ async function countInScope(exec: Exec, scope: ProjectionReadinessScope, relevan
       FROM (SELECT p.id, p.type, p.page_kind, lower(COALESCE(p.title, '') || ' ' || p.slug) AS haystack${classColumn}
         FROM pages p JOIN sources s ON s.id = p.source_id ${join}
         WHERE p.deleted_at IS NULL AND ${where} AND ${scopeFilter(scope)}
-        LIMIT ${COVERAGE_COUNT_CAP}) x`);
+        LIMIT ${COVERAGE_COUNT_CAP}) x`, classed);
     const total = Number(row?.total), couldAffect = Number(row?.could_affect);
     if (!Number.isFinite(total) || !Number.isFinite(couldAffect)) return null;
     return { total, could_affect: couldAffect, capped: total >= COVERAGE_COUNT_CAP, ...(top === null ? {} : { top_counted: row?.top_counted === true }),
@@ -89,7 +93,8 @@ export function countEmbeddingHeldPages(exec: Exec, scope: ProjectionReadinessSc
 /**
  * #9192: progress of the index rebuild an upgrade's activation queued (rows still queued with reason
  * `protocol_activation`), over the pages in scope: how many are done of the total, and the rate measured from the
- * start of the rebuild. Null when no such rebuild is running or the count fails.
+ * start of the rebuild. Null when no such rebuild is running or the count fails. JIT off for the same reason as the
+ * classed `countInScope`: the never-run count still prices into the estimate.
  */
 export async function projectionRebuildProgress(exec: Exec, scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null> {
   try {
@@ -100,7 +105,7 @@ export async function projectionRebuildProgress(exec: Exec, scope: ProjectionRea
       SELECT started.seconds, c.total, c.done FROM started, LATERAL (SELECT count(p.id)::int AS total,
           count(p.id) FILTER (WHERE p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision)::int AS done
         FROM pages p JOIN sources s ON s.id = p.source_id
-        WHERE started.seconds IS NOT NULL AND p.deleted_at IS NULL AND ${trustedSql(projectionClassSql('p', 's'))} NOT IN ('protected','archived') AND ${filter}) c`);
+        WHERE started.seconds IS NOT NULL AND p.deleted_at IS NULL AND ${trustedSql(projectionClassSql('p', 's'))} NOT IN ('protected','archived') AND ${filter}) c`, true);
     if (row?.seconds === null || row?.seconds === undefined) return null;
     const done = Number(row.done), total = Number(row.total), seconds = Number(row.seconds);
     return { done, total, pages_per_second: seconds > 0 && done > 0 ? done / seconds : null };
