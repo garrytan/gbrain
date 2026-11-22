@@ -228,7 +228,7 @@ jobs:
     needs: scope
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.target == 'darwin-arm64' && 45 || 30 }}
     strategy:
       fail-fast: false
       matrix:
