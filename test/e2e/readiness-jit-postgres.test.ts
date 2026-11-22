@@ -1,9 +1,11 @@
 /**
- * Search's readiness counts (pending projections, embedding-held pages and the upgrade rebuild's progress) run with
- * JIT off (`executeRaw({ jitOff: true })`): a remote caller's visibility subplans lift their estimates past
- * `jit_above_cost`, and on a large brain the compilation cost more than a second on every search. The plan
- * assertions run on a one-connection engine whose session sets `jit_above_cost = 0`, so every statement that keeps
- * JIT on compiles and shows a `JIT` block: the control proves the assertion can fail.
+ * The counts search adds while projections are pending (pending pages by class, and the upgrade rebuild's progress)
+ * run with JIT off (`executeRaw({ jitOff: true })`): the class's subplans and a remote caller's visibility subplans
+ * lift their estimates past `jit_above_cost`, and on a large brain the compilation cost more than a second on every
+ * search. The embedding-held count, which runs on every search and prices low, stays a plain statement, so a search
+ * on a ready brain pays no extra statements. The plan assertions run on a one-connection engine whose session sets
+ * `jit_above_cost = 0`, so every statement that keeps JIT on compiles and shows a `JIT` block: the control proves
+ * the assertion can fail.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
@@ -27,7 +29,7 @@ async function hasJit(engine: PostgresEngine, raw: Raw, opts?: { jitOff?: boolea
   return JSON.stringify(row!['QUERY PLAN']).includes('"JIT"');
 }
 
-async function captureReadinessCounts(engine: PostgresEngine): Promise<Raw[]> {
+async function capture(engine: PostgresEngine, count: (spy: PostgresEngine) => Promise<unknown>): Promise<Raw[]> {
   const statements: Raw[] = [];
   const execute = engine.executeRaw.bind(engine);
   const spy = Object.assign(Object.create(engine), {
@@ -36,13 +38,12 @@ async function captureReadinessCounts(engine: PostgresEngine): Promise<Raw[]> {
       return execute(sql, params, opts);
     },
   }) as PostgresEngine;
-  const scope = { sourceId: 'default', excludePrivate: true };
-  const relevance: CoverageRelevance = { all: false, types: ['note'], patterns: ['jit'], pageIds: [], exactTopPageId: null, imageArm: false };
-  expect(await countPendingProjections(spy, scope, relevance)).not.toBeNull();
-  expect(await countEmbeddingHeld(spy, scope, relevance)).not.toBeNull();
-  await countProjectionRebuild(spy, scope);
+  await count(spy);
   return statements;
 }
+
+const scope = { sourceId: 'default', excludePrivate: true };
+const relevance: CoverageRelevance = { all: false, types: ['note'], patterns: ['jit'], pageIds: [], exactTopPageId: null, imageArm: false };
 
 (hasDatabase() ? describe : describe.skip)('search readiness counts without JIT (Postgres)', () => {
   beforeAll(async () => {
@@ -53,17 +54,29 @@ async function captureReadinessCounts(engine: PostgresEngine): Promise<Raw[]> {
   }, 120_000);
   afterAll(async () => { await teardownDB(); });
 
-  test('each count statement shows no JIT block; with JIT on it does', async () => {
+  test('the pending and rebuild counts show no JIT block; with JIT on they do', async () => {
     const reader = await oneConnection(['SET jit = on', 'SET jit_above_cost = 0']);
     try {
-      const statements = await captureReadinessCounts(reader);
-      expect(statements.length).toBe(3);
+      const statements = [
+        ...await capture(reader, async spy => expect(await countPendingProjections(spy, scope, relevance)).not.toBeNull()),
+        ...await capture(reader, spy => countProjectionRebuild(spy, scope)),
+      ];
+      expect(statements.length).toBe(2);
       for (const statement of statements) {
         expect(statement.opts).toEqual({ jitOff: true });
         expect(await hasJit(reader, statement, statement.opts)).toBe(false);
         expect(await hasJit(reader, statement)).toBe(true);
       }
       expect(await reader.executeRaw(`SELECT current_setting('jit') AS jit`)).toEqual([{ jit: 'on' }]);
+    } finally { await reader.disconnect(); }
+  }, 60_000);
+
+  test('the embedding-held count on every search stays one plain statement', async () => {
+    const reader = await oneConnection(['SET jit = on']);
+    try {
+      const statements = await capture(reader, async spy => expect(await countEmbeddingHeld(spy, scope, relevance)).not.toBeNull());
+      expect(statements.length).toBe(1);
+      expect(statements[0]!.opts).toBeUndefined();
     } finally { await reader.disconnect(); }
   }, 60_000);
 });

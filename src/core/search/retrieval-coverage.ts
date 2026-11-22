@@ -112,8 +112,9 @@ export function coverageScopeFilters(scope: ProjectionReadinessScope, params: un
 /**
  * Pages in scope matching `where` (over `pages p` joined to `sources s` and `join`), up to the cap, and how many could affect the query.
  * `classed` also counts the could-affect images in the `sealable` or `reimport` class. Null when the count fails: unknown, never zero.
- * JIT off, as in the readiness probe (#8033): a remote caller's visibility subplans lift the estimate past `jit_above_cost`,
- * and on a large brain compiling them costs more than a second on every search while the read itself takes a fraction of that.
+ * The classed count runs JIT off, as the readiness probe does (#8033): the class's per-page subplans and a remote caller's
+ * visibility subplans lift its estimate past `jit_above_cost`, and on a large brain compiling them cost more than a second
+ * on every search while the read itself took a fraction of that. The unclassed count stays a plain statement.
  */
 async function countInScope(engine: Pick<BrainEngine, 'executeRaw'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance,
   join: string, where: string, classed = false): Promise<ScopedCount | null> {
@@ -136,7 +137,7 @@ async function countInScope(engine: Pick<BrainEngine, 'executeRaw'>, scope: Proj
         WHERE p.deleted_at IS NULL AND ${where} AND ${filters.join(' AND ')}
         LIMIT ${COVERAGE_COUNT_CAP}) x`,
       params,
-      { jitOff: true },
+      classed ? { jitOff: true } : undefined,
     );
     const total = Number(row?.total), couldAffect = Number(row?.could_affect);
     if (!Number.isFinite(total) || !Number.isFinite(couldAffect)) return null;
@@ -169,7 +170,7 @@ export function countEmbeddingHeld(engine: Pick<BrainEngine, 'executeRaw'>, scop
  * so they never make a rebuild look like it runs for good. That check reads only the queue, and the count of every
  * page in scope, a read of the whole pages table, sits behind it (a filter on the outer row alone, so Postgres never
  * starts the scan when no rebuild runs): it runs only while the rebuild runs, never on every search. JIT off for the
- * same reason as `countInScope`: the never-run count still prices into the estimate.
+ * same reason as the classed `countInScope`: the never-run count still prices into the estimate.
  */
 export async function countProjectionRebuild(engine: Pick<BrainEngine, 'executeRaw'>, scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null> {
   const params: unknown[] = [];
