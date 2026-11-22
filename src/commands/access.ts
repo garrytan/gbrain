@@ -9,6 +9,8 @@
  *   gbrain access group add|rm|list <group> [--members a,b]
  *   gbrain access who-can-read <slug> [--source <id>]
  *   gbrain access check --token <name>|--client <id> [--as a,b]
+ *   gbrain access log [--member <id>] [--since 7d] [--limit N]
+ *   gbrain access who-read <slug> [--source <id>] [--since 30d] [--limit N]
  *
  * Trusted local CLI only; everything lives in the database, so a repo-less
  * brain works the same as a git-backed one. Refusals follow the agent
@@ -18,6 +20,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { exitCliError, usageError } from '../cli/cli-error.ts';
 import { runAccessRules } from './access-rules.ts';
 import { runAccessServes } from './access-serves.ts';
+import { readAccessLog, readLogLines, whoRead, whoReadLines } from './access-read-log.ts';
 import { disableReadByNobodyLines, readByNobodyNote } from './access-read-by-nobody.ts';
 import { rescopeArchiveAfter, rescopeArchiveBefore } from './archive-rescope.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -136,6 +139,12 @@ Checks (read-only):
   gbrain access check --token <name>|--client <id> [--as a,b]
                                              One credential's grant axes and member identity; --as lists an
                                              audience and reports whether its may_act_for covers it
+  gbrain access log [--member <id>] [--since 7d] [--limit 100]
+                                             Reads members and audiences made (enforced CLI reads, member-bound
+                                             and audience remote reads): time, who, operation, result, pages
+                                             returned; never text or query terms. Owner reads are not logged
+  gbrain access who-read <slug> [--source <id>] [--since 30d] [--limit 100]
+                                             Which members and audiences read the page, how often, and when
 
 Bind credentials: gbrain auth create|rescope|register-client ... --member <id>|none [--may-act-for <list>|none]
 Preview a member's view: gbrain search "<query>" --as <member>
@@ -149,7 +158,7 @@ function flagValue(args: string[], name: string): string | undefined {
   return v;
 }
 
-const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--members-file', '--source', '--token', '--client', '--as', '--qm', '--member', '--email', '--kind', '--owner']);
+const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--members-file', '--source', '--token', '--client', '--as', '--qm', '--member', '--email', '--kind', '--owner', '--since', '--limit']);
 
 function positionals(args: string[]): string[] {
   const out: string[] = [];
@@ -591,8 +600,18 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
           ...(r.audience ? [`  Audience: ${r.audience.map(a => `${a.principal}${a.covered_by_may_act_for ? '' : ' (not in may_act_for)'}`).join(', ')}`] : []),
           `  ${r.explanation}`]);
       }
+      case 'log': {
+        const entries = await readAccessLog(engine, { member: flagValue(rest, '--member'), since: flagValue(rest, '--since'), limit: flagValue(rest, '--limit') });
+        return print(json, { reads: entries }, () => readLogLines(entries));
+      }
+      case 'who-read': {
+        const slug = positionals(rest)[0];
+        if (!slug) throw usageError('who-read needs a page slug.', 'gbrain access who-read <slug> [--source <id>] [--since 30d]');
+        const r = await whoRead(engine, slug, { source: flagValue(rest, '--source'), since: flagValue(rest, '--since'), limit: flagValue(rest, '--limit') });
+        return print(json, r, () => whoReadLines(r));
+      }
       default:
-        throw usageError(`Unknown access subcommand: ${cmd}.`, 'Use member, owner, members-read-lineage, serves, group, rule, apply, resume, who-can-read or check (gbrain access --help).', { code: 'unknown_command' });
+        throw usageError(`Unknown access subcommand: ${cmd}.`, 'Use member, owner, members-read-lineage, serves, group, rule, apply, resume, who-can-read, who-read, log or check (gbrain access --help).', { code: 'unknown_command' });
     }
   } catch (e) {
     exitCliError(e, 'access');

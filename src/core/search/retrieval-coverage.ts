@@ -94,7 +94,12 @@ export function coverageRelevance(
   };
 }
 
-/** The pending pages the readiness probe found (unsealed, needing work) in the same scope. Null when the count fails. */
+/**
+ * The pending pages the readiness probe found (unsealed, needing work) in the same scope. Null when the count fails.
+ * The classed count runs JIT off, as the readiness probe does (#8033): the class's per-page subplans and a remote caller's
+ * visibility subplans lift its estimate past `jit_above_cost`, and on a large brain compiling them cost more than a second
+ * on every search while the read itself took a fraction of that. The embedding-held count stays a plain statement.
+ */
 export function countPendingProjections(engine: Pick<BrainEngine, 'countPendingProjectionPages'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
   return engine.countPendingProjectionPages(scope, relevance);
 }
@@ -113,7 +118,8 @@ export function countEmbeddingHeld(engine: Pick<BrainEngine, 'countEmbeddingHeld
  * Rows left on images (`sealable`, `reimport`) wait for an operator, whom the pending-images notice already names,
  * so they never make a rebuild look like it runs for good. That check reads only the queue, and the count of every
  * page in scope, a read of the whole pages table, sits behind it (a filter on the outer row alone, so Postgres never
- * starts the scan when no rebuild runs): it runs only while the rebuild runs, never on every search.
+ * starts the scan when no rebuild runs): it runs only while the rebuild runs, never on every search. JIT off for the
+ * same reason as the classed pending count: the never-run count still prices into the estimate.
  */
 export function countProjectionRebuild(engine: Pick<BrainEngine, 'projectionRebuildProgress'>, scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null> {
   return engine.projectionRebuildProgress(scope);

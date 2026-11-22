@@ -34,6 +34,7 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/persistence/atom-maintenance.ts': { count: 3, why: 'maintenance producer, never deferred' },
   'src/core/persistence/atom-retry.ts': { count: 2, why: 'receipt state' },
   'src/core/persistence/checkpoint-validation.ts': { count: 2, why: 'managed sync' },
+  'src/core/persistence/managed-sync-orphans.ts': { count: 3, why: 'managed sync: the checkpoint-moved, slug-mode-refused and pass-stamp orphan lists the doctor tests pin, kept as exports here when the engine-sql copy took the repair reads (batch 10 merge of cli-members-next)' },
   'src/core/persistence/journal.ts': { count: 7, why: 'claim and head selectors pair the list with RELEASED_DEFERRED (EARLIER_HEAD with its own EARLIER_DEFERRED probe); the two named-sync lists match sync rows, never deferred; the rest are recovery rules' },
   'src/core/persistence/refresh-barrier.ts': { count: 1, why: 'the downgrade backlog names deferred ahead of the open states: a released deferred row that is still queued or running has not published' },
   'src/core/persistence/page-batch.ts': { count: 1, why: 'batches are never deferred' },
@@ -54,7 +55,6 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/persistence/types.ts': { count: 1, why: 'the public receipt states, where deferred reads as queued' },
   'src/core/persistence/worktree-refresh.ts': { count: 1, why: 'the drain counts released deferred rows through RELEASED_DEFERRED' },
   'src/core/rust-engine/store-members/managed-sync-orphans.ts': { count: 1, why: 'managed sync (the Rust members mirror engine-sql/managed-sync-orphans.ts)' },
-  'src/core/rust-engine/store-members/dream-journal.ts': { count: 1, why: 'cycle producer, never deferred (the Rust listLaterPersistenceRequests mirrors engine-sql/dream-cycle.ts)' },
   'src/core/shared-skills/retention.ts': { count: 1, why: 'skill bundles are never deferred' },
 };
 

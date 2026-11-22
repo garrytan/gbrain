@@ -6,6 +6,8 @@ src/core/access/policy-git.ts	fs_import	1	W7: filesystem boundary moves to the l
 src/core/access/policy-git.ts	process_env	4	W6: settings plane out of the core
 src/core/access/policy-git.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/access/policy-transfer.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/access/read-log.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-2476 gap 1: the page ids one dispatched read returns)
+src/core/access/read-log.ts	module_collection	2	W6: per-engine state, or mark as a constant table (GST-2476 gap 1: per-engine read log buffers, like search/telemetry.ts)
 src/core/access/scope-read.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-1158 E1 read mode per attested call)
 src/core/advisor/collect-setup-smells.ts	process_env	1	W6: settings plane out of the core
 src/core/advisor/collect-uninstalled-brain-pack.ts	fs_import	1	W7: filesystem boundary moves to the local app

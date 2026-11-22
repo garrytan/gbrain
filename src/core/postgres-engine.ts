@@ -3206,7 +3206,7 @@ export class PostgresEngine implements BrainEngine {
   ensureFactsKeywordIndex(lang: string, notice?: (line: string) => void) { return ensureFactsFtsIndex(this, { lang, version: 0, notice }); }
   countPendingProjectionPages(scope: ProjectionReadinessScope, relevance: CoverageRelevance) { return retrievalCoverageImpl.countPendingProjectionPages(this.executeRaw.bind(this), scope, relevance); }
   countEmbeddingHeldPages(scope: ProjectionReadinessScope, relevance: CoverageRelevance) { return retrievalCoverageImpl.countEmbeddingHeldPages(this.executeRaw.bind(this), scope, relevance); }
-  projectionRebuildProgress(scope: ProjectionReadinessScope) { return retrievalCoverageImpl.projectionRebuildProgress(this.linkTemporal, scope); }
+  projectionRebuildProgress(scope: ProjectionReadinessScope) { return retrievalCoverageImpl.projectionRebuildProgress({ executeRaw: this.executeRaw.bind(this) }, scope); }
   // The readiness probe's statements, through this engine's executeRaw so the probe keeps its JIT-off option.
   readProjectionReadinessGeneration() { return retrievalCoverageImpl.readProjectionReadinessGeneration(this.executeRaw.bind(this)); }
   readProjectionReadiness(scope: ProjectionReadinessScope) { return retrievalCoverageImpl.readProjectionReadiness(this.executeRaw.bind(this), scope); }

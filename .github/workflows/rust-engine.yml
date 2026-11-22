@@ -228,6 +228,7 @@ jobs:
     needs: scope
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.runner }}
+    # darwin-arm64 runners run about 1.3x slower; its job took 17-22 min and was cancelled at 30 min with no failed test.
     timeout-minutes: ${{ matrix.target == 'darwin-arm64' && 45 || 30 }}
     strategy:
       fail-fast: false

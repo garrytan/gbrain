@@ -34,6 +34,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { OperationError } from '../ops/contract.ts';
+import { runAppleContactsEnrichment, type EnrichDeps } from './enrich.ts';
 import { withConnectorSync, pendingConnectorResult, type ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { connectorIdentity } from '../persistence/connector-identity.ts';
 import { abortsManagedRun, ConnectorHoldSession, connectorHoldsResult } from '../connectors/connector-hold-session.ts';
@@ -70,6 +71,8 @@ export interface AppleContactsSyncDeps {
   helper?: AppleContactsHelper;
   now?: () => number;
   log?: (line: string) => void;
+  /** Test seam: the write route enrichment sends its batch to. */
+  enrichSend?: EnrichDeps['send'];
 }
 
 interface Summary extends PublishSummary { status: 'synced' | 'partial'; failedFiles: number }
@@ -101,8 +104,20 @@ export async function runAppleContactsSync(engine: BrainEngine, sourceId: string
     throw new OperationError('invalid_params', '--reset-checkpoint does not apply to an Apple Contacts source.',
       `Run gbrain sync --source ${sourceId} --full instead: it reads every contact from GBrain Helper again, under the delete floor.`);
   }
-  return withConnectorSync(engine, sourceId, APPLE_CONTACTS_KIND, cfg, opts,
+  const result = await withConnectorSync(engine, sourceId, APPLE_CONTACTS_KIND, cfg, opts,
     async (managed, options) => options.dryRun ? connectorDryRunResult('Apple Contacts', sourceId) : runInner(engine, sourceId, cfg, options, managed, deps), pendingConnectorResult);
+  // Enrichment reads what the pull just wrote, so it runs only after a clean one; its failure never fails the pull.
+  if (opts.dryRun || (result.status !== 'synced' && result.status !== 'up_to_date')) return result;
+  const log = deps.log ?? ((line: string) => process.stderr.write(`${line}\n`));
+  try {
+    const countryCode = parsePhoneCountryCode(await engine.getConfig(PHONE_COUNTRY_CODE_CONFIG_KEY).catch(() => null));
+    const record = await runAppleContactsEnrichment(engine, sourceId, cfg, countryCode, { send: deps.enrichSend, now: deps.now });
+    if (record?.note) log('[apple-contacts] ' + sourceId + ': enrichment: ' + record.note + ': gbrain apple-contacts enrich status --source ' + sourceId);
+  } catch (error) {
+    if (runScoped(error)) throw error;
+    log('[apple-contacts] ' + sourceId + ': enrichment did not run: ' + (error instanceof Error ? error.message : String(error)));
+  }
+  return result;
 }
 
 async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContactsSourceConfig, opts: SyncOpts,

@@ -331,6 +331,7 @@ import { v327 } from './v327-access-handovers.ts';
 import { v328 } from './v328-owner-only-reads-complete.ts';
 import { v329 } from './v329-serves-since-subsecond.ts';
 import { v330 } from './v330-entity-identity-reviews-evidence.ts';
+import { v331 } from './v331-access-read-log.ts';
 import { v333 } from './v333-byte-order-slug-indexes.ts';
 import { v334 } from './v334-projection-jobs-byte-order-index.ts';
 import { v335 } from './v335-pages-projection-waiting-haystack-trgm.ts';
@@ -663,6 +664,7 @@ export const MIGRATIONS: Migration[] = [
   v328,
   v329,
   v330,
+  v331,
   v333,
   v334,
   v335,

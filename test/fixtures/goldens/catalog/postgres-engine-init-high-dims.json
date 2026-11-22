@@ -32,6 +32,7 @@
       "access_policy_revisions.access_policy_revisions_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES access_policy_state(source_id) ON DELETE CASCADE",
       "access_policy_state.access_policy_state_pkey": "p PRIMARY KEY (source_id)",
       "access_policy_state.access_policy_state_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "access_read_log.access_read_log_pkey": "p PRIMARY KEY (id)",
       "access_rules.access_rules_pkey": "p PRIMARY KEY (source_id, rule_id)",
       "access_rules.access_rules_prefix_check": "c CHECK (((length(prefix) <= 512) AND (prefix ~ '^(([a-z0-9][a-z0-9._-]*/)+|([a-z0-9][a-z0-9._-]*/)*[a-z0-9][a-z0-9._-]*)$'::text) AND (POSITION(('..'::text) IN (prefix)) = 0)))",
       "access_rules.access_rules_rule_id_check": "c CHECK ((rule_id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
@@ -741,6 +742,9 @@
       "access_policy_state": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "access_read_log": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "access_rules": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1303,6 +1307,7 @@
       "access_policy_revisions_operation_idx": "CREATE UNIQUE INDEX access_policy_revisions_operation_idx ON public.access_policy_revisions USING btree (operation_id) WHERE (operation_id IS NOT NULL)",
       "access_policy_revisions_pkey": "CREATE UNIQUE INDEX access_policy_revisions_pkey ON public.access_policy_revisions USING btree (source_id, revision)",
       "access_policy_state_pkey": "CREATE UNIQUE INDEX access_policy_state_pkey ON public.access_policy_state USING btree (source_id)",
+      "access_read_log_pkey": "CREATE UNIQUE INDEX access_read_log_pkey ON public.access_read_log USING btree (id)",
       "access_rules_pkey": "CREATE UNIQUE INDEX access_rules_pkey ON public.access_rules USING btree (source_id, rule_id)",
       "access_tokens_pkey": "CREATE UNIQUE INDEX access_tokens_pkey ON public.access_tokens USING btree (id)",
       "access_tokens_token_hash_key": "CREATE UNIQUE INDEX access_tokens_token_hash_key ON public.access_tokens USING btree (token_hash)",
@@ -1431,6 +1436,9 @@
       "guest_promotions_link_key": "CREATE UNIQUE INDEX guest_promotions_link_key ON public.guest_promotions USING btree (guest_page_id, target_source_id, target_slug)",
       "guest_promotions_pkey": "CREATE UNIQUE INDEX guest_promotions_pkey ON public.guest_promotions USING btree (id)",
       "guest_sources_pkey": "CREATE UNIQUE INDEX guest_sources_pkey ON public.guest_sources USING btree (source_id)",
+      "idx_access_read_log_member_time": "CREATE INDEX idx_access_read_log_member_time ON public.access_read_log USING btree (member, created_at DESC)",
+      "idx_access_read_log_pages": "CREATE INDEX idx_access_read_log_pages ON public.access_read_log USING gin (page_ids)",
+      "idx_access_read_log_time": "CREATE INDEX idx_access_read_log_time ON public.access_read_log USING btree (created_at)",
       "idx_access_tokens_hash": "CREATE INDEX idx_access_tokens_hash ON public.access_tokens USING btree (token_hash) WHERE (revoked_at IS NULL)",
       "idx_budget_reservations_expires": "CREATE INDEX idx_budget_reservations_expires ON public.budget_reservations USING btree (expires_at) WHERE (status = 'held'::text)",
       "idx_chat_usage_log_created": "CREATE INDEX idx_chat_usage_log_created ON public.chat_usage_log USING btree (created_at)",
@@ -1838,6 +1846,7 @@
     },
     "policies": {},
     "sequences": {
+      "access_read_log_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=access_read_log.id",
       "belief_events_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=belief_events.id",
       "belief_redactions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=belief_redactions.id",
       "calibration_profiles_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=calibration_profiles.id",
@@ -2016,6 +2025,19 @@
         "columns": [
           "1 source_id text/text NOT NULL",
           "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "access_read_log": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('access_read_log_id_seq'::regclass)",
+          "2 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "3 member text/text NULL",
+          "4 audience ARRAY/_text NULL",
+          "5 operation text/text NOT NULL",
+          "6 transport text/text NOT NULL",
+          "7 result_code text/text NOT NULL",
+          "8 page_ids ARRAY/_int4 NOT NULL DEFAULT '{}'::integer[]"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
