@@ -2,7 +2,7 @@
  * BrainEngine parity — batches 6b and 6c: the twin merge (persistence/twin-merge.ts `mergeTwinInto`, its moves in
  * engine-sql/twin-merge-moves.ts) and the origin-twins merge mode, the twin-merge moves called directly
  * (`moveTwinRelationships`, `moveTwinPageChildren`, `moveTwinFacts`), `recordRenameAlias`, the moved-pages fold's
- * version move (`movePageVersions`) and the secret-spans scan's named stop.
+ * version move (`movePageVersions`).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the three moves, `recordRenameAlias` and `movePageVersions` answer the same on PGLite, Postgres and the
@@ -17,9 +17,8 @@
  *  - Regression: the merge wrote a page version and detached the twin's origin before its first raw statement, where the
  *    Rust engine refused it with an unnamed executeRaw error; and the moves themselves refused by name on Rust.
  *  - Why existing coverage misses it: test/origin-twins-6948.test.ts runs on PGLite and Postgres only.
- *    The fold moves every page version of the old page to the survivor on every engine (a missing survivor refuses), and
- *    secret-spans previews a named page on PGLite and Postgres while the Rust engine stops it by name ("repair
- *    secret-spans scan") before any read.
+ *    The fold moves every page version of the old page to the survivor on every engine (a missing survivor refuses).
+ *    (`gbrain repair secret-spans` is served on every engine since batch 6c: test/engine-parity/repair-secret-spans.test.ts.)
  *  - Seam: none. The merge runs in the engine's own transaction. Seeding uses typed members only. Two seeds have no
  *    typed writer: a tag with no claim (a legacy NULL tag_source; addTag claims `added` or `frontmatter`) and a link
  *    transition of a producer other than `manual` (writeManualLinkTransitions writes only manual rows). The history half
@@ -32,12 +31,6 @@ import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { mergeTwinInto } from '../../src/core/persistence/twin-merge.ts';
 import { resolveOriginTwin, type OriginTwinPair } from '../../src/core/repair/origin-twins.ts';
-import { resolveRepairScope } from '../../src/core/repair/core.ts';
-import { repairRunner } from '../../src/core/repair/registry.ts';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { withEnv } from '../helpers/with-env.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -224,27 +217,6 @@ describe('engine parity: the twin merge on every engine', () => {
       twin: await count(pair.twin.slug), survivor: await count(pair.survivor.slug) };
     expect(answers).toEqual({ moved: 2, ascending: true, none: [], missing: 'refused', twin: 1, survivor: 3 });
     return answers;
-  });
-
-  parityTest('secret-spans previews a named page on the SQL engines, and the Rust engine stops the scan by name', {
-    methods: ['putPage'], requires: 'raw_sql', timeout: 60_000,
-  }, async (engine, backend) => {
-    await seedPair(engine);
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-repair-b6b-home-'));
-    try {
-      return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
-        try {
-          const result = await (await repairRunner(engine, { apply: false, noEmbed: true, logger: { info() {}, warn() {}, error() {} } as never }))
-            .run('secret-spans', await resolveRepairScope(engine, 'default'), { explicit: true, remote: false, slugs: ['notes/twin-copy'] } as never);
-          return { affected: result.affected, residuals: result.residuals };
-        } catch (err) {
-          if (backend === 'rust') expect(refusalText(err)).toContain('repair secret-spans scan');
-          throw err;
-        }
-      });
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
   });
 
   parityTest('moveTwinRelationships moves links and transitions of every provenance onto the survivor, dropping the colliding derived rows', {

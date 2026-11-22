@@ -453,11 +453,8 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
 }
 
 /** Queue the latest revision even when its worktree owner is unavailable. */
-export async function queuePageProjection(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, reason: string): Promise<void> {
-  await engine.executeRaw(`INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
-    SELECT s.incarnation,p.slug,p.knowledge_revision,$3 FROM pages p JOIN sources s ON s.id=p.source_id
-    WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL
-    ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now()`, [sourceId, slug, reason]);
+export async function queuePageProjection(engine: Pick<BrainEngine, 'queuePageProjectionJob'>, sourceId: string, slug: string, reason: string): Promise<void> {
+  await engine.queuePageProjectionJob(sourceId, slug, reason);
 }
 
 /** A live, unsegmented page's chunker version (`projectionBelowSafeFence`); the text lives in engine-sql/pages.ts with `getPageSealState`. */

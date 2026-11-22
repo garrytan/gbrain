@@ -136,9 +136,10 @@ test/engine-parity/repair-page-reads.test.ts	3	0
 test/engine-parity/repair-page-scans.test.ts	4	0
 test/engine-parity/repair-plan-scans.test.ts	2	0
 test/engine-parity/repair-runner.test.ts	17	0
+test/engine-parity/repair-secret-spans.test.ts	8	0
 test/engine-parity/repair-source-reads.test.ts	2	0
 test/engine-parity/repair-takes-timeline.test.ts	4	7
-test/engine-parity/repair-twin-merge.test.ts	5	3
+test/engine-parity/repair-twin-merge.test.ts	5	2
 test/engine-parity/request-tools-persist.test.ts	1	0
 test/engine-parity/resolve-reads.test.ts	7	0
 test/engine-parity/restriction-flag-reads.test.ts	3	0

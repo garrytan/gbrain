@@ -224,6 +224,13 @@ src/core/engine-sql/pages.ts	revertToVersion	sql	SEGW	lane 1e: refuses a segment
 src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segmented pages are never sampled
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
+src/core/engine-sql/secret-spans-rows.ts	PAGE_SQL	sql	INLINE	inline body columns; a segmented body is read whole through materializeSegmentedBody by repair/secret-spans.ts readFields, refused page_too_large over the single-string ceiling
+src/core/engine-sql/secret-spans-rows.ts	listVersionBodiesForRedaction	sql	INLINE	retained page_versions rows are rewritten only when inline; a segmented version is skipped and counted
+src/core/engine-sql/secret-spans-rows.ts	setRedactedPageFields	field	INLINE	runs only for an inline page; a segmented body is restaged through prepareSegmentedBody and applySegmentedBody
+src/core/engine-sql/secret-spans-rows.ts	setRedactedPageFields	sql	INLINE	runs only for an inline page; a segmented body is restaged through prepareSegmentedBody and applySegmentedBody
+src/core/engine-sql/secret-spans-rows.ts	setRetainedVersionBody	sql	INLINE	retained page_versions rows are rewritten only when inline; a segmented version is skipped and counted
+src/core/engine-sql/secret-store.ts	HOLDING_PAGES_SQL	sql	INLINE	presence check on inline columns in SQL; a segmented body is not read here, and restore reads its segments through readSegmentedBody
+src/core/engine-sql/secret-store.ts	readRestorePageHit	sql	INLINE	presence check on inline columns in SQL; a segmented page counts as a hit and the apply reads it whole
 src/core/engine-sql/sources.ts	PAGE_SIZE_ROWS_FOR_SLUGS_SQL	sql	META	lane 1e file: body_bytes for segmented pages; octet_length of the inline body only (moved from page-embedding-budget.ts readPageSizeStates)
 src/core/engine-sql/sources.ts	PAGE_SIZE_ROWS_SQL	sql	META	lane 1e file: body_bytes for segmented pages; octet_length of the inline body only (moved from page-embedding-budget.ts readPageSizeStates)
 src/core/engine-sql/timeline-reads.ts	listTimelineOrphanPages	sql	STREAM	the orphan prune's page list, moved from timeline-extract.ts pruneTimelineOrphans: compiled_truth and timeline of inline pages
@@ -590,12 +597,9 @@ src/core/repair/readers.ts	readersWrite	call:serializePageToMarkdown	SEGW	a segm
 src/core/repair/redacted-facts.ts	pageTexts	field	INLINE	inline branch only (a segmented page's body is read through readBodyRange in segmentedText)
 src/core/repair/redacted-facts.ts	restoreFencedRows	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read, and its fenced rows preview as class segmented
 src/core/repair/redacted-facts.ts	restoreFencedRows	field	INLINE	inline pages only: a segmented page returns before the read, and its fenced rows preview as class segmented
-src/core/repair/secret-spans.ts	PAGE_SQL	sql	INLINE	inline body columns; a segmented body is read whole through materializeSegmentedBody, refused page_too_large over the single-string ceiling
 src/core/repair/secret-spans.ts	bindToStore	field	INLINE	retained page_versions rows are rewritten only when inline; a segmented version is skipped and counted
-src/core/repair/secret-spans.ts	bindToStore	sql	INLINE	retained page_versions rows are rewritten only when inline; a segmented version is skipped and counted
 src/core/repair/secret-spans.ts	readFields	field	INLINE	inline body columns; a segmented body is read whole through materializeSegmentedBody, refused page_too_large over the single-string ceiling
 src/core/repair/secret-spans.ts	writePage	call:contentHash	INLINE	runs only for an inline page; a segmented body is restaged through prepareSegmentedBody and applySegmentedBody
-src/core/repair/secret-spans.ts	writePage	sql	INLINE	runs only for an inline page; a segmented body is restaged through prepareSegmentedBody and applySegmentedBody
 src/core/repair/segmented-mirror.ts	fileHoldsWithdrawnRows	field	NONE	the overlay result of one file fragment (a facts fence block) for the region digests (body-digests.ts); no page body is read
 src/core/repair/segmented-tiling.ts	republish	field	NONE	destructures the truth and timeline strings stageable built from the blob HEAD holds; no stored page body is read
 src/core/repair/segmented-tiling.ts	stageable	field	NONE	reads the compiled_truth and timeline the import screen (or parseMarkdown) returns for the file blob HEAD holds; no stored page body is read (the damaged one is never read)
@@ -650,8 +654,6 @@ src/core/search/relational-recall.ts	hydrate	field	LEAD	synopsis from boundedBod
 src/core/search/safe-chunks.ts	bodyWriteChunkVersion	sql	SEGW	spliced into inline body writes only; a segmented row refuses those writes (CHECK)
 src/core/search/safe-chunks.ts	protectedBodyFilter	sql	META	segmented page: body_flags.has_protected decides, missing flag counts as protected (fail closed)
 src/core/search/safe-chunks.ts	protectedTakesFilter	sql	META	segmented page: body_flags.has_protected decides, missing flag counts as protected (fail closed)
-src/core/secret-store/marker-sql.ts	pageHoldsSql	sql	INLINE	presence check on inline columns in SQL; a segmented body is not read here, and restore reads its segments through readSegmentedBody
-src/core/secret-store/restore.ts	previewRestore	sql	INLINE	presence check on inline columns in SQL; a segmented page counts as a hit and the apply reads it whole
 src/core/shared-skills/migration-export.ts	exportInventory	call:serializeMarkdown	INLINE	
 src/core/shared-skills/migration-export.ts	exportInventory	field	INLINE	
 src/core/shared-skills/migration-projection.ts	assertExportProjectionRoundtrip	field	INLINE	

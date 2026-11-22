@@ -401,6 +401,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'moveTwinRelationships', 'moveTwinPageChildren', 'moveTwinFacts', 'movePageVersions', 'recordRenameAlias',
   // The batch 9 daily budget ledger writes (engine-sql/budget-ledger-writes.ts; test/engine-parity/budget-ledger-writes.test.ts)
   'reclaimBudgetReservations', 'reserveBudgetReservation', 'dispatchBudgetReservation', 'settleBudgetReservation', 'releaseBudgetReservation',
+  // The batch 6c secret store and secret-spans members (engine-sql/secret-store.ts, secret-spans-rows.ts, page-projection-queue.ts; test/engine-parity/repair-secret-spans.test.ts)
+  'findSecretEntryByMac', 'secretEntryExists', 'insertSecretEntry', 'insertSecretOccurrence', 'readSecretEntry', 'listSecretOccurrences', 'listSecretEntrySummaries', 'countSecretsByRule', 'listAllowedSecretMacs', 'listSecretKeysInUse', 'readSecretStoreSnapshot', 'insertBackupSecretEntry', 'readBackupEntryHold', 'insertBackupSecretOccurrence', 'deleteUnreferencedSecretEntry', 'listSecretHoldingPages', 'countUnreferencedSecretEntries', 'readRestorePageHit', 'markSecretEntryAllowed',
+  'readPageRedactionRow', 'readPageRedactionRows', 'listTimelineDedupRows', 'listVersionBodiesForRedaction', 'countPageVersionRows', 'setRetainedVersionBody', 'listChunkTextsForRedaction', 'deleteChunksByIds', 'setRedactedPageFields', 'readRawDataValue', 'setRawDataValue', 'setRedactedRowText', 'queuePageProjectionJob',
   // The write owner's housekeeping scans (engine-sql/persistence-owner-scans.ts).
   'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads', 'listResumableRefreshes', 'listSourceLastCommits',
   // The effect worker's claim, settle and gate statements (engine-sql/persistence-effect-worker.ts).

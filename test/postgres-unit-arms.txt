@@ -281,6 +281,7 @@ test/engine-parity/repair-page-reads.test.ts
 test/engine-parity/repair-page-scans.test.ts
 test/engine-parity/repair-plan-scans.test.ts
 test/engine-parity/repair-runner.test.ts
+test/engine-parity/repair-secret-spans.test.ts
 test/engine-parity/repair-source-reads.test.ts
 test/engine-parity/repair-takes-timeline.test.ts
 test/engine-parity/repair-twin-merge.test.ts

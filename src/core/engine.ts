@@ -4815,6 +4815,70 @@ export interface BrainEngine {
   settleBudgetReservation(key: import('./engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string, actual: string): Promise<import('./engine-sql/budget-ledger-writes.ts').BudgetSettleRow | null>;
   /** Releases a held reservation and frees its estimate; true when released. */
   releaseBudgetReservation(key: import('./engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string): Promise<boolean>;
+  /** The secret store (GST-2988; engine-sql/secret-store.ts): the entry id that holds this (source, value MAC), or null. */
+  findSecretEntryByMac(sourceId: string, mac: string): Promise<string | null>;
+  /** Whether a secret store entry has this id. */
+  secretEntryExists(id: string): Promise<boolean>;
+  /** Writes one sealed entry (ciphertext and MAC as given); the id when written, null when the conflict clause skipped it. */
+  insertSecretEntry(row: import('./engine-sql/secret-store.ts').SecretEntryInsert, conflict: import('./engine-sql/secret-store.ts').SecretEntryConflict): Promise<string | null>;
+  /** Records where a marker was put. */
+  insertSecretOccurrence(o: import('./engine-sql/secret-store.ts').SecretOccurrenceInsert): Promise<void>;
+  /** One entry as stored (never a value), or null. */
+  readSecretEntry(id: string): Promise<import('./engine-sql/secret-store.ts').SecretEntryRow | null>;
+  /** The recorded places of one entry, in recording order. */
+  listSecretOccurrences(entryId: string): Promise<import('./engine-sql/secret-store.ts').SecretOccurrenceRow[]>;
+  /** Entries with their occurrence counts and slugs, oldest first. */
+  listSecretEntrySummaries(filter: { sourceId: string | null; slug: string | null; limit: number }): Promise<import('./engine-sql/secret-store.ts').SecretEntrySummaryRow[]>;
+  /** Entries and occurrences per rule. */
+  countSecretsByRule(sourceId: string | null): Promise<Array<{ rule: string; entries: number; occurrences: number }>>;
+  /** The key and MAC of every restored (allowed) value: of one source, or of every source in key order. */
+  listAllowedSecretMacs(sourceId: string | null): Promise<import('./engine-sql/secret-store.ts').SecretAllowedMac[]>;
+  /** Key ids entries were sealed with, by host. */
+  listSecretKeysInUse(): Promise<import('./engine-sql/secret-store.ts').SecretKeyInUse[]>;
+  /** Every entry and occurrence row, from one snapshot (an encrypted backup's input). */
+  readSecretStoreSnapshot(): Promise<{ entries: import('./engine-sql/secret-store.ts').SecretBackupEntryRow[]; occurrences: import('./engine-sql/secret-store.ts').SecretBackupOccurrenceRow[] }>;
+  /** Writes a backed-up entry unless its id or (source, value) is held, for a source this brain has; true when written. */
+  insertBackupSecretEntry(row: import('./engine-sql/secret-store.ts').SecretBackupEntryRow): Promise<boolean>;
+  /** Whether the row under `id` holds this (source, value MAC): null when no row has the id. */
+  readBackupEntryHold(id: string, sourceId: string, mac: string): Promise<boolean | null>;
+  /** Writes a backed-up occurrence once, on the page holding `pageId` (or at its slug); true when written. */
+  insertBackupSecretOccurrence(o: import('./engine-sql/secret-store.ts').SecretBackupOccurrenceRow, pageId: number | null): Promise<boolean>;
+  /** Deletes an entry no occurrence references; true when it did. */
+  deleteUnreferencedSecretEntry(id: string): Promise<boolean>;
+  /** The pages of the source at these slugs, each with whether its inline stores hold entry `id`'s marker. */
+  listSecretHoldingPages(sourceId: string, slugs: readonly string[], id: string): Promise<import('./engine-sql/secret-store.ts').SecretHoldingPageRow[]>;
+  /** Entries no occurrence references (doctor). */
+  countUnreferencedSecretEntries(): Promise<number>;
+  /** `gbrain secrets restore` preview: the live page's revision and whether it still holds the marker; null without a live page. */
+  readRestorePageHit(sourceId: string, slug: string, marker: string): Promise<import('./engine-sql/secret-store.ts').RestorePageHit | null>;
+  /** Marks an entry restored (allowed). */
+  markSecretEntryAllowed(id: string): Promise<void>;
+  /** `gbrain repair secret-spans` (engine-sql/secret-spans-rows.ts): the live page at (source, slug) as a redaction reads it, or null. */
+  readPageRedactionRow(sourceId: string, slug: string): Promise<import('./engine-sql/secret-spans-rows.ts').PageRedactionRow | null>;
+  /** The timeline rows, facts, takes, link contexts and raw data of a page, each in id order. */
+  readPageRedactionRows(pageId: number, sourceId: string, slug: string): Promise<import('./engine-sql/secret-spans-rows.ts').PageRedactionRows>;
+  /** Every timeline row of the pages whose rows belong to page `pageId`. */
+  listTimelineDedupRows(pageId: number): Promise<import('./engine-sql/secret-spans-rows.ts').TimelineDedupRow[]>;
+  /** The page's retained versions in id order. */
+  listVersionBodiesForRedaction(pageId: number): Promise<import('./engine-sql/secret-spans-rows.ts').RetainedVersionBody[]>;
+  /** The number of retained versions of a page. */
+  countPageVersionRows(pageId: number): Promise<number>;
+  /** Rewrites a retained version's text and frontmatter. */
+  setRetainedVersionBody(pageId: number, id: number, compiledTruth: string | null, frontmatter: unknown): Promise<void>;
+  /** Every stored chunk row of a page (staged and retired included): ids and texts for a rewrite, texts alone for the residual scan. */
+  listChunkTextsForRedaction(pageId: number, purpose: 'rewrite' | 'scan'): Promise<import('./engine-sql/secret-spans-rows.ts').ChunkTextRow[]>;
+  /** Deletes chunk rows by id. */
+  deleteChunksByIds(pageId: number, ids: readonly number[]): Promise<void>;
+  /** Rewrites the page row's text fields and content hash. */
+  setRedactedPageFields(pageId: number, fields: import('./engine-sql/secret-spans-rows.ts').RedactedPageFields): Promise<void>;
+  /** The data of one raw data row, named by (page, id). */
+  readRawDataValue(pageId: number, id: number): Promise<unknown>;
+  /** Replaces the data of one raw data row. */
+  setRawDataValue(pageId: number, id: number, data: unknown): Promise<void>;
+  /** Rewrites one text column of a timeline, fact, take or link row (a fact or take loses its embedding). */
+  setRedactedRowText(pageId: number, store: import('./engine-sql/secret-spans-rows.ts').RedactedRowStore, id: number, column: string, text: string): Promise<void>;
+  /** Queues the live page at (source, slug) for a projection rebuild at its current revision (engine-sql/page-projection-queue.ts). */
+  queuePageProjectionJob(sourceId: string, slug: string, reason: string): Promise<void>;
   /** The twin merge: drops the twin's colliding derived links and transitions and moves the rest onto the survivor, with the relationship keys before and after (engine-sql/twin-merge-moves.ts). Run it in the merge's transaction. */
   moveTwinRelationships(ids: import('./engine-sql/twin-merge-moves.ts').TwinMergeIds): Promise<import('./engine-sql/twin-merge-moves.ts').TwinRelationshipMoves>;
   /** The twin merge: moves the twin's timeline rows and events, raw data, user-added tags, files and free-text aliases to the survivor; the tags moved. */
