@@ -15,7 +15,8 @@ const REGISTRY: &str = include_str!("../../../../docs/designs/RUST_ENGINE_INTERF
 fn constants(src: &str) -> Vec<(String, u8, bool)> {
     let mut out = Vec::new();
     for line in src.lines() {
-        let Some(rest) = line.trim().strip_prefix("pub const ") else {
+        // Any visibility (`pub`, `pub(crate)`, none): a tag is a tag wherever it is declared.
+        let Some((_, rest)) = line.trim().split_once("const ") else {
             continue;
         };
         let Some((name, value)) = rest.split_once(": u8 = ") else {
@@ -35,16 +36,24 @@ fn constants(src: &str) -> Vec<(String, u8, bool)> {
     out
 }
 
-/// A `pub const NAME: [u8; 2] = family_tag(b'x');` line of `keys.rs`: a two-byte family tag, by its family byte.
-fn family_constants(src: &str) -> Vec<(String, u8)> {
+/// Every `const NAME: [u8; 2] = family_tag(...)` declaration of `keys.rs` (any visibility, any trailing comment): a
+/// two-byte family tag by its family byte, or `None` when the argument is not one printable byte literal `b'x'`
+/// (which includes `b'\0'`), so no declaration is skipped unseen.
+fn family_constants(src: &str) -> Vec<(String, Option<u8>)> {
     src.lines()
         .filter_map(|line| {
-            let rest = line.trim().strip_prefix("pub const ")?;
-            let (name, value) = rest.split_once(": [u8; 2] = family_tag(b'")?;
-            match value.strip_suffix("');")?.as_bytes() {
-                [b] => Some((name.to_string(), *b)),
+            let (_, rest) = line.trim().split_once("const ")?;
+            let (name, value) = rest.split_once(": [u8; 2] = family_tag(")?;
+            let arg = value.split_once(')').map(|(a, _)| a)?;
+            let byte = match arg
+                .strip_prefix("b'")
+                .and_then(|a| a.strip_suffix('\''))
+                .map(str::as_bytes)
+            {
+                Some([b]) if b.is_ascii_graphic() => Some(*b),
                 _ => None,
-            }
+            };
+            Some((name.trim().to_string(), byte))
         })
         .collect()
 }
@@ -171,7 +180,7 @@ fn problems(keys_src: &str, doc: &str) -> Vec<String> {
 /// The "Tag registry" rule over the one-byte tags and two-byte family tags of `keys.rs`.
 fn registry_problems(
     consts: &[(String, u8, bool)],
-    families: &[(String, u8)],
+    families: &[(String, Option<u8>)],
     doc: &str,
 ) -> Vec<String> {
     let mut out = Vec::new();
@@ -219,7 +228,8 @@ fn registry_problems(
     for (name, byte) in &tags {
         if (b'4'..=b'9').contains(byte)
             && !rows.iter().any(|r| {
-                ticked(r[1]).first() == Some(name)
+                ticked(r[0]).first().map(|t| t.as_bytes()) == Some(&[*byte][..])
+                    && ticked(r[1]).first() == Some(name)
                     && r.get(3).is_some_and(|s| s.starts_with("approved"))
             })
         {
@@ -231,12 +241,11 @@ fn registry_problems(
     }
     let mut by_family: BTreeMap<u8, Vec<&str>> = BTreeMap::new();
     for (name, byte) in families {
+        let Some(byte) = byte else {
+            out.push(format!("family tag declaration the guard cannot read: {name} (use family_tag(b'x') with one printable byte)"));
+            continue;
+        };
         by_family.entry(*byte).or_default().push(name);
-        if *byte == 0 {
-            out.push(format!(
-                "family tag ~0x00 ({name}) uses the storage adapter's byte"
-            ));
-        }
         let tag = format!("~{}", *byte as char);
         if !rows.iter().any(|r| {
             ticked(r[0]).first() == Some(&tag.as_str())
@@ -322,6 +331,36 @@ fn a_branch_claim_on_a_held_byte_an_unapproved_digit_and_a_duplicate_family_tag_
         "tag '~' is the family escape and cannot be ODD",
         "family tag ~a is taken by [\"FAM_A\", \"FAM_B\"]",
         "family tag ~a (FAM_B) is not in the Tag registry",
+    ] {
+        assert!(
+            found.iter().any(|p| p.contains(want)),
+            "missing {want:?} in {found:?}"
+        );
+    }
+}
+
+/// Round-1 review cases: a declaration with a trailing comment or an argument the guard cannot read is never skipped,
+/// a digit approval counts only for its own byte, and a duplicate registry row or an unapproved digit row is named.
+#[test]
+fn a_commented_or_unreadable_family_tag_a_digit_approved_for_another_byte_and_duplicate_rows_are_reported()
+ {
+    let keys = "pub const FAMILY_ESCAPE: u8 = b'~';\npub const DIGIT: u8 = b'5';\n\
+        pub const FAM_A: [u8; 2] = family_tag(b'a'); // first\npub const FAM_B: [u8; 2] = family_tag(b'a'); // second\n\
+        pub const FAM_NUL: [u8; 2] = family_tag(b'\\0');\npub(crate) const FAM_C: [u8; 2] = family_tag(NAME);\n";
+    let doc = "### Key layout\n\n| Tag | Records | Owner |\n|---|---|---|\n| `5` | x | core |\n\n\
+        Reserved tags:\n\n| Family | Tag | Constant | Cascade |\n|---|---|---|---|\n| esc | `~` | `FAMILY_ESCAPE` | no |\n\n\
+        ### Tag registry\n\n| Tag | Constant | Owner | Status |\n|---|---|---|---|\n\
+        | `4` | `DIGIT` | core | approved |\n| `6` | `OTHER` | core | requested |\n\
+        | `~a` | `FAM_A` | core | main |\n| `~a` | `FAM_B` | core | main |\n\n\
+        | Sub-tag | Constant | Table |\n|---|---|---|\n";
+    let found = problems(keys, doc);
+    for want in [
+        "family tag ~a is taken by [\"FAM_A\", \"FAM_B\"]",
+        "digit tag '5' (DIGIT) has no approved Tag registry row",
+        "digit tag '6' (OTHER) is not approved",
+        "tag registry gives \"~a\" to [\"FAM_A\", \"FAM_B\"]",
+        "family tag declaration the guard cannot read: FAM_NUL",
+        "family tag declaration the guard cannot read: FAM_C",
     ] {
         assert!(
             found.iter().any(|p| p.contains(want)),

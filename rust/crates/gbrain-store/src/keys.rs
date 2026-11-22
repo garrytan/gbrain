@@ -126,6 +126,7 @@ pub const FAMILY_ESCAPE: u8 = b'~';
 
 /// The two-byte tag of a family under `FAMILY_ESCAPE`. `family` is never `0x00` (the storage adapter's byte).
 pub const fn family_tag(family: u8) -> [u8; 2] {
+    assert!(family != 0, "a family byte is never 0x00");
     [FAMILY_ESCAPE, family]
 }
 
@@ -459,5 +460,13 @@ mod family_tag_tests {
             assert!(tag < FAMILY_ESCAPE);
         }
         assert_eq!(family_text(fam_a, &[]), fam_a.to_vec());
+    }
+
+    /// `0x00` is the storage adapter's byte, so no family takes it.
+    #[test]
+    #[should_panic(expected = "a family byte is never 0x00")]
+    fn family_tag_refuses_the_storage_adapter_byte() {
+        let zero = std::hint::black_box(0u8);
+        let _ = family_tag(zero);
     }
 }

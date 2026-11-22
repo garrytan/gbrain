@@ -112,8 +112,9 @@ Rules:
 
 - Ids are big-endian `u64` (`keys::id_key`, `keys::page_id`). A chunk index is a big-endian `u32`. Text parts are
   UTF-8 joined by a `0x00` byte (`keys::text`); a text part never contains `0x00`.
-- **One tag per family.** Each planned family has one reserved tag below (also in `keys.rs`, one constant per
-  family). Every byte after the tag belongs to the family's module, which documents its sub-layout in its header.
+- **One tag per family.** Each planned family has one reserved tag below, one constant per family in `keys.rs`
+  (a tag claimed on a branch is listed in the "Tag registry" until its constant reaches this tree). A new family takes
+  a two-byte tag, `~` then one byte (see "Tag registry"). Every byte after the tag belongs to the family's module, which documents its sub-layout in its header.
   Use a second byte as a sub-table marker when the family has more than one table (for example `F 0x01 <id>` for
   rows and `F 0x02 <source> 0x00 <entity> 0x00 <id>` for an index).
 - **Never reuse, reorder or repurpose a byte.** A family that is not listed takes an unused byte in a reviewed
@@ -203,7 +204,8 @@ change to this table and to `keys.rs`.
 ### Tag registry
 
 The one-byte tags on `rust-engine/main` are the "Key layout" and "Reserved tags" tables above: every capital letter,
-every small letter but `x` and `y`, and the digits `1` and `2`. This table lists every other tag claimed on any
+every small letter but `x` and `y`, and the digits `1` and `2`. The "Reserved tags" row for `x` (`ACCESS_MEMBERS`)
+records a claim whose constant is still only on the access branches, listed below as a branch claim. This table lists every other tag claimed on any
 branch, and the reserved ones, with the owner who claimed it. The rules:
 
 - **Claim before you write.** A branch that adds a one-byte tag adds its row here in the same commit, with status
