@@ -25,13 +25,15 @@
  *  - Why existing coverage misses it: test/access-members.test.ts runs the commands on PGLite only, and the write-misc
  *    parity cases seed members with raw SQL, which stops on the Rust arm.
  *  - Seam: none. Timestamps are reduced to their shape. Token rows are written through the typed insertAccessToken.
- *  - Known losses on Rust (docs/designs/RUST_ENGINE.md row 32c): applyAttestSources; verifiedMember also refuses on
- *    Rust when called with no engine (sign-in passes the engine, row 32d-1). The labelled-only page policy (row 32e)
- *    and the token list (row 32g) are served and have their own parity cases. The last describe pins each refusal,
- *    so a pin fails when Rust stops refusing and its row must leave the table.
+ *  - --attest-sources (row 32c): applyAttestSources reads the credentials and sources through the typed lists on Rust
+ *    (a mark, a restore, each refusal and a dry run answer as on PGLite and Postgres); the last describe runs that case on
+ *    the Rust arm alone, so a typed refusal cannot pass for an answer.
+ *  - Known loss on Rust: verifiedMember also refuses on Rust when called with no engine (sign-in passes the engine, row
+ *    32d-1). The labelled-only page policy (row 32e) and the token list (row 32g) are served and have their own parity
+ *    cases. The last describe pins the refusal, so the pin fails when Rust stops refusing and must then go.
  */
 import { describe, expect, test } from 'bun:test';
-import { createSource, parityArms, resetArm } from './harness.ts';
+import { archiveSource, createSource, parityArms, resetArm, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AccessMemberInsert, CredentialBindingRow } from '../../src/core/engine-sql/access-members.ts';
@@ -43,12 +45,12 @@ import {
 } from '../../src/core/access/members.ts';
 import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
 import { ownerMemberId, setOwner } from '../../src/core/access/owner.ts';
-import { applyAttestSources } from '../../src/core/access/attest-sources.ts';
 import { remoteCallerAccess } from '../../src/core/access/caller.ts';
 import { servesStatus } from '../../src/commands/access-serves.ts';
 import { openPages } from '../../src/core/access/open-pages.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { parseSourceConfig } from '../../src/core/sources-load.ts';
 
 const { parityTest, arms } = parityArms(testBackends());
 
@@ -91,7 +93,81 @@ async function seedCorePages(engine: BrainEngine): Promise<void> {
 const corePages = async (engine: BrainEngine) =>
   (await engine.listCorePageRows({ excludePrivate: true, forCaller: true, limit: 50 })).map(r => r.slug).sort();
 
+/**
+ * `gbrain auth rescope --attest-sources` (row 32c: bindCredential over applyAttestSources): a mark, a restore, every
+ * refusal and a dry run, each as the outcome the operator sees plus the resulting `qm_scope` / `federated` of every source.
+ */
+async function attestSourcesCase(engine: BrainEngine, backend: ParityBackend) {
+  const ids = ['home', 'scope-a', 'scope-t', 'scope-dry', 'scope-fed', 'scope-arch', 'shared', 'shared-t', 'scope-pp', 'scope-pf', 'scope-keep'];
+  for (const id of ids) await createSource(engine, backend, id, id === 'scope-fed' ? { federated: true } : {});
+  await archiveSource(engine, backend, 'scope-arch');
+  const cc = (client_id: string, extra: Partial<Parameters<BrainEngine['insertOauthClient']>[0]> = {}) =>
+    engine.insertOauthClient({ client_id, client_name: client_id, grant_types: ['client_credentials'], client_secret_hash: 'secret-hash', ...extra });
+  await cc('scope-cc', { source_id: 'home' });
+  await cc('pp-cc', { private_pages: 'granted_sources' });
+  await cc('pf-cc', { private_facts: 'granted_sources' });
+  await cc('keeper-cc', { federated_read: ['scope-keep'] });
+  await cc('reader-cc', { source_id: 'shared' });
+  await cc('dead-cc', { source_id: 'scope-a', deleted_at: new Date('2026-01-01T00:00:00Z') });
+  await engine.insertAccessToken({ ...tokenRow('reader-t'), permissions: { source_id: 'shared-t' } });
+  await engine.insertAccessToken({ ...tokenRow('gone-t'), permissions: { source_id: 'scope-t' }, revoked_at: new Date('2026-01-01T00:00:00Z') });
+  const { id: scopeToken } = await engine.insertAccessToken(tokenRow('scope-t'));
+  const client = (id: string) => ({ kind: 'client' as const, id });
+  const attest = (sources: string[] | null) => ({ attestActor: 'qm', attestOps: ['memory_write'], attestSources: sources });
+  const run = async (ref: { kind: 'token' | 'client'; id: string }, sources: string[] | null, dryRun = false) => {
+    try {
+      const r = await bindCredential(engine, ref, attest(sources), { dryRun });
+      return { changed: r.changed, sources: r.attest_sources };
+    } catch (error) {
+      const e = error as { code?: string; reason?: string; message: string };
+      return { code: e.code, reason: e.reason, message: e.message };
+    }
+  };
+  const out: Record<string, unknown> = {
+    dryRun: await run(client('scope-cc'), ['scope-dry'], true),
+    mark: await run(client('scope-cc'), ['scope-a']),
+    markToken: await run({ kind: 'token', id: scopeToken }, ['scope-t']),
+    markKeep: await run(client('keeper-cc'), ['scope-keep']),
+    dropStillRead: await run(client('keeper-cc'), null),
+    privatePages: await run(client('pp-cc'), ['scope-pp']),
+    privateFacts: await run(client('pf-cc'), ['scope-pf']),
+    defaultSource: await run(client('scope-cc'), ['default']),
+    federated: await run(client('scope-cc'), ['scope-fed']),
+    archived: await run(client('scope-cc'), ['scope-arch']),
+    missing: await run(client('scope-cc'), ['no-such-source']),
+    ownWrite: await run(client('scope-cc'), ['home']),
+    readByClient: await run(client('scope-cc'), ['shared']),
+    readByToken: await run(client('scope-cc'), ['shared-t']),
+  };
+  // A restore: a listed source that lost its mark is marked again by restating the list.
+  await engine.updateSourceConfig('scope-a', { qm_scope: false });
+  out.restore = await run(client('scope-cc'), ['scope-a']);
+  out.marks = await Promise.all(ids.map(async id => { const c = parseSourceConfig((await engine.getSource(id))?.config); return [id, c.qm_scope ?? null, c.federated ?? null]; }));
+  const refused = (message: string) => ({ code: 'invalid_params', reason: 'scope_source_reserved', message });
+  const marked = (sources: string[]) => ({ changed: true, sources });
+  expect(out).toEqual({
+    dryRun: marked(['scope-dry']), mark: marked(['scope-a']), markToken: marked(['scope-t']), markKeep: marked(['scope-keep']), restore: marked(['scope-a']),
+    dropStillRead: refused('This credential still reads scope-keep, so it cannot leave --attest-sources; nothing changed.'),
+    privatePages: refused('This credential holds the private-pages grant, so it cannot list scope sources; nothing changed.'),
+    privateFacts: refused('This credential holds the private-facts grant, so it cannot list scope sources; nothing changed.'),
+    defaultSource: refused('--attest-sources names default, which every connection without a source grant reads (the default source).'),
+    federated: refused('--attest-sources names scope-fed, which every connection without a source grant reads (a federated source).'),
+    archived: refused('--attest-sources names scope-arch, which is not an active source.'),
+    missing: refused('--attest-sources names no-such-source, which is not an active source.'),
+    ownWrite: refused("--attest-sources names home, this credential's own write source (where member pages live)."),
+    readByClient: refused('--attest-sources names shared, which OAuth client reader-cc can already read.'),
+    readByToken: refused('--attest-sources names shared-t, which token reader-t can already read.'),
+    // Only the three accepted sources hold the mark (never federated); the dry run, every refusal and the dead and revoked readers left none.
+    marks: ids.map(id => [id, ['scope-a', 'scope-t', 'scope-keep'].includes(id) ? true : null, ['scope-a', 'scope-t', 'scope-keep'].includes(id) ? false : id === 'scope-fed' ? true : null]),
+  });
+  return out;
+}
+
 describe('engine parity: access members', () => {
+  parityTest('rescope --attest-sources marks, restores, refuses and dry-runs the same way on every engine', {
+    methods: ['insertOauthClient', 'insertAccessToken', 'getSource', 'updateSourceConfig', 'transaction'],
+  }, (engine, backend) => attestSourcesCase(engine, backend));
+
   // The read-side leak, first: a labelled-only member is read as itself, labelled-only, and never as nobody.
   parityTest('a stdio server bound to a labelled-only member reads as that member, labelled-only, and as nobody once disabled',
     { methods: ['insertAccessMember', 'setAccessMemberLabelledOnly', 'readLiveMember', 'readAccessMembers', 'setAccessMemberDisabled'] }, async (engine) => {
@@ -470,9 +546,10 @@ describe('engine parity: the open-page count reads the member keys (row 32g)', (
   });
 });
 
-describe('the Rust arm refuses what it does not serve yet (row 32c, and verifiedMember without an engine), and writes nothing', () => {
-  // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine and pin each refusal: a pin
-  // fails when Rust stops refusing, and its row must then leave docs/designs/RUST_ENGINE.md.
+describe('the Rust arm serves --attest-sources (row 32c), and refuses verifiedMember with no engine, and writes nothing', () => {
+  // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine: the first is red while
+  // applyAttestSources stops on the raw_sql refusal; the second pins a refusal that fails when Rust stops refusing
+  // (and must then go).
   const RAW_SQL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
   const refusal = async (run: () => Promise<unknown>) => {
     try {
@@ -489,11 +566,15 @@ describe('the Rust arm refuses what it does not serve yet (row 32c, and verified
     return rust?.engine;
   };
 
-  test('loss: applyAttestSources and verifiedMember stop on the raw_sql refusal', async () => {
+  test('rescope --attest-sources marks, restores, refuses and dry-runs on Rust as on PGLite', async () => {
+    const engine = await rustArm();
+    if (engine) await attestSourcesCase(engine, 'rust');
+  });
+
+  test('loss: verifiedMember with no engine stops on the raw_sql refusal', async () => {
     const engine = await rustArm();
     if (!engine) return;
     await addMember(engine, 'alice-example');
-    expect(await refusal(() => applyAttestSources(engine, { kind: 'token', id: 'x' }, ['scope-a'], null))).toEqual(stop(RAW_SQL));
     expect(await refusal(() => verifiedMember(sqlQueryForEngine(engine), 'alice-example'))).toEqual(stop(RAW_SQL));
   });
 });

@@ -98,9 +98,14 @@ export function sourcesOf(s: GrantSources): { reads: string[]; write: string | n
 }
 
 /** Every live credential's read sources, write source and attest_sources, read through the canonical grant model. */
-async function credentialSources(sql: SqlQuery): Promise<CredentialSources[]> {
-  const clients = await sql`SELECT * FROM oauth_clients WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`;
-  const tokens = await sql`SELECT * FROM access_tokens WHERE revoked_at IS NULL`;
+async function credentialSources(db: Db): Promise<CredentialSources[]> {
+  // The Rust engine has no raw SQL: it reads the same live rows through the typed lists (its write transaction is the lock).
+  const rust = typeof db !== 'function' && db.kind === 'rust' ? db : null;
+  const sql = sqlOf(db);
+  const clients = rust ? (await rust.listOauthClients()).filter(r => r.deleted_at == null) as unknown as Record<string, unknown>[]
+    : await sql`SELECT * FROM oauth_clients WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`;
+  const tokens = rust ? (await rust.listAccessTokens()).filter(r => r.revoked_at == null) as unknown as Record<string, unknown>[]
+    : await sql`SELECT * FROM access_tokens WHERE revoked_at IS NULL`;
   return [
     ...clients.map(row => {
       const g = grantFromRow(row);
@@ -155,13 +160,15 @@ function attestInvalid(message: string, suggestion: string): OperationError {
  */
 export async function applyAttestSources(db: Db, self: CredentialRef, next: readonly string[] | null, before: readonly string[] | null, opts: { dryRun?: boolean } = {}): Promise<boolean> {
   const sql = sqlOf(db);
-  const marked = await markedScopeSources(sql, next ?? []);
+  // Rust: typed reads and writes in the caller's store transaction, which holds the writer gate (no row locks to take).
+  const rust = typeof db !== 'function' && db.kind === 'rust' ? db : null;
+  const marked = await markedScopeSources(rust ?? sql, next ?? []);
   const added = (next ?? []).filter(s => !(before ?? []).includes(s) || !marked.has(s));
   const dropped = (before ?? []).filter(s => !(next ?? []).includes(s));
   if (!added.length && !dropped.length) return false;
   // The caller holds this credential's row FOR UPDATE; the sources it marks are locked before the other grants are read.
-  await markedScopeSources(sql, added, 'update');
-  const all = await credentialSources(sql);
+  await markedScopeSources(rust ?? sql, added, 'update');
+  const all = await credentialSources(db);
   const mine = all.find(c => same(c.ref, self));
   const stillRead = dropped.filter(s => mine?.reads.includes(s));
   if (stillRead.length) {
@@ -174,8 +181,9 @@ export async function applyAttestSources(db: Db, self: CredentialRef, next: read
   if (added.length && mine?.privateFacts) {
     throw attestInvalid('This credential holds the private-facts grant, so it cannot list scope sources; nothing changed.', 'Clear it first (gbrain auth rescope ... --private-facts none): a scope credential reads only shared memory.');
   }
+  const records = rust ? new Map((await rust.listSourceRecords()).map(r => [r.id, r])) : null;
   for (const s of added) {
-    const [row] = await sql`SELECT archived, config FROM sources WHERE id = ${s}`;
+    const row = records ? records.get(s) : (await sql`SELECT archived, config FROM sources WHERE id = ${s}`)[0];
     if (!row || row.archived === true) throw attestInvalid(`--attest-sources names ${s}, which is not an active source.`, 'Add a dedicated source for the scope first (gbrain sources add <id>: with a path on a repo brain, without one on a repo-less brain), then list it.');
     if (s === 'default' || parseSourceConfig(row.config).federated === true) throw attestInvalid(`--attest-sources names ${s}, which every connection without a source grant reads (${s === 'default' ? 'the default source' : 'a federated source'}).`, 'Use a dedicated, unfederated source per scope.');
     if (mine?.write === s) throw attestInvalid(`--attest-sources names ${s}, this credential's own write source (where member pages live).`, 'Keep member pages and each scope in separate sources: list only scope sources.');
@@ -187,6 +195,7 @@ export async function applyAttestSources(db: Db, self: CredentialRef, next: read
   }
   if (opts.dryRun) return true;
   for (const s of added) {
+    if (rust) { await rust.updateSourceConfig(s, { qm_scope: true, federated: false }); continue; }
     const [row] = await sql`SELECT config FROM sources WHERE id = ${s}`;
     await sql`UPDATE sources SET config = ${JSON.stringify({ ...normalizeSourceConfig(row!.config), qm_scope: true, federated: false })}::text::jsonb WHERE id = ${s}`;
   }
