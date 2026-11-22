@@ -25,7 +25,7 @@ for the architecture philosophy.
 ## Contract
 
 - Published HTML is fully self-contained: no external dependencies, no server needed.
-- All private metadata (frontmatter, source citations, confirmation numbers, brain cross-links, timeline) is stripped before publishing.
+- All private metadata (frontmatter, source citations, confirmation numbers, brain cross-links, timeline, facts and takes fences, HTML comments) is stripped before publishing.
 - Password protection uses AES-256-GCM with PBKDF2 key derivation; plaintext never appears in the encrypted HTML file.
 - Default is always encrypted unless the user explicitly requests "open", "no password", or "public".
 - External URLs (`https://...`) are preserved; only internal brain paths are stripped.
@@ -74,10 +74,14 @@ The publish command automatically removes all private/internal data:
 | `[Source: ...]` citations | All formats | Provenance is internal |
 | Confirmation numbers | `ABC123DEF` -> "on file" | PII/booking data |
 | Brain cross-links | `[Jane](../people/jane.md)` -> `Jane` | Internal paths |
-| Timeline section | Everything below `---` / `## Timeline` | Raw evidence log |
+| Timeline section | From the first `## Timeline` / `## History` heading (any level, with or without a `---` above it) or timeline sentinel to the end of the page | Raw evidence log |
+| gbrain fences | `## Facts` / `## Takes` blocks and other `<!-- gbrain:...:begin -->` blocks | Private fact rows, internal structure |
+| HTML comments | `<!-- note -->` | Hidden, never meant to be read |
 | "See also" lines | Internal references | Brain navigation |
 
 **Preserved:** external URLs (`https://...`), all other content.
+
+Stripping fails closed: anything after a section that never closes (a fence or comment with no end marker) is dropped too, and a page whose frontmatter never closes is refused. Read the output before sharing when a page has a prose `History` section: it is dropped with everything after it.
 
 ## Sharing Workflows
 
