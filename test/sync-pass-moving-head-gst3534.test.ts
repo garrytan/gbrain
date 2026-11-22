@@ -9,7 +9,7 @@
  * Protects:
  * - A pass whose last round finds only paths the commits since its previous round changed stamps that previous round's
  *   commit (`synced`, `last_commit` there, `settled_behind` naming the newer HEAD) instead of ending `not_converged`;
- *   the next plain sync imports the rest. Rounds after the first patch the previous round's `I⋈P` (checked against a whole
+ *   the next plain sync imports the rest, whether the stamp is folded or drained (a round that also deletes). Rounds after the first patch the previous round's `I⋈P` (checked against a whole
  *   read by GBRAIN_SYNC_LEVEL_REUSE_VERIFY), and `sync status`'s `convergence.levels` counts the heads and reads.
  * - A pass that stops resumable (a slice's writer_yield) keeps its `I⋈P` for the next pass, whose first round patches it.
  * - The stamp-behind check refuses when one unsettled path is not a path the newer commits changed, when nothing is
@@ -112,6 +112,23 @@ for (const backend of testBackends()) describe(`[${backend}] GST-3534: a pass wh
     expect({ status: next.status, toCommit: next.toCommit }).toEqual({ status: 'synced', toCommit: seen[3]!.head });
     expect(await slugs(engine)).toEqual(['notes/w0', 'notes/w1', 'notes/w2', 'notes/w3']);
     expect((await performManagedSync(engine, OPTS)).status).toBe('up_to_date');
+  }), 300_000);
+
+  test('a writer that also deletes during every round: the stamp behind HEAD still records settled_behind', () => brain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    const rewrite = (i: number) => { rmSync(join(root, `notes/n${i}.md`)); write(root, `w${i}`); };
+    rewrite(0);
+    const seen: Round[] = [];
+    let writes = 0;
+    installFaultHook((point, detail) => {
+      if (point === 'sync:round_start' && (detail.round ?? 0) > 1) rewrite(++writes);
+      if (point === 'sync:level_read' && detail.level) seen.push(roundOf(detail));
+    });
+    const pass = await performManagedSync(engine, OPTS);
+    installFaultHook(undefined);
+    expect({ status: pass.status, toCommit: pass.toCommit, heads: new Set(seen.map(r => r.head)).size }).toEqual({ status: 'synced', toCommit: seen[2]!.head, heads: 4 });
+    const convergence = (await readSyncStatus(engine, 'default')).convergence as { settled_behind: string | null; converged_target: string | null };
+    expect({ settled_behind: convergence.settled_behind, converged_target: convergence.converged_target }).toEqual({ settled_behind: seen[3]!.head, converged_target: seen[2]!.head });
   }), 300_000);
 
   test('a pass that stops resumable keeps its I⋈P: the next pass\'s first round patches it', () => brain(async ({ engine, root }) => {

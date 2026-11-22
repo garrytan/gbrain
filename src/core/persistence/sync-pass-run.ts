@@ -954,9 +954,9 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
   };
   /** The pass's stamp at `at`'s commit, drained as an empty batch; the pass ends synced on it. */
   const stampAt = async (at: SettledLevel, behind?: string): Promise<SyncResult> => {
-    const stopped = await stampFor(at).then(async stamp => { await save('open', null); return drain([], stamp); });
-    if (stopped) return stop(stopped);
-    value.telemetry = { ...value.telemetry, outcome: 'synced', stop_reason: configured ? null : 'selection_scoped', remaining: 0, ...(behind ? { settled_behind: behind } : {}) };
+    const stopped = await stampFor(at).then(async stamp => { if (behind) value.telemetry.settled_behind = behind; await save('open', null); return drain([], stamp); });
+    if (stopped) { delete value.telemetry.settled_behind; return stop(stopped); }
+    value.telemetry = { ...value.telemetry, outcome: 'synced', stop_reason: configured ? null : 'selection_scoped', remaining: 0 };
     return synced(false);
   };
   const stop = async (drained: SyncResult): Promise<SyncResult> => {
