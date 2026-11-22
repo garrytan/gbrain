@@ -96,7 +96,7 @@ describe('supersession check currency (PGLite)', () => {
     expect(JSON.stringify(degraded)).not.toContain('secret');
   });
 
-  test('the supersession warning names the failure class and code, never the raw error text', async () => {
+  test('the supersession warning names only the failure class, never the raw error text or its code', async () => {
     await engine.addLink('notes/pricing-v2', 'notes/pricing-v1', '', 'supersedes', 'manual');
     engine.supersedingPageSlugs = async () => {
       throw Object.assign(new Error('connection terminated postgres://user:secret@internal-host/db'), { code: '57P01' });
@@ -114,7 +114,7 @@ describe('supersession check currency (PGLite)', () => {
     const line = warned.find(w => w.includes('supersession check failed'));
     expect(line).toBeDefined();
     expect(line).toContain('provider_error');
-    expect(line).toContain('57P01');
+    expect(line).not.toContain('57P01');
     expect(line).not.toContain('secret');
     expect(line).not.toContain('postgres://');
   });
