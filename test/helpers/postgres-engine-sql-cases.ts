@@ -400,6 +400,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listStandingPreferences': OOS.factsTrust,
   'listStoredFenceFactRows': OOS.factsCycle,
   'listUnfencedFactRows': OOS.factsPurge,
+  'countUnfencedFactGroups': OOS.factsPurge,
   'listUnlinkedConversationSlugs': OOS.factsDoctor,
   'listUnpreviewedTrustFacts': OOS.factsDoctor,
   'listUnwithdrawnFacts': OOS.factsRepair,

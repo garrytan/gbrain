@@ -661,7 +661,7 @@ const OWNER_SCAN_BUDGET_MS = 10_000;
  * GST-2988: with `secrets.on_push` redact (the default) a `publish_secret_found` range goes to the shared publish too,
  * whose child rebuilds the unpushed commits with store markers (git/redact-unpushed.ts) and pushes them; the result
  * carries `redaction` so the caller drains the spool into the store. The push target stays below a held commit (D10).
- * A redaction or scan that runs past its budget there is retried once in a detached child with 4x the budget
+ * A redaction or scan that runs past its budget there is retried once in a detached child with 2x the budget
  * (git/background-publish.ts); meanwhile this root's effects wait as a dependency and other roots go on.
  */
 export type PushRedaction = { values: number; rebuilt: number; notices?: unknown[] } & Record<string, unknown>;

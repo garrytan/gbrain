@@ -1730,7 +1730,8 @@ export class PGLiteEngine implements BrainEngine {
   listSimilarActiveFacts(opts: { sourceId: string; factId: number; remote: boolean; excludePrivate: boolean; minCosine: number; limit: number }) { return factsPurgeImpl.listSimilarActiveFacts(this.rawRead, opts); }
   findActiveSingleFact(opts: { sourceId: string; entitySlug: string | null; visibility: string; fact: string; attributedTo: string | null; pageSlug: string | null; remoteFloor: boolean; newest?: boolean }) { return factsPurgeImpl.findActiveSingleFact(this.rawRead, opts); }
   listSingleFactMetadata(opts: { sourceId: string; ids: number[]; remoteFloor: boolean }) { return factsPurgeImpl.listSingleFactMetadata(this.rawRead, opts); }
-  listUnfencedFactRows(opts: { sourceId?: string }) { return factsPurgeImpl.listUnfencedFactRows(this.rawRead, opts); }
+  countUnfencedFactGroups(opts: { sourceId?: string }) { return factsPurgeImpl.countUnfencedFactGroups(this.rawRead, opts); }
+  listUnfencedFactRows(opts: { sourceId?: string; fenceableSourceIds?: string[] }) { return factsPurgeImpl.listUnfencedFactRows(this.rawRead, opts); }
   listHeldFenceFactRows(sourceId: string, slug: string) { return factsPurgeImpl.listHeldFenceFactRows(this.rawRead, sourceId, slug); }
   listWithdrawalSlugs(sourceId: string, visibility: string, factHash: string, subject: string) { return factsPurgeImpl.listWithdrawalSlugs(this.rawRead, sourceId, visibility, factHash, subject); }
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string) { return factsPurgeImpl.expireFactsByWithdrawal(this.rawRead, sourceId, visibility, fact, subject); }

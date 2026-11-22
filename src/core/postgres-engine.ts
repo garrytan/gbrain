@@ -1406,7 +1406,8 @@ export class PostgresEngine implements BrainEngine {
   listSimilarActiveFacts(opts: { sourceId: string; factId: number; remote: boolean; excludePrivate: boolean; minCosine: number; limit: number }) { return factsPurgeImpl.listSimilarActiveFacts(this.executeRaw.bind(this), opts); }
   findActiveSingleFact(opts: { sourceId: string; entitySlug: string | null; visibility: string; fact: string; attributedTo: string | null; pageSlug: string | null; remoteFloor: boolean; newest?: boolean }) { return factsPurgeImpl.findActiveSingleFact(this.executeRaw.bind(this), opts); }
   listSingleFactMetadata(opts: { sourceId: string; ids: number[]; remoteFloor: boolean }) { return factsPurgeImpl.listSingleFactMetadata(this.executeRaw.bind(this), opts); }
-  listUnfencedFactRows(opts: { sourceId?: string }) { return factsPurgeImpl.listUnfencedFactRows(this.executeRaw.bind(this), opts); }
+  countUnfencedFactGroups(opts: { sourceId?: string }) { return factsPurgeImpl.countUnfencedFactGroups(this.executeRaw.bind(this), opts); }
+  listUnfencedFactRows(opts: { sourceId?: string; fenceableSourceIds?: string[] }) { return factsPurgeImpl.listUnfencedFactRows(this.executeRaw.bind(this), opts); }
   listHeldFenceFactRows(sourceId: string, slug: string) { return factsPurgeImpl.listHeldFenceFactRows(this.executeRaw.bind(this), sourceId, slug); }
   listWithdrawalSlugs(sourceId: string, visibility: string, factHash: string, subject: string) { return factsPurgeImpl.listWithdrawalSlugs(this.executeRaw.bind(this), sourceId, visibility, factHash, subject); }
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string) { return factsPurgeImpl.expireFactsByWithdrawal(this.executeRaw.bind(this), sourceId, visibility, fact, subject); }
