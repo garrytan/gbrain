@@ -96,7 +96,7 @@ async function withLedger<T>(home: string, now: number, fn: (charged: number) =>
   const lockPath = `${ledgerPath(home)}.lock`;
   let lease = null;
   for (let i = 0; i < 5 && !lease; i++) {
-    try { lease = await tryAcquireLeaseAsync(lockPath, { purpose: 'router-spend', leaseMs: LEDGER_LEASE_MS }); } catch { return null; }
+    try { lease = await tryAcquireLeaseAsync(lockPath, { purpose: 'router-spend', leaseMs: LEDGER_LEASE_MS }); } catch { return null; } // silent-read-ok: null is the typed outcome; callPicker reports ledger_unavailable and makes no call
     if (!lease) await new Promise(r => setTimeout(r, 5 * 2 ** i));
   }
   if (!lease) return null;
@@ -105,7 +105,7 @@ async function withLedger<T>(home: string, now: number, fn: (charged: number) =>
     const r = fn(charged_usd);
     writeFileAtomic(ledgerPath(home), `${JSON.stringify({ v: 1, day: utcDay(now), charged_usd: Math.max(0, r.charged) } satisfies LedgerDoc)}\n`);
     return r.result;
-  } catch { return null; } finally { await releaseLeaseAsync(lease); }
+  } catch { return null; } finally { await releaseLeaseAsync(lease); } // silent-read-ok: null is the typed outcome; callPicker reports ledger_unavailable and makes no call
 }
 
 const round6 = (x: number) => Math.round(x * 1e6) / 1e6;

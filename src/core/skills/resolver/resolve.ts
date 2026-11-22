@@ -294,7 +294,7 @@ function readPickerDescriptions(home: string, c: OpenedCatalog): Map<string, str
     if (b === 'too_large') return null;
     const j = JSON.parse(b.toString('utf8')) as { v?: unknown; catalog_hash?: unknown; skills?: unknown };
     return j?.v === 1 && j.catalog_hash === c.receipt.catalog.catalog_hash && Array.isArray(j.skills) ? new Map(j.skills as [string, string][]) : null;
-  } catch { return null; }
+  } catch { return null; } // silent-read-ok: a catalog built before picker.json existed has none; the picker uses each skill's index summary
 }
 
 function logUnexpected(home: string, e: unknown): void {

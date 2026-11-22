@@ -45,7 +45,7 @@ export function pickerKey(provider: PickerProvider, home: string, env: NodeJS.Pr
   try {
     const v = (JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')) as Record<string, unknown>)[configKey];
     return typeof v === 'string' && v ? v : null;
-  } catch { return null; }
+  } catch { return null; } // silent-read-ok: no readable config.json key means no key; the turn reports router.fallback missing_key
 }
 
 const base = (env: NodeJS.ProcessEnv, name: string, fallback: string) => (env[name] || fallback).replace(/\/+$/, '').replace(/\/v1(beta)?$/, '');
