@@ -21,6 +21,8 @@
 import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
+import { entityLookupFault, FAULT_MESSAGE } from '../helpers/entity-lookup-fault.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -89,6 +91,36 @@ describe('engine parity: raw_sql', () => {
       const after = (await engine.getPage('notes/bounded'))?.title ?? null;
       expect([read, thrown, after]).toEqual([[{ slug: 'notes/bounded' }], 'read refused', 'Bounded']);
       return { read, thrown, after };
+    },
+  );
+
+  // The `entity` card finds its page with a raw read over `pages` (src/core/verbs/entity-card.ts, arm 2). A read that
+  // fails is never a miss: on the SQL arms the card is marked `entity_lookup_failed` (the injected failure stands in
+  // for a timeout or a permission error). The Rust engine serves no raw SQL, so there the real lookup read refuses and the
+  // card ends on the typed `raw_sql` refusal (before: it swallowed the refusal and answered found:false on every Rust
+  // brain). Known stop: the Rust store owns a typed page-row lookup (exact title / slug / slug-suffix with the card's
+  // columns) in its pages store member family (rust/crates/gbrain-store, store-members/pages.ts); until it lands the
+  // card cannot run there.
+  parityTest(
+    'entity: a failed page lookup read is marked degraded, never found:false alone (Rust: typed raw_sql refusal)',
+    { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' },
+    async (engine, backend) => {
+      await engine.putPage('people/alice-example', PAGE('Alice Example', 'Alice Example runs operations at Acme Example.'));
+      const card = (e: typeof engine) => buildEntityCard(e, 'default', 'people/alice-example', { remote: false, variants: false });
+      const failing = await card(backend === 'rust' ? engine : entityLookupFault(engine, { arm2: () => new Error(FAULT_MESSAGE) }));
+      const healthy = await card(engine);
+      const present = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE slug = $1', ['people/alice-example']);
+      const observed = {
+        failing: { found: failing.found, degraded: failing.degraded ?? null },
+        healthy: { found: healthy.found, degraded: healthy.degraded ?? null, slug: healthy.card?.entity.slug ?? null },
+        pagePresent: present.length === 1,
+      };
+      expect(observed).toEqual({
+        failing: { found: false, degraded: [{ stage: 'entity_lookup_failed', reason: 'provider_error' }] },
+        healthy: { found: true, degraded: null, slug: 'people/alice-example' },
+        pagePresent: true,
+      });
+      return observed;
     },
   );
 });

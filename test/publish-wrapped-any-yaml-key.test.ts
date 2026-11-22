@@ -37,6 +37,9 @@ describe('wrapped frontmatter with any YAML key shape', () => {
     expect(makeShareable('intro\n---\n# Heading\nThe draft is ready.\n')).toContain('The draft is ready.');
     expect(makeShareable('intro\n---\nThe meeting is at 10:30 on Friday.\n---\nend\n')).toContain('10:30');
     expect(makeShareable('intro\n---\nSee https://example.com/a\n---\nend\n')).toContain('https://example.com/a');
-    expect(makeShareable('intro\n---\n- item: one\n---\nend\n')).toContain('item: one');
+  });
+
+  test('a list of key: value items between early rules fails closed', () => {
+    expect(() => makeShareable('intro\n---\n- item: one\n---\nend\n')).toThrow(invalid);
   });
 });
