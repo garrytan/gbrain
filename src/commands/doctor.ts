@@ -143,6 +143,7 @@ import { finalizeCheckFixes, fixLine, unknownScoreCategories, type CheckAgentFie
 import { throttleDoctorHeartbeat } from './doctor/heartbeat.ts';
 import { alertRanChecks, computeAlert, printAlertReport, type DoctorAlert } from './doctor/alert.ts';
 import type { RenderContext } from '../core/agent-output.ts';
+import { recordDoctor } from '../core/telemetry/client.ts';
 export interface Check extends CheckAgentFields {
   name: string;
   status: 'ok' | 'warn' | 'fail';
@@ -574,6 +575,7 @@ function outputResults(
   const hasFail = report.status === 'unhealthy';
   const hasWarn = report.status === 'warnings';
   const score = report.health_score;
+  recordDoctor({ score, failing: checks.filter(c => c.status === 'fail').map(c => c.name), pages: Number(/^Connected, (\d+) pages/.exec(checks.find(c => c.name === 'connection')?.message ?? '')?.[1] ?? NaN) });
 
   if (json) {
     void writeJsonDocument(JSON.stringify(report)); // D2: the one --json document

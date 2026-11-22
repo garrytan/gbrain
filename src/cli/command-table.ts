@@ -153,6 +153,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // conformance targets, the cost-gated --synthesize flag).
   { name: 'protocol', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/protocol.ts') },
   { name: 'errors', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', read_only: true, load: () => import('./commands/errors.ts') },
+  // gbrain telemetry: opt-in usage telemetry controls; engine-free, and the detached `telemetry sync` child skips startup hooks.
+  { name: 'telemetry', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', skipStartupHooks: true, load: () => import('./commands/telemetry.ts') },
   { name: 'bundled-skill', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', read_only: true, skipStartupHooks: true, load: () => import('./commands/bundled-skill.ts') },
   // GBRA-377: `skills index|resolve` (routed by cli/command-route.ts); engine-free on every install shape.
   { name: 'skill-resolver', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/skill-resolver.ts') },
