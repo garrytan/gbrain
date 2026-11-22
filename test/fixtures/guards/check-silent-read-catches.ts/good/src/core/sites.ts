@@ -27,6 +27,23 @@ export async function preMigration(engine: Engine): Promise<string[]> {
   }
 }
 
+/** Opted out with an inline block comment that carries its reason. */
+export async function inlineReason(engine: Engine): Promise<string[]> {
+  try {
+    return await engine.listPages();
+  } catch { /* silent-read-ok: a brain older than migration 104 has no pages table, so no rows is right */ return []; }
+}
+
+/** A guard `if` whose body can answer is not a pure rethrow, so the handler is not an empty answer. */
+export async function cachedFallback(engine: Engine, cached: string[] | null): Promise<string[]> {
+  try {
+    return await engine.listPages();
+  } catch {
+    if (cached) return cached;
+    throw new Error('pages unavailable');
+  }
+}
+
 /** A typed degraded marker, not an empty answer. */
 export async function marked(engine: Engine, ids: number[]): Promise<Map<number, string>> {
   try {
