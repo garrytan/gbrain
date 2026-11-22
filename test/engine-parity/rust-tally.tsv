@@ -111,7 +111,7 @@ test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/repair-frontmatter-holds.test.ts	0	1
 test/engine-parity/request-tools-persist.test.ts	1	0
 test/engine-parity/restriction-flag-reads.test.ts	3	0
-test/engine-parity/retrieval-coverage.test.ts	13	1
+test/engine-parity/retrieval-coverage.test.ts	16	0
 test/engine-parity/search-cjk.test.ts	7	0
 test/engine-parity/search-deep-query.test.ts	1	0
 test/engine-parity/search-privacy-retention.test.ts	5	0

@@ -14,7 +14,7 @@
  * Export only BrainEngine members from this file (index.ts spreads the module into STORE_MEMBERS); helpers stay
  * unexported.
  */
-import { COVERAGE_COUNT_CAP, type CoverageRelevance, type ProjectionRebuildProgress, type ScopedCount } from '../../search/retrieval-coverage.ts';
+import { COVERAGE_COUNT_TIMEOUT_MS, type CoverageRelevance, type ProjectionRebuildProgress, type ScopedCount } from '../../search/retrieval-coverage.ts';
 import type { ProjectionReadinessRow, ProjectionReadinessScope } from '../../search/projection-readiness.ts';
 import type * as LinkTemporalSql from '../../engine-sql/link-temporal.ts';
 import { DERIVED_TRANSITION_PRODUCERS } from '../../engine-sql/link-temporal.ts';
@@ -174,12 +174,11 @@ export const countPendingProjectionPages: StoreMember<[scope: ProjectionReadines
         pageIds: ids(relevance.pageIds), exactTopPageId: relevance.exactTopPageId == null ? null : Number(relevance.exactTopPageId),
         imageArm: relevance.imageArm === true,
       },
+      timeoutMs: COVERAGE_COUNT_TIMEOUT_MS,
     };
-    const count = await storeCall({ member }, () => brain.countPendingProjectionPages(input)) as ScopedCount | null;
-    // A count that reaches the cap reads an unordered subset on the SQL engines (their scan order, which PGLite and
-    // Postgres do not share), so no store walk order gives the same could-affect: the capped form refuses.
-    if (count?.capped === true) refuseMember(member, `a count that reaches the ${COVERAGE_COUNT_CAP}-page cap (its could-affect depends on the SQL scan order)`);
-    return count;
+    // Each count is min(every match in scope, cap) on every engine, so a capped count is the same answer too. A walk
+    // past the time limit gives null (unknown), as a SQL count that times out does.
+    return storeCall({ member }, () => brain.countPendingProjectionPages(input)) as Promise<ScopedCount | null>;
   };
 
 export const projectionRebuildProgress: StoreMember<[scope: ProjectionReadinessScope], ProjectionRebuildProgress | null> = async (brain, scope) => {
