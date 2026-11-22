@@ -137,6 +137,69 @@ pub(crate) fn assumed_config(assumed: bool, key: &str, stored: Option<String>) -
     }
 }
 
+/// A store read handle on which the flag reads `'1'`, whatever the record file holds: every read of
+/// a store whose open-time scan could not store the flag (`Store::flag_assumed`) goes through one
+/// (`Store::read`), so a policy that reads the flag itself (the short member-access form in
+/// `facts/privacy.rs`) fails closed as the config reads do (`assumed_config`).
+pub(crate) struct AssumedFlagRead {
+    inner: Box<dyn KvRead>,
+    flag: Vec<u8>,
+}
+
+impl AssumedFlagRead {
+    pub(crate) fn wrap(inner: Box<dyn KvRead>) -> Box<dyn KvRead> {
+        Box::new(AssumedFlagRead {
+            inner,
+            flag: keys::text(keys::CONFIG, &[RESTRICTIONS_PRESENT_KEY]),
+        })
+    }
+}
+
+impl KvRead for AssumedFlagRead {
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        if key == self.flag.as_slice() {
+            return Ok(Some(b"1".to_vec()));
+        }
+        self.inner.get(key)
+    }
+
+    /// The inner scan with the flag's entry read as `'1'`, in key order, whether or not the record
+    /// file holds it.
+    fn scan(
+        &self,
+        start: &[u8],
+        end: &[u8],
+        reverse: bool,
+        f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+    ) -> Result<()> {
+        let flag = self.flag.as_slice();
+        if !(start <= flag && flag < end) {
+            return self.inner.scan(start, end, reverse, f);
+        }
+        let (mut emitted, mut stopped) = (false, false);
+        self.inner.scan(start, end, reverse, &mut |key, value| {
+            let past = if reverse { key < flag } else { key > flag };
+            if !emitted && (key == flag || past) {
+                emitted = true;
+                if !f(flag, b"1") {
+                    stopped = true;
+                    return false;
+                }
+                if key == flag {
+                    return true;
+                }
+            }
+            let more = f(key, value);
+            stopped = !more;
+            more
+        })?;
+        if !emitted && !stopped {
+            f(flag, b"1");
+        }
+        Ok(())
+    }
+}
+
 /// A store write handle that sets the flag on every put of a page record with a top-level
 /// `readable_by` key, in the same write. `Store::write` hands every write closure one.
 pub(crate) struct FlaggingWriter<'a>(pub(crate) &'a mut dyn KvWrite);
