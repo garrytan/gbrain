@@ -635,6 +635,7 @@ src/core/minions/job-list-page.ts	execute_raw	1
 src/core/minions/lease-pressure-audit.ts	execute_raw	3
 src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2
+src/core/minions/no-worker.ts	execute_raw	1	minion_jobs reads stay raw until the minions area moves behind engine methods; the facts_drain no-worker warning (overtonxyz/gbrain#2772)
 src/core/minions/queue-families.ts	execute_raw	1
 src/core/minions/queue.ts	execute_raw	86
 src/core/minions/rate-leases.ts	execute_raw	6
