@@ -96,6 +96,16 @@ pub const KEYWORD_KINDS: &[KeyKind] = &[
 /// comment, belong to the core store (`pages.rs`, `chunks.rs`, `journal.rs` and the rest of the
 /// core work); they are listed under the family `core`.
 pub const KEYSPACES: &[Keyspace] = &[
+    ks(
+        keys::REASON_TOMBSTONE,
+        "reason_tombstones",
+        "purged change reasons",
+    ),
+    ks(
+        keys::EMBEDDING_HOLD,
+        "embedding_holds",
+        "page embedding holds",
+    ),
     Keyspace {
         tag: keys::TAKE,
         family: "takes",
@@ -165,9 +175,9 @@ pub const KEYSPACES: &[Keyspace] = &[
         "code traversal cache",
     ),
     ks(
-        keys::EMBEDDING_HOLD,
-        "embedding_holds",
-        "page embedding holds",
+        keys::DERIVED_GENERATION,
+        "generations",
+        "derived generation ledger",
     ),
     ks(
         keys::ENTITY_IDENTITY,
@@ -192,11 +202,6 @@ pub const KEYSPACES: &[Keyspace] = &[
     ),
     ks(keys::RELATION_CATALOG, "relations", "relation catalog"),
     ks(keys::LOCK_QUEUE, "transactions", "lock queue"),
-    ks(
-        keys::REASON_TOMBSTONE,
-        "reason_tombstones",
-        "purged change reasons",
-    ),
     ks(keys::ACCESS_RULES, "access_rules", "folder access rules"),
 ];
 

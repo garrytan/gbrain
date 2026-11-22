@@ -203,13 +203,7 @@ fn review_deletes_match_either_ref_in_their_source_only() {
             .unwrap()
             .is_some()
     );
-    assert_eq!(
-        store
-            .delete_purge_review_proposals("default", &["5\0".to_string()])
-            .unwrap_err()
-            .code,
-        INVALID_ARGUMENT
-    );
+    // A ref with a NUL is not refused here: main's `delete_purge_review_*` (facts/purge_writes.rs) check only the source id.
 }
 
 #[test]

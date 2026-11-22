@@ -6,9 +6,8 @@
 
 use gbrain_store::takes::{
     HeldFenceTakeSpec, IncomingTake, LiveTakeAt, McpResolvedInput, PurgeTakesInput,
-    RevertResolutionsSpec, TakePreimageInput,
-    TakeGradeFilter, TakeGradeInput, TakeGradeKey, TakeHorizonInput, TakeNudgeFilter,
-    TakeNudgeInput, TakesLeavingFence, WaveSpec,
+    RevertResolutionsSpec, TakeGradeFilter, TakeGradeInput, TakeGradeKey, TakeHorizonInput,
+    TakeNudgeFilter, TakeNudgeInput, TakePreimageInput, TakesLeavingFence, WaveSpec,
 };
 use napi::Env;
 use napi::bindgen_prelude::Object;

@@ -43,7 +43,6 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-
 const NEXT_PROPOSAL_ID: &str = "decide_proposal_next_id";
 const NEXT_REVIEW_PROPOSAL_ID: &str = "decide_review_proposal_next_id";
 
