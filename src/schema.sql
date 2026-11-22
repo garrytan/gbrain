@@ -2890,7 +2890,6 @@ CREATE TABLE IF NOT EXISTS shared_skill_revisions (
     stored_bytes BIGINT GENERATED ALWAYS AS (octet_length(files::text)+octet_length(metadata::text)) STORED,
     PRIMARY KEY(source_id,source_incarnation,pack_id,name,revision)
   );
-CREATE INDEX IF NOT EXISTS shared_skill_revision_request_idx ON shared_skill_revisions(request_id);
 CREATE INDEX IF NOT EXISTS shared_skill_heads_active_idx ON shared_skill_heads(source_id,source_incarnation,pack_id,name) WHERE NOT deleted;
 CREATE INDEX IF NOT EXISTS shared_skill_revision_retention_idx ON shared_skill_revisions(source_id,source_incarnation,name,created_at DESC);
 CREATE INDEX IF NOT EXISTS shared_skill_revision_uuid_idx ON shared_skill_revisions(revision);

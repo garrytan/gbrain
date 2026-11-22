@@ -1756,7 +1756,6 @@
       "shared_skill_revision_lease_expiry_idx": "CREATE INDEX shared_skill_revision_lease_expiry_idx ON public.shared_skill_revision_leases USING btree (source_id, source_incarnation, expires_at)",
       "shared_skill_revision_lease_target_idx": "CREATE INDEX shared_skill_revision_lease_target_idx ON public.shared_skill_revision_leases USING btree (source_id, source_incarnation, pack_id, name, revision, expires_at)",
       "shared_skill_revision_leases_pkey": "CREATE UNIQUE INDEX shared_skill_revision_leases_pkey ON public.shared_skill_revision_leases USING btree (lease_kind, lease_id, source_id, source_incarnation, pack_id, name, revision)",
-      "shared_skill_revision_request_idx": "CREATE INDEX shared_skill_revision_request_idx ON public.shared_skill_revisions USING btree (request_id)",
       "shared_skill_revision_retention_idx": "CREATE INDEX shared_skill_revision_retention_idx ON public.shared_skill_revisions USING btree (source_id, source_incarnation, name, created_at DESC)",
       "shared_skill_revision_uuid_idx": "CREATE INDEX shared_skill_revision_uuid_idx ON public.shared_skill_revisions USING btree (revision)",
       "shared_skill_revisions_pkey": "CREATE UNIQUE INDEX shared_skill_revisions_pkey ON public.shared_skill_revisions USING btree (source_id, source_incarnation, pack_id, name, revision)",
