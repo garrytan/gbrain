@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { renderCliError } from '../src/core/agent-output.ts';
-import { runEngineSwap, type EngineSwapCliDeps } from '../src/commands/engine-swap.ts';
+import { runEngineSwap, serviceDefinitions, type EngineSwapCliDeps } from '../src/commands/engine-swap.ts';
 import { existsSync } from 'node:fs';
 import { withEnv } from './helpers/with-env.ts';
 import { CODES } from '../src/core/error-registry.ts';
@@ -48,6 +48,23 @@ async function run(args: string[], extra: Partial<EngineSwapCliDeps> = {}) {
 }
 
 describe('engine swap --plan', () => {
+  test('a service definition that cannot be read is marked unread, not listed as setting nothing', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'gbrain-swap-svc-'));
+    try {
+      const dir = join(fakeHome, '.config', 'systemd', 'user');
+      mkdirSync(dir, { recursive: true });
+      // A directory where a unit file is expected: readFileSync throws EISDIR, the same as an unreadable file.
+      mkdirSync(join(dir, 'gbrain-serve.service'));
+      writeFileSync(join(dir, 'gbrain-sync.service'), 'Environment=GBRAIN_DATABASE_URL=postgresql://x/y\n');
+      expect(serviceDefinitions(fakeHome)).toEqual([
+        { name: 'gbrain-serve.service', kind: 'systemd', sets: [], unread: 'read_failed' },
+        { name: 'gbrain-sync.service', kind: 'systemd', sets: ['GBRAIN_DATABASE_URL'] },
+      ]);
+    } finally {
+      rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+
   test('prints one JSON plan with names only, never values', async () => {
     const r = await run(['--to', 'rust', '--plan', '--json']);
     expect(r.code).toBe(0);
