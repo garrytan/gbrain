@@ -584,9 +584,11 @@ writer protocol registration exists here.
 
 Differences from a SQL brain: slugs and source ids sort in byte order; the store keeps no
 `database_only_reason` (always null); an audit page's frontmatter size is its compact JSON text
-(only the audit's 5 MB skip reads it). The engine reports `managed_persistence`, so an activated Rust
-brain is written through the journal; a topology change of a managed source still refuses `raw_sql`
-(`persistence/topology-locks.ts`).
+(only the audit's 5 MB skip reads it). The engine reports `managed_persistence`, so the journal
+members above are served, but activation itself refuses `raw_sql` on this engine
+(`requireManagedActivation` in `src/core/rust-engine/errors.ts`, first in `activatePersistence` and
+`activateSharedSkillPersistence`): a Rust brain never becomes managed. A topology change of a managed
+source also refuses `raw_sql` (`persistence/topology-locks.ts`).
 
 ## Publication journal
 
