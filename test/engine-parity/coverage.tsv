@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1583/1593
+# covered: 1589/1599
 # lifecycle: 9/9
 # pages: 70/70
 # search: 7/7
@@ -33,6 +33,7 @@
 # config: 7/7
 # import_guards: 13/13
 # persistence_journal: 198/200
+# doctor_join: 6/6
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -128,7 +129,7 @@ listIdentityDecisions	pages	yes	3	no	yes	yes	serves
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	serves
 applyIdentityDecisions	pages	yes	3	no	yes	yes	serves
 listAllPageRefs	pages	yes	3	yes	yes	yes	serves
-listAllSources	pages	yes	12	no	yes	yes	serves
+listAllSources	pages	yes	14	no	yes	yes	serves
 updateSourceConfig	pages	yes	17	no	yes	yes	serves
 getSource	pages	yes	18	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
@@ -548,7 +549,7 @@ replaceDerivedAliases	sync_aliases	yes	14	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
-getConfig	config	yes	26	no	yes	yes	serves
+getConfig	config	yes	27	no	yes	yes	serves
 setConfig	config	yes	45	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
@@ -768,6 +769,12 @@ readWriterVersionCutoff	persistence_journal	yes	1	no	yes	yes	serves
 listWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 recentWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 readSegmentedGateEvidence	persistence_journal	yes	2	no	yes	yes	serves
+listAccessMemberStatuses	doctor_join	yes	1	no	yes	yes	serves
+listAccessGroupMemberships	doctor_join	yes	1	no	yes	yes	serves
+listPagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
+listRulePagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
+listGoogleSourceMembers	doctor_join	yes	1	no	yes	yes	serves
+listOwnerMemberLinks	doctor_join	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
 readIdentitySiblingCandidates	entity_reads	yes	4	no	yes	yes	serves
@@ -934,7 +941,7 @@ listAccessPolicySourceIds	cli_reads_export	yes	2	no	yes	yes	serves
 setLocalStatementTimeout	cli_reads_export	yes	1	no	yes	yes	serves
 scanExactBatch	cli_reads_ops	yes	5	no	yes	yes	serves
 nextLivePageAfter	cli_reads_ops	yes	1	no	yes	yes	serves
-listExactIdentityCandidates	cli_reads_ops	yes	5	no	yes	yes	serves
+listExactIdentityCandidates	cli_reads_ops	yes	6	no	yes	yes	serves
 rankEntities	cli_reads_ops	yes	4	no	yes	yes	serves
 readRankCoverage	cli_reads_ops	yes	1	no	yes	yes	serves
 readExactSnippetChunks	cli_reads_ops	yes	1	no	yes	yes	serves
@@ -1471,7 +1478,7 @@ readAccessStoreConfig	write_misc	no	0	no	-	-	-
 writeAccessStoreConfig	write_misc	no	0	no	-	-	-
 ensureAccessPolicyState	write_misc	no	0	no	-	-	-
 lockAccessPolicy	write_misc	yes	1	no	yes	yes	serves
-listAccessRules	write_misc	yes	1	no	yes	yes	serves
+listAccessRules	write_misc	yes	2	no	yes	yes	serves
 readAccessPolicyRevisions	write_misc	yes	1	no	yes	yes	serves
 listAccessCoverage	write_misc	yes	1	no	yes	yes	serves
 readAccessStateUnreadable	write_misc	no	0	no	-	-	-
@@ -1499,7 +1506,7 @@ recordAccessMigrationPhase	write_misc	yes	1	no	yes	yes	serves
 switchAccessMigration	write_misc	yes	1	no	yes	yes	serves
 listAccessPolicySources	write_misc	yes	1	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
-readAccessMembers	write_misc	yes	2	no	yes	yes	serves
+readAccessMembers	write_misc	yes	3	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	2	no	yes	yes	serves
 listAudienceAccessMembers	write_misc	yes	2	no	yes	yes	serves
 readLiveMember	write_misc	yes	4	no	yes	yes	serves
@@ -1682,7 +1689,7 @@ settleWakeWatch	jobs_wake	yes	4	no	yes	yes	serves
 queueWakeForget	jobs_wake	yes	2	no	yes	yes	serves
 claimWakeForgets	jobs_wake	yes	2	no	yes	yes	serves
 settleWakeForget	jobs_wake	yes	2	no	yes	yes	serves
-ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
+ownerOnlyMarkTriggers	owner_only	yes	4	no	yes	yes	serves
 readEngineMigrationHistory	engine_migration	yes	2	no	yes	yes	serves
 readMigrationRows	engine_migration	yes	4	no	yes	yes	serves
 readMigrationPageColumns	engine_migration	yes	2	no	yes	yes	serves

@@ -27,6 +27,7 @@ test/engine-parity/cycle-locks.test.ts	11	0
 test/engine-parity/decide-proposals.test.ts	8	0
 test/engine-parity/decide-store.test.ts	36	0
 test/engine-parity/delegated-grant.test.ts	2	0
+test/engine-parity/doctor-join-checks.test.ts	2	2
 test/engine-parity/dream-config-members.test.ts	5	0
 test/engine-parity/dream-cycle-sites.test.ts	3	7
 test/engine-parity/effect-scans.test.ts	3	0
@@ -111,7 +112,7 @@ test/engine-parity/notifier-freshness.test.ts	3	0
 test/engine-parity/notifier.test.ts	4	0
 test/engine-parity/oauth-clients.test.ts	6	0
 test/engine-parity/open-loops.test.ts	6	0
-test/engine-parity/owner-only-marks.test.ts	0	2
+test/engine-parity/owner-only-marks.test.ts	1	1
 test/engine-parity/owner-only-reads.test.ts	4	0
 test/engine-parity/owner-recovery-scans.test.ts	5	0
 test/engine-parity/page-embedding-budget.test.ts	5	0

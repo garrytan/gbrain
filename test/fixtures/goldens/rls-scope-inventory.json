@@ -2651,6 +2651,28 @@
         ],
         "flagOnScopes": []
       },
+      "listAccessGroupMemberships#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listAccessMemberStatuses#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listAccessPolicySources#default": {
         "flagOffLanes": [
           "pool"
@@ -3248,6 +3270,17 @@
         ],
         "flagOnScopes": []
       },
+      "listGoogleSourceMembers#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listHeldGenerationRows#default": {
         "flagOffLanes": [
           "pool"
@@ -3387,6 +3420,17 @@
         "flagOnScopes": []
       },
       "listOwnedGenerationItems#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listOwnerMemberLinks#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3610,6 +3654,17 @@
           "*"
         ]
       },
+      "listPagesReadByNobody#default": {
+        "flagOffLanes": [
+          "reserved"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "reserved"
+        ],
+        "flagOnScopes": []
+      },
       "listPendingGenerationMembers#default": {
         "flagOffLanes": [
           "pool"
@@ -3765,6 +3820,17 @@
         "flagOn": "unscoped",
         "flagOnLanes": [
           "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listRulePagesReadByNobody#default": {
+        "flagOffLanes": [
+          "reserved"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "reserved"
         ],
         "flagOnScopes": []
       },
@@ -8046,6 +8112,8 @@
         "linkTemporal": "none",
         "listAcceptedTakeRemovals": "none",
         "listAccessCoverage": "none",
+        "listAccessGroupMemberships": "none",
+        "listAccessMemberStatuses": "none",
         "listAccessPolicySourceIds": "none",
         "listAccessPolicySources": "none",
         "listAccessPrefixSlugs": "none",
@@ -8192,6 +8260,7 @@
         "listGenerationOrphanCandidates": "none",
         "listGenerationSourceIncarnations": "none",
         "listGitEffectsCarryingReason": "none",
+        "listGoogleSourceMembers": "none",
         "listGuardedTakeRows": "none",
         "listGuestSourceIds": "none",
         "listHeldFactRows": "none",
@@ -8272,6 +8341,7 @@
         "listOwnedContentRows": "none",
         "listOwnedGenerationItems": "none",
         "listOwnedPrivateQueues": "none",
+        "listOwnerMemberLinks": "none",
         "listOwnerProposalRows": "none",
         "listOwnerRecoveryHeads": "none",
         "listOwnerTierFacts": "none",
@@ -8290,6 +8360,7 @@
         "listPages": "direct",
         "listPagesByOriginPath": "none",
         "listPagesForPurgeRewrite": "none",
+        "listPagesReadByNobody": "none",
         "listPagesTitledIn": "none",
         "listPendingContradictions": "none",
         "listPendingGenerationMembers": "none",
@@ -8345,6 +8416,7 @@
         "listRetiredFenceItems": "none",
         "listRetiredGenerationItemKeys": "none",
         "listRootPageSlugsAfter": "none",
+        "listRulePagesReadByNobody": "none",
         "listSafeChunksPending": "none",
         "listSegmentedLabelPages": "none",
         "listSegmentedPageBodies": "none",
