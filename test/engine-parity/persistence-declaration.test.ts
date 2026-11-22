@@ -305,6 +305,7 @@ describe('engine parity: persistence declaration', () => {
 
   parityTest('a write to a managed worktree that is not bound to its source is refused source_changed', {
     methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
+    requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine) => {
     await registerLocalWriter(engine, 'cli');
@@ -315,6 +316,11 @@ describe('engine parity: persistence declaration', () => {
     const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default',
       sourceIncarnation: source!.incarnation, slug: 'notes/parity-worktree', requestId: REQUESTS[0]!, worktreeId: WORKTREE, topologyGeneration: 1,
       callerIntent: { body: 'x' }, intent: { body: 'x' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
+    // A Rust brain refuses managed mode by name, before any worktree read.
+    if (!engine.capabilities.has('managed_persistence')) {
+      expect({ code: refusal?.code, reason: refusal?.reason }).toEqual({ code: 'engine_capability_missing', reason: 'managed_persistence' });
+      throw refusal;
+    }
     // The admission reads the worktree binding; this worktree is not bound to the source, so nothing is accepted.
     expect(refusal?.code).toBe('source_changed');
     return { managed: engine.capabilities.has('managed_persistence'), code: refusal?.code, reason: refusal?.reason ?? null };

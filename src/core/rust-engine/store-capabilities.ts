@@ -15,14 +15,21 @@ import { STORE_MEMBERS } from './store-members/index.ts';
  * member table. A held `persistence_journal` would start no persistence listener (rust-engine/owner-ipc/client.ts
  * `rustOwnerServesPersistence`). A capability leaves this table when its last blocking caller is typed.
  *
- * Nothing is held. `managed_persistence` is reported: a worktree-bound write (a source with a claimed checkout) is
- * admitted, prepared, published and recovered through typed members. A topology change of a managed source (move,
- * clone, and the recovery of an interrupted one) still takes its locks through raw SQL (persistence/topology-locks.ts
- * `withTopologyLocks`), so it refuses `raw_sql` at its first statement, before it writes anything. A remote write that
- * would queue a mention-links effect still refuses `raw_sql` at admission (rust-engine/errors.ts
- * `requireRawSqlPublication`): its publication reads through raw SQL (persistence/effect-links.ts).
+ * `managed_persistence` is held: until the managed-persistence program on the Rust engine is done, a Rust brain refuses managed
+ * mode with the typed refusal (capability managed_persistence). A worktree-bound write (a source with a claimed checkout) is
+ * refused by name at its admission (persistence/journal.ts `admitWrite`) and writes no request row, and the first page write to a
+ * rooted source refuses `claimWorktree` the same way (persistence/unbound-source.ts). A write with no worktree and a grouped
+ * admission of such writes are served. The members that serve a bound write exist and stay in the
+ * member table; this hold keeps them from being reached until the program lands.
  */
-export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {};
+export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {
+  managed_persistence: [
+    'compareFileTarget (persistence/page-prepare.ts): a bound write compares its canonical file against the import hold; typed here, held with the rest of managed mode',
+    'guardOwnership (persistence/ownership.ts): a bound write locks its worktree row; typed here, held with the rest of managed mode',
+    'publication recovery (persistence/coordinator.ts): a bound write marks publication started and locks its source row; typed here, held with the rest of managed mode',
+    'withTopologyLocks (persistence/topology-locks.ts): topology recovery takes its locks through executeRaw',
+  ],
+};
 
 /** Capabilities withheld until every capability they need is reported. */
 export const CAPABILITY_REQUIRES: Partial<Record<Capability, readonly Capability[]>> = {

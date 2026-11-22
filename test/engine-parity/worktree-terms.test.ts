@@ -191,6 +191,7 @@ describe('engine parity: the journal on a claimed worktree', () => {
 
   parityTest('the topology recovery pass attempts a recovering change on the owner host\'s worktree', {
     methods: ['insertTopologyChange', 'listTopologyRecoveries'],
+    requires: 'raw_sql',
     timeout: 60_000,
   }, async (engine, backend) => withClaimedWorktree(engine, backend, async ({ host, binding, incarnation }) => {
     const change = await engine.insertTopologyChange({ principalId: 'f0000000-0000-4000-8000-0000000000f6', requestId: RECOVERY, digest: 'e'.repeat(64), operation: 'writer_claim',

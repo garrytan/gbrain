@@ -1,12 +1,13 @@
 /**
  * Engine parity for the first page write to a git-rooted source no writer claimed (bench N1/N5): each engine keeps its
- * own rule. A single-process engine (PGLite, Rust) claims the source and commits the page and its file; Postgres, a
- * multi-process engine, refuses `owner_unavailable` until `gbrain sources writer claim` (#6608).
+ * own rule. A single-process engine (PGLite) claims the source and commits the page and its file; Postgres, a
+ * multi-process engine, refuses `owner_unavailable` until `gbrain sources writer claim` (#6608); a Rust brain refuses
+ * managed mode with the typed `managed_persistence` refusal.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: a put_page to an unclaimed rooted source, from a trusted local caller and from a remote MCP caller on
- *    stdio and on http, commits the page and writes its file on PGLite and Rust, and refuses owner_unavailable with no
- *    page and no file on Postgres. On an engine that cannot hold a managed worktree yet, the write refuses with the
+ *    stdio and on http, commits the page and writes its file on PGLite, and refuses owner_unavailable with no
+ *    page and no file on Postgres. On the Rust engine, which holds managed mode, the write refuses with the
  *    typed `managed_persistence` refusal before anything is claimed.
  *  - Regression: persistence/unbound-source.ts decideUnboundWrite auto-claimed only on PGLite, so the Rust engine
  *    refused owner_unavailable (unbound_source) where PGLite commits.
@@ -58,7 +59,7 @@ async function withUnclaimedCheckout(engine: BrainEngine, backend: ParityBackend
         const page = await engine.getPage(SLUG, { sourceId });
         const file = join(root, 'notes', 'bob-example.md');
         const out = { put, page: page !== null, file: existsSync(file) && readFileSync(file, 'utf8').includes('widget-co') };
-        // Postgres is multi-process: it never claims on a write. PGLite and Rust are single-process engines and do.
+        // Postgres is multi-process: it never claims on a write. PGLite is a single-process engine and does; Rust refused above.
         expect(out).toEqual(backend === 'postgres'
           ? { put: { ok: false, code: 'owner_unavailable' }, page: false, file: false }
           : { put: { ok: true, status: 'created_or_updated' }, page: true, file: true });
@@ -101,24 +102,21 @@ async function remotePut(engine: BrainEngine, transport: 'stdio' | 'http', sourc
   return { ok: false, code };
 }
 
-// The local write compares on Rust: the store serves managed persistence, so Rust claims and commits as PGLite does.
-// A remote write still stops on Rust: admission refuses raw_sql for a write that would queue a mention-links effect
-// (rust-engine/errors.ts requireRawSqlPublication; its publication reads through raw SQL, persistence/effect-links.ts).
-// Drop `requires: 'raw_sql'` from the two remote cases when that publication is typed. Each case reads the page back
-// with getPage on every arm it runs.
+// A Rust brain refuses managed mode until the managed-persistence program is done (store-capabilities.ts holds
+// `managed_persistence`): the first write to a rooted source would claim a managed worktree, so every case below ends on the
+// typed managed_persistence refusal on the Rust arm, before anything is claimed or written, and compares equal on PGLite and
+// Postgres. Each case reads the page back with getPage on every arm it runs.
 
 describe('the first page write to a rooted source no writer claimed', () => {
-  parityTest('a local put_page: PGLite and Rust claim and commit, Postgres refuses owner_unavailable',
+  parityTest('a local put_page: PGLite claims and commits, Postgres refuses owner_unavailable, Rust refuses managed_persistence',
     { methods: ['getPage'], requires: 'managed_persistence', timeout: 60_000 },
     async (engine, backend) => withUnclaimedCheckout(engine, backend, 'vault', () => localPut(engine, 'vault')));
 
   parityTest('an MCP put_page over stdio follows the same rule',
-    { methods: ['getPage'], requires: 'raw_sql', timeout: 60_000 },
+    { methods: ['getPage'], requires: 'managed_persistence', timeout: 60_000 },
     async (engine, backend) => withUnclaimedCheckout(engine, backend, 'vault', () => remotePut(engine, 'stdio', 'vault')));
 
-  // On `default` (sync.repo_path): a token minted with a grant to another source checks the grant through raw SQL
-  // (access/attest-sources.ts), which the Rust engine refuses, a separate gap.
   parityTest('an MCP put_page over http follows the same rule',
-    { methods: ['getPage'], requires: 'raw_sql', timeout: 60_000 },
+    { methods: ['getPage'], requires: 'managed_persistence', timeout: 60_000 },
     async (engine, backend) => withUnclaimedCheckout(engine, backend, 'default', () => remotePut(engine, 'http', 'default')));
 });

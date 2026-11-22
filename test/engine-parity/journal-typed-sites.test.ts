@@ -248,6 +248,7 @@ describe('engine parity: the persistence sites the journal flip typed', () => {
 
   parityTest('a worktree-bound put_page writes the page and its file', {
     methods: ['getWorktreeBinding'],
+    requires: 'managed_persistence',
     timeout: 90_000,
   }, async (engine, backend: ParityBackend) => withHome(async (home) => {
     const root = join(home, 'checkout');

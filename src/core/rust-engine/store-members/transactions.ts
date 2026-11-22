@@ -70,11 +70,11 @@ function seen(engine: RustEngine): Set<string> {
 /**
  * The `gbrain.*` settings schema triggers and functions read (`current_setting('gbrain.<name>'` in src) that no store
  * writer reads yet. Kept in the transaction's map, one would change what Postgres does and nothing on Rust, so each
- * refuses until the store reads it. test/rust-engine-shell.test.ts fails on a schema-read name outside the kept sets
+ * refuses until the store reads it (`gbrain.writer_quiesced` is not here: SCOPE_SETTINGS keeps it on the transaction). test/rust-engine-shell.test.ts fails on a schema-read name outside the kept sets
  * and this one.
  */
 const SCHEMA_READ_SETTINGS: ReadonlySet<string> = new Set([
-  'gbrain.materializing_revision', 'gbrain.writer_quiesced', 'gbrain.topology_change', 'gbrain.refresh_barrier',
+  'gbrain.materializing_revision', 'gbrain.topology_change', 'gbrain.refresh_barrier',
   'gbrain.trust_generation_bumped', 'gbrain.guest_note', 'gbrain.graduation_run',
 ]);
 /** Postgres's custom setting name: two or more simple identifiers separated by dots, here under `gbrain`. */

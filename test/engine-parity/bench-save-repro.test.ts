@@ -9,7 +9,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: (1) a put_page to a git-rooted source that no writer claimed commits the page and writes its file on
- *    a single-process engine (PGLite, Rust), and refuses owner_unavailable on Postgres until a writer claims it;
+ *    a single-process engine (PGLite), refuses owner_unavailable on Postgres until a writer claims it, and refuses
+ *    engine_capability_missing (managed_persistence) on a Rust brain, which holds managed mode;
  *    (2) a forced update of an existing page commits, and a later write in the same source behind it commits;
  *    (3) a new conversation page (chronicle-shaped) commits.
  *  - Regression: (1) persistence/unbound-source.ts decideUnboundWrite auto-claims only for PGLite, so Rust refuses
@@ -42,7 +43,10 @@ const run = async (engine: BrainEngine, name: string, params: Record<string, unk
   try {
     const r = await operations.find(o => o.name === name)!.handler(ctxFor(engine, sourceId) as never, params) as Record<string, unknown>;
     return { ok: true, state: r.state ?? null, status: r.status ?? null };
-  } catch (error) { return { ok: false, code: (error as { code?: string }).code ?? String(error) }; }
+  } catch (error) {
+    // The raw error rides along unseen by toEqual, so a case that ends on a typed refusal can rethrow it.
+    return Object.defineProperty({ ok: false, code: (error as { code?: string }).code ?? String(error) }, 'error', { value: error, enumerable: false });
+  }
 };
 const person = (n: string) => `---\ntitle: Carol\ntype: person\n---\nCarol ${n}.\n`;
 const COMMITTED = { ok: true, state: 'committed', status: 'created_or_updated' };
@@ -50,6 +54,7 @@ const COMMITTED = { ok: true, state: 'committed', status: 'created_or_updated' }
 describe('the bench save failures', () => {
   parityTest('case 1: put_page to a git-rooted source no writer claimed commits the page and its file', {
     methods: ['getPage'],
+    requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine, backend) => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-bench-save-parity-')));
@@ -68,7 +73,13 @@ describe('the bench save failures', () => {
           const file = join(root, 'notes', 'bob-example.md');
           const out = { put, page: page !== null, file: existsSync(file) && readFileSync(file, 'utf8').includes('widget-co') };
           // Postgres is a multi-process engine: an unclaimed rooted source refuses until `gbrain sources writer claim`
-          // (by design, #6608). PGLite and Rust are single-process engines (consumer-election.ts) and claim it.
+          // (by design, #6608). PGLite is a single-process engine (consumer-election.ts) and claims it. A Rust brain refuses
+          // managed mode (capability managed_persistence, held in store-capabilities.ts), so the claim refuses by name and
+          // nothing is written.
+          if (backend === 'rust') {
+            expect(out).toEqual({ put: { ok: false, code: 'engine_capability_missing' }, page: false, file: false });
+            throw (put as { error?: unknown }).error;
+          }
           const rule = backend === 'postgres'
             ? { put: { ok: false, code: 'owner_unavailable' }, page: false, file: false }
             : { put: COMMITTED, page: true, file: true };

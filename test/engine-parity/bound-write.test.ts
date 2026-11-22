@@ -143,6 +143,7 @@ describe('a write to a worktree-bound source', () => {
 
   parityTest('claim the checkout, put_page to the bound source: the page and its file are written', {
     methods: ['worktreeClaimStore'],
+    requires: 'managed_persistence',
     timeout: 120_000,
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (root) => {
     await submitPageMutation(ctxFor(engine) as never, { operation: 'put_page',
@@ -156,6 +157,7 @@ describe('a write to a worktree-bound source', () => {
 
   parityTest('a refusal at publication moves the request to recovering, then ends it failed: no page, no file', {
     methods: ['worktreeClaimStore'],
+    requires: 'managed_persistence',
     timeout: 120_000,
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (root) => {
     const request_id = randomUUID();
