@@ -421,8 +421,10 @@ re-reading only the rows any writer changed since; the tree is patched from
 unsettled paths are ones the commits since the previous round changed, the
 previous round's commit is converged: the pass stamps it (`synced`), and
 `convergence.settled_behind` names the newer `HEAD`, whose commits the next
-plain sync imports (status reads `commits_waiting` until then). So a pass ends
-in at most four rounds however often writers commit. `convergence.levels`
+plain sync imports (status reads `commits_waiting` until then). This needs the
+previous round to have left nothing in flight, owed or mismatched; a writer
+whose database write is still in flight keeps the pass ending `not_converged`
+as before. `convergence.levels`
 counts the commits the newest pass read (`heads`) and how many of its rounds
 read the pages whole or patched the previous read (`whole`, `patched`).
 

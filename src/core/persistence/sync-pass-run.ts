@@ -885,6 +885,9 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
   const stampFor = (level: SettledLevel) => passStampFor(engine, { context, head: level.head, slugMode: levelSlugMode, episode, selection, configured, mode, leaseToken: lease.token, retry, level, selectionFp, parserFp,
     pack, full: kind === 'full', counts, extract: !processingOptions.noExtract, since: value.telemetry.started_at, rescreen: legacyWaived.size > 0, closures });
 
+  const levelCache = openPassLevelCache(sourceId, incarnation, levelReuse);
+  /** GST-3534: the last round's `I⋈P` for this process's next pass, kept at a synced end and at a resumable one alike (the next pass proves it `across`). */
+  const keepLevel = () => { if (levelReuse && levelCache.pages) keepPassPages([sourceId, incarnation], { ...levelCache.pages, key: levelCache.pages.acrossKey, across: true }); };
   const save = async (outcome: PassOutcome, stopReason: string | null, pin = false, fenced = true, onlyOpen = false) => {
     await beat.pending; const ended = outcome !== 'open';
     if (outcome === 'resumable') keepLevel();
@@ -940,9 +943,6 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
     }
     return await consumeRetry(entries.slice(0, drained.managedCursor?.index ?? 0).map(entry => entry.path)).then(() => drained);
   };
-  const levelCache = openPassLevelCache(sourceId, incarnation, levelReuse);
-  /** GST-3534: the last round's `I⋈P` for this process's next pass, kept at a synced end and at a resumable one alike (the next pass proves it `across`). */
-  const keepLevel = () => { if (levelReuse && levelCache.pages) keepPassPages([sourceId, incarnation], { ...levelCache.pages, key: levelCache.pages.acrossKey, across: true }); };
   /** The pass ended on its stamp; a folded one (sync-pass-fold.ts) saves the round's telemetry beside the obligations it wrote. */
   const synced = async (onFold: boolean): Promise<SyncResult> => {
     if (onFold) await save('synced', configured ? null : 'selection_scoped');
@@ -1037,9 +1037,9 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       // GST-3534: HEAD moved under the pass; on its last round, a level only newer commits unsettle stamps the previous round's commit.
       if (round === PASS_MAX_ROUNDS && settled && settled.head !== head && mode === 'committed' && !remote
         && await onlyMovedSince(context.gitRoot, settled.head, head, level.scope, [...deletes, ...imports, ...inFlight, ...owed, ...mismatch])) {
-        const behind = head, stillReleasable = new Set(level.releasableHolds); head = value.telemetry.target = settled.head;
+        const behind = head, releasable = new Set(level.releasableHolds), gone = new Set(level.deletionCandidates.map(entry => entry.path)); head = value.telemetry.target = settled.head;
         if (folded?.head === head && folded.done === doneKey()) { value.telemetry = { ...value.telemetry, settled_behind: behind, remaining: 0 }; return synced(true); }
-        return stampAt({ ...settled, releasableHolds: settled.releasableHolds.filter(path => stillReleasable.has(path)) }, behind);
+        return await stampAt({ ...settled, releasableHolds: settled.releasableHolds.filter(path => releasable.has(path)), deletionCandidates: settled.deletionCandidates.filter(entry => gone.has(entry.path)) }, behind);
       }
       if (!candidates && inFlight.length && waits < IN_FLIGHT_WAITS) {
         waits++; round--;
@@ -1071,7 +1071,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
         }
         // #6926: a round after a folded stamp that confirmed the level and did nothing more ends on that stamp.
         if (folded?.head === head && level.confirm?.taken && !applied.recorded.size && folded.done === doneKey()) return synced(true);
-        return stampAt(level);
+        return await stampAt(level);
       }
       opts.onProgress?.({ phase: 'managed_sync.round_admit', round: { round, target: head, paths: level.paths.length, imports: imports.length, deletes: deletes.length, in_flight: inFlight.length } });
       const built = await batchEntries(engine, level, deletes, imports).catch(async (error: unknown) => {
