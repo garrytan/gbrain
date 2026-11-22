@@ -14,7 +14,7 @@
   "ask-user/SKILL.md": "ffa15b80a286180d79642bf1d96be860ad2801ad8ba5c2923750a7adafd260ae",
   "blog-ingest/SKILL.md": "9e8f2a9681ca9714f49aeb697d70fae3d3b72ddbff6ff2556568440480758355",
   "blog-ingest/routing-eval.jsonl": "aa3172ee83f29bee62ef19027975359dcb356c4e57a551eff1f7a187e6562b49",
-  "book-mirror/SKILL.md": "298baf9a561b1d6c663d6ec37da419f07b892fc3b1284cab0cfdb456a7b0939c",
+  "book-mirror/SKILL.md": "6896a0a1d00c046e02d6b35181bacdb560868a7bf71408e9d35d1ece3d1c33e1",
   "book-mirror/routing-eval.jsonl": "79fd23642cfa37b1255a799907e71bb2904585cf79dd6a596e3a2f019787e54c",
   "brain-ingest-gate/SKILL.md": "0c382dc55df9b7b991fd6b8ad367fc9b7ac17ebe5e8610c0740ff32234fdc82b",
   "brain-ingest-gate/routing-eval.jsonl": "281e94affbb8631ef7ff44203884cce1c03c468b27f893829da1e6e439401a33",
@@ -226,7 +226,7 @@
   "skillpack-check/SKILL.md": "0d2d2d201ed72e19b47d7e3743b5bbdfb5c2655d1f34d29447c601fca3908f9e",
   "skillpack-harvest/SKILL.md": "787cabe94aa40e693c700b38190072f97a33a28f55283963deed0391d717a25b",
   "skillpack-harvest/routing-eval.jsonl": "cb4783288e95af3132b32ecb40a54cffc095f57b36240f96a25c2d2adf5e68c6",
-  "skills.lock.history.json": "e2f9cde2d5b465038b841b9748d62d266df8c334117e9e7be2358679558cce13",
+  "skills.lock.history.json": "197b948820a7aa065a7b287ce85b8cab425ac5e147c5519332182e5ae6cda8ed",
   "smoke-test/SKILL.md": "f5099e1d2ab9dc6827096249e68414f7ae357c29b39fb069a54bb7fb74f414a5",
   "soul-audit/SKILL.md": "7a48e180849f7502d332878c443397f90a3756f45caa94f76bcfcc7c997469c8",
   "storage-manifest/SKILL.md": "1debbefba61007a17cda1525496875d1edfde90642adf3ec031f25a71724807e",
@@ -235,7 +235,7 @@
   "testing/SKILL.md": "c69fe3456aa981bbcfe06c7633042eabf68617c69e9c26c00e47a0848fd90fb3",
   "two-tier-extraction/SKILL.md": "9a4a7095622000f9b91ed24750cd0b9ce64342e4dddc9528fe2df48b77566a25",
   "two-tier-extraction/routing-eval.jsonl": "b6af30ccd4ad20b60c229d3d63b50445f659d98f67b680e6d473a1e1ca020d90",
-  "voice-note-ingest/SKILL.md": "da09a82cdea92e8407a9dff946f2e25bb3ccbd433d767ea38f275e087457086d",
+  "voice-note-ingest/SKILL.md": "9749cdfe40bfec83dc369a3e4f1f7170814e0daede7d2472a86f525d22d6a3f3",
   "voice-note-ingest/routing-eval.jsonl": "374aaec16fbde336d1e376edce89e51adc4ecaa93c13fb4a69b967ba299b8742",
   "webhook-transforms/SKILL.md": "39d3f4e21de6a899652a26fd051ae19d55cc70a8c868f251834f5fa6a8322a74"
 }
