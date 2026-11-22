@@ -1252,4 +1252,5 @@ src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4
 src/mcp/http-transport.ts	sql_template	3
 src/mcp/source-preflight.ts	execute_raw	1
+src/shadow/capture.ts	execute_raw	4	shadow replay: drops the local scratch Postgres copy's schema when the brain purges (a replay-owned scratch database, never the brain)
 src/shadow/replay-copy.ts	execute_raw	16	shadow replay: writes seed rows into a fresh PGLite or local Postgres replay copy (SQL engines only; the Rust copy takes the same rows through importRelation)

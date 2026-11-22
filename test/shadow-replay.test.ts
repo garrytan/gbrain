@@ -17,7 +17,8 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { appendPurgeIntent } from '../src/core/belief/purge-mirror.ts';
 import {
-  attachCapture, basesDir, CaptureWriter, epochDir, invalidateIfPurged, readEpoch, readSegment, startEpoch, wrapCaptureEngine, type CaptureRecord,
+  __setScratchOpenerForTests, attachCapture, basesDir, CaptureWriter, epochDir, invalidateIfPurged, readEpoch, readSegment, scratchCleared,
+  scratchPendingPath, scratchRecordPath, startEpoch, watchPurges, wrapCaptureEngine, type CaptureRecord,
 } from '../src/shadow/capture.ts';
 import { captureDir, captureOffMarker, writePrivateJson } from '../src/shadow/capture-state.ts';
 import { checkLocalPostgresUrl } from '../src/shadow/replay-copy.ts';
@@ -138,10 +139,46 @@ describe('capture', () => {
   test('a purge in a recording process deletes the epoch at once, through the purge listener', async () => {
     const { cap, home } = recordingCapture();
     const id = readEpoch(cap)!.id;
-    const e = attachCapture(fakeEngine() as unknown as BrainEngine, cap);
+    const engine = fakeEngine() as unknown as BrainEngine;
+    watchPurges(engine, cap);
+    const e = attachCapture(engine, cap);
     appendPurgeIntent({ request: 'r2', request_id: 'q2', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
     expect(existsSync(epochDir(cap, id))).toBe(false);
     await e.getPage('x');
+  });
+
+  test('a purge drops the scratch Postgres copy in the same step, with capture on or off', async () => {
+    for (const enabled of [true, false]) {
+      const { cap, home } = recordingCapture();
+      writePrivateJson(join(cap, 'state.json'), { version: 1, enabled, turned_on_at: '2026-11-22T00:00:00.000Z' });
+      writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/replay_scratch', brain: 'pglite-abc' });
+      const sql: string[] = [];
+      __setScratchOpenerForTests(async () => ({ async executeRaw(q: string) { sql.push(q); return [] as never[]; }, async disconnect() {} }));
+      const onDisconnect: Array<() => Promise<void>> = [];
+      try {
+        watchPurges({ registerBeforeDisconnect: (fn: () => Promise<void>) => onDisconnect.push(fn) } as unknown as BrainEngine, cap);
+        appendPurgeIntent({ request: `r${enabled}`, request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
+        for (const fn of onDisconnect) await fn();
+      } finally { __setScratchOpenerForTests(null); }
+      expect(sql).toContain('DROP SCHEMA IF EXISTS public CASCADE');
+      expect(existsSync(scratchRecordPath(cap))).toBe(false);
+      expect(existsSync(scratchPendingPath(cap))).toBe(false);
+    }
+  });
+
+  test('a scratch drop that fails stays pending, and the copy counts as not cleared until a drop succeeds', async () => {
+    const { cap, home } = recordingCapture();
+    writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/replay_scratch', brain: 'pglite-abc' });
+    __setScratchOpenerForTests(async () => { throw Object.assign(new Error('down'), { code: 'ECONNREFUSED' }); });
+    try {
+      appendPurgeIntent({ request: 'r9', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
+      expect(invalidateIfPurged(cap, { home })).toBe(true);
+      expect(await scratchCleared(cap)).toBe(false);
+      expect(existsSync(scratchPendingPath(cap))).toBe(true);
+      __setScratchOpenerForTests(async () => ({ async executeRaw() { return [] as never[]; }, async disconnect() {} }));
+      expect(await scratchCleared(cap)).toBe(true);
+      expect(existsSync(scratchPendingPath(cap))).toBe(false);
+    } finally { __setScratchOpenerForTests(null); }
   });
 
   test('a purge log that cannot be read fails closed', () => {

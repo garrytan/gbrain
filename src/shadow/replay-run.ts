@@ -13,7 +13,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { configDir } from '../core/config.ts';
 import {
-  basesDir, deleteEpochData, epochDir, invalidateIfPurged, purgeLogChanged, readEpoch, setEpochState, startEpoch, type EpochPointer,
+  basesDir, deleteEpochData, epochDir, invalidateIfPurged, purgeLogChanged, readEpoch, scheduleScratchDrop, scratchCleared, scratchRecordPath,
+  setEpochState, startEpoch, type EpochPointer,
 } from './capture.ts';
 import { captureDir, captureIsOn, writePrivateJson } from './capture-state.ts';
 import { FanOutSeedTarget, markScratchPostgres, REPLAY_POSTGRES_ENV, resetScratchPostgres, SqlSeedTarget, checkLocalPostgresUrl, type ArmImport } from './replay-copy.ts';
@@ -88,6 +89,8 @@ async function seedEpoch(deps: NightlyDeps, cap: string, epoch: EpochPointer): P
     await pglite.initSchema();
     sql.pglite = new SqlSeedTarget(pglite, plan);
     if (pgUrl) {
+      // Recorded before the first row lands, so a purge from any process can drop this copy (capture.ts).
+      writePrivateJson(scratchRecordPath(cap), { url: pgUrl, brain: deps.brainKey });
       const pg = await deps.openSql('postgres', pgUrl);
       opened.push(pg);
       await resetScratchPostgres(pg, deps.brainKey);
@@ -139,7 +142,7 @@ async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer,
   rmSync(join(runDir, 'work'), { recursive: true, force: true });
   rmSync(join(runDir, 'segments'), { recursive: true, force: true });
   rmSync(join(runDir, 'home'), { recursive: true, force: true });
-  if (stopped === 'purged' || purgeLogChanged(sealed.purge_log, deps.home)) { removeRun(runDir); throw new ReplayError('shadow_replay_purged', 'during the replay'); }
+  if (stopped === 'purged' || purgeLogChanged(sealed.purge_log, deps.home)) { removeRun(runDir); await scheduleScratchDrop(cap); throw new ReplayError('shadow_replay_purged', 'during the replay'); }
   if (stopped === 'budget') throw new ReplayError('shadow_replay_budget', `${Math.round(budgetMs / 60_000)} minutes`);
   const reportPath = join(runDir, 'out', 'report.json');
   if (code !== 0 || !existsSync(reportPath)) throw new Error(`the replay child exited ${code} without a report (its stderr names the cause)`);
@@ -154,6 +157,7 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
   const result: NightlyResult = { schema_version: 1, status: 'off' };
   try {
     const purged = invalidateIfPurged(cap, { home });
+    if (!await scratchCleared(cap)) throw new ReplayError('shadow_replay_purged', 'the scratch Postgres copy of a purged epoch could not be dropped yet');
     let pointer = readEpoch(cap);
     if (pointer?.state === 'recording' && !existsSync(join(basesDir(cap, pointer.id), 'manifest.json'))) {
       invalidateIfPurged(cap, { home, force: 'unseeded' });
@@ -166,7 +170,7 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
     if (next) result.started_epoch = next.id;
     if (sealed) {
       try {
-        if (purgeLogChanged(sealed.purge_log, home)) throw new ReplayError('shadow_replay_purged', 'before the replay');
+        if (purgeLogChanged(sealed.purge_log, home)) { await scheduleScratchDrop(cap); throw new ReplayError('shadow_replay_purged', 'before the replay'); }
         const { report, dir } = await replayEpoch(deps, cap, sealed, budgetMs);
         Object.assign(result, { status: 'replayed', replayed_epoch: sealed.id, coverage: report.coverage, by_class: report.by_class, report: join(dir, 'report.md'), summary: join(dir, 'summary.json') });
       } catch (e) {
@@ -184,7 +188,11 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
         if (e instanceof ReplayError) throw e;
         throw new ReplayError('shadow_replay_seed_failed', `error code ${(e as { code?: unknown }).code ?? (e as Error).name}`);
       }
-      if (result.status === 'off') result.status = 'seeded_only';
+      if (purgeLogChanged(next.purge_log, home)) {
+        invalidateIfPurged(cap, { home, force: 'purge' });
+        await scratchCleared(cap);
+        result.status = 'purged';
+      } else if (result.status === 'off') result.status = 'seeded_only';
     }
     return result;
   } finally {

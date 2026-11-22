@@ -18,6 +18,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { nightlyDeps } from '../src/commands/engine-shadow-replay.ts';
 import { createEngine } from '../src/core/engine-factory.ts';
+import { appendPurgeIntent } from '../src/core/belief/purge-mirror.ts';
 import { viewedEngine } from '../src/core/persistence/switches.ts';
 import { constructEngine } from '../src/core/engine-construct.ts';
 import type { EngineConfig } from '../src/core/types.ts';
@@ -56,6 +57,13 @@ async function emptyScratch(url: string): Promise<void> {
   const e = await constructEngine(cfg);
   await e.connect(cfg);
   try { await e.executeRaw('DROP SCHEMA IF EXISTS public CASCADE'); await e.executeRaw('CREATE SCHEMA public'); } finally { await e.disconnect(); }
+}
+
+async function scratchTables(url: string): Promise<number> {
+  const cfg = { engine: 'postgres', database_url: url } as EngineConfig;
+  const e = await constructEngine(cfg);
+  await e.connect(cfg);
+  try { return (await e.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'public'"))[0]!.n; } finally { await e.disconnect(); }
 }
 
 describe('shadow replay end to end', () => {
@@ -130,9 +138,19 @@ describe('shadow replay end to end', () => {
         const parsed = JSON.parse(report);
         expect(parsed.arms).toEqual(PG ? ['pglite', 'postgres', 'rust'] : ['pglite', 'rust']);
         expect(parsed.by_class.ts_disagree ?? 0).toBe(0);
-        // The Postgres copy is one scratch database that the next seed resets, so restoring an old epoch cannot
-        // bring its copy back: the byte-identical rerun covers the PGLite and Rust copies.
-        if (PG) return;
+        if (PG) {
+          // A purge from a process with capture off and the env kill switch set still drops the scratch copy at once.
+          expect(await runEngineShadow(['capture', 'off'], io)).toBe(0);
+          await withEnv({ GBRAIN_SHADOW_CAPTURE: 'off' }, async () => {
+            const purger = await createEngine(config);
+            await purger.connect(config);
+            expect(await scratchTables(PG)).toBeGreaterThan(0);
+            appendPurgeIntent({ request: 'r1', request_id: 'q1', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] });
+            await purger.disconnect();
+          });
+          expect(await scratchTables(PG)).toBe(0);
+          return;
+        }
         rmSync(cap, { recursive: true, force: true });
         cpSync(backup, cap, { recursive: true });
         const third = await runNightlyReplay(deps());
