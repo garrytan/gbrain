@@ -75,6 +75,8 @@ import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import type { MaintenanceWriteWait } from '../persistence/maintenance-wait.ts';
 import { connectorAtomExclusionSql } from './connector-atoms.ts';
+import { unionExtractableTypes, equivalentAtomScanRevisions, excludeEquivalentAtomScans } from './extract-atoms-equivalent-scan.ts';
+export { unionExtractableTypes } from './extract-atoms-equivalent-scan.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate, settleExtractAtomsCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { classifyRunStop, providerHaltReason, upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -126,16 +128,6 @@ const TRANSIENT_EXTRACT_ERROR_RE =
 // Legacy floor: the pre-pack hardcoded atom-extraction types. Retained as a
 // back-compat union member so a gbrain-base brain never loses an extraction
 // target when we begin honoring the pack manifest's `extractable` flags.
-const LEGACY_EXTRACTABLE_TYPES = [
-  'meeting', 'source', 'article', 'video', 'book', 'original',
-] as const;
-
-// Synthesis outputs are never extraction inputs: extracting atoms from atoms or
-// concepts would loop (concepts are synthesized FROM atoms). Mirrors
-// facts/eligibility.ts, which likewise excludes `concept` despite its
-// extractable:true flag being a documented forward-compat marker.
-const SYNTHESIS_OUTPUT_TYPES = new Set<string>(['atom', 'concept']);
-
 const PAGE_DISCOVERY_BUDGET = 50;
 const MIN_PAGE_CHARS_FOR_EXTRACTION = 500;
 /** `compiled_truth` has >= `param` characters: octet_length reads a TOASTed size from its header and a character is
@@ -162,19 +154,6 @@ const pageScanStateExclusionSql = (maxInputChars?: string) => `AND NOT EXISTS (
     AND (scan.tombstoned OR ${maxInputChars ? `scan.partial_input_chars >= ${maxInputChars}` : 'scan.partial_input_chars IS NOT NULL'})
 )`;
 const PAGE_SCAN_STATE_EXCLUSION_SQL = pageScanStateExclusionSql();
-
-/**
- * Pure allowlist policy: the legacy floor (minus floor types the pack declares not extractable, #5756: the floor
- * covers only types the pack is silent about) UNION the pack's `extractable: true` types, MINUS synthesis outputs.
- * Exported for unit tests; keep I/O-free.
- */
-export function unionExtractableTypes(packExtractable: Iterable<string>, packExcluded: Iterable<string> = []): string[] {
-  const types = new Set<string>(LEGACY_EXTRACTABLE_TYPES);
-  for (const t of packExcluded) types.delete(t);
-  for (const t of packExtractable) types.add(t);
-  for (const t of SYNTHESIS_OUTPUT_TYPES) types.delete(t);
-  return [...types];
-}
 
 /**
  * Resolve the atom-extraction type allowlist from the active schema pack.
@@ -411,48 +390,52 @@ export async function discoverExtractablePages(
   affectedSlugs?: string[],
   limit: number = PAGE_DISCOVERY_BUDGET,
 ): Promise<AtomPageInput[]> {
-  const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
-  const connectorExclusion = await connectorAtomExclusionSql(engine);
-  const sql = `
-    SELECT p.id, p.knowledge_revision,
-           (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
-           p.slug,
-           p.compiled_truth,
-           p.content_hash
-    FROM pages p
-    WHERE p.source_id = $1
-      AND p.type = ANY($2::text[])
-      AND p.deleted_at IS NULL
-      AND p.content_hash IS NOT NULL
-      AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
-      AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
-      ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-      AND ${minCompiledTruthChars('$3')}
-      ${MANAGED_ATOM_DISCOVERY_SQL}
-      ${PAGE_SCAN_STATE_EXCLUSION_SQL}
-      ${connectorExclusion}
-      ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
-      AND NOT EXISTS (
-        SELECT 1
-        FROM pages atom
-        WHERE atom.type = 'atom'
-          AND atom.source_id = $1
-          AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-          AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-          AND atom.deleted_at IS NULL
-      )
-    ORDER BY p.updated_at DESC
-    LIMIT $4
-  `;
-  const params: unknown[] = [
-    sourceId,
-    await resolveExtractableTypes(),
-    MIN_PAGE_CHARS_FOR_EXTRACTION,
-    limit,
-  ];
-  if (hasFilter) params.push(affectedSlugs);
-
   try {
+    const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
+    const extractableTypes = await resolveExtractableTypes();
+    const equivalent = await equivalentAtomScanRevisions(engine, sourceId, extractableTypes, hasFilter ? affectedSlugs : undefined);
+    const connectorExclusion = await connectorAtomExclusionSql(engine);
+    const sql = `
+      SELECT p.id, p.knowledge_revision,
+             (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
+             p.slug,
+             p.compiled_truth,
+             p.content_hash
+      FROM pages p
+      WHERE p.source_id = $1
+        AND p.type = ANY($2::text[])
+        AND p.deleted_at IS NULL
+        AND p.content_hash IS NOT NULL
+        AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
+        AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+        ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
+        AND ${minCompiledTruthChars('$3')}
+        ${MANAGED_ATOM_DISCOVERY_SQL}
+        ${PAGE_SCAN_STATE_EXCLUSION_SQL}
+        ${connectorExclusion}
+        ${excludeEquivalentAtomScans(5)}
+        ${hasFilter ? "AND p.slug = ANY($6::text[])" : ''}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM pages atom
+          WHERE atom.type = 'atom'
+            AND atom.source_id = $1
+            AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+            AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
+            AND atom.deleted_at IS NULL
+        )
+      ORDER BY p.updated_at DESC
+      LIMIT $4
+    `;
+    const params: unknown[] = [
+      sourceId,
+      extractableTypes,
+      MIN_PAGE_CHARS_FOR_EXTRACTION,
+      limit,
+      equivalent,
+    ];
+    if (hasFilter) params.push(affectedSlugs);
+
     const rows = await engine.executeRaw<{
       id: number;
       knowledge_revision: string;
@@ -516,6 +499,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND ${minCompiledTruthChars('$3')}
+           ${excludeEquivalentAtomScans(5)}
            ${managedAtomDiscoverySql('$4::integer')}
            ${pageScanStateExclusionSql('$4::integer')}
            ${connectorExclusion}
@@ -534,6 +518,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND ${minCompiledTruthChars('$2')}
+           ${excludeEquivalentAtomScans(4)}
            ${managedAtomDiscoverySql('$3::integer')}
            ${pageScanStateExclusionSql('$3::integer')}
            ${connectorExclusion}
@@ -545,10 +530,11 @@ export async function countExtractAtomsBacklog(
                AND atom.deleted_at IS NULL
            )`;
     const extractableTypes = await resolveExtractableTypes();
+    const equivalent = await equivalentAtomScanRevisions(engine, sourceId, extractableTypes, undefined, opts.signal);
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
     const params = scoped
-      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars]
-      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars];
+      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, equivalent]
+      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, equivalent];
     const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: opts.signal });
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {

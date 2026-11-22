@@ -23,20 +23,24 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { PAGE_INLINE_MAX_BYTES } from '../page-size-policy.ts';
 import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { BOUNDED_PREFIX_BYTES, boundedProjectedPrefix } from './document.ts';
 
 /**
- * SQL for the bounded raw prefix of a page's compiled truth that a fan-out
- * query selects instead of the whole column (fixed table aliases only). A
- * segmented page has no `compiled_truth`; its `truth_lead` holds the same raw
- * prefix, so the sanitize path downstream is unchanged. This is the one
- * sanctioned COALESCE of the body column (scripts/check-page-body-readers.ts
- * allows it by name).
+ * Fixed table aliases only. The ordinary lead can use a segmented page's
+ * stored prefix. A caller proving exact body equality can request one complete
+ * inline region instead. That form returns NULL for a segmented or oversized
+ * region, because comparing a shortened prefix would discard real changes.
+ * It also works on inline page versions, which have no truth_lead column.
  */
-export function boundedBodyPrefixSql(alias: string): string {
+export function boundedBodyPrefixSql(alias: string, completeInline?: 'truth' | 'timeline'): string {
+  if (completeInline) {
+    const column = completeInline === 'truth' ? `${alias}.compiled_truth` : `COALESCE(${alias}.timeline, '')`;
+    return `CASE WHEN ${alias}.body_storage='inline' AND octet_length(${column})<=${PAGE_INLINE_MAX_BYTES} THEN ${column} END`;
+  }
   return `left(coalesce(${alias}.compiled_truth, ${alias}.truth_lead), ${BOUNDED_PREFIX_BYTES})`;
 }
 

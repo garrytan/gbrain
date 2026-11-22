@@ -319,6 +319,7 @@
       "raw": 5,
       "tx": 1
     },
+    "readAtomScanRevisionCandidates#scoped": {},
     "readEmbeddingStateCounts#full": {
       "raw": 1
     },

@@ -156,6 +156,7 @@ import type { PageCountQuery, PageCounts, TypeGrouper } from './page-counts.ts';
 import * as healthImpl from './engine-sql/health.ts';
 import { resolveEntityTypes } from './schema-pack/entity-types.ts';
 import * as pagesImpl from './engine-sql/pages.ts';
+import { readAtomScanRevisionCandidates, type AtomScanRevisionQuery } from './engine-sql/atom-scans.ts';
 import * as entityKeysImpl from './engine-sql/entity-keys.ts';
 import type { EntityKeyRow, EntityKeyRowsOpts } from './engine-sql/entity-keys.ts';
 import * as identityDecisionsImpl from './engine-sql/identity-decisions.ts';
@@ -1269,10 +1270,7 @@ export class PGLiteEngine implements BrainEngine {
   }
   private _heldPageKeys: HeldPageKeys | null = null;
 
-  /**
-   * v0.41.13 (#1309) — identity-based dedup pre-check.
-   * See `BrainEngine.findDuplicatePage` for the contract.
-   */
+  /** See `BrainEngine.findDuplicatePage` for the identity-based dedup contract. */
   async findDuplicatePage(
     sourceId: string,
     opts: { hash: string; frontmatterId?: string | null; excludeSlug?: string },
@@ -1280,6 +1278,7 @@ export class PGLiteEngine implements BrainEngine {
     return pagesImpl.findDuplicatePage(scopedRead(this.engineSql), sourceId, opts);
   }
   async findDuplicatePages(sourceId: string, inputs: Parameters<typeof pagesImpl.findDuplicatePages>[2]) { return pagesImpl.findDuplicatePages(scopedRead(this.engineSql), sourceId, inputs); }
+  readAtomScanRevisionCandidates(opts: AtomScanRevisionQuery) { return readAtomScanRevisionCandidates(scopedRead(this.engineSql), opts); }
 
   private _pageTransaction = false;
 

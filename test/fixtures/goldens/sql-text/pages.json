@@ -1202,6 +1202,23 @@
           }
         ]
       },
+      "readAtomScanRevisionCandidates": {
+        "scoped": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<string>",
+              "string",
+              "array<string>",
+              "number",
+              "number",
+              "number"
+            ],
+            "sql": "SELECT p.id AS page_id, p.knowledge_revision AS revision, s.incarnation, archive.id AS version_id, archive.content_hash AS old_hash, encode(sha256(convert_to(jsonb_build_array( CASE WHEN archive.body_storage='inline' AND octet_length(archive.compiled_truth)<=1048576 THEN archive.compiled_truth END, CASE WHEN archive.body_storage='inline' AND octet_length(COALESCE(archive.timeline, ''))<=1048576 THEN COALESCE(archive.timeline, '') END, archive.title, archive.type, archive.frontmatter, archive.tags, archive.trust_tier, archive.content_hash, archive.archived_write_request_id, archive.is_deleted)::text, 'UTF8')), 'hex') AS archive_hash, CASE WHEN p.body_storage='inline' AND octet_length(p.compiled_truth)<=1048576 THEN p.compiled_truth END AS current_truth, CASE WHEN archive.body_storage='inline' AND octet_length(archive.compiled_truth)<=1048576 THEN archive.compiled_truth END AS old_truth, CASE WHEN archive.body_storage='inline' AND octet_length(COALESCE(archive.timeline, ''))<=1048576 THEN COALESCE(archive.timeline, '') END AS old_timeline, ARRAY(SELECT t.tag FROM tags t WHERE t.page_id=p.id) AS current_tags, jsonb_build_object('title',archive.title,'type',archive.type,'frontmatter',archive.frontmatter,'tags',archive.tags) AS old_page FROM pages p JOIN sources s ON s.id=p.source_id AND NOT s.archived JOIN persistence_requests current_write ON current_write.id=p.revision_write_request_id AND current_write.source_id=s.id AND current_write.source_incarnation=s.incarnation AND current_write.page_id=p.id AND current_write.slug=p.slug AND current_write.operation IN ('remember','put_page') AND current_write.state='committed' JOIN page_versions archive ON archive.page_id=p.id JOIN persistence_requests archived_by ON archived_by.id=archive.archived_write_request_id AND archived_by.source_id=s.id AND archived_by.source_incarnation=s.incarnation AND archived_by.page_id=p.id AND archived_by.slug=p.slug AND archived_by.operation IN ('remember','put_page') AND archived_by.state='committed' WHERE p.deleted_at IS NULL AND p.type=ANY($1::text[]) AND p.source_id=$2 AND p.slug=ANY($3::text[]) AND (p.id,archive.id)>($4::integer,$5::integer) AND archive.is_deleted=false AND p.title=archive.title AND p.type=archive.type AND p.trust_tier IS NOT DISTINCT FROM archive.trust_tier AND p.frontmatter=archive.frontmatter AND CASE WHEN p.body_storage='inline' AND octet_length(COALESCE(p.timeline, ''))<=1048576 THEN COALESCE(p.timeline, '') END=CASE WHEN archive.body_storage='inline' AND octet_length(COALESCE(archive.timeline, ''))<=1048576 THEN COALESCE(archive.timeline, '') END AND CASE WHEN p.body_storage='inline' AND octet_length(p.compiled_truth)<=1048576 THEN p.compiled_truth END<>CASE WHEN archive.body_storage='inline' AND octet_length(archive.compiled_truth)<=1048576 THEN archive.compiled_truth END AND archive.tags IS NOT NULL AND EXISTS (SELECT 1 FROM extract_atoms_page_state scan WHERE scan.source_incarnation=s.incarnation AND scan.page_id=p.id AND scan.tombstoned AND scan.partial_input_chars IS NULL) ORDER BY p.id, archive.id LIMIT $6",
+            "textSha256": "3acb1579653742c3fe1a4722ae1c145004ed33555b835171c66871dbccca404d"
+          }
+        ]
+      },
       "readPageSnapshot": {
         "default": [
           {

@@ -178,6 +178,7 @@ export const DOMAIN_OF: Record<string, string> = {
 
   // pages
   'getPage': 'pages', 'readPageSnapshot': 'pages', 'readPageSnapshotsBatch': 'pages', 'lockPageKeys': 'pages', 'findDuplicatePage': 'pages', 'findDuplicatePages': 'pages',
+  'readAtomScanRevisionCandidates': 'pages',
   'putPage': 'pages', 'deletePage': 'pages', 'deletePages': 'pages', 'resolveSlugsByPaths': 'pages',
   'softDeletePage': 'pages', 'softDeletePages': 'pages', 'restorePage': 'pages', 'purgeDeletedPages': 'pages',
   'refreshPageBody': 'pages', 'updatePageContextualRetrievalState': 'pages', 'listPages': 'pages',
@@ -401,6 +402,9 @@ export const SQL_CASES: SqlCase[] = [
   ]),
   ...variants('findDuplicatePages', [
     ['default', (e) => e.findDuplicatePages(SRC, [{ hash: 'hash-1' }, { hash: 'hash-2', frontmatterId: 'fm-1', excludeSlug: SLUG }])],
+  ]),
+  ...variants('readAtomScanRevisionCandidates', [
+    ['scoped', (e) => e.readAtomScanRevisionCandidates({ sourceId: SRC, types: ['meeting'], slugs: [SLUG], afterPageId: 0, afterVersionId: 0 })],
   ]),
   ...variants('putPage', [
     ['default', (e) => e.putPage(SLUG, page), [pageRet]],

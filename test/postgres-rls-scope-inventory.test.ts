@@ -181,8 +181,9 @@ describe('EO4 RLS scope inventory (master)', () => {
     const scoping = astScoping(capture.ast);
 
     const callSites = Object.values(capture.ast).reduce((a, m) => a + m.directCallSites, 0);
-    expect(callSites).toBe(36);
-    expect(Object.values(capture.ast).filter((m) => m.directCallSites > 0).length).toBe(35);
+    expect(callSites).toBe(37);
+    expect(Object.values(capture.ast).filter((m) => m.directCallSites > 0).length).toBe(36);
+    expect(capture.runtime['readAtomScanRevisionCandidates#scoped'].flagOnScopes).toEqual(['src-a']);
 
     const byMethod = new Map<string, RuntimeObservation[]>();
     for (const [key, obs] of Object.entries(capture.runtime)) {

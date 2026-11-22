@@ -30,6 +30,19 @@ const PAGE = (title: string, body: string) => ({ type: 'note' as const, title, c
 
 describe('engine parity: raw_sql', () => {
   parityTest(
+    'Atom scan candidates require an archived remember publication, not merely an eligible page type',
+    { methods: ['putPage', 'readAtomScanRevisionCandidates'], requires: 'raw_sql' },
+    async (engine) => {
+      await engine.putPage('meetings/parity-review', { ...PAGE('Review', 'Fictional source material.'), type: 'meeting' });
+      const candidates = await engine.readAtomScanRevisionCandidates({
+        sourceId: 'default', types: ['meeting'], slugs: ['meetings/parity-review'], afterPageId: 0, afterVersionId: 0,
+      });
+      expect(candidates).toEqual([]);
+      return candidates;
+    },
+  );
+
+  parityTest(
     'executeRaw binds parameters, returns typed rows and sees the typed writes',
     { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' },
     async (engine) => {
