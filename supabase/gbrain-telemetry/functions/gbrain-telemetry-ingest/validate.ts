@@ -159,8 +159,17 @@ function hour(v: unknown): string | null {
   d.setUTCMinutes(0, 0, 0);
   return d.toISOString();
 }
+// A real calendar day within the last 31 days (or tomorrow, for clock skew).
+function day(v: unknown): string | null {
+  if (typeof v !== "string" || !DAY_RE.test(v)) return null;
+  const t = Date.parse(`${v}T00:00:00Z`);
+  if (!Number.isFinite(t) || new Date(t).toISOString().slice(0, 10) !== v) return null;
+  const now = Date.now();
+  return t > now + 86_400_000 || t < now - 31 * 86_400_000 ? null : v;
+}
 // {identifier: count} with at most 200 keys; keys off the identifier shape and
-// non-integer counts are dropped. crash_counts keys come from a fixed list.
+// counts that aren't an integer from 0 to 10,000 (more than one install does in
+// a day) are dropped. crash_counts keys come from a fixed list.
 function counts(v: unknown, keyOk: (k: string) => boolean): Record<string, number> | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const out: Record<string, number> = {};
@@ -168,7 +177,7 @@ function counts(v: unknown, keyOk: (k: string) => boolean): Record<string, numbe
   for (const [k, c] of Object.entries(v as Record<string, unknown>)) {
     if (n >= 200) break;
     if (!keyOk(k)) continue;
-    const ci = int(c, 0, 1_000_000);
+    const ci = int(c, 0, 10_000);
     if (ci === null) continue;
     out[k] = ci;
     n++;
@@ -217,7 +226,7 @@ export function toRow(e: Row): Row | null {
     failing_checks: failing && failing.length ? failing : null,
     mode: pick("mode", e.mode),
     brain_size_band: pick("brain_size_band", e.brain_size_band),
-    rollup_day: str(DAY_RE, e.rollup_day),
+    rollup_day: day(e.rollup_day),
     transport: pick("transport", e.transport),
     command_counts: counts(e.command_counts, (k) => IDENT_RE.test(k)),
     operation_counts: counts(e.operation_counts, (k) => IDENT_RE.test(k)),

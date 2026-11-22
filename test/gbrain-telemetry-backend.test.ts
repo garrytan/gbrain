@@ -141,3 +141,21 @@ describe('gbrain telemetry ingest: field checks (validate.ts)', () => {
     expect(toRow({ ...base, ts: new Date(Date.now() - 40 * 86_400_000).toISOString() })).toBeNull();
   });
 });
+
+describe('gbrain telemetry ingest: days and counts', () => {
+  const base = { v: 1, ts: new Date().toISOString(), event_type: 'daily_rollup', gbrain_version: '0.60.760.0', tier: 'anonymous', os: 'linux', arch: 'x64' };
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+
+  test('a rollup day must be a real calendar day from the last month', () => {
+    expect(toRow({ ...base, rollup_day: daysAgo(1) })!.rollup_day).toBe(daysAgo(1));
+    for (const d of ['2026-02-30', '2026-13-45', '2026-00-10', daysAgo(40), daysAgo(-3), '20261122']) {
+      expect({ d, kept: toRow({ ...base, rollup_day: d })!.rollup_day }).toEqual({ d, kept: null });
+    }
+  });
+
+  test('a count above 10,000 for one key is dropped', () => {
+    const row = toRow({ ...base, command_counts: { query: 10_000, doctor: 10_001 }, error_code_counts: { no_brain: 1_000_000 } })!;
+    expect(row.command_counts).toEqual({ query: 10_000 });
+    expect(row.error_code_counts).toBeNull();
+  });
+});

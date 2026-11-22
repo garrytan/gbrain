@@ -83,19 +83,24 @@ CREATE TABLE IF NOT EXISTS public.gbrain_installations (
   os TEXT CHECK (os IN ('linux', 'darwin', 'win32', 'freebsd', 'other'))
 );
 
--- The ingest's global daily ceiling: accepted requests and rows per UTC day.
+-- The ingest's global daily ceiling: accepted requests and rows per UTC day,
+-- and how many requests it refused (the pulse reports them).
 CREATE TABLE IF NOT EXISTS public.gbrain_ingest_daily (
   day DATE PRIMARY KEY,
   requests INTEGER NOT NULL DEFAULT 0,
-  rows_accepted INTEGER NOT NULL DEFAULT 0
+  rows_accepted INTEGER NOT NULL DEFAULT 0,
+  refused INTEGER NOT NULL DEFAULT 0
 );
 
--- The pulse's one-hour cache.
+-- The pulse's one-hour cache. attempted_at is the refresh claim: one refresh
+-- at a time, and at most one attempt every 5 minutes after a failure.
 CREATE TABLE IF NOT EXISTS public.gbrain_pulse_cache (
   id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   data JSONB NOT NULL DEFAULT '{}'::jsonb,
-  refreshed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  refreshed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  attempted_at TIMESTAMPTZ
 );
+INSERT INTO public.gbrain_pulse_cache (id, refreshed_at) VALUES (1, 'epoch') ON CONFLICT (id) DO NOTHING;
 
 -- Real use only: live rows with a release-shaped version.
 CREATE OR REPLACE VIEW public.gbrain_telemetry_live WITH (security_invoker = true) AS
@@ -105,7 +110,8 @@ WHERE source = 'live'
   AND gbrain_version NOT LIKE '0.0.0%';
 
 -- Reserve room under the daily ceiling for one request of p_rows rows. Returns
--- false (and reserves nothing) once either limit for today is reached.
+-- false (reserving nothing and counting the refusal) once either limit for
+-- today is reached.
 CREATE OR REPLACE FUNCTION public.gbrain_ingest_reserve(p_rows INTEGER, p_max_requests INTEGER, p_max_rows INTEGER)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -114,14 +120,21 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   ok BOOLEAN;
+  today DATE := (now() AT TIME ZONE 'utc')::date;
 BEGIN
-  INSERT INTO public.gbrain_ingest_daily AS d (day, requests, rows_accepted)
-  VALUES ((now() AT TIME ZONE 'utc')::date, 1, p_rows)
-  ON CONFLICT (day) DO UPDATE
-    SET requests = d.requests + 1, rows_accepted = d.rows_accepted + p_rows
-    WHERE d.requests < p_max_requests AND d.rows_accepted + p_rows <= p_max_rows
-  RETURNING true INTO ok;
-  RETURN coalesce(ok, false) AND p_rows <= p_max_rows;
+  IF p_rows <= p_max_rows THEN
+    INSERT INTO public.gbrain_ingest_daily AS d (day, requests, rows_accepted)
+    VALUES (today, 1, p_rows)
+    ON CONFLICT (day) DO UPDATE
+      SET requests = d.requests + 1, rows_accepted = d.rows_accepted + p_rows
+      WHERE d.requests < p_max_requests AND d.rows_accepted + p_rows <= p_max_rows
+    RETURNING true INTO ok;
+  END IF;
+  IF ok IS NULL THEN
+    INSERT INTO public.gbrain_ingest_daily AS d (day, refused) VALUES (today, 1)
+    ON CONFLICT (day) DO UPDATE SET refused = d.refused + 1;
+  END IF;
+  RETURN coalesce(ok, false);
 END
 $$;
 
@@ -172,7 +185,9 @@ $$;
 -- version can't fake a regression. NULL counts every release-shaped version.
 -- Counts per harness x version are published as they are (counts, no ids);
 -- any cell that crosses with brain size or failing checks needs 5 distinct
--- community installs.
+-- community installs. Every row is an unauthenticated report, so the
+-- per-version lists cover only the 10 versions with the most rows, keeping the
+-- answer small however many versions callers invent.
 CREATE OR REPLACE FUNCTION public.gbrain_pulse_summary(p_max_version TEXT)
 RETURNS JSONB
 LANGUAGE sql
@@ -190,12 +205,18 @@ known AS (
   SELECT * FROM week
   WHERE p_max_version IS NULL OR v <= string_to_array(p_max_version, '.')::int[]
 ),
+top AS (
+  SELECT v FROM known GROUP BY v ORDER BY count(*) DESC, v DESC LIMIT 10
+),
+recent AS (
+  SELECT * FROM known WHERE v IN (SELECT v FROM top)
+),
 setup AS (
   SELECT harness, gbrain_version, v,
          count(*) AS attempts,
          count(*) FILTER (WHERE outcome = 'success') AS successes,
          count(DISTINCT installation_id) AS installs
-  FROM known WHERE event_type = 'setup' AND step IS NOT NULL
+  FROM recent WHERE event_type = 'setup' AND step IS NOT NULL
   GROUP BY harness, gbrain_version, v
 ),
 upgrades AS (
@@ -204,16 +225,18 @@ upgrades AS (
          count(*) FILTER (WHERE outcome = 'error') AS failures,
          count(*) FILTER (WHERE wedged) AS wedged,
          count(DISTINCT installation_id) AS installs
-  FROM known WHERE event_type = 'upgrade'
+  FROM recent WHERE event_type = 'upgrade'
+    AND (to_version IS NULL OR p_max_version IS NULL
+         OR string_to_array(to_version, '.')::int[] <= string_to_array(p_max_version, '.')::int[])
   GROUP BY to_version, gbrain_version, v
 ),
 codes AS (
   SELECT gbrain_version, v, code, sum(n)::bigint AS n
   FROM (
-    SELECT gbrain_version, v, error_code AS code, 1::bigint AS n FROM known WHERE error_code IS NOT NULL
+    SELECT gbrain_version, v, error_code AS code, 1::bigint AS n FROM recent WHERE error_code IS NOT NULL
     UNION ALL
     SELECT k.gbrain_version, k.v, c.key, c.value::bigint
-    FROM known k, jsonb_each_text(k.error_code_counts) c
+    FROM recent k, jsonb_each_text(k.error_code_counts) c
     WHERE k.event_type = 'daily_rollup' AND k.error_code_counts IS NOT NULL
   ) x
   GROUP BY gbrain_version, v, code
@@ -238,6 +261,8 @@ SELECT jsonb_build_object(
   'max_version', p_max_version,
   'events', (SELECT count(*) FROM known),
   'community_installs', (SELECT count(DISTINCT installation_id) FROM known),
+  'ceiling_refusals', (SELECT coalesce(sum(refused), 0) FROM public.gbrain_ingest_daily
+      WHERE day > (now() AT TIME ZONE 'utc')::date - 7),
   'setup', coalesce((SELECT jsonb_agg(jsonb_build_object('harness', harness, 'version', gbrain_version,
       'attempts', attempts, 'successes', successes, 'installs', installs) ORDER BY v DESC, harness) FROM setup), '[]'::jsonb),
   'upgrades', coalesce((SELECT jsonb_agg(jsonb_build_object('to_version', to_version, 'version', gbrain_version,

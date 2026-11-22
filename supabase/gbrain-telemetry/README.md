@@ -14,11 +14,14 @@ gbrain's opt-in telemetry lands here: two Supabase edge functions and the SQL be
 
 - The publishable (anon) key the client ships can't read or write any table, view or function here: RLS is on with no policies and every privilege is revoked from `anon` and `authenticated`.
 - Only `service_role`, which the two functions hold in their own environment, reads and writes.
-- The pulse is public by design: counts only, no installation id, and any cell crossed with brain size needs 5 distinct installs.
+- The pulse is public by design: counts only, no installation id. A cell crossed with brain size needs 5 distinct community installs, which stops a casual reader from singling out one install but can't stop a caller who invents ids.
+- Every row is an unauthenticated report, so the pulse is a lead to check, not proof, for anyone reading it (the severe sweep included). Its per-version lists cover the 10 versions with the most rows, and one install's count for any command or error code tops out at 10,000 a day.
 
 ## The daily ceiling
 
 Clients send at most one request per install every 6 hours, so 15,000 accepted requests a day covers about 3,700 opted-in installs (about 450,000 a month). With gstack's traffic (about 310,000 invocations a month on 2026-11-22) that stays under half of the Pro plan's 2 million monthly invocations. The ceiling caps what lands in the tables. It can't cap what a caller sends: Supabase counts an invocation before the function runs, so a flood still spends invocations even when every request gets a 429.
+
+The ceiling is one bucket shared by every caller, so one caller can fill it. The pulse reports the requests refused in its 7 days as `ceiling_refusals`, so a full day reads as missing data rather than a quiet one. Per-caller limits would mean storing caller addresses, which this design doesn't do.
 
 ## Applying it
 

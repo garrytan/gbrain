@@ -16,6 +16,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const CACHE_MAX_AGE_MS = 60 * 60 * 1000;
+const CLAIM_MS = 5 * 60 * 1000;
 const VERSION_URL = "https://raw.githubusercontent.com/garrytan/gbrain/master/VERSION";
 const VERSION_RE = /^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}(\.[0-9]{1,6})?$/;
 const HEADERS = { "Content-Type": "application/json", "Cache-Control": "public, max-age=3600" };
@@ -38,17 +39,30 @@ Deno.serve(async (req) => {
   let cached: { data: Record<string, unknown>; refreshed_at: string } | null = null;
   try {
     const { data } = await supabase.from("gbrain_pulse_cache").select("data, refreshed_at").eq("id", 1).maybeSingle();
-    cached = data ?? null;
+    cached = data?.data && "setup" in data.data ? data : null;
   } catch {
     cached = null;
   }
-  if (cached?.refreshed_at && cached.data && "setup" in cached.data) {
-    if (Date.now() - new Date(cached.refreshed_at).getTime() < CACHE_MAX_AGE_MS) {
-      return new Response(JSON.stringify({ ...cached.data, status: "ok", refreshed_at: cached.refreshed_at }), { status: 200, headers: HEADERS });
-    }
+  if (cached && Date.now() - new Date(cached.refreshed_at).getTime() < CACHE_MAX_AGE_MS) {
+    return new Response(JSON.stringify({ ...cached.data, status: "ok", refreshed_at: cached.refreshed_at }), { status: 200, headers: HEADERS });
   }
+  const stale = () =>
+    cached
+      ? new Response(JSON.stringify({ ...cached.data, status: "ok", stale: true, refreshed_at: cached.refreshed_at }), { status: 200, headers: HEADERS })
+      : new Response(JSON.stringify({ error: "pulse_unavailable" }), { status: 503, headers: { "Content-Type": "application/json" } });
 
   try {
+    // One refresh at a time, and after a failure none for 5 minutes: the request
+    // that claims the cache row recomputes; every other one gets the stale answer.
+    const claimBefore = new Date(Date.now() - CLAIM_MS).toISOString();
+    const { data: claimed, error: claimError } = await supabase
+      .from("gbrain_pulse_cache")
+      .update({ attempted_at: new Date().toISOString() })
+      .eq("id", 1)
+      .or(`attempted_at.is.null,attempted_at.lt."${claimBefore}"`)
+      .select("id");
+    if (claimError || !claimed?.length) return stale();
+
     const prior = typeof cached?.data?.max_version === "string" ? (cached.data.max_version as string) : null;
     const maxVersion = (await newestRelease()) ?? prior;
     const { data: summary, error } = await supabase.rpc("gbrain_pulse_summary", { p_max_version: maxVersion });
@@ -56,12 +70,9 @@ Deno.serve(async (req) => {
     if (!summary || typeof summary !== "object") throw new Error("empty pulse summary");
     const refreshed_at = new Date().toISOString();
     const result = { status: "ok", ...(summary as Record<string, unknown>) };
-    await supabase.from("gbrain_pulse_cache").upsert({ id: 1, data: result, refreshed_at });
+    await supabase.from("gbrain_pulse_cache").update({ data: result, refreshed_at }).eq("id", 1);
     return new Response(JSON.stringify({ ...result, refreshed_at }), { status: 200, headers: HEADERS });
   } catch {
-    if (cached?.data) {
-      return new Response(JSON.stringify({ ...cached.data, status: "ok", stale: true, refreshed_at: cached.refreshed_at }), { status: 200, headers: HEADERS });
-    }
-    return new Response(JSON.stringify({ error: "pulse_unavailable" }), { status: 503, headers: { "Content-Type": "application/json" } });
+    return stale();
   }
 });

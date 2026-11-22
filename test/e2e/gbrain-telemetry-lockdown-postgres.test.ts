@@ -157,6 +157,31 @@ const EVENT = (over: Record<string, unknown> = {}) => ({
     expect(p.doctor_by_size).toEqual([{ brain_size_band: '10k+', score_band: '30-49', count: 5 }]);
   });
 
+  test('the pulse keeps 10 versions, drops upgrades to unreleased versions and reports ceiling refusals', async () => {
+    await asRole(ROLE.service_role, async tx => {
+      await tx`DELETE FROM public.gbrain_telemetry_events`;
+      await tx`DELETE FROM public.gbrain_ingest_daily`;
+      for (let k = 1; k <= 12; k++) await tx`INSERT INTO public.gbrain_telemetry_events ${tx(EVENT({ gbrain_version: `0.60.${k}.0` }))}`;
+      for (let i = 0; i < 2; i++) await tx`INSERT INTO public.gbrain_telemetry_events ${tx(EVENT({ gbrain_version: '0.60.1.0' }))}`;
+      for (const to of ['0.60.12.0', '9.0.0.0']) {
+        await tx`INSERT INTO public.gbrain_telemetry_events ${tx(EVENT({ event_type: 'upgrade', harness: null, step: null, gbrain_version: '0.60.12.0', to_version: to }))}`;
+      }
+      await tx`SELECT public.gbrain_ingest_reserve(5, 1, 10)`;
+      await tx`SELECT public.gbrain_ingest_reserve(5, 1, 10)`;
+      await tx`SELECT public.gbrain_ingest_reserve(11, 5, 10)`;
+    });
+    const [{ p }] = await asRole(ROLE.service_role, tx => tx`SELECT public.gbrain_pulse_summary('0.60.760.0') AS p`);
+    const versions = p.setup.map((c: { version: string }) => c.version);
+    expect(versions.length).toBe(10);
+    expect(versions).toContain('0.60.1.0');
+    expect(versions).not.toContain('0.60.2.0');
+    expect(versions).not.toContain('0.60.3.0');
+    expect(p.upgrades.map((c: { to_version: string }) => c.to_version)).toEqual(['0.60.12.0']);
+    expect(p.ceiling_refusals).toBe(2);
+    const [day] = await asRole(ROLE.service_role, tx => tx`SELECT requests, rows_accepted, refused FROM public.gbrain_ingest_daily`);
+    expect(day).toEqual({ requests: 1, rows_accepted: 5, refused: 2 });
+  });
+
   test('prune keeps recent rows and drops those past 400 days', async () => {
     await asRole(ROLE.service_role, tx => tx`INSERT INTO public.gbrain_telemetry_events ${tx({ ...EVENT(), received_at: new Date(Date.now() - 401 * 86_400_000).toISOString() })}`);
     const before = (await asRole(ROLE.service_role, tx => tx`SELECT count(*)::int AS n FROM public.gbrain_telemetry_events`))[0].n;
