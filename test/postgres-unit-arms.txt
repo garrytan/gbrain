@@ -131,6 +131,7 @@ test/doctor-guard-ledger-checks.test.ts
 test/doctor-image-embedding-coverage.test.ts
 test/doctor-keyword-plan-6495.test.ts
 test/doctor-owner-identity.test.ts
+test/doctor-owner-only-triggers-role.test.ts
 test/doctor-purged-page-facts-count.test.ts
 test/doctor-routing-skill-pack-source.test.ts
 test/doctor-session-lane-gbra133.test.ts
@@ -212,6 +213,7 @@ test/engine-parity/doctor-checkpoints.test.ts
 test/engine-parity/doctor-derived.test.ts
 test/engine-parity/doctor-facts-trust.test.ts
 test/engine-parity/doctor-fence-census.test.ts
+test/engine-parity/doctor-join-checks.test.ts
 test/engine-parity/doctor-pages.test.ts
 test/engine-parity/doctor-persistence.test.ts
 test/engine-parity/doctor-reads.test.ts

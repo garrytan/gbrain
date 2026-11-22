@@ -514,11 +514,13 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // writes (facts/generations.rs), so the check runs on a Rust brain.
       // synopsis_tier_coverage is not here: readSynopsisTierConfig reads the typed listSynopsisSourceIds and
       // hasSynopsisFrontmatterOverride, which the store serves.
-      // These checks come from rust-engine/main and read through members the Rust engine does not serve yet, so each warns
-      // with the typed refusal and says its health is unknown: access_pages_read_by_nobody and owner_identity read through
-      // executeRaw (raw_sql), owner_only_marks_triggers through ownerOnlyMarkTriggers (raw_sql: it reads and installs
-      // triggers), entity_duplicates through listIdentityDecisions (the store keeps no identity decisions).
-      typedRefusals: ['access_pages_read_by_nobody', 'entity_duplicates', 'owner_identity', 'owner_only_marks_triggers'],
+      // access_pages_read_by_nobody, owner_identity and owner_only_marks_triggers are gone from this list: their reads are
+      // typed members the store answers (engine-sql/doctor-join.ts, store-members/owner-only-marks.ts), so each reports
+      // what PGLite reports.
+      // entity_duplicates comes from rust-engine/main and reads through listIdentityDecisions, which the Rust engine does
+      // not serve yet (the store keeps no identity decisions), so it warns with the typed refusal and says its health is
+      // unknown.
+      typedRefusals: ['entity_duplicates'],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });

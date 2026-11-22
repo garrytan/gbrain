@@ -282,6 +282,7 @@ import type { CounterColumn, WriterReleaseStore } from './engine-sql/writer-rele
 import type { PublicationJournalStore } from './engine-sql/publication-journal.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import type { ActiveWorktreeRefreshRow, BlockingEffectRow, OnboardingSourceRow, WriterDiagnosticRows, WriterStatusRows } from './engine-sql/writer-status.ts';
+import type * as DoctorJoinSql from './engine-sql/doctor-join.ts';
 
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 
@@ -7001,6 +7002,19 @@ export interface BrainEngine {
   readSoftDeletedAliasCounts(): Promise<DoctorSearchSql.SoftDeletedAliasCounts>;
   /** Every distinct (source, type) among live typed pages, in source then type order. */
   listPageTypePairs(): Promise<DoctorSearchSql.PageTypePair[]>;
+  // Doctor reads of the checks from the rust-engine/main join (engine-sql/doctor-join.ts): access_pages_read_by_nobody and owner_identity.
+  /** Every access member by id, with its status: removed (tombstoned), disabled, or enabled. */
+  listAccessMemberStatuses(): Promise<DoctorJoinSql.AccessMemberStatusRow[]>;
+  /** Every group membership, in no defined order. */
+  listAccessGroupMemberships(): Promise<DoctorJoinSql.AccessGroupMembershipRow[]>;
+  /** The live pages whose readers name none of `live` and not the nobody marker, member pages left out; no defined order. */
+  listPagesReadByNobody(live: readonly string[], opts: { timeoutMs: number }): Promise<DoctorJoinSql.PageReadersRow[]>;
+  /** The live pages a folder rule at `prefix` of `sourceId` covers that none of the `admitted` principals reads; no defined order. */
+  listRulePagesReadByNobody(sourceId: string, prefix: string, admittedCount: number, admitted: readonly string[], opts: { timeoutMs: number }): Promise<DoctorJoinSql.PageReadersRow[]>;
+  /** The Google sources that are not archived, by id in byte order, with their account and bound members. */
+  listGoogleSourceMembers(): Promise<DoctorJoinSql.GoogleSourceMembersRow[]>;
+  /** One member's external ids (access_member_links), by system and external id. */
+  listOwnerMemberLinks(memberId: string): Promise<DoctorJoinSql.OwnerMemberLinkRow[]>;
   // Doctor reads, second set (engine-sql/doctor-acc.ts): the access, token, OAuth, request-log, decide, chronicle, feedback, belief and volunteer statements doctor checks ran through executeRaw.
   /** Whether the database role cannot read the folder access tables (row-level security hides them). */
   isAccessStateUnreadable(): Promise<boolean>;

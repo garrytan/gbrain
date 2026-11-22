@@ -380,6 +380,7 @@ import type {
   OauthClientProbe, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller, OauthCodeInsert,
 } from './engine-sql/access-credentials.ts';
 import * as trustScan from './engine-sql/trust-scan.ts';
+import * as doctorJoinImpl from './engine-sql/doctor-join.ts';
 
 export { hasPostgresCancellationCapability } from './postgres-engine/cancellation.ts';
 // Engine-path imports stay static unless a call site carries an explicit
@@ -1463,6 +1464,14 @@ export class PostgresEngine implements BrainEngine {
   listOrphanedAliasCounts() { return doctorSearchImpl.listOrphanedAliasCounts(this.executeRaw.bind(this)); }
   readSoftDeletedAliasCounts() { return doctorSearchImpl.readSoftDeletedAliasCounts(this.executeRaw.bind(this)); }
   listPageTypePairs() { return doctorSearchImpl.listPageTypePairs(this.executeRaw.bind(this)); }
+  listAccessMemberStatuses() { return doctorJoinImpl.listAccessMemberStatuses(this.executeRaw.bind(this)); }
+  listAccessGroupMemberships() { return doctorJoinImpl.listAccessGroupMemberships(this.executeRaw.bind(this)); }
+  listPagesReadByNobody(live: readonly string[], opts: { timeoutMs: number }) { return doctorJoinImpl.listPagesReadByNobody(this.executeRaw.bind(this), live, opts); }
+  listRulePagesReadByNobody(sourceId: string, prefix: string, admittedCount: number, admitted: readonly string[], opts: { timeoutMs: number }) {
+    return doctorJoinImpl.listRulePagesReadByNobody(this.executeRaw.bind(this), sourceId, prefix, admittedCount, admitted, opts);
+  }
+  listGoogleSourceMembers() { return doctorJoinImpl.listGoogleSourceMembers(this.executeRaw.bind(this)); }
+  listOwnerMemberLinks(memberId: string) { return doctorJoinImpl.listOwnerMemberLinks(this.executeRaw.bind(this), memberId); }
   isAccessStateUnreadable() { return doctorAccImpl.isAccessStateUnreadable(this.executeRaw.bind(this)); }
   listRawOnlyRules() { return doctorAccImpl.listRawOnlyRules(this.executeRaw.bind(this)); }
   listAudienceMemberIds() { return doctorAccImpl.listAudienceMemberIds(this.executeRaw.bind(this)); }

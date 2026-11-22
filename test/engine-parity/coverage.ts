@@ -480,6 +480,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   doctor_facts_trust: ['countConversationPipelinePages', 'listPersistentWriterContention', 'countRowTrustTiers', 'countLegacyUnknownBySource', 'listTrustColumns', 'listTrustClaimTargets', 'countClaimLiftedRows'],
   doctor_sources: ['readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'countDefaultSourceFiles'],
   session_state: ['upsertSessionState', 'readSessionCursor', 'readDeltaSessionRow', 'readCheckpointManifestRow', 'writeCheckpointManifest', 'ageOutSessionState', 'capSessionStatePerClient'],
+  doctor_join: ['listAccessMemberStatuses', 'listAccessGroupMemberships', 'listPagesReadByNobody', 'listRulePagesReadByNobody', 'listGoogleSourceMembers', 'listOwnerMemberLinks'],
 };
 
 /** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */

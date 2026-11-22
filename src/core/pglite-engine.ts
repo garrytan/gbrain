@@ -361,6 +361,7 @@ import type {
   OauthClientProbe, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller, OauthCodeInsert,
 } from './engine-sql/access-credentials.ts';
 import * as trustScan from './engine-sql/trust-scan.ts';
+import * as doctorJoinImpl from './engine-sql/doctor-join.ts';
 
 function pgliteCloseWatchdogMs(): { deadlineMs: number; graceMs: number } {
   const rawStr = process.env.GBRAIN_PGLITE_CLOSE_WATCHDOG_MS;
@@ -1735,6 +1736,14 @@ export class PGLiteEngine implements BrainEngine {
   listOrphanedAliasCounts() { return doctorSearchImpl.listOrphanedAliasCounts(this.rawRead); }
   readSoftDeletedAliasCounts() { return doctorSearchImpl.readSoftDeletedAliasCounts(this.rawRead); }
   listPageTypePairs() { return doctorSearchImpl.listPageTypePairs(this.rawRead); }
+  listAccessMemberStatuses() { return doctorJoinImpl.listAccessMemberStatuses(this.rawRead); }
+  listAccessGroupMemberships() { return doctorJoinImpl.listAccessGroupMemberships(this.rawRead); }
+  listPagesReadByNobody(live: readonly string[], opts: { timeoutMs: number }) { return doctorJoinImpl.listPagesReadByNobody(this.rawRead, live, opts); }
+  listRulePagesReadByNobody(sourceId: string, prefix: string, admittedCount: number, admitted: readonly string[], opts: { timeoutMs: number }) {
+    return doctorJoinImpl.listRulePagesReadByNobody(this.rawRead, sourceId, prefix, admittedCount, admitted, opts);
+  }
+  listGoogleSourceMembers() { return doctorJoinImpl.listGoogleSourceMembers(this.rawRead); }
+  listOwnerMemberLinks(memberId: string) { return doctorJoinImpl.listOwnerMemberLinks(this.rawRead, memberId); }
   isAccessStateUnreadable() { return doctorAccImpl.isAccessStateUnreadable(this.rawRead); }
   listRawOnlyRules() { return doctorAccImpl.listRawOnlyRules(this.rawRead); }
   listAudienceMemberIds() { return doctorAccImpl.listAudienceMemberIds(this.rawRead); }

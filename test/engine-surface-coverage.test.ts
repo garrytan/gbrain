@@ -256,6 +256,13 @@ const INTERFACE_METHODS: readonly string[] = [
   'listGitImageHoldCounts',
   'readProjectionBacklog',
   'countAtomExtractionBacklog',
+  // Doctor reads of the checks from the main join (engine-sql/doctor-join.ts; covered by test/engine-parity/doctor-join-checks.test.ts)
+  'listAccessMemberStatuses',
+  'listAccessGroupMemberships',
+  'listPagesReadByNobody',
+  'listRulePagesReadByNobody',
+  'listGoogleSourceMembers',
+  'listOwnerMemberLinks',
   // Doctor reads, second set (engine-sql/doctor-acc.ts; covered by test/engine-parity/doctor-acc.test.ts)
   
   'isAccessStateUnreadable',
