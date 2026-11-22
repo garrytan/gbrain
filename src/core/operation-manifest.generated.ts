@@ -1699,7 +1699,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "autocut": {
         "type": "boolean",
-        "description": "Default on (never empty); false: full top-K for breadth.",
+        "description": "Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.",
         "fullSurfaceOnly": true
       },
       "relational": {

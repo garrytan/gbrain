@@ -1587,7 +1587,7 @@ export function formatResult(
       const { results, meta } = redactRetrievalOutput(room.rows as any[], lastRetrievalMeta);
       const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
       if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
-      const capLine = pageCapLine(meta, '--limit');
+      const capLine = pageCapLine(meta, '--limit'), savedFacts: string = require('../mcp/saved-facts-notice.ts').cliSavedFacts(getCliOptions().room === undefined ? meta : null, params.json === true); // --room marks no saved fact, so none prints
       if (capLine) process.stderr.write(capLine + '\n');
       if (params.json === true) {
         const incompleteNotice = retrievalIncompleteLine(meta);
@@ -1602,7 +1602,7 @@ export function formatResult(
       const cliOpts = getCliOptions();
       process.stderr.write(searchTimingsLine(meta));
       const timingsLine = cliOpts.explain && meta?.timings ? require('../core/search/stage-timings.ts').formatTimingsSummary(meta.timings) + '\n' : '';
-      if (results.length === 0) return `No results.${describeEmptyRetrieval()}\n` + timingsLine;
+      if (results.length === 0) return savedFacts ? `No page results.\n${savedFacts}${timingsLine}` : `No results.${describeEmptyRetrieval()}\n` + timingsLine;
       // v0.40.4 — --explain switches to per-stage attribution formatter.
       if (cliOpts.explain) {
         // Lazy import keeps formatResult's startup hot path narrow for
@@ -1610,9 +1610,9 @@ export function formatResult(
         const { formatResultsExplain } = require('../core/search/explain-formatter.ts');
         // v0.48.2: thread the captured retrieval meta so the header lines
         // (autocut decision, `degraded: reranker_skipped (no_key)`) render.
-        return formatResultsExplain(results, meta ?? undefined);
+        return formatResultsExplain(results, meta ?? undefined) + savedFacts;
       }
-      return retrievalIncompleteLine(meta) + results.map(require('./search-row-format.ts').formatSearchRow).join('\n') + '\n';
+      return retrievalIncompleteLine(meta) + results.map(require('./search-row-format.ts').formatSearchRow).join('\n') + '\n' + savedFacts;
     }
     case 'get_tags': {
       const tags = result as string[];

@@ -23,7 +23,7 @@ start here.
    export PATH="$HOME/.bun/bin:$PATH"
    bun install -g github:garrytan/gbrain#stable
    ```
-   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one.
+   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one. A command scanner (Hermes) refuses the Bun installer or `bun install -g`? Use the [release binary route](INSTALL_FOR_AGENTS.md#release-binary).
    If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`
    ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
    Exit 1 with `migrations_pending` means the schema is still behind and another `--yes` repeats the failure:
