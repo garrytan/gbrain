@@ -148,6 +148,7 @@ test/embedding-disabled-rechecks-9715.test.ts
 test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
+test/engine-parity-reset.test.ts
 test/engine-parity/access-flag.test.ts
 test/engine-parity/access-tokens.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
