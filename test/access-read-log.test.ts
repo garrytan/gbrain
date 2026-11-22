@@ -28,6 +28,7 @@ const OPEN = 'notes/open-plan';
 const ALICE = 'notes/alice-plan';
 const BOB = 'notes/bob-plan';
 const QUIET = 'notes/quiet-plan';
+const DATED = 'notes/dated-plan';
 const TERM = 'zebracanary';
 
 async function capture(fn: () => Promise<unknown>): Promise<string> {
@@ -44,6 +45,7 @@ async function seed(engine: BrainEngine): Promise<void> {
   await page(ALICE, ['readable_by: [owner-example, alice-example]']);
   await page(BOB, ['readable_by: [owner-example, bob-example]']);
   await page(QUIET, ['visibility: private']);
+  await page(DATED, ['readable_by: [owner-example, alice-example]', 'valid_from: 2026-01-01']);
 }
 
 const rows = async (engine: BrainEngine) => {
@@ -112,12 +114,18 @@ for (const kind of testBackends()) {
       expect(log[1]!.result_code).not.toBe('ok');
     });
 
+    test('a temporal get_page (as_of) logs the page it returned', async () => {
+      const out = await call(engine, 'get_page', { slug: DATED, as_of: new Date().toISOString().slice(0, 10) }, { stdioMember: 'alice-example' });
+      expect(text(out)).toContain(TERM);
+      expect((await rows(engine)).map(r => r.page_ids)).toEqual([[await pageId(engine, DATED)]]);
+    });
+
     test('a search logs the readable pages it returned and never the query terms', async () => {
       const out = await call(engine, 'search', { query: TERM }, { stdioMember: 'alice-example' });
       expect(out.isError).toBeFalsy();
       const [row] = await rows(engine);
       expect(row).toMatchObject({ member: 'alice-example', operation: 'search', result_code: 'ok' });
-      const visible = new Set([await pageId(engine, OPEN), await pageId(engine, ALICE)]);
+      const visible = new Set([await pageId(engine, OPEN), await pageId(engine, ALICE), await pageId(engine, DATED)]);
       expect(row!.page_ids.length).toBeGreaterThan(0);
       for (const id of row!.page_ids) expect(visible.has(id)).toBe(true);
       expect(JSON.stringify(await engine.executeRaw('SELECT to_jsonb(l) - \'id\' AS row FROM access_read_log l'))).not.toContain(TERM);
