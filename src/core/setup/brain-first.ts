@@ -177,7 +177,7 @@ function openclawHome(): string {
 }
 
 /** An OpenClaw path setting: a leading ~ is OpenClaw's home, a relative path is from the current directory. */
-function openclawPath(p: string): string {
+export function openclawPath(p: string): string {
   return resolve(p === '~' ? openclawHome() : p.startsWith('~/') ? join(openclawHome(), p.slice(2)) : p);
 }
 
