@@ -92,6 +92,15 @@ describe('gbrain telemetry backend: locked down and separate from gstack', () =>
     expect(INGEST).toContain('Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")');
     expect(INGEST).not.toMatch(/req\.headers\.get\("(authorization|apikey)"\)/i);
   });
+
+  test('forget never touches the daily ceiling, so load can never block withdrawal', () => {
+    const start = INGEST.indexOf('"forget" in body');
+    const forget = INGEST.slice(start, INGEST.indexOf('const events =', start));
+    expect(forget).toContain('gbrain_telemetry_forget');
+    expect(forget).not.toContain('gbrain_ingest_reserve');
+    expect(forget).not.toContain('daily_ceiling');
+    expect(start).toBeLessThan(INGEST.indexOf('gbrain_ingest_reserve'));
+  });
 });
 
 describe('gbrain telemetry ingest: field checks (validate.ts)', () => {
