@@ -10,6 +10,49 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.761.0] - 2026-11-22
+
+**A sync that re-screens many held notes against their files' earlier versions now spends at most two minutes per pass reading Git history, keeps what a cut-short read already found, and keeps reporting progress while it reads.**
+
+### Fixed
+- Reading a held note's earlier versions walks every commit that changed its file, so on a deep repository a pass over thousands of such notes could spend many minutes in Git. A pass now stops starting new history reads after two minutes. A note whose history it didn't read in full is screened with what it did read and counted as `driftHistoryUnread` in the pass's counts. If that note is held, including a note whose file changed for the first time since an older gbrain imported it, the hold is marked so the next sync screens it again, with no `gbrain sources retry-held` needed. If that retry is cut short too, the note keeps an ordinary hold, so sync doesn't re-read the same history on every run.
+- A history read that timed out used to drop everything it had read for its group of notes. It now keeps the versions it found, so those notes can still clear.
+- While a long history read streams, the pass now reports progress every second or so instead of only when the read ends, so a slow read no longer looks stalled and a cancelled sync stops promptly.
+- The read now collects 5 distinct versions per file, which is what sync and `gbrain repair file-drift --held` use, instead of 50. A file listed twice no longer keeps its group's read from stopping early.
+
+**Bundled skills now tell you when a model refuses instead of hiding it, ask for the narrowest access that works, and `gbrain book-mirror` no longer writes a refused chapter into the page as finished.**
+
+### Fixed
+- `gbrain book-mirror` marks a chapter the provider refused, or whose output filter stopped it, as failed with "provider refusal or output filter stop". Before, the refusal text went into the page as a completed chapter and the run could exit 0. The retry hints now say to retry only if you choose, and that a refused chapter's job has to be deleted first (`gbrain jobs delete <id>`).
+
+### Changed
+- The cross-modal-review skill reports a review model's refusal to you as a provider refusal. Another model reviews only when you pick one, or when `refusal_routing.behavior` in `skills/conventions/cross-modal.yaml` is `next_in_chain`, and the output then names the switch. The default is `report`. `skills/conventions/model-routing.md` follows the same rule.
+- The cold-start skill, the credential-gateway recipe and its integration doc ask for the narrowest gateway task scope and purpose that does the job. When a request you need is blocked, the agent tells you and widens the task with your agreement.
+- The book-mirror skill records a filter-stopped chapter as that chapter's result and tells you, and retries only if you choose.
+
+## [0.60.760.0] - 2026-11-22
+
+**`gbrain search` on the command line now shows the facts you saved with `gbrain remember`, and the OpenClaw install steps add the brain-first rule.**
+
+### Fixed
+- `gbrain search` and `gbrain query` on the command line print the saved facts (`remember`) that match, under "Saved facts (remember)", as MCP search already did. A fact saved with `gbrain remember` and looked up later with `gbrain search` used to print "No results." With `--json`, stdout stays the row array and the saved facts go to stderr.
+- `gbrain setup --help` names `openclaw`, `hermes`, `opencode` and `cursor` in its usage lines, not only `claude-code` and `codex`.
+
+### Changed
+- The OpenClaw install steps (`INSTALL_FOR_AGENTS.md`, `docs/mcp/OPENCLAW.md`) run `gbrain setup openclaw` right after registering the MCP server. Without that step a new session answers from OpenClaw's own memory instead of gbrain.
+
+**Search is fast again on brains where old upgrade work sits parked on image pages.**
+
+### Fixed
+- Since v0.60.723.0, every search on a brain whose readiness said "projection pending" also counted the pages a post-upgrade rebuild still had to process. When that rebuild's queue rows were parked on image pages, which the rebuild never touches, the count still read every page in the brain on every search. On a brain of several hundred thousand pages that added more than a second to each warm search. Search now reads only the rebuild's queued rows to decide whether a rebuild is running, and counts pages only while one is running for text pages in the caller's scope.
+- Search results are unchanged. The rebuild progress in search's readiness metadata (`_meta.retrieval.coverage.rebuild`) now appears only while text pages in your scope still wait for the rebuild; work left only on image pages no longer shows as a running rebuild, and the pending-images notice still names it.
+
+**A GitHub connector's first import now also stops at the job's deadline, and a connector sync refused on its own retained publication records that refusal.**
+
+### Fixed
+- The first, database-only pass of a GitHub connector import ignored the job's deadline, so a large first import could still run until the job was killed at its timeout and record nothing. It now stops importing at the deadline without counting a failed item, keeps every listed page, and the next sync picks up the items it did not reach. (#9968)
+- A connector sync refused with `recovery_required` because its own retained publication was still recovering did not record the refusal, so `sources status` never counted it toward a stop. The refusal is now recorded as the source's last failure, with the blocking request. (#9968)
+
 ## [0.60.759.0] - 2026-11-21
 
 **Sync now finds the earlier committed version a held note still matches by looking through that file's own history, so the `gbrain sources retry-held` route clears what `gbrain repair file-drift --held` says it will. On a read-only mirror, the preview also says why it couldn't read a held file.**

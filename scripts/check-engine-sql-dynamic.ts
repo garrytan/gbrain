@@ -164,6 +164,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   buildCJKKeywordSql: 'src/core/search/cjk-keyword-sql.ts: binds the query as params; shared by both engines',
   currentTextProjectionFilter: 'src/core/search/safe-chunks.ts: constant projection predicate over a caller alias',
   projectionClassSql: 'src/core/page-state/projection-class.ts: constant projection class CASE over caller page/source aliases (module constants only, no values)',
+  textClassSql: 'src/core/page-state/projection-class.ts: constant text-class predicate over caller page/source aliases (module constants only, no values; #10000)',
   budgetRowAppliesFilter: 'src/core/page-size-policy.ts: constant applying-budget-row predicate over caller budget/page aliases (module constants only, no values)',
   servedTextProjectionFilter: 'src/core/search/safe-chunks.ts: constant projection predicate over a caller alias, ORed with the constant v153 served-index marker (#9192)',
   waitingTextProjectionFilter: 'src/core/search/safe-chunks.ts: constant waiting-projection predicate over a caller alias with the constant v153 served-index marker, the v317 index predicate (#9192)',
