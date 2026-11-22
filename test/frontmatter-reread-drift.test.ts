@@ -156,7 +156,7 @@ describe('pages-03: onlyDerivedKeysAdded reads a value the old parser typed as s
 });
 
 describe('pages-03: the repair text of a record-less file_drift hold names the older-release typing case', () => {
-  const fix = (meta: Record<string, unknown>) => gitHoldFix({ source_id: 'source-a', path: 'people/d.md', slug: 'people/d', code: 'file_drift', meta } as Parameters<typeof gitHoldFix>[0]).why;
+  const fix = (meta: Record<string, unknown>) => gitHoldFix({ source_id: 'source-a', path: 'people/d.md', slug: 'people/d', code: 'file_drift', meta } as unknown as Parameters<typeof gitHoldFix>[0]).why;
   test('it says plainly that this is the older-release typing case and names the one-pass command that imports the file versions', () => {
     const why = fix({ sides: 'unknown', side: 'unknown' });
     expect(why).toContain('older-release typing case');
