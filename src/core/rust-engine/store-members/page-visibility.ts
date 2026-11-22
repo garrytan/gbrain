@@ -17,6 +17,7 @@
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '../../engine-sql/page-visibility.ts';
 import { callerAccessAllowedSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { readOauthClient } from './jobs-oauth-clients.ts';
 import { judgeWidenedCaller, ownerOnlyFormIn, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 /**
@@ -66,9 +67,16 @@ export const readWriteVisibilityProbe: StoreMember<[sourceId: string, slug: stri
       brain.readWriteVisibilityProbe(sourceId, slug, policy)) as WriteVisibilityProbe;
   };
 
-/** A local writer's fence comes from the stored registration; an OAuth client's refuses (not read from the store's clients yet). */
-export const readWriterSlugFence: StoreMember<[principal: { kind: string; id: string }], unknown> = async (brain, principal) => {
-  if (principal.kind === 'oauth_client') refuseMember('readWriterSlugFence', 'an OAuth client fence (not read from the store\'s OAuth clients yet)');
+/**
+ * A local writer's fence comes from the stored registration; an OAuth client's from its stored client record
+ * (`bound_slug_prefixes`, or `delegated_slug_prefixes` for a delegated write), null when the client is gone.
+ */
+export const readWriterSlugFence: StoreMember<[principal: { kind: string; id: string }, opts?: { delegated?: boolean }], unknown> =
+  async (brain, principal, opts) => {
+  if (principal.kind === 'oauth_client') {
+    const client = await readOauthClient(brain, principal.id);
+    return (opts?.delegated ? client?.delegated_slug_prefixes : client?.bound_slug_prefixes) ?? null;
+  }
   if (principal.kind !== 'local_cli' && principal.kind !== 'local_stdio') return null;
   const row = await storeCall({ member: 'readWriterSlugFence' }, () => brain.readLocalWriter(principal.id)) as
     { grant_ceiling?: { slugPrefixes?: unknown } | null } | null;

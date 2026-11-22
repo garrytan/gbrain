@@ -83,6 +83,7 @@ mod op_checkpoint;
 mod owner_scans;
 pub(crate) mod projection_queue;
 mod projection_rebuild;
+mod publication;
 mod purge_effects;
 mod receipt_compaction;
 mod receipt_list;
@@ -97,6 +98,7 @@ mod worktree_claim_tests;
 mod worktree_rows;
 mod worktrees;
 mod write_claim_terms;
+mod writer_status;
 mod writer_versions;
 pub use connector_orphans::OrphanBounds;
 pub use effect_worker::{EffectClaim, EffectSettle, LinksRearm, Settle};
@@ -125,6 +127,7 @@ pub use projection_rebuild::{
     ProjectionJobKey, ProjectionWindowCandidate, QueuedProjectionFilter, QueuedProjectionKey,
     QueuedProjectionPages,
 };
+pub use publication::{PublicationRead, PublicationWrite, RecoveryTable};
 pub use purge_effects::{
     GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,
 };
@@ -134,7 +137,9 @@ pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;
 pub use worktree_admission::WorktreeAdmissionKey;
 pub(crate) use worktrees::remove_source_binding_in;
-pub use worktrees::{HostBindingInsert, SourceBindingInsert, WorktreeInsert};
+pub use worktrees::{
+    CounterDelta, HostBindingInsert, ReleaseRead, SourceBindingInsert, WorktreeInsert,
+};
 
 /// The byte after `keys::PERSISTENCE` of a counter row.
 const COUNTER: u8 = 0x01;

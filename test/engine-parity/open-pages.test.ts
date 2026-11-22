@@ -2,7 +2,7 @@
  * BrainEngine parity — the open-page count (engine-sql/access-setup.ts countOpenPages) and the reads
  * access/open-pages.ts and access/owner.ts make around it: the counted members and their bound tokens and clients
  * (readAccessMembers, readAccessCredentials, readJobPrincipal, listOauthClients), the company source a member key reads
- * (listUnarchivedSourceIds), the access-state read (readAccessStateUnreadable) and the owner write (setOwner).
+ * (filterUnarchivedSourceIds), the access-state read (readAccessStateUnreadable) and the owner write (setOwner).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the count admits only live pages that the empty-identity member-access floor admits (no readable_by
@@ -146,7 +146,7 @@ describe('open-page count and the access reads around it', () => {
   });
 
   parityTest('setOwner names an enabled member, and a member key reads the company source while it is unarchived', {
-    methods: ['readAccessMembers', 'listUnarchivedSourceIds', 'insertAccessMember'],
+    methods: ['readAccessMembers', 'filterUnarchivedSourceIds', 'insertAccessMember'],
   }, async (engine, backend) => {
     await engine.insertAccessMember(member('alice-example'));
     const owner = (await setOwner(engine, 'alice-example')).owner;

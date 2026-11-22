@@ -14,9 +14,7 @@
  *    refused at admission on the Rust engine (rust-engine/errors.ts `requireRawSqlPublication`). Fail-first: with that
  *    gate removed and the sites still raw, the Rust arm commits the stdio put_page with no mention edge (its links effect
  *    refuses raw_sql) and never publishes the stdio put_pages batch (the batch re-arm refuses raw_sql); 0 of 4 pass.
- *  - HTTP on Rust: the store keeps no OAuth clients until lane 8 (bound-write-rust) serves the write grant, so an http
- *    write is refused at admission (permission_denied). Those cases declare `oauth_write_grant` and are n/a on Rust
- *    (arm-capabilities.ts); they still run on PGLite and Postgres.
+ *  - HTTP on Rust: the store keeps OAuth clients and serves the write grant, so an http write is admitted on every arm.
  *    The facts backstop effect the same writes queue (persistence/effect-facts.ts) also read through executeRaw; with
  *    the links sites typed and those still raw, the Rust stdio cases committed the right edges but caught 4 and 7
  *    raw_sql refusals (effect-facts.ts dispatchFactsBackstopEffect and the projection rebuild). A remote capture (which
@@ -193,7 +191,6 @@ describe('engine parity: remote mention links', () => {
       parityTest(`a remote ${grouped ? 'put_pages batch' : 'put_page'} over ${transport} commits its mention links`, {
         methods: ['getLinks', 'addLinksBatch', 'insertOauthClient'],
         timeout: 90_000,
-        ...(transport === 'http' ? { requires: 'oauth_write_grant' as const } : {}),
       }, async (recorded) => withHome(async () => {
         const refusals: unknown[] = [];
         const engine = keepingRefusals(recorded, refusals);

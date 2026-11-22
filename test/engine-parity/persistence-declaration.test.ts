@@ -302,4 +302,38 @@ describe('engine parity: persistence declaration', () => {
     }
     return { replayed: true, state: replay.state, changed, paused, sync: sync?.code };
   });
+
+  parityTest('a write to a managed worktree that is not bound to its source is refused source_changed', {
+    methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const source = await engine.readSourceMembership('default');
+    const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+      logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+    const authority = await submissionAuthority(ctx, 'put_page', 'default', source!.incarnation, 'notes/parity-worktree');
+    const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default',
+      sourceIncarnation: source!.incarnation, slug: 'notes/parity-worktree', requestId: REQUESTS[0]!, worktreeId: WORKTREE, topologyGeneration: 1,
+      callerIntent: { body: 'x' }, intent: { body: 'x' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
+    // The admission reads the worktree binding; this worktree is not bound to the source, so nothing is accepted.
+    expect(refusal?.code).toBe('source_changed');
+    return { managed: engine.capabilities.has('managed_persistence'), code: refusal?.code, reason: refusal?.reason ?? null };
+  });
+
+  parityTest('a skill bundle write with no activated shared-skill owner is refused writer_not_quiesced', {
+    methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const source = await engine.readSourceMembership('default');
+    const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+      logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+    const authority = await submissionAuthority(ctx, 'put_skill', 'default', source!.incarnation, 'skills/parity-pack/parity-skill');
+    const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_skill', sourceId: 'default',
+      sourceIncarnation: source!.incarnation, slug: 'skills/parity-pack/parity-skill', requestId: REQUESTS[1]!, targetKind: 'skill_bundle', protocolVersion: 2,
+      callerIntent: { name: 'parity-skill' }, intent: { name: 'parity-skill' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
+    // The admission checks the shared-skill owner; none was activated, so nothing is accepted.
+    expect(refusal?.code).toBe('writer_not_quiesced');
+    return { code: refusal?.code, message: refusal?.message };
+  });
 });

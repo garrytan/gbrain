@@ -109,6 +109,9 @@ import * as persistenceIdentity from './persistence-identity.ts';
 import * as writeMisc from './write-misc.ts';
 import * as worktreeClaim from './worktree-claim.ts';
 import * as writerAdmin from './writer-admin.ts';
+import * as writerRelease from './writer-release.ts';
+import * as publicationJournal from './publication-journal.ts';
+import * as writerStatus from './writer-status.ts';
 import * as writeAttribution from './write-attribution.ts';
 import * as opCheckpoint from './op-checkpoint.ts';
 import * as syncRunReads from './sync-run-reads.ts';
@@ -167,6 +170,8 @@ import * as synopsisTier from './synopsis-tier.ts';
 import * as sourceCrMode from './source-cr-mode.ts';
 import * as remoteLinks from './remote-links.ts';
 import * as factsBackstop from './facts-backstop.ts';
+
+const { readBrainMode: _brainModeHelper, ...writerReleaseMembers } = writerRelease;
 
 export const STORE_MEMBERS = {
   initSchema,
@@ -235,6 +240,12 @@ export const STORE_MEMBERS = {
   ...worktreeClaim,
   // Writer administration: the reviewed state digest, the operator lock, transfer prepare and cancel (same section).
   ...writerAdmin,
+  // Writer activation, deactivation and the pre-activation release over the stored brain mode (same doc, "Writer release").
+  // `readBrainMode` is the module's shared brain-mode read for other members, not a BrainEngine member, so it is not served.
+  ...writerReleaseMembers,
+  // A bound publication's request-row reads and writes around its files (same doc, "Publication journal").
+  ...publicationJournal,
+  ...writerStatus,
   // get_write_attribution's receipt and name reads (rust/docs/store/write_attribution.md).
   ...writeAttribution,
   ...opCheckpoint,

@@ -81,6 +81,14 @@ export interface ParityCaseOpts {
    * `engine_capability_missing` refusal, and an `n/a` capability skips the arm.
    */
   requires?: EngineCapability;
+  /**
+   * Rust only: the case ends write_pending because the coordinator refused one typed capability inside the write and
+   * released it to queued (the scenario sees no refusal to throw). It counts as stopped only while the case recorded
+   * exactly this refusal: `capability`, and `member` as the refusal names it (`member=<member> capability=...`), and
+   * `frame` in its stack when given. Any other outcome fails and says to update or remove the pin; `site`, `owner` and
+   * `due` name the code and the lane whose fix removes it. PGLite and Postgres ignore it.
+   */
+  rustPendingStop?: { capability: string; member: string; site: string; frame?: string; owner: string; due: string };
   timeout?: number;
 }
 
@@ -675,6 +683,7 @@ export interface RustCase<T> {
  *  - it returns a value that differs from the reference in exactly the way its row in test/rust-expected-divergence/
  *    names (a named normaliser maps both sides to one value, and the raw values must still differ so a stale row
  *    fails): counted as diverged.
+ * A case with a `rustPendingStop` pin has one outcome instead: write_pending behind exactly the pinned refusal.
  * Anything else fails: a refusal the case caught on its way to some other failure, or to a value, does not make it pass,
  * and a divergence row never excuses a thrown error.
  */
@@ -694,7 +703,15 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   const refusedBy = (e: unknown) => [...capabilities].some((capability) => isCapabilityRefusal(e, capability as EngineCapability));
   const caught = c.refusals.filter(refusedBy).length;
 
+  const pin = c.opts.rustPendingStop;
+  const pinText = pin && `${pin.capability} at ${pin.member} (${pin.site}); owner ${pin.owner}, due ${pin.due}`;
   if ('error' in outcome) {
+    if (pin && !refusedBy(outcome.error)) {
+      checkPendingStop(c.name, pin, pinText!, outcome.error, c.refusals);
+      tally.refused++;
+      return;
+    }
+    if (pin) throw new Error(`[rust] "${c.name}" now throws a typed refusal, not write_pending; update or remove its rustPendingStop pin (${pinText})`);
     // Only the terminal outcome counts: a refusal caught earlier does not excuse a different failure.
     if (!refusedBy(outcome.error)) {
       if (outcome.error instanceof Error) {
@@ -709,6 +726,7 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
     return;
   }
 
+  if (pin) throw new Error(`[rust] "${c.name}" no longer stops; remove its rustPendingStop pin (${pinText})`);
   // It returned. A case that reaches a refusing member, or caught a refusal, must not finish as if nothing happened.
   expect({ backend: 'rust', case: c.name, reachesRefusingMember: refusing.length > 0 && capabilities.size > 0, caughtRefusals: caught })
     .toEqual({ backend: 'rust', case: c.name, reachesRefusingMember: false, caughtRefusals: 0 });
@@ -735,6 +753,18 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   expect({ backend: 'rust', case: c.name, normalizedBy: c.divergence.normalizer, value: normalize(outcome.value) })
     .toEqual({ backend: 'rust', case: c.name, normalizedBy: c.divergence.normalizer, value: normalize(reference.value) });
   tally.diverged++;
+}
+
+/** A pinned Rust case passes only when it ended write_pending and recorded exactly the pinned typed refusal. */
+function checkPendingStop(name: string, pin: NonNullable<ParityCaseOpts['rustPendingStop']>, pinText: string, error: unknown,
+  refusals: unknown[]): void {
+  const message = String((error as Error | null)?.message ?? error);
+  const detail = (e: unknown) => String((e as { detail?: unknown } | null)?.detail ?? '');
+  const named = refusals.some((e) => isCapabilityRefusal(e, pin.capability as EngineCapability) && detail(e).includes(`member=${pin.member} capability=${pin.capability}`)
+    && (pin.frame === undefined || String((e as Error).stack ?? '').includes(pin.frame)));
+  if (message.includes('write_pending') && named) return;
+  throw new Error(`[rust] "${name}" does not stop as its rustPendingStop pin says (${pinText}); update or remove the pin. `
+    + `write_pending: ${message.includes('write_pending')}; typed refusals: ${JSON.stringify([...new Set(refusals.map(detail))])}; error: ${message}`);
 }
 
 /** Sorted copy, for order-free comparisons. */

@@ -43,12 +43,12 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     queue('git', { version: 2, targets: opts.pageTargets, ...(opts.pushOnly ? { push_only: true } : {}) });
     if (!opts.pushOnly && outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });
   } else if (prepared?.file && row.worktree_id) {
-    const localPath = await tx.readOwnerHostBinding(row.worktree_id);
-    if (!localPath) throw opError('owner_unavailable', 'Cannot record the canonical Git target without its owner binding.',
+    const ownerPath = await (await tx.publicationJournalStore()).ownerPath(row.worktree_id);
+    if (!ownerPath) throw opError('owner_unavailable', 'Cannot record the canonical Git target without its owner binding.',
       `Worktree ${row.worktree_id} of source ${row.source_id} has no host binding for its owner, so request ${row.id} could not record its Git target. Read the request's receipt; the owner host's binding is restored by its claim or transfer.`,
       row.principal_kind === 'local_cli' ? { fix: readFix(`Reads request ${row.id}'s durable receipt, read-only.`, { argv: ['gbrain', 'write-request', '--', row.id] }) } : {});
     const commit = prepared.file.commit;
-    queue('git', { relative_path: relative(localPath, prepared.file.path).split(sep).join('/'),
+    queue('git', { relative_path: relative(ownerPath, prepared.file.path).split(sep).join('/'),
       expected_hash: prepared.file.content === null ? null : fileContentHash(prepared.file.content),
       ...(opts.pushOnly ? { push_only: true } : commit ? { commit_subject: commit.subject, commit_line: commit.line, ...(commit.trailers?.length ? { commit_trailers: commit.trailers } : {}) } : {}) });
     if (!opts.pushOnly && outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });

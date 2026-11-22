@@ -1,7 +1,8 @@
 //! Jobs: the `access_tokens` table, the columns the legacy-token mint and the read-floor command touch, as the members
 //! of `src/core/engine-sql/access-tokens.ts` run them (rust/docs/store/access-tokens.md).
 //!
-//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust, the name read of
+//! Members: insertAccessToken, findActiveAccessTokens, setAccessTokenMinTrust,
+//! readLiveAccessTokenScope, the name read of
 //! readWriteAttributionNames (`read_access_token_names`), and the credential members of
 //! `src/core/engine-sql/access-credentials.ts`: listAccessTokens, readActiveAccessTokenGrant, accessTokenLive,
 //! readActiveAccessTokenByHash (the bearer checks), revokeAccessTokensNamed and revokeAccessToken; the legacy-token
@@ -308,6 +309,19 @@ impl Store {
             }
         }
         Ok(Value::Array(rows))
+    }
+
+    /// `readLiveAccessTokenScope(id)`: `{ reads_unscoped, created_at }` of the token `id` names when it is not revoked,
+    /// or null. `reads_unscoped` is always null: the column is not kept, and no token this store mints opts out.
+    pub fn read_live_access_token_scope(&self, id: &str) -> Result<Value> {
+        let read = self.read()?;
+        match get_json::<TokenRecord>(&*read, &token_key(id))? {
+            Some(t) if t.revoked_at.is_none() => Ok(json!({
+                "reads_unscoped": Value::Null,
+                "created_at": iso(t.created_at),
+            })),
+            _ => Ok(Value::Null),
+        }
     }
 
     /// `setAccessTokenMinTrust(id, tier)`: sets (or clears, with None) one token's floor; whether a token had the id.

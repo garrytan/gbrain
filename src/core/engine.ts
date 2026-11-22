@@ -161,8 +161,8 @@ import type {
   NotifierFirstDueRow, SourceSyncShapeRow,
 } from './engine-sql/notifier.ts';
 import type {
-  AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot,
-  SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions,
+  SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
@@ -178,7 +178,7 @@ import type {
   SettleLogOutcome, SpendLogInsert,
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
-import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
+import type { AccessTokenInsert, ActiveAccessTokenRow, AccessTokenScopeRow } from './engine-sql/access-tokens.ts';
 import type {
   HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakesLeavingFence, TakeTrustRef,
   AbandonedTakeRow, HolderResolvedTakeRow,
@@ -278,6 +278,10 @@ import type { FileFinding, PageFinding, ScanRecord } from './fence-repair/census
 import type { DrainLeaseHolderRecord } from './engine-sql/cycle-locks.ts';
 import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from './engine-sql/reflex-reads.ts';
 import type * as BriefReadsSql from './engine-sql/brief-reads.ts';
+import type { CounterColumn, WriterReleaseStore } from './engine-sql/writer-release.ts';
+import type { PublicationJournalStore } from './engine-sql/publication-journal.ts';
+import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
+import type { ActiveWorktreeRefreshRow, BlockingEffectRow, OnboardingSourceRow, WriterDiagnosticRows, WriterStatusRows } from './engine-sql/writer-status.ts';
 
 export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 
@@ -1750,12 +1754,34 @@ export interface BrainEngine {
    * is its SHA-256 (persistence/admin-intent.ts). `lock` holds the topology until the transaction commits.
    */
   readWriterAdminState(opts?: WriterAdminStateOptions): Promise<string>;
+  /** A worktree's recorded manifest, read before a transfer accept's transaction; null when it has none or is missing. */
+  readWorktreeManifest(worktreeId: string): Promise<StoredWorktreeManifest | null>;
+  /** Writer status's diagnostics rows (engine-sql/writer-status.ts): a running claim untouched since `abandonedCutoff` (ISO) is abandoned. */
+  readWriterDiagnosticRows(abandonedCutoff: string | null, excludedOrigins: readonly string[]): Promise<WriterDiagnosticRows>;
+  /** Writer status's source bindings with `hostId`'s root, and its stopped retire requests (one source, or all). */
+  readWriterStatusRows(hostId: string | null, sourceId: string | null): Promise<WriterStatusRows>;
+  /** The active sources (one, or all) the writer onboarding preflight reads, by id in byte order. */
+  listOnboardingSources(sourceId: string | null): Promise<OnboardingSourceRow[]>;
+  /** The effects that keep the brain from quiescing, by id, at most `limit` (persistence/blocking-effects.ts). */
+  listBlockingEffectRows(sourceId: string | null, limit: number, recoveringOnly: boolean): Promise<BlockingEffectRow[]>;
+  /** The active worktree refreshes (of one source's worktree, or all), oldest first. */
+  listActiveWorktreeRefreshRows(sourceId: string | null): Promise<ActiveWorktreeRefreshRow[]>;
   /**
-   * The writer-admin store for writer lock and unlock and transfer prepare and cancel (engine-sql/writer-admin.ts).
+   * The writer-admin store for writer lock and unlock and transfer prepare, accept and cancel (engine-sql/writer-admin.ts).
    * Call it on a transaction engine: it turns on durable commit, and every store call runs in that transaction.
    * `writerAdminTransaction(engine, body)` opens the transaction and the store.
    */
   writerAdminStore(): Promise<WriterAdminStore>;
+  /**
+   * The store of writer activation, deactivation and the pre-activation claim release (engine-sql/writer-release.ts).
+   * Called on a transaction engine, every store call runs in that transaction.
+   */
+  writerReleaseStore(): Promise<WriterReleaseStore>;
+  /**
+   * The request-row reads and writes of a bound (worktree) publication around its files (engine-sql/publication-journal.ts).
+   * Called on a transaction engine, every store call runs in that transaction.
+   */
+  publicationJournalStore(): Promise<PublicationJournalStore>;
   hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
   listActiveAccessMembers(): Promise<string[]>;
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
@@ -5171,6 +5197,8 @@ export interface BrainEngine {
   readAdmissionRate(principal: { kind: string; id: string } | null, opts?: { sample?: boolean }): Promise<AdmissionRate>;
   /** Creates the missing counter rows and locks them all FOR UPDATE in key order; returns the locked rows. */
   lockPersistenceCounters(keys: readonly string[]): Promise<CounterRow[]>;
+  /** Adds `delta` to counter row `key`'s columns (an absent column adds 0); a sum below zero refuses (engine-sql/writer-release.ts). */
+  addPersistenceCounters(key: string, delta: Partial<Record<CounterColumn, number>>): Promise<void>;
   /** Inserts an admitted request and charges its (already locked) counters; returns the stored row. */
   insertWriteRequest(row: WriteRequestInsert): Promise<WriteRequest>;
   /** Inserts a grouped admission's page requests in item order and charges their (already locked) counters; returns the stored rows. */
@@ -5555,7 +5583,7 @@ export interface BrainEngine {
   listUnboundTokenNames(): Promise<string[]>;
   listUnboundClientIds(): Promise<string[]>;
   readLiveAccessToken(name: string): Promise<LiveAccessTokenRow | null>;
-  listUnarchivedSourceIds(ids: readonly string[]): Promise<string[]>;
+  filterUnarchivedSourceIds(ids: readonly string[]): Promise<string[]>;
   recordTokenSetupReads(name: string, reads: readonly string[]): Promise<void>;
   listKeysReadingSource(sourceId: string): Promise<MemberKeyReadingRow[]>;
   countCompanyPages(sourceId: string): Promise<{ pages: number; calls: number }>;
@@ -6204,6 +6232,8 @@ export interface BrainEngine {
   findActiveAccessTokens(target: string): Promise<ActiveAccessTokenRow[]>;
   /** Set or clear one token's read floor by row id. A tier outside the six is a constraint error (23514). */
   setAccessTokenMinTrust(id: string, tier: string | null): Promise<void>;
+  /** A live token's `reads_unscoped` and `created_at` (access/requester-scope.ts `credentialScopeFor`), or null when revoked or absent. */
+  readLiveAccessTokenScope(id: string): Promise<AccessTokenScopeRow | null>;
   /** One rate-lease bounce appended to the lease-pressure log. */
   insertLeasePressure(row: LeasePressureInsert): Promise<void>;
   /** How many lease bounces match every given field (window in ms, job id, lease key). */

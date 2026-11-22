@@ -27,6 +27,7 @@ PGLite. The code is `crates/gbrain-store/src/persistence.rs`, with `persistence/
 | `d 0x09 0x01 <worktree id>` | one `persistence_worktrees` row, JSON (worktrees.rs) |
 | `d 0x09 0x02 <worktree id> 0x00 <host id>` | one `persistence_host_bindings` row, JSON (worktrees.rs) |
 | `d 0x09 0x03 <source id>` | one `persistence_source_bindings` row, JSON (worktrees.rs) |
+| `d 0x09 0x04` | the brain mode `{ enabled, mode_epoch, activated_at_us }` of `persistence_brain`, JSON (worktrees/release.rs); absent reads as `enabled` false, `mode_epoch` 1 |
 | `d 0x10 <refresh id>` | one `persistence_worktree_refreshes` row (`RefreshRecord`), JSON (persistence/worktree_admission.rs) |
 
 A counter key is the text of `persistence_counters.key` (`brain`, `principal:<kind>:<id>`).
@@ -58,6 +59,8 @@ no-ops: the store runs one write transaction at a time, so no read overlaps a wr
 | `brain.listWriteRequestsByRequestId(requestId)` | at most two `WriteRequest` rows with that request id, across every principal (no order is promised; the Postgres statement has no ORDER BY); `invalid_input` for an id that is not a UUID. Two rows tell the caller the id is shared, so the host operator gets `not_found` instead of one principal's request | `readWriteRequestsByRequestId` |
 | `brain.readWriteRequestById(id)` | the `WriteRequest` or `null` | `readWriteRequestById`, `lockWriteRequest`, `readWriteRequestProgress` (the TS member picks the nine progress columns from this row) |
 | `brain.listWriteRequestsByRequestIds(requestIds)` | the `WriteRequest` rows admitted under any of the client request ids, any principal, by sequence; `invalid_argument` for an id that is not a uuid | `listWriteRequestsByRequestIds` |
+| `brain.listLaterPersistenceRequests(sourceId, incarnation, slug, sequence)` | the source's requests for the slug with a sequence above `sequence` (text, a Postgres bigint) in state `queued`, `running`, `recovering` or `committed`, in sequence order; the incarnation matches without regard to case. A sequence that is not an integer is `invalid_argument` | `listLaterPersistenceRequests` |
+| `brain.listCommittedOutputRequests(requestIds, sourceId, incarnation)` | `[{ request }]`: the committed `put_page` requests of the source and incarnation whose request id is one of `requestIds` (uuids), newest sequence first; an empty id list reads nothing | `listCommittedOutputRequests` |
 | `brain.countOutstandingBySource(principalKind, principalId)` | `[{ source_id, n }]`: one row per source that holds requests of the principal in state `queued`, `deferred`, `running` or `recovering`. The most requests come first; a tie is in byte order of the source id, as Postgres sorts `COLLATE "C"` | `countOutstandingBySource` |
 | `brain.readWorktreeAdmission({ worktreeId, sourceId, sourceIncarnation, topologyGeneration })` | `{ worktree, refresh, bound }`. `worktree` is `{ state, owner_epoch }` (the epoch as text) from the worktree row, or null when no row has the id; `refresh` is the worktree's refresh in an active state (`draining`, `fenced`, `merged`, `syncing`, `recovery_required`) or null; `bound` is whether the source's binding names this incarnation, worktree and topology generation (a null generation binds nothing). The ids must be uuids; a generation that is not a Postgres integer refuses with the integer syntax or range message | `readWorktreeAdmission` |
 | `brain.completeSyncedRefresh(refreshId)` | `true` when the refresh was `syncing` and none of its member sources still differs from its target head, and is now `completed`. The store keeps no `last_commit`, so a stored member source always differs | `completeSyncedRefresh` |
@@ -618,13 +621,18 @@ store keeps the three rows and refuses what the tables' keys, foreign keys and C
 | `brain.listHostRootBindings(hostId)` | one row per source bound under a worktree `hostId` binds, `topology_generation` as text | the first half of `listManagedRootBindings` |
 | `brain.writerAdminStateText()` | the writer topology document as jsonb text, from one snapshot: see "Writer admin state" below | `readWriterAdminState` (`WRITER_ADMIN_STATE_SQL`) |
 | `brain.preparedTransferWorktree()` | the first worktree id, in key order, that is `draining` with a manifest; `null` when none is | the writer lock's prepared-transfer check |
-| `brain.readWorktreeOwner(id)` | `{ owner_host_id, owner_epoch, state }`, `owner_epoch` as text; `null` when absent | the transfer's `SELECT … FOR UPDATE` |
+| `brain.readWorktreeOwner(id)` | `{ owner_host_id, owner_epoch, state, manifest }`, `owner_epoch` as text; `null` when absent | the transfer's `SELECT … FOR UPDATE` |
+| `brain.readWorktreeManifest(id)` | the worktree's manifest; `null` when it has none or is absent | `readWorktreeManifest`, the accept's read before its transaction |
 | `brain.worktreePublicationPending(id)` | whether a request on the worktree is `running` or `recovering` or holds a recovery record, or an effect on it holds one | the transfer's pending-publication check |
 | `brain.markWorktreeDraining(id, manifest)`, `brain.reactivateWorktree(id)` | the worktree is `draining` with the manifest plus `prepared_at` (now, jsonb `timestamptz` text); `active` with no manifest. A missing worktree changes nothing; a manifest that is not an object is `invalid_argument` | the transfer prepare and cancel `UPDATE`s |
+| `brain.upsertHostBinding(row)` | the host binding has the row's paths; an existing binding keeps its Git durability, a new one has none. `constraint_violation` for an unknown worktree | the accept's `INSERT … ON CONFLICT DO UPDATE` |
+| `brain.contentReceiptRows(worktreeIds, hostId, sourceIds)` | one row per source bound to one of the worktrees (only `sourceIds` when not null) at its current, unarchived incarnation, with a binding on `hostId` and a `shared_skills.content.v1.<source>.<incarnation>` config row: `{ source_id, incarnation, relative_path, local_path, brain_id, key, value }`, source ids in byte order; none for a brain without an id | the content-receipt join of `rebindContentReceipts` |
+| `brain.swapConfigValue(key, value, expected)` | sets the config row only while it holds `expected`; whether it did | the receipt's compare-and-set `UPDATE config` |
+| `brain.acceptWorktreeOwner(id, hostId)` | `hostId` owns the worktree at the next epoch, `active`, heartbeat now; the manifest is kept. A missing worktree changes nothing | the accept's `UPDATE persistence_worktrees` |
 
 A source binding has no foreign key to its source, as on Postgres: a removed or re-created source
-leaves its binding, and the readers compare incarnations. Rows are not deleted on this engine yet: no
-rebind or source purge runs here.
+leaves its binding, and the readers compare incarnations. Only a writer release deletes binding rows
+("Writer release" below); no rebind or source purge runs here.
 
 ### Writer admin state
 
@@ -632,8 +640,11 @@ rebind or source purge runs here.
 `src/core/engine-sql/writer-admin.ts`; `writerAdminTransaction(engine, body)` there opens
 `engine.transaction` and gives the body the transaction's `writerAdminStore()`. `persistence/admin-intent.ts` hashes the state text for a
 reviewed `--expected-state` check (`writerAdminState`, `assertWriterAdminState`). The writer lock
-(`admin-lock.ts` `writeWriterAdminLock`) and a writer transfer's prepare and cancel
-(`ownership.ts`) run as a `writerAdminTransaction` body over that store. On this
+(`admin-lock.ts` `writeWriterAdminLock`) and a writer transfer's prepare, accept and cancel
+(`ownership.ts`) run as a `writerAdminTransaction` body over that store. An accept reads the
+prepared manifest with `readWorktreeManifest` before its transaction, and rebinds the content
+receipts through the store's `contentReceiptRows` and `swapConfigValue`
+(`shared-skills/receipt-root.ts`). On this
 engine the store's calls run on the transaction's store handle (`store-members/writer-admin.ts`).
 `lockBrain` and `{ lock: true }` do nothing: the store runs one write transaction at a time, so a
 state read in a transaction holds until it commits. `now()` is this process's clock in the SQL
@@ -643,13 +654,110 @@ The document has the SQL's keys and row shapes. Source ids, binding source ids a
 byte order on every engine (`COLLATE "C"` in the SQL). An empty table is `null`, as `jsonb_agg`
 over no rows gives. Two parts differ from a SQL brain:
 
-- **`brain`.** This engine keeps no `persistence_brain` columns besides the brain id. The other
-  columns hold their defaults: `enabled` and `skill_bundles_enabled` false, `writer_protocol_floor`
-  and `mode_epoch` 1. A store with no brain id has no row, so `brain` is `null`.
+- **`brain`.** `enabled` and `mode_epoch` are the stored brain mode (`d 0x09 0x04`, "Writer
+  release" below). The other columns hold their defaults: `skill_bundles_enabled` false and
+  `writer_protocol_floor` 1. A store with no brain id has no row, so `brain` is `null`.
 - **The digest.** Each brain has its own id, so a state reviewed on one brain never matches
   another, on any engine.
 
-`acceptWriterTransfer` still reads raw SQL and refuses here.
+A real `gbrain sources writer claim` applies on this engine, and `writer deactivate` and
+`writer activate` lift it through the writer release store ("Writer release" below).
+
+A claim that finds a wedged reservation (its coordination lock recorded inside the checkout, #6766)
+repairs it in one claim-store transaction (`persistence/coordination-lock.ts`
+`repairWedgedReservation`): the store's `brainId` and `worktree` answer the brain and worktree checks
+from the brain row and the worktree records.
+
+## Writer status
+
+`gbrain sources writer status` reads five members of `src/core/engine-sql/writer-status.ts`,
+answered here by `persistence/writer_status.rs`:
+
+- `readWriterDiagnosticRows(abandonedCutoff, excludedOrigins)`: the request, counter and claim row
+  sets of the diagnostics block. A running claim untouched since the cutoff is abandoned. A cutoff
+  that is not an ISO time refuses, as the SQL cast does.
+- `readWriterStatusRows(hostId, sourceId)`: the source bindings with the host's root, and the
+  stopped retire requests.
+- `listOnboardingSources(sourceId)`: the active sources of the onboarding preflight.
+- `listBlockingEffectRows(sourceId, limit, recoveringOnly)`: the effects that keep the brain from
+  quiescing, by id.
+- `listActiveWorktreeRefreshRows(sourceId)`: the active worktree refreshes, oldest first, with
+  their deferred request count and age.
+
+Text keys sort in byte order on every engine (`COLLATE "C"` in the SQL). Ages are whole
+milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds. Three reads of the status
+(stalled catch-ups, parked groups and source movement) still read raw SQL: on this engine the
+first two refuse and source movement reports `not_read`.
+
+## Writer release
+
+`gbrain sources writer deactivate` and `activate` (`src/core/persistence/deactivation.ts`,
+`activation.ts`, `pre-activation-release.ts`) and the counter charges of a topology receipt
+(`topology-receipts.ts`) run on the BrainEngine members `writerReleaseStore()` and
+`addPersistenceCounters(key, delta)` of `src/core/engine-sql/writer-release.ts`. On this engine the
+store is `store-members/writer-release.ts`: each read is one `brain.writerReleaseRows({ kind, ... })`
+call (`persistence::ReleaseRead`) with the rows of the SQL it replaces. The lock calls and `begin`
+change nothing (one write transaction at a time, durable commit). `writerProtocolCount` is 0: no
+writer protocol registration exists here.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.writerReleaseRows({ kind: 'blocking_requests', limit })` | the first `limit` requests that are outstanding or hold a recovery record, by sequence | `BLOCKING_REQUESTS_SQL` |
+| `kind: 'recovering_topology_changes'` | the first 20 topology changes `recovering` or holding a recovery record, oldest first | `RECOVERING_TOPOLOGY_SQL` |
+| `kind: 'release_effects', which` | the first 50 effects by id, `blocking` (queued, running or recovering) or `failed` (failed, no recovery record, not settled), joined to their request by its internal id | `BLOCKING_EFFECTS_SQL`, `FAILED_EFFECTS_SQL` |
+| `kind: 'has_recovering_effect'` | whether an effect holds a recovery record | the deactivation's recovery check |
+| `kind: 'live_leases'` | the unexpired cycle locks that are not page embedding leases, by id | `LIVE_LEASES_SQL` |
+| `kind: 'live_worktree_roots'`, `'claim_roots'` | each worktree that is not retired, or each source binding, with each host root (one null root when none) | `LIVE_WORKTREE_ROOTS_SQL`, `CLAIM_ROOTS_SQL` |
+| `kind: 'bound_source_ids'`, `'source_binding_count'`, `'live_bound_source_count'` | the bound source ids, their count, and the count whose incarnation is live | the binding reads |
+| `kind: 'configured_sources'`, `'source_local_paths'`, `'host_binding_roots'` | the sources that are not archived (`{ id, incarnation, local_path, kind }`, by id), every source local path, every host root | `SOURCES_SQL` and the path reads |
+| `kind: 'retired_deactivations'` | `[{ outcome }]` of every committed `writer_deactivate` topology change | `listRetiredDeactivations` |
+| `kind: 'brain_mode'` | `{ enabled, mode_epoch }`, the epoch as text | the brain row read |
+| `kind: 'audit_pages', sourceId, after, limit` | the source's live markdown pages after `after`, by slug, with `bytes` (null for a segmented body) | the activation preview's drift-audit read |
+| `brain.setBrainEnabled(enabled)` | moves `mode_epoch` by one and returns it as text; the first enable records `activated_at_us`. `invalid_argument` on a store with no brain id | `ENABLE_SQL`, `DISABLE_SQL` |
+| `brain.releaseWorktreeBindings(ids \| null)` | retires the named worktrees (or all), deletes every source binding and the named worktrees' host bindings (or all) | the release `UPDATE` and `DELETE`s |
+| `brain.addPersistenceCounters(key, delta)` | adds each column of `delta` to counter row `key`; a missing row changes nothing; a column below zero is `constraint_violation` | `ADD_COUNTERS_SQL` |
+
+Differences from a SQL brain: slugs and source ids sort in byte order; the store keeps no
+`database_only_reason` (always null); an audit page's frontmatter size is its compact JSON text
+(only the audit's 5 MB skip reads it). The engine reports `managed_persistence`, so an activated Rust
+brain is written through the journal; a topology change of a managed source still refuses `raw_sql`
+(`persistence/topology-locks.ts`).
+
+## Publication journal
+
+A write to a worktree-bound source publishes its file around a request-row recovery record
+(`src/core/persistence/coordinator.ts` publishMutation and recoverPublication, `journal.ts`
+prepareRecovery, clearResolvedRecovery and markRecovering, `page-prepare.ts`, `ownership.ts`
+guardOwnership, `effect-journal.ts`, `staging.ts` upgradeRecoveryStaging). Those reads and writes
+run on the BrainEngine member `publicationJournalStore()` of
+`src/core/engine-sql/publication-journal.ts`. On this engine the store is
+`store-members/publication-journal.ts`: each read is one `brain.publicationJournalRows({ kind, ... })`
+call (`persistence::PublicationRead`) and each write one `brain.publicationJournalWrite({ kind, ... })`
+call (`persistence::PublicationWrite`). `lockSource`, `shareWorktree` and `stagingDurability` change
+nothing (one write transaction at a time, durable commit); `shareWorktreeOwner` is
+`brain.readWorktreeOwner(id)`.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `publicationJournalRows({ kind: 'held_behind_import', sourceId, slug, sequence })` | the `deferred_import_from` of the earliest `deferred` request to the page before `sequence` whose import is the source's last commit (`''` when none), or null | compareFileTarget's held-first read |
+| `kind: 'recovery_blocker', worktreeId, excludeId` | whether another request on the worktree, or an effect on it, holds a recovery record | publishMutation's recheck |
+| `kind: 'owner_path', worktreeId` | the owner host's `local_path`, or null with no owner binding | the Git effect target read |
+| `kind: 'recovery_staging', table, id` | `{ recovery, recovery_bytes, source_id }` of the request (uuid) or effect (number), or null | upgradeRecoveryStaging's locked read |
+| `publicationJournalWrite({ kind: 'record_recovery', id, executionToken, recovery, bytes, keys, checked })` | `checked`: records and reserves only on a `running` row under the token with no record, true when it did. Otherwise reserves on `keys` and records by id and token, true when the row matched | prepareRecovery's two statements |
+| `kind: 'clear_known_recovery', id, keys, recovery` | clears a terminal row's record that is still exactly `recovery` and releases its bytes; true when it did | clearResolvedRecovery's known clear |
+| `kind: 'clear_recovery', id, keys, bytes` | releases `bytes` from `keys` and clears the row's record | clearResolvedRecovery's checked clear |
+| `kind: 'mark_recovering', id, executionToken, reason, errorCode, errorMessage, errorDetail` | a `running` or `recovering` row under the token goes `recovering` with `reason`; the first error is kept | markRecovering |
+| `kind: 'publication_started', id` | stamps `publication_started` and returns the row, or null | the publication's row stamp |
+| `kind: 'block_capacity', id` | a `running` or `recovering` row with a record takes `writer_pool_capacity`; the row, or null | recoverPublication's capacity wait |
+| `kind: 'block_recovery', id, reason` | a live row goes `recovering`, a terminal one keeps its state; both take `reason` | recoverPublication's refusal |
+| `kind: 'requeue_recovered', id, kept, clearError` | the row goes `queued` with no claim, record or stamp; `kept` replaces the outcome; `clearError` clears the error | recoverPublication's requeue |
+| `kind: 'grow_recovery_staging', table, id, recovery, extra` | replaces the record and adds `extra` to the row's `recovery_bytes` | upgradeRecoveryStaging's update |
+
+A counter release below zero is `constraint_violation`, as the CHECK (>= 0) refuses it; a missing
+counter row changes nothing. recoverPublication and upgradeRecoveryStaging move the counters through
+`addPersistenceCounters` ("Writer release"). A bound write is still admitted only through
+`requireManagedPersistence` (`journal.ts` admission), which this engine refuses until that
+admission is typed. The owner pending-wait read in `owner-activity.ts` stays raw SQL.
 
 ## TypeScript members with no stored state
 

@@ -9,6 +9,9 @@
  * topology change is refused `writer_admin_state_changed`. The Postgres arm runs on whatever locale the test server
  * has (en_US.utf8 in CI); source ids `a-b` and `ab` sort differently there and in byte order, so the digest must not
  * depend on the server's collation to stay stable.
+ *
+ * Every arm, the Rust engine included, applies a real claim: writer deactivate and writer activate release it there
+ * too (test/engine-parity/writer-release.test.ts), so no arm refuses the claim verb.
  */
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -133,6 +136,81 @@ describe('writer administration', () => {
       draining: { state: 'draining', prepared_at: true }, lockWhilePrepared: 'writer_transfer_conflict', staleCancel: 'writer_admin_state_changed',
       cancelled: { cancelled: true, owner_epoch: '1' }, active: { state: 'active', prepared_at: null, owner_epoch: '1' },
     });
+    return answers;
+  }));
+
+  parityTest('a reviewed transfer accept moves the owner to the successor checkout, bumps the epoch and rebinds the content receipt', {
+    methods: ['writerAdminStore', 'readWriterAdminState', 'worktreeClaimStore', 'getWorktreeBinding', 'readWorktreeManifest', 'setConfig', 'getConfig'],
+  }, async (engine, backend) => withCheckout(engine, backend, async (root) => {
+    await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, ...await reviewed(engine, 'writer_claim') });
+    const host = localHostId();
+    const claimed = (await engine.getWorktreeBinding('work', host))!;
+    const receiptKey = `shared_skills.content.v1.work.${claimed.source_incarnation}`;
+    const brainId = await engine.readPersistenceBrainId();
+    await engine.setConfig(receiptKey, JSON.stringify({ version: 1, brain_id: brainId, source_id: 'work', source_incarnation: claimed.source_incarnation, owned_root: true, root }));
+    // The successor checkout: the same content at a new path (written, not copied, so no root record comes along).
+    const successor = join(root, '..', 'successor');
+    await Bun.write(join(successor, 'example.md'), 'generic example');
+    const prepared = await runPersistenceAdministration(engine, 'writer_transfer_prepare', { source_id: 'work', ...await reviewed(engine, 'writer_transfer_prepare') }) as {
+      owner_epoch: string; manifest: { digest: string } };
+    const accept = (extra: Record<string, unknown>) => runPersistenceAdministration(engine, 'writer_transfer_accept', {
+      source_id: 'work', path: successor, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest, ...extra });
+    const staleState = await writerAdminState(engine);
+    await createSource(engine, backend, 'late', { kind: 'notes' });
+    const staleAccept = await refusal(accept({ admin_intent: 'writer_transfer_accept', expected_state: staleState }));
+    const stillDraining = (await engine.getWorktreeBinding('work', host))?.state;
+    const wrongManifest = await refusal(runPersistenceAdministration(engine, 'writer_transfer_accept', {
+      source_id: 'work', path: successor, expected_epoch: prepared.owner_epoch, manifest: 'f'.repeat(64), ...await reviewed(engine, 'writer_transfer_accept') }));
+    // The accept dry run reads the prepared manifest through the typed member (its scope picks the successor's hash).
+    const manifestReads: string[] = [];
+    const readManifest = engine.readWorktreeManifest;
+    (engine as { readWorktreeManifest: BrainEngine['readWorktreeManifest'] }).readWorktreeManifest = (id: string) => { manifestReads.push(id); return readManifest.call(engine, id); };
+    let preview: { dry_run?: boolean; manifest_matches?: boolean; expected_epoch?: string };
+    try { preview = await accept({ dry_run: true }) as typeof preview; } finally { (engine as { readWorktreeManifest: BrainEngine['readWorktreeManifest'] }).readWorktreeManifest = readManifest; }
+    const dryRun = { dry_run: preview.dry_run, manifest_matches: preview.manifest_matches, expected_epoch: preview.expected_epoch,
+      read_through_member: manifestReads.length === 1 && manifestReads[0] === claimed.worktree_id };
+    const accepted = await accept(await reviewed(engine, 'writer_transfer_accept')) as {
+      transferred: boolean; binding: { owner_epoch: string; state: string; local_path: string; owner_host_id: string; prepared_at: string | null };
+      content_receipts?: { source_id: string; from: string | null; to: string }[] };
+    const receipt = JSON.parse((await engine.getConfig(receiptKey))!) as { root: string; root_identity?: { device: number; inode: number } };
+    const after = (await engine.getWorktreeBinding('work', host))!;
+    const replay = await refusal(accept(await reviewed(engine, 'writer_transfer_accept')));
+    const kept = await engine.readWorktreeManifest(claimed.worktree_id);
+    const answers = {
+      staleAccept, stillDraining, wrongManifest, dryRun,
+      manifest: { kept: kept?.digest === prepared.manifest.digest, missing: await engine.readWorktreeManifest('00000000-0000-4000-8000-000000000000') },
+      accepted: { transferred: accepted.transferred, owner_epoch: accepted.binding.owner_epoch, state: accepted.binding.state,
+        at_successor: accepted.binding.local_path === realpathSync(successor), owner_is_this_host: accepted.binding.owner_host_id === host,
+        prepared_at_kept: typeof accepted.binding.prepared_at === 'string' && JSONB_TIME.test(accepted.binding.prepared_at) },
+      receipts: (accepted.content_receipts ?? []).map(r => ({ source_id: r.source_id, from_old: r.from === root, to_successor: r.to === realpathSync(successor) })),
+      receipt: { at_successor: receipt.root === realpathSync(successor), identity: typeof receipt.root_identity?.inode === 'number' },
+      after: { owner_epoch: after.owner_epoch, state: after.state, at_successor: after.local_path === realpathSync(successor) },
+      replay,
+    };
+    expect(answers).toEqual({
+      staleAccept: 'writer_admin_state_changed', stillDraining: 'draining', wrongManifest: 'writer_manifest_mismatch',
+      dryRun: { dry_run: true, manifest_matches: true, expected_epoch: '1', read_through_member: true },
+      manifest: { kept: true, missing: null },
+      accepted: { transferred: true, owner_epoch: '2', state: 'active', at_successor: true, owner_is_this_host: true, prepared_at_kept: true },
+      receipts: [{ source_id: 'work', from_old: true, to_successor: true }],
+      receipt: { at_successor: true, identity: true },
+      after: { owner_epoch: '2', state: 'active', at_successor: true },
+      replay: 'writer_transfer_conflict',
+    });
+    return answers;
+  }));
+
+  parityTest('a real claim applies on every engine and binds the source; the dry run and the reviewed-state check still answer', {
+    methods: ['readWriterAdminState', 'getWorktreeBinding'],
+  }, async (engine, backend) => withCheckout(engine, backend, async (root) => {
+    const dryRun = (await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, dry_run: true })).dry_run;
+    const staleState = await writerAdminState(engine);
+    await createSource(engine, backend, 'late', { kind: 'notes' });
+    const stale = await refusal(runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim', expected_state: staleState }));
+    const real = await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, ...await reviewed(engine, 'writer_claim') });
+    const binding = await engine.getWorktreeBinding('work', localHostId());
+    const answers = { dryRun, stale, claimed: real.claimed === true, bound: binding?.state ?? null };
+    expect(answers).toEqual({ dryRun: true, stale: 'writer_admin_state_changed', claimed: true, bound: 'active' });
     return answers;
   }));
 });

@@ -25,17 +25,21 @@ import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../../engine-sql/applied-watermark-reads.ts';
 import type { SourceDetailRow } from '../../engine.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
+import type { DreamDeferralReceipt } from '../../engine-sql/dream-cycle.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import { requestRow, topologyRow, uuidText, withDates } from '../store-codec.ts';
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
 import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
+import { readOauthClient } from './jobs-oauth-clients.ts';
+import { readBrainMode } from './writer-release.ts';
 // The managed-worktree admission members (managed_persistence), served beside the journal's.
 export * from './persistence-admission.ts';
 
-/** The store keeps no managed brains: a brain on this engine is always unmanaged, one singleton row. */
-export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async () => [{ enabled: false }];
+/** The one singleton row with the stored brain mode (gbrain-store `persistence::worktrees::release`; classic until activated). */
+export const readManagedModeRows: StoreMember<[], Array<{ enabled: unknown }>> = async (brain) =>
+  [{ enabled: (await readBrainMode(brain, 'readManagedModeRows')).enabled }];
 
 /**
  * The registration row of a local writer, or undefined. `lock` asks PGLite for FOR SHARE so a revocation waits; the

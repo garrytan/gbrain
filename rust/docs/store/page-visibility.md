@@ -38,8 +38,10 @@ member-access part alone (the page's readers, and the origin of a derived page):
   page's readers, so the same holds for a member caller
   (`test/engine-parity/unrestricted-member-page-reads.test.ts`).
 - `readWriterSlugFence(principal)` reads a `local_cli` or `local_stdio` writer's stored grant ceiling
-  (`brain.readLocalWriter`) and returns its `slugPrefixes`, or `null`. Another kind, other than an OAuth client,
-  carries no fence and reads nothing. The capability is `persistence_journal`.
+  (`brain.readLocalWriter`) and returns its `slugPrefixes`, or `null`. For an `oauth_client` it reads the stored
+  client record (`brain.readOauthClient`) and returns its `bound_slug_prefixes` (its `delegated_slug_prefixes` for a
+  delegated write), or `null` when the client is gone. Another kind carries no fence and reads nothing. The
+  capability is `persistence_journal`.
 
 ## Differences from PGLite
 

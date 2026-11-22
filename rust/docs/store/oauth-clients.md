@@ -56,7 +56,9 @@ and `grant_repair_reasons` `{}`, `bound_max_concurrent` 1, `delegated_namespace`
 
 `readOauthClient` serves the by-client-id reads of `access.ts` (`access check --client`), `harness/client-setup.ts`,
 `agent-register.ts` (reissue), `minions/submission-authority.ts` (two reads), `shared-skills/policy.ts`,
-`access/requester-scope.ts`, `persistence/effect-facts.ts` and `persistence/authority.ts` (the takes-holders read).
+`access/requester-scope.ts`, `persistence/effect-facts.ts`, `persistence/authority.ts` (the takes-holders read),
+`persistence/page-visibility.ts` (`defaultSourceMemberWriter`, the client's `member_id`) and the Rust store member
+`readOAuthClientWriteGrant` (the grant `authorizeWrite` re-checks, [journal.md](journal.md)).
 `listOauthClients` serves `listClientRows` (`commands/auth-client-rows.ts`, behind `gbrain auth clients`), which picks the
 columns it shows out of each row; a brain from before a column returns rows without it, so the old six-step projection
 ladder is gone and the surface and source columns read as null there, as before. The listing's order is now byte order

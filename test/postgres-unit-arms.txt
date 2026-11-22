@@ -164,6 +164,8 @@ test/engine-parity/attested-actor-link.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
 test/engine-parity/belief-ledger.test.ts
 test/engine-parity/belief-purge-probes.test.ts
+test/engine-parity/bench-save-repro.test.ts
+test/engine-parity/bound-write.test.ts
 test/engine-parity/brief-reads.test.ts
 test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/chronicle-publish-parity.test.ts
@@ -199,6 +201,7 @@ test/engine-parity/collate-ties.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/connect-gate.test.ts
 test/engine-parity/core-page-member-reads.test.ts
+test/engine-parity/credential-grant-writes.test.ts
 test/engine-parity/cycle-locks.test.ts
 test/engine-parity/decide-proposals.test.ts
 test/engine-parity/decide-store.test.ts
@@ -275,6 +278,7 @@ test/engine-parity/forget-whole.test.ts
 test/engine-parity/generation-output-parity.test.ts
 test/engine-parity/generation-page-rows-order.test.ts
 test/engine-parity/generation-write-parity.test.ts
+test/engine-parity/git-durability-credential.test.ts
 test/engine-parity/git-holds.test.ts
 test/engine-parity/harness-consumer-stop.test.ts
 test/engine-parity/held-fence-cells.test.ts
@@ -435,6 +439,7 @@ test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
+test/engine-parity/topology-named-stop.test.ts
 test/engine-parity/transaction-settings.test.ts
 test/engine-parity/traversal-cache.test.ts
 test/engine-parity/trust-fence.test.ts
@@ -444,6 +449,7 @@ test/engine-parity/trust-tier-reads.test.ts
 test/engine-parity/trust-withdrawals.test.ts
 test/engine-parity/trust-write-gate.test.ts
 test/engine-parity/typed-config-reads.test.ts
+test/engine-parity/unbound-claim.test.ts
 test/engine-parity/unrestricted-caller-reads.test.ts
 test/engine-parity/unrestricted-fact-list-reads.test.ts
 test/engine-parity/unrestricted-member-page-reads.test.ts
@@ -452,6 +458,7 @@ test/engine-parity/vector-options.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/wanted-markers.test.ts
+test/engine-parity/wedged-reservation.test.ts
 test/engine-parity/whoami-embedding-fix.test.ts
 test/engine-parity/withdrawal-discovery-reads.test.ts
 test/engine-parity/withdrawal-fence.test.ts
@@ -465,6 +472,8 @@ test/engine-parity/write-request-cancel.test.ts
 test/engine-parity/write-request-reads.test.ts
 test/engine-parity/writer-admin.test.ts
 test/engine-parity/writer-registration.test.ts
+test/engine-parity/writer-release.test.ts
+test/engine-parity/writer-status.test.ts
 test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts

@@ -334,6 +334,18 @@ export const RUST_ENGINE_MEMBERS = {
   // Writer administration (the reviewed --expected-state digest, the operator lock, transfer prepare and cancel).
   readWriterAdminState: 'persistence_journal',
   writerAdminStore: 'persistence_journal',
+  // Writer activation, deactivation and the pre-activation release; a topology receipt's counter charges.
+  writerReleaseStore: 'persistence_journal',
+  addPersistenceCounters: 'persistence_journal',
+  // A bound publication's request-row reads and writes around its files (engine-sql/publication-journal.ts).
+  publicationJournalStore: 'persistence_journal',
+  readWorktreeManifest: 'persistence_journal',
+  // Writer status (engine-sql/writer-status.ts).
+  readWriterDiagnosticRows: 'persistence_journal',
+  readWriterStatusRows: 'persistence_journal',
+  listOnboardingSources: 'persistence_journal',
+  listBlockingEffectRows: 'persistence_journal',
+  listActiveWorktreeRefreshRows: 'persistence_journal',
   // config
   getConfigValues: 'config',
   getConfig: 'config',
@@ -1676,7 +1688,7 @@ export const RUST_ENGINE_MEMBERS = {
   listUnboundTokenNames: 'access_control',
   listUnboundClientIds: 'access_control',
   readLiveAccessToken: 'access_control',
-  listUnarchivedSourceIds: 'access_control',
+  filterUnarchivedSourceIds: 'access_control',
   recordTokenSetupReads: 'access_control',
   listKeysReadingSource: 'access_control',
   countCompanyPages: 'access_control',
@@ -1923,6 +1935,7 @@ export const RUST_ENGINE_MEMBERS = {
   deleteOauthRefreshToken: 'minion_queue',
   readOauthCodeChallenge: 'minion_queue',
   issueOauthTokens: 'minion_queue',
+  readLiveAccessTokenScope: 'minion_queue',
   insertLeasePressure: 'minion_queue',
   countLeasePressure: 'minion_queue',
   listRecentLeasePressure: 'minion_queue',

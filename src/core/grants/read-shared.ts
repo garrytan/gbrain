@@ -72,7 +72,7 @@ export async function expandReadShared(sql: SqlQuery, stored: readonly string[],
 }
 
 /** The engine members that read which sources exist and which are not archived (a Rust brain serves them, not raw SQL). */
-export type ArchivedSourceReads = Pick<BrainEngine, 'listSourceIds' | 'listUnarchivedSourceIds'>;
+export type ArchivedSourceReads = Pick<BrainEngine, 'listSourceIds' | 'filterUnarchivedSourceIds'>;
 
 /**
  * Which of `ids` name an archived source (an id no source has is not archived). With the engine's members the read is
@@ -81,7 +81,7 @@ export type ArchivedSourceReads = Pick<BrainEngine, 'listSourceIds' | 'listUnarc
 async function archivedAmong(sql: SqlQuery, ids: readonly string[], engine: ArchivedSourceReads | undefined): Promise<Set<string>> {
   if (!engine) return new Set((await sql`SELECT id FROM sources WHERE archived IS TRUE`).map(r => String(r.id)));
   const wanted = [...new Set(ids)];
-  const [existing, live] = await Promise.all([engine.listSourceIds(), engine.listUnarchivedSourceIds(wanted)]);
+  const [existing, live] = await Promise.all([engine.listSourceIds(), engine.filterUnarchivedSourceIds(wanted)]);
   const exists = new Set(existing), unarchived = new Set(live);
   return new Set(wanted.filter(id => exists.has(id) && !unarchived.has(id)));
 }

@@ -49,6 +49,7 @@ mod page_purges;
 
 mod page_visibility;
 mod pages;
+mod publication_journal;
 mod reflex_reads;
 mod search;
 mod session_state;
@@ -67,6 +68,8 @@ mod write_attribution;
 mod write_guards;
 mod write_misc;
 mod write_trust;
+mod writer_release;
+mod writer_status;
 
 // Planned families: no methods yet (docs/designs/RUST_ENGINE_INTERFACES.md).
 mod alias_fanout_reads;

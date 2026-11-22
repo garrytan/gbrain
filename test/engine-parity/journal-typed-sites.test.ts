@@ -1,6 +1,6 @@
 /**
  * Engine parity for the four persistence sites the journal flip typed (Rust store-capabilities.ts reports
- * `persistence_journal` and holds `managed_persistence` back): the grouped admission (persistence/journal.ts
+ * `persistence_journal`, and `managed_persistence` since bound-write-rust): the grouped admission (persistence/journal.ts
  * `admitWriteGroupInTransaction`, through page-batch.ts `admitBatch`), the owner's host-binding read
  * (persistence/effect-journal.ts `queuePublicationEffects`), the topology recovery scan
  * (persistence/topology-recovery.ts `recoverSourceTopologies`) and the segmented-storage gate's writer evidence
@@ -16,16 +16,15 @@
  *    interval or the timestamp cannot hold refuses as Postgres refuses it. A grouped insert is one write: a refusal at a
  *    later item keeps no row and no counter charge. The replay read names each row once, whatever the id's letter case.
  *    A put_pages batch with no worktree writes every page on every arm. A worktree-bound put_page writes the page and
- *    its file where managed_persistence is reported, and refuses by name at admission (`engine_capability_missing`,
- *    managed_persistence), with no counter charge, no page and no file, where it is not (the Rust arm).
+ *    its file on every arm.
  *    A remote put_page admission, alone or grouped, is admitted on every arm: its publication queues a mention-links
  *    effect, and that effect reads and writes through typed engine members (engine-sql/remote-links.ts).
  *  - Regression: each site sent SQL through executeRaw. On the Rust engine that refused raw_sql, so the store held both
  *    capabilities back (HELD_FOR_CALLERS) and a Rust brain had no write journal. Fail-first: on the parent head
  *    524768a179 every case fails on the Rust arm, at the capability check or at a member the engine did not have, and
- *    the ingest stamp was not written (the importer row's version was null). With managed_persistence reported on Rust
- *    (store-capabilities.ts holding nothing back), the bound put_page case fails there: the write is admitted, reaches
- *    raw SQL in preparation and ends `failed` with a request row (engine_capability_missing raw_sql). Before the group
+ *    the ingest stamp was not written (the importer row's version was null). Before the bound write's preparation and
+ *    publication were typed, the bound put_page case failed on Rust once managed_persistence was reported: the write was
+ *    admitted, reached raw SQL in preparation and ended `failed` with a request row. Before the group
  *    insert was one store write, the later-item case kept the first item's row on Rust; before the replay read folded
  *    case, the mixed-case read returned one row twice; before the window start was checked, a day count of -1e100
  *    overflowed and refused as internal_error. While the links effect read through raw SQL, the Rust arm refused both
@@ -160,7 +159,7 @@ describe('engine parity: the persistence sites the journal flip typed', () => {
     methods: ['worktreeClaimStore', 'getWorktreeBinding', 'readOwnerHostBinding', 'readLedgerSource', 'insertTopologyChange', 'listTopologyRecoveries'],
     timeout: 60_000,
   }, async (engine, backend: ParityBackend) => withHome(async (home) => {
-    // These are typed members the journal calls directly; none needs managed_persistence, which Rust holds back.
+    // These are typed members the journal calls directly; none needs managed_persistence.
     expect(engine.capabilities.has('persistence_journal')).toBe(true);
     const root = join(home, 'checkout');
     await Bun.write(join(root, 'example.md'), 'generic example');
@@ -247,9 +246,8 @@ describe('engine parity: the persistence sites the journal flip typed', () => {
     }
   }));
 
-  parityTest('a worktree-bound put_page writes the page and its file, and refuses by name at admission where managed_persistence is held', {
-    methods: ['getWorktreeBinding', 'readCounterRows'],
-    requires: 'managed_persistence',
+  parityTest('a worktree-bound put_page writes the page and its file', {
+    methods: ['getWorktreeBinding'],
     timeout: 90_000,
   }, async (engine, backend: ParityBackend) => withHome(async (home) => {
     const root = join(home, 'checkout');
@@ -264,19 +262,7 @@ describe('engine parity: the persistence sites the journal flip typed', () => {
       await engine.setConfig('sync.write_through', 'true');
       const ctx = { engine, sourceId: 'work', remote: false, dryRun: false, logger,
         config: { engine: engine.kind, embedding_disabled: true } } as unknown as OperationContext;
-      const charged = await counterText(engine);
-      let put: Record<string, unknown>;
-      try {
-        put = await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: '---\ntype: concept\ntitle: bound\n---\nStored.\n', request_id: BOUND } });
-      } catch (e) {
-        // The held arm: the admission refuses before it reads or writes, so nothing of the write exists.
-        const err = e as { code?: string; message?: string };
-        expect({ code: err.code, names: /managed_persistence/.test(String(err.message)) && /admitWrite/.test(String(err.message)),
-          chargeKept: await counterText(engine) === charged, file: existsSync(file),
-          page: (await engine.getPage(slug, { sourceId: 'work' })) !== null })
-          .toEqual({ code: 'engine_capability_missing', names: true, chargeKept: true, file: false, page: false });
-        throw e;
-      }
+      const put = await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content: '---\ntype: concept\ntitle: bound\n---\nStored.\n', request_id: BOUND } }) as Record<string, unknown>;
       const answers = { status: put.status, file: existsSync(file) && readFileSync(file, 'utf8').includes('Stored.'),
         page: (await engine.getPage(slug, { sourceId: 'work' }))?.compiled_truth?.trim() ?? null };
       expect(answers).toEqual({ status: 'created_or_updated', file: true, page: 'Stored.' });

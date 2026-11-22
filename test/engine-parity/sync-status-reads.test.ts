@@ -8,7 +8,8 @@
  *  - Contract: the source row carries the source's incarnation, last commit, drain lock, pass row, Apple Contacts
  *    identity reviews and held deletes, and admission
  *    probes (null while the stored admission reads as normal; otherwise pinned only while an open pass row holds the
- *    live drain lease); an archived or missing source has no row. A brain with no managed write has no committed page,
+ *    live drain lease) and the Apple Contacts identity reviews and held deletes stored for that source; an archived or
+ *    missing source has no row. A brain with no managed write has no committed page,
  *    held push or fence, head request, recovery record, cursor, failure or identity downgrade. A managed-sync cursor
  *    reads with its failure and manifest path, the failed cursor first; an old incarnation's cursor counts as retired.
  *    The source row also carries the source's Apple Contacts identity-review and held-deletion checkpoints, raw.
@@ -42,6 +43,19 @@ async function sourceRow(engine: BrainEngine, id: string) {
 }
 
 describe('engine parity: sync status reads', () => {
+  parityTest('the source row carries the Apple Contacts identity reviews and held deletes stored for that source only',
+    { methods: ['readSyncStatusSourceRow', 'writeOpCheckpointKeys'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'repo', {}, '/srv/brain/repo');
+      await createSource(engine, backend, 'other', {}, '/srv/brain/other');
+      await engine.writeOpCheckpointKeys(APPLE_CONTACTS_REVIEW_OP, 'repo', ['people-b']);
+      await engine.writeOpCheckpointKeys(APPLE_CONTACTS_PENDING_DELETES_OP, 'repo', ['delete-floor']);
+      const pick = (row: Awaited<ReturnType<typeof sourceRow>>) => row && { reviews: row.identity_reviews, held: row.held_deletes };
+      const result = { repo: pick(await sourceRow(engine, 'repo')), other: pick(await sourceRow(engine, 'other')) };
+      expect(result).toEqual({ repo: { reviews: ['people-b'], held: ['delete-floor'] }, other: { reviews: null, held: null } });
+      return result;
+    });
+
   parityTest('a brain with no managed write: the source row, nothing committed, held, pending, failed or downgraded',
     { methods: ['readSyncStatusSourceRow', 'readSyncStatusCommittedRow', 'readManagedSyncCursorHeader', 'readRetiredManagedSyncCursor', 'readManagedSyncFailureRows',
       'readOrphanedManagedSyncFailureRows', 'readSyncHeadRequestRow', 'readSyncRecoveryProbeRow', 'readIdentityDowngradeRows'] },
@@ -66,8 +80,9 @@ describe('engine parity: sync status reads', () => {
       expect(result as unknown).toEqual({
         source: {
           incarnation: true, last_commit: null, drain_lock: false, pass_value: null, pass_updated: false, read_at: true, withheld: null, synced: false,
+          identity_reviews: null, held_deletes: null,
           admission_stored: null, admission_row_value: null, admission_set_at: null, admission_pinned: null, admission_destructive: null,
-          writeback_failed: null, refresh: null, identity_reviews: null, held_deletes: null, config: {},
+          writeback_failed: null, refresh: null, config: {},
         },
         missing: null,
         committed: { n: 0, git_push_held: false, fence_held: false, last_committed_at: null },

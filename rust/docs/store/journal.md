@@ -59,6 +59,9 @@ Each returns what PGLite returns for a brain with the same contents.
 | `readOAuthClientWriteGrant(clientId, opts?)` | `brain.readOauthClientWriteGrant`, `deleted_at` as a `Date`, or null | The client with this id, deleted or not ([oauth-clients.md](oauth-clients.md)), so `authorizeWrite` admits a write owned by a live client and refuses a deleted or absent one with the same `permission_denied` text as PGLite. `lock` changes nothing: one write transaction runs at a time. |
 | `readAccessTokenWriteGrant(tokenId, opts?)` | `brain.readAccessTokenWriteGrant`, `revoked_at` as a `Date`, or null | The token with this id (a UUID, so any case; a non-UUID refuses as `id = $1` does), revoked or not ([access-tokens.md](access-tokens.md)); a live token is admitted and a revoked or absent one refused, as above. The private grants are not kept and read as `none`. |
 | `shareLockWriteCredential(kind, id)` | no-op | The store runs one write transaction at a time, so no revocation lands between the re-check and the write. |
+| `readOAuthClientWriteGrant(clientId, opts?)` | the grant columns, or `null` | Projected from the client's whole row (`readOauthClient`, [oauth-clients.md](oauth-clients.md)): `deleted_at`, `scope`, `source_id`, `source_grant`, `allowed_operations`, `bound_slug_prefixes`, `bound_tools`, `delegated_namespace`, `delegated_slug_prefixes`. A client the store does not have answers `null`, and `authorizeWrite` refuses `permission_denied`. `lock` holds nothing: one process owns the store. |
+| `readAccessTokenWriteGrant(tokenId, opts?)` | the grant columns, or `null` | Read from the token's stored row ([access-tokens.md](access-tokens.md)): `id`, `scopes`, `permissions`, the five grant columns, `grant_revision`, `read_shared_revision` and `revoked_at`. `private_pages` and `private_facts` are not kept, so they are left out, as on a brain whose table lacks them; `authorizeWrite` does not read them. A token the store does not have answers `null`, and `authorizeWrite` refuses `permission_denied`. |
+| `shareLockWriteCredential(kind, id)` | no-op | One process owns the store, so no other write can remove the credential between the lock and the read; a missing row locks nothing on Postgres either. |
 
 `src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way
 (SQL for PGLite and Postgres in `src/core/engine-sql/connect-gate.ts`):
@@ -87,6 +90,11 @@ join. The engine holds `managed_persistence` back (`store-capabilities.ts` `HELD
 bound worktree refuses at admission and no refresh, request-recovery or derived-generation writer runs
 (`gbrain sources refresh` refuses `raw_sql`). A remote write that queues a mention-links effect is admitted: the
 links effect and a finished batch's re-arm are store members ([remote-links.md](remote-links.md)). Each part of a
+join. The engine reports `managed_persistence`, so a write to a bound worktree is admitted and writes a request row,
+but no refresh, request-recovery or derived-generation writer runs (`gbrain sources refresh` refuses `raw_sql`), and
+these reads do not yet see a worktree-bound request (an open item below). A remote write that would queue a mention-links effect refuses
+`raw_sql` at admission too (`requireRawSqlPublication`): the links effect and a finished batch's re-arm still read
+through raw SQL. Each part of a
 read that joins those rows still gives its empty answer below; a read that must see a worktree-bound request is an
 open item of the capability flip, not served yet:
 
@@ -96,7 +104,7 @@ open item of the capability flip, not served yet:
 | `readSyncStatusCommittedRow(sourceId)` | `{ n: 0, git_push_held: false, fence_held: false, last_committed_at: null }` | No managed-sync request commits (a managed sync stops on `raw_sql` before it admits one), and no fence generation is written. A Git effect of a worktree-bound page write is not read here yet: an open item of the capability flip. |
 | `readManagedSyncCursorHeader`, `readRetiredManagedSyncCursor` | the `managed-sync` checkpoint rows, read as the SQL reads them | The store keeps op checkpoint rows. |
 | `readManagedSyncFailureRows`, `readOrphanedManagedSyncFailureRows` | the unfinished cursors (or cursorless failures) of live source incarnations, with failure row and manifest path; `receipt` is `null` | No managed-sync request is admitted to give a receipt: a managed sync stops on `raw_sql` before it admits one. |
-| `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No request-recovery writer has landed. A worktree-bound page write refuses at admission (`managed_persistence` is held), so no request row exists for this read to see. |
+| `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No request-recovery writer has landed. A worktree-bound page write now writes a request row, which this read does not see yet: an open item of the capability flip. |
 | `readIdentityDowngradeRows(sourceIds)` | `[]`, or a refusal when a downgrade record exists | A record joins the pages it names, which this member does not serve. Records are written only through `executeRaw`, which this engine refuses, so none exists. |
 
 The request members (`readWriteRequest`, `readWriteRequestById`, `listWriteRequestsByRequestIds`, `readWriteRequestProgress`, `countOutstandingBySource`, `readWorktreeAdmission`, `completeSyncedRefresh`, `hasDeferralRoom`, `readRefreshTiming`, `countHeldBehindImport`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,

@@ -202,7 +202,7 @@ async function assertActiveSources(engine: BrainEngine, ids: string[]): Promise<
     if (!isValidSourceId(id)) throw new GrantError('invalid_grant', `Invalid source id: ${id}`);
   }
   if (ids.length === 0) return;
-  const active = new Set(await engine.listUnarchivedSourceIds(ids));
+  const active = new Set(await engine.filterUnarchivedSourceIds(ids));
   const missing = ids.filter(id => !active.has(id));
   if (missing.length) throw new GrantError('invalid_grant', `Unknown or archived source: ${missing.join(', ')} (see gbrain sources list)`);
 }

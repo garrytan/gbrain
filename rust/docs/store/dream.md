@@ -44,6 +44,9 @@ members in `src/core/rust-engine/store-members/dream-journal.ts`):
 | `brain.readWriteRequestById(id)` | the stored request; the member keeps `{ state, error_code, error_message }`, or null. An id that is not a UUID is `invalid_argument`, as the `::uuid` cast refuses it | `readDreamDeferralReceipt` |
 | `brain.listLaterPersistenceRequests(sourceId, incarnation, slug, sequence)` | the requests of the source, incarnation and slug with `sequence` greater than the given bigint (text) and state queued, running, recovering or committed, by sequence. A sequence that is not an integer is `invalid_argument` | `listLaterPersistenceRequests` |
 | `brain.listCommittedOutputRequests(requestIds, sourceId, incarnation)` | `[{ request }]`: the committed `put_page` requests of the source and incarnation whose request id is one of `requestIds`, newest sequence first; times as text, as `row_to_json` gives them. A request id that is not a UUID is `invalid_argument` | `listCommittedOutputRequests` | The lock takes no row lock: the store admits one write transaction at a time.
+incarnation). The lock takes no row lock: the store admits one write transaction at a time.
+`readDreamDeferralReceipt`, `listLaterPersistenceRequests` and `listCommittedOutputRequests` read the persistence
+journal (`gbrain-store` `persistence::dream_reads`, see [persistence.md](persistence.md)).
 
 Return shapes are the raw row shapes the callers read; timestamps come back as the driver returns them
 (a `Date` or text), and the callers normalise them. The SQL text and bound parameters are byte-identical to

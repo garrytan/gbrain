@@ -4,7 +4,8 @@
 //! A source lifecycle change (remove, purge, clone, deactivate) records one row per
 //! (principal, request id), so a page write cannot reuse a lifecycle request id and a lifecycle
 //! retry finds its earlier receipt. Key `d 0x03 <principal_id> 0x00 <request_id>` (both lower-case
-//! UUID text), JSON `TopologyChangeRecord`. Rows are never deleted on this engine. The counter
+//! UUID text), JSON `TopologyChangeRecord`. Rows are never deleted on this engine. Writer
+//! deactivation reads the recovering rows and the committed `writer_deactivate` outcomes. The counter
 //! charges that go with a lifecycle receipt stay with their callers (topology-receipts.ts).
 
 use super::{uuid_param, violation};
@@ -101,6 +102,62 @@ fn to_row(r: &TopologyChangeRecord) -> Value {
         "created_at": iso(r.created_at_us),
         "updated_at": iso(r.updated_at_us),
     })
+}
+
+/// The stopped retire requests writer status lists (`readWriterStatusRows`,
+/// `engine-sql/writer-status.ts`): remove and purge changes (of `source_id`, or every source)
+/// with no recovery record that are `recovering`, or `failed` because a later lifecycle change
+/// superseded them; newest first, at most 20. `created_at` is `created_at::text`.
+pub(super) fn retire_requests_in(read: &dyn KvRead, source_id: Option<&str>) -> Result<Vec<Value>> {
+    let mut rows: Vec<TopologyChangeRecord> = Vec::new();
+    let mut bad = false;
+    scan_prefix(
+        read,
+        &[keys::PERSISTENCE, super::TOPOLOGY],
+        false,
+        &mut |_, v| {
+            match serde_json::from_slice::<TopologyChangeRecord>(v) {
+                Ok(r) => rows.push(r),
+                Err(_) => bad = true,
+            }
+            !bad
+        },
+    )?;
+    if bad {
+        return Err(StoreError::invalid(
+            "a topology change record is not readable",
+        ));
+    }
+    let error = |r: &TopologyChangeRecord| -> Option<String> {
+        match r.outcome.as_ref()?.get("error")? {
+            Value::Null => None,
+            Value::String(s) => Some(s.clone()),
+            other => Some(crate::cli_reads::pg_text::jsonb_text(other)),
+        }
+    };
+    rows.retain(|r| {
+        source_id.is_none_or(|s| r.source_id == s)
+            && (r.operation == "remove" || r.operation == "purge")
+            && r.recovery.is_none()
+            && (r.state == "recovering"
+                || r.state == "failed" && error(r).as_deref() == Some("source_retire_superseded"))
+    });
+    rows.sort_by_key(|r| std::cmp::Reverse(r.created_at_us));
+    rows.truncate(20);
+    Ok(rows
+        .iter()
+        .map(|r| {
+            json!({
+                "request_id": r.request_id,
+                "operation": r.operation,
+                "source_id": r.source_id,
+                "source_incarnation": r.source_incarnation,
+                "state": r.state,
+                "error": error(r),
+                "created_at": crate::cli_reads::pg_text::timestamptz_text(r.created_at_us),
+            })
+        })
+        .collect())
 }
 
 /// The INSERT ... RETURNING * of a lifecycle receipt. The table's CHECKs and its
@@ -330,6 +387,65 @@ pub(crate) fn topology_capacity_days(
                 "recent_net": recent_bytes.to_string(),
             })
         })
+        .collect())
+}
+
+fn all_changes(read: &dyn KvRead) -> Result<Vec<TopologyChangeRecord>> {
+    let mut rows = Vec::new();
+    scan_prefix(
+        read,
+        &[keys::PERSISTENCE, super::TOPOLOGY],
+        false,
+        &mut |_, v| {
+            rows.push(serde_json::from_slice::<TopologyChangeRecord>(v));
+            true
+        },
+    )?;
+    rows.into_iter()
+        .map(|r| r.map_err(|e| StoreError::invalid(format!("a topology change record: {e}"))))
+        .collect()
+}
+
+/// The writer-deactivation blocker read (`engine-sql/writer-release.ts`
+/// `recoveringTopologyChanges`): the first 20 changes that are recovering or hold a recovery
+/// record, oldest first. `admission` is a recovering change with no recovery record; `automatic`
+/// is one whose outcome says `expired_only` (as text, `true`).
+pub(crate) fn recovering_topology_rows_in(read: &dyn KvRead) -> Result<Vec<Value>> {
+    let has_recovery = |r: &TopologyChangeRecord| r.recovery.as_ref().is_some_and(|v| !v.is_null());
+    let mut rows: Vec<TopologyChangeRecord> = all_changes(read)?
+        .into_iter()
+        .filter(|r| r.state == "recovering" || has_recovery(r))
+        .collect();
+    rows.sort_by_key(|r| r.created_at_us);
+    Ok(rows
+        .iter()
+        .take(20)
+        .map(|r| {
+            let expired_only = r.outcome.as_ref().and_then(|o| o.get("expired_only"));
+            let automatic = match expired_only {
+                Some(Value::Bool(b)) => *b,
+                Some(Value::String(s)) => s == "true",
+                _ => false,
+            };
+            json!({
+                "id": r.id,
+                "operation": r.operation,
+                "source_id": r.source_id,
+                "request_id": r.request_id,
+                "admission": r.state == "recovering" && !has_recovery(r),
+                "automatic": automatic,
+            })
+        })
+        .collect())
+}
+
+/// `listRetiredDeactivations()` (`engine-sql/connect-gate.ts`): the outcome of every committed
+/// change of `operation`, in key order, as `{ outcome }`.
+pub(crate) fn committed_outcomes_in(read: &dyn KvRead, operation: &str) -> Result<Vec<Value>> {
+    Ok(all_changes(read)?
+        .into_iter()
+        .filter(|r| r.operation == operation && r.state == "committed")
+        .map(|r| json!({ "outcome": r.outcome.map(crate::jsonb::order) }))
         .collect())
 }
 

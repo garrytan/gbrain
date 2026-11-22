@@ -80,11 +80,11 @@ describe('access setup members (engine-sql/access-setup.ts)', () => {
     return { before, after };
   });
 
-  parityTest('the unarchived ids are the asked sources that exist and are not archived', { methods: ['listUnarchivedSourceIds'] }, async (engine, backend) => {
+  parityTest('the unarchived ids are the asked sources that exist and are not archived', { methods: ['filterUnarchivedSourceIds'] }, async (engine, backend) => {
     for (const id of ['alpha', 'beta', 'gamma']) await createSource(engine, backend, id);
     await archiveSource(engine, backend, 'beta');
-    const ids = (await engine.listUnarchivedSourceIds(['alpha', 'beta', 'missing', 'default'])).sort();
-    const none = await engine.listUnarchivedSourceIds([]);
+    const ids = (await engine.filterUnarchivedSourceIds(['alpha', 'beta', 'missing', 'default'])).sort();
+    const none = await engine.filterUnarchivedSourceIds([]);
     expect(ids).toEqual(['alpha', 'default']);
     expect(none).toEqual([]);
     return { ids, none };

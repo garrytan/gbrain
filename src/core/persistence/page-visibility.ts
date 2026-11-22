@@ -12,6 +12,7 @@ import { authorizedSlug, type SqlEngine, type WriteAuthority } from './model.ts'
 import type { BrainEngine } from '../engine.ts';
 import type { PagePolicyPart } from '../engine-sql/page-visibility.ts';
 import { renderWriterReadPolicy, type WriterReadPolicy } from '../engine-sql/remote-links.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 import { hasScope } from '../scope.ts';
 import { viewedEngine } from './switches.ts';

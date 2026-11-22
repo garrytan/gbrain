@@ -718,3 +718,28 @@ fn the_migration_read_finds_the_active_tokens_with_no_source_grant_oldest_first_
     assert_eq!(rows[0]["permissions"], json!({ "source_id": "wiki" }));
     assert!(rows[0].get("token_hash").is_none());
 }
+
+#[test]
+fn the_scope_read_answers_a_live_tokens_creation_time_and_null_for_a_revoked_or_missing_token() {
+    let b = brain("tokens-scope");
+    let live = insert(&b, token("live", "h1", json!({}))).unwrap();
+    let gone = insert(
+        &b,
+        token(
+            "gone",
+            "h2",
+            json!({ "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    let scope = b.read_live_access_token_scope(&live).unwrap();
+    assert_eq!(scope["reads_unscoped"], Value::Null);
+    let created = scope["created_at"].as_str().unwrap();
+    assert!(created.ends_with('Z') && created.len() == 27, "{created}");
+    assert_eq!(b.read_live_access_token_scope(&gone).unwrap(), Value::Null);
+    assert_eq!(
+        b.read_live_access_token_scope("00000000-0000-4000-8000-000000000000")
+            .unwrap(),
+        Value::Null
+    );
+}

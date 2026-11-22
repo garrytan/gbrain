@@ -17,7 +17,7 @@
 import type { BrainEngine } from './engine.ts';
 import { isConnectorSourceKind } from './persistence/connector-identity.ts';
 import { getWorktreeBinding } from './persistence/ownership.ts';
-import { readDatabaseOnlyActivatedSources } from './persistence/unbound-source.ts';
+import { autoClaimsUnboundSource } from './persistence/unbound-source.ts';
 import { readManagedMode } from './persistence/managed-mode.ts';
 import { previewHash } from './persistence/preview-approval.ts';
 import { canonicalOriginPage, pickCanonicalOrigin } from './persistence/origin-guard.ts';
@@ -44,15 +44,15 @@ type RestoreProbeEngine = Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'kind' 
 
 /**
  * Whether a restore of a page that came from a canonical file can be admitted on this source, by the rule page writes
- * follow (decideUnboundWrite): a bound source, a connector source, a source with no checkout, or a PGLite source not
- * activated database-only can; an unbound Postgres source with a checkout refuses `owner_unavailable`, so no surface
- * offers the restore there.
+ * follow (decideUnboundWrite): a bound source, a connector source, a source with no checkout, or a single-process
+ * engine's source not activated database-only can; an unbound Postgres source with a checkout refuses
+ * `owner_unavailable`, so no surface offers the restore there.
  */
 export async function identityRestoreAvailable(engine: RestoreProbeEngine, sourceId: string): Promise<boolean> {
   const [source] = await engine.executeRaw<{ local_path: string | null; kind: string | null }>("SELECT local_path, config->>'kind' AS kind FROM sources WHERE id = $1", [sourceId]);
   if (!source?.local_path || isConnectorSourceKind(source.kind)) return true;
   if (await getWorktreeBinding(engine as never, sourceId, null)) return true;
-  return engine.kind === 'pglite' && !(await readDatabaseOnlyActivatedSources(engine)).includes(sourceId);
+  return autoClaimsUnboundSource(engine, sourceId);
 }
 
 /** SQL: the downgrade record `dg` is open for the page aliased `alias` (no disposition, old page still soft-deleted by that sync). */

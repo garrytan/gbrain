@@ -105,7 +105,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listSymbolTypesForName', 'listSynopsisSourceIds', 'listSynthesisCompletionKeys', 'listSynthesisPageBodies',
   'listTakeIdsLeavingFence', 'listTakePreimages', 'listTakeRowsForPage', 'listTakeSupersessionCandidates',
   'listTimelineOrphanPages', 'listTrueUpRequests', 'listTrustAllowRuleRows', 'listTrustProposals',
-  'listTrustScanRows', 'listUnarchivedSourceIds', 'listUnattributedFacts', 'listUnbackedConversationRows',
+  'listTrustScanRows', 'filterUnarchivedSourceIds', 'listUnattributedFacts', 'listUnbackedConversationRows',
   'listUnfencedFactRows', 'listUnlinkedConversationRows', 'listUnlinkedConversationSlugs',
   'listUnpreviewedTrustFacts', 'listUnreviewedJobs', 'listUnwithdrawnFacts', 'listValidTimeIdentities',
   'listVersionReasonWriters', 'listVersionTrustTiers', 'listVisibleBeliefLifetimes', 'listVisiblePageSlugs',

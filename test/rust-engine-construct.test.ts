@@ -156,17 +156,16 @@ describe('servePersistenceIpcProvider (the serve-path persistence socket)', () =
     });
   });
 
-  // The flip released persistence_journal; managed_persistence stays held (store-capabilities.ts HELD_FOR_CALLERS) until
-  // the bound-write path is typed.
+  // The flip released persistence_journal; bound-write-rust released managed_persistence once the bound write was typed.
   test('the Rust engine reports persistence_journal', () => {
     const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
     expect(rust.capabilities.has('persistence_journal')).toBe(true);
   });
 
-  test('the Rust engine holds managed_persistence back, naming the bound-write sites that still run raw SQL', () => {
+  test('the Rust engine reports managed_persistence and holds no capability back', () => {
     const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
-    expect(rust.capabilities.has('managed_persistence')).toBe(false);
-    expect((HELD_FOR_CALLERS.managed_persistence ?? []).map(site => site.split(' ')[0])).toEqual(['compareFileTarget', 'guardOwnership', 'publication', 'withTopologyLocks']);
+    expect(rust.capabilities.has('managed_persistence')).toBe(true);
+    expect(HELD_FOR_CALLERS).toEqual({});
   });
 
   test('an engine with the persistence journal goes on to the provider', async () => {

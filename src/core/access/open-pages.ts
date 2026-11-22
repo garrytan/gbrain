@@ -67,7 +67,7 @@ export const COMPANY_SOURCE_ID = 'company';
  */
 export async function memberKeyReadSources(engine: BrainEngine, source: string): Promise<string[]> {
   const federated = await localFederatedSourceIds(engine, source, 'seed_default').catch(() => undefined) ?? [source];
-  const company = source !== COMPANY_SOURCE_ID && (await engine.listUnarchivedSourceIds([COMPANY_SOURCE_ID])).includes(COMPANY_SOURCE_ID);
+  const company = source !== COMPANY_SOURCE_ID && (await engine.filterUnarchivedSourceIds([COMPANY_SOURCE_ID])).includes(COMPANY_SOURCE_ID);
   return [...new Set([source, ...(company ? [COMPANY_SOURCE_ID] : []), ...federated])];
 }
 

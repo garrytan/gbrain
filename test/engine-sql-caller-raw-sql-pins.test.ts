@@ -838,7 +838,7 @@ const PINS: Pin[] = [
   },
   {
     from: 'src/commands/access-serves.ts:197 member key plan (active sources) (at 6e123afe98); also grants/legacy-token.ts:193 assertActiveSources (at 5a32485552)',
-    case: { method: 'listUnarchivedSourceIds', variant: 'default', run: e => e.listUnarchivedSourceIds(['src-a', 'src-b']) },
+    case: { method: 'filterUnarchivedSourceIds', variant: 'default', run: e => e.filterUnarchivedSourceIds(['src-a', 'src-b']) },
     texts: ['SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE'],
   },
   {
@@ -2695,7 +2695,7 @@ const PINS: Pin[] = [
   },
   {
     from: 'src/commands/access-serves.ts:197 member key plan (active sources) (at 6e123afe98)',
-    case: { method: 'listUnarchivedSourceIds', variant: 'default', run: e => e.listUnarchivedSourceIds(['src-a', 'src-b']) },
+    case: { method: 'filterUnarchivedSourceIds', variant: 'default', run: e => e.filterUnarchivedSourceIds(['src-a', 'src-b']) },
     texts: ['SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE'],
   },
   {
@@ -2932,6 +2932,230 @@ const PINS: Pin[] = [
       released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST($3::bigint-r.terminal_reservation,c.terminal_bytes)
         FROM r WHERE c.key=ANY($4::text[]))
       SELECT * FROM r`],
+  },
+  ...([
+    ['all', {}],
+    ['sources-run', { sourceIds: ['default'], runId: 'run-1' }],
+  ] as const).map(([variant, opts]): Pin => ({
+    from: `src/core/persistence/sync-holds.ts:575 readGitSourceHolds (${variant})`,
+    case: { method: 'readGitHoldRecords', variant, run: e => e.readGitHoldRecords(opts) },
+    texts: () => [`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
+    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
+    ORDER BY s.id,h.fingerprint`],
+  })),
+  {
+    from: 'src/core/persistence/sync-holds.ts:598 readGitHoldListing (at 77ac0ed0e9)',
+    case: { method: 'readGitHoldListingRows', variant: 'default', run: e => e.readGitHoldListingRows(['default'], 5) },
+    texts: [`SELECT s.id AS source_id,
+      s.incarnation::text AS incarnation, COALESCE((sm.completed_keys->0->>'count')::int,0) AS count, h.record
+    FROM sources s
+    JOIN op_checkpoints sm ON sm.op=$1 AND sm.fingerprint=s.id||':'||s.incarnation::text
+    LEFT JOIN LATERAL (SELECT x.fingerprint, CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(x.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE x.completed_keys->0 END AS record FROM op_checkpoints x
+      WHERE x.op=$2 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
+      ORDER BY x.fingerprint LIMIT $4) h ON true
+    WHERE s.id=ANY($3::text[]) AND COALESCE((sm.completed_keys->0->>'count')::int,0)>0
+    ORDER BY s.id, h.fingerprint`],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:620 readGitHoldCodeCounts (at 77ac0ed0e9)',
+    case: { method: 'readGitHoldCodeCountRows', variant: 'default', run: e => e.readGitHoldCodeCountRows(['default']) },
+    texts: [`SELECT s.id AS source_id, x.completed_keys->0->>'code' AS code, count(*) AS n
+    FROM sources s JOIN op_checkpoints x ON x.op=$1 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
+    WHERE s.id=ANY($2::text[]) GROUP BY 1,2`],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:562 readGitImageHoldCounts (at 77ac0ed0e9)',
+    case: { method: 'readGitImageHoldCountRows', variant: 'default', run: e => e.readGitImageHoldCountRows(['default']) },
+    texts: [`SELECT s.id AS source_id, COALESCE((h.completed_keys->0->>'images')::int,0) AS images
+    FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
+    WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:1168 readSyncConversions (at 77ac0ed0e9)',
+    case: { method: 'readSyncConversionRows', variant: 'default', run: e => e.readSyncConversionRows(['default']) },
+    texts: [`SELECT s.id AS source_id, c.completed_keys->0->'conversions' AS conversions
+    FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text WHERE s.id=ANY($2::text[])`],
+  },
+  {
+    from: 'src/commands/access-serves.ts:197 member key plan (active sources) (at 6e123afe98)',
+    case: { method: 'filterUnarchivedSourceIds', variant: 'default', run: e => e.filterUnarchivedSourceIds(['src-a', 'src-b']) },
+    texts: ['SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE'],
+  },
+  {
+    from: 'src/core/source-health.ts:384 pageCountsBySource (at cd882f06e6)',
+    case: { method: 'countLivePagesBySource', variant: 'default', run: e => e.countLivePagesBySource() },
+    texts: [`SELECT source_id, COUNT(*)::int AS n
+       FROM pages
+      WHERE deleted_at IS NULL
+      GROUP BY source_id`],
+  },
+  {
+    from: 'src/core/source-health.ts:403 chunkCountsBySource (at cd882f06e6)',
+    case: { method: 'countChunksBySource', variant: 'default', run: e => e.countChunksBySource('embedding') },
+    texts: [`SELECT p.source_id,
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE c."embedding" IS NOT NULL)::int AS embedded
+       FROM content_chunks c
+       JOIN pages p ON p.id = c.page_id
+      WHERE p.deleted_at IS NULL
+      GROUP BY p.source_id`],
+  },
+  {
+    from: 'src/commands/extract.ts:497 loadSlugAliasTargets (at a18d118d27)',
+    case: { method: 'listSlugAliases', variant: 'default', run: e => e.listSlugAliases('default') },
+    texts: ['SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1'],
+  },
+  {
+    from: 'src/core/quarantine.ts:116 quarantinedSlugs (at 90ede8f55a)',
+    case: { method: 'listQuarantinedSlugs', variant: 'default', run: e => e.listQuarantinedSlugs('default') },
+    texts: [`SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND NOT NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine')`],
+  },
+  {
+    from: 'src/core/link-reconciliation.ts:220 fileLinkOwnership scoped metadata (at 90ede8f55a)',
+    case: { method: 'listLinkPageMetadataForSlugs', variant: 'default', run: e => e.listLinkPageMetadataForSlugs('default', ['a']) },
+    texts: [`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
+        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`],
+  },
+  {
+    from: 'src/core/trust/timeline-projection.ts:22 pageInputs (at 1a12510b10)',
+    case: { method: 'listPageTrustTiersByKey', variant: 'default', run: e => e.listPageTrustTiersByKey([{ source_id: 'default', slug: 'a' }]) },
+    texts: [`SELECT p.id,p.source_id,p.slug,p.trust_tier FROM pages p
+      JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug`],
+  },
+  {
+    from: 'src/core/trust/timeline-projection.ts:59 addProjectedTimelineBatch requirePages (at 1a12510b10)',
+    case: { method: 'lockLivePagesByKey', variant: 'default', run: e => e.lockLivePagesByKey([{ source_id: 'default', slug: 'a' }]) },
+    texts: [`SELECT p.source_id,p.slug FROM pages p
+          JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug
+          WHERE p.deleted_at IS NULL FOR SHARE OF p`],
+  },
+  {
+    from: 'src/core/link-reconciliation.ts:229 fileLinkOwnership attendance origins (at 90ede8f55a)',
+    case: { method: 'listAttendedOriginSlugs', variant: 'default', run: e => e.listAttendedOriginSlugs('default') },
+    texts: [`SELECT DISTINCT o.slug FROM links l
+    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
+      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id`],
+  },
+  {
+    from: 'src/core/link-reconciliation.ts:229 fileLinkOwnership scoped attendance origins (at 90ede8f55a)',
+    case: { method: 'listAttendedOriginSlugs', variant: 'default', run: e => e.listAttendedOriginSlugs('default', ['a']) },
+    texts: [`SELECT DISTINCT o.slug FROM links l
+    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
+      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id AND o.slug = ANY($2::text[])`],
+  },
+  {
+    from: 'src/core/sync-pending.ts:106 readFirstDue (at 4e39797ed0)',
+    case: { method: 'readFirstDue', variant: 'default', run: e => e.readFirstDue(['default']) },
+    texts: [`SELECT s.id AS source_id, n.observed_head,
+              LEAST(CASE WHEN n.state <> 'idle' THEN n.first_due_at END,
+                    (SELECT min(m.first_due_at) FROM sync_wanted_markers m WHERE m.source_id = s.id AND m.intent = 'freshness'
+                       AND m.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+                       AND (m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit))) AS first_due_at
+         FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id AND n.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
+        WHERE s.id = ANY($1::text[])`],
+  },
+  {
+    from: 'src/core/persistence/sync-status.ts:297 cursorHeader (at 21cd64e151)',
+    case: { method: 'readManagedSyncCursorHeader', variant: 'default', run: e => e.readManagedSyncCursorHeader('default', '1', 'k') },
+    texts: [`SELECT completed_keys->0 AS header, fingerprint AS key FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'incarnation'=$2
+      ORDER BY (fingerprint=$3) DESC, updated_at DESC LIMIT 1`],
+  },
+  {
+    from: 'src/core/persistence/sync-status.ts:304 retiredCursorStands (at 21cd64e151)',
+    case: { method: 'readRetiredManagedSyncCursor', variant: 'default', run: e => e.readRetiredManagedSyncCursor('default', '1') },
+    texts: [`SELECT to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS first_seen FROM op_checkpoints
+    WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'incarnation'<>$2 AND COALESCE(completed_keys->0->>'done','false')<>'true' ORDER BY updated_at LIMIT 1`],
+  },
+  {
+    from: 'src/core/persistence/sync-status.ts:364 readSyncStatus (source row) (at 21cd64e151); identity_reviews and held_deletes from sync-status.ts:376 (at c9e289dbed)',
+    case: { method: 'readSyncStatusSourceRow', variant: 'default', run: e => e.readSyncStatusSourceRow('default') },
+    texts: () => {
+      const admissionSql = syncAdmissionSettingSql(4);
+      return [`SELECT s.incarnation::text AS incarnation, s.last_commit, s.last_sync_at, EXISTS (SELECT 1 FROM gbrain_cycle_locks l WHERE l.id=$7) AS drain_lock,
+      p.completed_keys->0 AS pass_value, p.updated_at AS pass_updated_at, now() AS pass_read_at, w.completed_keys->0 AS withheld, ${admissionSql.columns}, ${syncAdmissionEffectSql(7, 's')},
+      (SELECT r.request_id::text FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.kind='git' AND e.state='failed' AND NOT (e.data ? 'settled')
+        AND e.request_id IN (SELECT id::uuid FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.completed_keys->0->'obligations'->'converged'->'writeback')='array'
+          THEN p.completed_keys->0->'obligations'->'converged'->'writeback' ELSE '[]'::jsonb END) AS w(id)) ORDER BY e.id LIMIT 1) AS writeback_failed,
+      (SELECT row_to_json(f) FROM (SELECT r.id,r.worktree_id,r.state,r.source_ids,r.outcome,r.old_head,r.target_head,r.barrier_sequence,r.updated_at,w.owner_host_id FROM persistence_worktree_refreshes r
+        LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE s.id=ANY(r.source_ids) AND r.state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh,
+      (SELECT ir.completed_keys FROM op_checkpoints ir WHERE ir.op='${APPLE_CONTACTS_REVIEW_OP}' AND ir.fingerprint=s.id) AS identity_reviews,
+      (SELECT hd.completed_keys FROM op_checkpoints hd WHERE hd.op='${APPLE_CONTACTS_PENDING_DELETES_OP}' AND hd.fingerprint=s.id) AS held_deletes FROM sources s
+      LEFT JOIN op_checkpoints p ON p.op=$2 AND p.fingerprint=s.id||':'||s.incarnation::text
+      LEFT JOIN op_checkpoints w ON w.op=$3 AND w.fingerprint=s.id||':'||s.incarnation::text
+      ${admissionSql.joins}
+      WHERE s.id=$1 AND s.archived IS NOT TRUE`];
+    },
+  },
+  {
+    from: 'src/core/persistence/sync-status.ts:380 readSyncStatus (committed row) (at 21cd64e151)',
+    case: { method: 'readSyncStatusCommittedRow', variant: 'default', run: e => e.readSyncStatusCommittedRow('default') },
+    texts: () => [`SELECT count(*) AS n, EXISTS (SELECT 1 FROM persistence_effects e
+      WHERE e.source_id=$1 AND e.kind='git' AND e.state IN ('queued','running','failed') AND e.error_code IN ('targets_parked', ${GIT_PUSH_CODES.map(code => `'${code}'`).join(',')})
+        AND NOT (e.data ? 'settled')) AS git_push_held,
+      EXISTS (SELECT 1 FROM derived_generations g WHERE g.source_id=$1 AND g.kind IN ('fact_fence','take_fence') AND g.state='held') AS fence_held,
+      (SELECT max(r.completed_at) FROM persistence_source_bindings b JOIN persistence_requests r ON r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
+        WHERE b.source_id=$1 AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS last_committed_at
+    FROM persistence_requests WHERE source_id=$1 AND state='committed'
+    AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND completed_at > now() - interval '10 minutes'`],
+  },
+  {
+    from: 'src/core/persistence/sync-status.ts:589 recoveryProbe (at 21cd64e151)',
+    case: { method: 'readSyncRecoveryProbeRow', variant: 'default', run: e => e.readSyncRecoveryProbeRow('default', { timeoutMs: 2_000 }) },
+    // The `timeoutMs` option wraps the statement in the engine's statement-timeout transaction, as the caller's executeRaw did.
+    texts: ['BEGIN READ WRITE; SET LOCAL statement_timeout = 2000', `SELECT (SELECT count(*) FROM persistence_requests WHERE source_id=$1 AND recovery IS NOT NULL) AS n, f.request_id::text AS request_id, f.slug,
+         f.blocked_reason IN ('unexpected_staging_bytes','unexpected_file_bytes') AS blocked
+       FROM (SELECT 1) one LEFT JOIN LATERAL (SELECT request_id, slug, blocked_reason FROM persistence_requests WHERE source_id=$1 AND recovery IS NOT NULL ORDER BY sequence LIMIT 1) f ON true`, 'COMMIT'],
+  },
+  {
+    from: 'src/core/persistence/sync-failures.ts:171 readManagedSyncFailures (at 21cd64e151)',
+    case: { method: 'readManagedSyncFailureRows', variant: 'default', run: e => e.readManagedSyncFailureRows(['default']) },
+    texts: [`
+    SELECT c.fingerprint AS cursor_key,jsonb_build_object('sourceId',s.id,'incarnation',s.incarnation,'runId',c.completed_keys->0->>'runId',
+      'index',c.completed_keys->0->'index','target',c.completed_keys->0->>'target',
+      'syncOptions',c.completed_keys->0->'syncOptions','processingOptions',c.completed_keys->0->'processingOptions',
+      'pending',jsonb_build_object('requestId',c.completed_keys->0->'pending'->>'requestId')) AS value,
+      CASE WHEN r.id IS NULL THEN NULL ELSE jsonb_build_object('state',r.state,'request_id',r.request_id,'error_code',r.error_code,'error_message',r.error_message,'error_detail',r.error_detail) END AS receipt,
+      f.completed_keys->0 AS failure,m.completed_keys->((c.completed_keys->0->>'index')::int)->>'path' AS path,c.updated_at
+    FROM op_checkpoints c
+    JOIN sources s ON s.id=c.completed_keys->0->>'sourceId' AND s.incarnation::text=c.completed_keys->0->>'incarnation'
+    LEFT JOIN persistence_requests r ON r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
+      AND r.principal_id=c.completed_keys->0->'authority'->'writer'->'principal'->>'id'
+      AND r.principal_kind=c.completed_keys->0->'authority'->'writer'->'principal'->>'kind'
+    LEFT JOIN op_checkpoints f ON f.op='managed-sync-failure' AND f.fingerprint=c.fingerprint
+    LEFT JOIN op_checkpoints m ON m.op='managed-sync-manifest' AND m.fingerprint=c.completed_keys->0->>'runId'
+    WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
+      AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))`],
+  },
+  {
+    from: 'src/core/persistence/sync-failures.ts:202 readManagedSyncFailures (orphaned failures) (at 21cd64e151)',
+    case: { method: 'readOrphanedManagedSyncFailureRows', variant: 'default', run: e => e.readOrphanedManagedSyncFailureRows(null) },
+    texts: [`
+    SELECT f.completed_keys->0 AS failure FROM op_checkpoints f
+    JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text=f.completed_keys->0->>'source_incarnation'
+    WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
+      AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint)`],
+  },
+  {
+    from: 'src/core/persistence/sync-drain.ts:807 engineStallProbe head (at 21cd64e151)',
+    case: { method: 'readSyncHeadRequestRow', variant: 'default', run: e => e.readSyncHeadRequestRow('default', { timeoutMs: 2_000 }) },
+    // The `timeoutMs` option wraps the statement in the engine's statement-timeout transaction, as the caller's executeRaw did.
+    texts: ['BEGIN READ WRITE; SET LOCAL statement_timeout = 2000', `SELECT h.state AS head_state, h.id::text AS head_request_id, h.request_id::text AS head_write_request_id, h.claim_phase AS head_claim_phase, h.execution_token::text AS head_token,
+           (h.claim_expires_at IS NOT NULL AND h.claim_expires_at < now()) AS head_lapsed, h.intent->>'kind' AS head_kind
+         FROM persistence_source_bindings b
+         JOIN sources s ON s.id = b.source_id AND s.incarnation = b.source_incarnation
+         JOIN LATERAL (SELECT e.id, e.request_id, e.state, e.claim_phase, e.execution_token, e.claim_expires_at, e.intent FROM persistence_requests e
+           WHERE e.worktree_id = b.worktree_id AND e.state IN ('queued','running','recovering') ORDER BY (e.state <> 'running'), e.sequence LIMIT 1) h ON true
+         WHERE b.source_id = $1`, 'COMMIT'],
+  },
+  {
+    from: 'src/core/sync-identity-downgrades.ts:114 listIdentityDowngrades (at 21cd64e151)',
+    case: { method: 'readIdentityDowngradeRows', variant: 'default', run: e => e.readIdentityDowngradeRows(['default']) },
+    texts: () => [`SELECT dg.completed_keys->0 AS record, np.slugs AS new_slugs FROM op_checkpoints dg JOIN pages p ON p.id::text = dg.fingerprint
+      LEFT JOIN LATERAL (SELECT array_agg(slug ORDER BY slug) AS slugs FROM pages WHERE source_id = p.source_id AND deleted_at IS NULL AND source_path = dg.completed_keys->0->>'to') np ON true
+      WHERE dg.op = $1 AND p.deleted_at IS NOT NULL AND ${identityDowngradeOpen('p')}
+        AND p.source_id = dg.completed_keys->0->>'source_id' AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
+      ORDER BY dg.completed_keys->0->>'recorded_at', dg.fingerprint`],
   },
 ];
 
