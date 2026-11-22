@@ -322,9 +322,9 @@ test/scripts/check-core-world-reads.test.ts	check-core-world-reads.ts: the ratch
 test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	1	exec-scan,readFileSync
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
 test/scripts/check-item-allowlist-catches.test.ts	CLI	2	readFileSync
-test/scripts/check-public-surface.test.ts	dropped manifest entries	5	bun-file
+test/scripts/check-public-surface.test.ts	dropped manifest entries	7	bun-file
 test/scripts/check-public-surface.test.ts	the base it compares with	10	bun-file
-test/scripts/check-public-surface.test.ts	the committed manifest	2	bun-file
+test/scripts/check-public-surface.test.ts	the committed manifest	3	bun-file
 test/scripts/chunk-visibility-ratchet.test.ts	check-chunk-visibility.ts	6	readFileSync
 test/scripts/ci-bounded-run.test.ts	(file-level)	7	readFileSync
 test/scripts/ci-executed-counts.test.ts	CLI	2	readFileSync
@@ -446,7 +446,7 @@ test/skillpack-scaffold.test.ts	runScaffold — IRON-RULE regressions (R1, R2)	3
 test/skillpack-scaffold.test.ts	runScaffold — happy path	3	readFileSync
 test/skillpack-scrub-legacy.test.ts	runScrubLegacy	8	readFileSync
 test/skillpack-writer-guard.test.ts	(file-level)	6	readFileSync
-test/skills-refusal-honesty.test.ts	agent-loaded text reports refusals and asks for narrow access	2	readFileSync
+test/skills-refusal-honesty.test.ts	agent-loaded text reports refusals and asks for narrow access	3	readFileSync
 test/slug-move-keeps-trust-9735.test.ts	#9735 slug move census	2	readFileSync
 test/snapshot-shape-guard.test.ts	(file-level)	10	readFileSync
 test/sources-webhook.test.ts	Webhook sync job extraction contract	1	source-surface-helper

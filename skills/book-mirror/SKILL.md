@@ -488,7 +488,8 @@ Cross-link entities mentioned in the analysis:
 The **Chapter half** should:
 
 - Preserve the author's actual stories, statistics, frameworks, examples.
-- Quote memorable phrases verbatim.
+- Quote memorable phrases verbatim, a sentence or two at a time; never copy
+  whole passages.
 - Be detailed enough that the reader could skip the book and not lose much.
 
 The **Mirror half** should:

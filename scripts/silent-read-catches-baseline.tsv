@@ -2007,7 +2007,7 @@ src/core/skills/resolver/build.ts#catalogStatus	catch_empty	2
 src/core/skills/resolver/build.ts#gbrainCommit	catch_empty	1
 src/core/skills/resolver/catalog-files.ts#listCatalogs	catch_empty	1
 src/core/skills/resolver/catalog-files.ts#readReceipt	catch_empty	1
-src/core/skills/resolver/config.ts#readResolverSettings	catch_empty	1
+src/core/skills/resolver/config.ts#readResolverSection	catch_empty	1
 src/core/skills/resolver/daily-log.ts#appendDailyLog	promise_catch_empty	1
 src/core/skills/resolver/daily-log.ts#appendDailyLogSync	catch_empty	1
 src/core/skills/resolver/daily-log.ts#readRecentDailyLog	catch_empty	1
