@@ -17,6 +17,7 @@ import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
 import { dirname, basename, join } from 'path';
 import { createRequire } from 'module';
 import { frontmatterBodyOffset, validatorFrontmatterFence } from '../core/markdown.ts';
+import { GUEST_WARNING_LINE_RE } from '../core/guests/marker.ts';
 import { opError } from '../core/ops/contract.ts';
 
 // Inline marked.js so published HTML is truly self-contained (no CDN dependency)
@@ -40,13 +41,18 @@ function before(text: string, pattern: RegExp): string {
  * Strip private/internal data from brain markdown before publishing. Fails closed (#10020): the page is cut at the
  * first line that could start its timeline (any timeline sentinel, or a Timeline or History heading at any level,
  * with or without a --- rule before it), a gbrain fence or HTML comment that never closes drops the rest of the
- * page, and frontmatter that never closes refuses to publish.
+ * page, and frontmatter that never closes refuses to publish. A guest page saved from `gbrain get` starts with its
+ * warning line; when frontmatter opens right after it, the line is dropped and the frontmatter stripped as usual.
  */
 export function makeShareable(content: string): string {
   let clean = content.replace(/\r\n?/g, '\n');
+  const opensFrontmatter = (text: string) => validatorFrontmatterFence(text.split('\n')).opens;
+
+  const guestLine = GUEST_WARNING_LINE_RE.exec(clean);
+  if (guestLine && opensFrontmatter(clean.slice(guestLine[0].length))) clean = clean.slice(guestLine[0].length);
 
   // Remove YAML frontmatter
-  if (validatorFrontmatterFence(clean.split('\n')).opens) {
+  if (opensFrontmatter(clean)) {
     const offset = frontmatterBodyOffset(clean);
     if (offset === 0) throw opError('invalid_frontmatter', 'The page opens a frontmatter block with --- and never closes it, so nothing was published.', 'Close the frontmatter with a --- line that starts at the beginning of the line (an indented --- does not close it), then publish again.', { why: 'Publishing cannot tell where the private frontmatter ends, so it publishes nothing rather than guess.' });
     clean = clean.slice(offset);
