@@ -35,6 +35,7 @@ const EXEMPT = {
   'src/core/persistence/sync-image.ts': 'owner git edits (managed sync image branch, prepared through importImageFile as import-prepare.ts is); doctor core_memory reports any overage',
   'src/core/persistence/connector-sync.ts': 'connector-owned pages; core marking is owner-written frontmatter the connector never sets',
   'src/core/persistence/connector-google-receipts.ts': 'connector receipt rows, not page text',
+  'src/core/persistence/fact-date-verification.ts': 'local operator verifies an existing date. Checks that the receipt routing key has no page and records hashed evidence only. The native receipt test verifies that the fact and canonical files are unchanged.',
   'src/core/persistence/projection-reindex.ts': 'rebuilds derived projections; page text is unchanged',
   'src/core/persistence/change-reason.ts': 'wraps the PreparedMutation preparePageMutation returned (service.ts) in place: the core guard, exclusiveSources and every other field are the guarded object\'s own',
   'src/core/persistence/import-deferral.ts': 'withSupersedes wraps the PreparedMutation preparePageMutation returned (service.ts) in place: it only adds the supersedes trailer and the outcome field to a held blind put_page; the core guard, exclusiveSources and every other field are the guarded object\'s own',

@@ -107,6 +107,7 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
                                          [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair duplicate-facts [--source <id>] [--include-cross-entity] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair fact-claim-dates --source <id> [--day YYYY-MM-DD] [--apply --expect <preview-hash> --yes] [--json]
+       gbrain repair fact-date-verification --source <id> --evidence-file <path> [--apply --expect <preview-hash>] [--json]
        gbrain repair provenance [--source <id>] [--slug <slug>]... [--include-ambiguous] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair secret-spans --source <id> --slug <slug>... [--rules <rule,...>] [--no-embed] [--apply --expect <preview-hash>] [--json]
        gbrain repair segmented-tiling --source <id> [--slug <slug>]... [--apply --expect <preview-hash>] [--json]
@@ -614,6 +615,10 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
 }
 
 export async function runRepairCommand(engine: BrainEngine, args: string[]): Promise<void> {
+  if (args[0] === 'fact-date-verification') {
+    const { runFactDateVerificationCommand } = await import('./repair-fact-date-verification.ts');
+    return runFactDateVerificationCommand(engine, args);
+  }
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
   const { kind, apply, all, json, noEmbed, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
     prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, wholeClass, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,

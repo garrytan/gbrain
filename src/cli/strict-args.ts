@@ -95,6 +95,13 @@ export const STRICT_SUBCOMMANDS: Readonly<Record<string, StrictSpec>> = {
  * running the real apply. The harness lane (`--harness`) has its own parser.
  */
 export const STRICT_SELF_HELP_SUBCOMMANDS: Readonly<Record<string, StrictSpec>> = {
+  'repair fact-date-verification': {
+    flags: ['--apply', '--json'],
+    values: { '--source': null, '--evidence-file': null, '--expect': { re: /^[a-f0-9]{64}$/, shape: 'the SHA-256 preview hash' } },
+    separateValues: true,
+    maxPositionals: 0,
+    fix: { argv: ['repair', 'fact-date-verification', '--help'], why: 'Shows the evidence manifest and read-only preview command.' },
+  },
   'skillpack reference': {
     flags: ['--all', '--apply-clean-hunks', '--dry-run', '--json', '--update-untouched', '--no-diff', '--accept-historical', '--fail-on-skipped'],
     values: { '--workspace': null, '--since': null },

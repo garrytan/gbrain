@@ -3237,7 +3237,8 @@ at least a quarter of them, across 20 or more entities. It reports each such
 day with its fact and entity counts, the most frequent source tags, and how
 many of those claims state exactly one earlier ISO date of their own ("Acme
 Example closed a seed round on 2025-03-14"). A remote caller sees only its
-permitted sources. `gbrain repair fact-claim-dates` moves those facts to the
+permitted sources. A real concentration can be checked against
+[retained date evidence](#fact-date-verification). `gbrain repair fact-claim-dates` moves those facts to the
 date their claim states. It is explicit-only, preview-bound and destructive,
 and it never runs on upgrade.
 
@@ -3277,6 +3278,51 @@ then changes exactly the previewed rows; a page edited during the run reports
 `changed_since_preview` and is kept. A second preview lists nothing. On a
 managed brain `git revert` of the repair commit undoes it, and page history
 keeps the earlier revision.
+
+<a id="fact-date-verification"></a>
+### Verify an existing fact date from its retained original
+
+Use this host-only command with source-wide write authority when the recorded UTC day is substantiated by the
+fact's original evidence. Review the source contents and verify that the date
+describes the event in the fact. The command checks the exact excerpt and
+date token. It cannot determine which event the excerpt describes.
+
+```bash
+gbrain repair fact-date-verification --source <id> --evidence-file <path> --json
+gbrain repair fact-date-verification --source <id> --evidence-file <path> --apply --expect <hash> --json
+```
+
+The manifest has `"mode": "verify"` and a nonempty `rows` array. Each row has a
+stable `request_id` UUID and an `evidence` object with these fields.
+
+| Field | Value |
+| --- | --- |
+| `fact_id` | The active fact's numeric ID in the selected source |
+| `claim_sha256` | Lowercase SHA-256 of the exact stored claim as UTF-8 |
+| `utc_day` | The fact's recorded event day in `YYYY-MM-DD` form |
+| `original_page_id`, `original_revision` | Numeric page ID and revision UUID of the retained original in that source |
+| `excerpt_start`, `excerpt_length` | One-based starting character and length in the archived `compiled_truth`, measured in Unicode code points. The length may be up to 4,000 characters. |
+| `excerpt_sha256` | Lowercase SHA-256 of the exact archived substring as UTF-8, including any whitespace in the selection |
+
+The read-only preview checks all rows, including that each excerpt has a single
+unambiguous date for the proposed day. Select words that describe the event
+along with its date. A date alone or in a citation target does not qualify.
+The preview hash binds the source incarnation,
+registered writer, active facts and evidence to the reviewed request IDs.
+Apply validates the whole manifest again and rechecks each fact in its
+publication transaction. An interruption can leave a committed prefix. Reuse
+the manifest and original request IDs to reconcile existing receipts.
+Upgrade and restart eligible persistence consumers before applying, since
+older consumers can reject these operations. Check an earlier request's
+terminal receipt before deciding whether a new ID is needed after an upgrade.
+
+To withdraw a verification, preview and apply a manifest with
+`"mode": "revoke"`. Each row has a new stable `request_id` and the
+verification's `receipt_id` from the original apply output. Both receipts
+remain in the ledger. The commands leave facts and page files intact.
+Doctor preserves the original bulk-day totals. It reports a verified same-day
+concentration only when every active fact on that day has current evidence and
+no claim states a single earlier date.
 
 <a id="failed-writes"></a>
 ### Failed writes

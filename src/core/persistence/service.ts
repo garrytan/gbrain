@@ -119,6 +119,7 @@ async function prepareByOperation(e: BrainEngine, row: WriteRequest, cfg: GBrain
   if (row.operation === 'trust_owner_page') return (await import('../trust/page-handlers.ts')).prepareTrustOwnerPageMutation(e, row, cfg);
   if (row.operation === 'trust_release') return (await import('../trust/release-publish.ts')).prepareTrustReleaseMutation(e, row, cfg);
   if (row.operation === 'relink_facts') return (await import('../facts/relink-publish.ts')).prepareRelinkMutation(e, row, cfg);
+  if (row.operation === 'verify_fact_date' || row.operation === 'revoke_fact_date_verification') return (await import('./fact-date-verification.ts')).prepareFactDateVerification(row);
   if (row.operation === 'retire_connector_facts') return (await import('./connector-fact-retirement.ts')).prepareConnectorFactRetirement(e, row, cfg);
   if (['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
