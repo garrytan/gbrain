@@ -12,6 +12,7 @@
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
 import { withEngineScope } from './engine-scope.ts';
+import { isRemoteCaller, withRemoteCaller } from './remote-caller.ts';
 import { withGuestMarks } from './guests/marker.ts';
 import { OPERATION_LOADERS } from './operation-loaders.generated.ts';
 
@@ -144,8 +145,12 @@ export function finalizeOperation(op: Operation): void {
   }
   // The handler runs in its engine's scope, so an embedded engine's AI calls use that engine's gateway (engine-scope.ts).
   // Redaction runs after the guest stamp, so a key-like sender label in a guest mark is redacted like stored text.
+  // It also runs under the remote-caller mark its context names (remote-caller.ts), so a handler a model's tool call
+  // reaches outside MCP dispatch (a subagent brain tool, a SkillOpt tool) is a remote caller too. The mark is sticky:
+  // a nested call with `remote: false` under a remote caller stays remote.
   const handler = withOutputRedaction({ handler: withPrivacyHoldReplies(op, withGuestMarks(op, op.handler)), outputRedaction: op.outputRedaction });
-  op.handler = (ctx, params) => withEngineScope(ctx.engine, () => handler(ctx, params));
+  op.handler = (ctx, params) => withEngineScope(ctx.engine,
+    () => withRemoteCaller(isRemoteCaller() || ctx.remote !== false, () => handler(ctx, params)));
 }
 
 /** The finalized operation named `name`, loading only the module that defines it. */

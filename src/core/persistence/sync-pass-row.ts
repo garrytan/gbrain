@@ -131,6 +131,8 @@ export interface ManagedSyncPassValue {
      * step ends; status names it for a pass that stopped there.
      */
     step?: { name: 'level_read' | 'drift_history'; at: string; done?: number; total?: number };
+    /** GST-3534: the commits the pass's rounds read, and how many rounds read `I⋈P` whole or patched the previous read. */
+    levels?: { heads: number; whole: number; patched: number };
   };
 }
 

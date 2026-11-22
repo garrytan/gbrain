@@ -185,6 +185,9 @@ CHECKS=(
   # GBRA-130: per-item catches that test an error code against a list and
   # rethrow the rest only shrink; baseline scripts/item-allowlist-catches-baseline.tsv.
   "check:item-allowlist-catches"
+  # A catch that turns a failed read into an empty answer only falls; baseline
+  # scripts/silent-read-catches-baseline.tsv (rules: scripts/silent-read-rules.ts).
+  "check:silent-read-catches"
   # EO10 (refactor wave 1): engine-sql/ and schema-migrations/ never import
   # back up into the engine façades or migrate.ts (ESM TDZ cycles).
   "check:layering"

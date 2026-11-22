@@ -154,7 +154,6 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   'edge-proposals': async () => (await import('../commands/edge-proposals.ts')).runEdgeProposals as never,
   'memory-proposals': async () => (await import('../commands/memory-proposals.ts')).runMemoryProposals as never,
   questions: async () => (await import('../commands/questions.ts')).runQuestions as never, // --help before the engine
-  waiting: async () => (await import('../commands/loops.ts')).runWaiting as never,
   access: async () => (await import('../commands/access.ts')).runAccess as never, // GBRA-218: usage prints before the engine
   // runSources's `--help`/`-h`/undefined-subcommand branch calls printHelp()
   // without ever touching `engine` — safe to dispatch with no brain
@@ -637,6 +636,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     const { runDelegatedCliOperation } = await import('../commands/persistence-delegate.ts');
     if (await runDelegatedCliOperation(op.name, params, cfgPre, {
       brain: cliOpts.brain, timeoutMs: cliOpts.timeoutMs ?? undefined, ...(cliOpts.room !== undefined ? { room: cliOpts.room } : {}),
+      emitResponseMeta: captureRetrievalMeta,
     }, formatResult)) return;
   }
 
@@ -703,7 +703,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
 
     let rawResult: unknown;
     const enforcedReadOf = enforced && enforcedClass === 'read'
-      ? (p: Record<string, unknown>) => enforced.enforcedRead(engine, command, op.name, p, { sourceId: ctx.sourceId, localFederatedSourceIds: ctx.localFederatedSourceIds, config: ctx.config })
+      ? (p: Record<string, unknown>) => enforced.enforcedRead(engine, command, op.name, p, { sourceId: ctx.sourceId, localFederatedSourceIds: ctx.localFederatedSourceIds, config: ctx.config, ...(op.name === 'entity' ? { retrieval: (m: unknown) => captureRetrievalMeta('retrieval', m) } : {}) }) // entity alone reads the lookup marker back
       : null;
     if (enforced && enforcedClass === 'write') await enforced.checkEnforcedWrite(engine, command, op.name, params, ctx.sourceId);
     if (enforcedReadOf) {
@@ -759,7 +759,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     if (output) await writeStdoutFinal(output);
     if (noticeText) process.stderr.write(noticeText);
     reportInBandFailure(result, command);
-    markEntityMiss(op.name, result);
+    markEntityMiss(op.name, result, lastRetrievalMeta);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
     // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
@@ -863,7 +863,7 @@ async function runThinClientRouted(
     if (output) await writeStdoutFinal(output);
     if (stampText) process.stderr.write(stampText);
     reportInBandFailure(result, op.cliHints?.name ?? op.name);
-    markEntityMiss(op.name, result);
+    markEntityMiss(op.name, result, lastRetrievalMeta);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {

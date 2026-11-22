@@ -1064,11 +1064,15 @@ const confirmGuard = <T>(read: Promise<T>) => read.catch((error: unknown) => { t
 async function readRoundSnapshot(engine: BrainEngine, input: { kind: 'postgres' | 'pglite'; sourceId: string; incarnation: string; worktreeId: string; parser: SyncImportParser; step: LoopYield;
   reuse?: { cache: PassLevelCache; passId: string; recorded?: ReadonlySet<number>; working: boolean; head: string } }, timed: <T>(key: string, read: () => Promise<T>) => Promise<T>) {
   const { kind, sourceId, incarnation, worktreeId, reuse } = input;
-  // Reused only at the same commit (a pass's own rounds; across passes any), worktree and parser, in committed mode: working mode always reads `I⋈P` whole.
+  // Reused at the same worktree and parser, in committed mode: working mode always reads `I⋈P` whole. A pass's own round at the same
+  // commit proves the previous round's table with attribution; GST-3534: one at a later commit (HEAD moved under the pass), like the
+  // next pass's first round, proves it `across` (every changed row re-read, any writer's), since `I⋈P` holds no Git state.
   const key = JSON.stringify([sourceId, incarnation, worktreeId, reuse?.head, input.parser]), acrossKey = JSON.stringify([sourceId, incarnation, worktreeId, input.parser]);
-  const cached = reuse?.cache.pages, across = cached?.across;
-  const unkeyed = cached && (reuse!.working || cached.key !== (across ? acrossKey : key)) ? { taken: false, reason: reuse!.working ? 'working' : 'key', rows: 0, ...(across ? { across } : {}) } : undefined;
-  let prior = reuse && !unkeyed ? reuse.cache.pages : undefined;
+  const cached = reuse?.cache.pages;
+  const across = cached && (cached.across || cached.key !== key) ? true as const : undefined;
+  const keyed = cached && (cached.across ? cached.key === acrossKey : cached.acrossKey === acrossKey);
+  const unkeyed = cached && (reuse!.working || !keyed) ? { taken: false, reason: reuse!.working ? 'working' : 'key', rows: 0, ...(across ? { across } : {}) } : undefined;
+  let prior = reuse && !unkeyed ? (across && !cached!.across ? { ...cached!, across } : cached) : undefined;
   const confirming = prior !== undefined;
   if (reuse) reuse.cache.pages = undefined;
   const round = (marking: boolean) => withRoundSnapshot(engine, async exec => {
@@ -1087,7 +1091,7 @@ async function readRoundSnapshot(engine: BrainEngine, input: { kind: 'postgres' 
     // A failed mark fails what was pipelined after it: the mark's failure is the one to report.
     const read = confirmed?.read ?? await timed('pages', () => readPages(exec, kind, sourceId, incarnation, input.parser, undefined, input.step)).catch(async (error: unknown) => { await marked; throw error; });
     const mark = confirmed?.mark ?? (marked ? await marked : null);
-    if (confirmed?.read && levelReuseVerify()) await verifyReusedPages(exec, { kind, sourceId, incarnation, parser: input.parser, table: confirmed.read.pages, how: across ? 'across passes' : 'in a pass' });
+    if (confirmed?.read && levelReuseVerify()) await verifyReusedPages(exec, { kind, sourceId, incarnation, parser: input.parser, table: confirmed.read.pages, how: !across ? 'in a pass' : cached!.across ? 'across passes' : 'in a pass at a later commit' });
     const [work, markers, passRow] = await others;
     if (reuse && mark) reuse.cache.pages = { key, acrossKey, mark, table: read!.pages };
     const confirm = confirmed?.confirm ?? unkeyed;

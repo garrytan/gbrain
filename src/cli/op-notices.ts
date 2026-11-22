@@ -12,7 +12,7 @@
  * until the count worsens or a new source or kind appears.
  */
 import { createHash } from 'node:crypto';
-import { cliRenderContext, renderAction, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
+import { cliRenderContext, renderAction, renderNotice, type Action, type Notice, type RenderedNotice } from '../core/agent-output.ts';
 import { renderCliNotices } from '../core/agent-markers.ts';
 import { isInteractive } from '../core/interaction.ts';
 import { admitAcrossCliCalls, processNoticeLedger, mutedNoticeCodes } from '../core/notice-ledger.ts';
@@ -73,6 +73,17 @@ export function withDegradedStamp(result: unknown, json: boolean, stamp: Degrade
 /** The routed (thin-client) path: the server's stamp, or (an older server) the one its result and retrieval meta imply. */
 export function withRoutedDegradedStamp(op: string, result: unknown, meta: Record<string, unknown> | undefined, json: boolean): { result: unknown; stderr?: string } {
   return withDegradedStamp(result, json, (meta?.degraded as DegradedStamp | undefined) ?? degradedStampFor(op, result, meta, []));
+}
+
+/** G8: a read the live serve answered gets its degraded stamp and notices where a cold run puts them (applyCliOpNotices). */
+export function withDelegatedMeta(op: string, result: unknown, meta: Record<string, unknown>, json: boolean): { result: unknown; stderr?: string } {
+  const stamped = withRoutedDegradedStamp(op, result, meta, json);
+  const rendered = Array.isArray(meta.gbrain_notices) ? meta.gbrain_notices as RenderedNotice[] : [];
+  if (rendered.length === 0) return stamped;
+  const isObject = typeof stamped.result === 'object' && stamped.result !== null && !Array.isArray(stamped.result);
+  if (json && isObject) return { ...stamped, result: { ...(stamped.result as Record<string, unknown>), notices: rendered } };
+  const stderr = (stamped.stderr ?? '') + (renderCliNotices(rendered, { json: false, tty: isInteractive(), stdoutIsData: true }).stderr ?? '');
+  return stderr ? { result: stamped.result, stderr } : { result: stamped.result };
 }
 
 /**
