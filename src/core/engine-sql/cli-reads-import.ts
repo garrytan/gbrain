@@ -158,7 +158,7 @@ export async function listLinkPageMetadata(exec: LegacyUnscopedRead, sourceId?: 
 /** The live pages of one source whose slug is in `slugs`, by slug (a sync's link extraction). */
 export async function listLinkPageMetadataForSlugs(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[]): Promise<LinkPageMetadataRow[]> {
   return exec.executeRaw<LinkPageMetadataRow>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
-        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`, [sourceId, [...slugs]]);
+        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug COLLATE "C"`, [sourceId, [...slugs]]);
 }
 
 /**

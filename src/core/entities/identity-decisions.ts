@@ -348,11 +348,10 @@ async function databaseOnly(engine: BrainEngine, home: IdentityHome, decisions: 
 /**
  * Sync's hook: re-project the home source's decisions after it syncs, retry pending members after any sync, fill the
  * fingerprints of "different" decisions recorded before they were kept, then run the company sweep from the pages the
- * sync changed. Never throws. A Rust brain keeps no decision rows and serves neither listIdentityDecisions nor the sweep's entity
- * key reads, so its sync skips the hook instead of ending on a typed refusal that it would log after every sync.
+ * sync changed. Never throws. Every engine runs it: the Rust store serves the decision list and apply and the sweep's entity
+ * key reads (rust/docs/store/entity_identities.md).
  */
 export async function syncIdentityDecisions(engine: BrainEngine, sourceId: string, log?: (line: string) => void, changedSlugs?: readonly string[] | 'all'): Promise<void> {
-  if (engine.kind === 'rust') return;
   try {
     const home = await identityHome(engine);
     if (home && home.sourceId === sourceId) {

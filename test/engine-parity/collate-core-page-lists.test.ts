@@ -143,7 +143,7 @@ describe('census, size states and file lists', () => {
     return states;
   });
 
-  parityTest('fileLinkOwnership lists the scoped pages by slug byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('fileLinkOwnership lists the scoped pages by slug byte', { methods: ['putPage', 'listLinkPageMetadataForSlugs', 'listAttendedOriginSlugs'] }, async (engine, backend) => {
     await createSource(engine, backend, 'link-example');
     for (const slug of MIXED_SLUGS) await engine.putPage(slug, note(slug), { sourceId: 'link-example' });
     const { metadata } = await fileLinkOwnership(engine, 'link-example', { slugs: MIXED_SLUGS });
