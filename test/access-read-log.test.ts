@@ -37,14 +37,6 @@ async function capture(fn: () => Promise<unknown>): Promise<string> {
   return lines.join('\n');
 }
 
-async function open(kind: string): Promise<{ engine: BrainEngine; close: () => Promise<void> }> {
-  if (kind === 'postgres') return isolatedPersistencePostgres(process.env.DATABASE_URL!);
-  const engine = new PGLiteEngine();
-  await engine.connect({ engine: 'pglite' } as never);
-  await engine.initSchema();
-  return { engine, close: () => engine.disconnect() };
-}
-
 async function seed(engine: BrainEngine): Promise<void> {
   await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
   const page = (slug: string, fm: string[]) => importFromContent(engine, slug, ['---', 'type: note', 'title: ' + slug, ...fm, '---', '# ' + slug, '', 'Plan notes ' + TERM + '.'].join('\n'), { sourceId: SRC, noEmbed: true });
@@ -68,7 +60,11 @@ for (const kind of testBackends()) {
   describe(`access read log: a brain with no members (${kind}, repo-less)`, () => {
     let engine: BrainEngine;
     let close: () => Promise<void>;
-    beforeAll(async () => { ({ engine, close } = await open(kind)); await seed(engine); });
+    beforeAll(async () => {
+      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+      else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
+      await seed(engine);
+    });
     afterAll(async () => { __resetAccessReadLogForTests(); await close(); });
 
     test('remote and stdio reads write nothing', async () => {
@@ -84,7 +80,8 @@ for (const kind of testBackends()) {
     let engine: BrainEngine;
     let close: () => Promise<void>;
     beforeAll(async () => {
-      ({ engine, close } = await open(kind));
+      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+      else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
       await seed(engine);
       await addMember(engine, 'owner-example');
       await addMember(engine, 'alice-example');
@@ -123,7 +120,7 @@ for (const kind of testBackends()) {
       const visible = new Set([await pageId(engine, OPEN), await pageId(engine, ALICE)]);
       expect(row!.page_ids.length).toBeGreaterThan(0);
       for (const id of row!.page_ids) expect(visible.has(id)).toBe(true);
-      expect(JSON.stringify(await engine.executeRaw('SELECT * FROM access_read_log'))).not.toContain(TERM);
+      expect(JSON.stringify(await engine.executeRaw('SELECT to_jsonb(l) - \'id\' AS row FROM access_read_log l'))).not.toContain(TERM);
     });
 
     test('an enforced member CLI read logs transport cli and the CLI teardown drain writes it', async () => {

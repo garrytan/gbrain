@@ -60,7 +60,7 @@ export async function whoRead(engine: BrainEngine, slug: string, opts: Window & 
   const { since, limit } = window(opts, '30d');
   const pages = await engine.executeRaw<{ id: number; source_id: string; slug: string }>(
     'SELECT id, source_id, slug FROM pages WHERE slug = $1 AND ($2::text IS NULL OR source_id = $2) ORDER BY source_id', [slug, opts.source ?? null]);
-  if (pages.length === 0) throw opError('page_not_found', `No page ${slug}${opts.source ? ` in source ${opts.source}` : ''}.`, 'Find the slug with gbrain find <name>.');
+  if (pages.length === 0) throw opError('page_not_found', `No page ${slug}${opts.source ? ` in source ${opts.source}` : ''}.`, 'Find the slug with gbrain find, then run the command again.');
   const ids = pages.map(p => p.id);
   const reads = (await engine.executeRaw<Row>(`${SELECT} WHERE l.page_ids && $1::int[] AND l.created_at >= $2::timestamptz ORDER BY l.created_at DESC, l.id DESC LIMIT $3`,
     [ids, since, limit])).map(entry);
