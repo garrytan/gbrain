@@ -448,11 +448,13 @@ about $0.0001 a turn once the list is cached and $0.001 the first time; a
 typical wait is under a second. Each call is charged to
 `skill-index/router-spend.json` at its largest possible cost before it is
 made and settled to its real cost after, so a call cut off mid-way still
-counts. The cap resets at 00:00 UTC.
+counts, and a reply that reports no token counts stays at the largest cost.
+The cap resets at 00:00 UTC.
 
 **Privacy.** With the picker on, each message and your skills' ids and
 descriptions go to the model's provider (Anthropic, OpenAI or Google), over
-HTTPS, with your key (with a `compat:` model, to the endpoint you set). Keys come from the environment (`ANTHROPIC_API_KEY`,
+HTTPS, with your key (with a `compat:` model, to the endpoint you set). A
+redirect from that address is refused, so the request goes nowhere else. Keys come from the environment (`ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY`) or from
 `anthropic_api_key`, `openai_api_key` or `google_api_key` in
 `~/.gbrain/config.json`; `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` and

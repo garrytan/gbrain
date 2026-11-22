@@ -38,8 +38,8 @@ export const PICKER_MAX_OUTPUT_TOKENS = 200;
 export const ROUTER_DEFAULT_MODELS = ['anthropic:claude-haiku-5-5', 'openai:gpt-6-luna', 'google:gemini-3.5-flash-lite'] as const;
 const LEDGER_FILE = 'router-spend.json';
 const LEDGER_LEASE_MS = 2_000;
-/** A conservative token estimate: about 3 characters per token. */
-const estTokens = (chars: number) => Math.ceil(chars / 3);
+/** Tokens a request adds around its text (roles, separators). The reservation counts one token per UTF-8 byte of text, a ceiling for byte-level tokenizers, at the cache-write rate. */
+const PICKER_OVERHEAD_TOKENS = 64;
 
 export const routerTimeoutMs = (harness: string | undefined, s: RouterSettings): number => s.timeoutMs ?? (harness === 'claude-code' ? 1500 : 2000);
 
@@ -82,17 +82,23 @@ interface LedgerDoc { v: 1; day: string; charged_usd: number }
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const ledgerPath = (home: string) => join(skillIndexRoot(home), LEDGER_FILE);
 
+/** The stored ledger: its day ('' with none) and that day's charged spend. */
+async function readLedger(home: string): Promise<{ day: string; charged: number }> {
+  try {
+    const d = JSON.parse(await readFile(ledgerPath(home), 'utf8')) as LedgerDoc;
+    return typeof d?.day === 'string' && typeof d.charged_usd === 'number' && Number.isFinite(d.charged_usd) ? { day: d.day, charged: d.charged_usd } : { day: '', charged: 0 };
+  } catch { return { day: '', charged: 0 }; } // silent-read-ok: no readable ledger means nothing charged yet
+}
+
 /** Today's charged spend (0 on a new day or with no ledger). */
 export async function readRouterSpend(home: string, now = Date.now()): Promise<{ day: string; charged_usd: number }> {
   const day = utcDay(now);
-  try {
-    const d = JSON.parse(await readFile(ledgerPath(home), 'utf8')) as LedgerDoc;
-    return { day, charged_usd: d?.day === day && typeof d.charged_usd === 'number' && Number.isFinite(d.charged_usd) ? d.charged_usd : 0 };
-  } catch { return { day, charged_usd: 0 }; }
+  const d = await readLedger(home);
+  return { day, charged_usd: d.day === day ? d.charged : 0 };
 }
 
-/** Run `fn` on today's ledger under its lease; null when the lease cannot be had. */
-async function withLedger<T>(home: string, now: number, fn: (charged: number) => { charged: number; result: T }): Promise<T | null> {
+/** Run `fn` on the stored ledger under its lease and write the day and charge it returns, if any; null when the lease cannot be had. */
+async function withLedger<T>(home: string, fn: (stored: { day: string; charged: number }) => { write?: { day: string; charged: number }; result: T }): Promise<T | null> {
   const lockPath = `${ledgerPath(home)}.lock`;
   let lease = null;
   for (let i = 0; i < 5 && !lease; i++) {
@@ -101,9 +107,8 @@ async function withLedger<T>(home: string, now: number, fn: (charged: number) =>
   }
   if (!lease) return null;
   try {
-    const { charged_usd } = await readRouterSpend(home, now);
-    const r = fn(charged_usd);
-    writeFileAtomic(ledgerPath(home), `${JSON.stringify({ v: 1, day: utcDay(now), charged_usd: Math.max(0, r.charged) } satisfies LedgerDoc)}\n`);
+    const r = fn(await readLedger(home));
+    if (r.write) writeFileAtomic(ledgerPath(home), `${JSON.stringify({ v: 1, day: r.write.day, charged_usd: Math.max(0, r.write.charged) } satisfies LedgerDoc)}\n`);
     return r.result;
   } catch { return null; } finally { await releaseLeaseAsync(lease); } // silent-read-ok: null is the typed outcome; callPicker reports ledger_unavailable and makes no call
 }
@@ -137,17 +142,23 @@ async function callPicker(home: string, message: string, skills: readonly Picker
   const compat = model.startsWith('compat:');
   const price = compat ? (s.usdPerMtok ? { input: s.usdPerMtok[0], output: s.usdPerMtok[1] } : null) : (await import('../../model-pricing.ts')).canonicalLookup(model);
   if (!price) return { ok: false, code: 'no_pricing', model, usd: 0 };
+  if (s.maxUsdPerDay <= 0) return { ok: false, code: 'daily_cap', model, usd: 0, detail: 'router_max_usd_per_day is 0' };
   const system = pickerPrompt(skills);
-  const estimate = round6((estTokens(system.length + message.length) * price.input + PICKER_MAX_OUTPUT_TOKENS * price.output) / 1e6);
+  const estimate = round6(((Buffer.byteLength(system) + Buffer.byteLength(message) + PICKER_OVERHEAD_TOKENS) * price.input * 1.25 + PICKER_MAX_OUTPUT_TOKENS * price.output) / 1e6);
   if (signal.aborted) return { ok: false, code: 'timeout', model, usd: 0 };
-  const at = now();
-  const reserved = await withLedger<{ ok: boolean; spent: number }>(home, at, charged => (charged + estimate > s.maxUsdPerDay
-    ? { charged, result: { ok: false, spent: charged } }
-    : { charged: charged + estimate, result: { ok: true, spent: charged } }));
+  const reserved = await withLedger<{ ok: boolean; spent: number; day: string }>(home, stored => {
+    const today = utcDay(now());
+    const day = stored.day > today ? stored.day : today;
+    const charged = stored.day === day ? stored.charged : 0;
+    return charged + estimate > s.maxUsdPerDay
+      ? { result: { ok: false, spent: charged, day } }
+      : { write: { day, charged: charged + estimate }, result: { ok: true, spent: charged, day } };
+  });
   if (!reserved) return { ok: false, code: 'ledger_unavailable', model, usd: 0 };
   if (!reserved.ok) return { ok: false, code: 'daily_cap', model, usd: 0, detail: `spent ${reserved.spent.toFixed(4)} of ${s.maxUsdPerDay.toFixed(2)} USD today (UTC); resets at 00:00 UTC` };
+  const settle = (cost: number) => withLedger(home, stored => ({ ...(stored.day === reserved.day ? { write: { day: stored.day, charged: stored.charged - estimate + cost } } : {}), result: true }));
   if (signal.aborted) {
-    await withLedger(home, at, charged => ({ charged: charged - estimate, result: true }));
+    await settle(0);
     return { ok: false, code: 'timeout', model, usd: 0 };
   }
   let res: PickerReply;
@@ -157,8 +168,10 @@ async function callPicker(home: string, message: string, skills: readonly Picker
     return { ok: false, code: signal.aborted ? 'timeout' : 'provider_error', model, usd: estimate };
   }
   const u = res.usage;
-  const actual = round6((u.input * price.input + u.cacheRead * price.input * 0.1 + u.cacheWrite * price.input * 1.25 + u.output * price.output) / 1e6);
-  if (utcDay(now()) === utcDay(at)) await withLedger(home, at, charged => ({ charged: charged - estimate + actual, result: true }));
+  const actual = u && u.input + u.cacheRead + u.cacheWrite + u.output > 0
+    ? round6((u.input * price.input + u.cacheRead * price.input * 0.1 + u.cacheWrite * price.input * 1.25 + u.output * price.output) / 1e6)
+    : estimate;
+  await settle(actual);
   if (res.refused) return { ok: false, code: 'provider_error', model, usd: actual };
   const parsed = parsePickerReply(res.text, new Set(skills.map(x => x.id)));
   if ('code' in parsed) return { ok: false, code: parsed.code, model, usd: actual };

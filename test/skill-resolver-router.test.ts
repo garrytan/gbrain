@@ -13,7 +13,7 @@
  *    gateway's test transport, so nothing leaves the machine.
  */
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { __setPickerTransportForTests, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
@@ -179,8 +179,10 @@ describe('the picker in a turn', () => {
 describe('a compat: model on an OpenAI-compatible endpoint', () => {
   const seen: { path: string; auth: string | null; body: any }[] = [];
   const server = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) {
-    seen.push({ path: new URL(req.url).pathname, auth: req.headers.get('authorization'), body: await req.json() });
-    return Response.json({ choices: [{ message: { content: '{"needed": true, "skills": ["gbrain:people"]}' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1000, completion_tokens: 10 } });
+    const path = new URL(req.url).pathname;
+    seen.push({ path, auth: req.headers.get('authorization'), body: await req.json() });
+    if (path.startsWith('/hop/')) return new Response(null, { status: 307, headers: { location: '/v1/chat/completions' } });
+    return Response.json({ choices: [{ message: { content: '{"needed": true, "skills": ["gbrain:people"]}' }, finish_reason: 'stop' }], ...(path.startsWith('/nousage/') ? {} : { usage: { prompt_tokens: 1000, completion_tokens: 10 } }) });
   } });
   afterAll(() => server.stop(true));
   const compat = (extra: Record<string, unknown>) => ({ router: true, router_model: 'compat:acme/picker-1', router_base_url: `http://127.0.0.1:${server.port}/v1`, ...extra });
@@ -222,6 +224,31 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     expect((await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: remote, catalogs: ['c'], router: true, env })).output.router?.fallback).toEqual({ code: 'config_invalid' });
     expect(seen).toHaveLength(0);
   });
+
+  test('a redirect is refused, so the prompt reaches no second URL', async () => {
+    seen.length = 0;
+    const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/hop/v1`, router_usd_per_mtok: [1, 2] }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+    expect(r.output.router?.fallback).toEqual({ code: 'provider_error' });
+    expect(seen.map(x => x.path)).toEqual(['/hop/v1/chat/completions']);
+  });
+
+  test('a reply with no token counts keeps the whole reservation on the ledger', async () => {
+    const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/nousage/v1`, router_usd_per_mtok: [1, 2] }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+    expect(r.output.router?.answered_by).toBe('picker');
+    const spend = (await readRouterSpend(h)).charged_usd;
+    expect(spend).toBeGreaterThan(0.00102);
+    expect(spend).toBeCloseTo(r.output.router!.est_usd, 6);
+  });
+
+  test('a cap of 0 stops a free model too, before any call', async () => {
+    seen.length = 0;
+    const h = await home(compat({ router_usd_per_mtok: [0, 0], router_max_usd_per_day: 0 }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+    expect(r.output.router?.fallback).toMatchObject({ code: 'daily_cap' });
+    expect(seen).toHaveLength(0);
+  });
 });
 
 describe('the daily spend cap', () => {
@@ -250,5 +277,29 @@ describe('the daily spend cap', () => {
     expect((await turn(h, 'zzqx')).output.router?.fallback).toEqual({ code: 'daily_cap' });
     writeFileSync(join(h, 'skill-index', 'router-spend.json'), JSON.stringify({ v: 1, day: '2000-01-01', charged_usd: 5 }));
     expect((await turn(h, 'zzqx')).output.router?.fallback).toBeNull();
+  });
+
+  test('the reservation covers the most a call can cost: a token per character, all of it written to the cache', async () => {
+    const h = await home({ router: true });
+    let reserved = -1;
+    __setPickerTransportForTests(async (req) => {
+      reserved = (await readRouterSpend(h)).charged_usd;
+      return { text: '{"needed": true, "skills": ["gbrain:people"]}', refused: false, usage: { input: 0, cacheRead: 0, cacheWrite: req.system.length + req.message.length, output: req.maxTokens } };
+    });
+    await turn(h, '会议纪要'.repeat(200));
+    const settled = (await readRouterSpend(h)).charged_usd;
+    expect(settled).toBeGreaterThan(0);
+    expect(reserved).toBeGreaterThanOrEqual(settled);
+  });
+
+  test('a ledger already on a later day is never rewritten to an earlier one', async () => {
+    const h = await home({ router: true });
+    const file = join(h, 'skill-index', 'router-spend.json');
+    writeFileSync(file, JSON.stringify({ v: 1, day: '2999-01-01', charged_usd: 0.01 }));
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    expect((await turn(h, 'zzqx')).output.router?.fallback).toBeNull();
+    const doc = JSON.parse(readFileSync(file, 'utf8'));
+    expect(doc.day).toBe('2999-01-01');
+    expect(doc.charged_usd).toBeGreaterThan(0.01);
   });
 });

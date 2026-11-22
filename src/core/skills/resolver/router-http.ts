@@ -17,8 +17,8 @@ import { join } from 'node:path';
 export const PICKER_PROVIDERS = ['anthropic', 'openai', 'google', 'compat'] as const;
 export type PickerProvider = (typeof PICKER_PROVIDERS)[number];
 export interface PickerRequest { model: string; system: string; message: string; maxTokens: number; signal: AbortSignal; baseUrl?: string }
-/** A reply; usage.input counts only uncached input tokens. */
-export interface PickerReply { text: string; refused: boolean; usage: { input: number; cacheRead: number; cacheWrite: number; output: number } }
+/** A reply; usage.input counts only uncached input tokens, and usage is null when the provider reported no token counts. */
+export interface PickerReply { text: string; refused: boolean; usage: { input: number; cacheRead: number; cacheWrite: number; output: number } | null }
 
 let testTransport: ((req: PickerRequest) => Promise<PickerReply>) | null = null;
 /** Tests only: answer every picker call with `fn` (null restores the network). */
@@ -51,7 +51,7 @@ export function pickerKey(provider: PickerProvider, home: string, env: NodeJS.Pr
 const base = (env: NodeJS.ProcessEnv, name: string, fallback: string) => (env[name] || fallback).replace(/\/+$/, '').replace(/\/v1(beta)?$/, '');
 
 async function post(url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal): Promise<Record<string, any>> {
-  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal });
+  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal, redirect: 'error' });
   if (!res.ok) throw new Error(`provider answered HTTP ${res.status}`);
   return await res.json() as Record<string, any>;
 }
@@ -66,36 +66,36 @@ export async function pickerChat(req: PickerRequest, key: string, env: NodeJS.Pr
       model, max_tokens: req.maxTokens, thinking: { type: 'disabled' },
       system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: req.message }],
     }, req.signal);
-    const u = j.usage ?? {};
+    const u = j.usage;
     return { text: (j.content ?? []).filter((b: any) => b?.type === 'text').map((b: any) => b.text).join(''), refused: j.stop_reason === 'refusal',
-      usage: { input: u.input_tokens ?? 0, cacheRead: u.cache_read_input_tokens ?? 0, cacheWrite: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 } };
+      usage: u ? { input: u.input_tokens ?? 0, cacheRead: u.cache_read_input_tokens ?? 0, cacheWrite: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 } : null };
   }
   if (provider === 'compat') {
     const j = await post(`${(req.baseUrl ?? '').replace(/\/+$/, '')}/chat/completions`, key ? { authorization: `Bearer ${key}` } : {}, {
       model, max_tokens: req.maxTokens, temperature: 0, messages: [{ role: 'system', content: req.system }, { role: 'user', content: req.message }],
     }, req.signal);
-    const u = j.usage ?? {};
-    const cached = u.prompt_tokens_details?.cached_tokens ?? 0;
+    const u = j.usage;
+    const cached = u?.prompt_tokens_details?.cached_tokens ?? 0;
     const choice = j.choices?.[0];
     return { text: typeof choice?.message?.content === 'string' ? choice.message.content : '', refused: choice?.finish_reason === 'content_filter' || Boolean(choice?.message?.refusal),
-      usage: { input: Math.max(0, (u.prompt_tokens ?? 0) - cached), cacheRead: cached, cacheWrite: 0, output: u.completion_tokens ?? 0 } };
+      usage: u ? { input: Math.max(0, (u.prompt_tokens ?? 0) - cached), cacheRead: cached, cacheWrite: 0, output: u.completion_tokens ?? 0 } : null };
   }
   if (provider === 'openai') {
     const j = await post(`${base(env, 'OPENAI_BASE_URL', 'https://api.openai.com')}/v1/responses`, { authorization: `Bearer ${key}` }, {
       model, instructions: req.system, input: req.message, max_output_tokens: req.maxTokens, reasoning: { effort: 'none' },
     }, req.signal);
-    const u = j.usage ?? {};
-    const cached = u.input_tokens_details?.cached_tokens ?? 0;
+    const u = j.usage;
+    const cached = u?.input_tokens_details?.cached_tokens ?? 0;
     const text = (j.output ?? []).flatMap((o: any) => o?.content ?? []).filter((c: any) => c?.type === 'output_text').map((c: any) => c.text).join('');
-    return { text, refused: (j.output ?? []).some((o: any) => (o?.content ?? []).some((c: any) => c?.type === 'refusal')), usage: { input: Math.max(0, (u.input_tokens ?? 0) - cached), cacheRead: cached, cacheWrite: 0, output: u.output_tokens ?? 0 } };
+    return { text, refused: (j.output ?? []).some((o: any) => (o?.content ?? []).some((c: any) => c?.type === 'refusal')), usage: u ? { input: Math.max(0, (u.input_tokens ?? 0) - cached), cacheRead: cached, cacheWrite: 0, output: u.output_tokens ?? 0 } : null };
   }
   const j = await post(`${base(env, 'GOOGLE_GENERATIVE_AI_BASE_URL', 'https://generativelanguage.googleapis.com')}/v1beta/models/${encodeURIComponent(model)}:generateContent`, { 'x-goog-api-key': key }, {
     systemInstruction: { parts: [{ text: req.system }] }, contents: [{ role: 'user', parts: [{ text: req.message }] }],
     generationConfig: { maxOutputTokens: req.maxTokens, temperature: 0, thinkingConfig: { thinkingLevel: 'minimal' } },
   }, req.signal);
-  const u = j.usageMetadata ?? {};
+  const u = j.usageMetadata;
   const cand = j.candidates?.[0];
-  const cached = u.cachedContentTokenCount ?? 0;
+  const cached = u?.cachedContentTokenCount ?? 0;
   return { text: (cand?.content?.parts ?? []).map((p: any) => p?.text ?? '').join(''), refused: cand?.finishReason === 'SAFETY' || Boolean(j.promptFeedback?.blockReason),
-    usage: { input: Math.max(0, (u.promptTokenCount ?? 0) - cached), cacheRead: cached, cacheWrite: 0, output: u.candidatesTokenCount ?? 0 } };
+    usage: u ? { input: Math.max(0, (u.promptTokenCount ?? 0) - cached), cacheRead: cached, cacheWrite: 0, output: u.candidatesTokenCount ?? 0 } : null };
 }
