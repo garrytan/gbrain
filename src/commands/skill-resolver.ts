@@ -26,7 +26,7 @@ import {
 import { validCatalogName } from '../core/skills/resolver/paths.ts';
 import { readResolverConfig, resolverHarnesses, resolverSection } from '../core/setup/skill-resolver-config.ts';
 import { configuredTopGate } from '../core/skills/resolver/config.ts';
-import { catalogSkillIds, pinProblem, PINS_MAX, readPins, renderPinnedBlock, writePins } from '../core/setup/skill-pins.ts';
+import { catalogSkillIds, pinProblem, PINS_MAX, readPins, renderPinnedBlock, sessionStartPinnedBlock, writePins } from '../core/setup/skill-pins.ts';
 import { refreshOpenclawPins } from '../core/setup/openclaw-skill-plugin.ts';
 import { PI_SKILL_CATALOG, refreshPiPins } from '../core/setup/pi-skill-extension.ts';
 import { HERMES_PINS_CATALOG, syncHermesPins } from '../core/setup/hermes-skill-pins.ts';
@@ -114,7 +114,8 @@ so turning the resolver off keeps them.
   --catalog <name>  the catalog the skill must be in (openclaw-<agent>, claude-code-user, ...)
   --line <text>     one trigger-first line shown beside the id (no < or >)
 
-An OpenClaw agent picks up a pin change on its next turn, with no reload.
+An OpenClaw agent picks up a pin change on its next turn, with no reload; Claude Code
+and Codex get claude-code-user's and codex-user's pins at their next session start.
 Guide: docs/guides/skill-resolver.md#pinned-skills
 `;
 
@@ -375,19 +376,23 @@ async function runPin(args: string[]): Promise<void> {
     writePins(read, catalog, pins);
   }
   const cursor = catalog.startsWith(CURSOR_PINS_CATALOG_PREFIX);
-  const rendered = cursor ? cursorPinnedBlock(home, catalog) : renderPinnedBlock(pins, { harness: catalog.startsWith('openclaw-') ? 'openclaw' : catalog === HERMES_PINS_CATALOG ? 'hermes' : catalog === PI_SKILL_CATALOG ? 'pi' : undefined, known: catalogSkillIds(home, catalog) });
+  const laneHarness = catalog === 'claude-code-user' ? 'claude-code' : catalog === 'codex-user' ? 'codex' : null;
+  const laneOn = !!laneHarness && resolverHarnesses(read.state === 'ok' ? read.doc : null).includes(laneHarness);
+  const laneHook = laneOn ? (await import('../core/setup/skill-resolver-hook.ts')).inspectSkillResolverHook(laneHarness).state : null;
+  const rendered = cursor ? cursorPinnedBlock(home, catalog) : laneHarness ? sessionStartPinnedBlock(home, laneHarness, pins) : renderPinnedBlock(pins, { harness: catalog.startsWith('openclaw-') ? 'openclaw' : catalog === HERMES_PINS_CATALOG ? 'hermes' : catalog === PI_SKILL_CATALOG ? 'pi' : undefined, known: catalogSkillIds(home, catalog) });
   const agents = sub === 'list' ? [] : refreshOpenclawPins(home);
   const piUpdated = sub !== 'list' && catalog === PI_SKILL_CATALOG && refreshPiPins(home);
   const hermesOn = catalog === HERMES_PINS_CATALOG && sub !== 'list' && resolverHarnesses(read.state === 'ok' ? read.doc : null).includes('hermes');
   const soul = hermesOn ? syncHermesPins({ home, hermesHome: (await import('../core/setup/skill-resolver-hook.ts')).hermesHomeDir(), dryRun: false }) : null;
   const cursorRule = cursor && sub !== 'list' ? refreshCursorPins(home, catalog) : null;
-  const doc = { catalog, pins, rendered: rendered.ids, unknown: rendered.unknown, cut: rendered.cut, block_tokens: rendered.tokens, ...(agents.length ? { openclaw_agents_updated: agents } : {}), ...(soul ? { hermes_soul: soul } : {}), ...(piUpdated ? { pi_state_updated: true } : {}), ...(cursorRule ? { cursor_rule: { project: cursorRule.project, steps: cursorRule.steps, ...(cursorRule.error ? { error: cursorRule.error } : {}) } } : {}) };
+  const doc = { catalog, pins, rendered: rendered.ids, unknown: rendered.unknown, cut: rendered.cut, block_tokens: rendered.tokens, ...(agents.length ? { openclaw_agents_updated: agents } : {}), ...(soul ? { hermes_soul: soul } : {}), ...(piUpdated ? { pi_state_updated: true } : {}), ...(laneHook === 'wired' ? { session_start_harness: laneHarness } : {}), ...(cursorRule ? { cursor_rule: { project: cursorRule.project, steps: cursorRule.steps, ...(cursorRule.error ? { error: cursorRule.error } : {}) } } : {}) };
   if (json) { await write(`${JSON.stringify(doc)}\n`); return; }
   await write([
     pins.length ? `${catalog}: ${pins.length} pin(s)` : `${catalog}: no pins`,
     ...pins.map((x) => `  ${x.name}${x.line ? ` — ${x.line}` : ''}${rendered.unknown.includes(x.name) ? ' (not in the catalog: left out, skill_resolver_pin_unknown)' : rendered.cut.includes(x.name) ? ' (over the token cap: left out)' : ''}`),
     agents.length ? `OpenClaw agent(s) ${agents.join(', ')} use the new pins from their next turn.` : '',
     piUpdated ? 'Pi uses the new pins from its next run.' : '',
+    laneHarness ? `${laneHarness === 'codex' ? 'Codex' : 'Claude Code'} ${laneHook === 'wired' ? 'gets these pins at its next session start (startup, resume, clear or compaction)' : laneOn ? `gets these pins at its next session start once its SessionStart hook is ${laneHook === 'untrusted' ? 'trusted' : 'refreshed'}: gbrain setup ${laneHarness} --skill-loading resolve` : `gets these pins at its next session start once skill loading is on: gbrain setup ${laneHarness} --skill-loading resolve`}.` : '',
     soul ? `Hermes: ${soul.action} ${soul.detail}${soul.action === 'skip' ? '' : '; Hermes reads SOUL.md at session start'}.` : '',
     cursorRule ? (cursorRule.error ? `Cursor: ${cursorRule.error.message}` : `Cursor (${cursorRule.project}): ${cursorRule.steps.filter((x) => x.step === 'rule').map((x) => `${x.action} ${x.detail}`).join('; ')}; Cursor applies the rule from its next request.`) : '',
   ].filter(Boolean).join('\n') + '\n');

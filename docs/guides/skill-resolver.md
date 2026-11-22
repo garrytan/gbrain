@@ -151,6 +151,22 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   plus every listed one that exists, records them in the catalog's rebuild
   command (so the auto-rebuild keeps them), and keeps them on every later
   setup run; unset the key and run setup again to drop them.
+- **Pins and a session-start note:** at every SessionStart that starts or
+  restores a context (`startup`, `resume`, `clear`, `compact`), the lane
+  prints the user catalog's [pins](#pinned-skills) (`--catalog
+  claude-code-user` or `codex-user`; Codex lines carry the SKILL.md path)
+  and then the text in
+  `skills.resolver.per_harness.<claude-code|codex>.session_start`, as the
+  hook's `additionalContext`. Set the text with `gbrain config set
+  skills.resolver.per_harness.claude-code.session_start "<text>"`: plain
+  text of at most 600 tokens (about 2,400 characters), no control characters
+  but newlines and tabs. Both live in `~/.gbrain/config.json`, so they work
+  with no brain and no brain repository. With neither set, SessionStart
+  prints nothing. Each part has its own cap, so the block is held to the
+  harness's 10,000-character hook output cap rather than
+  `lane_payload_chars`. An install from before the SessionStart entry
+  (doctor shows its hook `outdated`) needs one setup run first; `gbrain
+  skills pin` says so.
 - **Session cleanup:** after the dedupe commit the lane runs one session GC
   pass before it exits, at most 64 files and never past the deadline.
 - **Payload:** at most `skills.resolver.lane_payload_chars` characters of hook
@@ -173,7 +189,8 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   once a minute; `skills.resolver.auto_rebuild false` or
   `GBRAIN_SKILLS_NO_AUTOREBUILD=1` stops both.
 - **Compaction:** a SessionStart with `source: compact` (Claude Code, and Codex
-  0.165 and later) resets the session, so skills can be offered again. A Codex
+  0.165 and later) resets the session, so skills can be offered again, and
+  prints the pins and session-start note again. A Codex
   install from before gets the SessionStart group on its next setup run.
   Hermes sends no compaction event; the lane resets a session when its history shrinks or on a first turn.
 
@@ -376,9 +393,12 @@ gbrain skills pin remove deploy-example --catalog openclaw-main
 A pin must name a skill in that catalog (`skill_resolver_pin_unknown`
 otherwise), its line is at most 100 characters with no `<` or `>`, a catalog
 holds at most 64 pins, and the rendered block is capped at 600 tokens (pins
-past it are listed as cut). A pinned skill is never also suggested. Pins live
+past it are listed as cut). A pinned skill is never also suggested, except on
+Claude Code and Codex, whose pins arrive at session start. Pins live
 in config.json under `skills.resolver.pins.<catalog>`, so turning the resolver
-off keeps them; an OpenClaw agent uses a change from its next turn.
+off keeps them; an OpenClaw agent uses a change from its next turn, and Claude
+Code and Codex (`claude-code-user`, `codex-user`) from their next session
+start, through the [hook lane](#hook-lane-claude-code-and-codex).
 
 ## The contract (schema_version 1)
 
@@ -686,8 +706,9 @@ The `--from-json` catalog or routing file is malformed or over its size bound
 
 `skills.resolver.session_token_budget` is not 0 or 100-50,000, a lane turn
 setting (`top_k`, `min_match`, `top_gate`, `pinned`, `per_harness`, including a
-`dirs` list that is not absolute paths or names a harness other than
-`claude-code` or `codex`) is out of range, or
+`dirs` list that is not absolute paths, or a `session_start` text that is
+empty, over 600 tokens or holds control characters, or either key on a
+harness other than `claude-code` or `codex`) is out of range, or
 GBRAIN_HOME is not an absolute path.
 
 ### skill_resolver_config_unreadable
