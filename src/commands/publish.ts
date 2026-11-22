@@ -16,6 +16,10 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
 import { dirname, basename, join } from 'path';
 import { createRequire } from 'module';
+import { frontmatterBodyOffset, validatorFrontmatterFence } from '../core/markdown.ts';
+import { FrontmatterLanguageError, scanDataFrontmatter } from '../core/data-frontmatter.ts';
+import { GUEST_WARNING_LINE_RE } from '../core/guests/marker.ts';
+import { opError } from '../core/ops/contract.ts';
 
 // Inline marked.js so published HTML is truly self-contained (no CDN dependency)
 const require = createRequire(import.meta.url);
@@ -23,12 +27,89 @@ const MARKED_JS = readFileSync(join(dirname(require.resolve('marked')), 'marked.
 
 // ── Content stripping ──────────────────────────────────────────────
 
-/** Strip private/internal data from brain markdown before publishing */
+const TIMELINE_MARKER = /<!--+\s*timeline\s*-*-->/i;
+const TIMELINE_LINE = /^[ \t]*(?:-{3,}[ \t]*timeline[ \t]*-{3,}[ \t]*$|#{1,6}[ \t]+[^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
+const MANAGED_BLOCK_END = /<!--+\s*gbrain:([a-z0-9_-]+):end\b[^>]*>/gi;
+const MANAGED_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
+
+const WRAPPED_FRONTMATTER_WINDOW = 5;
+const FRONTMATTER_KEY_LINE = /^(?:['"][^'"\n]+['"]|[A-Za-z_][\w.-]*)[ \t]*:(?:[ \t]|$)/m;
+
+/**
+ * Whether a column-0 frontmatter fence pair, as parseDataFrontmatter reads one, starts on one of the first
+ * WRAPPED_FRONTMATTER_WINDOW non-blank lines: an opener naming its language (`---yaml`, `---yml`, `---json`), a fence
+ * whose first line is a YAML key or a flow mapping, or a closed plain `---` pair with a YAML key line between the fences.
+ * Two horizontal rules with only prose between them are not, and neither is one rule followed by prose.
+ */
+function startsFrontmatterPair(text: string): boolean {
+  const lines = text.split('\n');
+  for (let i = 0, seen = 0; i < lines.length && seen < WRAPPED_FRONTMATTER_WINDOW; i++) {
+    if (!lines[i]!.trim()) continue;
+    seen++;
+    let fenced;
+    try {
+      fenced = scanDataFrontmatter(lines.slice(i).join('\n')).fenced;
+    } catch (e) {
+      if (e instanceof FrontmatterLanguageError) continue;
+      throw e;
+    }
+    if (!fenced) continue;
+    const first = /^.*\S.*$/m.exec(fenced.block)?.[0] ?? '';
+    if (fenced.language !== '' || FRONTMATTER_KEY_LINE.test(first) || first.trimStart().startsWith('{')) return true;
+    if (fenced.content != null && FRONTMATTER_KEY_LINE.test(fenced.block)) return true;
+  }
+  return false;
+}
+
+/** The text before the first match of `pattern`, or all of it when nothing matches. */
+function before(text: string, pattern: RegExp): string {
+  const match = pattern.exec(text);
+  return match ? text.slice(0, match.index) : text;
+}
+
+/**
+ * Strip private/internal data from brain markdown before publishing. Fails closed (#10020): the page is cut at the
+ * first line that could start its timeline (any timeline sentinel, or a Timeline or History heading at any level,
+ * with or without a --- rule before it), a gbrain fence or HTML comment that never closes drops the rest of the
+ * page, and frontmatter that never closes refuses to publish. A guest page saved from `gbrain get` starts with its
+ * warning line; when frontmatter opens right after it, the line is dropped and the frontmatter stripped as usual. Any
+ * other text above frontmatter (the quote fence a paged `gbrain get` prints, a wrapper line) refuses to publish.
+ */
 export function makeShareable(content: string): string {
-  let clean = content;
+  let clean = content.replace(/\r\n?/g, '\n');
+  const opensFrontmatter = (text: string) => validatorFrontmatterFence(text.split('\n')).opens;
+
+  const guestLine = GUEST_WARNING_LINE_RE.exec(clean);
+  if (guestLine && opensFrontmatter(clean.slice(guestLine[0].length))) clean = clean.slice(guestLine[0].length);
 
   // Remove YAML frontmatter
-  clean = clean.replace(/^---[\s\S]*?---\n*/, '');
+  if (opensFrontmatter(clean)) {
+    const offset = frontmatterBodyOffset(clean);
+    if (offset === 0) throw opError('invalid_frontmatter', 'The page opens a frontmatter block with --- and never closes it, so nothing was published.', 'Close the frontmatter with a --- line that starts at the beginning of the line (an indented --- does not close it), then publish again.', { why: 'Publishing cannot tell where the private frontmatter ends, so it publishes nothing rather than guess.' });
+    clean = clean.slice(offset);
+  } else if (startsFrontmatterPair(clean)) {
+    throw opError('invalid_frontmatter', 'The page has frontmatter below other text, such as the quote fence a paged gbrain get prints, so nothing was published.', 'Save the page again with plain gbrain get, or delete the lines above the opening --- so the frontmatter starts the file, then publish again.', { why: 'Publishing strips frontmatter only where it starts the file; it refuses rather than share frontmatter it did not strip.' });
+  }
+
+  // Remove the Timeline section and everything after it
+  clean = before(before(clean, TIMELINE_MARKER), TIMELINE_LINE);
+
+  // Remove gbrain fences (facts, takes and other machine blocks) with their Facts/Takes headings
+  for (let match = MANAGED_BLOCK_BEGIN.exec(clean); match; match = MANAGED_BLOCK_BEGIN.exec(clean)) {
+    const rest = clean.slice(match.index + match[0].length);
+    const end = [...rest.matchAll(MANAGED_BLOCK_END)].find(candidate => candidate[1]!.toLowerCase() === match![1]!.toLowerCase());
+    clean = clean.slice(0, match.index) + (end ? rest.slice(end.index! + end[0].length) : '');
+  }
+
+  // Remove HTML comments
+  let visible = '';
+  let at = 0;
+  for (let open = clean.indexOf('<!--'); open !== -1; open = clean.indexOf('<!--', at)) {
+    visible += clean.slice(at, open).replace(/[ \t]+$/, '');
+    const close = clean.indexOf('-->', open + 4);
+    at = close === -1 ? clean.length : close + 3;
+  }
+  clean = visible + clean.slice(at);
 
   // Remove [Source: ...] citations (all formats)
   clean = clean.replace(/\s*\[Source:[^\]]*\]/g, '');
@@ -44,13 +125,10 @@ export function makeShareable(content: string): string {
   // Remove "See also" brain-internal lines
   clean = clean.replace(/^-?\s*See also:.*$/gm, '');
 
-  // Remove Timeline section (below the --- separator near end)
-  clean = clean.replace(/\n---\n\n## Timeline[\s\S]*$/, '');
-
-  // Clean up excessive blank lines
+  // Clean up excessive blank lines and the --- rule left above a removed timeline
   clean = clean.replace(/\n{3,}/g, '\n\n');
 
-  return clean.trim();
+  return clean.trim().replace(/(?:\n+[ \t]*---[ \t]*)+$/, '').trim();
 }
 
 // ── Title extraction ───────────────────────────────────────────────
@@ -412,7 +490,7 @@ export async function runPublish(args: string[]) {
 
   const raw = readFileSync(inputPath, 'utf-8');
   const cleaned = makeShareable(raw);
-  const title = (titleIdx >= 0 ? args[titleIdx + 1] : null) || extractTitle(raw);
+  const title = (titleIdx >= 0 ? args[titleIdx + 1] : null) || extractTitle(cleaned);
 
   // Handle password
   let encrypted: EncryptedContent | null = null;

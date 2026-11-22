@@ -129,8 +129,7 @@ describe('engine parity: commit notifier lease and host sources', () => {
   });
 
   parityTest('listHostSources watches a bound classic checkout and skips the rest with a reason', { methods: ['listNotifierHostSourceRows'] }, async (engine, backend) => {
-    // The real path: the notifier resolves the checkout's git dir through symlinks, and on macOS tmpdir() sits behind
-    // the /var -> /private/var symlink.
+    // git answers the real path of the checkout's .git, and macOS tmpdir() sits behind the /var -> /private/var symlink.
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'notifier-parity-')));
     try {
       const repo = join(root, 'repo');

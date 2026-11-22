@@ -136,6 +136,10 @@ export async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     const n = parseFloat(raw);
     return Number.isFinite(n) && n > 0 ? n : fallback;
   };
+  const parseCostOrDefault = (raw: string | null, fallback: number): number => {
+    const n = raw == null ? NaN : parseFloat(raw);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
 
   let types: AllowedType[] = [...ALLOWED_TYPES];
   if (typesRaw) {
@@ -165,8 +169,8 @@ export async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
   return {
     enabled: enabledFlag,
     excludeSources: parseSourceList(excludeRaw),
-    maxCostUsd: parseFloatOrDefault(maxCost, 1.0),
-    maxTotalCostUsd: parseFloatOrDefault(maxTotalCost, 5.0),
+    maxCostUsd: parseCostOrDefault(maxCost, 1.0),
+    maxTotalCostUsd: parseCostOrDefault(maxTotalCost, 5.0),
     explicitCostCap: maxCost !== null || maxTotalCost !== null,
     maxWalltimeMin: parseFloatOrDefault(maxWall, 20),
     maxTotalWalltimeMin: parseFloatOrDefault(maxTotalWall, 30),

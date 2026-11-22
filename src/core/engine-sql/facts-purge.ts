@@ -234,16 +234,38 @@ export async function listSingleFactMetadata(raw: EngineRawRead, opts: { sourceI
   return raw<SingleFactMetadataRow>(text, params);
 }
 
-/** planUnfencedFacts: the active unfenced rows (no fence row, no ontology dimension) of one source or every source, with whether the entity has a live page, in byte order of source and entity (COLLATE "C", whatever the server locale), then id. */
-export async function listUnfencedFactRows(raw: EngineRawRead, opts: { sourceId?: string }): Promise<UnfencedFactRow[]> {
+/** Whether the entity a fact row names has a live page in the row's source. */
+const LIVE_ENTITY_PAGE = trustedSql('EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)');
+
+/** planUnfencedFacts (#10005): one group of the active unfenced rows (no fence row, no ontology dimension), by source, whether the row names an entity and whether that entity has a live page of the source. */
+export interface UnfencedFactGroup { source_id: string; has_entity: boolean; page_exists: boolean; n: number }
+
+/** planUnfencedFacts (#10005): the counts of the active unfenced rows of one source or every source per (source, has an entity, entity page is live), so the rows that can never be fenced are counted on the server and not transferred. */
+export async function countUnfencedFactGroups(raw: EngineRawRead, opts: { sourceId?: string }): Promise<UnfencedFactGroup[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT source_id, has_entity, page_exists, COUNT(*) AS n
+       FROM (SELECT f.source_id, f.entity_slug IS NOT NULL AS has_entity, ${LIVE_ENTITY_PAGE} AS page_exists
+               FROM facts f WHERE row_num IS NULL AND expired_at IS NULL AND dimension IS NULL${opts.sourceId !== undefined ? sqlFragment` AND source_id = ${opts.sourceId}` : sqlFragment``}) c
+      GROUP BY source_id, has_entity, page_exists`);
+  return (await raw<{ source_id: string; has_entity: boolean; page_exists: boolean; n: number | string }>(text, params))
+    .map(row => ({ ...row, n: Number(row.n) }));
+}
+
+/**
+ * planUnfencedFacts: the active unfenced rows (no fence row, no ontology dimension) of one source or every source, with whether the entity has a live page, in byte order of source and entity (COLLATE "C", whatever the server locale), then id.
+ * With `fenceableSourceIds` (#10005) only the rows that name an entity with a live page, in those sources, come back (all with `page_exists` true).
+ */
+export async function listUnfencedFactRows(raw: EngineRawRead, opts: { sourceId?: string; fenceableSourceIds?: string[] }): Promise<UnfencedFactRow[]> {
+  const fenceable = opts.fenceableSourceIds;
+  if (fenceable !== undefined && fenceable.length === 0) return [];
+  const pageExists = fenceable !== undefined ? trustedSql('TRUE') : LIVE_ENTITY_PAGE;
   const { text, params } = renderFragment(sqlFragment`SELECT id, source_id, entity_slug, fact, kind, visibility, notability,
             context, valid_from, valid_until, source, confidence,
             claim_metric, claim_value, claim_unit, claim_period, attributed_to,
-            EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id
-              AND p.slug = f.entity_slug AND p.deleted_at IS NULL) AS page_exists
+            ${pageExists} AS page_exists
        FROM facts f
       WHERE row_num IS NULL AND expired_at IS NULL AND dimension IS NULL
         ${opts.sourceId !== undefined ? sqlFragment`AND source_id = ${opts.sourceId}` : sqlFragment``}
+        ${fenceable !== undefined ? sqlFragment`AND source_id = ANY(${fenceable}::text[]) AND entity_slug IS NOT NULL AND ${LIVE_ENTITY_PAGE}` : sqlFragment``}
       ORDER BY source_id COLLATE "C", entity_slug COLLATE "C", id`);
   return raw<UnfencedFactRow>(text, params);
 }

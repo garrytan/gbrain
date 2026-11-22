@@ -405,6 +405,7 @@ test/engine-parity/search.test.ts
 test/engine-parity/segment-regions.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/segmented-fence-staging.test.ts
+test/engine-parity/segmented-ledger-reads.test.ts
 test/engine-parity/segmented-purge-writes.test.ts
 test/engine-parity/session-state-cap.test.ts
 test/engine-parity/session-state.test.ts

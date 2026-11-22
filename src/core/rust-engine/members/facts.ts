@@ -118,6 +118,7 @@ export const FACTS_MEMBERS = {
   listSimilarActiveFacts: 'facts',
   findActiveSingleFact: 'facts',
   listSingleFactMetadata: 'facts',
+  countUnfencedFactGroups: 'facts',
   listUnfencedFactRows: 'facts',
   listHeldFenceFactRows: 'facts',
   listWithdrawalSlugs: 'facts',

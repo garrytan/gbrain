@@ -179,7 +179,10 @@ export interface FactsStatementMembers {
   listSimilarActiveFacts(opts: { sourceId: string; factId: number; remote: boolean; excludePrivate: boolean; minCosine: number; limit: number }): Promise<FactsPurgeSql.SimilarActiveFacts>;
   findActiveSingleFact(opts: { sourceId: string; entitySlug: string | null; visibility: string; fact: string; attributedTo: string | null; pageSlug: string | null; remoteFloor: boolean; newest?: boolean }): Promise<FactsPurgeSql.ExactFactRow | null>;
   listSingleFactMetadata(opts: { sourceId: string; ids: number[]; remoteFloor: boolean }): Promise<FactsPurgeSql.SingleFactMetadataRow[]>;
-  listUnfencedFactRows(opts: { sourceId?: string }): Promise<FactsPurgeSql.UnfencedFactRow[]>;
+  /** planUnfencedFacts (#10005): the counts of the active unfenced rows of one source or every source per source, entity and live page, so the rows that can never be fenced are not transferred. */
+  countUnfencedFactGroups(opts: { sourceId?: string }): Promise<FactsPurgeSql.UnfencedFactGroup[]>;
+  /** With `fenceableSourceIds` only the rows that name an entity with a live page of those sources. */
+  listUnfencedFactRows(opts: { sourceId?: string; fenceableSourceIds?: string[] }): Promise<FactsPurgeSql.UnfencedFactRow[]>;
   listHeldFenceFactRows(sourceId: string, slug: string): Promise<FactsPurgeSql.HeldFenceFactRow[]>;
   listWithdrawalSlugs(sourceId: string, visibility: string, factHash: string, subject: string): Promise<Array<{ slug: string }>>;
   expireFactsByWithdrawal(sourceId: string, visibility: string, fact: string, subject: string): Promise<Array<{ id: number }>>;

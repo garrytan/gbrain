@@ -32,7 +32,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'countSegmentedCensusPages', 'countSegmentedTimelinePages', 'countSegmentedVersionsOfPage', 'countSourcePages',
   'countStaleFactEmbeddings', 'countSubagentMessages', 'countTakes', 'countTimelineCommentMarkupRows',
   'countTtlCancelledByName', 'countTtlExpiredWaiting', 'countUncomparableFacts', 'countUnconsolidatedFactsBySource',
-  'countUnlinkedFactStats', 'countUnlinkedFactsByOrigin', 'countUnreadableFilesAt', 'countUnscannedTrustRows',
+  'countUnfencedFactGroups', 'countUnlinkedFactStats', 'countUnlinkedFactsByOrigin', 'countUnreadableFilesAt', 'countUnscannedTrustRows',
   'countWakeWatches', 'countWorldFacts', 'countZeroWeightWithTakes', 'currentCodeChunksExist', 'edgeClosureLanded',
   'edgeValidityCounts', 'entityGraphCoverage', 'factReadableUnder', 'factRelinkAttemptsTableExists',
   'filterPagesAtRevision', 'findActiveAccessTokens', 'findActiveSingleFact', 'findBulkFactDays',

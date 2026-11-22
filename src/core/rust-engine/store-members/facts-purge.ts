@@ -19,6 +19,7 @@ import { withDates } from '../store-codec.ts';
 import { FACTS_FENCE_BEGIN } from '../../facts-fence.ts';
 import { FACTLESS_SETTLE_LIMIT } from '../../engine-sql/facts-purge.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import type { StoreBrain } from '../store.ts';
 import { storeFloorPolicy, storePrivacyPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -79,9 +80,27 @@ export const findActiveSingleFact: Member<'findActiveSingleFact'> = async (brain
   return row === null ? null : withDates(row, FACT_DATES) as never;
 };
 
+/** The store lists every unfenced row, with whether its entity page is live; `countUnfencedFactGroups` and `fenceableSourceIds` are answered from that list (the store has no member that counts or narrows them on its side). */
+const unfencedRows = async (brain: StoreBrain, sourceId: string | undefined): Promise<Row[]> =>
+  (await storeCall({ member: 'listUnfencedFactRows' }, () => brain.listUnfencedFactRows({ sourceId: sourceId ?? null }))) as Row[];
+
 export const listUnfencedFactRows: Member<'listUnfencedFactRows'> = async (brain, opts) => {
-  const rows: Row[] = await storeCall({ member: 'listUnfencedFactRows' }, () => brain.listUnfencedFactRows({ sourceId: opts.sourceId ?? null }));
+  const fenceable = opts.fenceableSourceIds === undefined ? undefined : new Set(opts.fenceableSourceIds);
+  const rows = (await unfencedRows(brain, opts.sourceId))
+    .filter((row) => fenceable === undefined || (fenceable.has(row.source_id as string) && row.entity_slug !== null && row.page_exists === true));
   return rows.map((row) => withDates(row, FENCE_DATES)) as never;
+};
+
+export const countUnfencedFactGroups: Member<'countUnfencedFactGroups'> = async (brain, opts) => {
+  const groups = new Map<string, { source_id: string; has_entity: boolean; page_exists: boolean; n: number }>();
+  for (const row of await unfencedRows(brain, opts.sourceId)) {
+    const group = { source_id: row.source_id as string, has_entity: row.entity_slug !== null, page_exists: row.page_exists === true, n: 0 };
+    const key = `${group.source_id}\0${group.has_entity}\0${group.page_exists}`;
+    const seen = groups.get(key) ?? group;
+    seen.n += 1;
+    groups.set(key, seen);
+  }
+  return [...groups.values()];
 };
 
 export const listHeldFenceFactRows: Member<'listHeldFenceFactRows'> = async (brain, sourceId, slug) => {

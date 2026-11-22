@@ -55,7 +55,7 @@ test/engine-parity/facts-cycle-sites.test.ts	1	14
 test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	14	0
 test/engine-parity/facts-purge-sites.test.ts	5	21
-test/engine-parity/facts-purge.test.ts	27	0
+test/engine-parity/facts-purge.test.ts	28	0
 test/engine-parity/facts-repair-sites.test.ts	0	14
 test/engine-parity/facts-repair.test.ts	16	1
 test/engine-parity/facts-rest-sites.test.ts	1	18
@@ -175,6 +175,7 @@ test/engine-parity/search-reads.test.ts	18	0
 test/engine-parity/search.test.ts	23	0
 test/engine-parity/segment-regions.test.ts	1	0
 test/engine-parity/segmented-body.test.ts	21	0
+test/engine-parity/segmented-ledger-reads.test.ts	5	0
 test/engine-parity/segmented-purge-writes.test.ts	7	0
 test/engine-parity/source-admin-writes.test.ts	1	0
 test/engine-parity/source-archive.test.ts	6	0
