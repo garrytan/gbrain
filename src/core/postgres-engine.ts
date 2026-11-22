@@ -1112,7 +1112,7 @@ export class PostgresEngine implements BrainEngine {
 
   // Import-path guard, attribution and config reads: SQL in engine-sql (persistence-state, transaction-settings, belief, config, access-control, sources).
   getSource(sourceId: string) { return this.preparationRead(exec => sourcesImpl.getSource(refuseAborted(unscopedExecutor(exec, 'sources: single-row read ran unscoped through executeRaw')), sourceId)); }
-  getConfigValues(keys: readonly string[]) { return this.preparationRead(exec => configImpl.getConfigValues(unscopedExecutor(exec, 'config: keyed read ran unscoped through executeRaw'), keys)); }
+  getConfigValues(keys: readonly string[]) { return this.preparationRead(exec => configImpl.getConfigValues(refuseAborted(unscopedExecutor(exec, 'config: keyed read ran unscoped through executeRaw')), keys)); }
   readManagedModeRows() { return this.preparationRead(exec => persistenceStateImpl.readManagedModeRows(unscopedExecutor(exec, 'persistence: managed-mode read ran unscoped through executeRaw'))); }
   listExportPageKeys(q: exportReadsImpl.ExportPageKeyQuery) { return exportReadsImpl.listExportPageKeys(this, q); }
   readExportWithdrawalLedgerBytes(sourceId: string) { return this.engineRead(exec => exportReadsImpl.readExportWithdrawalLedgerBytes(exec, sourceId)); }
@@ -2132,7 +2132,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async pruneFrontmatterTags(slug: string, keep: readonly string[], opts?: { sourceId?: string }): Promise<void> {
-    return tagsImpl.pruneFrontmatterTags(this.autocommitSql, slug, keep, opts);
+    return tagsImpl.pruneFrontmatterTags(refuseAborted(this.autocommitSql), slug, keep, opts);
   }
 
   async addPageTagsById(pageId: number, tags: readonly string[], opts?: { tagSource?: 'frontmatter' }): Promise<void> {
@@ -3028,6 +3028,7 @@ export class PostgresEngine implements BrainEngine {
   async getConfig(key: string): Promise<string | null> {
     const held = await requestConfigValue(this, key);
     if (held !== undefined) return held;
+    throwIfRequestAborted(); // the notifier status read replaced an executeRaw call, which refused a cancelled request before its statement
     // #1603: a transient pooler drop on this read used to throw / fall through
     // to defaults silently — which on remote Postgres surfaces as the wrong
     // search mode/knobs and empty-stdout queries.
