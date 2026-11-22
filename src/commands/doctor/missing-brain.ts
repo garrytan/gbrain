@@ -79,13 +79,38 @@ export function missingBrainRefusal(brainId = 'host'): OperationError | null {
     });
 }
 
-/** Render the refusal like every doctor structured error (`--json` envelope or text) and set the exit verdict. */
+/** Render the refusal like every doctor structured error (`--json` envelope or text) and set the exit verdict. Under `--alert` it is the alert contract instead. */
 export async function refuseMissingBrain(args: string[], err: OperationError): Promise<void> {
   const { renderCliError } = await import('../../core/agent-output.ts');
   const { setCliExitVerdict, writeStdoutFinal } = await import('../../core/cli-force-exit.ts');
+  if (args.includes('--alert')) { await alertMissingBrain(err, args.includes('--json')); return; }
   const out = renderCliError(err, { json: args.includes('--json'), command: 'doctor', tty: !!process.stderr.isTTY });
   // Under the --json guard only writeStdoutFinal reaches fd 1; process.stdout.write is rerouted to stderr.
   if (out.stdout) await writeStdoutFinal(out.stdout);
   if (out.stderr) process.stderr.write(out.stderr);
   setCliExitVerdict(out.exitCode);
+}
+
+/**
+ * `doctor --alert` on a missing brain: the datastore cannot be connected to, so the page-class `connection` check pages (act, exit 17),
+ * never the bare error exit 1 a cron cannot tell from a crash. The item's code is brain_missing, its fix the refusal's own (ask the user).
+ * The brain_missing envelope a caller already reads stays at the top of the `--json` document, with `alert` beside it.
+ */
+async function alertMissingBrain(err: OperationError, json: boolean): Promise<void> {
+  const { renderCliError } = await import('../../core/agent-output.ts');
+  const { ALERT_DOCS, alertExitCode, recordAlertStreak } = await import('./alert.ts');
+  const { fixLine } = await import('./check-fix.ts');
+  const { setCliExitVerdict, writeStdoutFinal } = await import('../../core/cli-force-exit.ts');
+  const envelope = JSON.parse(renderCliError(err, { json: true, command: 'doctor', tty: false }).stdout!) as Record<string, any>;
+  const item = { code: 'brain_missing', check: 'connection', status: 'fail' as const, message: envelope.message as string, docs: envelope.docs as string, fix: envelope.fix };
+  const alert = recordAlertStreak({ level: 'act', items: [item], unknown: [], docs: ALERT_DOCS });
+  if (json) {
+    await writeStdoutFinal(JSON.stringify({ ...envelope, alert }));
+  } else {
+    console.log('Alert: act');
+    console.log(`  [ACT] connection (brain_missing): ${item.message}`);
+    const fix = fixLine(item.fix);
+    if (fix) console.log(`    Fix: ${fix}`);
+  }
+  setCliExitVerdict(alertExitCode(alert.level));
 }
