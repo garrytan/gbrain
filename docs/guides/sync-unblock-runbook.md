@@ -5,7 +5,8 @@ thousands of pages, other agents committing to the brain repo every few
 minutes) finishes unattended. A page that moves under the run is held, not
 fatal; a dropped database connection is retried, not fatal; a relaunch starts
 a new pass that reads the source's level again and admits only what is still
-unsettled, so nothing already settled is written twice (a company-brain source
+unsettled, so nothing already settled is written twice; in the same process it
+re-reads only the database rows that changed since the last pass's read (a company-brain source
 keeps its cursor and resumes its frozen manifest). What is left for an
 operator is one loop over two commands, and this page is the decision table
 behind them.
@@ -33,7 +34,7 @@ moving again; ask me only about the ones gbrain will not decide by itself."*
    say where the source stands. Where the run stands is `convergence` for a
    managed source synced by the live pass (its newest pass: `pass_id`,
    `outcome`, `stop_reason`, `round`, `candidates`, `settled`, `remaining`,
-   `classes`; see [the pass](#the-pass-outcomes-and-status-reasons)); there
+   `classes`, `levels`; see [the pass](#the-pass-outcomes-and-status-reasons)); there
    `run_id`, `cursor`, `rate_pages_per_min` and `eta_seconds` are null because
    no cursor exists. A company-brain source keeps `cursor` (`index/total`, the
    `pinned_target` commit, `last_advance_at`). `committed_last_10m` is the
@@ -409,6 +410,14 @@ paths that are not settled, in at most four rounds. A pass with nothing
 unsettled and nothing in flight stamps `last_commit`. Every plain sync
 compares the whole tree with what the database absorbed, so a reset or a lost
 run converges on the next plain sync with no flag.
+
+Each round reads the level at the current `HEAD`. A round at a commit its
+previous round did not read (another writer committed, or `gbrain sources
+refresh` moved `HEAD`) patches that round's pages-and-import-records read,
+re-reading only the rows any writer changed since; the tree is patched from
+`git diff-tree` and every path is still judged. `convergence.levels`
+counts the commits the newest pass read (`heads`) and how many of its rounds
+read the pages whole or patched the previous read (`whole`, `patched`).
 
 | Status `reason` | `state` | What it means | `next` |
 |---|---|---|---|

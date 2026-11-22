@@ -10,6 +10,57 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.764.0] - 2026-11-22
+
+**Three community-reported search fixes: the alias hop respects `--types`, keyword-only CJK search degrades instead of erroring on a statement timeout, and get_page's "cannot combine" error shows a call that works.**
+
+### Fixed
+- `search --types company` (or `--type`) no longer injects an aliased page of another type at rank 1. The alias hop now applies the same type gate as the exact-lookup tier, so a page the caller filtered out is never added back. Reported and first fixed by @Masashi-Ono0611 (#9923).
+- Keyword-only CJK search (`search --match keyword`, and `search` with `search.mcp_keyword_only` on) no longer fails with `internal_error: canceling statement due to statement timeout` on a large brain. The CJK read is bounded like hybrid search's CJK arm, and a cut read returns what it has, stamped degraded `keyword_candidates_incomplete`. Reported and first fixed by @Masashi-Ono0611 (#9936).
+- `get_page`'s refusal of `section` with `include_content` or `grep` (and the other slice conflicts) now suggests a full call that works, such as `get_page {"slug": "notes/acme-example-log", "section": "Goals"}` over MCP or `gbrain get notes/acme-example-log --section Goals` on the CLI, instead of a malformed example agents copied straight back into the same error. Reported by @donfan2323, first fixed by @Masashi-Ono0611 (#9808).
+
+**The benchmark crate no longer pins a `url` version with a known advisory (RUSTSEC-2026-0592).**
+
+### Fixed
+- `rust/bench/Cargo.lock` moves `url` from 2.5.8 to 2.5.9, the release that fixes RUSTSEC-2026-0592, and `form_urlencoded` from 1.2.2 to 1.2.3, which `url` 2.5.9 requires. The benchmark crate is not part of any shipped build, so installed gbrain is unaffected; the change clears the dependency scanner's finding.
+
+**PDFs made with the brain-pdf skill no longer include a page's private Timeline or fact rows.**
+
+<!-- behavior-change: brain_pdf_strips_private_sections -->
+
+### Fixed
+- The brain-pdf skill removed only a page's frontmatter before rendering, so a PDF made for sharing carried its private Timeline, fact rows and comments. It now strips the page exactly as `gbrain publish` does, including a guest page, whose `gbrain get` output puts an attribution line above the frontmatter.
+- brain-pdf writes its work files and the PDF in a private temporary directory instead of a fixed `/tmp/<slug>.pdf` path, and a failed render now exits non-zero instead of printing `Rendered:`.
+- `gbrain publish` failed in the release binary with `Cannot find module 'marked'`, because it read the browser copy of marked from `node_modules` at runtime. The copy is now built into the binary. (#10019, reported by @ocscdsa)
+- Stripping a page with a very long run of spaces, or a long space run before a citation, no longer takes seconds.
+- `gbrain publish` also leaves out a timeline that starts with a `--- timeline ---` line written with non-breaking spaces.
+
+### Added
+- `gbrain publish --markdown` writes the stripped markdown instead of an HTML page, for other renderers such as brain-pdf. It refuses an `--out` that is the page itself, and without `--out` it never replaces an existing `<name>.shared.md`.
+
+**`gbrain publish` refuses more wrapped frontmatter, including keys that start with a digit, a symbol or a non-Latin letter, and a block that starts with a comment.**
+
+<!-- behavior-change: publish_wrapped_any_yaml_key -->
+
+### Fixed
+- `gbrain publish` refuses frontmatter that sits below other text, but it recognized a block only when its key started with an ASCII letter or `_`. A block whose keys started with a digit or a symbol (`2fa_backup:`, `$secret:`), used a non-Latin letter, or held a space (`home address:`) was published, values included. Those keys now count, and so do quoted keys in either quote style (including `"alice's phone":`), anchored and tagged keys, and `? key` complex keys. A block that never closes and starts with a `# comment` line is now read past the comment too. A rule followed by a line with a colon and a space, such as `Summary: …`, is refused, so reword that line or move the rule.
+- The publish skill now says to publish whole pages only, because a `gbrain get --lines` slice that starts below the opening `---` has frontmatter keys publish cannot recognize.
+
+**`gbrain publish` decides whether text below a wrapper line is frontmatter with gbrain's own YAML parser, so no key shape slips through.**
+
+<!-- behavior-change: publish_wrapped_yaml_parse -->
+
+### Fixed
+- `gbrain publish` refuses a page whose frontmatter sits below other text, but it recognized that frontmatter by matching key lines against a pattern, and keys the pattern missed were published with their values. The missed shapes were an indented key block, a key holding a colon (`a:b:`, `time 10:30:`), a `[a, b]:` key, a block opened by a tag or anchor on its own line (`!!map`, `&a`), and empty-quoted, `-:` and `?:` keys. Publish now reads the block with the YAML parser sync uses to decide frontmatter. The text between two unindented `---` lines in the first five non-blank lines, or after an `---` line that never closes up to the first blank line, is refused with `invalid_frontmatter` when it parses as a mapping or as a list holding one. A block the parser cannot read is refused when it holds a colon followed by a space or the line end, so malformed private YAML is never shared. Language openers (`---yaml`, `---yml`, `---json`) and `{` mappings stay refused. An early horizontal rule followed by prose, a heading, a link, a time such as 10:30, or a plain list still publishes; a rule followed by `- Label: value` list items, or by a sentence YAML reads as a key and value (`We met at 10:30 and agreed: ship it.`), is now refused, so reword those lines or move the rule.
+- `gbrain publish` no longer writes over the page it is publishing, as HTML or with `--markdown`. An `--out` that named the page itself (the same path, a symlink or hard link to it, a path through a symlinked folder, or a case variant on a case-insensitive filesystem), or a default output name that happened to be the page, replaced the page with the published copy. Publish now refuses with `invalid_params` and writes nothing; pass a different `--out` path.
+
+**Fixed: `gbrain init --non-interactive` re-runs against the brain your config already names instead of stopping with "--non-interactive requires --url".**
+
+### Fixed
+- With no engine flag, `gbrain init --non-interactive` now keeps a configured PGLite brain (its own path) or a configured Postgres brain (its own URL). A `DATABASE_URL` or `GBRAIN_DATABASE_URL` in the environment still takes precedence, and `--pglite`, `--supabase`, `--url` and `--prefer-postgres` still choose the engine. With no config at all, it still asks for `--url`.
+
+<!-- behavior-change: init_non_interactive_keeps_brain -->
+
 ## [0.60.763.0] - 2026-11-22
 
 **Spending caps saved with `gbrain config set` now bind in every paid dream phase, a saved 0 spends nothing, and each `gbrain serve` maintenance sweep no longer re-reads unfenced facts it can never fence.**
