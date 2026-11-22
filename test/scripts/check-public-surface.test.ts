@@ -367,7 +367,7 @@ describe('deprecation records', () => {
   test('a record with a bad surface, no owner or no date is refused', () => {
     const r = run(repo({}, { 'deprecations.d/bad_record_1234.md': '---\nsurface: cli-thing\nname: gbrain x\n---\nText.\n' }));
     expect(r.code).toBe(1);
-    expect(r.out).toContain('surface: must be one of cli-command, cli-flag, mcp-tool, mcp-param, config-key, exit-code, page-format, json-field');
+    expect(r.out).toContain('surface: must be one of cli-command, cli-flag, mcp-tool, mcp-param, config-key, exit-code, page-format, json-field, bundled-skill');
     expect(r.out).toContain('owner: is missing');
     expect(r.out).toContain('remove_after: must be a date (YYYY-MM-DD)');
   });
@@ -376,6 +376,13 @@ describe('deprecation records', () => {
     for (const surface of ['page-format', 'json-field']) {
       expect(run(repo({}, { 'deprecations.d/old_field_1234.md': record(surface, 'gbrain stats --json .old_field', '2026-11-30') })).code).toBe(0);
     }
+  });
+
+  test('a bundled-skill record names a skill; the manifest does not list skills, and the 14-day rule still applies', () => {
+    expect(run(repo({}, { 'deprecations.d/skill_moved_alpha_example.md': record('bundled-skill', 'alpha-example', '2026-11-30') })).code).toBe(0);
+    const short = run(repo({}, { 'deprecations.d/skill_moved_alpha_example.md': record('bundled-skill', 'alpha-example', '2026-11-29') }));
+    expect(short.code).toBe(1);
+    expect(short.out).toContain('remove_after 2026-11-29 is less than 14 days away');
   });
 });
 
