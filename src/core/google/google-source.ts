@@ -206,7 +206,7 @@ async function processThread(
   activePack: ActivePack,
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
-  seen: { thread?: GmailThreadData } = {},
+  seen: { thread?: GmailThreadData; tier?: IngestTier; slug?: string | null } = {},
   cutoffMs?: number,
 ): Promise<GmailThreadData | null> {
   const thread = await gmail.getThread(threadId, deps.cfg.account, {
@@ -234,11 +234,13 @@ async function processThread(
       ? await classifyThreadTier(deps.engine, thread, myAddressSet(deps.entry), privateSenders)
       : privateSenders && isPrivateThread(thread, privateSenders) ? 'private' : 'full';
     summary.ingestTiers = { ...summary.ingestTiers, [tier]: (summary.ingestTiers?.[tier] ?? 0) + 1 };
+    seen.tier = tier;
     if (tier === 'none') return thread;
     markdown = applyTierFrontmatter(markdown, tier);
   }
   const slug = await importRendered(deps, rendered.relPath, markdown, activePack, summary, countedSlugs,
     { thread_id: thread.threadId, message_ids: thread.messages.map((m) => m.id) });
+  seen.slug = slug;
   // #8644/#8938: a purged thread is neither detected nor extracted, and its grace hold is dropped, so its text does not
   // come back through open loops.
   if (slug === null) {
@@ -580,7 +582,8 @@ async function retierPrivatePages(g: GmailSweep): Promise<'aborted' | void> {
     rows = await deps.engine.executeRaw<{ slug: string; source_path: string | null; tid: string | null }>(
       `SELECT slug, source_path, frontmatter->>'thread_id' AS tid FROM pages
         WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE 'emails/%'
-          AND COALESCE(frontmatter->>'visibility', '') <> 'private'
+          AND NOT (COALESCE(frontmatter->>'visibility', '') = 'private' AND COALESCE(frontmatter->>'extract_atoms', '') = 'false'
+                   AND COALESCE(frontmatter->>'facts_backstop', '') = 'false')
           AND jsonb_typeof(frontmatter->'participants') = 'array'
           AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(frontmatter->'participants') a
                        WHERE lower(a) = ANY($2::text[]) OR split_part(lower(a), '@', 2) = ANY($3::text[]))`,
@@ -594,21 +597,32 @@ async function retierPrivatePages(g: GmailSweep): Promise<'aborted' | void> {
   }
   let failed = 0;
   let rewritten = 0;
+  let unsettled = 0;
   for (const [tid, threadPages] of [...byThread].slice(0, RETIER_MAX_THREADS)) {
     if (deps.opts.signal?.aborted) return 'aborted';
+    const seen: { tier?: IngestTier; slug?: string | null } = {};
     try {
-      await processThread(deps, g.gmail, tid, g.activePack, g.summary, g.countedSlugs);
-      rewritten++;
+      await processThread(deps, g.gmail, tid, g.activePack, g.summary, g.countedSlugs, seen);
     } catch (e) {
       if (e instanceof GoogleCursorExpiredError && e.status === 404) {
-        g.summary.deleted += await deleteEmailPages(deps, threadPages);
+        unsettled++;
+        deps.log(`[google] thread ${tid} was not found while re-tiering; its page(s) ${threadPages.map((p) => p.slug).join(', ')} are kept as they are and it is retried next sweep`);
         continue;
       }
       if (deps.managed) rethrowConnectorWriteError(e);
       failed++;
       deps.log(`[google] re-tiering thread ${tid} as private failed (retried next sweep): ${e instanceof Error ? e.message : String(e)}`);
       if (e instanceof CredentialError && (e.code === 'gbrainio_limit_reached' || e.code === 'rate_limited')) break;
+      continue;
     }
+    if (typeof seen.slug !== 'string') {
+      unsettled++;
+      deps.log(`[google] thread ${tid} was read but no page was rewritten while re-tiering; it is retried next sweep`);
+      continue;
+    }
+    rewritten++;
+    const moved = threadPages.filter((p) => p.slug !== seen.slug);
+    if (moved.length > 0) g.summary.deleted += await deleteEmailPages(deps, moved);
   }
   if (rewritten > 0) {
     deps.log(`[google] ${rewritten} page(s) rewritten as private after the private-senders list grew; on a git-backed brain, earlier commits still hold their previous text`);
@@ -617,6 +631,7 @@ async function retierPrivatePages(g: GmailSweep): Promise<'aborted' | void> {
     g.summary.status = 'partial';
     return;
   }
+  if (unsettled > 0) return;
   if (byThread.size > RETIER_MAX_THREADS) {
     deps.log(`[google] re-tiered ${RETIER_MAX_THREADS} of ${byThread.size} threads as private; the rest continue next sweep`);
     return;

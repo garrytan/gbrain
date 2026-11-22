@@ -164,7 +164,7 @@ test('gbrain.io source: a grown private-senders list rewrites the matching pages
   }
 }), 180_000);
 
-test('gbrain.io source: re-tiering stops at a usage limit, resumes, and removes pages of threads gone from Gmail', async () => withEnv(env, async () => {
+test('gbrain.io source: re-tiering stops at a usage limit, resumes, and never deletes a page whose thread is gone', async () => withEnv(env, async () => {
   for (const engine of engines) {
     const file = privateList(['nobody@elsewhere.example.invalid']);
     const config = gbrainioConfig({ g_private_senders_file: file });
@@ -189,11 +189,49 @@ test('gbrain.io source: re-tiering stops at a usage limit, resumes, and removes 
     expect((await runGoogleSync(engine, f.id, cfg, options)).status).not.toBe('partial');
     const after = await pages(engine, f.id);
     expect(after.get('a1a1a1a1a1a1a100')?.visibility).toBe('private');
-    expect(after.has('b2b2b2b2b2b2b200')).toBe(false);
+    expect(after.get('b2b2b2b2b2b2b200')?.ingest_tier).toBe('record');
 
-    const settled = fakeGbrainio(mail);
+    const retried = fakeGbrainio(mail);
     expect((await runGoogleSync(engine, f.id, cfg, options)).status).not.toBe('partial');
-    expect(settled.shows()).toEqual([]);
+    expect(retried.shows()).toEqual(['b2b2b2b2b2b2b200']);
+    expect((await pages(engine, f.id)).has('b2b2b2b2b2b2b200')).toBe(true);
+  }
+}), 180_000);
+
+test('gbrain.io source on an unmanaged brain: re-tiering replaces a renamed thread page and rewrites a page made private by hand', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const file = privateList(['nobody@elsewhere.example.invalid']);
+    const config = gbrainioConfig({ g_private_senders_file: file });
+    const f = await source(engine, config);
+    await disposePersistenceConsumer(engine);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    try {
+      const cfg = parseGoogleSourceConfig(config, f.dir);
+      const mail = MAIL.map((m) => ({ ...m }));
+      fakeGbrainio(mail);
+      await runGoogleSync(engine, f.id, cfg, options);
+      await settleConnectorWrites(engine, f.id);
+      await engine.executeRaw(
+        "UPDATE pages SET frontmatter = frontmatter || '{\"visibility\":\"private\"}'::jsonb WHERE source_id = $1 AND frontmatter->>'thread_id' = 'e5e5e5e5e5e5e500'", [f.id]);
+      mail.splice(mail.findIndex((m) => m.id === 'a1a1a1a1a1a1a101'), 1);
+      mail.find((m) => m.id === 'a1a1a1a1a1a1a102')!.subject = 'Dinner instead';
+      writeFileSync(file, 'nobody@elsewhere.example.invalid\nother@example.invalid\npeer@example.invalid\n');
+      fakeGbrainio(mail);
+      expect((await runGoogleSync(engine, f.id, cfg, options)).status).not.toBe('partial');
+      await settleConnectorWrites(engine, f.id);
+      const rows = await engine.executeRaw<{ slug: string; frontmatter: unknown }>(
+        "SELECT slug, frontmatter FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND frontmatter->>'thread_id' IN ('a1a1a1a1a1a1a100', 'e5e5e5e5e5e5e500')", [f.id]);
+      const fm = (r: { frontmatter: unknown }) => (typeof r.frontmatter === 'string' ? JSON.parse(r.frontmatter) : r.frontmatter) as Record<string, unknown>;
+      const lunch = rows.filter((r) => fm(r).thread_id === 'a1a1a1a1a1a1a100');
+      expect(lunch).toHaveLength(1);
+      expect(fm(lunch[0]!).visibility).toBe('private');
+      const starred = rows.filter((r) => fm(r).thread_id === 'e5e5e5e5e5e5e500');
+      expect(starred).toHaveLength(1);
+      expect(fm(starred[0]!).ingest_tier).toBe('private');
+      expect(fm(starred[0]!).extract_atoms).toBe(false);
+    } finally {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    }
   }
 }), 180_000);
 

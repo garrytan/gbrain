@@ -503,9 +503,10 @@ Threads are sorted into tiers before anything is written:
 The private-senders file holds one address or `@domain` per line (`#` starts
 a comment). If the file is missing, unreadable or empty, the sync stops before
 writing anything. When you add someone, the next sync rewrites their existing
-pages as private (up to 200 threads per sync; the rest follow on later syncs)
-and removes pages of threads that are gone from Gmail; on a git-backed brain,
-earlier commits still hold the old text. Otherwise a thread's tier is set when
+pages as private (up to 200 threads per sync; the rest follow on later syncs);
+on a git-backed brain, earlier commits still hold the old text. A page whose
+thread is gone from Gmail is never deleted for that: it keeps its tier, the
+sync log names it and retries it, and `gbrain delete <slug>` removes it. Otherwise a thread's tier is set when
 its newest message is read: starring it or creating a person page later
 changes the tier only when a new message arrives.
 
