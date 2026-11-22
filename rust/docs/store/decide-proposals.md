@@ -59,7 +59,7 @@ Proposals are owner-reviewed rows, a few hundred at most, so lists scan a table 
 ## Differences from PGLite and Postgres
 
 - Ids are taken before the unique keys are checked, as a BIGSERIAL does: a conflicting insert returns `null` and the id is gone. In Postgres a `NOT NULL` failure also takes an id; the store validates before it allocates, so a refused insert there takes none.
-- The review queue's due order is `a_ref COLLATE "C", b_ref COLLATE "C"`. This is a deliberate pin: it makes Postgres order by bytes, as the store does, so the two do not depend on the database's locale.
+- The review queue's due order is `next_attempt_at, created_at, a_ref, b_ref`, and the SQL does not pin `a_ref` and `b_ref` to `COLLATE "C"`. The Rust store breaks ties on those two by bytes, and so does PGLite; Postgres breaks them in the database's collation. Refs are text, so the difference shows only for refs that sort differently by bytes and by collation (mixed case, accents, punctuation).
 - The supersede rows' `created_at` and `decided_at` are ISO strings with milliseconds on PGLite and Postgres. The store keeps microseconds; `store-members/decide-proposals.ts` cuts them to milliseconds (`new Date(s).toISOString()`). Review rows pass through as Postgres prints them (`created_at::text`).
 - `REAL` columns (`p_supersede` and the like) are stored as `f32` and read back as the shortest decimal that names that `f32`, as Postgres prints a `real`. A value outside the `real` range is refused.
 - `claim_conflicts:%` is a SQL `LIKE`, so `_` matches any one character: `claimXconflicts:a` counts as a claim sweep, `claims_conflicts:a` does not. The store uses the same matcher as the facts family.
