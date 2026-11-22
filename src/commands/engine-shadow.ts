@@ -4,13 +4,16 @@
  * Shadow mode mirrors a sample of the host brain's reads to the Rust engine in a supervised child process and
  * records whether the answers agree. It is off by default and writes nothing to the brain database, its config
  * table or the brain repo: every file lives in `<gbrain home>/shadow/<brain>/`. `start` previews a plan with a hash
- * and needs `--yes --expect <hash>`; the installed addon is loaded then, in the foreground. The
+ * and needs `--yes --expect <hash>`; the installed addon is loaded then, in the foreground. `start` first opens the brain
+ * to read its storage mode and refuses a managed-storage brain (the Rust engine never holds one). The
  * hidden `__child <dir>` is the child the serving process spawns.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
+import type { BrainEngine } from '../core/engine.ts';
+import type { OperationError } from '../core/ops/contract.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
@@ -24,6 +27,8 @@ export interface EngineShadowDeps {
   brainId?: () => string;
   /** The brain config; default loadConfig() (the host brain). */
   config?: () => Pick<EngineConfig, 'engine' | 'database_path' | 'database_url'> | null;
+  /** Opens the configured brain to read its storage mode (never with shadow mode attached; closed after); default the real engine. */
+  openPrimary?: () => Promise<BrainEngine>;
   /** The addon loader `start --yes` runs; default the real loader (installed addon only, no network). */
   loadAddon?: () => Promise<RustEngineAddonLoad>;
   out?: (line: string) => void;
@@ -46,6 +51,9 @@ Shadow mode is off by default. When on, a sample of reads this brain answers is 
 supervised child process that runs the same read on the Rust engine and records match, diff or why it could not
 compare. The primary answer never waits for the child. It writes nothing to the brain database, its config or the
 brain repo; everything lives in <gbrain home>/shadow/<brain>/. stop --delete removes that directory.
+
+A brain that uses managed storage is refused (exit 3): the Rust engine never holds managed storage, so a shadow on it
+measures nothing it could use. start opens the brain database to read that, even with --plan.
 
 The report is provisional and always says NOT READY: the Rust store is not seeded until a later release.`;
 
@@ -115,7 +123,9 @@ async function defaultBrainId(): Promise<() => string> {
   return () => brainRoutingArgs()[1] ?? 'unresolved';
 }
 
-async function resolveBrain(deps: EngineShadowDeps): Promise<{ key: string; dir: string; engine: string }> {
+interface ResolvedBrain { key: string; dir: string; engine: string; config: Pick<EngineConfig, 'engine' | 'database_path' | 'database_url'> }
+
+async function resolveBrain(deps: EngineShadowDeps): Promise<ResolvedBrain> {
   // Shadow state is keyed by the host brain's config. A selected mounted brain would silently read, start or delete the host's.
   // Loaded here, not at the top, so the command's flag table does not grow by everything the resolver imports.
   const { HOST_BRAIN_ID } = await import('../core/brain-registry.ts');
@@ -127,7 +137,7 @@ async function resolveBrain(deps: EngineShadowDeps): Promise<{ key: string; dir:
   const id = config ? brainIdentity(config) : null;
   const key = config ? shadowBrainKey(config) : null;
   if (!config || !id || !key) throw new UsageError('No brain is configured here (gbrain init sets one up); shadow mode needs a brain to compare against.');
-  return { key, dir: shadowDirFor(key), engine: id.engine };
+  return { key, dir: shadowDirFor(key), engine: id.engine, config };
 }
 
 export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {}): Promise<number> {
@@ -165,11 +175,47 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
   }
 }
 
+/** Opens the configured brain the way the primary opens it, minus shadow mode (that attaches in createEngine only). */
+async function openConfiguredPrimary(config: ResolvedBrain['config']): Promise<BrainEngine> {
+  const { constructEngine } = await import('../core/engine-construct.ts');
+  const engineConfig: EngineConfig = { engine: config.engine, database_path: config.database_path, database_url: config.database_url };
+  const engine = await constructEngine(engineConfig);
+  await engine.connect(engineConfig);
+  return engine;
+}
+
+/** The managed-storage refusal for this brain, or null. A brain that cannot be opened is refused too (the mode is unknown). */
+async function managedRefusal(brain: ResolvedBrain, deps: EngineShadowDeps): Promise<OperationError | null> {
+  const { managedStorageRefusal, unopenableBrainRefusal } = await import('../shadow/managed-gate.ts');
+  let primary: BrainEngine;
+  try {
+    primary = await (deps.openPrimary ?? (() => openConfiguredPrimary(brain.config)))();
+  } catch (e) {
+    return unopenableBrainRefusal(e);
+  }
+  try {
+    return await managedStorageRefusal(primary);
+  } finally {
+    await primary.disconnect().catch(() => undefined);
+  }
+}
+
+/** Renders the managed-storage refusal: one line, the why and the next step on stderr; exit 3 (consent). */
+function renderManagedRefusal(e: OperationError, err: (l: string) => void): number {
+  err(`engine shadow: ${e.code} (${e.reason}): ${e.message}`);
+  if (e.why) err(e.why);
+  if (e.detail) err(`Detail: ${e.detail}`);
+  err(e.suggestion ?? 'Ask the user; nothing was written.');
+  return 3;
+}
+
 async function start(
-  brain: { key: string; dir: string; engine: string }, o: StartOpts, deps: EngineShadowDeps,
+  brain: ResolvedBrain, o: StartOpts, deps: EngineShadowDeps,
   out: (l: string) => void, err: (l: string) => void, now: () => Date,
 ): Promise<number> {
   const { plan, hash } = shadowPlan(brain.key, brain.engine, brain.dir, o);
+  const refusal = await managedRefusal(brain, deps);
+  if (refusal) return renderManagedRefusal(refusal, err);
   if (o.plan || !o.yes) {
     out(`Shadow mode plan for brain ${plan.brain} (${plan.primary_engine}):`);
     out(`  mirrors: ${plan.mirrors}`);

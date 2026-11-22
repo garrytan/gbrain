@@ -38,14 +38,17 @@ function capture() {
   return { out, err, deps: { out: (l: string) => out.push(l), err: (l: string) => err.push(l) } };
 }
 
+/** The brain `start` opens to read its storage mode: an unmanaged one, so these tests keep exercising start itself. */
+const unmanagedBrain = { openPrimary: async () => ({ executeRaw: async () => [{ enabled: false }], disconnect: async () => undefined }) as never };
+
 const okAddon = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1' } as never });
 
 async function startShadow(config: EngineConfig): Promise<string> {
   const plan = capture();
-  expect(await runEngineShadow(['start', '--plan'], { ...plan.deps, config: () => config })).toBe(0);
+  expect(await runEngineShadow(['start', '--plan'], { ...plan.deps, config: () => config, ...unmanagedBrain })).toBe(0);
   const hash = plan.out.find((l) => l.startsWith('plan_hash: '))!.slice('plan_hash: '.length);
   const go = capture();
-  expect(await runEngineShadow(['start', '--yes', '--expect', hash], { ...go.deps, config: () => config, loadAddon: okAddon })).toBe(0);
+  expect(await runEngineShadow(['start', '--yes', '--expect', hash], { ...go.deps, config: () => config, ...unmanagedBrain, loadAddon: okAddon })).toBe(0);
   return hash;
 }
 
@@ -53,10 +56,10 @@ describe('gbrain engine shadow', () => {
   test('start previews a plan and needs --yes with the matching hash', async () => {
     await inHome(async (_home, config) => {
       const preview = capture();
-      expect(await runEngineShadow(['start'], { ...preview.deps, config: () => config })).toBe(3);
+      expect(await runEngineShadow(['start'], { ...preview.deps, config: () => config, ...unmanagedBrain })).toBe(3);
       expect(preview.out.join('\n')).toContain('never writes: the brain database, the brain config table, the brain repo');
       const wrong = capture();
-      expect(await runEngineShadow(['start', '--yes', '--expect', 'nope'], { ...wrong.deps, config: () => config, loadAddon: okAddon })).toBe(3);
+      expect(await runEngineShadow(['start', '--yes', '--expect', 'nope'], { ...wrong.deps, config: () => config, ...unmanagedBrain, loadAddon: okAddon })).toBe(3);
       expect(wrong.err.join('\n')).toContain('preview_changed');
       const dir = shadowDirFor(shadowBrainKey(config)!);
       expect(existsSync(dir)).toBe(false);
@@ -66,11 +69,11 @@ describe('gbrain engine shadow', () => {
   test('a refused addon keeps shadow mode off and writes nothing', async () => {
     await inHome(async (_home, config) => {
       const plan = capture();
-      await runEngineShadow(['start', '--plan'], { ...plan.deps, config: () => config });
+      await runEngineShadow(['start', '--plan'], { ...plan.deps, config: () => config, ...unmanagedBrain });
       const hash = plan.out.find((l) => l.startsWith('plan_hash: '))!.slice(11);
       const go = capture();
       const code = await runEngineShadow(['start', '--yes', '--expect', hash], {
-        ...go.deps, config: () => config,
+        ...go.deps, config: () => config, ...unmanagedBrain,
         loadAddon: async () => ({ ok: false, code: 'rust_engine_addon_missing', reason: 'release_unavailable', message: 'Could not read the release.' }),
       });
       expect(code).toBe(1);
