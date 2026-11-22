@@ -16,8 +16,9 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
       const { loadConfig } = await import('../../core/config.ts');
       const { getCliOptions } = await import('../../core/cli-options.ts');
       const { maybeDelegateLocalOperation } = await import('../../core/persistence/local-client.ts');
+      const { DEFAULT_READ_WALLCLOCK_MS } = await import('../../core/cli-socket/protocol.ts');
       const cli = getCliOptions();
-      const delegated = await maybeDelegateLocalOperation('open_loops', params, loadConfig(), { brain: cli.brain, source: sourceId, timeoutMs: cli.timeoutMs ?? undefined });
+      const delegated = await maybeDelegateLocalOperation('open_loops', params, loadConfig(), { brain: cli.brain, source: sourceId, timeoutMs: cli.timeoutMs ?? DEFAULT_READ_WALLCLOCK_MS });
       if (delegated.handled) return delegated.result;
       engine = await ctx.connectEngine();
       const { handleToolCall } = await import('../../mcp/server.ts');

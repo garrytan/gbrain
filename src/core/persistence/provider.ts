@@ -101,7 +101,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     // GBRA-498: the trusted local CLI's --room is marked here, where the brain is; any other lane's answer goes back
     // unmarked and the CLI marks every item unknown.
     const answer = async (): Promise<unknown> => {
-      if (withMeta) return { [PERSISTENCE_META_KEY]: { result: body, meta: { degraded: result._meta?.degraded, gbrain_notices: result._meta?.gbrain_notices } } };
+      if (withMeta) return { [PERSISTENCE_META_KEY]: { result: body, meta: { degraded: result._meta?.degraded, gbrain_notices: result._meta?.gbrain_notices, retrieval: result._meta?.retrieval } } };
       if (request.room === undefined || verified.remote || verified.principal.kind !== 'local_cli') return body;
       const { assessRoom, readRoomDeclaration } = await import('../access/room.ts');
       const room = await assessRoom(engine, { op: request.operation, result: body, sourceId,

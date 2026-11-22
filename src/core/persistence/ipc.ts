@@ -89,7 +89,7 @@ export interface PersistenceIpcCapabilities {
 
 /** GBRA-498: the one key of an owner's answer to a request that named a room: the marked result, its room meta and notices. */
 export const PERSISTENCE_ROOM_MARKED_KEY = 'room_marked';
-/** G8: the one key of an owner's answer to a `with_meta` request: the result and its `degraded` and `gbrain_notices` meta. */
+/** G8: the one key of an owner's answer to a `with_meta` request: the result and its `degraded`, `gbrain_notices` and `retrieval` meta. */
 export const PERSISTENCE_META_KEY = 'with_meta';
 /** The longest `--room` a request carries; a longer one stays with the CLI, which marks every item unknown. */
 export const PERSISTENCE_ROOM_MAX_CHARS = 4_096;

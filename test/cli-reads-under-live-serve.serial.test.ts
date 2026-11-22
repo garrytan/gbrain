@@ -41,11 +41,25 @@ const READS: Array<[string, string[]]> = [
   ['whois', ['whois', 'alice', '--json']],
   ['entity', ['entity', 'people/alice-example', '--json']],
   ['waiting', ['waiting', '--json', '--as-of', '2026-01-01T00:00:00.000Z']],
+  ['query --explain-target', ['query', 'zzzz', '--explain-target', 'people/alice-example', '--json']],
+];
+/** Human output that reads the serve's retrieval meta: the empty-result cause after "No results.". */
+const TEXT_READS: Array<[string, string[]]> = [
+  ['search (no results)', ['search', 'zzzz']],
 ];
 const cold = new Map<string, string>();
+const coldText = new Map<string, string>();
 /** Fields that differ between any two runs (timing, and the read-touch stamp the previous read wrote). */
 const VOLATILE = new Set(['latency_ms', 'last_retrieved_at']);
-const stable = (stdout: string) => JSON.stringify(JSON.parse(stdout), (k, v) => (VOLATILE.has(k) ? undefined : v));
+/**
+ * The explain-target fix retries the serve's own arguments, which carry the source as routing and no `--json`, so
+ * its argv and command name the same retry without those flags; every other field matches the cold run.
+ */
+const VOLATILE_FOR: Record<string, string[]> = { 'query --explain-target': ['argv', 'command'] };
+const stable = (stdout: string, name = '') => {
+  const skip = new Set([...VOLATILE, ...(VOLATILE_FOR[name] ?? [])]);
+  return JSON.stringify(JSON.parse(stdout), (k, v) => (skip.has(k) ? undefined : v));
+};
 
 beforeAll(async () => {
   expect((await cli(['init', '--pglite', '--no-embedding'])).exitCode).toBe(0);
@@ -55,7 +69,12 @@ beforeAll(async () => {
   for (const [name, args] of READS) {
     const r = await cli(args);
     expect(r.exitCode).toBe(0);
-    cold.set(name, stable(r.stdout));
+    cold.set(name, stable(r.stdout, name));
+  }
+  for (const [name, args] of TEXT_READS) {
+    const r = await cli(args);
+    expect(r.exitCode).toBe(0);
+    coldText.set(name, r.stdout);
   }
   serve = Bun.spawn({ cmd: [process.execPath, '--no-env-file', CLI, 'serve'], cwd: home, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
     env: env() });
@@ -81,7 +100,14 @@ describe('read-only CLI commands while a live serve owns the PGLite brain', () =
       const r = await cli(args);
       expect(r.stderr).not.toContain('pglite_busy');
       expect(r.exitCode).toBe(0);
-      expect(stable(r.stdout)).toBe(cold.get(name)!);
+      expect(stable(r.stdout, name)).toBe(cold.get(name)!);
+    }, 90_000);
+  }
+  for (const [name, args] of TEXT_READS) {
+    test(`gbrain ${name} prints the cold path's text through the serve`, async () => {
+      const r = await cli(args);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toBe(coldText.get(name)!);
     }, 90_000);
   }
 });
