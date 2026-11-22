@@ -122,7 +122,7 @@ async function runInitBranches(args: string[]) {
   }
 
   // An existing rust/pglite config is the engine when no engine flag says otherwise: a Rust brain is reported
-  // and left unchanged (the store is never opened here); --non-interactive on either takes the local branch below.
+  // and left unchanged (the store is never opened here); --non-interactive routing for a kept local config is split out.
   const kept = keptEngineConfig(fileState, isPGLite || isSupabase || !!manualUrl || args.includes('--prefer-postgres'));
   if (kept?.engine === 'rust') return reportKeptRustBrain(kept, jsonOutput);
 
@@ -189,7 +189,7 @@ async function runInitBranches(args: string[]) {
   }
 
   // Explicit PGLite mode
-  if (!preservedPostgresUrl && (isPGLite || (!isSupabase && !manualUrl && (!isNonInteractive || (kept && !effectiveEnvDatabaseUrl()))))) {
+  if (!preservedPostgresUrl && (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive))) {
     // Smart detection: scan for .md files unless --pglite flag forces it
     if (!isPGLite && !isSupabase) {
       const fileCount = countMarkdownFiles(process.cwd());

@@ -148,20 +148,19 @@ describe('#3753 — --force re-init preserves a configured postgres engine', () 
 });
 
 /**
- * The same preservation for a configured Rust engine (`engine: 'rust'`, the opt-in store at `database_path`), and
- * `--non-interactive` on a configured local engine.
+ * The same preservation for a configured Rust engine (`engine: 'rust'`, the opt-in store at `database_path`).
+ * `init --non-interactive` on a configured PGLite or Postgres brain is split into its own PR (Minder's gate on #9946).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  * 1. Protects: `gbrain init` and `gbrain init --non-interactive` with no engine flag on a brain whose config says
  *    `engine: 'rust'` exit 0, report the existing brain, and keep that engine and store path; they never write a PGLite
- *    brain over it. `init --non-interactive` on an existing `engine: 'pglite'` brain uses PGLite without asking for
- *    --url. A fresh `init --non-interactive` (no config, no engine flag) still demands --url and writes nothing.
+ *    brain over it. A fresh `init --non-interactive` (no config, no engine flag) still demands --url and writes nothing.
  * 2. Fails when: init routes a Rust config into the PGLite default branch (src/commands/init.ts, the
  *    `keptEngineConfig` check), which rewrites config.json to engine=pglite at GBRAIN_HOME/.gbrain/brain.pglite and
- *    orphans the Rust store; or when --non-interactive on an existing rust/pglite config takes the Postgres branch and
+ *    orphans the Rust store; or when --non-interactive on an existing rust config takes the Postgres branch and
  *    stops with "--non-interactive requires --url"; or when the fresh no-config path stops demanding --url.
  * 3. Existing coverage: the #3753 cases above seed only a postgres config, and only with --force; no other init test
- *    seeds a Rust or PGLite config for --non-interactive or runs it with no config at all.
+ *    seeds a Rust config for --non-interactive or runs it with no config at all.
  * 4. Seams: none. Real CLI subprocess, hermetic GBRAIN_HOME. The repo's built addon is passed when it exists;
  *    the Rust cases never open the store, so they hold with or without it.
  */
@@ -243,49 +242,6 @@ describe('init with no engine flag preserves a configured rust engine', () => {
 });
 
 describe('init --non-interactive engine routing', () => {
-  test('existing pglite config: init --non-interactive uses PGLite and does not demand --url', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-init-noninteractive-pglite-home-'));
-    const cwd = mkdtempSync(join(tmpdir(), 'gbrain-init-noninteractive-pglite-cwd-'));
-    try {
-      const dbPath = join(home, '.gbrain', 'brain.pglite');
-      mkdirSync(join(home, '.gbrain'));
-      writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: dbPath }, null, 2));
-      const r = await runCli(['init', '--non-interactive', '--no-embedding'], { gbrainHome: home, cwd });
-      expect(r.stderr).not.toMatch(/--non-interactive requires --url/);
-      expect(r.exitCode).toBe(0);
-      expect({ engine: readConfig(home).engine, database_path: readConfig(home).database_path }).toEqual({ engine: 'pglite', database_path: dbPath });
-      expect(existsSync(dbPath)).toBe(true);
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
-  test('existing pglite config at a custom path: init --non-interactive keeps that path, never the default', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-init-noninteractive-custom-home-'));
-    const cwd = mkdtempSync(join(tmpdir(), 'gbrain-init-noninteractive-custom-cwd-'));
-    try {
-      const custom = join(home, 'elsewhere', 'brain.pglite');
-      mkdirSync(join(home, '.gbrain'));
-      writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: custom }, null, 2));
-      const first = await runCli(['init', '--pglite', '--path', custom, '--no-embedding'], { gbrainHome: home, cwd });
-      expect(first.exitCode).toBe(0);
-      const put = await runCli(['put', 'notes/sentinel', '--content', '# Sentinel\n\nKept across re-init.\n'], { gbrainHome: home, cwd });
-      expect(put.exitCode).toBe(0);
-      const r = await runCli(['init', '--non-interactive', '--no-embedding'], { gbrainHome: home, cwd });
-      expect(r.exitCode).toBe(0);
-      expect({ engine: readConfig(home).engine, database_path: readConfig(home).database_path }).toEqual({ engine: 'pglite', database_path: custom });
-      expect(existsSync(join(home, '.gbrain', 'brain.pglite'))).toBe(false);
-      // The brain the config names after re-init is the one that holds the page.
-      const get = await runCli(['get', 'notes/sentinel'], { gbrainHome: home, cwd });
-      expect(get.exitCode).toBe(0);
-      expect(get.stdout).toContain('Kept across re-init.');
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
-
   test('no config and no engine flag: init --non-interactive still demands --url and writes no config', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-init-noninteractive-fresh-home-'));
     const cwd = mkdtempSync(join(tmpdir(), 'gbrain-init-noninteractive-fresh-cwd-'));
