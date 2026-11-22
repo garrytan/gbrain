@@ -34,6 +34,7 @@ function captureStatus(cap: string) {
     off_marker: existsSync(captureOffMarker(cap)),
     epoch: epoch ? { id: epoch.id, state: epoch.state, started_at: epoch.started_at, seeded: existsSync(join(basesDir(cap, epoch.id), 'manifest.json')) } : null,
     invalidated_now: purged,
+    scratch_drop_pending: existsSync(join(cap, 'scratch-drop-pending')),
     recording_processes: files.filter(f => f.startsWith('proc-')).length,
     segment_bytes: files.filter(f => f.endsWith('.jsonl')).reduce((n, f) => n + statSync(join(dir!, f)).size, 0),
     directory: cap,
@@ -64,12 +65,15 @@ export async function runShadowReplayCommand(sub: string, rest: string[], io: Sh
     }
     if (action === 'status') {
       const s = captureStatus(cap);
+      if (s.invalidated_now || s.scratch_drop_pending) s.scratch_drop_pending = !await (await import('../shadow/capture.ts')).scratchCleared(cap);
       if (json) io.out(JSON.stringify(s, null, 2));
       else io.out(`capture: ${s.on ? 'on' : 'off'}${s.killed_by_env ? ' (GBRAIN_SHADOW_CAPTURE=off)' : ''}\nepoch: ${s.epoch ? `${s.epoch.id} ${s.epoch.state}${s.epoch.seeded ? ', copies seeded' : ', not seeded'}` : 'none'}\nrecording processes: ${s.recording_processes}\nrecorded bytes: ${s.segment_bytes}\ndirectory: ${s.directory}`);
       return 0;
     }
     if (action === 'delete') {
       if (!flags.includes('--yes')) { io.out(`This deletes every recording, seeded copy and replay report under ${cap} and ${join(io.brain.dir, 'replay')}. Run again with --yes.`); return 1; }
+      const { scheduleScratchDrop } = await import('../shadow/capture.ts');
+      if (!await scheduleScratchDrop(cap)) { io.err('engine shadow: the scratch Postgres copy could not be dropped; nothing was deleted. Make the scratch database reachable and run this again.'); return 1; }
       const gone: string[] = [];
       if (existsSync(cap)) for (const f of readdirSync(cap)) if (f !== 'state.json' && f !== 'off') { rmSync(join(cap, f), { recursive: true, force: true }); gone.push(join(cap, f)); }
       const runs = join(io.brain.dir, 'replay');

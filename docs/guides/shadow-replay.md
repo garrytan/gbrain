@@ -39,7 +39,8 @@ Each later `gbrain engine shadow replay` replays the recording since the last ru
 copies, and seeds fresh copies for the next one. Run it once a night. It needs the Rust engine addon installed.
 
 Optional third arm: set `GBRAIN_SHADOW_REPLAY_POSTGRES_URL` to an empty Postgres database on this machine
-(`localhost` or a Unix socket). Any other host is refused before a row is sent. With three arms a difference reads as
+(`localhost` or a Unix socket). Any other host is refused before a row is sent. The seed records the URL in
+`capture/scratch-postgres.json` (owner-only) so that a purge in any process can drop the copy. With three arms a difference reads as
 "Rust differs" (PGLite and Postgres agree) or "the TypeScript engines disagree" (`ts_disagree`). With two arms a
 difference only shows that PGLite and Rust disagree.
 
@@ -77,17 +78,20 @@ show its recorded difference; when the Rust fix lands, change it to `"fixed"` an
 ## Purge
 
 When you purge a page or fact, gbrain writes a line to its purge log. Any new purge-log line, or a purge log that
-cannot be read, deletes the whole current recording and its copies (the process doing the purge deletes them at
-once; other processes and the nightly run check before they write). Nothing purged is replayed. The next nightly run
-seeds new copies from the purged brain. The local Postgres scratch copy, when you use one, is reset by that run.
-Reports and summaries hold no content, so a purge has nothing to remove there.
+cannot be read, deletes the whole current recording and its copies, and drops the local Postgres scratch copy's
+schema. The process doing the purge does this at once, whether capture is on, off or turned off with
+`GBRAIN_SHADOW_CAPTURE=off`, as long as the brain has a capture directory. Other processes and the nightly run check
+before they write. A running replay is stopped within seconds. If the scratch database cannot be reached at that
+moment, a pending marker stays, and every later replay, status and seed refuses to go on until the drop succeeds
+(`capture status` shows `scratch_drop_pending`). Nothing purged is replayed. The next nightly run seeds new copies from
+the purged brain. Reports and summaries hold no content, so a purge has nothing to remove there.
 
 ## Stop and delete
 
 ```bash
 gbrain engine shadow capture off                 # stops every recording process at its next write; deletes nothing
 GBRAIN_SHADOW_CAPTURE=off gbrain serve           # off for any process started with this variable
-gbrain engine shadow capture delete --yes        # deletes recordings, copies and reports, and lists what it deleted
+gbrain engine shadow capture delete --yes        # drops the scratch copy, deletes recordings, copies and reports
 ```
 
 ## Nightly run on the brain's host (for an operator agent)

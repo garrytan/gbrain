@@ -3,7 +3,7 @@ import type { EngineConfig } from './types.ts';
 import { registerChatUsageSink, makeEngineChatUsageSink } from './ai/chat-usage.ts';
 import { constructEngine } from './engine-construct.ts';
 import { shadowStateFor } from '../shadow/state.ts';
-import { captureStateFor } from '../shadow/capture-state.ts';
+import { capturePurgeWatchFor, captureStateFor } from '../shadow/capture-state.ts';
 
 /**
  * Create an engine instance based on config.
@@ -43,5 +43,7 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
     const { attachCapture } = await import('../shadow/capture.ts');
     out = attachCapture(out, capture.cap);
   }
+  const purgeWatch = capturePurgeWatchFor(config);
+  if (purgeWatch) (await import('../shadow/capture.ts')).watchPurges(out, purgeWatch);
   return out;
 }

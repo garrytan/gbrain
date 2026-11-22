@@ -18,7 +18,7 @@
  * copies are deleted. `appendPurgeIntent` also notifies this module directly (`onPurgeIntent`).
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statfsSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
@@ -151,7 +151,83 @@ export function invalidateIfPurged(cap: string, opts: { home?: string; force?: s
   if (!opts.force && !purgeLogChanged(pointer.purge_log, opts.home)) return false;
   setEpochState(cap, pointer, 'invalidated', opts.force ?? 'purge');
   deleteEpochData(cap, pointer.id);
+  scheduleScratchDrop(cap);
   return true;
+}
+
+// ---- the scratch Postgres copy --------------------------------------------------------------------------------
+// The seed records where the scratch Postgres copy lives (`scratch-postgres.json`, 0600). Every invalidation writes
+// `scratch-drop-pending` and drops the copy's schema at once; the marker goes away only after the drop succeeded, and
+// every later replay, status and seed refuses to go on while it is there.
+
+export const scratchRecordPath = (cap: string) => join(cap, 'scratch-postgres.json');
+export const scratchPendingPath = (cap: string) => join(cap, 'scratch-drop-pending');
+type ScratchSql = { executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>; disconnect(): Promise<void> };
+type ScratchOpener = (url: string) => Promise<ScratchSql>;
+const openScratch: ScratchOpener = async url => {
+  const { constructEngine } = await import('../core/engine-construct.ts');
+  const cfg = { engine: 'postgres', database_url: url } as never;
+  const e = await constructEngine(cfg);
+  await e.connect(cfg);
+  return e;
+};
+let scratchOpener: ScratchOpener = openScratch;
+/** Test seam: the opener the drop uses. Null restores the real one. */
+export function __setScratchOpenerForTests(o: ScratchOpener | null): void { scratchOpener = o ?? openScratch; }
+const scratchDrops = new Map<string, Promise<boolean>>();
+
+/** Drops the scratch Postgres copy's schema now when one is recorded or a drop is pending. True when nothing is left. */
+export async function dropScratchPostgres(cap: string): Promise<boolean> {
+  const recordPath = scratchRecordPath(cap);
+  if (!existsSync(recordPath)) { rmSync(scratchPendingPath(cap), { force: true }); return true; }
+  let rec: { url: string; brain: string };
+  try { rec = JSON.parse(readFileSync(recordPath, 'utf8')); } catch { return false; }
+  let e: ScratchSql | null = null;
+  try {
+    e = await scratchOpener(rec.url);
+    const [marker] = await e.executeRaw<{ present: boolean }>("SELECT to_regclass('public.gbrain_shadow_replay_owner') IS NOT NULL AS present");
+    if (marker?.present) {
+      const [own] = await e.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1');
+      if (own && own.brain !== rec.brain) return false;
+    }
+    await e.executeRaw('DROP SCHEMA IF EXISTS public CASCADE');
+    await e.executeRaw('CREATE SCHEMA public');
+    rmSync(recordPath, { force: true });
+    rmSync(scratchPendingPath(cap), { force: true });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await e?.disconnect().catch(() => undefined);
+  }
+}
+
+/** Marks the scratch copy for dropping and starts the drop; a second call while one runs joins it. */
+export function scheduleScratchDrop(cap: string): Promise<boolean> {
+  if (!existsSync(scratchRecordPath(cap))) return Promise.resolve(true);
+  try { writeFileSync(scratchPendingPath(cap), `${new Date().toISOString()}\n`, { mode: 0o600 }); } catch { /* the record stays; the next run drops it */ }
+  let p = scratchDrops.get(cap);
+  if (!p) {
+    p = dropScratchPostgres(cap).finally(() => scratchDrops.delete(cap));
+    scratchDrops.set(cap, p);
+  }
+  return p;
+}
+
+/** Waits for a drop this process started; then, when a drop is still pending, tries it once more. */
+export async function scratchCleared(cap: string): Promise<boolean> {
+  await scratchDrops.get(cap);
+  return existsSync(scratchPendingPath(cap)) ? scheduleScratchDrop(cap) : true;
+}
+
+/**
+ * Installs the purge listener on an engine of a brain that has a capture directory, whether capture is on, off or
+ * killed by the environment: a purge always deletes the epoch and drops the scratch copy. The engine's disconnect
+ * waits for a drop it started.
+ */
+export function watchPurges(engine: BrainEngine, cap: string): void {
+  const stop = onPurgeIntent(() => { try { if (!invalidateIfPurged(cap, { force: 'purge' })) scheduleScratchDrop(cap); } catch { /* fail open */ } });
+  engine.registerBeforeDisconnect(async () => { stop(); await scratchDrops.get(cap); });
 }
 
 /** Reads one segment file; a torn last line is skipped and reported. */
@@ -344,7 +420,7 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
   return registerEngineView(proxy, viewedEngine(engine));
 }
 
-/** The engine factory's entry point: the recording engine, with exit flush and the purge listener installed. */
+/** The engine factory's entry point: the recording engine, with its exit flush (the factory installs `watchPurges`). */
 export function attachCapture<E extends BrainEngine>(engine: E, cap: string): E {
   const writer = new CaptureWriter(cap);
   let ops = 0;
@@ -360,11 +436,10 @@ export function attachCapture<E extends BrainEngine>(engine: E, cap: string): E 
       writer.push({ t0: t, t1: t, kind: 'op', phase: 'end', id, ...(threw ? { ok: false, code: threw } : outcomeOf(output)) });
     },
   });
-  const stopListening = onPurgeIntent(() => { try { invalidateIfPurged(cap, { force: 'purge' }); } catch { /* fail open */ } });
   const onExit = () => writer.flushSync();
   process.once('exit', onExit);
   engine.registerBeforeDisconnect(async () => {
-    try { await writer.flush(); } finally { stopListening(); setOpRecorder(null); process.removeListener('exit', onExit); }
+    try { await writer.flush(); } finally { setOpRecorder(null); process.removeListener('exit', onExit); }
   });
   return wrapCaptureEngine(engine, writer);
 }
