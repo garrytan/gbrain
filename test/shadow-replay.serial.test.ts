@@ -101,7 +101,11 @@ describe('shadow replay end to end', () => {
         await live.getPage(SECRET.slug);
         await live.searchKeyword('nightjar');
         await live.getTags(SECRET.slug);
+        const { dispatchToolCall } = await import('../src/mcp/dispatch.ts');
+        await dispatchToolCall(live, 'get_page', { slug: SECRET.slug }, { remote: false, transport: 'stdio' });
         await live.disconnect();
+        const cli = Bun.spawnSync([...CLI, 'get', SECRET.slug], { env: { ...process.env, GBRAIN_HOME: home } });
+        expect(cli.exitCode).toBe(0);
 
         const cap = captureDir(shadowDir);
         hmacKey(cap);
@@ -126,6 +130,7 @@ describe('shadow replay end to end', () => {
           expect(summary.toLowerCase()).not.toContain(s.toLowerCase());
         }
         expect(JSON.parse(report).counts.replayed).toBeGreaterThan(0);
+        expect(JSON.parse(report).counts.ops).toBeGreaterThanOrEqual(2);
 
         const parsed = JSON.parse(report);
         expect(parsed.arms).toEqual(PG ? ['pglite', 'postgres', 'rust'] : ['pglite', 'rust']);

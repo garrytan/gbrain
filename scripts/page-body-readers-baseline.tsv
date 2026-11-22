@@ -732,3 +732,4 @@ src/core/guests/promote.ts	promoteGuestNote	call:serializeMarkdown	INLINE	assert
 src/core/guests/promote.ts	promoteGuestNote	field	INLINE	assertInlineBody before the body is read
 src/core/rust-engine/store-codec.ts	guardNullBody	field	META	reads only whether the Rust store sent compiled_truth/timeline as null (a segmented shell, PGLite pages_body_storage_chk), never the body text; a null body becomes the guarded segmented page of rowToPage
 src/core/persistence/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inline page timeline for emptiness; a segmented page counts as unread and stays hidden
+src/shadow/minimize.ts	minimizeDifference	field	STREAM	shadow replay minimizer: reads a page to synthesize a test case; a segmented page throws page_body_segmented, which is caught and the page is left out of the case

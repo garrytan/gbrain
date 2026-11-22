@@ -21,6 +21,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { withCallerAccess } from '../core/search/private-visibility.ts';
 import { canonicalJson, decodeValue, encodeValue } from './codec.ts';
 import { readSegment, type CaptureRecord } from './capture.ts';
+import type { OpCall } from './op-hook.ts';
+import type { EngineConfig } from '../core/types.ts';
 import { ReplayError } from './replay-errors.ts';
 import { SHADOW_READ_MEMBERS } from './reads.ts';
 
@@ -47,7 +49,7 @@ export type Outcome = { ok: true; value: unknown } | { ok: false; code: string }
 
 export type DiffClass = 'match' | 'capability_missing' | 'rust_diff' | 'rust_diff_seed_loss' | 'ts_disagree' | 'differs' | 'differs_seed_loss';
 
-export interface ReportDiff { ref: string; member: string; path: string[]; class: DiffClass; hashes: Partial<Record<ArmName, string>> }
+export interface ReportDiff { ref: string; member: string; path: string[]; class: DiffClass; hashes: Partial<Record<ArmName, string>>; repro?: string }
 
 export interface ReplayReport {
   schema_version: 1;
@@ -79,6 +81,9 @@ export function jsonView(enc: unknown): unknown {
   return out;
 }
 
+/** Volatile ids and times inside longer text (CLI text output, markdown). */
+const TOKEN_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/gi;
+
 /**
  * Referential normalization state for one pair of arms. A UUID or timestamp is volatile only when it is not in the
  * recorded inputs and (for timestamps) falls inside the replay window; volatile values must map one to one, in order
@@ -90,7 +95,7 @@ export class NormState {
   private n = 0;
   constructor(readonly known: ReadonlySet<string>, readonly window: { from: number; to: number }) {}
 
-  private volatile(s: string): boolean {
+  volatile(s: string): boolean {
     if (this.known.has(s)) return false;
     if (UUID_RE.test(s)) return true;
     if (!ISO_RE.test(s)) return false;
@@ -100,11 +105,20 @@ export class NormState {
 
   same(x: string, y: string): boolean {
     if (x === y) return true;
+    if (x.length > 36 || y.length > 36) return this.sameText(x, y);
     if (!this.volatile(x) || !this.volatile(y) || UUID_RE.test(x) !== UUID_RE.test(y)) return false;
     const ix = this.a.get(x);
     const iy = this.b.get(y);
     if (ix === undefined && iy === undefined) { this.n++; this.a.set(x, this.n); this.b.set(y, this.n); return true; }
     return ix !== undefined && ix === iy;
+  }
+
+  /** Two texts that differ only in volatile ids and times, mapped one to one. */
+  sameText(x: string, y: string): boolean {
+    const tx = x.match(TOKEN_RE) ?? [];
+    const ty = y.match(TOKEN_RE) ?? [];
+    if (!tx.length || tx.length !== ty.length || x.replace(TOKEN_RE, '\u0000') !== y.replace(TOKEN_RE, '\u0000')) return false;
+    return tx.every((t, i) => this.same(t, ty[i]!));
   }
 }
 
@@ -158,24 +172,40 @@ export function classify(out: Partial<Record<ArmName, Outcome>>, norms: { rust: 
 
 export type Unit =
   | { kind: 'call'; rec: CaptureRecord; t0: number; t1: number; order: string }
-  | { kind: 'tx'; member: string; children: Unit[]; t0: number; t1: number; order: string };
+  | { kind: 'tx'; member: string; children: Unit[]; t0: number; t1: number; order: string }
+  | { kind: 'op'; call: OpCall; calls: CaptureRecord[]; t0: number; t1: number; order: string };
 
 export interface UnitPlan { units: Unit[]; counts: Record<string, number> }
 
 /** Groups records into replay units: single calls and committed transaction groups, in end-time order. */
-export function buildUnits(records: CaptureRecord[], cut: RunSpec['cut']): UnitPlan {
-  const counts: Record<string, number> = { records: records.length, gaps: 0, after_gap: 0, rolled_back: 0, orphaned: 0, pre_cut: 0, boundary: 0, replayed: 0 };
+export function buildUnits(records: CaptureRecord[], cut: RunSpec['cut'], replayableOps: ReadonlySet<string> = new Set()): UnitPlan {
+  const counts: Record<string, number> = { records: records.length, gaps: 0, after_gap: 0, rolled_back: 0, orphaned: 0, pre_cut: 0, boundary: 0, replayed: 0, ops: 0, ops_as_engine_calls: 0, raw_inside_replayed_ops: 0 };
   const byProc = new Map<string, CaptureRecord[]>();
   for (const r of records) { const l = byProc.get(r.proc) ?? []; l.push(r); byProc.set(r.proc, l); }
   const top: Unit[] = [];
   for (const [proc, recs] of byProc) {
     recs.sort((x, y) => x.seq - y.seq);
     const open = new Map<string, Extract<Unit, { kind: 'tx' }>>();
+    const ops = new Map<string, Extract<Unit, { kind: 'op' }>>();
     let gapSeen = false;
     for (const r of recs) {
       const order = `${String(r.t1).padStart(15, '0')}:${proc}:${String(r.seq).padStart(10, '0')}`;
+      if (r.kind === 'gap' && r.parent && ops.has(r.parent)) { counts.raw_inside_replayed_ops += 1; continue; }
       if (r.kind === 'gap') { counts.gaps += r.count ?? 1; gapSeen = true; continue; }
       if (gapSeen) counts.after_gap++;
+      if (r.kind === 'op') {
+        if (r.phase === 'begin') {
+          if (replayableOps.has(r.id!)) ops.set(r.id!, { kind: 'op', call: decodeValue(r.call) as OpCall, calls: [], t0: r.t0, t1: r.t1, order });
+          else counts.ops_as_engine_calls++;
+        } else {
+          const u = ops.get(r.id!);
+          ops.delete(r.id!);
+          if (u) { u.t1 = r.t1; u.order = order; top.push(u); counts.ops++; }
+        }
+        continue;
+      }
+      const owner = r.parent ? ops.get(r.parent) : undefined;
+      if (owner) { if (r.kind === 'engine') owner.calls.push(r); continue; }
       if (r.kind === 'tx' && r.phase === 'begin') { open.set(r.tx!, { kind: 'tx', member: r.member ?? 'transaction', children: [], t0: r.t0, t1: r.t1, order }); continue; }
       if (r.kind === 'tx') {
         const g = open.get(r.tx!);
@@ -191,7 +221,7 @@ export function buildUnits(records: CaptureRecord[], cut: RunSpec['cut']): UnitP
       if (r.tx) { const g = open.get(r.tx); if (g) g.children.push(unit); else counts.orphaned++; }
       else top.push(unit);
     }
-    counts.orphaned += open.size;
+    counts.orphaned += open.size + ops.size;
   }
   top.sort((x, y) => (x.order < y.order ? -1 : x.order > y.order ? 1 : 0));
   const units: Unit[] = [];
@@ -231,11 +261,12 @@ async function callOn(engine: BrainEngine, rec: CaptureRecord): Promise<Outcome>
 }
 
 /** Runs a unit on one arm and returns the outcome of every call in it, in order. */
-export async function runUnit(engine: BrainEngine, unit: Unit): Promise<Array<{ member: string; out: Outcome }>> {
+export async function runUnit(engine: BrainEngine, unit: Unit, config?: EngineConfig): Promise<Array<{ member: string; out: Outcome }>> {
   if (unit.kind === 'call') return [{ member: unit.rec.member!, out: await callOn(engine, unit.rec) }];
+  if (unit.kind === 'op') return (await import('./replay-ops.ts')).renderOperation(engine, unit.call, config ?? ({ engine: 'pglite' } as EngineConfig));
   const outs: Array<{ member: string; out: Outcome }> = [];
   const body = async (tx: BrainEngine) => {
-    for (const child of unit.children) outs.push(...await runUnit(tx, child));
+    for (const child of unit.children) outs.push(...await runUnit(tx, child, config));
   };
   try {
     await (engine as unknown as Record<string, Function>)[unit.member === 'transactionDirect' ? 'transactionDirect' : 'transaction']!.call(engine, body);
@@ -248,7 +279,7 @@ export async function runUnit(engine: BrainEngine, unit: Unit): Promise<Array<{ 
 // ---- report -----------------------------------------------------------------------------------------------------
 
 /** Field names a report may show as they are; any other key (a frontmatter key, say) is shown only as a keyed hash. */
-const SCHEMA_KEYS = new Set(('$outcome slug source_id title type compiled_truth timeline frontmatter tags content_hash id page_id created_at updated_at '
+const SCHEMA_KEYS = new Set(('$outcome content text isError slug source_id title type compiled_truth timeline frontmatter tags content_hash id page_id created_at updated_at '
   + 'deleted_at effective_date effective_date_source chunk_index chunk_text chunk_source embedding model token_count score from_slug to_slug link_type '
   + 'context link_source origin_slug origin_field date summary source detail fact entity_slug kind visibility confidence valid_from valid_until expired_at '
   + 'superseded_by consolidated_at row_num source_markdown_slug status count total page_count chunk_count link_count tag_count timeline_entry_count '
@@ -262,8 +293,12 @@ export function keyedHash(key: Buffer, value: string): string {
   return createHmac('sha256', key).update(value).digest('hex').slice(0, 16);
 }
 
-function outcomeText(o: Outcome | undefined): string {
-  return !o ? 'absent' : o.ok ? canonicalJson(o.value) : `threw:${o.code}`;
+/** The outcome as hashed in a report: volatile ids and times (see NormState) read as one placeholder. */
+function outcomeText(o: Outcome | undefined, norm: NormState): string {
+  const stable = (v: unknown): unknown => typeof v === 'string'
+    ? (norm.volatile(v) ? '<volatile>' : v.replace(TOKEN_RE, t => (norm.volatile(t) ? '<volatile>' : t)))
+    : Array.isArray(v) ? v.map(stable) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, stable(x)])) : v;
+  return !o ? 'absent' : o.ok ? canonicalJson(stable(o.value)) : `threw:${o.code}`;
 }
 
 /** The sorted, deterministic report document. */
@@ -340,11 +375,10 @@ function writeOwnerOnly(path: string, text: string): void {
 
 /** Collects slugs a replayed write named, for the read-back sweep. */
 function writtenSlugs(units: Unit[], into: Set<string>): void {
-  for (const u of units) {
-    if (u.kind === 'tx') { writtenSlugs(u.children, into); continue; }
-    const m = u.rec.member!;
+  for (const rec of units.flatMap(flatCalls)) {
+    const m = rec.member!;
     if (m in SHADOW_READ_MEMBERS || /^(get|list|search|find|count|read|resolve)/.test(m)) continue;
-    const args = decodeValue(u.rec.args) as unknown[];
+    const args = decodeValue(rec.args) as unknown[];
     const first = args?.[0];
     if (typeof first === 'string' && /^[^\s]{1,300}$/.test(first)) into.add(first);
     if (first && typeof first === 'object' && typeof (first as { slug?: unknown }).slug === 'string') into.add((first as { slug: string }).slug);
@@ -358,8 +392,40 @@ function collectKnown(value: unknown, into: Set<string>): void {
 
 export interface ChildDeps {
   openArm(arm: ArmName, spec: RunSpec, runDir: string): Promise<BrainEngine>;
+  /** A fresh, empty brain for the minimizer; without it nothing is minimized. */
+  freshArm?(arm: ArmName): Promise<BrainEngine>;
   /** Default blockNetwork; in-process tests pass a no-op so the test runner keeps its own network. */
   blockNetwork?: (allowDir: string, allowLocalTcp: boolean) => void;
+}
+
+function flatCalls(u: Unit): CaptureRecord[] {
+  return u.kind === 'call' ? [u.rec] : u.kind === 'op' ? u.calls : u.children.flatMap(flatCalls);
+}
+
+const MINIMIZE_CLASSES = new Set<DiffClass>(['rust_diff', 'rust_diff_seed_loss', 'differs', 'differs_seed_loss']);
+
+/** Minimizes up to 5 differences with distinct signatures; writes each synthetic case under `dir`. */
+async function minimizeFound(found: Array<{ diff: ReportDiff; unit: Unit; index: number; path: string[]; earlier: number }>, units: Unit[],
+  reference: BrainEngine, freshArm: (arm: ArmName) => Promise<BrainEngine>, dir: string, key: Buffer): Promise<Record<string, number>> {
+  const { minimizeDifference } = await import('./minimize.ts');
+  const counts = { minimized: 0, not_minimizable: 0, minimizer_leak: 0 };
+  const seen = new Set<string>();
+  for (const f of found) {
+    const sig = `${f.diff.member}|${f.diff.path.join('.')}|${f.diff.class}`;
+    if (!MINIMIZE_CLASSES.has(f.diff.class) || seen.has(sig) || seen.size >= 5) continue;
+    seen.add(sig);
+    const calls = f.unit.kind === 'op' ? f.unit.calls : f.unit.kind === 'call' ? [f.unit.rec] : flatCalls(f.unit).slice(0, f.index + 1);
+    const earlier = units.slice(0, f.earlier).flatMap(flatCalls).filter(r => !(r.member! in SHADOW_READ_MEMBERS));
+    const target = f.unit.kind === 'op' ? null : { class: f.diff.class, path: f.path };
+    const r = await minimizeDifference(calls, earlier, target, { freshArm, reference });
+    if (!r.ok) { counts[r.reason]++; continue; }
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const name = `${keyedHash(key, JSON.stringify(r.case))}.json`;
+    writeOwnerOnly(join(dir, name), JSON.stringify(r.case, null, 2) + '\n');
+    f.diff.repro = name;
+    counts.minimized++;
+  }
+  return counts;
 }
 
 /** Replays the run's units on every arm and writes report.json, report.md and summary.json in `<runDir>/out`. */
@@ -374,7 +440,15 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
     records.push(...seg.records);
     if (seg.torn) torn++;
   }
-  const plan = buildUnits(records, spec.cut);
+  const replayable = new Set<string>();
+  const opSkips: Record<string, number> = {};
+  for (const r of records) {
+    if (r.kind !== 'op' || r.phase !== 'begin') continue;
+    const why = await (await import('./replay-ops.ts')).opSkipReason(decodeValue(r.call) as OpCall);
+    if (why) opSkips[`ops_skipped_${why}`] = (opSkips[`ops_skipped_${why}`] ?? 0) + 1; else replayable.add(r.id!);
+  }
+  const plan = buildUnits(records, spec.cut, replayable);
+  Object.assign(plan.counts, opSkips);
   const known = new Set<string>();
   for (const r of records) collectKnown(r.args, known);
   const window = { from: now(), to: Number.MAX_SAFE_INTEGER };
@@ -384,25 +458,37 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
     for (const a of arms) engines[a] = await deps.openArm(a, spec, runDir);
     const norms = { rust: new NormState(known, window), postgres: spec.arms.postgres ? new NormState(known, window) : undefined };
     const diffs: ReportDiff[] = [];
+    const found: Array<{ diff: ReportDiff; unit: Unit; index: number; path: string[]; earlier: number }> = [];
     let compared = 0;
+    let current: { unit: Unit; index: number; earlier: number } | null = null;
     const compare = (ref: string, member: string, outs: Partial<Record<ArmName, Outcome>>) => {
       compared++;
       const { cls, path } = classify(outs, norms, spec.seed_losses_present);
       if (cls === 'match') return;
       const hashes: Partial<Record<ArmName, string>> = {};
-      for (const a of arms) hashes[a] = keyedHash(key, outcomeText(outs[a]));
-      diffs.push({ ref, member, path: redactPath(path, key), class: cls, hashes });
+      for (const a of arms) hashes[a] = keyedHash(key, outcomeText(outs[a], norms.rust));
+      const diff: ReportDiff = { ref, member, path: redactPath(path, key), class: cls, hashes };
+      diffs.push(diff);
+      if (current) found.push({ diff, ...current, path });
     };
-    for (const unit of plan.units) {
+    const configs = {
+      pglite: { engine: 'pglite', database_path: spec.arms.pglite }, rust: { engine: 'rust', database_path: spec.arms.rust },
+      postgres: { engine: 'postgres', database_url: 'scratch' },
+    } as unknown as Record<ArmName, EngineConfig>;
+    for (const [u, unit] of plan.units.entries()) {
       const results = {} as Record<ArmName, Array<{ member: string; out: Outcome }>>;
-      for (const a of arms) results[a] = await runUnit(engines[a], unit);
+      for (const a of arms) results[a] = await runUnit(engines[a], unit, configs[a]);
+      current = { unit, index: 0, earlier: u };
       const n = Math.max(...arms.map(a => results[a].length));
       for (let i = 0; i < n; i++) {
         const outs: Partial<Record<ArmName, Outcome>> = {};
         for (const a of arms) outs[a] = results[a][i]?.out ?? { ok: false, code: 'call_missing' };
+        current = { unit, index: i, earlier: u };
         compare(`${keyedHash(key, unit.order)}#${i}`, results.pglite[i]?.member ?? results.rust[i]?.member ?? '?', outs);
       }
     }
+    current = null;
+    const minimized = deps.freshArm ? await minimizeFound(found, plan.units, engines.pglite, deps.freshArm, join(runDir, 'out', 'repros'), key) : { minimizer_unavailable: found.length };
     const slugs = new Set<string>();
     writtenSlugs(plan.units, slugs);
     const sweepMembers = ['getPage', 'getTags', 'getLinks', 'getBacklinks', 'getTimeline'] as const;
@@ -419,7 +505,7 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
       for (const a of arms) outs[a] = await callOn(engines[a], { member: 'getStats', args: [] } as unknown as CaptureRecord);
       compare('sweep:stats', 'sweep:getStats', outs);
     }
-    const report = renderReport(spec, arms, { ...plan.counts, compared_calls: compared, swept_pages: Math.min(slugs.size, 500) }, diffs, torn);
+    const report = renderReport(spec, arms, { ...plan.counts, ...minimized, compared_calls: compared, swept_pages: Math.min(slugs.size, 500) }, diffs, torn);
     const out = join(runDir, 'out');
     mkdirSync(out, { recursive: true, mode: 0o700 });
     writeOwnerOnly(join(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');

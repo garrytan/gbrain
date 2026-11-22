@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "status": "fixed",
+  "setup": [
+    { "member": "putPage", "args": ["zqa/zqbxx", { "type": "note", "title": "Zqcxx", "compiled_truth": "zqdxx zqexx zqdxx", "timeline": "", "frontmatter": { "kzqf": "zqgxx" } }] },
+    { "member": "addTag", "args": ["zqa/zqbxx", "zqhxx"] }
+  ],
+  "calls": [
+    { "member": "getPage", "args": ["zqa/zqbxx"] },
+    { "member": "getTags", "args": ["zqa/zqbxx"] }
+  ],
+  "expect": { "class": "match", "path": [] }
+}

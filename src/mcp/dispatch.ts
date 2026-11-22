@@ -6,6 +6,7 @@
  * + missing-context bugs; this module exists to prevent that recurring.
  */
 
+import { mcpOperationCall, operationRecording, recordOperation } from '../shadow/op-hook.ts';
 import { writeReceiptCapacityNotices } from '../core/persistence/capacity-snapshot.ts';
 import { affectsRecall } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -1002,10 +1003,8 @@ export function buildOperationContext(
 const WORLD_ONLY_PACK_OPS = new Set(['context_pack', 'delta']);
 
 /**
- * Resolve operation, validate params, build context, invoke handler, format result.
- *
- * Returns a `ToolResult` with the same shape both MCP transports need:
- * `{ content: [{ type: 'text', text }], isError?: boolean }`.
+ * Resolve operation, validate params, build context, invoke handler, format result. Returns a `ToolResult`
+ * with the same shape both MCP transports need: `{ content: [{ type: 'text', text }], isError?: boolean }`.
  */
 export async function dispatchToolCall(
   engine: BrainEngine,
@@ -1013,6 +1012,7 @@ export async function dispatchToolCall(
   params: Record<string, unknown> | undefined,
   opts: DispatchOpts = {},
 ): Promise<ToolResult> {
+  if (operationRecording()) return recordOperation(() => mcpOperationCall(name, params, opts), () => dispatchToolCall(engine, name, params, opts)); // shadow replay capture
   // #6721: a read op answers every config read from one snapshot of the table
   // (config-snapshot.ts); a write reads config live, so it sees its own writes.
   // GBRA-156: and reads the brain identity and each local writer's credential once for its pre-submission checks.

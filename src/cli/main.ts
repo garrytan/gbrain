@@ -701,7 +701,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
       throw e;
     }
 
-    let rawResult: unknown;
+    let rawResult: unknown; const recordCliOutput = (require('../shadow/op-hook.ts') as typeof import('../shadow/op-hook.ts')).enterOperation(() => ({ surface: 'cli', op: op.name, params, remote: false, source_id: ctx.sourceId, federated_source_ids: ctx.localFederatedSourceIds, bound_caller: cliOpts.as !== undefined || !!enforcedClass })); // shadow replay capture; a null check when off
     const enforcedReadOf = enforced && enforcedClass === 'read'
       ? (p: Record<string, unknown>) => enforced.enforcedRead(engine, command, op.name, p, { sourceId: ctx.sourceId, localFederatedSourceIds: ctx.localFederatedSourceIds, config: ctx.config })
       : null;
@@ -752,7 +752,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
       return;
     }
     const paged = op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => normalizeLocalResult(enforcedReadOf ? await enforcedReadOf(p) : await op.handler(ctx, p)) as Record<string, any>, result as Record<string, any>, params, writeStdoutFinal); // GBRA-217
-    const output = paged ? '' : require('./guest-lines.ts').withGuestLines(op.name, result, params, formatResult(op.name, result, params));
+    const output = paged ? '' : require('./guest-lines.ts').withGuestLines(op.name, result, params, formatResult(op.name, result, params)); recordCliOutput(output);
     // Awaited delivery (#3423): queued stdout writes past 64KiB lose their
     // tail to a slow pipe reader when the exit grace lapses — see
     // writeStdoutFinal.

@@ -139,6 +139,7 @@ async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer,
   rmSync(join(runDir, 'work'), { recursive: true, force: true });
   rmSync(join(runDir, 'segments'), { recursive: true, force: true });
   rmSync(join(runDir, 'home'), { recursive: true, force: true });
+  rmSync(join(runDir, 'fresh'), { recursive: true, force: true });
   if (stopped === 'purged' || purgeLogChanged(sealed.purge_log, deps.home)) { removeRun(runDir); throw new ReplayError('shadow_replay_purged', 'during the replay'); }
   if (stopped === 'budget') throw new ReplayError('shadow_replay_budget', `${Math.round(budgetMs / 60_000)} minutes`);
   const reportPath = join(runDir, 'out', 'report.json');

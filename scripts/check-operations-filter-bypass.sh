@@ -41,6 +41,7 @@ cd "$ROOT"
 # Files allowed to import `operations` directly. Each entry must be
 # accompanied by a one-line rationale (the comment on the same line).
 ALLOWED=(
+  "src/shadow/replay-ops.ts"                    # shadow replay child: runs only the operation a trusted local recording names, on private copies, after a bound_caller/scope/file-path filter
   "src/core/grants/profiles.ts"                 # snapshots eligible remote ops with !op.localOnly; grant validation never exposes local-only operations
   "src/core/bootstrap/harness.ts"              # trusted owner provisioning; filters localOnly and scopes before minting explicit follow operation snapshots
   "src/core/token-mint.ts"                     # trusted token creation validates explicit snapshots against public scope-compatible operations

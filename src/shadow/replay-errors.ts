@@ -19,6 +19,7 @@ export const REPLAY_ERRORS = {
   shadow_replay_addon_unavailable: { what: 'The Rust engine addon is not installed or does not match this release.', fix: 'Install the addon for this release (or set GBRAIN_RUST_ENGINE_ADDON to a build), then rerun.', changed: 'nothing', retry: 'after_fix' },
   shadow_replay_busy: { what: 'Another replay is running for this brain.', fix: 'Wait for it to end; a lock older than its budget is stale and is cleared by the next run.', changed: 'nothing', retry: 'safe' },
   shadow_replay_budget: { what: 'The replay ran past its time budget and was stopped; its work copies were deleted.', fix: 'Raise --budget-minutes or replay on a quieter night.', changed: 'deleted the run\'s work copies', retry: 'safe' },
+  shadow_replay_minimizer_leak: { what: 'A minimized case still held an input string, number or vector, so it was not written.', fix: 'Nothing: the difference stays in the local report as a redacted shape.', changed: 'nothing', retry: 'never' },
 } as const satisfies Record<string, ReplayErrorInfo>;
 
 export type ReplayErrorCode = keyof typeof REPLAY_ERRORS;

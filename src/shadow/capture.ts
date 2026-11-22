@@ -27,6 +27,7 @@ import { configDir } from '../core/config.ts';
 import { registerEngineView, viewedEngine } from '../core/persistence/switches.ts';
 import { callerAccessRecord } from '../core/search/private-visibility.ts';
 import { canonicalJson, encodeValue } from './codec.ts';
+import { currentOperationId, setOpRecorder } from './op-hook.ts';
 import { captureIsOn, writePrivateJson } from './capture-state.ts';
 import { ReplayError } from './replay-errors.ts';
 
@@ -57,7 +58,7 @@ export interface CaptureRecord {
   seq: number;
   t0: number;
   t1: number;
-  kind: 'engine' | 'tx' | 'gap';
+  kind: 'engine' | 'tx' | 'gap' | 'op';
   member?: string;
   args?: unknown;
   access?: unknown;
@@ -66,7 +67,11 @@ export interface CaptureRecord {
   code?: string;
   tx?: string;
   parent_tx?: string;
-  phase?: 'begin' | 'committed' | 'rolled_back';
+  phase?: 'begin' | 'committed' | 'rolled_back' | 'end';
+  /** An operation record's id; an engine record's `parent` names the operation it ran under. */
+  id?: string;
+  parent?: string;
+  call?: unknown;
   reason?: string;
   count?: number;
 }
@@ -289,11 +294,13 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
   const record = (member: string, fn: Function): Function => function captured(...args: unknown[]) {
     const t0 = Date.now();
     if (GAP_MEMBERS.has(member) || hasFunctionArg(args)) {
-      writer.push({ t0, t1: t0, kind: 'gap', member, reason: GAP_MEMBERS.has(member) ? 'raw' : 'function_arg', tx });
+      const op = currentOperationId();
+      writer.push({ t0, t1: t0, kind: 'gap', member, reason: GAP_MEMBERS.has(member) ? 'raw' : 'function_arg', tx, ...(op ? { parent: op } : {}) });
       return fn.apply(engine, args);
     }
     let encoded: unknown;
     let access: unknown;
+    const parent = currentOperationId();
     try {
       encoded = encodeValue(args);
       const a = callerAccessRecord();
@@ -303,7 +310,7 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
       return fn.apply(engine, args);
     }
     const done = (o: { ok: boolean; h?: string; code?: string }) => {
-      try { writer.push({ t0, t1: Date.now(), kind: 'engine', member, args: encoded, ...(access ? { access } : {}), ...o, ...(tx ? { tx } : {}) }); } catch { /* never fails a call */ }
+      try { writer.push({ t0, t1: Date.now(), kind: 'engine', member, args: encoded, ...(access ? { access } : {}), ...o, ...(tx ? { tx } : {}), ...(parent ? { parent } : {}) }); } catch { /* never fails a call */ }
     };
     let out: unknown;
     try { out = fn.apply(engine, args); } catch (e) { done({ ok: false, code: errorCode(e) }); throw e; }
@@ -315,8 +322,9 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
     if (typeof cb !== 'function') return fn.apply(engine, [cb, ...rest]);
     const id = `${writer.proc}:${tx ? `${tx}.` : ''}${++txSeq}`;
     const t0 = Date.now();
-    writer.push({ t0, t1: t0, kind: 'tx', phase: 'begin', member, tx: id, ...(tx ? { parent_tx: tx } : {}) });
-    const end = (phase: 'committed' | 'rolled_back') => writer.push({ t0, t1: Date.now(), kind: 'tx', phase, member, tx: id, ...(tx ? { parent_tx: tx } : {}) });
+    const rel = { ...(tx ? { parent_tx: tx } : {}), ...(currentOperationId() ? { parent: currentOperationId() } : {}) };
+    writer.push({ t0, t1: t0, kind: 'tx', phase: 'begin', member, tx: id, ...rel });
+    const end = (phase: 'committed' | 'rolled_back') => writer.push({ t0, t1: Date.now(), kind: 'tx', phase, member, tx: id, ...rel });
     const out = fn.apply(engine, [(inner: BrainEngine) => (cb as (e: BrainEngine) => unknown)(inner && typeof inner === 'object' ? wrapCaptureEngine(inner, writer, id) : inner), ...rest]);
     return isThenable(out) ? out.then(r => { end('committed'); return r; }, e => { end('rolled_back'); throw e; }) : out;
   };
@@ -339,11 +347,24 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
 /** The engine factory's entry point: the recording engine, with exit flush and the purge listener installed. */
 export function attachCapture<E extends BrainEngine>(engine: E, cap: string): E {
   const writer = new CaptureWriter(cap);
+  let ops = 0;
+  setOpRecorder({
+    begin(call) {
+      const id = `${writer.proc}:op${++ops}`;
+      const t = Date.now();
+      writer.push({ t0: t, t1: t, kind: 'op', phase: 'begin', id, call: encodeValue(call) });
+      return id;
+    },
+    end(id, output, threw) {
+      const t = Date.now();
+      writer.push({ t0: t, t1: t, kind: 'op', phase: 'end', id, ...(threw ? { ok: false, code: threw } : outcomeOf(output)) });
+    },
+  });
   const stopListening = onPurgeIntent(() => { try { invalidateIfPurged(cap, { force: 'purge' }); } catch { /* fail open */ } });
   const onExit = () => writer.flushSync();
   process.once('exit', onExit);
   engine.registerBeforeDisconnect(async () => {
-    try { await writer.flush(); } finally { stopListening(); process.removeListener('exit', onExit); }
+    try { await writer.flush(); } finally { stopListening(); setOpRecorder(null); process.removeListener('exit', onExit); }
   });
   return wrapCaptureEngine(engine, writer);
 }

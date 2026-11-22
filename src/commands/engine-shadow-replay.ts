@@ -2,7 +2,7 @@
  * `gbrain engine shadow capture on|off|status|delete` and `gbrain engine shadow replay` (docs/guides/shadow-replay.md).
  * The hidden `__replay-child <run dir>` is the isolated child the replay spawns.
  */
-import { existsSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -101,7 +101,7 @@ export async function runShadowReplayCommand(sub: string, rest: string[], io: Sh
     const runDir = rest[0];
     if (!runDir) throw new ReplayError('shadow_replay_no_epoch', '__replay-child needs the run directory');
     const { runReplayChild } = await import('../shadow/replay.ts');
-    await runReplayChild(runDir, { openArm: openReplayArm });
+    await runReplayChild(runDir, { openArm: openReplayArm, freshArm: arm => freshReplayArm(runDir, arm) });
     return 0;
   }
   return 2;
@@ -139,6 +139,27 @@ function sqlConfig(kind: 'pglite' | 'postgres', where: string): EngineConfig {
     case 'postgres': return { engine: kind, database_url: where } as EngineConfig;
     default: { const unreachable: never = kind; return unreachable; }
   }
+}
+
+let freshCount = 0;
+
+/** A fresh, empty brain inside the run directory, for the minimizer (PGLite copied from one initialized base). */
+async function freshReplayArm(runDir: string, arm: 'pglite' | 'postgres' | 'rust'): Promise<BrainEngine> {
+  const { cpSync, mkdirSync } = await import('node:fs');
+  const dir = join(runDir, 'fresh', String(++freshCount));
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const spec = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8')) as import('../shadow/replay.ts').RunSpec;
+  if (arm === 'rust') return openReplayArm('rust', { ...spec, arms: { ...spec.arms, rust: join(dir, 'rust') } });
+  const base = join(runDir, 'fresh', 'base-pglite');
+  if (!existsSync(base)) {
+    const { createEngine } = await import('../core/engine-factory.ts');
+    const e = await createEngine(sqlConfig('pglite', base));
+    await e.connect(sqlConfig('pglite', base));
+    await e.initSchema();
+    await e.disconnect();
+  }
+  cpSync(base, join(dir, 'pglite'), { recursive: true });
+  return openReplayArm('pglite', { ...spec, arms: { ...spec.arms, pglite: join(dir, 'pglite') } });
 }
 
 /** Opens one work copy in the replay child (no shadow, no capture: GBRAIN_SHADOW_CHILD=1). */

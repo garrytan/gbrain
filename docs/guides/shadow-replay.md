@@ -46,6 +46,10 @@ difference only shows that PGLite and Rust disagree.
 ## What the replay does and does not do
 
 - The arms are compared with each other, never with the live brain. They start from the same snapshot.
+- A recorded CLI or MCP operation replays as one: a read prints every surface (CLI `--json`, CLI text and markdown,
+  and the MCP tool result) on every arm, and each is compared; a write runs once, on the surface it came in on. Calls
+  with a credential or member identity (HTTP MCP, `--as`), admin operations and operations that take a file path are
+  not replayed as operations; their engine calls replay one by one instead. CLI notices and stderr are not compared.
 - Calls that finished before the snapshot are skipped (`pre_cut`); calls that overlap it are skipped (`boundary`).
 - Committed transactions replay as one group; rolled-back ones are skipped.
 - Raw SQL, reserved connections and calls with a function argument are not replayable and count as `gaps`.
@@ -56,6 +60,19 @@ difference only shows that PGLite and Rust disagree.
 - When the seed could not copy everything into the Rust store, Rust differences are labeled `*_seed_loss`.
 - The replay runs in a child process with a throwaway home and no API keys. It cannot open network connections (only
   the local scratch Postgres) and opens only its copies, never the brain.
+
+## Minimized cases
+
+For up to five differences per run, the replay tries to build a test case made only of invented data. It takes the
+calls that differed and the pages they name, replaces every word, slug, key, id and number with invented ones (dates
+keep their order, embeddings become random vectors), and checks on fresh, empty PGLite and Rust brains that the case
+still differs the same way. If it does not, nothing is written (`not_minimizable`). A final check refuses any case
+that still holds an input word, number or vector, plain or base64/hex encoded (`minimizer_leak`). Cases land in
+`replay/<run>/out/repros/`.
+
+A case is a JSON file that can be committed as a test: copy it into `test/fixtures/shadow-replay/` and
+`test/shadow-minimize.test.ts` runs it on fresh PGLite and Rust brains. A case marked `"status": "open"` must still
+show its recorded difference; when the Rust fix lands, change it to `"fixed"` and it must then match.
 
 ## Purge
 
@@ -85,8 +102,8 @@ Nothing here needs the brain's owner. Run these on the brain's host only.
    `GBRAIN_HOME`; see [cron-schedule.md](cron-schedule.md#calling-gbrain-unattended)). Keep stderr in the local log.
 4. After each run, read the JSON on stdout. `status` is `replayed`, `seeded_only`, `purged` or `off`; on an error it
    is `error` with a `code` from the table below.
-5. Send off the host only `summary.json` (its path is in `summary`). Never send `report.json` paths with run names,
-   the recording, the copies, stderr or the log.
+5. Send off the host only `summary.json` (its path is in `summary`) and files in `out/repros/`. Never send
+   `report.json`, the recording, the copies, stderr or the log.
 6. Stop with `gbrain engine shadow capture off`; delete with `gbrain engine shadow capture delete --yes`.
 
 ## Errors
@@ -100,6 +117,7 @@ Nothing here needs the brain's owner. Run these on the brain's host only.
 | `shadow_replay_postgres_not_local` | the scratch URL could leave the machine | point it at a local database or unset it | after fix |
 | `shadow_replay_postgres_not_owned` | the scratch database is not empty or is the brain | use an empty database | after fix |
 | `shadow_replay_postgres_privilege` | the scratch role cannot reset its database | give it ownership of that database | after fix |
+| `shadow_replay_minimizer_leak` | a minimized case still held input data, so it was not written | nothing | never |
 | `shadow_replay_budget` | the run passed `--budget-minutes` (default 120) | raise the budget | safe |
 
 The registry with every field is `src/shadow/replay-errors.ts`.
