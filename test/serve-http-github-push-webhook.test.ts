@@ -89,6 +89,26 @@ describe('unverified GitHub push webhooks', () => {
     expect(answer.status).toBe(202);
     expect(JSON.parse(answer.text)).toMatchObject({ status: 'ignored', reason: 'ref_mismatch' });
   });
+
+  test('the push source lookup can use the repository partial index', async () => {
+    const lookup = spyOn(engine, 'executeRaw');
+    let statement: Parameters<typeof engine.executeRaw> | undefined;
+    try {
+      const answer = await push('acme-example/signed', 'refs/heads/feature', signed('acme-example/signed', 'refs/heads/feature'));
+      expect(answer.status).toBe(202);
+      statement = lookup.mock.calls.find(([sql]) => sql.includes("config->>'github_repo'"));
+    } finally {
+      lookup.mockRestore();
+    }
+    if (!statement) throw new Error('Push did not look up its repository');
+    const [sql, params] = statement;
+    await engine.transaction(async tx => {
+      // The fixture has few sources. Check index eligibility independently of table size.
+      await tx.executeRaw('SET LOCAL enable_seqscan=off');
+      const plan = await tx.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`, params);
+      expect(plan.map(row => row['QUERY PLAN']).join('\n')).toContain('sources_github_repo_idx');
+    });
+  });
 });
 
 describe('unverified webhooks compute the HMAC whatever the repository (#8768)', () => {
