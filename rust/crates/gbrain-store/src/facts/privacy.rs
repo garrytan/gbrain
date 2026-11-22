@@ -490,6 +490,17 @@ fn member_access_allows(
     )
 }
 
+/// `accessAllowedSql(p, identity)` for the policy's own identity over one page: the member-access
+/// part alone (readers, folder rules and coverage, origin, owner-only), with no privacy part.
+pub(crate) fn page_admits_identity(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    let owner_only = OwnerOnlySources::read(read)?;
+    member_access_allows(read, page, &policy.identity, policy, &owner_only, false)
+}
+
 /// `orPrivateReadableSource`: the page's source is in the private-readable grant and the page
 /// does not carry `pinned_question`.
 fn private_source_open(page: &PageRecord, policy: &PrivacyPolicy) -> bool {

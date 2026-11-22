@@ -3,17 +3,18 @@
  * readPageAdmitsCaller, readPageFolderRulesAdmit, countLineageClosingRules; SQL in engine-sql/access-setup.ts and
  * engine-sql/access-policy.ts): what gbrain access serves, doctor open_shared_pages and gbrain access who-can-read read.
  * Folder rules come from gbrain-store `access_rules`, and the store's access state always reads. What
- * each member answers and why: rust/docs/store/write_misc.md (listWhoCanReadPages: page-visibility.md).
+ * each member answers and why: rust/docs/store/write_misc.md (listWhoCanReadPages, readPageAdmitsCaller: page-visibility.md).
  */
 import type { OpenPageCount, OpenPageExclusion, WhoCanReadPageRow } from '../../engine-sql/access-setup.ts';
 import type { OwnerOnlyForm } from '../../access/owner-only.ts';
 import { accessAllowedSql, callerAccessAllowedSql, currentCallerAccess, privacyPartSql } from '../../search/private-visibility.ts';
+import { validIdentity } from '../../access/principals.ts';
 import type { AccessRuleRow } from '../../engine-sql/access-policy.ts';
 import { ruleCovers, validPrefix, validQualifiedRuleId } from '../../access/folder-rules.ts';
 import { isValidSourceId } from '../../source-id.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { ownerOnlyFormIn, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
+import { callerFolders, ownerOnlyFormIn, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 /** The store keeps its access state in its own records, which always read, so the state is never unreadable. */
 export const readAccessStateUnreadable: StoreMember<[], boolean> = async () => false;
@@ -76,9 +77,28 @@ export const listWhoCanReadPages: StoreMember<[slug: string, sourceId: string | 
       brain.listWhoCanReadPages(slug, sourceId ?? null, storeForm)) as Promise<WhoCanReadPageRow[]>;
   };
 
-/** The store does not judge one member's member-access floor yet (row 32), so it refuses rather than guess one. */
-export const readPageAdmitsCaller: StoreMember<[sourceId: string, slug: string, identity: readonly string[]], boolean> = async () =>
-  refuseMember('readPageAdmitsCaller', 'one member\'s member-access floor');
+/**
+ * `accessAllowedSql('p', identity)` over the page row (live or soft-deleted: the SQL has no live test), rendered in the
+ * caller record the caller set. The store judges the member-access part (`page_admits_identity`, facts/privacy.rs) in
+ * that record: its identity, satisfied folder rules, folder coverage (the whole pending test, as `coverageSql` renders it
+ * in a record) and owner flag. The member serves the read only when the rendering equals the reference for such a record
+ * with `restricted: true`; a caller outside any record or on the short form (`restricted: false`) renders another text
+ * and refuses before any read. False when the source has no such page.
+ */
+export const readPageAdmitsCaller: StoreMember<[sourceId: string, slug: string, identity: readonly string[]], boolean> = async (brain, sourceId, slug, identity) => {
+  const access = currentCallerAccess();
+  const folders = callerFolders();
+  const text = accessAllowedSql('p', identity);
+  const reference = renderForStoreCaller({ identity: [...identity], owner: access.owner, restricted: true, ...folders.record }, () => accessAllowedSql('p', identity));
+  if (text !== reference) refuseMember('readPageAdmitsCaller', 'a member-access floor rendered outside a restricted caller record');
+  // SQL empties an identity or satisfied list with an invalid entry (readersAllowedSql, folderRulesAllowedSql).
+  const satisfied = (folders.flags.satisfiedRuleIds ?? []).every(validQualifiedRuleId) ? folders.flags.satisfiedRuleIds : undefined;
+  const policy: StorePrivacyPolicy = {
+    honorAliases: false, entityPrivacy: false, identity: validIdentity(identity) ? [...identity] : [], ownerOnly: ownerOnlyFormIn(text, 'pages', 'p'),
+    ...(satisfied ? { satisfiedRuleIds: satisfied } : {}), ...(folders.flags.folderCoverage ? { folderCoverage: folders.flags.folderCoverage } : {}), callerRecord: true,
+  };
+  return storeCall({ member: 'readPageAdmitsCaller', sourceId, slug }, () => brain.readPageAdmitsCaller(sourceId, slug, policy)) as Promise<boolean>;
+};
 
 /**
  * `folderRulesAllowedSql('p', satisfied)` over the page row (live or soft-deleted): its stamped rules

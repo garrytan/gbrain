@@ -355,44 +355,52 @@ describe('who-can-read and the open-page count on a brain that has, or once had,
   // members the read path serves: the readable_by members of a page, the owner alone for an iMessage page, and every open
   // page in the open count, while the owner-only source exists and after it is removed. They once judged pages without the
   // brain's schema version, so the owner-only test took its closed form and every page read as owner-only.
-  // Rust arm: a known stop. The reports read through typed members now (test/engine-parity/access-reports.test.ts), but
-  // this case first adds members, and member writes run through executeRaw (src/core/access/members.ts addMember), so it
-  // ends on the raw_sql refusal (docs/designs/RUST_ENGINE.md rows 32 and 32a). When the store keeps members it must give
-  // these same readers and counts.
+  async function seedOwnerOnlyBrain(engine: BrainEngine, backend: ParityBackend) {
+    // A real brain records its schema version in config; the arm reset empties config.
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+    for (const id of ['owner-example', 'alice-example', 'bob-example']) await addMember(engine, id);
+    await setOwner(engine, 'owner-example');
+    const put = (source: string, slug: string, frontmatter: Record<string, unknown> = {}) =>
+      engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Body of ${slug}.`, frontmatter }, { sourceId: source });
+    await put('default', 'notes/alice-only', { readable_by: ['alice-example'] });
+    await put('default', 'notes/owner-and-bob', { readable_by: ['owner-example', 'bob-example'] });
+    await put('default', 'notes/open');
+    await createSource(engine, backend, 'imsg', { kind: 'imessage' });
+    await put('imsg', 'chats/dm-open');
+    await put('imsg', 'chats/dm-alice', { readable_by: ['alice-example'] });
+    return async (pages: Array<[string, string]>) => {
+      const readers: Record<string, string[] | 'every_source_reader'> = {};
+      for (const [source, slug] of pages) readers[`${source}:${slug}`] = (await whoCanRead(engine, slug, source))[0]!.members;
+      const open = await openPages(engine);
+      return { readers, open: Object.fromEntries(open.folders.map(f => [`${f.source}/${f.folder}`, f.pages])) };
+    };
+  }
+  const DEFAULT_READERS = { 'default:notes/alice-only': ['alice-example'], 'default:notes/owner-and-bob': ['bob-example', 'owner-example'], 'default:notes/open': 'every_source_reader' as const };
+  const WITH_SOURCE = [['default', 'notes/alice-only'], ['default', 'notes/owner-and-bob'], ['default', 'notes/open'], ['imsg', 'chats/dm-open'], ['imsg', 'chats/dm-alice']] as Array<[string, string]>;
+  const withSourceReaders = { readers: { ...DEFAULT_READERS, 'imsg:chats/dm-open': ['owner-example'], 'imsg:chats/dm-alice': [] }, open: { 'default/notes': 1 } };
+
   parityTest(
-    'who-can-read names the members get_page serves, and the open count counts every open page, with an iMessage source and after its removal',
+    'who-can-read names the members get_page serves, and the open count counts every open page, with an iMessage source',
+    { methods: ['readPageAdmitsCaller', 'listWhoCanReadPages', 'putPage', 'setConfig'] },
+    async (engine, backend) => {
+      const withSource = await (await seedOwnerOnlyBrain(engine, backend))(WITH_SOURCE);
+      expect(withSource).toEqual(withSourceReaders);
+      return withSource;
+    },
+  );
+
+  // Rust arm: this case stops at removeSource, whose owned-folder read runs raw SQL (src/core/owned-folder/remove.ts, not
+  // a who-can-read member). When sources remove is served there it must give these same readers and counts.
+  parityTest(
+    'who-can-read names the members get_page serves, and the open count counts every open page, after the iMessage source is removed',
     { methods: ['executeRaw', 'putPage', 'setConfig'], requires: 'raw_sql' },
     async (engine, backend) => {
-      // A real brain records its schema version in config; the arm reset empties config.
-      await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
-      for (const id of ['owner-example', 'alice-example', 'bob-example']) await addMember(engine, id);
-      await setOwner(engine, 'owner-example');
-      const put = (source: string, slug: string, frontmatter: Record<string, unknown> = {}) =>
-        engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Body of ${slug}.`, frontmatter }, { sourceId: source });
-      await put('default', 'notes/alice-only', { readable_by: ['alice-example'] });
-      await put('default', 'notes/owner-and-bob', { readable_by: ['owner-example', 'bob-example'] });
-      await put('default', 'notes/open');
-      await createSource(engine, backend, 'imsg', { kind: 'imessage' });
-      await put('imsg', 'chats/dm-open');
-      await put('imsg', 'chats/dm-alice', { readable_by: ['alice-example'] });
-      const report = async (pages: Array<[string, string]>) => {
-        const readers: Record<string, string[] | 'every_source_reader'> = {};
-        for (const [source, slug] of pages) readers[`${source}:${slug}`] = (await whoCanRead(engine, slug, source))[0]!.members;
-        const open = await openPages(engine);
-        return { readers, open: Object.fromEntries(open.folders.map(f => [`${f.source}/${f.folder}`, f.pages])) };
-      };
-      const withSource = await report([['default', 'notes/alice-only'], ['default', 'notes/owner-and-bob'], ['default', 'notes/open'], ['imsg', 'chats/dm-open'], ['imsg', 'chats/dm-alice']]);
-      expect(withSource).toEqual({
-        readers: { 'default:notes/alice-only': ['alice-example'], 'default:notes/owner-and-bob': ['bob-example', 'owner-example'], 'default:notes/open': 'every_source_reader',
-          'imsg:chats/dm-open': ['owner-example'], 'imsg:chats/dm-alice': [] },
-        open: { 'default/notes': 1 },
-      });
+      const report = await seedOwnerOnlyBrain(engine, backend);
+      const withSource = await report(WITH_SOURCE);
+      expect(withSource).toEqual(withSourceReaders);
       await removeSource(engine, { id: 'imsg', confirmDestructive: true, yes: true } as never);
-      const removed = await report([['default', 'notes/alice-only'], ['default', 'notes/owner-and-bob'], ['default', 'notes/open']]);
-      expect(removed).toEqual({
-        readers: { 'default:notes/alice-only': ['alice-example'], 'default:notes/owner-and-bob': ['bob-example', 'owner-example'], 'default:notes/open': 'every_source_reader' },
-        open: { 'default/notes': 1 },
-      });
+      const removed = await report(WITH_SOURCE.slice(0, 3));
+      expect(removed).toEqual({ readers: DEFAULT_READERS, open: { 'default/notes': 1 } });
       return { withSource, removed };
     },
   );

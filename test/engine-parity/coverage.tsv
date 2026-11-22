@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1227/1231
+# covered: 1228/1231
 # lifecycle: 9/9
 # pages: 49/49
 # search: 7/7
@@ -67,7 +67,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 12/12
 # wanted_links: 2/2
-# write_misc: 82/86
+# write_misc: 83/86
 # write_attribution: 5/5
 # telemetry: 10/10
 # field_usage: 1/1
@@ -96,13 +96,13 @@ getPage	pages	yes	132	yes	yes	yes	serves
 readPageSnapshot	pages	yes	32	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	4	no	yes	yes	serves
-putPage	pages	yes	610	yes	yes	yes	serves
+putPage	pages	yes	613	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	22	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	176	yes	yes	yes	serves
+softDeletePage	pages	yes	177	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	11	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	4	no	yes	yes	serves
@@ -446,7 +446,7 @@ sweepSegments	segmented_body	yes	3	no	yes	yes	serves
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	3	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
-createVersion	versions	yes	45	no	yes	yes	serves
+createVersion	versions	yes	46	no	yes	yes	serves
 getVersions	versions	yes	25	no	yes	yes	serves
 readLatestVersionId	versions	yes	1	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	yes	1	no	yes	yes	serves
@@ -471,7 +471,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
 getConfig	config	yes	23	no	yes	yes	serves
-setConfig	config	yes	37	no	yes	yes	serves
+setConfig	config	yes	38	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	4	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
@@ -1174,7 +1174,7 @@ lockAccessPolicy	write_misc	yes	1	no	yes	yes	serves
 listAccessRules	write_misc	yes	1	no	yes	yes	serves
 readAccessPolicyRevisions	write_misc	yes	1	no	yes	yes	serves
 listAccessCoverage	write_misc	yes	1	no	yes	yes	serves
-applyAccessRuleChanges	write_misc	yes	5	no	yes	yes	serves
+applyAccessRuleChanges	write_misc	yes	6	no	yes	yes	serves
 restampAccessWindow	write_misc	yes	1	no	yes	yes	serves
 finishAccessRestamp	write_misc	yes	1	no	yes	yes	serves
 insertAccessPolicyRevision	write_misc	yes	2	no	yes	yes	serves
@@ -1189,8 +1189,8 @@ listRuleCoveredSlugs	write_misc	yes	2	no	yes	yes	serves
 listRuleCoveredPages	write_misc	yes	1	no	yes	yes	serves
 listOpenTwinRows	write_misc	yes	1	no	yes	yes	serves
 countOpenPages	write_misc	yes	5	no	yes	yes	serves
-listWhoCanReadPages	write_misc	yes	1	no	yes	yes	serves
-readPageAdmitsCaller	write_misc	no	0	no	-	-	-
+listWhoCanReadPages	write_misc	yes	2	no	yes	yes	serves
+readPageAdmitsCaller	write_misc	yes	2	no	yes	yes	serves
 readPageFolderRulesAdmit	write_misc	no	0	no	-	-	-
 countLineageClosingRules	write_misc	no	0	no	-	-	-
 listUnboundTokenNames	write_misc	yes	1	no	yes	yes	serves

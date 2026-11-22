@@ -373,3 +373,44 @@ fn who_can_read_lists_each_source_row_of_the_slug() {
     assert_eq!(row.page_type, "note");
     assert_eq!(row.frontmatter["readable_by"], json!(["member:alice"]));
 }
+
+#[test]
+fn page_admits_caller_judges_one_row_for_the_policy_identity() {
+    let dir = TempDir::new("visibility-admits");
+    let store = seeded(&dir);
+    source(&store, "chat", json!({ "kind": "imessage" }));
+    put_in(&store, "chat", "chats/dm", "note");
+    put(&store, "pend/x", json!({}));
+    let policy = |identity: &[&str], owner_only: &str| -> PrivacyPolicy {
+        serde_json::from_value(json!({
+            "honorAliases": false, "entityPrivacy": false, "identity": identity,
+            "ownerOnly": owner_only, "callerRecord": true,
+            "folderCoverage": [{ "source_id": "default", "prefix": "pend/" }],
+        }))
+        .unwrap()
+    };
+    let admits = |source: &str, slug: &str, p: &PrivacyPolicy| {
+        store.read_page_admits_caller(source, slug, p).unwrap()
+    };
+    let alice = policy(&["member:alice"], "fn");
+    assert!(admits("default", "notes/open", &alice));
+    assert!(admits("default", "notes/alice", &alice));
+    assert!(!admits(
+        "default",
+        "notes/alice",
+        &policy(&["member:bob"], "fn")
+    ));
+    assert!(!admits("default", "notes/alice", &policy(&[], "fn")));
+    // The member-access floor has no privacy part and no live test: a private or deleted row passes.
+    assert!(admits("default", "notes/private", &alice));
+    assert!(admits("default", "notes/gone", &alice));
+    assert!(!admits("default", "notes/missing", &alice));
+    assert!(!admits("default", "pend/x", &alice));
+    // An owner-only source hides its page in the `fn` form, and the `off` form (an owner read) opens it.
+    assert!(!admits("chat", "chats/dm", &alice));
+    assert!(admits(
+        "chat",
+        "chats/dm",
+        &policy(&["member:alice"], "off")
+    ));
+}

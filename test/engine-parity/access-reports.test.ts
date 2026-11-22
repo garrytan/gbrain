@@ -25,7 +25,7 @@
  *    must leave the table. Member writes are served (test/engine-parity/access-members.test.ts).
  */
 import { describe, expect, test } from 'bun:test';
-import { archiveSource, createSource, parityArms, restrictFolder, type ParityBackend } from './harness.ts';
+import { archiveSource, createSource, parityArms, resetArm, restrictFolder, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OpenPageCount } from '../../src/core/engine-sql/access-setup.ts';
@@ -36,8 +36,13 @@ import { servesStatus } from '../../src/commands/access-serves.ts';
 import { openSharedPagesEntry } from '../../src/commands/doctor/checks/open-shared-pages.ts';
 import type { DoctorContext } from '../../src/commands/doctor/context.ts';
 import { schemaVersionNow, withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { addMember } from '../../src/core/access/members.ts';
+import { folderAccessFor } from '../../src/core/access/caller.ts';
+import { proposeRevision } from '../../src/core/access/policy.ts';
+import { identityFor } from '../../src/core/access/principals.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 
-const { parityTest } = parityArms(testBackends());
+const { parityTest, arms } = parityArms(testBackends());
 
 const put = (engine: BrainEngine, slug: string, sourceId: string, type = 'note', frontmatter: Record<string, unknown> = {}) =>
   engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `body of ${slug}`, timeline: '', frontmatter }, { sourceId });
@@ -216,5 +221,84 @@ describe('the reports built on the count, on a brain with no member', () => {
     expect(missing).toEqual({ code: 'not_found', message: 'No page "nowhere/page".' });
     expect(missingInSource).toEqual({ code: 'not_found', message: 'No page "notes/world-a" in source team.' });
     return { open, labelled, labelledTeam, priv, ownerOnly, deleted, missing, missingInSource };
+  });
+});
+
+/**
+ * readPageAdmitsCaller as whoCanRead calls it: one page row, one member's identity, in that member's caller record
+ * (satisfied folder rules and coverage, owner flag, restricted). bob is the owner; the record of each member also
+ * carries a pending prefix `pend/` in source `default`. Each row is [alice, bob].
+ */
+async function admits(engine: BrainEngine, backend: ParityBackend): Promise<Record<string, boolean[]>> {
+  await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+  await addMember(engine, 'alice-example', { groups: ['team-a'] });
+  await addMember(engine, 'bob-example');
+  await createSource(engine, backend, 'imsg', { kind: 'imessage' });
+  await proposeRevision(engine, 'default', [{ id: 'deals', prefix: 'deals/', readable_by: ['member:alice-example'] }, { id: 'ops', prefix: 'ops/', readable_by: ['member:bob-example'] }], { origin: 'cli', store: 'database' });
+  const pages: Array<[string, string, Record<string, unknown>?]> = [['default', 'notes/open'], ['default', 'notes/alice-only', { readable_by: ['alice-example'] }],
+    ['default', 'notes/bob-only', { readable_by: ['bob-example'] }], ['default', 'notes/team', { readable_by: ['group:team-a'] }], ['default', 'deals/q4'], ['default', 'ops/plan'],
+    ['default', 'pend/x'], ['imsg', 'chats/dm'], ['default', 'gone/page']];
+  for (const [source, slug, frontmatter] of pages) await put(engine, slug, source, 'note', frontmatter);
+  await engine.softDeletePage('gone/page', { sourceId: 'default' });
+  const remotePolicy = { privacyRelaxed: false, restricted: true, ...await schemaVersionNow(engine) };
+  const out: Record<string, boolean[]> = {};
+  for (const [source, slug] of [...pages.map(p => [p[0], p[1]] as const), ['default', 'nowhere/page'] as const]) {
+    out[`${source}:${slug}`] = [];
+    for (const [id, groups] of [['alice-example', ['team-a']], ['bob-example', []]] as const) {
+      const identity = identityFor(id, groups);
+      const folder = await folderAccessFor(engine, identity);
+      const record = { identity, ...folder, folderCoverage: [...folder.folderCoverage, { source_id: 'default', prefix: 'pend/' }], restricted: true, owner: id === 'bob-example', remotePolicy };
+      out[`${source}:${slug}`]!.push(await withCallerAccess(record as never, () => engine.readPageAdmitsCaller(source, slug, identity)));
+    }
+  }
+  return out;
+}
+
+const ADMITS = {
+  'default:notes/open': [true, true], 'default:notes/alice-only': [true, false], 'default:notes/bob-only': [false, true], 'default:notes/team': [true, false],
+  'default:deals/q4': [true, false], 'default:ops/plan': [false, true], 'default:pend/x': [false, false], 'imsg:chats/dm': [false, true],
+  'default:gone/page': [true, true], 'default:nowhere/page': [false, false],
+};
+
+describe('one page row against one member\'s member-access floor', () => {
+  parityTest('readPageAdmitsCaller admits an open, a named, a group, a satisfied-rule and an owner-only page for those who meet it, and no one for a pending prefix or a missing page', {
+    methods: ['readPageAdmitsCaller', 'putPage', 'softDeletePage', 'applyAccessRuleChanges'],
+  }, async (engine, backend) => {
+    const result = await admits(engine, backend);
+    expect(result).toEqual(ADMITS);
+    return result;
+  });
+
+  // A parity case counts a typed refusal as a pass, so this reads the Rust arm's own engine: red while the member refuses.
+  test('the Rust arm answers readPageAdmitsCaller as PGLite does, and refuses a caller whose floor it cannot match', async () => {
+    const rust = arms().find(arm => arm.backend === 'rust');
+    if (!rust) return;
+    await resetArm(rust);
+    expect(await admits(rust.engine, 'rust')).toEqual(ADMITS);
+    const open = await withCallerAccess({ identity: ['member:alice-example'], restricted: false } as never, () => rust.engine.readPageAdmitsCaller('default', 'notes/open', ['member:alice-example']).catch(e => (e as { code?: string }).code));
+    expect(open).toBe('engine_capability_missing');
+  });
+});
+
+describe('get_page as of a date, for a member a folder rule does not name', () => {
+  // Pins the public handler's live-page check for an older edition under a folder rule: dan gets no edition of deals/q4.
+  parityTest('a member a folder rule does not name gets page_not_found as of any date', { methods: ['putPage', 'createVersion'] }, async (engine) => {
+    await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));
+    for (const id of ['alice-example', 'bob-example', 'dan-example']) await addMember(engine, id);
+    const edition = (title: string, valid_from: string) => ({ type: 'note' as const, title, compiled_truth: `body canary-${title}`, timeline: '', frontmatter: { valid_from } });
+    await engine.putPage('deals/q4', edition('March', '2026-01-01'), { sourceId: 'default' });
+    await engine.createVersion('deals/q4', { sourceId: 'default', reason: 'repriced' });
+    await engine.putPage('deals/q4', edition('July', '2026-06-01'), { sourceId: 'default' });
+    await proposeRevision(engine, 'default', [{ id: 'deals', prefix: 'deals/', readable_by: ['member:alice-example', 'member:bob-example'] }], { origin: 'cli', store: 'database' });
+    const asOf = async (member: string, as_of: string) => {
+      await engine.setConfig('mcp.stdio_member', member);
+      const r = await dispatchToolCall(engine, 'get_page', { slug: 'deals/q4', as_of }, { remote: true, transport: 'stdio', sourceId: 'default' }) as { isError?: boolean; content: Array<{ text: string }> };
+      const text = r.content.map(c => c.text).join('');
+      return { error: r.isError === true, code: r.isError ? JSON.parse(text).error?.code ?? JSON.parse(text).code : undefined, march: text.includes('canary-March'), july: text.includes('canary-July') };
+    };
+    const seen = { danMarch: await asOf('dan-example', '2026-03-01'), danJuly: await asOf('dan-example', '2026-07-01'), bobMarch: await asOf('bob-example', '2026-03-01'), bobJuly: await asOf('bob-example', '2026-07-01') };
+    const none = { error: true, code: 'page_not_found', march: false, july: false };
+    expect(seen).toEqual({ danMarch: none, danJuly: none, bobMarch: { error: false, code: undefined, march: true, july: false }, bobJuly: { error: false, code: undefined, march: false, july: true } });
+    return seen;
   });
 });

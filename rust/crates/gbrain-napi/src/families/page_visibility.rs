@@ -50,6 +50,24 @@ impl Brain {
         })
     }
 
+    /// `readPageAdmitsCaller(sourceId, slug, policy)`: whether the page row passes the member-access floor.
+    #[napi]
+    pub fn read_page_admits_caller<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        policy: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_admits_caller(
+                &source_id,
+                &slug,
+                &required(policy, "readPageAdmitsCaller policy")?,
+            )
+        })
+    }
+
     /// `readCallerPageAccess(pages, policy)`: the pairs that name a page row, and whether each reads.
     #[napi]
     pub fn read_caller_page_access<'env>(
