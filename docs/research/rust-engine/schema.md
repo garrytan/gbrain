@@ -834,7 +834,7 @@ Purpose: durable Anthropic-shape or provider-neutral message blocks, one row per
 | ended_at | TIMESTAMPTZ | NOT NULL DEFAULT now() | |
 
 Constraints: `uniq_subagent_messages_idx` UNIQUE (`job_id`, `message_idx`); `chk_subagent_messages_role`.
-Indexes: `idx_subagent_messages_job` (1424) btree (`job_id`, `message_idx`); `idx_subagent_messages_provider` (1425) btree (`job_id`, `provider_id`).
+The unique constraint indexes ordered transcript reads by (`job_id`, `message_idx`). The separate `idx_subagent_messages_provider` index supports lookups by (`job_id`, `provider_id`).
 Readers/writers: `core/minions/handlers/subagent.ts` (2), `core/minions/handlers/subagent-persistence.ts` (2), `core/minions/transcript.ts` (1). Migration v036 (provider-neutral persistence).
 
 #### subagent_tool_executions (schema.sql:1438-1463)

@@ -82,7 +82,8 @@ describe('schema-embedded.ts contains subagent tables', () => {
     expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS subagent_messages');
     expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS subagent_tool_executions');
     expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS subagent_rate_leases');
-    expect(SCHEMA_SQL).toContain('idx_subagent_messages_job');
+    expect(SCHEMA_SQL).toContain('CONSTRAINT uniq_subagent_messages_idx UNIQUE (job_id, message_idx)');
+    expect(SCHEMA_SQL).not.toContain('CREATE INDEX IF NOT EXISTS idx_subagent_messages_job ');
     expect(SCHEMA_SQL).toContain('idx_subagent_tools_job');
     expect(SCHEMA_SQL).toContain('idx_rate_leases_key_expires');
   });

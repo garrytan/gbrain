@@ -972,7 +972,6 @@
       "idx_pages_type": "CREATE INDEX idx_pages_type ON public.pages USING btree (type)",
       "idx_rate_leases_key_expires": "CREATE INDEX idx_rate_leases_key_expires ON public.subagent_rate_leases USING btree (key, expires_at)",
       "idx_raw_data_page": "CREATE INDEX idx_raw_data_page ON public.raw_data USING btree (page_id)",
-      "idx_subagent_messages_job": "CREATE INDEX idx_subagent_messages_job ON public.subagent_messages USING btree (job_id, message_idx)",
       "idx_subagent_messages_provider": "CREATE INDEX idx_subagent_messages_provider ON public.subagent_messages USING btree (job_id, provider_id)",
       "idx_subagent_tools_job": "CREATE INDEX idx_subagent_tools_job ON public.subagent_tool_executions USING btree (job_id, status)",
       "idx_tags_page_id": "CREATE INDEX idx_tags_page_id ON public.tags USING btree (page_id)",

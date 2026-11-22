@@ -866,7 +866,6 @@ CREATE TABLE IF NOT EXISTS subagent_messages (
   CONSTRAINT uniq_subagent_messages_idx UNIQUE (job_id, message_idx),
   CONSTRAINT chk_subagent_messages_role CHECK (role IN ('user','assistant'))
 );
-CREATE INDEX IF NOT EXISTS idx_subagent_messages_job ON subagent_messages (job_id, message_idx);
 CREATE INDEX IF NOT EXISTS idx_subagent_messages_provider ON subagent_messages (job_id, provider_id);
 
 CREATE TABLE IF NOT EXISTS subagent_tool_executions (
