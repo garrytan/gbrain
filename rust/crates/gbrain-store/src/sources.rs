@@ -21,6 +21,8 @@ pub(crate) struct SourceRecord {
     pub id: String,
     pub name: Option<String>,
     pub local_path: Option<String>,
+    /// When the sync anchor last advanced (`sources.last_sync_at`).
+    #[serde(default)]
     pub last_sync_at_us: Option<i64>,
     #[serde(deserialize_with = "crate::jsonb::de_map")]
     pub config: Map<String, Value>,
@@ -39,6 +41,14 @@ pub(crate) struct SourceRecord {
     /// When the archive's recovery window ends (`sources.archive_expires_at`), or `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive_expires_at_us: Option<i64>,
+    /// The sync's last observation of the checkout's Git upstream (`sources.upstream_checked_at`,
+    /// `upstream_commit`, `upstream_behind`), or `None` before the first one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_checked_at_us: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_behind: Option<i64>,
     /// The commit the source's last git sync reached (`sources.last_commit`), or `None` before the
     /// first one. Only `advance_source_commit` writes it; older records read as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -83,9 +93,10 @@ impl From<SourceRecord> for SourceRow {
 }
 
 /// One source as `getSource` returns it: `SourceDetailRow` of `src/core/engine.ts`, dates as ISO
-/// strings. The store keeps no `contextual_retrieval_mode` or `trust_frontmatter_overrides`: only
-/// source admin SQL writes those columns, and it does not run on a Rust brain, so they read as the
-/// column defaults (null, false). `last_commit` is the one `advance_source_commit` stored.
+/// strings. `last_commit` is the one the sync anchor advanced (`advance_source_commit`). The
+/// store keeps no `contextual_retrieval_mode` or `trust_frontmatter_overrides`: only source admin
+/// SQL writes those columns, and it does not run on a Rust brain, so they read as the column
+/// defaults (null, false).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SourceDetailRow {
     pub id: String,
@@ -183,6 +194,9 @@ pub(crate) fn seed_default_source(tx: &mut dyn KvWrite, env: &dyn Env) -> Result
         archive_expires_at_us: None,
         last_commit: None,
         newest_content_at_us: None,
+        upstream_checked_at_us: None,
+        upstream_commit: None,
+        upstream_behind: None,
         purge_epoch: 0,
     };
     put_json(tx, &source_key(DEFAULT_SOURCE), &record)
@@ -261,6 +275,9 @@ impl Store {
                     archive_expires_at_us: None,
                     last_commit: None,
                     newest_content_at_us: None,
+                    upstream_checked_at_us: None,
+                    upstream_commit: None,
+                    upstream_behind: None,
                     purge_epoch: 0,
                 },
             };
@@ -327,6 +344,26 @@ impl Store {
         })
     }
 
+    /// `advanceSourcePurgeEpoch(sourceId)`: adds one to the source's purge epoch and returns the
+    /// new value, as `UPDATE sources SET purge_epoch = purge_epoch + 1 ... RETURNING` does; an
+    /// unknown id changes nothing and returns `None` (no row).
+    pub fn advance_source_purge_epoch(&self, id: &str) -> Result<Option<i64>> {
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, id)? else {
+                return Ok(None);
+            };
+            record.purge_epoch += 1;
+            put_json(tx, &source_key(id), &record)?;
+            Ok(Some(record.purge_epoch))
+        })
+    }
+
+    /// `readSourcePurgeEpoch(sourceId)`: the source's purge epoch as stored, or `None` for an
+    /// unknown id.
+    pub fn read_source_purge_epoch(&self, id: &str) -> Result<Option<i64>> {
+        Ok(read_source(&*self.read()?, id)?.map(|record| record.purge_epoch))
+    }
+
     /// Archives or restores a source. Archiving sets no archive time (an unverified archive);
     /// restoring clears both times. Returns whether the source exists.
     pub fn set_source_archived(&self, id: &str, archived: bool) -> Result<bool> {
@@ -374,9 +411,52 @@ impl Store {
         })
     }
 
+    /// `writeSourceSyncHeartbeat(sourceId)`: stamps `last_sync_at` with the store clock and leaves
+    /// the commit anchor alone (the 0-change sync heartbeat). An unknown source changes nothing.
+    pub fn write_source_sync_heartbeat(&self, source_id: &str) -> Result<()> {
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, source_id)? else {
+                return Ok(());
+            };
+            record.last_sync_at_us = Some(self.env.now_micros());
+            put_json(tx, &source_key(source_id), &record)
+        })
+    }
+
+    /// `writeSourceUpstreamObservation(sourceId, checkedAt, commit, behind)`: the sync's upstream
+    /// observation of the source's checkout. `checked_at` is an ISO time. An unknown source changes
+    /// nothing.
+    pub fn write_source_upstream_observation(
+        &self,
+        source_id: &str,
+        checked_at: &str,
+        commit: &str,
+        behind: Option<i64>,
+    ) -> Result<()> {
+        let checked_us = parse_iso(checked_at).ok_or_else(|| {
+            StoreError::invalid("upstream_checked_at must be an ISO timestamp ending in Z")
+        })?;
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, source_id)? else {
+                return Ok(());
+            };
+            record.upstream_checked_at_us = Some(checked_us);
+            record.upstream_commit = Some(commit.to_owned());
+            record.upstream_behind = behind;
+            put_json(tx, &source_key(source_id), &record)
+        })
+    }
+
     /// `getSource(id)`: the source row, archived or not, or `None`. Mirrors `getSource`.
     pub fn get_source(&self, id: &str) -> Result<Option<SourceDetailRow>> {
         Ok(read_source(&*self.read()?, id)?.map(SourceDetailRow::from))
+    }
+
+    /// `readSourceLastCommit(id)`: the commit the source's last sync advanced to, or `None` before
+    /// the first advance and for an unknown source. Archived sources read too, as the SELECT does
+    /// not filter them.
+    pub fn read_source_last_commit(&self, id: &str) -> Result<Option<String>> {
+        Ok(read_source(&*self.read()?, id)?.and_then(|r| r.last_commit))
     }
 
     /// `countRepoBoundSources()`: how many sources that are not archived have a non-empty
@@ -386,12 +466,6 @@ impl Store {
             .into_iter()
             .filter(|r| !r.archived && r.local_path.as_deref().is_some_and(|p| !p.is_empty()))
             .count() as u64)
-    }
-
-    /// `readSourcePurgeEpoch(id)`: the source's stored purge epoch (0 until a purge raises it), or
-    /// `None` for an unknown source. Archived sources answer too, as the SQL reads the row as is.
-    pub fn read_source_purge_epoch(&self, id: &str) -> Result<Option<i64>> {
-        Ok(read_source(&*self.read()?, id)?.map(|r| r.purge_epoch))
     }
 
     /// `listSourceLocalPaths()`: the local path of every source that has a non-empty one,
@@ -413,47 +487,61 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::OpenOptions;
-    use std::path::PathBuf;
+    use super::SourceRecord;
 
-    struct Dir(PathBuf);
-    impl Drop for Dir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
+    #[test]
+    fn a_record_written_before_the_sync_anchor_fields_still_reads() {
+        let old = r#"{"id":"wiki","name":"wiki","local_path":null,"config":{},"incarnation":"i1","archived":false,"created_at_us":1}"#;
+        let record: SourceRecord = serde_json::from_str(old).unwrap();
+        assert_eq!(record.last_sync_at_us, None);
+        assert_eq!(record.last_commit, None);
+        assert_eq!(record.newest_content_at_us, None);
+        // Unset anchor fields are not written, so an older reader still reads a new record.
+        let back = serde_json::to_value(&record).unwrap();
+        assert!(back.get("last_commit").is_none() && back.get("newest_content_at_us").is_none());
+        assert!(
+            back.get("upstream_commit").is_none() && back.get("upstream_checked_at_us").is_none()
+        );
     }
 
-    /// `readSourcePurgeEpoch` reads the stored field, not a constant: a fresh source reads 0, a
-    /// raised epoch reads as stored, another source keeps its own, and an unknown source has none.
     #[test]
-    fn read_source_purge_epoch_reads_the_stored_epoch_of_the_named_source() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/unit-tmp")
-            .join(format!("source-purge-epoch-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let _guard = Dir(dir.clone());
-        let store = Store::open_dir(&dir.join("brain"), OpenOptions::default()).unwrap();
-        let team: SourceInput =
-            serde_json::from_value(serde_json::json!({ "id": "team" })).unwrap();
-        store.upsert_source(&team).unwrap();
-        assert_eq!(store.read_source_purge_epoch("team").unwrap(), Some(0));
+    fn the_upstream_observation_lands_on_one_source_only() {
+        let store = crate::test_support::store();
+        let wiki = super::SourceInput {
+            id: "wiki".into(),
+            ..Default::default()
+        };
+        store.upsert_source(&wiki).unwrap();
         store
-            .write(|tx| {
-                let mut record = require_source(&*tx, "team")?;
-                record.purge_epoch = 3;
-                put_json(tx, &source_key("team"), &record)
-            })
+            .write_source_upstream_observation("wiki", "2026-01-02T03:04:05.000Z", "u1", Some(2))
             .unwrap();
-        assert_eq!(store.read_source_purge_epoch("team").unwrap(), Some(3));
-        assert_eq!(
-            store.read_source_purge_epoch(DEFAULT_SOURCE).unwrap(),
-            Some(0)
+        store
+            .write_source_upstream_observation("wiki", "2026-01-03T03:04:05.000Z", "u2", None)
+            .unwrap();
+        store
+            .write_source_upstream_observation("missing", "2026-01-02T03:04:05.000Z", "u9", Some(0))
+            .unwrap();
+        assert!(
+            store
+                .write_source_upstream_observation("wiki", "not a time", "u3", Some(1))
+                .is_err()
         );
+        let record = super::read_source(&*store.read().unwrap(), "wiki")
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.upstream_commit.as_deref(), Some("u2"));
+        assert_eq!(record.upstream_behind, None);
         assert_eq!(
-            store.read_source_purge_epoch("no-such-source").unwrap(),
-            None
+            record
+                .upstream_checked_at_us
+                .map(crate::env::iso)
+                .as_deref(),
+            Some("2026-01-03T03:04:05.000000Z")
+        );
+        assert!(
+            super::read_source(&*store.read().unwrap(), "missing")
+                .unwrap()
+                .is_none()
         );
     }
 }

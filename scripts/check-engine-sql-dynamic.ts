@@ -52,6 +52,7 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   ANY_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant any-owner-only-source EXISTS over sources read_source; the kinds and flag key are module constants (no input)',
   OWNER_ONLY_LINEAGE_PRESENT_SQL: 'src/core/access/owner-only.ts: the constant v320 lineage function call `gbrain_owner_only_lineage()` (no input)',
   READ_SOURCE_OWNER_ONLY_SQL: 'src/core/access/owner-only.ts: constant owner-only row test of the sources alias read_source; the kinds and flag key are module constants (no input)',
+  CONNECTOR_KIND_LIST_SQL: 'src/core/persistence/connector-kinds.ts: constant parenthesized list of the code-constant connector kinds (no input)',
   ACTIVATION_SERVED_REVISION: 'src/core/search/safe-chunks.ts: the constant v153 served-index marker uuid (#9192); no input',
   UNBACKED_FACT_SQL: 'src/core/engine-sql/fact-relink-writes.ts: constant live-row-on-an-unbacked-name-key predicate over the facts alias f (unbackedEntitySql plus LIVE_FACT_SQL); no input',
   ACTIVE_UNLINKED_FACT_SQL: 'src/core/engine-sql/fact-relink-writes.ts: constant live-row-with-no-entity predicate over the facts alias f; no input',
@@ -64,6 +65,8 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
+  // access-grants.ts builders
+  tokenGrantColumnList: 'src/core/engine-sql/access-grants.ts (from grants/model.ts): joins only TOKEN_GRANT_ROW_COLUMNS constant names, filtered by which ones pg_attribute reports present; no values',
   // facts-rest-sites builders (facts-trust.ts, facts-recall.ts)
   oversizedEligibleSql: 'src/core/engine-sql/facts-trust.ts: returns the constant eligibleFactEmbedding predicate (embedding-identity.ts, placeholder $2 audit sources bound by the caller); no values',
   oversizedStaleSql: 'src/core/engine-sql/facts-trust.ts: returns the constant staleFactEmbedding predicate (embedding-identity.ts, placeholders $3 model and $4 width bound by the caller); no values',
@@ -79,6 +82,9 @@ const VETTED_BUILDERS: Record<string, string> = {
   partiallyEmbeddedFactSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant partiallyEmbeddedFact predicate (embedding-identity.ts, EMBED_MAX_CHARS literal); no values',
   eligibleFactEmbeddingSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant eligibleFactEmbedding predicate (embedding-identity.ts, placeholder $2 audit sources bound by the caller); no values',
   factSourceScopeSql: 'src/core/engine-sql/facts-doctor.ts: constant optional-source scope over the facts alias f with the hand-numbered $1 source id bound by the caller; no values',
+
+  // doctor-derived.ts builders
+  withEmbeddingColumn: 'src/core/engine-sql/doctor-derived.ts: constant statement with one "__COL__" marker replaced by an embedding column that matches COLUMN_NAME_REGEX (^[a-z_][a-z0-9_]*$) or throws; no values',
 
   // facts-cycle.ts builders
   readersSourcedFactSql: 'src/core/access/member-facts.ts: constant readers-sourced predicate over a caller facts alias; the folder-rule fragment it embeds is constant',
@@ -134,8 +140,10 @@ const VETTED_BUILDERS: Record<string, string> = {
   quarantinedProvenanceFilterFragment: 'src/core/quarantine.ts: constant fact-provenance quarantine predicate over a caller alias; no values',
   factsFtsDocument: 'src/core/fts-language.ts: constant facts full-text document expression over a caller alias; the language passes VALID_CONFIG_NAME or falls back to the default',
   getFtsLanguage: 'src/core/fts-language.ts: the brain full-text config name; passes VALID_CONFIG_NAME ([a-z][a-z0-9_]*) or falls back to the default',
+  memberFactAdmitSql: 'src/core/access/member-facts.ts: own-member-page fact predicate over a caller alias; the member id passed ACCESS_ID_RE (no quote) and the page test is privatePagesFilterForCaller; no values',
   grantedPrivateFactSql: 'src/core/access/member-facts.ts: private-facts grant predicate over a caller alias; granted source ids passed isValidSourceId, so they embed as literals',
   trustRankSql: 'src/core/trust/tier.ts: CASE mapping a caller column expression to a rank from the constant tier table; callers pass a column, never a value',
+  trustRankArmsSql: 'src/core/trust/tier.ts: the constant WHEN ... ELSE 0 END) tail of trustRankSql from the constant tier table; takes no input, the subject is bound through sqlFragment',
   claimPendingSql: 'src/core/trust/claim-state.ts: constant claim-pending predicate over a caller sources alias; config keys are module constants',
   conversationSlotSql: 'src/core/engine-sql/facts-trust.ts: CONVERSATION_SLOT_SQL, the constant conversation-source prefix test; no values',
   savedFactCollapseColumns: 'src/core/engine-sql/facts-trust.ts: SAVED_FACT_COLLAPSE_COLUMNS, the constant select list the capture-dedup collapse reads; no values',
@@ -158,6 +166,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   renderWriterReadPolicy: 'src/core/engine-sql/remote-links.ts: readPolicyFragment over a code-provided alias, ANDed (labelled-only writer) with labelledOnlyForSql, whose identities pass validIdentity and rule ids validQualifiedRuleId before they are quoted in; no values',
   privacyPartSql: 'src/core/search/private-visibility.ts: the constant privacy part (snapshot, derived-origin and declared-lineage tests) over a code-provided page alias; no values',
   privatePagesFilterFragment: 'src/core/search/private-visibility.ts: constant visibility predicate over a caller alias',
+  openPageSql: 'src/core/engine-sql/access-setup.ts: the constant deleted_at test AND accessAllowedSql with an empty identity and no satisfied rules over a caller page alias; no values',
   callerAccessAllowedSql: 'src/core/search/private-visibility.ts: the member-access part of privatePagesFilterForCaller alone (callerAccessSql); readers identities pass validIdentity before they are quoted in, and a satisfied rule id that is not a valid qualified id empties the set (fail closed); no values',
   privatePagesFilterForCaller: 'src/core/search/private-visibility.ts: privatePagesFilterFragment ORed with the private-readable source ids, each checked by isValidSourceId (alphabet [a-z0-9-], no quote) before it is quoted in',
   privateLinkOriginFilterForCaller: 'src/core/search/private-visibility.ts: constant link-origin predicate ORed with isValidSourceId-checked private-readable source ids',

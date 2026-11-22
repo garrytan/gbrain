@@ -40,6 +40,12 @@ function checkBatch(member: string, n: number): void {
   if (n > DELETE_BATCH_SIZE) throw new Error(`${member}: input size ${n} exceeds DELETE_BATCH_SIZE=${DELETE_BATCH_SIZE}. Caller must chunk.`);
 }
 
+/** The page read policy keys (`PageReadPolicy`); a key the type gains and this list misses fails to compile. */
+const READ_POLICY_KEYS = ['sourceId', 'sourceIds', 'excludePrivate', 'requireSafeChunks', 'minTrust', 'suppressFlagged',
+  'takesHoldersAllowList'] as const satisfies ReadonlyArray<keyof PageReadPolicy>;
+const READ_POLICY_KEYS_COMPLETE: Exclude<keyof PageReadPolicy, (typeof READ_POLICY_KEYS)[number]> extends never ? true : never = true;
+void READ_POLICY_KEYS_COMPLETE;
+
 /**
  * A `PageReadScope` as the store reads it (`pageReadFilter`, search/read-policy-sql.ts). Any scope object turns on
  * PGLite's live filter (not deleted, not quarantined, source not archived), so `live` says one was passed.

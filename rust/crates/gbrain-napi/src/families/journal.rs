@@ -193,6 +193,19 @@ impl Brain {
         })
     }
 
+    /// `readWriteRequestsByRequestId(requestId)`: at most two `persistence_requests` rows with this
+    /// request id, from any principal.
+    #[napi]
+    pub fn list_write_requests_by_request_id<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_write_requests_by_request_id(&request_id)
+        })
+    }
+
     /// `listWriteRequestRows(principal, sourceId, filter)`: the principal's request rows in one live
     /// source, newest sequence first, through the filter's cursor and fences.
     #[napi]

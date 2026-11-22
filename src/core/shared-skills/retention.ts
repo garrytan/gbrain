@@ -10,10 +10,9 @@ import { initializeLocalPersistence, requestPrincipalForContext } from '../persi
 import { requireUuid } from '../persistence/digest.ts';
 import { skillName } from './manifest.ts';
 
-export const SHARED_SKILL_RETENTION_LIMITS = Object.freeze({ recentPerSkill: 20, graceHours: 24,
-  sourceRevisions: 10_000, sourceBytes: 256 * 1024 * 1024, pruneBatch: 128,
-  brainRevisions: 100_000, brainBytes: 1024 * 1024 * 1024,
-  pinHours: 24, principalPins: 64, sourcePins: 256, brainPins: 4096 });
+import { SHARED_SKILL_RETENTION_LIMITS } from './model.ts';
+
+export { SHARED_SKILL_RETENTION_LIMITS };
 
 export interface SkillRetentionCapacity {
   retained_revisions: number;

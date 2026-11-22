@@ -238,6 +238,7 @@
   "test/engine-parity/search-reads.test.ts": 7567,
   "test/engine-parity/search.test.ts": 19578,
   "test/engine-parity/segmented-body.test.ts": 13584,
+  "test/engine-parity/source-order-callers.test.ts": 2400,
   "test/engine-parity/source-resolver-reads.test.ts": 8723,
   "test/engine-parity/spend-log.test.ts": 12073,
   "test/engine-parity/stats-vectors.test.ts": 7844,

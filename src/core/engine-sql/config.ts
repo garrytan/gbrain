@@ -7,7 +7,7 @@ import type { LegacyUnscopedRead } from './brands.ts';
 
 /** The stored `{ key, value }` rows for the named keys, ordered by key; a key with no row is absent. Reads the table, never a request snapshot. */
 export async function getConfigValues(exec: LegacyUnscopedRead, keys: readonly string[]): Promise<Array<{ key: string; value: string }>> {
-  return exec.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key', [[...keys]]);
+  return exec.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[]) ORDER BY key COLLATE "C"', [[...keys]]);
 }
 
 /**

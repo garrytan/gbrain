@@ -39,7 +39,8 @@ import {
   saveBackupStatus,
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
-import { countBrainLivePages as countBrainLivePagesSql, readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
+import { readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
+import { countLivePages as countLivePagesSql } from '../src/core/engine-sql/doctor-pages.ts';
 
 const ENV_KEYS = [
   'GBRAIN_HOME',
@@ -132,7 +133,6 @@ function stubEngine(opts: {
 } = {}): BrainEngine {
   return {
     kind: opts.kind ?? 'pglite',
-    countBrainLivePages() { return countBrainLivePagesSql(this as never); },
     readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => {
       opts.onCall?.();
@@ -143,6 +143,8 @@ function stubEngine(opts: {
     },
     // loadAllSources reads the sources table through the typed member; it counts as one call, as the raw read did.
     listSourceRecords: async () => { opts.onCall?.(); return opts.sources ?? []; },
+    // The live-page count is a typed member too (engine-sql/doctor-pages.ts), one call as the raw read was.
+    countLivePages: async () => { opts.onCall?.(); return opts.pages ?? 0; },
     // The writer-binding read is a typed member too: one call, a row only for a bound source.
     getWorktreeBinding: async (sourceId: string) => {
       opts.onCall?.();
@@ -472,7 +474,8 @@ describe('getBackupStatus — cache choke point', () => {
     let throwCalls = 0;
     const throwing = {
       kind: 'pglite',
-      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      // The live-page count is the typed doctor-pages member, run on this stub's executeRaw.
+      countLivePages() { const e = this as unknown as { executeRaw(sql: string, params?: unknown[]): Promise<never[]> }; return countLivePagesSql((sql, params) => e.executeRaw(sql, params)); },
       readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throwCalls++;
@@ -536,7 +539,6 @@ describe('computeBackupCoverage — pages count unestablished', () => {
   function pagesRowEngine(pagesRows: unknown[]): BrainEngine {
     return {
       kind: 'pglite',
-      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
       readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async (sql: string) => {
         if (sql.includes('FROM pages')) return pagesRows;
@@ -544,6 +546,8 @@ describe('computeBackupCoverage — pages count unestablished', () => {
         return [];
       },
       listSourceRecords: async () => [],
+      // The typed count hands back the row's n as is: a missing or non-numeric one is an unestablished count.
+      countLivePages: async () => (pagesRows[0] as { n?: number } | undefined)?.n,
     } as unknown as BrainEngine;
   }
 
@@ -810,7 +814,6 @@ describe('computeBackupCoverage: API connector sources', () => {
   test('a failing persistence read degrades the verdict instead of exempting the connector', async () => {
     const engine = {
       kind: 'pglite',
-      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
       readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async (sql: string) => {
         if (sql.includes('FROM persistence_brain')) throw new Error('persistence table unreadable');
@@ -819,6 +822,7 @@ describe('computeBackupCoverage: API connector sources', () => {
         return [];
       },
       listSourceRecords: async () => [srcRow('conn-src', join(tmp, 'x'), { config: { kind: 'google' } })],
+      countLivePages: async () => 1,
     } as unknown as BrainEngine;
 
     const s = await computeBackupCoverage(engine, { localGitProbes: true });
@@ -961,7 +965,8 @@ describe('degraded verdict never clobbers a probed cache', () => {
       saveBackupStatus(warn);
       const broken = {
         kind: 'pglite',
-        countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+        // The live-page count is the typed doctor-pages member, run on this stub's executeRaw.
+        countLivePages() { const e = this as unknown as { executeRaw(sql: string, params?: unknown[]): Promise<never[]> }; return countLivePagesSql((sql, params) => e.executeRaw(sql, params)); },
         readBrainMaturity() { return readBrainMaturitySql(this as never); },
         executeRaw: async () => {
           throw new Error('engine down');

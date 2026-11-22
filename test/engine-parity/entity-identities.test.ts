@@ -216,12 +216,12 @@ describe('engine parity: entity identities', () => {
   );
 
   parityTest(
-    'listEntityIdentityRows hides the identities under a folder the caller\'s record reads as nobody, on every arm',
+    'listEntityIdentityRows under excludePrivate serves a caller under a pending folder prefix the same on every arm',
     { methods: ['putPage', 'linkEntityIdentityRow', 'listEntityIdentityRows'] },
     async (engine, backend) => {
       await people(engine, backend);
       await link(engine, 'g-alice', 'default', 'people/alice-example', true);
-      // The folder coverage rides on the store policy (privacy.rs FolderAccess), so Rust answers what the SQL engines do.
+      // Every arm reads the folder rules and the pending prefixes (the Rust store keeps them: rust/docs/store/access_rules.md).
       const rows = await withCallerAccess({
         identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
       }, () => list(engine, { entityId: 'g-alice', excludePrivate: true }));
@@ -375,10 +375,9 @@ describe('entity identity union: a refused Rust read is not "no identity"', () =
     }) as unknown as BrainEngine;
     const viaStore: BrainEngine['listEntityIdentityRows'] = (filter) =>
       (STORE_MEMBERS.listEntityIdentityRows as (b: unknown, f: unknown) => Promise<never>)(brain, filter);
+    // A lineage caller still widens the page policy past what the store reads, so the store member refuses typed.
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      // An audience of two members: every one must meet a page's readers, which the store policy does not carry.
-      identity: [], audience: ['member:alice-example', 'member:bob-example'],
-      audienceIdentities: [['member:alice-example'], ['member:bob-example']], hidePrivate: true,
+      identity: ['member:alice-example'], hidePrivate: true, lineage: true,
     }, fn);
     const run = (engine: BrainEngine) => widened(() => unionLinksAcrossIdentity(engine, 'people/alice-example', base, 'in',
       { sourceId: 'default', excludePrivate: true } as never));

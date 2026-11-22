@@ -1,4 +1,7 @@
-import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
+import type {
+  ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta,
+  BodyManifestOutline,
+} from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
 import type * as TrustWithdrawalsSql from './engine-sql/trust-withdrawals.ts';
@@ -34,10 +37,16 @@ import type * as JobsWake from './engine-sql/jobs-wake.ts';
 import type { ExactScanOpts, ExactBatchRow } from './search/exact-scan.ts';
 import type { ExactIdentityStatementOpts, ExactIdentityRow } from './engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from './engine-sql/graph-rank.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, AudiencePrincipalRows, MayActForVia, FolderAccessRows, JobPrincipalKind } from './engine-sql/access-control.ts';
+import type {
+  AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision,
+  AudiencePrincipalRows, MayActForVia, FolderAccessRows, JobPrincipalKind, AccessGroupRow, PageNamingReaderRow, MemberBindingVia,
+} from './engine-sql/access-control.ts';
 import type { AccessCoverageRow, AccessPolicyMarks, AccessRestampWindow, AccessRevisionInsert, AccessRevisionQuery, AccessRevisionRow, AccessRuleChanges, AccessRuleRow } from './engine-sql/access-policy.ts';
-import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, PeopleFolderCount } from './engine-sql/access-setup.ts';
-import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey, HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow } from './engine-sql/cli-reads-ops.ts';
+import type { AccessMigrationRow, LiveAccessTokenRow, MemberKeyReadingRow, PeopleFolderCount, OpenPageCount, OpenPageExclusion } from './engine-sql/access-setup.ts';
+import type {
+  ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, HeldFenceCellKey,
+  HeldFenceCellRow, RankCoverageRow, UnattributedFactRow, WantedPageRow, LongPageSizeRow, PageTypeProbe,
+} from './engine-sql/cli-reads-ops.ts';
 import type * as FactsDoctorSql from './engine-sql/facts-doctor.ts';
 import type * as EmbeddingCatalogSql from './engine-sql/embedding-catalog.ts';
 import type { FactRelinkAttempt, FactRelinkOutcome, FactRelinkUpsertOpts } from './engine-sql/fact-relink-attempts.ts';
@@ -75,15 +84,24 @@ import type { DerivedAliasRow } from './engine-sql/pages.ts';
 import type { LocalWriterInsert, LocalWriterRow } from './engine-sql/persistence-state.ts';
 import type { DurablePersistenceSettings } from './engine-sql/persistence-declaration.ts';
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from './engine-sql/persistence-admission.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress, TerminalIntentCompaction } from './engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from './engine-sql/persistence-claims.ts';
+import type {
+  AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource,
+  PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert,
+  WriteRequestListFilter, WriteRequestProgress, TerminalIntentCompaction, DrainHolderProgressRow,
+} from './engine-sql/persistence-journal.ts';
+import type {
+  ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership,
+  TopologyChange, TopologyChangeInsert,
+} from './engine-sql/persistence-claims.ts';
 import type { EmbeddingCandidate, GatedMirrorRequest, RequestEffectState } from './engine-sql/persistence-effect-scans.ts';
 import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from './engine-sql/persistence-effect-worker.ts';
 import type { IdleProbeRow, IdleProbeSpec } from './engine-sql/persistence-idle-probe.ts';
 import type { NoopSettleCandidate, NoopSettleCandidateSpec, NoopSettledRow, NoopSettleWindow } from './engine-sql/persistence-embedding-noop-settle.ts';
 import type { OverdueHold, OverdueHoldKind } from './engine-sql/persistence-owner-scans.ts';
-import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionJobRef, ProjectionPageRef, ProjectionWindowRow, ReceiptBudget,
-  ReceiptCompactionCandidate, ReceiptCompactionWindow, SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation } from './engine-sql/persistence-housekeeping.ts';
+import type {
+  CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionJobRef, ProjectionPageRef, ProjectionWindowRow, ReceiptBudget,
+  ReceiptCompactionCandidate, ReceiptCompactionWindow, SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation,
+} from './engine-sql/persistence-housekeeping.ts';
 import type { ProjectionScanCursor } from './page-state/projection-window.ts';
 import type { WriteRequest } from './persistence/model.ts';
 import type { CanonicalTimelineRow, TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/timeline.ts';
@@ -96,8 +114,10 @@ import type { PageBodySizes } from './engine-sql/large-page.ts';
 import type { GenerationActivationRow, GenerationAttemptCount, GenerationLedgerRow, GenerationRowKey, GenerationValveRow, HeldGenerationRow, HeldInputRow, LiveGenerationRow } from './engine-sql/derived-generations.ts';
 import type { LedgerScrubCounts } from './engine-sql/generation-ledger.ts';
 import type { GenerationActivationRecord, GenerationActivationState, GenerationOrphanRow, PendingGenerationMemberRow } from './engine-sql/generation-activations.ts';
-import type { GenerationRepairFilter, GenerationRepairItemRow, HeldGenerationListRow, HeldGenerationProposalRow, RestorableGenerationRow,
-  UnmatchedGenerationRow } from './engine-sql/generation-repair.ts';
+import type {
+  GenerationRepairFilter, GenerationRepairItemRow, HeldGenerationListRow, HeldGenerationProposalRow, RestorableGenerationRow, UnmatchedGenerationRow,
+  SourceIncarnationListRow,
+} from './engine-sql/generation-repair.ts';
 import type { FenceVersionBodyRow } from './engine-sql/generation-fence-evidence.ts';
 import type { GenerationPageRow, GenerationPageRowsQuery } from './engine-sql/generation-page-rows.ts';
 import type { AtomOriginInputRow, AtomWriteReceiptRow, GenerationVersionProducer, ProducerVersionRow } from './engine-sql/generation-atom-reads.ts';
@@ -119,17 +139,30 @@ import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './en
 import type { AliasTarget } from './engine-sql/alias-orphans.ts';
 import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from './engine-sql/repair-page-scans.ts';
 import type { AtomFenceCandidate, AtomFenceQuery, ContactRowQuery, RepairPageRef, SplitFactsPages } from './engine-sql/repair-fence-scans.ts';
-import type { AttributionTable, DriftConflictBounds, DriftConflictDetails, DriftConflictGroups, DriftConflictQuery, FailedWriteQuery, FailedWriteRow, OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery } from './engine-sql/repair-plan-scans.ts';
-import type { RepairBusyRows } from './engine-sql/repair-busy.ts';
-import type { EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow } from './engine-sql/entity-reads.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourceSyncStampOptions, SourceDeleteImpact, SourceDeleteResult, SourceIncarnationListRow } from './engine-sql/sources.ts';
 import type {
-  Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, NotifierStatusRow,
-  PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput, FirstDueRow,
+  AttributionTable, DriftConflictBounds, DriftConflictDetails, DriftConflictGroups, DriftConflictQuery, FailedWriteQuery, FailedWriteRow,
+  OriginPathPageRow, SourceHoldQuery, SourceHoldRecordRow, UntiledPage, UntiledPageQuery,
+} from './engine-sql/repair-plan-scans.ts';
+import type { RepairBusyRows } from './engine-sql/repair-busy.ts';
+import type {
+  EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, LivePageTypeRow,
+  MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, TrigramCandidateQuery,
+  TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, EntityAnchoredPages, TextMentionPageRow, InboundLinkerCountRow,
+  MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, SlugPatternPageRow,
+} from './engine-sql/entity-reads.ts';
+import type {
+  DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, PageSizeRow,
+  ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourceSyncStampOptions, SourceDeleteImpact, SourceDeleteResult,
+  SourceIncarnationListRow as SourcesIncarnationRow, SourceUpstreamObservation, PageIdentityRow,
+} from './engine-sql/sources.ts';
+import type {
+  Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder,
+  NotifierSourceRow, NotifierStatusRow, PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput, FirstDueRow,
+  NotifierFirstDueRow, SourceSyncShapeRow,
 } from './engine-sql/notifier.ts';
 import type {
-  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow,
-  WorktreeBinding,
+  AdmissionSourceRow, AttachSourcePathOptions, OpCheckpointRecord, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot,
+  SourceStateOptions, SourceStateRow, WorktreeBinding,
 } from './engine-sql/write-misc.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
 import type { WriterAdminStateOptions, WriterAdminStore } from './engine-sql/writer-admin.ts';
@@ -139,48 +172,56 @@ import type {
 } from './engine-sql/write-attribution.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from './engine-sql/jobs.ts';
 import type { JobInsightRows, JobInsightSpec } from './engine-sql/jobs-insight.ts';
-import type {
-  ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePressureInsert, LeasePressureRow, SettleSpendOutcome, SpendReservationInsert, SpendTreeRow,
-} from './engine-sql/jobs-spend.ts';
+import type { ExpireSpendScope, JobSpendTreeSpec, LeasePressureFilter, LeasePressureInsert, LeasePressureRow, SettleSpendOutcome, SpendReservationInsert, SpendTreeRow } from './engine-sql/jobs-spend.ts';
 import type {
   AgentClientSpendRow, ClientReserveOutcome, ClientReserveSpec, GroupReserveOutcome, GroupReserveSpec, GroupSpendRow, OauthClientInsert,
   SettleLogOutcome, SpendLogInsert,
 } from './engine-sql/spend-log.ts';
 import type { OauthClientPatch, OauthClientPatchGuard, OauthClientPatched, OauthClientRow } from './engine-sql/oauth-clients.ts';
 import type { AccessTokenInsert, ActiveAccessTokenRow } from './engine-sql/access-tokens.ts';
-import type { HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakesLeavingFence } from './engine-sql/takes-reads.ts';
+import type {
+  HeldFenceTakeRow, HeldFenceTakeSpec, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakesLeavingFence, TakeTrustRef,
+  AbandonedTakeRow, HolderResolvedTakeRow,
+} from './engine-sql/takes-reads.ts';
 import type {
   BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, TrustScanRow, TrustScanRowSpec, UnscannedTrustSpec, ValidTimeIdentityRow,
-  ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef, PageKeyRef,
+  ValidTimeIdentitySpec, ValidTimePickSpec, AmendmentsNotAppliedSpec, AmendmentNotAppliedRow, PageVersionEditionRow, CursorEditionRow, PageIdRef,
+  PageKeyRef, TrustScanTable,
 } from './engine-sql/trust-tier-reads.ts';
 import type {
   CancelJobsSpec, DelayActiveJobSpec, JobAttachmentInsert, JobPageSpec, JobStatsRead, JobTokenCounts, PrivateQueueState, PruneJobsSpec,
-  SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState,
-  QueueFamilyRow, RetryJobPolicy,
+  SynthesisCompletion, SynthesisCompletionPrefix, JobSourceState, QueueFamilyRow, RetryJobPolicy,
 } from './engine-sql/jobs-queue.ts';
-import type {
-  PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow,
-} from './engine-sql/jobs-health.ts';
+import type { PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow } from './engine-sql/jobs-health.ts';
 import type { EngineMigrationHistory, ManualLinkTransition, MigrationPageColumns, MigrationRows, MigrationTable } from './engine-sql/engine-migration.ts';
 import type {
   EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts, TtlCancelledCount,
-  WaitingScopeState,
+  WaitingScopeState, BudgetOwnerRow,
 } from './engine-sql/jobs-status.ts';
 import type {
-  DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob,
-  LegacyJobAuthorityRead, QueuedSpendRows,
+  DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob, LegacyJobAuthorityRead,
+  QueuedSpendRows,
 } from './engine-sql/jobs-checks.ts';
 import type {
   SubagentFailureFallback, SubagentMessageInsert, SubagentMessageRow, SubagentOneshotLedgerRow, SubagentRetainedPutPage, SubagentToolInsert,
   SubagentToolOrder, SubagentToolRow, SubagentToolStart, SubagentToolTarget, SubagentWriteOutcome,
 } from './engine-sql/jobs-subagent.ts';
 import type { EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary, TitledPage } from './engine-sql/link-reads.ts';
-import type { CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow } from './engine-sql/chunk-reads.ts';
+import type {
+  CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow, UnsealedPageScope,
+  WithdrawalChunkKey, WithdrawalChunkRow,
+} from './engine-sql/chunk-reads.ts';
 import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from './engine-sql/withdrawal-discovery.ts';
 import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
-import type { ConnectorFencePage, TimelineHistoryQuery, TimelineMarkupQuery, TimelineMarkupRow, TimelineRepairPage, TimelineRowRewrite, TimelineVersionBody, TimelineVersionWitness } from './engine-sql/timeline-repair-reads.ts';
+import type {
+  ConnectorFencePage, TimelineHistoryQuery, TimelineMarkupQuery, TimelineMarkupRow, TimelineRepairPage, TimelineRowRewrite, TimelineVersionBody,
+  TimelineVersionWitness,
+} from './engine-sql/timeline-repair-reads.ts';
 import type { CaseSensitiveAliasRow, EntityAliasRow, PageAliasRow, SlugAliasRow, TitleHitRow } from './engine-sql/alias-fanout-reads.ts';
-import type { McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket, SearchTelemetryRow } from './engine-sql/telemetry.ts';
+import type {
+  McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket,
+  SearchTelemetryRow, McpRequestCountKind, McpRequestLogPage, McpRequestLogPageSpec, PendingWriteHealth, McpTokenRequestCount,
+} from './engine-sql/telemetry.ts';
 import type { ChatUsageLogRow, ChatUsageWindow } from './engine-sql/chat-usage.ts';
 import type { FieldUsageQuery, FieldUsageTypeSample } from './engine-sql/field-usage.ts';
 import type * as LinkTemporalSql from './engine-sql/link-temporal.ts';
@@ -189,30 +230,56 @@ import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } fr
 import type { CoverageRelevance, ProjectionRebuildProgress, ScopedCount } from './search/retrieval-coverage.ts';
 import type { ProjectionReadinessRow, ProjectionReadinessScope } from './search/projection-readiness.ts';
 import type { VectorBackfillOpts } from './search-vector-backfill.ts';
-export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
-  Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
-  Chunk, ChunkInput, ChunkReuseRow, StaleChunkRow, StalePageRow, ChunklessPageRow,
-  SearchResult, SearchOpts, ResolvedColumn,
-  Link, GraphNode, GraphPath, RelationalFanoutRow, RelationalFanoutOpts, ChainHopOpts, ChainHopEdge,
-  TimelineEntry, TimelineInput, TimelineOpts,
-  ChronicleTimelineRow, ChronicleTimelineOpts, LastSeenResult,
-  OntologyObservationInput, OntologyMergeResult, OntologyValue, OntologyDimensionStat,
-  OntologyConflict, OntologyReadOpts,
-  RawData,
-  PageVersion,
-  BrainStats, BrainHealth,
-  IngestLogEntry, IngestLogInput,
-  EngineConfig,
-  CodeEdgeInput, CodeEdgeResult,
-  EvalCandidate, EvalCandidateInput,
-  EvalCaptureFailure, EvalCaptureFailureReason,
-  SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
-  EmotionalWeightInputRow, EmotionalWeightWriteRow,
-  DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
-  AdjacencyRow,
-  EnrichCandidatesOpts, EnrichCandidate,
+  Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy, Chunk, ChunkInput, ChunkReuseRow, StaleChunkRow, StalePageRow,
+  ChunklessPageRow, SearchResult, SearchOpts, ResolvedColumn, Link, GraphNode, GraphPath, RelationalFanoutRow, RelationalFanoutOpts, ChainHopOpts,
+  ChainHopEdge, TimelineEntry, TimelineInput, TimelineOpts, ChronicleTimelineRow, ChronicleTimelineOpts, LastSeenResult, OntologyObservationInput,
+  OntologyMergeResult, OntologyValue, OntologyDimensionStat, OntologyConflict, OntologyReadOpts, RawData, PageVersion, BrainStats, BrainHealth,
+  IngestLogEntry, IngestLogInput, EngineConfig, CodeEdgeInput, CodeEdgeResult, EvalCandidate, EvalCandidateInput, EvalCaptureFailure,
+  EvalCaptureFailureReason, SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult, EmotionalWeightInputRow, EmotionalWeightWriteRow,
+  DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow, AdjacencyRow, EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
+import type { BatchAuditSite } from './retry.ts';
+import type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
+import type {
+  BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput, SegmentChunkInput,
+  SegmentedEmbedPage, SegmentedEmbedRef, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput,
+} from './page-body/types.ts';
+import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from './page-body/derivations.ts';
+import type * as AccessGrantsSql from './engine-sql/access-grants.ts';
+import type * as AccessMembersSql from './engine-sql/access-members.ts';
+import type * as SharedSkillMembersSql from './engine-sql/shared-skill-members.ts';
+import type { StoredSkillRevision } from './shared-skills/model.ts';
+import type { OauthClientGrantPersist, OauthGrantAuditRow } from './engine-sql/client-grants.ts';
+import type { OauthGrantAuditInsert } from './engine-sql/oauth-revocation.ts';
+import type {
+  AccessTokenGrantWrite, AccessTokenListRow, AccessTokenPrivateAxis, ActiveTokenGrantField, ActiveTokenTarget, DeletedOAuthClient,
+  LegacyTokenGrantColumns, OauthClientGrantInsert, OauthClientProbe, OauthTokenInsert, OauthTokenRung, ScopeSourceLock, TokenByHashCaller,
+  OauthCodeInsert, OauthCodeRow, OauthTokenRow,
+} from './engine-sql/access-credentials.ts';
+import type { FactsFencePagesQuery, SweepPageRefRow, SweepDeferredPageRow, SweepDeferredPagesQuery, SweepStalePageRow, SweepStalePagesQuery } from './engine-sql/sweep-reads.ts';
+import type { DeltaSessionRow, SessionCursorRow, SessionStateWrite } from './engine-sql/session-state.ts';
+import type * as DoctorReadsSql from './engine-sql/doctor-reads.ts';
+import type * as DoctorDerivedSql from './engine-sql/doctor-derived.ts';
+import type * as DoctorPersistenceSql from './engine-sql/doctor-persistence.ts';
+import type * as DoctorPagesSql from './engine-sql/doctor-pages.ts';
+import type * as DoctorSearchSql from './engine-sql/doctor-search.ts';
+import type * as AtomBacklogSql from './engine-sql/atom-backlog.ts';
+import type * as ProjectionBacklogSql from './engine-sql/projection-backlog.ts';
+import type * as DoctorAccSql from './engine-sql/doctor-acc.ts';
+import type * as DoctorCheckpointsSql from './engine-sql/doctor-checkpoints.ts';
+import type * as DoctorSourcesSql from './engine-sql/doctor-sources.ts';
+import type * as DoctorTerminalSql from './engine-sql/doctor-terminal.ts';
+import type * as DoctorBrainSql from './engine-sql/doctor-brain.ts';
+import type * as DoctorSyncSql from './engine-sql/doctor-sync.ts';
+import type * as DoctorFactsTrustSql from './engine-sql/doctor-facts-trust.ts';
+import type * as FenceCensusSql from './engine-sql/fence-census.ts';
+import type { FileFinding, PageFinding, ScanRecord } from './fence-repair/census-store.ts';
+import type { DrainLeaseHolderRecord } from './engine-sql/cycle-locks.ts';
+import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from './engine-sql/reflex-reads.ts';
+import type * as BriefReadsSql from './engine-sql/brief-reads.ts';
+
+export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 
 /**
  * v0.27.1: file row for binary-asset metadata. Mirrors the `files` table
@@ -397,7 +464,6 @@ export interface FileSpec {
  * - `signal`: AbortSignal that aborts mid-retry-sleep on SIGTERM/SIGINT.
  *   `MinionWorker.shutdownAbort.signal` is the canonical source.
  */
-import type { BatchAuditSite } from './retry.ts';
 export interface BatchOpts {
   auditSite?: BatchAuditSite;
   signal?: AbortSignal;
@@ -674,10 +740,6 @@ export interface TakeHit {
   score: number;            // search rank score (ts_rank for keyword, 1-cos_dist for vector)
 }
 
-import type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
-import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput, SegmentChunkInput,
-  SegmentedEmbedPage, SegmentedEmbedRef, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from './page-body/types.ts';
-import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from './page-body/derivations.ts';
 export type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 
 /** Resolution metadata for resolveTake. */
@@ -1379,6 +1441,12 @@ export interface BrainEngine {
   findPages(query: FindPagesQuery): Promise<FoundPages>;
   /** #7191: live page counts per (source, type), with distinct-slug totals per type group when `groupTypes` is set. */
   countPagesBy(query: PageCountQuery, groupTypes?: TypeGrouper): Promise<PageCounts>;
+  /** `gbrain schema detect`: live page totals of one source, typed and untyped (SQL in engine-sql/schema-detect.ts). */
+  pageTypeTotals(sourceId: string): Promise<import('./engine-sql/schema-detect.ts').PageTypeTotals>;
+  /** `gbrain schema detect`: the slug prefixes with at least `minPages` live pages, largest first, with their page types in byte order. */
+  pagePrefixSamples(sourceId: string, minPages: number, limit: number): Promise<import('./engine-sql/schema-detect.ts').PagePrefixSample[]>;
+  /** `gbrain schema detect`: live typed page counts per type, largest first (a tie in byte order), at most `limit`. */
+  countPagesByTypeForSource(sourceId: string, limit: number): Promise<import('./engine-sql/schema-detect.ts').PageTypeCount[]>;
   /**
    * Fuzzy slug resolver.
    *
@@ -1558,6 +1626,13 @@ export interface BrainEngine {
 
   /** Per existing source of `sourceIds`: the notifier's observed head and first due time, current incarnation only (sync-pending.ts readFirstDue). */
   readFirstDue(sourceIds: string[]): Promise<FirstDueRow[]>;
+  /** A live source as a sync request sees it (local path, managed checkout root, bound to a worktree), or null when it is missing or archived. notifier/nudge.ts sourceSyncShape. */
+  readSourceSyncShape(sourceId: string): Promise<SourceSyncShapeRow | null>;
+
+  /** Each existing source's persisted first-due clock: the earlier of its notifier row's first_due_at (not idle) and its oldest due freshness marker, with the observed head. sync-pending.ts readFirstDue. */
+  readNotifierFirstDue(sourceIds: string[]): Promise<NotifierFirstDueRow[]>;
+  /** The raw progress row of a drain lease's holder: managed commits since `since` (ISO), the last commit and save, through the source's writer binding; null when unbound (engine-sql/persistence-journal.ts). */
+  readDrainHolderProgress(sourceId: string, since: string): Promise<DrainHolderProgressRow | null>;
 
   /** Source resolution reads (SQL and contracts in engine-sql/sources.ts): sources with a local path and `archived`; every source row with `default`'s emptiness flag; the default-write guard's page split. */
   listLocalPathSources(): Promise<LocalPathSourceRow[]>;
@@ -1570,6 +1645,14 @@ export interface BrainEngine {
   countDefaultSourceSplit(): Promise<DefaultSourceSplit>;
   /** Live sources last synced more than seven days ago by the database clock, by id (engine-sql/sources.ts). */
   listStaleSyncSourceIds(): Promise<string[]>;
+  /** Every source id, archived sources included, by id (engine-sql/sources.ts). */
+  listSourceIds(): Promise<string[]>;
+  /** The only source's id, or null when there are none or several (engine-sql/sources.ts). */
+  readSoleSourceId(): Promise<string | null>;
+  /** `default` when it exists, else the lowest source id in byte order, else null (engine-sql/sources.ts). */
+  readFirstSourceId(): Promise<string | null>;
+  /** Locks every source row FOR UPDATE or FOR SHARE until the transaction ends (engine-sql/sources.ts). */
+  lockAllSourceRows(mode: 'update' | 'share'): Promise<void>;
   /** One source's id, local_path, raw config and archived flag, or null; `lockSourceRow` reads it FOR UPDATE (engine-sql/sources.ts). */
   readSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
   lockSourceRow(sourceId: string): Promise<SourceCheckRow | null>;
@@ -1581,6 +1664,16 @@ export interface BrainEngine {
   setSourceChunkerVersion(sourceId: string, version: string): Promise<void>;
   /** Sets the source's last sync time to now; false for an unknown source, which changes nothing (engine-sql/sources.ts). */
   markSourceSynced(sourceId: string, opts?: SourceSyncStampOptions): Promise<boolean>;
+  /** Advances the sync anchor: last_commit, last_sync_at and, when given, newest_content_at (null clears it); an unknown source changes nothing (engine-sql/sources.ts). */
+  advanceSourceCommit(sourceId: string, commit: string, newestContentAt?: string | null): Promise<void>;
+  /** The 0-change sync heartbeat: `last_sync_at` = now, the commit anchor untouched. An unknown source changes nothing. */
+  writeSourceSyncHeartbeat(sourceId: string): Promise<void>;
+  /** The sync's upstream observation of the source's checkout (engine-sql/sources.ts); an unknown source changes nothing. */
+  writeSourceUpstreamObservation(sourceId: string, observed: SourceUpstreamObservation): Promise<void>;
+  /** The frontmatter `id` and title of live page `pageId`; null for a missing or soft-deleted page. */
+  readPageIdentity(pageId: number): Promise<PageIdentityRow | null>;
+  /** The commit the source's last sync advanced to, or null before the first sync and for an unknown source (engine-sql/sources.ts). */
+  readSourceLastCommit(sourceId: string): Promise<string | null>;
   /** Pages of one source, soft-deleted pages only with `includeDeleted`; an unknown source has none (engine-sql/sources.ts). */
   countSourcePages(sourceId: string, opts?: { includeDeleted?: boolean }): Promise<number>;
   /** Inserts one source row (id, name, local_path, config); a taken id or name throws and writes nothing. */
@@ -1600,8 +1693,12 @@ export interface BrainEngine {
   holdPageEmbedding(pageId: number, reason: string): Promise<void>;
   /** The source's purged change-reason pairs by commit then path, or only `pair` when stored (engine-sql/sources.ts). */
   readReasonPurgeTombstones(sourceId: string, pair?: ReasonPurgeTombstone): Promise<ReasonPurgeTombstone[]>;
-  /** Stores the pairs not stored yet and returns how many it added; an unknown source throws (engine-sql/sources.ts). */
+  /** Stores the purged (commit, path) change-reason pairs of a source; returns how many were new. */
   writeReasonPurgeTombstones(sourceId: string, pairs: readonly ReasonPurgeTombstone[]): Promise<number>;
+  /** The same store with the pairs spread into two lists (a fact purge's receipt hits). */
+  insertReasonPurgeTombstones(sourceId: string, commits: string[], paths: string[]): Promise<number>;
+  /** Adds one to the source's purge epoch and returns the new value as stored, or null for an unknown source (engine-sql/sources.ts). */
+  advanceSourcePurgeEpoch(sourceId: string): Promise<string | number | null>;
   /** The live pages of one source that have a source_path, in no set order (engine-sql/sources.ts). */
   listSourcePathPages(sourceId: string): Promise<SourcePathPageRow[]>;
   /** The slugs of one source's live quarantined pages, in no set order (engine-sql/sources.ts). */
@@ -1610,8 +1707,6 @@ export interface BrainEngine {
   readRenameIdentityRows(sourceId: string, paths: readonly string[], slugs: readonly string[]): Promise<RenameIdentityRow[]>;
   /** The live pages of one source whose frontmatter id is in `ids` or whose title is in `titles`, in no set order (engine-sql/sources.ts). */
   readLiveIdentityHolders(sourceId: string, ids: readonly string[], titles: readonly string[]): Promise<LiveIdentityHolderRow[]>;
-  /** Records the commit a git sync reached and stamps last_sync_at; newestContentAt undefined keeps it, null clears it (engine-sql/sources.ts). */
-  advanceSourceCommit(sourceId: string, commit: string, newestContentAt?: string | null): Promise<void>;
   /** Every source with the columns `loadAllSources` reads, `default` first then by id; a schema without `archived`/`newest_content_at` omits them. */
   listSourceRecords(): Promise<SourceRecordRow[]>;
   /** A source's config and incarnation, or null for an unknown id. */
@@ -1666,7 +1761,7 @@ export interface BrainEngine {
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
   hasLabelledOnlyMember(): Promise<boolean>;
   /** Every legacy access token (`auth list`), revoked ones too, newest first. */
-  listAccessTokens(): Promise<AccessTokenRow[]>;
+  listAccessTokens(): Promise<AccessTokenListRow[]>;
   /** One resumable op's completed checkpoint keys, deduplicated; `corruptParent` when a legacy array was not an array (op-checkpoint.ts). */
   readOpCheckpointKeys(op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }>;
   /** A resumable op's checkpoint parent with `keys` (sorted by the caller) as its completed keys, stamped now (op-checkpoint.ts recordCompleted). */
@@ -1712,7 +1807,7 @@ export interface BrainEngine {
   /** The parent's records replaced and stamped now, in the caller's transaction; `null` deletes it with its paths. */
   writeOpCheckpointRecord(op: string, fingerprint: string, completedKeys: readonly unknown[] | null): Promise<void>;
   /** The incarnation of each known source of `sourceIds` as text, in id order (the preview hash of a repair binds it). */
-  listSourceIncarnations(sourceIds: readonly string[]): Promise<SourceIncarnationListRow[]>;
+  listSourceIncarnations(sourceIds: readonly string[]): Promise<SourcesIncarnationRow[]>;
   /** Writer bindings whose source or incarnation is gone, by source id (repair orphan-bindings, engine-sql/repair-bookkeeping.ts). */
   listOrphanBindings(opts?: { limit?: number }): Promise<OrphanBinding[]>;
   /** Deletes one orphan binding when it is still orphaned with no pending request; false when it was kept. */
@@ -1841,6 +1936,41 @@ export interface BrainEngine {
   readSynopsisTierSources(skipFrontmatter: boolean): Promise<SynopsisTierSql.SynopsisTierSources>;
   /** Sets a source's own contextual-retrieval mode, or clears it (null); false when the source does not exist (sources set-cr-mode). */
   setSourceContextualMode(sourceId: string, mode: string | null): Promise<boolean>;
+  /** Whether a live markdown page of a source that trusts its frontmatter names the synopsis tier there (synopsis-sweep.ts; engine-sql/write-misc.ts). */
+  hasSynopsisFrontmatterOverride(): Promise<boolean>;
+  /** Inserts an access member, creates its missing groups, adds it to each and binds the token, in one transaction (engine-sql/access-members.ts). */
+  insertAccessMember(spec: AccessMembersSql.AccessMemberInsert): Promise<{ groupsCreated: string[] }>;
+  /** Disables an access member (an earlier disable time is kept) or enables it. */
+  setAccessMemberDisabled(id: string, disabled: boolean): Promise<void>;
+  /** Sets (or, with null, clears) the email of a member that is not removed; true when a row changed. */
+  setAccessMemberEmail(id: string, email: string | null): Promise<boolean>;
+  /** Sets the kind of a member that is not removed. */
+  setAccessMemberKind(id: string, kind: AccessMembersSql.AccessMemberKind): Promise<void>;
+  /** Sets or clears the labelled-only grant of a member that is not removed. */
+  setAccessMemberLabelledOnly(id: string, labelledOnly: boolean): Promise<void>;
+  /** Marks a member removed (and disabled), clears its email and drops its group memberships, in one transaction. */
+  tombstoneAccessMember(id: string): Promise<void>;
+  /** Creates the group when missing and adds each member, in one transaction; true when the group was created. */
+  addAccessGroupMembers(groupId: string, memberIds: readonly string[]): Promise<boolean>;
+  /** Drops each named member from the group. */
+  removeAccessGroupMembers(groupId: string, memberIds: readonly string[]): Promise<void>;
+  /** Deletes the group and its memberships. */
+  deleteAccessGroup(id: string): Promise<void>;
+  /** Member links (v286, engine-sql/access-members.ts): read one exactly, add one, remove one, list all or one member's. */
+  readAccessMemberLink(system: string, externalId: string): Promise<AccessMembersSql.AccessMemberLinkRow | null>;
+  insertAccessMemberLink(system: string, externalId: string, memberId: string): Promise<void>;
+  deleteAccessMemberLink(system: string, externalId: string): Promise<void>;
+  listAccessMemberLinks(memberId: string | null): Promise<AccessMembersSql.AccessMemberLinkRow[]>;
+  /** A credential's binding columns locked FOR UPDATE (inside the binding's transaction), or undefined. */
+  readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }): Promise<AccessMembersSql.CredentialBindingRow | undefined>;
+  /** The member a credential is bound to (a revoked or deleted one too, nothing locked), or null. */
+  readCredentialMemberId(target: AccessMembersSql.CredentialTarget): Promise<string | null>;
+  /** The enabled member linked to (system, externalId), with its groups, or null (access/actor.ts linkedMember). */
+  readLinkedMember(system: string, externalId: string): Promise<AccessMembersSql.LinkedMemberRow | null>;
+  /** Writes a credential's member, may_act_for and attest columns. */
+  writeCredentialBinding(target: AccessMembersSql.CredentialTarget, binding: AccessMembersSql.CredentialBinding): Promise<void>;
+  /** Sets a credential's reads_unscoped to now() (true) or clears it (false). */
+  writeCredentialReadsUnscoped(target: AccessMembersSql.CredentialTarget, readsUnscoped: boolean): Promise<void>;
   expireMemoryProposals(reason: string): Promise<number>;
   listAwaitingMemoryProposals(limit: number): Promise<Array<Record<string, unknown>>>;
   /** The memory proposal a principal holds under `requestId` (a uuid), as its stored row, or null. */
@@ -2012,6 +2142,8 @@ export interface BrainEngine {
   listJunkEntityHubs(opts: { edgeThreshold: number; maxChunks: number; limit: number }): Promise<JunkEntityHubRow[]>;
   countEntityPages(filter: EntityTypeFilter, opts?: { sourceId?: string; excludeQuarantined?: boolean }): Promise<number>;
   entityGraphCoverage(filter: EntityTypeFilter): Promise<{ entities: number; connected: number; withTimeline: number } | null>;
+  entityFeatureCoverage(filter: EntityTypeFilter, feature: 'links' | 'timeline', opts?: { samplePercent?: number }): Promise<{ sampleSize: number; matched: number }>;
+  countDatedMeetingPages(): Promise<number>;
   countForeignEdges(slug: string, sourceId: string, direction: 'in' | 'out' | 'both'): Promise<number>;
   listLivePageSummaries(scope?: PageReadScope): Promise<LivePageSummary[]>;
   countInboundLinks(slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }): Promise<number>;
@@ -2036,6 +2168,22 @@ export interface BrainEngine {
   edgeValidityCounts(opts: { sourceIds?: readonly string[]; staleLimit: number }): Promise<LinkTemporalSql.EdgeValidityCounts | null>;
   listPageStatusByRef(refs: ReadonlyArray<{ source_id: string; slug: string }>, scope: { excludePrivate: boolean; includeQuarantined?: boolean }): Promise<Array<{ source_id: string; slug: string; status: unknown }>>;
   listRecordMetadataRows(pageIds: readonly number[], scope: { referrerSources: readonly string[]; excludePrivate: boolean; includeQuarantined?: boolean }): Promise<LinkTemporalSql.RecordMetadataRows>;
+  readReferrerGroupRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerGroupScope): Promise<LinkTemporalSql.ReferrerGroupRow[]>;
+  readReferrerPageDetails(ids: readonly number[]): Promise<LinkTemporalSql.ReferrerPageDetailRow[]>;
+  /** A live page's `COALESCE(effective_date, updated_at)` as UTC microsecond text, or null (the newer-mentions cutoff). */
+  readPageReferenceDate(sourceId: string, slug: string): Promise<string | null>;
+  readReferrerTargetCounts(target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
+    scope: LinkTemporalSql.ReferrerTargetCountScope): Promise<LinkTemporalSql.ReferrerTargetCountRow[]>;
+  /** The referrer page (get_backlinks group "page") and the card's record rows (mentions/referrers.ts). */
+  listReferrerTargetSources(slug: string, sources: readonly string[]): Promise<string[]>;
+  countReferrerRows(target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerRowScope): Promise<number>;
+  readReferrerRows(target: { sources: readonly string[]; slugs: readonly string[] },
+    scope: LinkTemporalSql.ReferrerRowScope & { cursor: readonly [string | null, string, string] | null; limit: number }): Promise<LinkTemporalSql.ReferrerRow[]>;
+  readReferrerRecordCandidates(target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
+    scope: LinkTemporalSql.ReferrerRecordCandidateScope): Promise<LinkTemporalSql.ReferrerRecordCandidateRow[]>;
+  readReferrerRecordPages(ids: readonly number[]): Promise<LinkTemporalSql.ReferrerRecordPageRow[]>;
+  /** The canonical and stored types among an entity's referrers (the unknown-type error of get_backlinks). */
+  readReferrerTypes(target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerTypeScope): Promise<LinkTemporalSql.ReferrerTypeRow[]>;
   /** reindex-search-vector's steps (SQL in engine-sql/search-vector.ts and search-vector-backfill.ts). */
   countSearchVectorRows(): Promise<{ pages: number; chunks: number }>;
   replaceSearchVectorTriggerFunction(target: 'pages' | 'chunks', lang: string): Promise<void>;
@@ -2097,6 +2245,14 @@ export interface BrainEngine {
   readMcpLogPruneCutoff(days: number): Promise<McpLogPruneCutoff>;
   pruneMcpRequestLogBatch(cutoff: string, keepOperations: readonly string[], limit: number): Promise<McpLogPruneBatch>;
   readMcpLifetimeUsage(tokenNames: readonly string[]): Promise<McpLifetimeUsageRow[]>;
+  /** The request log rows of the last 24 hours: all of them, the traffic, or the failed traffic (the admin dashboard counts). */
+  countMcpRequestsLastDay(kind: McpRequestCountKind): Promise<number>;
+  /** One page of the request log, newest first, with the filtered total (`/admin/api/requests`). */
+  readMcpRequestLogPage(spec: McpRequestLogPageSpec): Promise<McpRequestLogPage>;
+  /** In-flight writes, the oldest one's age in seconds, and the pending writes of the last day that later failed (`/admin/api/health-indicators`). */
+  readPendingWriteHealth(): Promise<PendingWriteHealth>;
+  /** Requests of the last 24 hours per asked token; a token with none has no row. */
+  countMcpRequestsLastDayByToken(tokenNames: readonly string[]): Promise<McpTokenRequestCount[]>;
   /** The chat usage ledger insert and the get_usage window read (SQL and contracts in engine-sql/chat-usage.ts). */
   logChatUsage(row: ChatUsageLogRow): Promise<void>;
   readChatUsage(days: number): Promise<ChatUsageWindow>;
@@ -2852,6 +3008,8 @@ export interface BrainEngine {
    * source) to a stored row of the page is skipped. A missing page is a foreign key refusal.
    */
   insertCanonicalTimelineRows(pageId: number, rows: readonly CanonicalTimelineRow[]): Promise<void>;
+  /** The id of the newest timeline row of the page (deleted or not) on `date` whose summary is `summary`, event rows included, or null. */
+  readNewestTimelineEntryId(sourceId: string, slug: string, date: string, summary: string): Promise<number | null>;
 
   // v0.42.x — Life Chronicle (#2390) per-entity ontology (rides `facts`).
   /**
@@ -3667,6 +3825,8 @@ export interface BrainEngine {
    */
   getStats(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainStats>;
   getHealth(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainHealth>;
+  /** The liveness round trip (`/health`, doctor's ops-tier connection check): resolves when the store answers. */
+  pingStore(opts?: { signal?: AbortSignal }): Promise<void>;
 
   // The admin operations' statements (engine-sql/admin-reads.ts).
   /** The slugs among `slugs` that name a live page the policy part admits, within the source scope (`null` admits every source). Reads pages. */
@@ -3805,6 +3965,10 @@ export interface BrainEngine {
   sealImportedPage(slug: string, seal: ImportedPageSeal): Promise<{ id: number } | null>;
   /** A live page's frontmatter, body columns, body storage and content hash (the valid-time advisory's after image), or null. */
   readLivePageBody(slug: string, opts: { sourceId: string }): Promise<LivePageBodyRow | null>;
+  /** A page's stored body columns by id, live or a tombstone, read raw (the append tail digest), or null (engine-sql/write-guards.ts). */
+  readInlinePageRegions(pageId: number): Promise<InlinePageRegionsRow | null>;
+  /** The raw stored `trust_tier` of a page by (source, slug), live or a tombstone (the page write gate), or null (engine-sql/write-guards.ts). */
+  readStoredPageTier(sourceId: string, slug: string): Promise<string | null>;
   /** Page `pageId`'s chunker version, corpus generation and page kind (a text projection's indexing context), live or a tombstone; null for no such page. */
   readPageIndexingState(pageId: number): Promise<PageIndexingState | null>;
   /**
@@ -3825,10 +3989,6 @@ export interface BrainEngine {
   lockEffectClaimRow(effectId: number | string): Promise<{ state: string; execution_token: string | null } | null>;
   lockEmbeddingSwitch(): Promise<void>;
   installChunkEmbeddings(pageId: number, column: ResolvedColumn, batch: string): Promise<void>;
-  /** A page's stored body columns by id, live or a tombstone, read raw (the append tail digest), or null (engine-sql/write-guards.ts). */
-  readInlinePageRegions(pageId: number): Promise<InlinePageRegionsRow | null>;
-  /** The raw stored `trust_tier` of a page by (source, slug), live or a tombstone (the page write gate), or null (engine-sql/write-guards.ts). */
-  readStoredPageTier(sourceId: string, slug: string): Promise<string | null>;
   // Page visibility guards (engine-sql/page-visibility.ts): the current caller's page policy, rendered in its access record.
   /** Whether a row of the page (live or soft-deleted) fails the current caller's policy: `read` (access, then privacy) or `access` alone. */
   readPageHiddenFromCaller(sourceId: string, slug: string, opts: { policy: PagePolicyPart }): Promise<boolean>;
@@ -3891,6 +4051,8 @@ export interface BrainEngine {
   insertTrustProposal(input: NewTrustProposal): Promise<{ id: number; created: boolean }>;
   /** One trust proposal by id, or null; `lock` takes it `FOR UPDATE` for the decision that follows. */
   getTrustProposal(id: number, lock?: boolean): Promise<TrustProposalRow | null>;
+  /** The privacy holds among `ids` whose target fact the current caller's widened world-only fact reads do not admit, ascending (trust/privacy-hold-reply.ts). */
+  listUnreadablePrivacyHoldIds(ids: number[]): Promise<number[]>;
   /** Trust proposals by status (`pending` by default; `all`), source, action and creation time, oldest first (500 by default, at most 5000). */
   listTrustProposals(filter?: TrustProposalFilter): Promise<TrustProposalRow[]>;
   /** The pending trust proposals naming a row as target or related, by id. */
@@ -4025,6 +4187,10 @@ export interface BrainEngine {
    * with JIT off under a `timeoutMs` statement deadline; a timeout throws the statement-timeout error.
    */
   scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number): Promise<ExactBatchRow[] | null>;
+  /** search's type-filter probe (engine-sql/cli-reads-ops.ts probePageTypes); Postgres runs it with JIT off, unprepared. */
+  probePageTypes(sets: readonly (readonly string[])[], scope: PageReadScope): Promise<PageTypeProbe>;
+  /** The long-page size preflight (engine-sql/cli-reads-ops.ts): each served page's body length; `includeTimeline` counts the timeline. */
+  readLongPageSizes(ids: readonly number[], scope: PageReadScope, opts: { includeTimeline: boolean }): Promise<LongPageSizeRow[]>;
   /** The first live page after `afterPageId` in id order, in any source, or null. */
   nextLivePageAfter(afterPageId: number): Promise<{ id: number; slug: string; source_id: string } | null>;
   /** gbrain export: the next 256 live page keys after page id `q.afterId`, in id order, within the filters (engine-sql/export-reads.ts). */
@@ -4102,8 +4268,6 @@ export interface BrainEngine {
   countStaleFactEmbeddings(opts: { model: string; dims: number; sourceId?: string | null }): Promise<{ count: number; chars: number }>;
   /** fence_integrity: live markdown pages of these sources stored in segments with no checkout file walked; null when no row answers. */
   countSegmentedCensusPages(sourceIds: string[], checkedOutSourceIds: string[]): Promise<{ n: number } | null>;
-  /** facts_undated_lines: every live `type: facts` page with whether it is segmented and the bounded prefix of its body, by (source, slug). */
-  listFactsPageBodies(): Promise<FactsDoctorSql.FactsPageBodyRow[]>;
   /** unlinked_facts: the `facts` and `fact_relink_attempts` table names the brain has (null for one it lacks). */
   readFactTableCatalog(): Promise<{ facts: string | null; attempts: string | null } | null>;
 
@@ -4119,6 +4283,10 @@ export interface BrainEngine {
   hasStoredVectors(store: EmbeddingCatalogSql.EmbeddingStore): Promise<boolean>;
   /** Per source with chunks, the chunk count and how many hold a vector in a fixed column (`embedding_image`, `embedding_multimodal`), in source id order. */
   countChunkVectorCoverage(column: EmbeddingCatalogSql.FixedVectorColumn): Promise<EmbeddingCatalogSql.ChunkVectorCoverageRow[]>;
+  /** doctor embedding_column_registry: the type of each named `content_chunks` column that exists (`vector(1024)`), in no set order. */
+  readChunkColumnTypes(columns: string[]): Promise<EmbeddingCatalogSql.ChunkColumnType[]>;
+  /** doctor embedding_column_registry: every `content_chunks` row and the percent holding a value in `column` (pct null with no row). Throws when the column is missing. */
+  countChunkColumnCoverage(column: string): Promise<EmbeddingCatalogSql.ChunkColumnCoverage>;
 
   // Facts relink attempts (engine-sql/fact-relink-attempts.ts): the `fact_relink_attempts` writes and reads relink ran through executeRaw.
   /** Records a fact's latest relink attempt (`attempted_at` now), replacing its stored one; `keepModelAndRun` keeps the stored `model` and `run_id` on a conflict. */
@@ -4186,8 +4354,8 @@ export interface BrainEngine {
   listFactIdsStillOnPage(ids: number[], slug: string): Promise<Array<{ id: number }>>;
   /** Which of links `ids` now start at page `pageId`. */
   listLinkIdsOnPage(ids: number[], pageId: number | string): Promise<Array<{ id: number }>>;
-  /** The recorded file origin (`source_path`, `source_uri`) of a live page, or null for no live page. */
-  readPageFileOrigin(sourceId: string, slug: string): Promise<FactsCycleSql.PageFileOrigin | null>;
+  /** The recorded file origin (`source_path`, `source_uri`) of a live page, or null for no live page; with `includeDeleted`, a soft-deleted page counts too. */
+  readPageFileOrigin(sourceId: string, slug: string, opts?: { includeDeleted?: boolean }): Promise<FactsCycleSql.PageFileOrigin | null>;
   /** The facts of a page coordinate that hold a fence row number, with their claim text and source (no set order). */
   listFenceRowClaims(sourceId: string, slug: string): Promise<FactsCycleSql.FenceRowClaim[]>;
   /** Gives unfenced fact `id` fence row `rowNum` on page `slug` with claim text `fact`; only a row that still has no fence row changes. */
@@ -4255,6 +4423,7 @@ export interface BrainEngine {
   /** Stores a fact purge tombstone; false when the same (source, visibility, subject, fingerprint) one exists. */
   insertFactPurge(row: FactsPurgeSql.FactPurgeInsert): Promise<boolean>;
   /** The one writer of take purge tombstones: stores one for `claimHash`, or one per distinct take claim of the page for `pageId`, under the subject; false when none was new (each exists, or the page has no takes). Write; run it in the purge transaction. */
+  /** Stores a take purge tombstone; false when the same (source, subject, fingerprint) one exists. */
   insertTakePurge(row: FactsPurgeSql.TakePurgeInsert): Promise<boolean>;
   /** One hop of the derivation walk: the rows a `derivation_inputs` edge derives from a frontier row, distinct, by (table, id), at most `limit`. */
   listDerivedRows(frontier: ReadonlyArray<{ table: string; id: string }>, limit: number): Promise<Array<{ derived_table: string; derived_id: string }>>;
@@ -4563,6 +4732,10 @@ export interface BrainEngine {
   countUncomparableFacts(q: FactsTrustSql.UncomparableFactsQuery): Promise<Array<{ source_id: string; n: number }>>;
   /** The keyword scan behind a search's saved-facts block: active facts sharing the query's words, with match counts and trust ranks. */
   matchSavedFacts(q: FactsTrustSql.SavedFactsMatchQuery): Promise<FactsTrustSql.SavedFactMatchRow[]>;
+  /** A named entity's newest active facts under the caller's read policy, with the collapse columns (search/entity-facts.ts). */
+  readEntityNewestFacts(q: FactsTrustSql.EntityNewestFactsQuery): Promise<FactsTrustSql.EntityNewestFactRow[]>;
+  /** The query terms each name head matches after stemming with the brain's full-text language, one row per head. */
+  matchHeadStems(heads: readonly string[], terms: readonly string[]): Promise<FactsTrustSql.HeadStemRow[]>;
   /** The fact an owner action targets, with its stored trust tier, or null when no fact has the id. */
   readFactForOwnerAction(id: number): Promise<FactsTrustSql.OwnerActionFactRow | null>;
   /** Unconfirmed standing preferences and commitments the write gate flagged (needs write_gate_receipts; the caller probes it). */
@@ -4604,6 +4777,7 @@ export interface BrainEngine {
   countClaimConflictPairs(sourceId: string, auditSources: string[]): Promise<{ n: number | string } | null>;
   /** The ids of every source that is not archived, in id order (the claim-conflict sweep's default scope). */
   listUnarchivedSourceRows(): Promise<Array<{ id: string }>>;
+  listAllUnarchivedSourceIds(): Promise<Array<{ id: string }>>;
 
   // Facts statements, conversation fact publication and relink (engine-sql/facts-conversation.ts). Each runs the statement its caller ran through executeRaw.
   /** The newest extractor fact id of a page (null when it has none): the next generation's seed. */
@@ -4737,6 +4911,14 @@ export interface BrainEngine {
   listPoolEntityPairs(scope: FactsTrustSql.FactPoolScope, filters: FactsTrustSql.FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>>;
   /** The whole fact rows of these ids within these sources. */
   listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]): Promise<FactsRecallSql.FactRowSqlShape[]>;
+  /** The provenance slug of each open non-conversation stint of an entity's (normalised) dimension, each once, sorted. */
+  listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string): Promise<string[]>;
+  /** The newest open, active, non-conversation stint of the dimension other than `excludeId`, with its stored tier; null: none. */
+  readOntologyRival(sourceId: string, entitySlug: string, dimension: string, excludeId: number): Promise<{ id: number; trust_tier: string } | null>;
+  /** The ledger stream slug of each listed fact, take or page row found (null where it has none), in no promised order. */
+  listBeliefStreamSlugs(table: 'facts' | 'takes' | 'pages', ids: readonly number[]): Promise<Array<string | null>>;
+  /** Of `slugs` in `sourceId`, the live pages the read policy of `scope` admits (its sources ignored), at most `limit`. */
+  listReadablePageSlugs(sourceId: string, slugs: readonly string[], scope: PageReadScope, limit: number): Promise<string[]>;
 
 
   /** True when the source's `config.canonical` is `git` (a git-canonical source); false for anything else, including an unknown id. */
@@ -4759,6 +4941,54 @@ export interface BrainEngine {
 
   /** Registers a local writer unless its id or credential hash is already registered; true when this call inserted the row. */
   insertLocalWriterRow(row: LocalWriterInsert): Promise<boolean>;
+  /** Revokes a local writer registration, keeping an earlier revocation time; true when the registration exists. */
+  revokeLocalWriterRow(id: string): Promise<boolean>;
+  /** An OAuth client's receipt grant row, deleted or not, or undefined; `lock` reads it `FOR SHARE` (engine-sql/access-grants.ts). */
+  readOAuthClientReceiptGrant(clientId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.ReceiptClientGrant | undefined>;
+  /** An access token's receipt grant row, revoked or not, or undefined; `lock` reads it `FOR SHARE`. */
+  readAccessTokenReceiptGrant(tokenId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.ReceiptTokenGrant | undefined>;
+  /** A live (not deleted) OAuth client's membership grant row read `FOR SHARE` (unless `lock` is false), or undefined. */
+  readOAuthClientMemberGrant(clientId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.MemberClientGrant | undefined>;
+  /** A live (not revoked) access token's grant columns read `FOR SHARE` (unless `lock` is false), or undefined. */
+  readAccessTokenMemberGrant(tokenId: string, opts?: { lock?: boolean }): Promise<AccessGrantsSql.MemberTokenGrant | undefined>;
+  /** A local writer's grant ceiling and revoked_at read `FOR SHARE`, revoked or not, or undefined. */
+  readLocalWriterMemberGrant(id: string): Promise<AccessGrantsSql.MemberLocalWriterGrant | undefined>;
+  /** The shared-skill serving epoch, or null when the brain has no shared-skill state row. */
+  readSharedSkillServingEpoch(): Promise<string | null>;
+
+  // Shared-skill membership (engine-sql/shared-skill-members.ts): the rows join_brain, sync_brain_skills, leave_brain and the catalog read.
+  /** The brain id, the catalog token secret and the serving epoch, or undefined without the brain or shared-skill state row. */
+  readSharedSkillCatalogIdentity(): Promise<SharedSkillMembersSql.SharedSkillCatalogIdentity | undefined>;
+  /** The live shared-skill heads of live sources that match the query, in key order, at most `limit` rows. */
+  listSharedSkillCatalogHeads(query: SharedSkillMembersSql.SharedSkillHeadQuery): Promise<SharedSkillMembersSql.SharedSkillHeadRow[]>;
+  /** A source incarnation's stored publication policy and epoch, or undefined; `lock` reads it `FOR SHARE`. */
+  readSharedSkillPolicyRow(sourceId: string, incarnation: string, lock: boolean): Promise<{ epoch: string; policy: unknown } | undefined>;
+  /** Upserts a source incarnation's publication policy under a new epoch and appends its audit row. */
+  writeSharedSkillPolicy(write: SharedSkillMembersSql.SharedSkillPolicyWrite): Promise<void>;
+  /** Inserts a published revision and moves its head; the SQL engines' publication guard refuses it outside a coordinated write. */
+  writeSharedSkillRevision(write: SharedSkillMembersSql.SharedSkillRevisionWrite): Promise<void>;
+  /** One stored shared-skill revision that is not deleted, or undefined. */
+  readSharedSkillRevision(key: SharedSkillMembersSql.SharedSkillRevisionKey): Promise<StoredSkillRevision | undefined>;
+  /** The live sources in both id lists (null matches all), by id, at most 65 rows. */
+  listSharedSkillFollowSources(allowed: string[] | null, sourceIds: string[] | null): Promise<Array<{ id: string; incarnation: string }>>;
+  /** The persistent brain id locked `FOR UPDATE`, or undefined without the row. */
+  lockSharedSkillBrainId(): Promise<string | undefined>;
+  /** One shared-skill member locked `FOR UPDATE`, or undefined; by installation id it matches only under its own principal. */
+  readSharedSkillMember(by: SharedSkillMembersSql.SharedSkillMemberLookup): Promise<SharedSkillMembersSql.SharedSkillMemberRow | undefined>;
+  /** The number of shared-skill members, active or not. */
+  countSharedSkillMembers(): Promise<number>;
+  /** Inserts a shared-skill member or re-activates the one with its installation id at the next epoch. */
+  enrollSharedSkillMember(spec: SharedSkillMembersSql.SharedSkillMemberEnroll): Promise<void>;
+  /** Sets an active member's narrowed follow policy and epoch, and resets its sequences and views. */
+  rebindSharedSkillMember(installationId: string, followPolicy: unknown, epoch: number): Promise<void>;
+  /** Marks a shared-skill member inactive. */
+  leaveSharedSkillMember(installationId: string): Promise<void>;
+  /** Issues a delivery batch for a member: prune, reuse or insert, retention trim and the seen mark, in order. */
+  issueSharedSkillDeliveryBatch(spec: SharedSkillMembersSql.SharedSkillBatchIssue): Promise<SharedSkillMembersSql.SharedSkillBatchIssued>;
+  /** A member's batch under this epoch issued within 24 hours, locked `FOR UPDATE`, or undefined. */
+  readSharedSkillDeliveryBatch(token: string, installationId: string, epoch: number): Promise<SharedSkillMembersSql.SharedSkillBatchRow | undefined>;
+  /** Records a batch's acknowledgment evidence and, with `advance`, the member's acknowledged sequence and view. */
+  acknowledgeSharedSkillDeliveryBatch(spec: SharedSkillMembersSql.SharedSkillBatchAcknowledge): Promise<void>;
 
   // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
   /** The journal limit config rows, then one row with a null key: the largest page stored in segments, or 'unindexed'. */
@@ -4767,12 +4997,25 @@ export interface BrainEngine {
   readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>>;
   /** The held-file summary rows of live sources with at least one held file, in source order; null reads every source. */
   readHeldCoverageRows(sourceIds: string[] | null): Promise<HeldCoverageRow[]>;
+  /** The held fence results of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first (`listFenceHolds`, engine-sql/fence-holds.ts). */
+  listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string): Promise<FenceHoldRow[]>;
+  /** A fence publish's statements (generations/fence.ts, engine-sql/fence-holds.ts): whether the page is deleted or gone, the generation key lock, the held rows a readable fence clears, and the held pages' file state. */
+  readFenceOriginGone(sourceId: string, slug: string): Promise<boolean>;
+  lockGenerationKey(lockKey: string): Promise<void>;
+  clearFenceHoldRows(key: FenceHoldKey): Promise<void>;
+  readFenceHoldFiles(sourceIds: readonly string[], slugs: readonly string[]): Promise<FenceHoldFileRow[]>;
+  /** The generation ledger statements of generations/publish.ts (engine-sql/derived-generations.ts): the live generation with its items, a new generation's activation, and a held result. */
+  readLiveGenerationRow(key: GenerationRowKey): Promise<LiveGenerationRow | null>;
+  activateGenerationRows(key: GenerationRowKey, liveId: number | null, row: GenerationActivationRow, items: readonly GenerationLedgerRow[]): Promise<number>;
+  recordHeldGenerationRow(key: GenerationRowKey, row: HeldGenerationRow): Promise<void>;
   /** The git sync hold records of each source's current incarnation, by source then fingerprint (SQL in engine-sql/sync-hold-reads.ts). */
   readGitHoldRecords<R = Record<string, unknown>>(opts?: GitHoldRecordsQuery): Promise<Array<{ record: R }>>;
   /** The pending `sources retry-held` request's keys for one source incarnation's fingerprint, or null (SQL in engine-sql/sync-hold-reads.ts). */
   readGitHoldRetryRequest(fingerprint: string): Promise<Array<{ paths?: unknown }> | null>;
   /** A sync hold report's summary counters (null when none) and the source's `mirror_read_only` text (SQL in engine-sql/sync-hold-reads.ts). */
   readGitHoldReportInputs(sourceId: string, fingerprint: string): Promise<GitHoldReportInputs>;
+  /** The source's purge epoch as stored, which every fact purge bumps, or null for an unknown source (SQL in engine-sql/sync-reason-reads.ts). */
+  readSourcePurgeEpoch(sourceId: string): Promise<string | number | null>;
   // The git sync hold store (SQL in engine-sql/sync-hold-store.ts); sync-holds.ts keeps the hold semantics.
   /** Creates the source incarnation's hold summary row when missing, else touches it (Postgres: locks it); returns its count. */
   lockGitHoldSummary(sourceId: string, incarnation: string): Promise<number>;
@@ -4826,19 +5069,6 @@ export interface BrainEngine {
   readSourceCheckoutRoot(sourceId: string, hostId: string | null): Promise<SourceCheckoutRoot | null>;
   /** The source's pages still waiting for an embedding in `column`: count, oldest edit, budget-held count. */
   readUnembeddedPageSummary(sourceId: string, column: string): Promise<UnembeddedPageSummary>;
-  /** The held fence results of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first (`listFenceHolds`, engine-sql/fence-holds.ts). */
-  listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string): Promise<FenceHoldRow[]>;
-  /** The source's purge epoch as stored, which every fact purge bumps, or null for an unknown source (SQL in engine-sql/sync-reason-reads.ts). */
-  readSourcePurgeEpoch(sourceId: string): Promise<string | number | null>;
-  /** A fence publish's statements (generations/fence.ts, engine-sql/fence-holds.ts): whether the page is deleted or gone, the generation key lock, the held rows a readable fence clears, and the held pages' file state. */
-  readFenceOriginGone(sourceId: string, slug: string): Promise<boolean>;
-  lockGenerationKey(lockKey: string): Promise<void>;
-  clearFenceHoldRows(key: FenceHoldKey): Promise<void>;
-  readFenceHoldFiles(sourceIds: readonly string[], slugs: readonly string[]): Promise<FenceHoldFileRow[]>;
-  /** The generation ledger statements of generations/publish.ts (engine-sql/derived-generations.ts): the live generation with its items, a new generation's activation, and a held result. */
-  readLiveGenerationRow(key: GenerationRowKey): Promise<LiveGenerationRow | null>;
-  activateGenerationRows(key: GenerationRowKey, liveId: number | null, row: GenerationActivationRow, items: readonly GenerationLedgerRow[]): Promise<number>;
-  recordHeldGenerationRow(key: GenerationRowKey, row: HeldGenerationRow): Promise<void>;
   /** publishGeneration's producer-path statements: held rows of one input, a held row's context, the identical replay, the attempt counter and the valve. */
   heldGenerationRowsForInput(key: GenerationRowKey, pin: string): Promise<HeldInputRow[]>;
   readHeldGenerationContext(key: GenerationRowKey, holdId: string): Promise<{ held_context: Record<string, unknown> | null } | null>;
@@ -4905,6 +5135,8 @@ export interface BrainEngine {
   readWriteRequest(principalKind: string, principalId: string, requestId: string): Promise<WriteRequest | null>;
   /** The requests a principal admitted under any of `requestIds` (uuids), in no order (a grouped admission's replays). */
   readWriteRequestsByRequestIds(principalKind: string, principalId: string, requestIds: readonly string[]): Promise<WriteRequest[]>;
+  /** At most two requests with this request_id (a uuid), from any principal, in no set order. */
+  readWriteRequestsByRequestId(requestId: string): Promise<WriteRequest[]>;
   /** The request with journal id `id`, or null; `signal` cancels the read. */
   readWriteRequestById(id: string, opts?: { signal?: AbortSignal }): Promise<WriteRequest | null>;
   /** The requests admitted under any of the client request ids `requestIds` (uuids), any principal. */
@@ -4955,15 +5187,15 @@ export interface BrainEngine {
   lockWriteRequestsById(ids: readonly string[]): Promise<WriteRequest[]>;
   /** Drops a terminal request's intent that carried purged content and shrinks its reservation (journal.ts finishTerminal); null for an unknown id. */
   compactTerminalIntent(compaction: TerminalIntentCompaction): Promise<WriteRequest | null>;
+  /** Cancels a request still queued as the caller read it, in one step: lock, check, complete, release its counters; null when it does not exist. */
+  cancelWriteRow(cancel: WriteCancellation): Promise<WriteCancelResult | null>;
   /** Inserts a publication's effects in queue order (a gated one only while auto-linking is on); returns the kinds inserted. */
   insertPublicationEffects(spec: PublicationEffectsSpec): Promise<string[]>;
   /** Queues a managed-request withdrawal's three effects for its source; an unknown source queues none, a kind already queued is kept. */
   insertWithdrawalEffects(spec: WithdrawalEffectsSpec): Promise<void>;
-  /** Cancels a request still queued as the caller read it, in one step: lock, check, complete, release its counters; null when it does not exist. */
-  cancelWriteRow(cancel: WriteCancellation): Promise<WriteCancelResult | null>;
   // Write-claim statements (engine-sql/persistence-claims.ts): the text journal.ts, authority.ts and consumer.ts sent through executeRaw.
-  /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE until the transaction ends. */
-  readSourceMembership(sourceId: string, opts?: { lock?: boolean }): Promise<SourceMembership | null>;
+  /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE (`'update'`: FOR UPDATE) until the transaction ends. */
+  readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }): Promise<SourceMembership | null>;
   /** `[{ request_id }]` for the first of `requestIds` a topology change of local writer `principalId` used, or []. */
   findTopologyChanges(principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>>;
   /** The topology changes with a recovery whose worktree host `hostId` owns, after change id `after`, in id order, at most `limit`. */
@@ -5078,6 +5310,7 @@ export interface BrainEngine {
   listResumableRefreshes<R = Record<string, unknown>>(hostId: string, budgetMs: number): Promise<(R & { stale: boolean })[]>;
   /** The last commit of each named source that exists (null before its first sync), in source id order (the refresh resume's lag check). */
   listSourceLastCommits(sourceIds: readonly string[]): Promise<{ last_commit: string | null }[]>;
+
   // Effect worker (engine-sql/persistence-effect-worker.ts): the claim stamp and the statements that settle a claim,
   // which effect-journal.ts sent through executeRaw. Each settle statement matches only effect `id` still claimed under
   // `token` (a null token matches none), so a claim that moved changes nothing.
@@ -5248,6 +5481,37 @@ export interface BrainEngine {
   listAppliedPolicyRevisions(): Promise<AppliedPolicyRevision[]>;
 
   /**
+   * The live (enabled, not tombstoned) access member `key` names through `via` (the member id, the config key's value,
+   * a live legacy token or a live OAuth client), with its groups; null when there is none. A failed read throws
+   * unchanged (access/caller.ts tells a schema older than the member tables from a transient failure).
+   */
+  readLiveMember(via: MemberBindingVia, key: string): Promise<LiveMemberRow | null>;
+
+  /**
+   * The applied folder rules any of `readers` meets (none read when `readers` is empty) and every folder prefix that
+   * reads as nobody, `!unreadable` included when this database role cannot read the folder access tables. Runs through
+   * this engine's executeRaw; a failure throws (access/caller.ts folderAccessForAll counts it as fail closed).
+   */
+  readFolderAccess(readers: readonly string[]): Promise<FolderAccessRows>;
+
+  // Session state (engine-sql/session-state.ts): the session_context_state statements context/session-state.ts ran
+  // through executeRaw. Keys arrive resolved (client id and session id capped); a failure throws unchanged.
+  /** Inserts or updates one session cursor row in one statement; resolves the row's incomplete-wake counter. */
+  upsertSessionState(sourceId: string, clientId: string, sessionId: string, write: SessionStateWrite): Promise<number>;
+  /** The session cursor row context_pack reads (wake time as microsecond ISO UTC text), or null when there is none. */
+  readSessionCursor(sourceId: string, clientId: string, sessionId: string): Promise<SessionCursorRow | null>;
+  /** delta's session row (both cursors as microsecond ISO UTC text, the counter as a number), or null when there is none. */
+  readDeltaSessionRow(sourceId: string, clientId: string, sessionId: string): Promise<DeltaSessionRow | null>;
+  /** The session's stored checkpoint manifest, or null when the session has no row. */
+  readCheckpointManifestRow(sourceId: string, clientId: string, sessionId: string): Promise<{ checkpoint_manifest: unknown } | null>;
+  /** Replaces the session's checkpoint manifest, creating the row when there is none. */
+  writeCheckpointManifest(sourceId: string, clientId: string, sessionId: string, manifest: readonly unknown[]): Promise<void>;
+  /** Deletes every session row last written more than `olderThanDays` (a whole number >= 1) days ago. */
+  ageOutSessionState(olderThanDays: number): Promise<void>;
+  /** Keeps the newest `maxRowsPerClient` (a whole number >= 1) session rows of each (source_id, client_id). */
+  capSessionStatePerClient(maxRowsPerClient: number): Promise<void>;
+
+  /**
    * The stored may_act_for of one caller (`via` names where it is stored; `key` is the token id, the client id or the
    * config key): a live token's or client's list, null when the row is revoked, deleted or absent; the stdio config text as stored.
    */
@@ -5302,6 +5566,20 @@ export interface BrainEngine {
   switchAccessMigration(id: string, receipts: Record<string, unknown>): Promise<void>;
   listAccessPolicySources(): Promise<string[]>;
   countPeopleFolderPages(): Promise<PeopleFolderCount[]>;
+  /** The maintenance sweep's facts-fence pages (engine-sql/sweep-reads.ts): newest `scanCap` recent pages, those holding a fence. */
+  listFactsFencePages(q: FactsFencePagesQuery): Promise<string[]>;
+  /** The sweep's links and timeline pages: recent pages whose links watermark is stale, less `exclude`, newest first. */
+  listSweepStalePages(q: SweepStalePagesQuery): Promise<SweepStalePageRow[]>;
+  /** Of the sweep's deferred segmented `slugs`, those still recent and stale. */
+  listSweepDeferredPages(q: SweepDeferredPagesQuery): Promise<SweepDeferredPageRow[]>;
+  /** The live pages of any source whose slug is in `slugs` (the links pass's refs), in no set order. */
+  listPageRefsForSlugs(slugs: readonly string[]): Promise<SweepPageRefRow[]>;
+  /**
+   * The open pages of `sources` less each excluded prefix (access/open-pages.ts): live pages the empty-identity
+   * member-access floor admits, grouped by source, top-level folder, type and whether the privacy part admits them.
+   * The policy is rendered in the current access context; the caller reads it outside any caller record.
+   */
+  countOpenPages(sources: readonly string[], exclude: readonly OpenPageExclusion[]): Promise<OpenPageCount[]>;
 
   /** Access member rows with their groups: one by exact id or by declared email (any status), or all by id, removed ones only when asked. */
   readAccessMembers(by: AccessMemberLookup): Promise<AccessMemberRow[]>;
@@ -5309,22 +5587,123 @@ export interface BrainEngine {
   /** Live credentials (active legacy tokens, clients not deleted): the tokens with one exact name, or those bound to one member. */
   readAccessCredentials(by: AccessCredentialLookup): Promise<AccessCredentialRow[]>;
 
+  /** Revoke every active access token with this exact name; the revoked ids (none on a store that keeps no credentials). */
+  revokeAccessTokensNamed(name: string): Promise<string[]>;
+  /** Revoke the active access token with this id (a UUID); its name, or null when no active token has it. */
+  revokeAccessToken(id: string): Promise<string | null>;
+  /** Delete an OAuth client, its tokens and codes cascading; the deleted client, or null when none has this id. */
+  deleteOAuthClient(clientId: string): Promise<DeletedOAuthClient | null>;
+  /** One grant column (`private_pages` or `permissions`) of the active token with this id (a UUID): `{ value }`, or null. */
+  readActiveAccessTokenGrant(id: string, field: ActiveTokenGrantField): Promise<{ value: unknown } | null>;
+  /** Whether an active access token has this id (compared as text). */
+  accessTokenLive(id: string): Promise<boolean>;
+  /** Whether an OAuth client not deleted has this id. */
+  oauthClientLive(clientId: string): Promise<boolean>;
+  /** Which of the probe's optional `oauth_clients` columns this brain has (a store that keeps them all names them all). */
+  readOauthClientColumns(probe: OauthClientProbe): Promise<string[]>;
+  /** Set one OAuth client's access-token lifetime in seconds; false when no client has this id. */
+  setOauthClientTokenTtl(clientId: string, ttlSeconds: number): Promise<boolean>;
+  /** Insert a scoped OAuth client with its register audit row (a store that keeps no grant audit writes the client only). */
+  insertOauthClientGrant(row: OauthClientGrantInsert): Promise<void>;
+  /** The clients an upgrade migration clamped the token lifetime of; a brain with no grant audit table raises its error. */
+  readTokenLifetimeClampedClients(): Promise<string[]>;
+  /** The id and config of each source among `ids`; `lock` takes the rows in id order FOR SHARE or FOR UPDATE (a single-writer store takes none). */
+  readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock): Promise<{ id: string; config: unknown }[]>;
+  /** The client's whole row read FOR UPDATE inside the caller's transaction (a single-writer store takes no lock), or null. */
+  readOauthClientForUpdate(clientId: string): Promise<OauthClientRow | null>;
+  /** Every OAuth client not deleted, whole rows (the grant checks read every credential's grant). */
+  readLiveOauthClients(): Promise<OauthClientRow[]>;
+  /** Every access token not revoked, whole rows (a store that keeps no attest or private columns reads their defaults). */
+  readLiveAccessTokenRows(): Promise<Record<string, unknown>[]>;
+  /** Every access token, revoked ones too, whole rows newest first, a tie by id (the admin key list). */
+  listAccessTokenRows(): Promise<Record<string, unknown>[]>;
+  /** The transaction-scoped lock on a client name key, so same-name registrations serialize (a single-writer store takes none). */
+  lockOauthClientName(lockKey: string): Promise<void>;
+  /** Whether the client holds an OAuth token or an authorization code (a store that keeps neither answers false). */
+  oauthClientHoldsAuthorization(clientId: string): Promise<boolean>;
+  /** Whether the source is archived, read FOR SHARE inside the caller's transaction; null for no such source. */
+  readSourceArchivedForShare(id: string): Promise<boolean | null>;
+  /** The source's archived flag and config, or null for no such source (the `--attest-sources` check). */
+  readSourceAttestState(id: string): Promise<{ archived: boolean; config: unknown } | null>;
+  /** Set the source's whole config (the `--attest-sources` mark). */
+  replaceSourceConfig(id: string, config: Record<string, unknown>): Promise<void>;
+  /** Write a client's grant while it still holds the expected revision, rewrite its legacy open jobs and append the audit row; false (nothing written) when the revision moved. */
+  persistOauthClientGrant(grant: OauthClientGrantPersist): Promise<boolean>;
+  /** The `after_grant` document of the client's newest audit row that records a catalog provenance, or null; a brain with no audit table raises its error. */
+  readLatestCatalogProvenanceAudit(clientId: string): Promise<unknown | null>;
+  /** The client's grant audit rows, oldest first. */
+  listOauthGrantAudit(clientId: string): Promise<OauthGrantAuditRow[]>;
+  /** Delete the OAuth token with this hash when this client owns it (a revoke naming another client deletes nothing). */
+  deleteOauthTokenByHash(hash: string, clientId: string): Promise<void>;
+  /** Stamp an OAuth client `deleted_at` now (a revoke); its tokens and codes are separate deletes. */
+  softDeleteOauthClient(clientId: string): Promise<void>;
+  /** Delete every OAuth token, access and refresh, of the client. */
+  deleteOauthClientTokens(clientId: string): Promise<void>;
+  /** Delete every authorization code of the client (a store that keeps none deletes none). */
+  deleteOauthClientCodes(clientId: string): Promise<void>;
+  /** Delete the OAuth client row (the lifecycle `delete`); its tokens and codes are separate deletes. */
+  deleteOauthClientRow(clientId: string): Promise<void>;
+  /** Set the client's grant revision; `revoke` also stamps `deleted_at` when the client is not already revoked. */
+  setOauthClientRevision(clientId: string, revision: number, revoke: boolean): Promise<void>;
+  /** Append one row to the OAuth grant audit (the grant documents are JSON text). */
+  insertOauthGrantAudit(row: OauthGrantAuditInsert): Promise<void>;
+  /** The bearer check's OAuth token read at one rung of its degrade ladder. */
+  readOauthAccessTokenRows(hash: string, rung: OauthTokenRung): Promise<Record<string, unknown>[]>;
+  /** `auth rescope`'s whole rows (`SELECT *`) of the active tokens one id or an exact name names, locked FOR UPDATE. */
+  lockActiveAccessTokens(target: ActiveTokenTarget): Promise<Record<string, unknown>[]>;
+  /** `auth rescope`'s grant writes: the grant columns and mirror (one more revision; null for no token), a private grant column, and the legacy-shape tokens locked FOR UPDATE, oldest first. */
+  writeAccessTokenGrant(id: string, write: AccessTokenGrantWrite): Promise<number | null>;
+  writeAccessTokenPrivateGrant(id: string, axis: AccessTokenPrivateAxis, value: string): Promise<void>;
+  lockLegacyAccessTokens(): Promise<Record<string, unknown>[]>;
+  /** The bearer check's whole row (`SELECT *`) of the token not revoked with this hash, or null. */
+  readActiveAccessTokenByHash(hash: string, caller: TokenByHashCaller): Promise<Record<string, unknown> | null>;
+  /** Stamp a token's `last_used_at`, debounced to once a minute. */
+  touchAccessTokenLastUsed(id: string, unified: boolean): Promise<void>;
+  /** Delete the OAuth tokens and codes that expired before `nowEpochSeconds`; the count of both (a store that keeps none deletes none). */
+  deleteExpiredOauthCredentials(nowEpochSeconds: number): Promise<number>;
+  /** Set `expires_at = 0` on every OAuth token and code (the shared-skill restore quarantine): no archived grant is honored. */
+  expireAllOauthCredentials(): Promise<void>;
+  /** OAuth access tokens expiring from `from` to `to` (epoch seconds, inclusive), or after `from` when `to` is null. */
+  countOauthAccessTokens(from: number, to: number | null): Promise<number>;
+  /** Convert an access token still on the legacy shape to its grant columns on first read; the converted row, or null when none converted. */
+  convertLegacyAccessTokenGrant(id: string, columns: LegacyTokenGrantColumns): Promise<Record<string, unknown> | null>;
+  /** Insert one OAuth token (the INSERTs of `OAuthGrants.issue`); a repeated hash is 23505, a client with no row 23503. */
+  insertOauthToken(row: OauthTokenInsert): Promise<void>;
+  /** Insert one authorization code (OAuthGrants.decide); a repeated hash is 23505, a client with no row 23503. */
+  insertOauthCode(row: OauthCodeInsert): Promise<void>;
+  /** The code of this hash and client taken FOR UPDATE, or null (the caller checks expiry). */
+  readOauthCodeForUpdate(codeHash: string, clientId: string): Promise<OauthCodeRow | null>;
+  /** Delete the code of this hash and client. */
+  deleteOauthCode(codeHash: string, clientId: string): Promise<void>;
+  /** The refresh token of this hash and client taken FOR UPDATE, or null (the caller checks expiry). */
+  readOauthRefreshTokenForUpdate(tokenHash: string, clientId: string): Promise<OauthTokenRow | null>;
+  /** Delete the refresh token of this hash and client. */
+  deleteOauthRefreshToken(tokenHash: string, clientId: string): Promise<void>;
+  /** The PKCE challenge of an unexpired code of this client (its client not soft-deleted), or null. */
+  readOauthCodeChallenge(codeHash: string, clientId: string, nowEpochSeconds: number): Promise<string | null>;
+  /** Insert the tokens of one grant on the grant transaction, all or none, after the client lock (OAuthGrants.issue); run it on the transaction handle, never the pool. */
+  issueOauthTokens(rows: readonly OauthTokenInsert[]): Promise<void>;
+
   /** The ids of the enabled, untombstoned audience-kind members, by id. */
   listAudienceAccessMembers(): Promise<string[]>;
 
-  /** The enabled, untombstoned member (with its groups) an id, the stdio member config key, a live token or a live client names; null when none. */
-  readLiveMember(via: LiveMemberVia, key: string): Promise<LiveMemberRow | null>;
+  /** Every access group with its member ids, by id; or the one group with exactly that id (null lists every group). */
+  readAccessGroups(id: string | null): Promise<AccessGroupRow[]>;
 
-  /**
-   * The applied folder rules any of `readers` meets (none read when `readers` is empty) and every folder prefix that
-   * reads as nobody, `!unreadable` included when this database role cannot read the folder access tables. Runs through
-   * this engine's executeRaw; a failure throws (access/caller.ts folderAccessForAll counts it as fail closed).
-   */
-  readFolderAccess(readers: readonly string[]): Promise<FolderAccessRows>;
+  /** The pages, in every source and by (source, slug), whose readers name exactly `principal`; at most 51 of them. */
+  listPagesNamingReader(principal: string, opts?: { live?: boolean }): Promise<PageNamingReaderRow[]>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
   readMentionLastPass(sourceId?: string | null): Promise<string | null>;
+  /** The mention-index status rows of `sourceIds` (mentions/coverage.ts), in no defined order; a source with no row has none. */
+  readMentionIndexStatus(sourceIds: readonly string[]): Promise<MentionIndexStatusRow[]>;
+  /** The live (not soft-deleted) pages of one source: mention coverage's pending count for a source with no status row. */
+  countLivePagesInSource(sourceId: string): Promise<number>;
+  /** Live pages of one source written at or after `since` (`-infinity` for no bound) and not scanned at their content or `mentionVersion`. */
+  countMentionDueSince(sourceId: string, since: string, mentionVersion: number): Promise<number>;
+  /** Writes a coverage recount on a source's status row while its fingerprint is `expectedFingerprint`; no row, no write. */
+  recountMentionIndexStatus(sourceId: string, recount: MentionIndexRecount): Promise<void>;
   /**
    * Live pages due for the mention pass (no mention state, or state behind the page's content or `mentionVersion`), in
    * one source or every source; `aliases` also counts pages of those types whose derived aliases are behind.
@@ -5370,6 +5749,10 @@ export interface BrainEngine {
    * prefix. `excludePrivate` applies the caller's page policy. No order.
    */
   readEntityCardRows(sourceId: string, match: EntityCardMatch, opts?: { excludePrivate?: boolean }): Promise<EntityCardRow[]>;
+  /** Person-duplicate reads (engine-sql/entity-reads.ts): unretired pages by slug pattern, name-variant candidates, distinct inbound linkers (a page's retirement is readRetirementHop with 'none'). */
+  listUnretiredPagesBySlugPattern(sourceId: string, patterns: readonly string[], limit: number): Promise<SlugPatternPageRow[]>;
+  listNameVariantCandidates(sourceId: string, q: NameVariantCandidateQuery): Promise<NameVariantCandidateRow[]>;
+  countDistinctInboundLinkers(sourceIds: readonly string[], slugs: readonly string[]): Promise<InboundLinkerCountRow[]>;
   /** The link-extraction lag row (`extractionLagStatement`) under a `timeoutMs` bound (default 10 s; PGLite ignores it). */
   readExtractionLagCounts(q: ExtractionLagQuery): Promise<ExtractionLagCounts | undefined>;
   /**
@@ -5378,6 +5761,32 @@ export interface BrainEngine {
    */
   readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string },
     opts?: { limit?: number; timeoutMs?: number }): Promise<IgnoredLabelPageRow[]>;
+  /** The type and frontmatter of the live page at `slug` in the source, or null; `timeoutMs` bounds Postgres (default 1 s). */
+  readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }): Promise<IgnoredLabelPageRow | null>;
+  /** The live entity page, then up to 10 newest live pages that name it as a word or link to it (search/entity-anchor.ts). */
+  readEntityAnchoredPages(sourceId: string, entitySlug: string): Promise<EntityAnchoredPages>;
+  /** The title of each page id, deleted or not, in no set order. */
+  readPageTitlesById(ids: readonly number[]): Promise<Array<{ id: number; title: string }>>;
+  /** The live pages at `slugs` in `sourceIds` with title, type, frontmatter and `COALESCE(effective_date, updated_at)` as `date` (the entity card's text mentions). */
+  readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]): Promise<TextMentionPageRow[]>;
+  /** The retrieval reflex's alias live recheck: the live pages in the scope at `slugs`, as (slug, source_id), in no set order. */
+  readReflexLiveKeys(scope: ReflexScope, slugs: readonly string[]): Promise<Array<{ slug: string; source_id: string }>>;
+  /** The retrieval reflex's candidate pages in the scope that `match` names, with the bounded body prefix (engine-sql/reflex-reads.ts). */
+  readReflexPages(scope: ReflexScope, match: ReflexPageMatch): Promise<ReflexPageRow[]>;
+  /** The proactive brief's live pages of the source at `slugs` that the privacy and the eligibility admit, in no set order. */
+  readBriefEntityPages(sourceId: string, slugs: readonly string[], opts: BriefEntityPageOpts): Promise<BriefEntityPageRow[]>;
+  /** The brief's world-visible, eligible meeting pages of `sourceIds` whose `start` text lies in [startFrom, startTo] (engine-sql/brief-reads.ts). */
+  readBriefMeetingPages(sourceIds: readonly string[], startFrom: string, startTo: string, eligibility?: BriefReadsSql.BriefReadEligibility): Promise<BriefReadsSql.BriefMeetingPageRow[]>;
+  /** The brief's alias rows of the source at `emails`, each with its live page that the read floor and eligibility admit. */
+  readBriefEmailAliasPages(sourceId: string, emails: readonly string[], eligibility?: BriefReadsSql.BriefReadEligibility): Promise<BriefReadsSql.BriefEmailAliasPageRow[]>;
+  /** The brief's active, world-visible, eligible facts among `factIds` whose provenance the caller may read. */
+  readBriefWorldFacts(factIds: readonly number[], eligibility?: BriefReadsSql.BriefReadEligibility): Promise<BriefReadsSql.BriefWorldFactRow[]>;
+  /** The brief's counterparty page for the edit arm, or null; its body is null past `maxBytes`. */
+  readBriefEditPage(sourceId: string, slug: string, maxBytes: number, opts: BriefReadsSql.BriefEditReadOpts): Promise<BriefReadsSql.BriefEditPageRow | null>;
+  /** The brief's newest timeline entry of the page recorded and dated since `since`, or null. */
+  readBriefTimelineEntry(pageId: number, since: string, opts: BriefReadsSql.BriefEditReadOpts): Promise<BriefReadsSql.BriefTimelineEntryRow | null>;
+  /** The brief's newest `limit` revisions of the page snapshotted since `since`, newest first; a body is null past `maxBytes`. */
+  readBriefPageVersions(pageId: number, since: string, maxBytes: number, limit: number): Promise<BriefReadsSql.BriefPageVersionRow[]>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;
@@ -5484,6 +5893,14 @@ export interface BrainEngine {
 
   /** Read lease rows (see `CycleLockFilter`). A read: no side effects, no acquire. */
   readCycleLocks(filter: CycleLockFilter): Promise<CycleLockRow[]>;
+  /** The beacon of the drain-lease holder record carrying `lockToken`, or null (engine-sql/cycle-locks.ts). */
+  readDrainLeaseBeacon(lockToken: string): Promise<Record<string, unknown> | null>;
+  /** Writes a drain lease's holder record, replacing the source's former one, in one statement (engine-sql/cycle-locks.ts). */
+  writeDrainLeaseHolder(record: DrainLeaseHolderRecord): Promise<void>;
+  /** Renews the drain-lease holder record carrying `lockToken` by `ttlMinutes` (engine-sql/cycle-locks.ts). */
+  refreshDrainLeaseHolder(lockToken: string, ttlMinutes: number): Promise<void>;
+  /** Deletes the drain-lease holder record carrying `lockToken` (engine-sql/cycle-locks.ts). */
+  releaseDrainLeaseHolder(lockToken: string): Promise<void>;
 
   /**
    * Snapshot-matched delete (`gbrain sync --break-lock`, the dead-holder reaper, takeover): one DELETE matching the
@@ -5530,6 +5947,16 @@ export interface BrainEngine {
 
   /** One job row by id, or null. */
   getJob(id: number): Promise<JobRow | null>;
+  /** The given ids whose job is waiting, active, delayed, waiting-children or paused (engine-sql/jobs.ts). */
+  readLiveJobIds(ids: number[]): Promise<number[]>;
+  /** `{ data }` of the job holding an idempotency key, whatever its status, or null. */
+  readJobDataByIdempotencyKey(key: string): Promise<{ data: unknown } | null>;
+  /**
+   * The idempotency-key step of admitJob on its own: the row holding `key` when `policy.decide` returns it, or null
+   * when no row holds the key or a dead or cancelled row's key was freed. `policy.authority` is the caller's
+   * submission authority, which the Rust store decides with; the SQL engines ask `decide`.
+   */
+  coalesceOnIdempotencyKey(key: string, policy: { authority: unknown; decide: AdmitJobPolicy['decide'] }): Promise<JobRow | null>;
 
   /** Job rows matching every given filter, newest first (default 50 from offset 0). */
   listJobs(filter?: ListJobsFilter): Promise<JobRow[]>;
@@ -5702,6 +6129,8 @@ export interface BrainEngine {
   countRecentCompletedJobs(name: string, withinSeconds: number): Promise<number>;
   /** The id and failure text of dead or failed jobs updated within the last `withinSeconds`, by id. */
   listRecentFailedJobErrors(withinSeconds: number): Promise<FailedJobError[]>;
+  /** The newest five unfinished jobs that own a budget, with remaining and reserved cents, newest id first. */
+  listBudgetOwners(): Promise<BudgetOwnerRow[]>;
   /** The average page text length (capped at `maxChars`) of the pages queued jobs of a name and queue point at, or null. */
   readQueuedPageChars(spec: { name: string; queue: string; maxChars: number }): Promise<number | null>;
   /** Per-source failure, queue and embed-backfill counts over the `sync` and `embed-backfill` jobs. */
@@ -5829,6 +6258,10 @@ export interface BrainEngine {
   readTakePreimages(read: TakePreimageRead): Promise<Array<{ preimage: TakePreimage; gone: boolean }>>;
   /** The page's stored takes by row number while its take_fence generation is held `fence_absent`; none otherwise. */
   listHeldFenceTakeRows(spec: HeldFenceTakeSpec): Promise<HeldFenceTakeRow[]>;
+  /** The take at a page's row number with its claim and stored trust tier; null when the page has none there. */
+  readTakeRowTrust(pageId: number, rowNum: number): Promise<{ id: number; claim: string; trust_tier: string } | null>;
+  /** A take by id with its page's source, its trust tier and origin, whether it is active and its page quarantined. */
+  readTakeTrustRef(id: number): Promise<TakeTrustRef | null>;
   // `gbrain extract takes` reads and delete (engine-sql/takes-reads.ts).
   /** The id of the live page `slug` in `sourceId`, or null. */
   readLivePageIdBySlug(slug: string, sourceId: string): Promise<number | null>;
@@ -5846,10 +6279,12 @@ export interface BrainEngine {
   deleteTakesByIds(ids: readonly number[]): Promise<void>;
   /** The id of the page's take at `rowNum`, or null. */
   findTakeId(pageId: number, rowNum: number): Promise<number | null>;
-  /** The takes generation adapter's before-states: the takes a write deletes (`gone`) or replaces at their row number, by row number. */
-  readTakePreimages(read: TakePreimageRead): Promise<Array<{ preimage: TakePreimage; gone: boolean }>>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
+  /** A holder's 25 heaviest active resolved takes (the calibration pattern drill-down). */
+  listTopResolvedTakesForHolder(holder: string): Promise<HolderResolvedTakeRow[]>;
+  /** The five oldest abandoned high-conviction takes (the calibration abandoned-threads card). */
+  listAbandonedTakes(): Promise<AbandonedTakeRow[]>;
   /** Live pages of the sources with an inactive or `superseded by #` take, by page id. */
   listTakeSupersessionCandidates(sourceIds: readonly string[]): Promise<Array<{ id: number; source_id: string; slug: string }>>;
   /** The row number and stored `superseded_by` of every take on a page (engine-sql/takes-reads.ts). */
@@ -5873,6 +6308,14 @@ export interface BrainEngine {
   listTrustScanRows(spec: TrustScanRowSpec): Promise<TrustScanRow[]>;
   /** How many rows of one scanned table above an id (and at or below a ceiling) have a listed stored tier. */
   countUnscannedTrustRows(spec: UnscannedTrustSpec): Promise<number>;
+  /** The trust scan's cursor (`op_checkpoints` trust_scan/v1): its `completed_keys` JSON, or null when there is none. */
+  readTrustScanCursor(): Promise<unknown>;
+  /** Replace the trust scan's cursor keys and stamp the row now. */
+  writeTrustScanCursor(completedKeys: readonly unknown[]): Promise<void>;
+  /** The claimed sources whose lift has not finished, by id. */
+  listClaimPendingSourceIds(): Promise<string[]>;
+  /** Each table the trust scan reads, with its max id (0 when empty). */
+  readTrustScanCeilings(): Promise<Record<TrustScanTable, number>>;
   /** One page of a source's belief events, with the per-row visibility facts the remote filter reads. */
   readBeliefHistoryRows(spec: BeliefHistoryRowQuery): Promise<Array<Record<string, unknown>>>;
   /** The listed page lifetimes that are live and whose page passes the remote read floor. */
@@ -6331,8 +6774,348 @@ export interface BrainEngine {
   settleWakeWatch(settle: JobsWake.WakeWatchSettle): Promise<boolean>;
   /** Queue a Wakeshift forget of a user (once while one is pending); with a member id, only when that member is not removed. */
   queueWakeForget(wakeUser: string, memberId: string | null): Promise<void>;
+  /** A removed member's Wakeshift state: queue a forget of each user it watched under, end its open watches, drop its terms acceptances. */
+  forgetWakeMember(memberId: string): Promise<{ ended: number; queued: number }>;
+  /** A revoked token's or deleted OAuth client's Wakeshift state: queue a forget of each user its member-less watches ran under, end its open watches, drop its terms acceptances. */
+  forgetWakeCredential(kind: JobsWake.WakeCredentialKind, id: string): Promise<{ ended: number; queued: number }>;
   /** Lease up to `limit` due pending forgets. */
   claimWakeForgets(spec: { leaseSeconds: number; limit: number }): Promise<JobsWake.WakeForgetClaim[]>;
   /** Settle a leased forget; false when its lease no longer matches. */
   settleWakeForget(settle: JobsWake.WakeForgetSettle): Promise<boolean>;
+
+  // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
+
+  // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.
+  /** The ignored-privacy-label values of live pages by key (at most 50 keys, 100001 pages scanned); `sourceIds` narrows it. */
+  readIgnoredPrivacyLabelCounts(opts: { sourceIds?: string[]; timeoutMs: number }): Promise<DoctorDerivedSql.IgnoredPrivacyLabelRow[]>;
+  /** Live pages of unarchived sources chunked below the safe-chunk fence: the ones a repair rebuilds and the ones it keeps. */
+  countSafeIndexPending(sourceIds?: string[]): Promise<DoctorDerivedSql.RebuildableCounts>;
+  /** Live pages whose text projection is behind and whose body holds a private key block: rebuildable and kept. */
+  countCredentialProjectionPending(sourceIds?: string[]): Promise<DoctorDerivedSql.RebuildableCounts>;
+  /** Live pages per source and stored type, split by whether gbrain writers wrote them. */
+  countPagesByTypeAndOwner(sourceIds?: string[]): Promise<DoctorDerivedSql.PageTypeOwnerRow[]>;
+  /** Expired tombstones of a source the belief ledger records, in scan order. */
+  listRecordedTombstones(hours: string, released: readonly number[]): Promise<DoctorDerivedSql.RecordedTombstoneRow[]>;
+  /** The derived-page visibility counts of `sourceIds` under a statement deadline. */
+  countDerivedVisibility(sourceIds: string[], timeoutMs: number): Promise<DoctorDerivedSql.DerivedVisibilityCounts>;
+  /** Live segmented pages of unarchived sources whose live generation rows do not tile the body. */
+  listUntiledSegmentedPageRows(sourceIds: readonly string[] | null, slugs: readonly string[] | null, limit: number): Promise<DoctorDerivedSql.UntiledPageRow[]>;
+  /** The next 200 inline pages after `afterId` carrying a timeline row no event page owns. */
+  listTimelineHistoryBatch(sourceIds: string[], afterId: number): Promise<DoctorDerivedSql.TimelineHistoryPageRow[]>;
+  /** The compiled text of pages by id. */
+  readPageCompiledTruths(ids: number[], timeoutMs?: number): Promise<Array<{ id: number; body: string | null }>>;
+  /** Age of the oldest live chunk with no vector in `column`, the chunks with no pending-since stamp, and whether the oldest predates the backfill. */
+  readEmbeddingBacklogAge(column: string): Promise<DoctorDerivedSql.EmbeddingBacklogAgeRow | undefined>;
+  /** Held and capped large pages with chunks still waiting for `column`, by source, state and reason. */
+  listBudgetLimitedRows(opts: { column: string; sourceId?: string; signature: string | null }): Promise<DoctorDerivedSql.BudgetLimitedRow[]>;
+  /** How many applying budget holds are older than a day, and the oldest update time. */
+  readBudgetHoldAge(): Promise<DoctorDerivedSql.BudgetHoldAge | undefined>;
+  /** The first 1000 image file rows with their source root and page source path. */
+  listImageAssetFiles(): Promise<DoctorDerivedSql.ImageAssetFileRow[]>;
+  /** Conversation pages held for an undetected format (at most 20, newest first) with the total. */
+  listAmbiguousExtractionInputs(): Promise<DoctorDerivedSql.AmbiguousExtractionRow[]>;
+  /** Page extraction receipts that read only part of their input, by pipeline and kind. */
+  listExtractionInputReceipts(): Promise<DoctorDerivedSql.ExtractionReceiptRow[]>;
+  /** Models whose derivation receipts say they had no price, with pipelines and pages. */
+  listUnpricedDerivationModels(): Promise<DoctorDerivedSql.UnpricedModelRow[]>;
+  /** Restorable re-extraction retirements no live generation ledger records, per source. */
+  listRestorableAtomRetirements(sourceIds: string[]): Promise<DoctorDerivedSql.RestorableAtomRetirementRow[]>;
+  /** Restorable re-extraction retirements a live generation ledger records. */
+  countLedgerCoveredAtomRetirements(sourceIds: string[]): Promise<number>;
+  /** Live generations that retired items within the last `restoreDays` days, by source and kind. */
+  listLiveGenerationRetirements(sourceIds: string[], restoreDays: number): Promise<DoctorDerivedSql.GenerationRetirementRow[]>;
+  /** Held derived generations by source, kind and reason. */
+  listHeldGenerations(sourceIds: string[]): Promise<DoctorDerivedSql.HeldGenerationRow[]>;
+  /** Pages a create member wrote for an activation that never happened and no live generation owns. */
+  listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null): Promise<DoctorDerivedSql.OrphanGenerationCandidateRow[]>;
+  /** The atom provenance drift counts (none when the aggregate returned no row). */
+  readAtomProvenanceCounts(): Promise<DoctorDerivedSql.AtomProvenanceCounts | undefined>;
+  /** The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text. */
+  readExtractRollup7d(withExpected: boolean): Promise<DoctorDerivedSql.ExtractRollupRow[]>;
+  /** The recorded halt reasons of the 7-day extract rollup, per kind and reason. */
+  listRecordedHaltReasons7d(): Promise<DoctorDerivedSql.RecordedHaltReasonRow[]>;
+  // Doctor persistence reads (engine-sql/doctor-persistence.ts): the statements the persistence checks ran through executeRaw.
+  /** Every counter row of the brain and of each principal, in key order. */
+  listCapacityCounters(): Promise<DoctorPersistenceSql.CapacityCounterRow[]>;
+  /** The three sources holding the most outstanding slots (of one principal when given), most stalled (ten minutes or older) first. */
+  listOutstandingHolders(principal: DoctorPersistenceSql.RequestPrincipal | null): Promise<DoctorPersistenceSql.OutstandingHolderRow[]>;
+  /** Rows in `persistence_requests`: the planner's estimate (Postgres, `estimate`) or the exact count. */
+  countPersistenceRequestRows(estimate: boolean): Promise<{ rows: string } | undefined>;
+  /** The lifetime request ids of the brain and of each principal, in key order. */
+  listLifetimeCounters(): Promise<DoctorPersistenceSql.LifetimeCounterRow[]>;
+  /** Admissions inside the last 7 days among the newest 10,000 (of one principal when given), and the oldest of those. */
+  readAdmissionSample(principal: DoctorPersistenceSql.RequestPrincipal | null): Promise<DoctorPersistenceSql.AdmissionSample | undefined>;
+  /** The oldest 100 running requests with their claim state, age, root progress inside `maxClaimMs` and the queue behind them. */
+  listRunningRequestStalls(maxClaimMs: number): Promise<DoctorPersistenceSql.RunningRequestStallRow[]>;
+  /** Hosts with a live full or promoted consumer heartbeat (renewed in the last 5 minutes) and the age of the oldest. */
+  readLiveConsumerSummary(): Promise<DoctorPersistenceSql.LiveConsumerSummary | undefined>;
+  /** Each terminal-bytes counter beside the receipts and topology changes it should equal, and the true-up clamp setting. */
+  readCounterDrift(clampedKey: string): Promise<DoctorPersistenceSql.CounterDriftRow[]>;
+  /** The newest request sequence, or null on an empty journal. */
+  readMaxRequestSequence(): Promise<string | null>;
+  /** Maintenance submit_job slugs refused `threshold` times or more with the same write and code inside `windowHours`. */
+  listRefusalBreakerRows(sourceId: string, windowHours: number, threshold: number, limit: number): Promise<DoctorPersistenceSql.RefusalBreakerRow[]>;
+  /** Slugs with a source_changed receipt after sequence `floor` (up to 100), with the total of them. */
+  listRecentDriftReceiptSlugs(sourceId: string, floor: string, message: string): Promise<Array<{ slug: string; total: number }>>;
+  /** Slugs with a source_changed receipt at or below sequence `floor` (up to 101), under a `timeoutMs` bound. */
+  listOlderDriftReceiptSlugs(sourceId: string, floor: string, message: string, timeoutMs: number): Promise<Array<{ slug: string }>>;
+  /** Writes in the last 7 days the database refused: by the managed-writer guard, by another trigger, and unclassified P0001. */
+  readPublicationRefusals(): Promise<DoctorPersistenceSql.PublicationRefusalRow | undefined>;
+  /** Effects that recorded a parked target and are not settled (of `sourceIds` when given). */
+  countParkedEffects(sourceIds: string[] | null): Promise<number>;
+  /** The first 20 parked effects with their request, and whether the binding they were parked under is gone. */
+  listParkedEffects(sourceIds: string[] | null): Promise<DoctorPersistenceSql.ParkedEffectRow[]>;
+  /** Held Git effects per source and worktree: retrying and parked counts, the codes of `codes` that hold them and the oldest request. */
+  listGitPushHoldRows(codes: string[], sourceIds: string[] | null): Promise<DoctorPersistenceSql.GitPushHoldRow[]>;
+  /** Queued writer_busy effects per source: how many waited longer than `stallMs`, how many are busy, since when, and the most retries. */
+  listStalledCatchupRows(sourceIds: string[] | null, stallMs: number): Promise<DoctorPersistenceSql.StalledCatchupRow[]>;
+  /** Parked Git targets per source, error code and former binding. */
+  listParkedGroupRows(sourceIds: string[] | null): Promise<DoctorPersistenceSql.ParkedGroupRow[]>;
+  /** Committed writes' stale queued or failed embedding effects: all, the failed, and the retry-queued. */
+  readStaleEmbeddingCounts(sourceIds: string[] | null): Promise<DoctorPersistenceSql.StaleEmbeddingCounts>;
+  /** The first 10 stale embedding effects. */
+  listStaleEmbeddingEffects(sourceIds: string[] | null): Promise<DoctorPersistenceSql.StaleEmbeddingEffectRow[]>;
+  /** Source bindings whose source is gone or was re-created, by source id, up to `limit` when given. */
+  listOrphanBindingRows(limit: number | null): Promise<DoctorPersistenceSql.OrphanBindingRow[]>;
+  /** The persistence identity as text, or null when the schema has no `persistence_brain` row. */
+  readPersistenceBrainIdText(): Promise<string | null>;
+  /** Every managed worktree id. */
+  listWorktreeIds(): Promise<string[]>;
+  /** The local paths of the active sources and of the worktrees `hostId` binds. */
+  listManagedRoots(hostId: string | null): Promise<DoctorPersistenceSql.ManagedRootRow[]>;
+  /** Sources with live database-only pages: the page count, whether the source has a binding, and its local path. */
+  listUnboundSourcePages(): Promise<DoctorPersistenceSql.UnboundSourcePageRow[]>;
+  /** Committed requests of the last `days`, grouped per role, host, principal and version. */
+  listRecentWriterVersions(days: number): Promise<DoctorPersistenceSql.RecentWriterVersionRow[]>;
+  /** Request ids of the page, fact and take purges of the last `days` (up to `cap`). */
+  listRecentPurgeRequests(days: number, cap: number): Promise<string[]>;
+  /** Active worktree refreshes older than `minutes`. */
+  listStuckWorktreeRefreshes(minutes: number): Promise<DoctorPersistenceSql.StuckWorktreeRefreshRow[]>;
+  /** Every active source's binding with its worktree owner (of `sourceIds` when given). */
+  listSourceBindingsForMovement(sourceIds: string[] | null): Promise<DoctorPersistenceSql.MovementBindingRow[]>;
+  /** The first 500 running claims that carry an owner, on worktrees `hostId` owns or on no worktree. */
+  listRunningClaimOwners(hostId: string): Promise<DoctorPersistenceSql.RunningClaimOwnerRow[]>;
+  /** Worktree bindings owned by a host other than `hostId`. */
+  listOwnerBindings(hostId: string): Promise<DoctorPersistenceSql.OwnerBindingRow[]>;
+  /** The newest consumer heartbeat of each of `hostIds`. */
+  listConsumerOwners(hostIds: string[]): Promise<DoctorPersistenceSql.ConsumerOwnerRow[]>;
+  /** The caller writes of `sourceIds` a managed-writer guard or a file drift refused, with the intent's pin and revision state, by sequence. */
+  listCallerRefusalRows(sourceIds: string[], operations: string[]): Promise<DoctorPersistenceSql.CallerRefusalRow[]>;
+  /** The refused receipts of `sourceIds` that compaction already emptied. */
+  countCompactedCallerRefusals(sourceIds: string[], operations: string[]): Promise<number>;
+  /** Per source, the put_page writes committed in the last 24 hours that adopted a local edit, and the paths. */
+  listLocalEditAdoptions(): Promise<DoctorPersistenceSql.LocalEditAdoptionRow[]>;
+  /** The recorded derivation-result sweeps of fact purges, oldest first. */
+  listDerivationPurgeSweeps(): Promise<DoctorPersistenceSql.DerivationPurgeSweepRow[]>;
+  // Doctor page reads (engine-sql/doctor-pages.ts): the page-table statements doctor checks ran through executeRaw.
+  /** Live pages without an `embed_skip` marker whose body and timeline are over `minBytes` bytes, largest first (at most 101). */
+  listOversizedPages(minBytes: number): Promise<DoctorPagesSql.OversizedPageRow[]>;
+  /** Live pages with title, body and timeline heads and frontmatter, newest update first (`limit` of them), or all of them (`null`). */
+  listScraperJunkCandidates(limit: number | null): Promise<DoctorPagesSql.ScraperJunkRow[]>;
+  /** Live pages whose frontmatter holds the key `marker` (`quarantine` or `content_flag`). */
+  countMarkedPages(marker: DoctorPagesSql.PageMarker): Promise<number>;
+  /** Live `always_load` pages stored in segments with more than `maxBytes` body bytes. */
+  countOversizedCorePages(maxBytes: number): Promise<number>;
+  /** Synthesized pages with no raw trace, raw data, evidence or exemption: their count and five slugs. */
+  readRawProvenanceGaps(): Promise<DoctorPagesSql.RawProvenanceGaps>;
+  /** Live unverified auto-extracted pages created more than `days` days ago (in `sourceId` when given). */
+  countUnverifiedExtractions(days: number, sourceId: string | null): Promise<number>;
+  /** Groups of live pages sharing a content hash within a source (at most 51). */
+  listContentHashDuplicates(): Promise<DoctorPagesSql.ContentHashDuplicateRow[]>;
+  /** Live conversation pages imported from a transcript. */
+  countTranscriptImportPages(): Promise<number>;
+  /** Every page row, soft-deleted pages included. */
+  countPageRows(): Promise<number>;
+  /** Page rows (soft-deleted included) whose slug starts with `prefix`, taken literally. */
+  countPagesBySlugPrefix(prefix: string): Promise<number>;
+  /** Live page rows. */
+  countLivePages(): Promise<number>;
+  /** The earliest `created_at` of any page row (soft-deleted included), or null. */
+  readOldestPageCreatedAt(): Promise<string | Date | null>;
+  /** Page rows per stored `trust_tier`. */
+  countPageTrustTiers(): Promise<DoctorPagesSql.TrustTierCount[]>;
+  /** Live pages with at least one outgoing `mentions` link. */
+  countPagesWithMentionLinks(): Promise<number>;
+  /** Image-asset chunks with an image vector whose modality is not `image`. */
+  countImageModalityMismatches(): Promise<number>;
+  /** Live image pages, those with no image vector and those with no recorded `source_path`. */
+  readImagePageCoverage(): Promise<DoctorPagesSql.ImagePageCoverage>;
+  /** Live `facts` pages in (source, slug) order with the bounded body prefix. */
+  listFactsPageBodies(): Promise<DoctorPagesSql.FactsPageBody[]>;
+  /** Live pages whose `source_path` has a bracket or a control character. */
+  listBracketPathPages(): Promise<DoctorPagesSql.BracketPathPage[]>;
+  /** Live pages of an unarchived source whose slug matches the slug-change pattern (in `sourceIds` when given), in id order. */
+  listSlugPathCandidates(sourceIds: string[] | null): Promise<DoctorPagesSql.SlugPathCandidate[]>;
+  /** Pages awaiting atom extraction (no atom of their current content yet, no held or tombstoned disposition) in the query's source scope; `opts.signal` cancels the count on the SQL engines. */
+  countAtomExtractionBacklog(query: AtomBacklogSql.AtomBacklogQuery, opts?: { signal?: AbortSignal }): Promise<number>;
+  /** The projection queue by class (pending text, failed, sealable and reimport images, protected, archived) in a read scope, the age of the oldest job that needs work, and the database time of the count. */
+  readProjectionBacklog(scope: PageReadScope): Promise<ProjectionBacklogSql.ProjectionBacklogCounts>;
+  /** Unsupported-image holds (managed_image_sync_unsupported) per source's current incarnation among sourceIds; sources with none are not listed. */
+  listGitImageHoldCounts(sourceIds: string[]): Promise<DoctorSearchSql.GitImageHoldCount[]>;
+  /** Pages whose body is under 30% of their raw content (over 1000 characters, with H2/H3 headings), at most 101. */
+  listTruncatedMarkdownBodies(): Promise<DoctorSearchSql.TruncatedMarkdownBody[]>;
+  /** Segmented pages whose raw content is over 1000 characters with H2/H3 headings (the length comparison skips them). */
+  countSegmentedMarkdownBodies(): Promise<number>;
+  /** Bodies of the 1000 newest live pages (NULL for a segmented page), within sourceIds when given. */
+  listRecentPageBodies(sourceIds: string[] | null): Promise<DoctorSearchSql.RecentPageBody[]>;
+  /** How many of the 1000 newest live pages are stored in segments, within sourceIds when given. */
+  countSegmentedRecentPages(sourceIds: string[] | null): Promise<number>;
+  /** Chunked pages search serves whose slug matches the LIKE pattern (backslash escapes), within sourceIds when given. */
+  countPagesHiddenByPrefix(pattern: string, sourceIds: string[] | null): Promise<number>;
+  // Doctor search and knowledge reads (engine-sql/doctor-search.ts): the statements the alias, type, entity, body, link, search-policy, hold, projection and atom doctor checks ran through executeRaw.
+  /** Alias rows (both tables) whose target page row is absent, per source, in source order. */
+  listOrphanedAliasCounts(): Promise<DoctorSearchSql.OrphanedAliasCount[]>;
+  /** Alias rows (both tables) whose target page is soft-deleted. */
+  readSoftDeletedAliasCounts(): Promise<DoctorSearchSql.SoftDeletedAliasCounts>;
+  /** Every distinct (source, type) among live typed pages, in source then type order. */
+  listPageTypePairs(): Promise<DoctorSearchSql.PageTypePair[]>;
+  // Doctor reads, second set (engine-sql/doctor-acc.ts): the access, token, OAuth, request-log, decide, chronicle, feedback, belief and volunteer statements doctor checks ran through executeRaw.
+  /** Whether the database role cannot read the folder access tables (row-level security hides them). */
+  isAccessStateUnreadable(): Promise<boolean>;
+  /** Folder and page rules that do not cover the pages derived from their pages, by source and rule id. */
+  listRawOnlyRules(): Promise<DoctorAccSql.RawOnlyRuleRow[]>;
+  /** Enabled members marked as an audience, by id. */
+  listAudienceMemberIds(): Promise<string[]>;
+  /** Enabled members that carry the labelled-only grant, by id. */
+  listLabelledOnlyMemberIds(): Promise<string[]>;
+  /** Every access member row with its groups, removed members only with `includeRemoved`. */
+  listAccessMemberRows(includeRemoved: boolean): Promise<DoctorAccSql.Row[]>;
+  /** Active tokens and live OAuth clients that carry an attest actor, as JSON rows. */
+  listAttestCredentialRows(): Promise<DoctorAccSql.AttestCredentialRow[]>;
+  /** Active (not revoked) API token rows, oldest first. */
+  listActiveAccessTokenRows(): Promise<DoctorAccSql.Row[]>;
+  /** OAuth client rows not deleted, by id. */
+  listActiveOauthClientRows(): Promise<DoctorAccSql.Row[]>;
+  /** Every OAuth client's id, auth method and secret hash. */
+  listOauthClientAuthShapes(): Promise<DoctorAccSql.OauthClientAuthShape[]>;
+  /** Federated read grants of live OAuth clients that name no source. */
+  listDanglingFederatedReads(): Promise<DoctorAccSql.DanglingFederatedRead[]>;
+  /** Derived-workspace sources (id ending in `suffix`) with no path, pages, facts or live client naming them. */
+  listOrphanWorkspaceSources(suffix: string): Promise<Array<{ id: string }>>;
+  /** Live clients that look self-registered with a scope matching `scopeRegex`; null when the grant audit schema is absent. */
+  listPrivilegedDcrClients(scopeRegex: string): Promise<DoctorAccSql.PrivilegedDcrClient[] | null>;
+  /** What the MCP request log occupies, in bytes (the engine's own measure). */
+  readMcpRequestLogBytes(): Promise<number>;
+  /** The MCP request log's row count: an estimate on Postgres, a count bounded to `limit` rows elsewhere. */
+  countMcpRequestLogRows(limit: number): Promise<number>;
+  /** Whether a request older than `days` days that retention would delete (operation not in `keepOperations`) is waiting. */
+  hasMcpLogRowsPastWindow(days: number, keepOperations: readonly string[]): Promise<boolean>;
+  /** `pages.knowledge_revision`: null when absent, else whether the column is NOT NULL (the revision backfill finished). */
+  readKnowledgeRevisionNotNull(): Promise<boolean | null>;
+  /** Which columns the provenance drift scan can read: trust tiers, then write attribution. */
+  readDriftSchema(): Promise<DoctorAccSql.DriftSchema>;
+  /** One batch of a source's live pages after page id `at.after`, or the page at `at.slug`, with the writer of its revision. */
+  listDriftLiveRows(schema: DoctorAccSql.DriftSchema, sourceId: string, at: { after?: number; slug?: string }): Promise<DoctorAccSql.DriftLiveRow[]>;
+  /** The versions of the given pages, oldest first, with the writer of each. */
+  listDriftVersionRows(schema: DoctorAccSql.DriftSchema, pageIds: number[]): Promise<DoctorAccSql.DriftVersionRow[]>;
+  /** Whether the index `name` exists (the origin index read on a non-Postgres engine). */
+  originIndexPresent(name: string): Promise<boolean>;
+  /** Life Chronicle ledger rollups of the automatic rows. */
+  readChronicleLedgerStats(): Promise<DoctorAccSql.ChronicleLedgerStats>;
+  /** Pages holding live events a newer chronicle extraction did not produce, and how many such events. */
+  readChronicleDuplicateEvents(): Promise<DoctorAccSql.ChronicleDuplicateEvents>;
+  /** Retrieval feedback counts, last rating time, the busiest client's share and the lowest and highest page weights. */
+  readFeedbackStatus(): Promise<DoctorAccSql.FeedbackStatusRow>;
+  /** Context-volunteer events of the last 7 days per channel; null `sourceIds` reads the whole brain. */
+  listVolunteerChannels(sourceIds: readonly string[] | null): Promise<DoctorAccSql.VolunteerChannelRow[]>;
+  // Doctor checkpoint reads (engine-sql/doctor-checkpoints.ts): the op_checkpoints and ingest_log statements doctor ran through executeRaw.
+  /** The fence candidate records of live source incarnations (one source's when `sourceIds` is given), by fingerprint. */
+  listFenceCandidateRecords(op: string, sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.CandidateRecord[]>;
+  /** Every derived-origin park whose page is still a tombstone, oldest first. */
+  listDerivedOriginParks(op: string): Promise<DoctorCheckpointsSql.DerivedOriginPark[]>;
+  /** Every purge-failure record whose tombstone still exists as recorded, by fingerprint. */
+  listPurgeParks(op: string): Promise<DoctorCheckpointsSql.PurgeParkRow[]>;
+  /** The sync soak counter record of each of the given UTC days (a day with none is absent). */
+  readSoakCounterRows(op: string, days: readonly string[]): Promise<Array<Record<string, unknown>>>;
+  /** The fingerprints of unfinished managed-sync cursors that no newer failure row explains. */
+  listUnfinishedManagedSyncCursors(): Promise<string[]>;
+  /** The managed-sync failure rows of live source incarnations that have no cursor row (the stops a pass left). */
+  listManagedSyncPassStops(sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.ManagedSyncPassStopRow[]>;
+  /** The headers of unfinished managed-sync cursors of registered sources. */
+  listManagedSyncBacklogHeaders(): Promise<DoctorCheckpointsSql.ManagedSyncBacklogHeader[]>;
+  /** One managed-sync pass row (record, write time and the engine clock at the read), or null when there is none. */
+  readManagedSyncPassRow(op: string, fingerprint: string): Promise<DoctorCheckpointsSql.ManagedSyncPassRowRecord | null>;
+  /** The pass rows of the sources' live incarnations (every source when `sourceIds` is omitted). */
+  listLiveManagedSyncPassRows(op: string, sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.LiveManagedSyncPassRowRecord[]>;
+  /** The non-archived sources whose unfinished managed-sync cursor waits at its checkpoint step. */
+  listCheckpointBlockedSources(sourceIds?: readonly string[]): Promise<string[]>;
+  /** The open identity-downgrade records (no disposition, old page still soft-deleted by that sync), oldest first, with the live slugs at the new path. */
+  listOpenIdentityDowngrades(op: string, sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.OpenIdentityDowngradeRow[]>;
+  /** The held managed-atom rows of the sources' current incarnations that no later run completed, excluding sources of role `excludedRole`. */
+  listHeldManagedAtomRows(sourceIds: readonly string[] | undefined, excludedRole: string): Promise<DoctorCheckpointsSql.HeldManagedAtomRow[]>;
+  /** The stored doctor last-known entries of one op: the entry name and its value. */
+  readDoctorLastKnown(op: string): Promise<Array<{ fingerprint: string; entry: unknown }>>;
+  /** Upserts one doctor last-known row per entry (the fingerprint is the entry name). */
+  writeDoctorLastKnown(op: string, rows: readonly DoctorCheckpointsSql.DoctorLastKnownRow[]): Promise<void>;
+  /** The sync-admission setting: the config value at `key` and the dating row's value and `set_at` (null when none). */
+  readSyncAdmissionSettingRow(key: string, op: string, fingerprint: string): Promise<DoctorCheckpointsSql.SyncAdmissionSettingRecord>;
+  /** The summary of the newest connector receipt in the ingest log, or null when there is none. */
+  readLatestConnectorReceipt(): Promise<string | null>;
+  /** The `facts:absorb` ingest rows of the last 24 hours grouped by source and reason, by source then count. */
+  listFactsAbsorbFailureGroups(): Promise<DoctorCheckpointsSql.FactsAbsorbFailureGroup[]>;
+  /** The credential re-chunk holds that still apply at chunker generation `producer`, oldest page first (doctor credential_projection_pending, text_projection_readiness). */
+  listCredentialResealHoldRows(producer: string, sourceIds?: readonly string[]): Promise<DoctorCheckpointsSql.CredentialResealHoldRow[]>;
+  // Doctor terminal reads: the grouped terminal write failure aggregate, its drill-down batch and the open-pass blocker statements doctor ran through executeRaw
+  /** The terminal receipts of the window and every receipt holding a recovery record, grouped on the columns the classifier reads, with the per-source totals row (`opts` bounds the statement on Postgres). */
+  readTerminalFailureGroups(query: DoctorTerminalSql.TerminalGroupsQuery, opts?: DoctorTerminalSql.TerminalReadOpts): Promise<DoctorTerminalSql.TerminalGroupRow[]>;
+  /** One source's terminal receipts and recovery holders, newest first by sequence, each with the later request that made it moot. */
+  listTerminalFailureBatch(query: DoctorTerminalSql.TerminalBatchQuery, opts?: DoctorTerminalSql.TerminalReadOpts): Promise<DoctorTerminalSql.TerminalBatchRow[]>;
+  /** Non-archived sources whose open pass has its managed-sync checkpoint request pending, with the worktree and checkpoint request. */
+  listOpenPassCheckpointBlockers(passOp: string, sourceIds: readonly string[] | null): Promise<DoctorTerminalSql.OpenPassCheckpoint[]>;
+  /** The recovery rows and pending sync page or checkpoint requests of a worktree that block its pass checkpoint, other than the checkpoint itself. */
+  listWorktreeBlockerRequests(worktreeId: string, checkpoint: string): Promise<DoctorTerminalSql.WorktreeBlockerRequest[]>;
+  // Doctor brain reads: the page, tag, fact, source and checkpoint statements the storage, archive, backup, git-hold and connector checks ran through executeRaw
+  /** Live stored-object pages outside the shelf that no adoption tag marks, per source (the storage_manifest check's interim count). */
+  listInterimStoredObjectCounts(type: string, shelfSourceId: string, prefix: string, adoptedTag: string): Promise<DoctorBrainSql.InterimStoredObjectCount[]>;
+  /** The earliest `created_at` of any source row, or null for a brain with no source. */
+  readOldestSourceCreatedAt(): Promise<string | Date | null>;
+  /** Live pages of non-archived sources whose frontmatter has a `visibility` key (any letter case) that is not the text `private`. */
+  listVisibilityCandidatePages(sourceIds: readonly string[] | null): Promise<DoctorBrainSql.VisibilityCandidatePage[]>;
+  /** Held files of non-archived sources that a git hold of `holdOp` records as `visibility_noncanonical`. */
+  countVisibilityNoncanonicalHolds(holdOp: string, sourceIds: readonly string[] | null): Promise<number>;
+  /** The failed, conflicted or cancelled receipts that unfinished managed-sync cursors wait on. */
+  listContentBlockedReceipts(): Promise<DoctorBrainSql.ContentBlockedReceipt[]>;
+  /** The failed, conflicted or cancelled receipts a source's sync pass admitted (the receipt intent carries the pass id). */
+  listPassAdmittedReceipts(sourceId: string, passId: string): Promise<DoctorBrainSql.ContentBlockedReceipt[]>;
+  // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw
+  /** The unfinished managed-sync cursors of live source incarnations with their pending receipt, failure row and manifest path (`sourceIds` null reads every source). */
+  listManagedSyncCursorFailureRows(sourceIds: readonly string[] | null): Promise<DoctorSyncSql.ManagedSyncCursorFailureRow[]>;
+  /** The five rowsets the managed-sync orphan classification reads; `movedMessage` is the refusal message of a checkpoint that lost the last_commit race. */
+  listManagedSyncOrphanRowsets(sourceIds: readonly string[] | null, movedMessage: string): Promise<DoctorSyncSql.ManagedSyncOrphanRowsets>;
+  /** The cursor keys among `keys` that still have a durable managed-sync failure row, under any incarnation. */
+  listDurableManagedSyncFailureKeys(keys: readonly string[]): Promise<string[]>;
+  // Doctor reads over `sources` (engine-sql/doctor-sources.ts).
+  /** The rows of one doctor `sources` read (`variant` names the statement; `scope` confines it to some ids or one source). */
+  readDoctorSources<V extends DoctorSourcesSql.DoctorSourceVariant>(variant: V, scope?: DoctorSourcesSql.DoctorSourceScope): Promise<DoctorSourcesSql.DoctorSourceRows[V][]>;
+  /** Sources whose config says guest or that have a guest_sources row, with writers and ceiling; throws the missing-table error behind the guest-notes migration. */
+  listGuestSourceRows(): Promise<DoctorSourcesSql.GuestSourceRow[]>;
+  /** Live sources' checkout roots, and the roots the host's worktree bindings hold (none on an engine without managed persistence). */
+  listCheckoutRoots(hostId: string | null): Promise<DoctorSourcesSql.CheckoutRootRow[]>;
+  /** The sources whose commits sync, with their last commit, managed flag and this host's root; `sourceIds` null reads every source. */
+  listPendingRoster(sourceIds: readonly string[] | null, hostId: string | null): Promise<DoctorSourcesSql.PendingRosterRow[]>;
+  /** Live pages of the `default` source and how many of them record a source path. */
+  countDefaultSourceFiles(): Promise<DoctorSourcesSql.DefaultSourceFiles>;
+  // Doctor facts, fence and trust reads (engine-sql/doctor-facts-trust.ts).
+  /** Live pages of the conversation-pipeline `types` whose slug matches none of the LIKE `slugPatterns`. */
+  countConversationPipelinePages(types: readonly string[], slugPatterns: readonly string[]): Promise<number>;
+  /** Per source, the facts writes deferred for `reason` in the last 24 hours that no later completed facts-absorb job covers, when they persist (more than 10, or the oldest over an hour old). */
+  listPersistentWriterContention(reason: string): Promise<DoctorFactsTrustSql.WriterContentionRow[]>;
+  countRowTrustTiers(table: DoctorFactsTrustSql.TrustTierTable): Promise<DoctorFactsTrustSql.RowTrustTierCount[]>;
+  countLegacyUnknownBySource(ceilings: DoctorFactsTrustSql.LegacyIdCeilings, sourceIds?: readonly string[]): Promise<DoctorFactsTrustSql.LegacyUnknownRow[]>;
+  listTrustColumns(): Promise<DoctorFactsTrustSql.TrustColumnRow[]>;
+  listTrustClaimTargets(mode: DoctorFactsTrustSql.TrustClaimTargetMode, sourceIds?: readonly string[]): Promise<DoctorFactsTrustSql.TrustClaimTargetRow[]>;
+  countClaimLiftedRows(table: DoctorFactsTrustSql.ClaimLiftTable): Promise<number>;
+  // Fence census reads and writes (engine-sql/fence-census.ts).
+  listFenceCensusSources(sourceIds: readonly string[] | null): Promise<FenceCensusSql.FenceCensusSource[]>;
+  readFencePassHorizon(graceMs: number): Promise<string>;
+  listFenceCensusPagesById(sourceId: string, afterId: number, limit: number): Promise<FenceCensusSql.FenceCensusPage[]>;
+  listFenceCensusPagesUpdated(sourceId: string, lower: string, after: { at: string; id: number } | null, limit: number): Promise<FenceCensusSql.FenceCensusPage[]>;
+  listLiveFencePageIds(pageIds: readonly number[]): Promise<number[]>;
+  readFenceScanRecord(op: string, fingerprint: string): Promise<ScanRecord | null>;
+  writeFenceScanRecord(op: string, fingerprint: string, record: ScanRecord): Promise<void>;
+  upsertFenceCandidatePart(op: string, fingerprint: string, ids: { sourceId: string; incarnation: string; key: string }, part: 'page' | 'file', finding: PageFinding | FileFinding): Promise<void>;
+  clearFenceCandidateParts(op: string, fingerprints: readonly string[], part: 'page' | 'file'): Promise<void>;
+  readFenceTrendRecords(op: string, sourceIds: readonly string[], fromDay: string): Promise<FenceCensusSql.FenceTrendRecord[]>;
+  countSegmentedFencePages(sourceIds: readonly string[], walkedSourceIds: readonly string[]): Promise<number>;
+  readBudgetLedgerDay(scope: string, resolver: string, day: string): Promise<FenceCensusSql.BudgetLedgerDayRow | null>;
 }

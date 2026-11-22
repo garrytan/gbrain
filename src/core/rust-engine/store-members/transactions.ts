@@ -14,7 +14,8 @@
  * the stamp will read; the attribution, source-scope and quiescence settings stay on the transaction
  * (`RustTransactionScope.settings`), and so does the one planner setting the belief batch switches (`plan_cache_mode`;
  * the store has no planner, so it changes nothing else, and an unset one reads PGLite's default). Both end with the
- * transaction; a savepoint rollback restores both. Any other name refuses.
+ * transaction; a savepoint rollback restores both. Any other custom `gbrain.*` name Postgres accepts stays on the
+ * transaction too, unless schema SQL reads it; any other name refuses.
  *
  * Export only BrainEngine members from this file: index.ts spreads the whole module into STORE_MEMBERS.
  */
@@ -66,11 +67,26 @@ function seen(engine: RustEngine): Set<string> {
   return (engine._txScope?.root ?? engine)._seenSettings;
 }
 
+/**
+ * The `gbrain.*` settings schema triggers and functions read (`current_setting('gbrain.<name>'` in src) that no store
+ * writer reads yet. Kept in the transaction's map, one would change what Postgres does and nothing on Rust, so each
+ * refuses until the store reads it. test/rust-engine-shell.test.ts fails on a schema-read name outside the kept sets
+ * and this one.
+ */
+const SCHEMA_READ_SETTINGS: ReadonlySet<string> = new Set([
+  'gbrain.materializing_revision', 'gbrain.writer_quiesced', 'gbrain.topology_change', 'gbrain.refresh_barrier',
+  'gbrain.trust_generation_bumped', 'gbrain.guest_note', 'gbrain.graduation_run',
+]);
+/** Postgres's custom setting name: two or more simple identifiers separated by dots, here under `gbrain`. */
+const CUSTOM_SETTING_NAME = /^gbrain(\.[a-z_][a-z0-9_]*)+$/;
+/** A custom name no writer or schema SQL reads: the transaction keeps it in its own map, as Postgres keeps it. */
+const keepsCustomSetting = (name: string) => CUSTOM_SETTING_NAME.test(name) && !TRUST_SETTINGS.has(name) && !SCHEMA_READ_SETTINGS.has(name);
+
 /** Checks every name before any work: the alphabet first (PGLite's error), then the names this engine keeps. */
 function checkSettingNames(member: string, names: readonly string[]): void {
   for (const name of names) if (!SETTING_NAME.test(name)) throw new Error(`Invalid transaction setting name: ${name}`);
   for (const name of names) {
-    if (TRUST_SETTINGS.has(name) || SCOPE_SETTINGS.has(name) || PLANNER_SETTINGS.has(name)) continue;
+    if (TRUST_SETTINGS.has(name) || SCOPE_SETTINGS.has(name) || keepsCustomSetting(name) || PLANNER_SETTINGS.has(name)) continue;
     throw opError('engine_capability_missing',
       `This brain's engine does not keep the transaction setting ${name} yet (${member} needs the transactions capability for it), so nothing ran.`,
       'Run it on a pglite or postgres brain, or wait for a gbrain release whose Rust engine keeps that setting.',
@@ -118,7 +134,7 @@ export const applyTransactionSettings = async function applyTransactionSettings(
     if (trust.length) {
       await storeCall({ member: 'applyTransactionSettings' }, () => brain.applyWriteTrust(trust.map(([n]) => n), trust.map(([, v]) => v)));
     }
-    names.forEach((name, index) => { if (SCOPE_SETTINGS.has(name)) scope.settings.set(name, values[index] ?? ''); });
+    names.forEach((name, index) => { if (SCOPE_SETTINGS.has(name) || keepsCustomSetting(name)) scope.settings.set(name, values[index] ?? ''); });
     for (const [name, value] of planner) scope.settings.set(name, value);
   }
   const known = seen(this);

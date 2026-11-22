@@ -173,7 +173,8 @@ Reserved tags:
 | persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
 | access_rules (folder rules, pending prefixes, policy state and revisions; the module owns the sub-tags) | `z` | `ACCESS_RULES` | no |
 | reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
-| embedding_holds, a page's `page_embedding_budget` state and reason | `2` | `EMBEDDING_HOLD` | yes (a hard page delete removes it) |
+| session_state | `y` | `SESSION_STATE` | no |
+| access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -562,7 +563,12 @@ store keeps the same rule in `pages.rs`.
   `engine-sql/generation-atom-reads.ts`, store in `generations/atom_reads.rs`), and the take rows
   adapter's before-state read (`readTakePreimages`, capability `takes`, SQL in `engine-sql/takes-reads.ts`, store in `takes/reads.rs`). The store answers them in `facts/fence.rs` in the default write
   context (no writer tier, nothing opened), so `listFenceFactRows` is empty until the Rust write context supplies the
-  writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md).
+  writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md). The fence
+  guard's read of held timeline rows is the typed member `listHeldTimelineRows` (capability `timeline`, SQL in
+  `engine-sql/trust-fence.ts`), served from `timeline/held.rs`; see "Held timeline rows" in
+  [`rust/docs/store/timeline_queries.md`](../../rust/docs/store/timeline_queries.md). Its read of held takes is
+  `listHeldTakeRows` (capability `takes`, the same SQL text `heldRows` sent), served from `takes/held.rs`; see "Held
+  takes" in [`rust/docs/store/takes.md`](../../rust/docs/store/takes.md).
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
 #### Nullable page fields (`PageText` in `pages.rs`)
@@ -1401,7 +1407,7 @@ Chunk vectors and vector search.
 - **Files:** `gbrain-store/src/vectors.rs`, `gbrain-napi/src/families/vectors.rs`, `store-members/vectors.ts`.
 - **Tag:** `X` (`VECTOR`). Cascade on page delete: yes.
 - **Members (2), capability:** `vector_search` (1), `takes` (1).
-- **Store and binding:** `searchVector` (`search_vector`), `searchTakesVector` (`search_takes_vector`).
+- **Store and binding:** `searchVector` (`search_vector`), `searchTakesVector` (`search_takes_vector`). `searchTakesVector` is built in the takes files: `gbrain-store/src/takes/vector_search.rs`, `gbrain-napi/src/families/takes.rs` and `store-members/takes.ts`.
 - **Postgres tables:** Chunk and take vectors (`embedding` columns), the vector index.
 - **Keys:** `X` (core sub-layout).
 - **Depends on:** Nothing. The store serves both members with an exact scan over the stored vectors (`rust/docs/store/vectors.md`).
@@ -1498,7 +1504,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `i x y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive and `h` is the derived generation ledger).
+until then no family writes under them. The free lowercase bytes today are `z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive, `x` is access_members and `h` is the derived generation ledger).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|
@@ -1736,16 +1742,12 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     counts and inserts in one write, so no second admission can see the count before the insert. The cases in
     `test/minions-admission.test.ts` stay as they are. Budget reservations (`budget-meter.ts`) and rate leases
     (`rate-leases.ts`) follow the same rule: count, check the cap, write, in one member.
-  - Delegated admission and retry: the refuse-before-write guard. `admitJob` with a delegated client's policy and
-    `retryJob` run the TypeScript policy on a narrow handle (`src/core/rust-engine/delegated-policy-handle.ts`) that
-    serves the job reads, `countOpenJobsByOwner` and `readJobSourceState` from the store. When the policy has called
-    `lockOAuthClient`, the handle records it (`handle.locked()`), and the member refuses (`engine_capability_missing`)
-    before it writes anything: the lock, the capacity count and the write are separate store calls, so they are not
-    one admission. The guard stays until admission is one store write. The store keeps no `oauth_clients` or
-    `access_tokens` table, so the policy's grant read refuses the same way, and `lockOAuthClient` called directly
-    refuses too (a lock that locks nothing would hide a missing guarantee). No production caller reaches the engine
-    member on a Rust brain: its one caller, `lockDelegatedSubmission` (`src/core/minions/delegated-admission.ts:38`),
-    runs on the handle above, so the member stays refused.
+  - Delegated admission and retry: one engine transaction. `admitJob` with a delegated client's policy runs the lock,
+    a store probe (`capacityCheck: true`, which answers a coalesce or stops where the capacity check runs and writes
+    nothing), the policy's capacity check and the store admission in one `transaction`, and `retryJob` runs its job
+    read, policy and update in one. The store admits one write transaction at a time, so the policy's count and the
+    insert are one admission. `lockOAuthClient` resolves with nothing to do: inside a transaction the store's single
+    writer holds what the row lock holds.
   - Cycle locks. PGLite's acquire (`src/core/db-lock.ts`) is an upsert that takes a held row only when
     `ttl_expires_at` has passed and `last_refreshed_at` is null or older than the steal grace, and returns the fence
     `extract(epoch from acquired_at)`. `acquireLease` does the same check and write in one member and returns the same
@@ -1933,6 +1935,9 @@ and write provenance on content rows, and the trust records.
     stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` and the four fact list reads
     (`listFactsByEntity`, `listFactsSince`, `listFactsKeyset`, `listFactsBySession`, which hot memory reads with the
     caller's eligibility) honour a read eligibility.
+  - Built: the trust scan's cursor, claimed-source check and id ceilings are typed members
+    (`engine-sql/trust-scan.ts`), served by `trust/scan_state.rs` and `persistence/trust_scan_cursor.rs`, so a scan on a
+    Rust brain stops and resumes as on PGLite.
   - Built: the `executeRaw` reads of `trust_tier` in core memory, the eligibility scan, belief history, page history
     (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
     `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,

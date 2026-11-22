@@ -44,7 +44,9 @@
 //! `updateSlug` writes slug aliases and rename history. The private-provenance policy
 //! (`facts/privacy.rs`) reads both through [`read_slug_alias`] and [`renamed_to`].
 
-use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, INVALID_STATE, Result, StoreError};
+use crate::error::{
+    CONSTRAINT_VIOLATION, INVALID_ARGUMENT, INVALID_STATE, Result, STORE_CORRUPT, StoreError,
+};
 use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::page_columns::PageColumns;
@@ -238,7 +240,11 @@ fn scan_tails(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<Stri
 }
 
 /// The `(alias_norm, origin)` rows of the page at `(source, slug)`.
-fn page_alias_rows(read: &dyn KvRead, source: &str, slug: &str) -> Result<Vec<(String, String)>> {
+pub(crate) fn page_alias_rows(
+    read: &dyn KvRead,
+    source: &str,
+    slug: &str,
+) -> Result<Vec<(String, String)>> {
     Ok(
         scan_tails(read, &prefix(PAGE_ALIAS_BY_SLUG, &[source, slug]))?
             .into_iter()
@@ -257,8 +263,15 @@ pub(crate) fn alias_row_slugs(
     source: &str,
     alias: &str,
 ) -> Result<BTreeSet<String>> {
+    Ok(alias_rows(read, source, alias)?.into_iter().collect())
+}
+
+/// The slug of each `page_aliases` row of `alias` in `source`, one per (slug, origin) row, in
+/// slug then origin byte order: a slug the alias names under two origins appears twice, as the
+/// SQL join returns it.
+pub(crate) fn alias_rows(read: &dyn KvRead, source: &str, alias: &str) -> Result<Vec<String>> {
     if has_nul(&[source, alias]) {
-        return Ok(BTreeSet::new());
+        return Ok(Vec::new());
     }
     Ok(scan_tails(read, &prefix(PAGE_ALIAS, &[source, alias]))?
         .into_iter()
@@ -337,6 +350,48 @@ fn delete_slug_alias(tx: &mut dyn KvWrite, source: &str, alias: &str) -> Result<
         tx.delete(&key(SLUG_ALIAS, &[source, alias]))?;
     }
     Ok(())
+}
+
+/// The `(source, slug)` pages the rows of `slug_aliases` and of `page_aliases` name.
+pub(crate) type AliasTargets = (Vec<(String, String)>, Vec<(String, String)>);
+
+/// The `(source, slug)` page every alias row names, one entry per row: the `canonical_slug` of each
+/// `slug_aliases` row, then the `slug` of each `page_aliases` row. The doctor's alias check joins
+/// them to the page rows, which the alias rows outlive.
+pub(crate) fn alias_row_targets(read: &dyn KvRead) -> Result<AliasTargets> {
+    let mut slug_aliases = Vec::new();
+    let root = prefix_of(SLUG_ALIAS);
+    let mut bad = None;
+    scan_prefix(read, &root, false, &mut |k, v| {
+        match serde_json::from_slice::<SlugAliasRecord>(v) {
+            Ok(row) => {
+                if let [source, _alias] = tail(k, root.len()).as_slice() {
+                    slug_aliases.push((source.clone(), row.canonical_slug));
+                }
+            }
+            Err(e) => bad = Some(e),
+        }
+        bad.is_none()
+    })?;
+    if let Some(e) = bad {
+        return Err(StoreError::new(
+            STORE_CORRUPT,
+            format!("slug alias row: {e}"),
+        ));
+    }
+    let root = prefix_of(PAGE_ALIAS);
+    let mut page_aliases = Vec::new();
+    for (_, parts) in scan_tails(read, &root)? {
+        if let [source, _alias_norm, slug, _origin] = parts.as_slice() {
+            page_aliases.push((source.clone(), slug.clone()));
+        }
+    }
+    Ok((slug_aliases, page_aliases))
+}
+
+/// `keys::ALIAS` and `sub`: every key of one alias table.
+fn prefix_of(sub: u8) -> Vec<u8> {
+    vec![keys::ALIAS, sub]
 }
 
 /// Every `new_slug` of the `slug_rename_history` rows of `old` in `source`, in key order.

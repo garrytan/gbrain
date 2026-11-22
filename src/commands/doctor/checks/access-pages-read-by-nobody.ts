@@ -42,7 +42,7 @@ async function verdict(ctx: DoctorContext): Promise<Check> {
     add(await engine.executeRaw<Row>(
       'SELECT source_id, slug, page_readers AS readers FROM pages WHERE deleted_at IS NULL AND page_readers IS NOT NULL AND NOT (page_readers && $1::text[]) AND NOT ($2 = ANY(page_readers)) AND NOT starts_with(slug, $3)',
       [live, NOBODY, MEMBER_PAGE_PREFIX], { timeoutMs: Math.max(timeLeft(), 1) }));
-    const sources = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(r => r.id);
+    const sources = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"')).map(r => r.id);
     rules: for (const source of sources) {
       for (const rule of await appliedRules(engine, source)) {
         if (timeLeft() <= 0) { partial = true; break rules; }

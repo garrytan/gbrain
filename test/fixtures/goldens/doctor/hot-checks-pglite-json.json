@@ -798,16 +798,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1482,16 +1482,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1532,16 +1532,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1844,6 +1844,10 @@
                 },
                 {
                   "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_source_slug_c",
                   "state": "valid"
                 }
               ],
@@ -5133,16 +5137,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -6363,16 +6367,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -7047,16 +7051,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -7097,16 +7101,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -7409,6 +7413,10 @@
                 },
                 {
                   "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_source_slug_c",
                   "state": "valid"
                 }
               ],
@@ -10710,16 +10718,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
                 "1024",
-                "--path",
-                "<home>/.gbrain/brain.pglite"
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"

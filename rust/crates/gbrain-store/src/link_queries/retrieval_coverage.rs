@@ -117,7 +117,7 @@ pub struct ReadinessRow {
 
 /// `projectionClassSql`, with the two image repair classes as one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProjectionClass {
+pub(super) enum ProjectionClass {
     Archived,
     Text,
     Protected,
@@ -125,13 +125,13 @@ enum ProjectionClass {
 }
 
 /// The archived flag of each source a read meets: `Some(archived)` for a present source.
-struct Sources<'a> {
+pub(super) struct Sources<'a> {
     read: &'a dyn KvRead,
     archived: HashMap<String, Option<bool>>,
 }
 
 impl<'a> Sources<'a> {
-    fn new(read: &'a dyn KvRead) -> Self {
+    pub(super) fn new(read: &'a dyn KvRead) -> Self {
         Self {
             read,
             archived: HashMap::new(),
@@ -149,14 +149,14 @@ impl<'a> Sources<'a> {
 }
 
 /// `servedTextProjectionFilter`.
-fn served(page: &PageRecord) -> bool {
+pub(crate) fn served(page: &PageRecord) -> bool {
     page.text_projection_revision
         .as_deref()
         .is_some_and(|r| r == page.knowledge_revision || r == ACTIVATION_SERVED_REVISION)
 }
 
 /// `projectionClassSql` for a page of a present source.
-fn class(page: &PageRecord, archived: bool) -> ProjectionClass {
+pub(super) fn class(page: &PageRecord, archived: bool) -> ProjectionClass {
     let segmented = page.compiled_truth.is_null() && page.timeline.is_null();
     if archived {
         ProjectionClass::Archived
@@ -171,13 +171,15 @@ fn class(page: &PageRecord, archived: bool) -> ProjectionClass {
     }
 }
 
-/// Whether `page` is a live page in `scope` (`scopeFilter`). `None` when its source is missing or
-/// archived, otherwise the scope test.
-fn in_scope(
+/// Whether `page` is in `scope` (`scopeFilter`). With `live` the page must also be live: not
+/// soft-deleted, not quarantined, its source present and not archived. Without it only the scope's
+/// own policy applies (the projection backlog counts archived sources and quarantined pages).
+pub(super) fn in_scope(
     read: &dyn KvRead,
     sources: &mut Sources<'_>,
     page: &PageRecord,
     scope: &CoverageScope,
+    live: bool,
 ) -> Result<bool> {
     if let Some(ids) = &scope.source_ids {
         if ids.is_empty() || !ids.contains(&page.source_id) {
@@ -188,10 +190,11 @@ fn in_scope(
     {
         return Ok(false);
     }
-    if page.deleted_at_us.is_some() || page.frontmatter.contains_key(QUARANTINE_KEY) {
-        return Ok(false);
-    }
-    if sources.archived(&page.source_id)? != Some(false) {
+    if live
+        && (page.deleted_at_us.is_some()
+            || page.frontmatter.contains_key(QUARANTINE_KEY)
+            || sources.archived(&page.source_id)? != Some(false))
+    {
         return Ok(false);
     }
     if let Some(kind) = scope.page_kind.as_deref().filter(|k| !k.is_empty())
@@ -255,7 +258,7 @@ fn walk_scope(
     let mut pages = all_pages(read)?;
     pages.sort_unstable_by_key(|page| page.id);
     for page in pages {
-        if !in_scope(read, &mut sources, &page, scope)? {
+        if !in_scope(read, &mut sources, &page, scope, true)? {
             continue;
         }
         // In scope means the source is present and live.

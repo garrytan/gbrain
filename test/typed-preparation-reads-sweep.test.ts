@@ -34,6 +34,9 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['getConfig', 'SELECT value FROM config WHERE key = $1', e => e.getConfig('a.key')],
   // The sync.admission read (persistence/sync-admission.ts readSyncAdmission) a managed sync and a keep_db reconcile prepare with.
   ['readStoredConfigValue', 'SELECT value FROM config WHERE key=$1', e => e.readStoredConfigValue('sync.admission')],
+  ['readCredentialMemberId', 'SELECT member_id FROM access_tokens WHERE id::text = $1', e => e.readCredentialMemberId({ kind: 'token', id: 'token-1' })],
+  ['readCredentialMemberId', 'SELECT member_id FROM oauth_clients WHERE client_id = $1', e => e.readCredentialMemberId({ kind: 'client', id: 'client-1' })],
+  ['readLinkedMember', 'FROM access_member_links l JOIN access_members m', e => e.readLinkedMember('qm', 'person-1')],
   ['getAllConfig', 'SELECT key, value FROM config', e => e.getAllConfig()],
   ['listConfigKeys', 'SELECT key FROM config WHERE key LIKE', e => e.listConfigKeys('a.')],
   ['readPageSnapshot', 'WITH chosen AS (', e => e.readPageSnapshot('a', { sourceId: 'default' })],
@@ -46,6 +49,9 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['readFactSnapshots', 'AS value FROM facts f', e => e.readFactSnapshots('default', [1], false)],
   // The segmented-storage writer gate a page or sync preparation reads through readPageBodyPolicy (page-body/limits.ts).
   ['readSegmentedGateEvidence', 'FROM ingest_log l CROSS JOIN win', e => e.readSegmentedGateEvidence(7)],
+  // A remote sync job's checks in validateSyncAuthority (sync-authority.ts): the source's creation time and a legacy token's row.
+  ['readJobSourceState', 'SELECT archived, created_at, local_path, config FROM sources WHERE id = $1', e => e.readJobSourceState('default')],
+  ['readJobPrincipal', 'FROM access_tokens WHERE id = $1', e => e.readJobPrincipal({ kind: 'legacy_token', id: '00000000-0000-4000-8000-000000000001' })],
   ['hasLabelledOnlyMember', 'FROM access_members WHERE labelled_only', e => e.hasLabelledOnlyMember()],
   ['readSegmentedPageHead', 'segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1', e => e.readSegmentedPageHead(1)],
   ['readSourceIncarnation', 'SELECT config,incarnation FROM sources WHERE id=$1', e => e.readSourceIncarnation('default')],

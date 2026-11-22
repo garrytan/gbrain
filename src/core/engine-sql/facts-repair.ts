@@ -59,7 +59,7 @@ export async function listSessionFactsForClassification(raw: EngineRawRead, sour
       FROM facts f
      WHERE f.source_id=ANY($1::text[]) AND f.source=ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
        AND (f.attributed_to IS NULL OR f.attributed_to='user') AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
-     ORDER BY f.source_id, f.id`, [sourceIds, lanes, ids]);
+     ORDER BY f.source_id COLLATE "C", f.id`, [sourceIds, lanes, ids]);
 }
 
 export interface SessionFactTwinRow { id: number | string; owner_twin: boolean; twin_sessions: Array<string | null> | null }
@@ -99,7 +99,7 @@ export async function listCapturedFactsForClassification(raw: EngineRawRead, sou
       FROM facts f
      WHERE f.source_id=ANY($1::text[]) AND f.source=ANY($2::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
        AND ($3::bigint[] IS NULL OR f.id=ANY($3::bigint[]))
-     ORDER BY f.source_id, f.id`, [sourceIds, lanes, ids]);
+     ORDER BY f.source_id COLLATE "C", f.id`, [sourceIds, lanes, ids]);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -154,6 +154,7 @@ export interface ExtractorFactRow {
 
 /** Expired fenceless extractor facts of these sources (or of one page) with the page, withdrawal, duplicate, fence and receipt evidence, in (source, page, id) order. */
 export async function listExtractorFactsForClassification(raw: EngineRawRead, sourceIds: string[], slug: string | null): Promise<ExtractorFactRow[]> {
+  // The receipts CTE order never reaches output: DISTINCT ON picks by completed_at and sequence, and the outer ORDER BY below is what callers see.
   const { text, params } = renderFragment(sqlFragment`
     WITH cand AS (
       SELECT f.id, f.source_id, f.source_markdown_slug AS slug, f.fact, f.visibility, f.entity_slug, f.expired_at AS expired,
@@ -191,7 +192,7 @@ export async function listExtractorFactsForClassification(raw: EngineRawRead, so
       LEFT JOIN pages p ON p.source_id=c.source_id AND p.slug=c.slug
       LEFT JOIN receipts r ON r.source_id=c.source_id AND r.slug=c.slug AND r.completed_at=c.expired
       LEFT JOIN fenced ON fenced.source_id=c.source_id AND fenced.slug=c.slug
-     ORDER BY c.source_id, c.slug, c.id`);
+     ORDER BY c.source_id COLLATE "C", c.slug COLLATE "C", c.id`);
   return raw<ExtractorFactRow>(text, params);
 }
 
@@ -539,7 +540,7 @@ export async function listNamedVisibilityRows(raw: EngineRawRead, sourceIds: str
 
 /** The ids of the sources that are not archived, in id order (the repair preview command names `--source` when more than one). */
 export async function listActiveSourceIds(raw: EngineRawRead): Promise<Array<{ id: string }>> {
-  return raw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id');
+  return raw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"');
 }
 
 /** The brain id a repair preview hashes, or null when the brain has no `persistence_brain` row (the callers fall back to `host`). */

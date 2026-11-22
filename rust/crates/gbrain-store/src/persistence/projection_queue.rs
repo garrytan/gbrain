@@ -287,6 +287,33 @@ pub(super) fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
     failure.map_or(Ok(out), Err)
 }
 
+/// A queued job joined to its source (`page_projection_jobs j JOIN sources s ON s.incarnation = j.source_incarnation`).
+pub(crate) struct QueuedJob {
+    pub source_id: String,
+    pub archived: bool,
+    pub slug: String,
+    pub reason: String,
+    pub updated_at_us: i64,
+}
+
+/// Every job whose source incarnation names a present source, in key order.
+pub(crate) fn queued_jobs(read: &dyn KvRead) -> Result<Vec<QueuedJob>> {
+    let sources = sources_by_incarnation(read)?;
+    Ok(all_jobs(read)?
+        .into_iter()
+        .filter_map(|job| {
+            let source = sources.get(&job.incarnation)?;
+            Some(QueuedJob {
+                source_id: source.id.clone(),
+                archived: source.archived,
+                slug: job.slug,
+                reason: job.record.reason,
+                updated_at_us: job.record.updated_at_us,
+            })
+        })
+        .collect())
+}
+
 /// `min(updated_at)` over the jobs with reason `protocol_activation`: when an upgrade's index rebuild
 /// began, or none when no such job is queued (`projectionRebuildProgress`).
 pub(crate) fn activation_started_us(read: &dyn KvRead) -> Result<Option<i64>> {

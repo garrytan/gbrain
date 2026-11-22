@@ -2,7 +2,8 @@
 //!
 //! Members: addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
 //! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, the reads of
-//! `takes/reads.rs`, and the reads and the delete of `takes/extract.rs`.
+//! `takes/reads.rs`, the fence guard's held takes (`takes/held.rs`), and the reads and the delete of
+//! `takes/extract.rs`.
 //!
 //! Keys (every record starts with `keys::TAKE`, `A`; ids and page ids are u64 BE, a `row_num` is
 //! its i32 with the sign bit flipped, BE, so keys sort by row number):
@@ -30,7 +31,8 @@ use crate::keyword::{TRGM_WORD_SIMILARITY_THRESHOLD, trgm_word_similarity};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
-use crate::trust::{RowTrust, TrustTable, stamp_row};
+use crate::trust::{RowTrust, TrustPolicy, TrustTable, check_insert, stamp_row};
+
 use crate::write_receipt::WriteReceipt;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -38,9 +40,11 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod extract;
+mod held;
 mod reads;
 
 pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
+pub use held::HeldTakeSpec;
 pub use reads::{
     HeldFenceTakeSpec, IncomingTakeRow, McpResolvedInput, PurgeTakesInput, TakePreimageInput,
 };
@@ -228,6 +232,25 @@ pub(crate) fn real_out(value: f32) -> f64 {
 }
 
 impl TakeRecord {
+    /// The hit `takeHitRowToHit` reads from `searchTakes` and `searchTakesVector`, with its `real`
+    /// score.
+    fn hit_json(&self, page_slug: &str, score: f32) -> Value {
+        json!({
+            "take_id": self.id,
+            "page_id": self.page_id,
+            "page_slug": page_slug,
+            "row_num": self.row_num,
+            "claim": self.claim,
+            "kind": self.kind,
+            "holder": self.holder,
+            "weight": real_out(self.weight),
+            "since_date": self.since_date,
+            "until_date": self.until_date,
+            "source": self.source,
+            "score": real_out(score),
+        })
+    }
+
     /// The row `takeRowToTake` reads (`t.*` plus `p.slug AS page_slug`).
     fn to_json(&self, page_slug: &str) -> Value {
         json!({
@@ -298,6 +321,10 @@ pub struct ListTakesOptions {
     pub source_ids: Option<Vec<Option<String>>>,
     /// A read-eligibility policy was given: hide the takes `projectionEligibleSql` always hides.
     pub eligible_only: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the take's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a take `activationSuppressedSql('takes')` flags.
+    pub suppress_flagged: bool,
     /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
     pub exclude_private: Option<PrivacyPolicy>,
 }
@@ -320,6 +347,10 @@ pub struct SearchTakesOptions {
     pub source_ids: Option<Vec<Option<String>>>,
     /// A read-eligibility policy was given: hide the takes `projectionEligibleSql` always hides.
     pub eligible_only: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the take's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a take `activationSuppressedSql('takes')` flags.
+    pub suppress_flagged: bool,
     /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
     pub exclude_private: Option<PrivacyPolicy>,
 }
@@ -574,7 +605,7 @@ pub(crate) fn write_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> 
 /// (`trust::stamp_row`): an insert when no row with its id is stored, else an update of the stored
 /// row, restamped only when `claim`, `kind` or `holder` changed. A refused raise is the trigger's
 /// error; the caller's write then rolls back.
-fn store_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+pub(crate) fn store_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     let old: Option<TakeRecord> = get_json(&*tx, &take_key(take.id))?;
     let content_changed = old
         .as_ref()
@@ -929,6 +960,9 @@ impl Store {
                 // The purge trigger runs BEFORE INSERT on every proposed row, an upsert's too.
                 refuse_purged_take(&*tx, *page_id, r.claim.as_deref())?;
                 let id = next_id(tx, NEXT_TAKE_ID)?;
+                // The BEFORE INSERT trigger runs on every proposed row, before its NOT NULL and
+                // CHECK constraints and before ON CONFLICT decides (`trust::check_insert`).
+                check_insert(TrustTable::Takes)?;
                 let page_id = page_id.ok_or_else(|| not_null(TAKES, "page_id"))?;
                 let row_num = row_num.ok_or_else(|| not_null(TAKES, "row_num"))?;
                 let claim = r.claim.clone().ok_or_else(|| not_null(TAKES, "claim"))?;
@@ -1020,8 +1054,8 @@ impl Store {
                             created_at_us: now,
                             updated_at_us: now,
                             claim_rev: 0,
-                            receipt: WriteReceipt::default(),
                             trust: RowTrust::default(),
+                            receipt: WriteReceipt::default(),
                         },
                     )?;
                 }
@@ -1064,6 +1098,7 @@ impl Store {
             }
         };
         let limit = options.limit.unwrap_or(100) as usize;
+        let trust = TrustPolicy::parse(options.min_trust.as_deref(), options.suppress_flagged)?;
         let read = self.read()?;
         let takes = match page_id {
             Some(p) => match u64::try_from(p) {
@@ -1089,6 +1124,7 @@ impl Store {
                     .resolved
                     .is_some_and(|r| r != take.resolved_at_us.is_some())
                 || !allowed(&options.allow_list, &take.holder)
+                || !trust.admits(&*read, TAKES, take.id, take.trust.tier())?
             {
                 continue;
             }
@@ -1186,6 +1222,7 @@ impl Store {
             return Ok(Vec::new());
         };
         let limit = options.limit.unwrap_or(30) as usize;
+        let trust = TrustPolicy::parse(options.min_trust.as_deref(), options.suppress_flagged)?;
         let read = self.read()?;
         let mut pages = PageCache::new(&*read);
         let mut hits: Vec<(f32, TakeRecord, String)> = Vec::new();
@@ -1203,6 +1240,7 @@ impl Store {
             if !in_scope(&options.source_ids, &page.source_id)
                 || (options.eligible_only && !eligible_page(page))
                 || private_page(&*read, page, &options.exclude_private)?
+                || !trust.admits(&*read, TAKES, take.id, take.trust.tier())?
             {
                 continue;
             }
@@ -1217,22 +1255,7 @@ impl Store {
         Ok(hits
             .iter()
             .take(limit)
-            .map(|(score, t, slug)| {
-                json!({
-                    "take_id": t.id,
-                    "page_id": t.page_id,
-                    "page_slug": slug,
-                    "row_num": t.row_num,
-                    "claim": t.claim,
-                    "kind": t.kind,
-                    "holder": t.holder,
-                    "weight": real_out(t.weight),
-                    "since_date": t.since_date,
-                    "until_date": t.until_date,
-                    "source": t.source,
-                    "score": real_out(*score),
-                })
-            })
+            .map(|(score, t, slug)| t.hit_json(slug, *score))
             .collect())
     }
 
@@ -1360,8 +1383,8 @@ impl Store {
                     created_at_us: now,
                     updated_at_us: now,
                     claim_rev: 0,
-                    receipt: WriteReceipt::default(),
                     trust: RowTrust::default(),
+                    receipt: WriteReceipt::default(),
                 },
             )?;
             old.active = false;

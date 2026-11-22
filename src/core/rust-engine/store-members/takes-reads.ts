@@ -4,13 +4,14 @@
  *
  * `countMcpResolvedTakes` reads the caller's source and holder scope. Under `excludePrivate` the SQL adds the page
  * policy of the caller in context (`privatePagesFilterForCaller('p')`): `storePagePolicy` sends the flags the store
- * applies when the caller is the one the store models, and refuses with `engine_capability_missing` for a caller
- * whose member pages, grants or lineage widen the policy.
+ * applies, with the caller's reader identity and private-readable grant (the same caller the scorecard it decorates
+ * serves), and refuses with `engine_capability_missing` for a caller whose folder rules, audience or lineage widen
+ * the policy.
  *
  * The reads and the delete of `gbrain extract takes` (readLivePageIdBySlug through findTakeId) refuse a page, take or
  * row id that is not an integer, as the SQL's integer casts refuse it.
  */
-import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PageTierRef, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead, type TakesLeavingFence, type AcceptedTakeRemoval } from '../../engine-sql/takes-reads.ts';
+import { checkTakePreimageRead, type HeldFenceTakeRow, type HeldFenceTakeSpec, type McpResolvedSpec, type PageTierRef, type PurgeTakesSpec, type TakePreimage, type TakePreimageRead, type TakesLeavingFence, type AcceptedTakeRemoval, type TakeTrustRef, type AbandonedTakeRow, type HolderResolvedTakeRow } from '../../engine-sql/takes-reads.ts';
 import { storedTrustTier } from '../../trust/tier.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -47,6 +48,12 @@ export const listHeldFenceTakeRows: StoreMember<[spec: HeldFenceTakeSpec], HeldF
     sourceId: spec.sourceId, kind: spec.kind, ownerKey: spec.ownerKey, pageId: spec.pageId }));
   return rows.map(row => ({ ...row, resolved_at: row.resolved_at == null ? null : new Date(row.resolved_at) }));
 };
+
+export const readTakeRowTrust: StoreMember<[pageId: number, rowNum: number], { id: number; claim: string; trust_tier: string } | null> =
+  (brain, pageId, rowNum) => storeCall({ member: 'readTakeRowTrust' }, () => brain.readTakeRowTrust(pageId, rowNum));
+
+export const readTakeTrustRef: StoreMember<[id: number], TakeTrustRef | null> = (brain, id) =>
+  storeCall({ member: 'readTakeTrustRef' }, () => brain.readTakeTrustRef(id));
 
 export const countMcpResolvedTakes: StoreMember<[spec: McpResolvedSpec], number> = (brain, spec) => {
   const excludePrivate = storePagePolicy('countMcpResolvedTakes', spec.excludePrivate, { callerReaders: true });
@@ -94,6 +101,14 @@ export const countZeroWeightWithTakes: StoreMember<[], { zero_weight_with_takes:
 
 export const hasCodeEdgesSymbol: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
   storeCall({ member: 'hasCodeEdgesSymbol' }, () => brain.hasCodeEdgesSymbol(sourceId));
+
+/** The holder's 25 heaviest active resolved takes (the calibration pattern drill-down). */
+export const listTopResolvedTakesForHolder: StoreMember<[holder: string], HolderResolvedTakeRow[]> =
+  (brain, holder) => storeCall({ member: 'listTopResolvedTakesForHolder' }, () => brain.listTopResolvedTakesForHolder(holder));
+
+/** The five oldest abandoned high-conviction takes (the calibration abandoned-threads card). */
+export const listAbandonedTakes: StoreMember<[], AbandonedTakeRow[]> =
+  (brain) => storeCall({ member: 'listAbandonedTakes' }, () => brain.listAbandonedTakes());
 
 // ---- The reads and the delete of `gbrain extract takes` ----
 

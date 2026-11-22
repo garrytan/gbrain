@@ -145,3 +145,576 @@ fn the_name_read_answers_each_asked_token_once_by_id_a_revoked_one_included() {
     assert_eq!(b.read_access_token_names(&ids).unwrap(), Value::Array(want));
     assert_eq!(b.read_access_token_names(&[]).unwrap(), json!([]));
 }
+
+const MINUTE_US: i64 = 60_000_000;
+
+#[test]
+fn the_list_is_newest_first_with_the_columns_not_kept_at_their_defaults_and_no_hash() {
+    let b = brain("tokens-list");
+    let first = insert(&b, token("older", "hash-older", json!({}))).unwrap();
+    b.clock.advance(1_000_000);
+    let second = insert(&b, token("newer", "hash-newer", json!({}))).unwrap();
+    let rows = b.list_access_tokens().unwrap();
+    let rows = rows.as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec![second.as_str(), first.as_str()]
+    );
+    assert_eq!(rows[0]["name"], "newer");
+    assert_eq!(rows[0]["scopes"], json!(["read"]));
+    assert_eq!(rows[0]["revoked_at"], Value::Null);
+    assert_eq!(rows[0]["last_used_at"], Value::Null);
+    assert_eq!(rows[0]["member_id"], Value::Null);
+    assert_eq!(rows[0]["private_pages"], "none");
+    assert_eq!(rows[0]["private_facts"], "none");
+    assert_eq!(rows[1]["created_at"], "2027-01-15T08:00:00.000000Z");
+    assert!(
+        rows.iter().all(|r| r.get("token_hash").is_none()),
+        "no listed row carries the hash"
+    );
+}
+
+#[test]
+fn the_whole_row_list_keeps_revoked_tokens_newest_first_with_a_tie_by_id_and_no_hash() {
+    let b = brain("tokens-whole-rows");
+    let older = insert(&b, token("older", "hash-older", json!({}))).unwrap();
+    b.clock.advance(1_000_000);
+    let tie_a = insert(&b, token("tie-a", "hash-tie-a", json!({}))).unwrap();
+    let tie_b = insert(&b, token("tie-b", "hash-tie-b", json!({}))).unwrap();
+    b.revoke_access_token(&older).unwrap();
+    let rows = b.list_access_token_rows().unwrap();
+    let rows = rows.as_array().unwrap();
+    let mut tied = [tie_a.clone(), tie_b.clone()];
+    tied.sort();
+    let want: Vec<&str> = tied
+        .iter()
+        .map(String::as_str)
+        .chain([older.as_str()])
+        .collect();
+    assert_eq!(
+        rows.iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        want,
+        "newest first, the same instant ordered by id, the revoked token kept"
+    );
+    assert_ne!(rows[2]["revoked_at"], Value::Null);
+    assert_eq!(rows[0]["revoked_at"], Value::Null);
+    assert_eq!(rows[2]["created_at"], "2027-01-15T08:00:00.000000Z");
+    assert!(
+        rows.iter().all(|r| r.get("token_hash").is_none()),
+        "no row carries the hash"
+    );
+}
+
+#[test]
+fn a_revoke_by_name_stamps_every_active_token_of_that_name_once_and_ends_its_liveness() {
+    let b = brain("tokens-revoke-name");
+    let a = insert(&b, token("shared", "hash-a", json!({}))).unwrap();
+    let c = insert(&b, token("shared", "hash-c", json!({}))).unwrap();
+    let other = insert(&b, token("other", "hash-o", json!({}))).unwrap();
+    assert!(b.access_token_live(&a).unwrap());
+    b.clock.advance(5_000_000);
+    let mut want = vec![a.clone(), c.clone()];
+    want.sort();
+    assert_eq!(b.revoke_access_tokens_named("shared").unwrap(), want);
+    assert!(
+        b.revoke_access_tokens_named("shared").unwrap().is_empty(),
+        "a revoked token is not revoked twice"
+    );
+    assert!(!b.access_token_live(&a).unwrap());
+    assert!(!b.access_token_live(&c).unwrap());
+    assert!(b.access_token_live(&other).unwrap());
+    assert!(found(&b, "shared").is_empty());
+    let rows = b.list_access_tokens().unwrap();
+    let revoked: Vec<_> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["name"] == "shared")
+        .map(|r| r["revoked_at"].clone())
+        .collect();
+    assert_eq!(
+        revoked,
+        vec![
+            json!("2027-01-15T08:00:05.000000Z"),
+            json!("2027-01-15T08:00:05.000000Z")
+        ]
+    );
+}
+
+#[test]
+fn a_revoke_by_id_returns_the_name_once_and_the_grant_read_stops_finding_it() {
+    let b = brain("tokens-revoke-id");
+    let id = insert(&b, token("solo", "hash-s", json!({}))).unwrap();
+    assert_eq!(
+        b.read_active_access_token_grant(&id.to_ascii_uppercase())
+            .unwrap(),
+        Some(json!({ "permissions": { "source_id": "wiki" }, "private_pages": "none" }))
+    );
+    assert!(b.access_token_live(&id).unwrap());
+    assert!(
+        !b.access_token_live("00000000-0000-4000-8000-0000000000c1")
+            .unwrap()
+    );
+    assert_eq!(
+        b.revoke_access_token(&id.to_ascii_uppercase())
+            .unwrap()
+            .as_deref(),
+        Some("solo")
+    );
+    assert_eq!(b.revoke_access_token(&id).unwrap(), None);
+    assert_eq!(
+        b.revoke_access_token("00000000-0000-4000-8000-0000000000c1")
+            .unwrap(),
+        None
+    );
+    assert_eq!(b.read_active_access_token_grant(&id).unwrap(), None);
+    assert!(!b.access_token_live(&id).unwrap());
+}
+
+#[test]
+fn the_bearer_read_finds_the_active_token_by_hash_without_the_hash_and_not_after_revoke() {
+    let b = brain("tokens-by-hash");
+    let id = insert(
+        &b,
+        token("bearer", "hash-b", json!({ "min_trust": "tool_observed" })),
+    )
+    .unwrap();
+    insert(&b, token("other", "hash-o", json!({}))).unwrap();
+    let row = b
+        .read_active_access_token_by_hash("hash-b")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["id"], json!(id));
+    assert_eq!(row["name"], json!("bearer"));
+    assert_eq!(row["scopes"], json!(["read"]));
+    assert_eq!(row["source_grant"], json!("default"));
+    assert_eq!(row["min_trust"], json!("tool_observed"));
+    assert_eq!(row["grant_revision"], json!(1));
+    assert_eq!(row["private_pages"], json!("none"));
+    assert_eq!(row["member_id"], Value::Null);
+    assert!(row.get("token_hash").is_none());
+    assert_eq!(b.read_active_access_token_by_hash("hash-").unwrap(), None);
+    assert_eq!(b.read_active_access_token_by_hash("nope").unwrap(), None);
+    b.revoke_access_token(&id).unwrap();
+    assert_eq!(b.read_active_access_token_by_hash("hash-b").unwrap(), None);
+    assert!(
+        b.read_active_access_token_by_hash("hash-o")
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn the_job_principal_read_finds_the_token_by_id_in_any_case_revoked_or_not_without_the_hash() {
+    let b = brain("tokens-by-id");
+    let id = insert(
+        &b,
+        token(
+            "legacy",
+            "hash-l",
+            json!({ "scopes": ["admin"], "source_grant": null }),
+        ),
+    )
+    .unwrap();
+    insert(&b, token("other", "hash-o", json!({}))).unwrap();
+    let row = b
+        .read_access_token(&id.to_ascii_uppercase())
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["id"], json!(id));
+    assert_eq!(row["name"], json!("legacy"));
+    assert_eq!(row["scopes"], json!(["admin"]));
+    assert_eq!(row["permissions"], json!({ "source_id": "wiki" }));
+    assert_eq!(row["source_grant"], Value::Null);
+    assert_eq!(row["revoked_at"], Value::Null);
+    assert!(row.get("token_hash").is_none());
+    assert_eq!(
+        b.read_access_token("00000000-0000-4000-8000-0000000000c9")
+            .unwrap(),
+        None
+    );
+    b.revoke_access_token(&id).unwrap();
+    let revoked = b.read_access_token(&id).unwrap().unwrap();
+    assert_eq!(revoked["name"], json!("legacy"));
+    assert!(
+        revoked["revoked_at"].is_string(),
+        "a revoked token is read with its revoked_at"
+    );
+}
+
+#[test]
+fn the_last_use_stamp_is_null_until_a_check_and_waits_a_minute_before_it_moves() {
+    let b = brain("tokens-last-used");
+    let id = insert(&b, token("seen", "hash-s", json!({}))).unwrap();
+    let last = |b: &Brain| {
+        let row = b
+            .read_active_access_token_by_hash("hash-s")
+            .unwrap()
+            .unwrap();
+        let listed = b.list_access_tokens().unwrap();
+        assert_eq!(
+            listed[0]["last_used_at"], row["last_used_at"],
+            "the list and the bearer read agree"
+        );
+        row["last_used_at"].clone()
+    };
+    assert_eq!(last(&b), Value::Null);
+    b.touch_access_token_last_used(&id, true).unwrap();
+    let first = last(&b);
+    assert_eq!(first, json!(gbrain_store::env::iso(memory_env::T0)));
+    b.clock.advance(MINUTE_US - 1);
+    b.touch_access_token_last_used(&id, true).unwrap();
+    assert_eq!(last(&b), first, "inside 60 seconds nothing changes");
+    b.clock.advance(1);
+    b.touch_access_token_last_used(&id, true).unwrap();
+    assert_eq!(
+        last(&b),
+        first,
+        "exactly 60 seconds is not older than now() - 60 s"
+    );
+    b.clock.advance(1);
+    b.touch_access_token_last_used(&id, true).unwrap();
+    assert_eq!(
+        last(&b),
+        json!(gbrain_store::env::iso(memory_env::T0 + MINUTE_US + 1))
+    );
+}
+
+#[test]
+fn the_unified_stamp_leaves_a_row_with_no_source_grant_and_the_legacy_stamp_does_not() {
+    let b = brain("tokens-last-used-unified");
+    let id = insert(&b, token("old", "hash-o", json!({ "source_grant": null }))).unwrap();
+    b.touch_access_token_last_used(&id, true).unwrap();
+    let row = b
+        .read_active_access_token_by_hash("hash-o")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["last_used_at"], Value::Null);
+    b.touch_access_token_last_used(&id, false).unwrap();
+    let row = b
+        .read_active_access_token_by_hash("hash-o")
+        .unwrap()
+        .unwrap();
+    assert!(row["last_used_at"].is_string());
+    b.touch_access_token_last_used("00000000-0000-0000-0000-00000000dead", true)
+        .unwrap();
+}
+
+#[test]
+fn a_legacy_token_converts_once_with_one_more_revision_and_a_bad_kind_leaves_it() {
+    use gbrain_store::jobs::TokenGrantColumns;
+    let b = brain("tokens-legacy-convert");
+    let id = insert(&b, token("old", "hash-l", json!({ "source_grant": null }))).unwrap();
+    let columns = |kind: &str| -> TokenGrantColumns {
+        serde_json::from_value(json!({
+            "source_grant": kind, "source_id": "wiki", "federated_read": null,
+            "allowed_operations": ["query"], "takes_holders": ["world"],
+        }))
+        .unwrap()
+    };
+    assert!(
+        b.convert_legacy_access_token_grant(&id, &columns("sideways"))
+            .is_err()
+    );
+    let row = b
+        .read_active_access_token_by_hash("hash-l")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["source_grant"], Value::Null);
+    let before = row["grant_revision"].as_i64().unwrap();
+    let converted = b
+        .convert_legacy_access_token_grant(&id.to_ascii_uppercase(), &columns("default"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(converted["id"], json!(id));
+    assert_eq!(converted["source_grant"], json!("default"));
+    assert_eq!(converted["source_id"], json!("wiki"));
+    assert_eq!(converted["allowed_operations"], json!(["query"]));
+    assert_eq!(converted["takes_holders"], json!(["world"]));
+    assert_eq!(converted["grant_revision"], json!(before + 1));
+    assert!(converted["last_used_at"].is_string());
+    assert!(converted.get("token_hash").is_none());
+    let row = b
+        .read_active_access_token_by_hash("hash-l")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row, converted);
+    assert_eq!(
+        b.convert_legacy_access_token_grant(&id, &columns("default"))
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        b.convert_legacy_access_token_grant(
+            "00000000-0000-0000-0000-00000000dead",
+            &columns("default")
+        )
+        .unwrap(),
+        None
+    );
+}
+
+fn locked(b: &Brain, id: Option<&str>, name: Option<&str>) -> Vec<Value> {
+    b.lock_active_access_tokens(id, name)
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn the_rescope_read_finds_active_tokens_by_id_in_any_case_or_exact_name_oldest_first_without_the_hash()
+ {
+    let b = brain("tokens-lock");
+    let late = insert(
+        &b,
+        token(
+            "twin",
+            "h-late",
+            json!({ "created_at": "2026-02-02T00:00:00Z" }),
+        ),
+    )
+    .unwrap();
+    let early = insert(
+        &b,
+        token(
+            "twin",
+            "h-early",
+            json!({ "created_at": "2026-01-01T00:00:00Z" }),
+        ),
+    )
+    .unwrap();
+    let gone = insert(
+        &b,
+        token(
+            "solo",
+            "h-gone",
+            json!({ "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    let ids: Vec<Value> = locked(&b, None, Some("twin"))
+        .iter()
+        .map(|r| r["id"].clone())
+        .collect();
+    assert_eq!(ids, vec![json!(early), json!(late)], "oldest first");
+    let by_id = locked(&b, Some(&late.to_ascii_uppercase()), None);
+    assert_eq!(by_id.len(), 1);
+    assert_eq!(by_id[0]["name"], json!("twin"));
+    assert_eq!(by_id[0]["private_pages"], json!("none"));
+    assert!(by_id[0].get("token_hash").is_none());
+    assert!(
+        locked(&b, None, Some("Twin")).is_empty(),
+        "the name is exact"
+    );
+    assert!(
+        locked(&b, None, Some("solo")).is_empty(),
+        "a revoked token is left out"
+    );
+    assert!(locked(&b, Some(&gone), None).is_empty());
+    assert!(locked(&b, Some("00000000-0000-4000-8000-0000000000c9"), None).is_empty());
+    assert!(b.lock_active_access_tokens(None, None).is_err());
+    assert!(
+        b.lock_active_access_tokens(Some(&late), Some("twin"))
+            .is_err()
+    );
+}
+
+#[test]
+fn a_grant_write_sets_the_columns_scopes_and_permissions_with_one_more_revision_and_a_bad_kind_leaves_the_row()
+ {
+    use gbrain_store::jobs::TokenGrantColumns;
+    let b = brain("tokens-grant-write");
+    let id = insert(&b, token("laptop", "hash-g", json!({}))).unwrap();
+    let columns = |kind: &str| -> TokenGrantColumns {
+        serde_json::from_value(json!({
+            "source_grant": kind, "source_id": "default", "federated_read": ["default", "work"],
+            "allowed_operations": ["query"], "takes_holders": ["world"],
+        }))
+        .unwrap()
+    };
+    let before = b
+        .read_active_access_token_by_hash("hash-g")
+        .unwrap()
+        .unwrap();
+    let revision = before["grant_revision"].as_i64().unwrap();
+    let refused = b
+        .write_access_token_grant(&id, &columns("everything"), None, json!({ "x": 1 }))
+        .expect_err("a source grant outside the list");
+    assert_eq!(refused.code, "constraint_violation");
+    assert_eq!(
+        refused.message,
+        "new row for relation \"access_tokens\" violates check constraint \"access_tokens_source_grant_check\""
+    );
+    assert_eq!(
+        b.read_active_access_token_by_hash("hash-g")
+            .unwrap()
+            .unwrap(),
+        before,
+        "a refused write leaves the row"
+    );
+
+    let written = b
+        .write_access_token_grant(
+            &id.to_ascii_uppercase(),
+            &columns("federated"),
+            None,
+            json!({ "keep": 1 }),
+        )
+        .unwrap();
+    assert_eq!(written, Some(revision as i32 + 1));
+    let row = b
+        .read_active_access_token_by_hash("hash-g")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["source_grant"], json!("federated"));
+    assert_eq!(row["federated_read"], json!(["default", "work"]));
+    assert_eq!(row["allowed_operations"], json!(["query"]));
+    assert_eq!(row["takes_holders"], json!(["world"]));
+    assert_eq!(row["scopes"], json!(["read"]), "no scopes keeps them");
+    assert_eq!(row["permissions"], json!({ "keep": 1 }));
+
+    let written = b
+        .write_access_token_grant(
+            &id,
+            &columns("scalar"),
+            Some(vec!["read".into(), "write".into()]),
+            json!({}),
+        )
+        .unwrap();
+    assert_eq!(written, Some(revision as i32 + 2));
+    let row = b
+        .read_active_access_token_by_hash("hash-g")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["scopes"], json!(["read", "write"]));
+    assert_eq!(
+        b.write_access_token_grant(
+            "00000000-0000-4000-8000-00000000dead",
+            &columns("default"),
+            None,
+            json!({})
+        )
+        .unwrap(),
+        None,
+        "an id no token has writes nothing"
+    );
+}
+
+#[test]
+fn the_private_grants_are_kept_read_back_and_refused_outside_the_two_values() {
+    let b = brain("tokens-private-grants");
+    let id = insert(&b, token("laptop", "hash-p", json!({}))).unwrap();
+    let row = || {
+        b.read_active_access_token_by_hash("hash-p")
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(
+        (
+            row()["private_pages"].clone(),
+            row()["private_facts"].clone()
+        ),
+        (json!("none"), json!("none"))
+    );
+    b.write_access_token_private_grant(
+        &id.to_ascii_uppercase(),
+        "private_pages",
+        "granted_sources",
+    )
+    .unwrap();
+    b.write_access_token_private_grant(&id, "private_facts", "granted_sources")
+        .unwrap();
+    assert_eq!(row()["private_pages"], json!("granted_sources"));
+    assert_eq!(row()["private_facts"], json!("granted_sources"));
+    let grant = b.read_access_token_write_grant(&id).unwrap().unwrap();
+    assert_eq!(grant["private_pages"], json!("granted_sources"));
+    assert_eq!(grant["private_facts"], json!("granted_sources"));
+    let listed = b.lock_active_access_tokens(Some(&id), None).unwrap();
+    assert_eq!(listed[0]["private_pages"], json!("granted_sources"));
+
+    for (axis, constraint) in [
+        ("private_pages", "access_tokens_private_pages_check"),
+        ("private_facts", "access_tokens_private_facts_check"),
+    ] {
+        let refused = b
+            .write_access_token_private_grant(&id, axis, "everything")
+            .expect_err("a value outside the two");
+        assert_eq!(refused.code, "constraint_violation");
+        assert_eq!(
+            refused.message,
+            format!(
+                "new row for relation \"access_tokens\" violates check constraint \"{constraint}\""
+            )
+        );
+    }
+    assert_eq!(
+        row()["private_pages"],
+        json!("granted_sources"),
+        "a refused write leaves the row"
+    );
+    let other = b
+        .write_access_token_private_grant(&id, "scopes", "none")
+        .expect_err("another axis");
+    assert_eq!(other.code, "invalid_argument");
+    b.write_access_token_private_grant(
+        "00000000-0000-4000-8000-00000000dead",
+        "private_pages",
+        "none",
+    )
+    .unwrap();
+
+    b.write_access_token_private_grant(&id, "private_pages", "none")
+        .unwrap();
+    assert_eq!(row()["private_pages"], json!("none"));
+    assert_eq!(row()["private_facts"], json!("granted_sources"));
+}
+
+#[test]
+fn the_migration_read_finds_the_active_tokens_with_no_source_grant_oldest_first_without_the_hash() {
+    let b = brain("tokens-lock-legacy");
+    let late = insert(
+        &b,
+        token(
+            "late",
+            "h-late",
+            json!({ "source_grant": null, "created_at": "2026-02-02T00:00:00Z" }),
+        ),
+    )
+    .unwrap();
+    let early = insert(
+        &b,
+        token(
+            "early",
+            "h-early",
+            json!({ "source_grant": null, "created_at": "2026-01-01T00:00:00Z" }),
+        ),
+    )
+    .unwrap();
+    insert(&b, token("unified", "h-unified", json!({}))).unwrap();
+    insert(
+        &b,
+        token(
+            "gone",
+            "h-gone",
+            json!({ "source_grant": null, "revoked_at": "2026-01-02T03:04:05Z" }),
+        ),
+    )
+    .unwrap();
+    let rows = b.lock_legacy_access_tokens().unwrap();
+    let rows = rows.as_array().unwrap();
+    let ids: Vec<Value> = rows.iter().map(|r| r["id"].clone()).collect();
+    assert_eq!(
+        ids,
+        vec![json!(early), json!(late)],
+        "oldest first, the unified and revoked tokens left out"
+    );
+    assert_eq!(rows[0]["name"], json!("early"));
+    assert_eq!(rows[0]["source_grant"], Value::Null);
+    assert_eq!(rows[0]["permissions"], json!({ "source_id": "wiki" }));
+    assert!(rows[0].get("token_hash").is_none());
+}

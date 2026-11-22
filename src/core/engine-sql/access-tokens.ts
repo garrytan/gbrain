@@ -3,7 +3,8 @@
  * (rust/docs/store/access-tokens.md): insert one token row, find the active tokens a target names, set one token's
  * `min_trust`. SQL once for both engines, so a store that is not SQL serves the same members.
  *
- * Not here: every other access_tokens reader and writer (verify, list, revoke, rescope, rotate) stays raw SQL.
+ * Not here: the list, the revokes and the bearer reads (engine-sql/access-credentials.ts), the member binding writes
+ * (engine-sql/access-members.ts); the grant rewrites (grants/legacy-token.ts) stay raw SQL.
  * A column a brain's migrations have not added raises Postgres's undefined-column error (42703) on the SQL engines;
  * the callers (token-mint.ts, trust/min-trust.ts) turn that into `migrations_pending`.
  */
@@ -15,7 +16,9 @@ type Raw = Pick<BrainEngine, 'executeRaw'>;
  * One token row to insert. The grant columns come from `tokenGrantColumnArrays` (grants/model.ts); `scopes` null is a
  * grandfathered full-access token. The row is born at grant revision 1. `min_trust` and `revoked_at` are left out
  * by the mint: the read-floor command sets the first after the mint, and a token is revoked after it exists.
- * A caller that gives either gets a brain with the column (the statement names it); one that does not never names it.
+ * `member_id`, `may_act_for` and `created_at` (null: `now()`) are left out by the mint too: a member insert or the
+ * credential binding write binds a token after it exists; a caller that seeds a bound token gives them.
+ * A caller that gives any of these gets a brain with the column (the statement names it); one that does not never names it.
  */
 export interface AccessTokenInsert {
   name: string;
@@ -31,6 +34,9 @@ export interface AccessTokenInsert {
   read_shared?: boolean;
   min_trust?: string | null;
   revoked_at?: Date | null;
+  member_id?: string | null;
+  may_act_for?: string[] | null;
+  created_at?: Date | null;
 }
 
 /** An active token a target names: the id, the name, and the read floor before a change. */
@@ -46,13 +52,26 @@ export interface ActiveAccessTokenRow {
  */
 export async function insertAccessToken(tx: Raw, row: AccessTokenInsert): Promise<{ id: string }> {
   const base = [row.name, row.token_hash, row.scopes, row.permissions, row.source_grant, row.source_id, row.federated_read, row.allowed_operations, row.takes_holders];
+  const withBinding = row.member_id !== undefined || row.may_act_for !== undefined || row.created_at !== undefined;
   const withFloor = row.min_trust !== undefined || row.revoked_at !== undefined;
-  const rows = row.read_shared
+  const rows = row.read_shared && withBinding
+    ? await tx.executeRaw<{ id: string }>(
+      `INSERT INTO access_tokens (name, token_hash, scopes, permissions, source_grant, source_id, federated_read, allowed_operations, takes_holders, grant_revision, read_shared_revision, min_trust, revoked_at, member_id, may_act_for, created_at)
+       VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1, 1, $10, $11::timestamptz, $12, $13::text[], COALESCE($14::timestamptz, now()))
+       RETURNING id::text AS id`,
+      [...base, row.min_trust ?? null, row.revoked_at ?? null, row.member_id ?? null, row.may_act_for ?? null, row.created_at ?? null])
+    : row.read_shared
     ? await tx.executeRaw<{ id: string }>(
       `INSERT INTO access_tokens (name, token_hash, scopes, permissions, source_grant, source_id, federated_read, allowed_operations, takes_holders, grant_revision, read_shared_revision, min_trust, revoked_at)
        VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1, 1, $10, $11::timestamptz)
        RETURNING id::text AS id`,
       [...base, row.min_trust ?? null, row.revoked_at ?? null])
+    : withBinding
+    ? await tx.executeRaw<{ id: string }>(
+      `INSERT INTO access_tokens (name, token_hash, scopes, permissions, source_grant, source_id, federated_read, allowed_operations, takes_holders, grant_revision, min_trust, revoked_at, member_id, may_act_for, created_at)
+       VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1, $10, $11::timestamptz, $12, $13::text[], COALESCE($14::timestamptz, now()))
+       RETURNING id::text AS id`,
+      [...base, row.min_trust ?? null, row.revoked_at ?? null, row.member_id ?? null, row.may_act_for ?? null, row.created_at ?? null])
     : withFloor
     ? await tx.executeRaw<{ id: string }>(
       `INSERT INTO access_tokens (name, token_hash, scopes, permissions, source_grant, source_id, federated_read, allowed_operations, takes_holders, grant_revision, min_trust, revoked_at)

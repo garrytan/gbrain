@@ -23,7 +23,7 @@ function isUndefinedColumnError(err: unknown): boolean {
 }
 
 /**
- * Every source, `default` first, then by id, with the columns `loadAllSources` reads. A brain whose schema lacks
+ * Every source, `default` first, then by id in byte order (`COLLATE "C"`, on any Postgres locale), with the columns `loadAllSources` reads. A brain whose schema lacks
  * `archived` or `newest_content_at` (pre-v0.26.5, pre-v109) is read again with the historical minimal columns.
  */
 export async function listSourceRecords(exec: LegacyUnscopedRead): Promise<SourceRecordRow[]> {
@@ -31,14 +31,14 @@ export async function listSourceRecords(exec: LegacyUnscopedRead): Promise<Sourc
     return await exec.executeRaw<SourceRecordRow>(
       `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
          FROM sources
-       ORDER BY (id = 'default') DESC, id`,
+       ORDER BY (id = 'default') DESC, id COLLATE "C"`,
     );
   } catch (err) {
     if (!isUndefinedColumnError(err)) throw err;
     return exec.executeRaw<SourceRecordRow>(
       `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
          FROM sources
-       ORDER BY (id = 'default') DESC, id`,
+       ORDER BY (id = 'default') DESC, id COLLATE "C"`,
     );
   }
 }
@@ -152,7 +152,7 @@ export async function readDatabaseClock(exec: LegacyUnscopedRead): Promise<strin
 /** Every live page (of one source when given) with its aliases and knowledge revision, by source then slug. */
 export async function listLinkPageMetadata(exec: LegacyUnscopedRead, sourceId?: string): Promise<LinkPageMetadataRow[]> {
   return exec.executeRaw<LinkPageMetadataRow>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision FROM pages
-    WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id, slug`, sourceId ? [sourceId] : []);
+    WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id COLLATE "C", slug COLLATE "C"`, sourceId ? [sourceId] : []);
 }
 
 /** The live pages of one source whose slug is in `slugs`, by slug (a sync's link extraction). */

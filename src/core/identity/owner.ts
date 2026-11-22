@@ -79,7 +79,7 @@ export async function ownerIdentity(engine: BrainEngine, opts: { member?: string
             (SELECT array_agg(b.member_id ORDER BY b.member_id) FROM access_member_sources b WHERE b.source_id = s.id) AS members
        FROM sources s
       WHERE s.archived IS NOT TRUE AND s.config->>'kind' = 'google'
-      ORDER BY s.id`);
+      ORDER BY s.id COLLATE "C"`);
   const skipped: SkippedSource[] = [];
   const googleOf = new Map<string, string[]>();
   for (const s of sources) {
@@ -120,7 +120,7 @@ export async function ownerIdentity(engine: BrainEngine, opts: { member?: string
   let entity = fallback;
   let degraded: OwnerIdentity['degraded'];
   if (emails.length) {
-    const sourceIds = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(r => r.id);
+    const sourceIds = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"')).map(r => r.id);
     const resolved = await resolvePersonTypes(engine, sourceIds);
     if (resolved.status === 'pack_unavailable') degraded = 'person_types_unavailable';
     const { text, params } = exactIdentityStatement({

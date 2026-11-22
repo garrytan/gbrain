@@ -23,6 +23,7 @@
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, STORE_CORRUPT, StoreError};
+use crate::facts::{VisibilityWidening, read_fact};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
@@ -31,6 +32,7 @@ use crate::trust::TrustTable;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use std::collections::HashSet;
 
 const PROPOSAL: u8 = 0x06;
 const PENDING: u8 = 0x07;
@@ -81,6 +83,15 @@ pub struct ProposalFilter {
     pub action: Option<String>,
     pub since: Option<String>,
     pub limit: Option<i64>,
+}
+
+/// `listUnreadablePrivacyHoldIds`: the proposal ids to judge and what widens the caller's
+/// world-only fact reads (`memberFactAdmitSql`, `grantedPrivateFactSql`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HoldReadQuery {
+    pub ids: Vec<i64>,
+    pub widen: VisibilityWidening,
 }
 
 /// The decider a status change records.
@@ -403,6 +414,24 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
     Ok(false)
 }
 
+/// The fact pairs a pending `supersede_fact` proposal between two facts covers, both ways round (the claim-conflict
+/// read leaves them out: `trust_proposals` with `status = 'pending'`, `target_table` and `related_table` `facts`).
+pub(crate) fn pending_fact_supersessions(read: &dyn KvRead) -> Result<HashSet<(i64, i64)>> {
+    let mut pairs = HashSet::new();
+    for p in all_records(read)? {
+        if p.status == "pending"
+            && p.action == "supersede_fact"
+            && p.target_table == "facts"
+            && p.related_table.as_deref() == Some("facts")
+            && let Some(related) = p.related_id
+        {
+            pairs.insert((p.target_id, related));
+            pairs.insert((related, p.target_id));
+        }
+    }
+    Ok(pairs)
+}
+
 /// The contested reference of one fact or take row (eligibility/sql.ts `contestedRefSql`): the
 /// lowest-id pending `supersede_fact` or `supersede_take` proposal naming it, as `tp<id>:challenger`
 /// when the row is the proposal's related row and `tp<id>:challenged` otherwise; `None` when no
@@ -526,6 +555,43 @@ impl Store {
         };
         let read = self.read()?;
         Ok(read_record(&*read, id)?.map(|r| r.to_row()))
+    }
+
+    /// `listUnreadablePrivacyHoldIds(ids)`: the privacy holds among `ids` (a `supersede_fact`
+    /// proposal whose before state names a visibility) whose target fact is missing or one the
+    /// caller's widened world-only reads do not admit, ascending. A target outside `facts` reads
+    /// as a missing fact, as the SQL's `LEFT JOIN` does.
+    pub fn list_unreadable_privacy_hold_ids(&self, q: &HoldReadQuery) -> Result<Vec<i64>> {
+        let read = self.read()?;
+        let ids: std::collections::BTreeSet<i64> = q.ids.iter().copied().collect();
+        let mut out = Vec::new();
+        for id in ids {
+            let Ok(key) = u64::try_from(id) else {
+                continue;
+            };
+            let Some(p) = read_record(&*read, key)? else {
+                continue;
+            };
+            let hold = p.action == "supersede_fact"
+                && p.before_state
+                    .as_object()
+                    .is_some_and(|o| o.contains_key("visibility"));
+            if !hold {
+                continue;
+            }
+            let fact = match (p.target_table.as_str(), u64::try_from(p.target_id)) {
+                ("facts", Ok(target)) => read_fact(&*read, target)?,
+                _ => None,
+            };
+            let readable = match &fact {
+                Some(row) => q.widen.admits(&*read, row)?,
+                None => false,
+            };
+            if !readable {
+                out.push(id);
+            }
+        }
+        Ok(out)
     }
 
     /// `listTrustProposals(filter)`: by status (`pending` when absent; `all` for every status),

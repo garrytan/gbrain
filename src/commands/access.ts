@@ -182,7 +182,7 @@ export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: s
   // owner_only: the page is in, or derived from, an owner-only source (imessage, apple-contacts, owner_only: true), so only the owner reads it.
   const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown; folder_rule_ids: string[] | null; owner_only: boolean }>(
     `SELECT p.slug, p.source_id, p.type, p.frontmatter, p.folder_rule_ids, ${ownerOnlyPageSql('p', ownerOnlyForm(schema.schemaVersion))} AS owner_only
-       FROM pages p WHERE p.slug = $1${sourceId ? ' AND p.source_id = $2' : ''} ORDER BY p.source_id`,
+       FROM pages p WHERE p.slug = $1${sourceId ? ' AND p.source_id = $2' : ''} ORDER BY p.source_id COLLATE "C"`,
     sourceId ? [slug, sourceId] : [slug]);
   if (!rows.length) {
     throw opError('not_found', `No page "${slug}"${sourceId ? ` in source ${sourceId}` : ''}.`, 'Check the slug with gbrain list or gbrain search.');
@@ -283,7 +283,7 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
   if (target.token) {
     const ref = await legacyTokenByName(engine, target.token);
     [row] = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE id::text = $1', [ref.id]) as [Record<string, unknown>];
-    grant = await resolveTokenGrant(sqlQueryForEngine(engine), row);
+    grant = await resolveTokenGrant(sqlQueryForEngine(engine), row, engine);
     credential = ref;
   } else {
     const client = await readClientGrant(engine, target.client!);

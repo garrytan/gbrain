@@ -8,13 +8,15 @@
  * requester-scope gate adds no query.
  */
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import type { BrainEngine } from '../engine.ts';
 import type { SqlQuery } from '../sql-query.ts';
 import { MemberBindingRefused, storedMayActFor, verifiedMember } from './members.ts';
 
-export async function tokenMemberBinding(sql: SqlQuery, row: { member_id?: unknown; may_act_for?: unknown; reads_unscoped?: unknown }, created: unknown):
+export async function tokenMemberBinding(sql: SqlQuery, row: { member_id?: unknown; may_act_for?: unknown; reads_unscoped?: unknown }, created: unknown,
+  engine?: Pick<BrainEngine, 'readAccessMembers'>):
   Promise<{ member: { id: string; groups: string[] } | null; mayActFor: string[] | null; readsUnscoped: boolean; createdAt: number | null }> {
   try {
-    return { member: await verifiedMember(sql, row.member_id), mayActFor: storedMayActFor(row.may_act_for), ...credentialScopeFields(row.reads_unscoped, created) };
+    return { member: await verifiedMember(sql, row.member_id, engine), mayActFor: storedMayActFor(row.may_act_for), ...credentialScopeFields(row.reads_unscoped, created) };
   } catch (e) {
     throw new InvalidTokenError(e instanceof MemberBindingRefused ? e.message : 'access_member_disabled: the member binding of this credential could not be verified.');
   }

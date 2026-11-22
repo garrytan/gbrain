@@ -19,6 +19,7 @@
 //! `createSegmentedPageShell` leaves. Its `body_bytes` lives in the page_body family's private
 //! body state, which this family reads through `page_body::segmented_body_bytes`; a NULL
 //! `body_bytes` fails `body_bytes > 0` as it does in SQL. A page's chunks are served when its
+
 //! `text_projection_revision` equals its `knowledge_revision`, the same test the SQL engines'
 //! served-projection filter makes. See rust/docs/store/chunk_queries.md.
 
@@ -40,6 +41,7 @@ use std::collections::{BTreeMap, HashMap};
 mod segment_regions;
 mod site_reads;
 pub use segment_regions::SegmentHit;
+pub(crate) use site_reads::Policy as PageReadPolicy;
 pub use site_reads::{
     ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,
     FrozenHitsInput, QualifiedNamesInput, UnsealedPagesInput, WithdrawalChunksInput, WithdrawalKey,
@@ -460,6 +462,7 @@ mod tests {
         // This shell has no body state (`make_shell` only nulls the columns), so its body_bytes is NULL and it is not
         // chunkless-with-content. A published body reads through `page_body::segmented_body_bytes`
         // (test/engine-parity/chunk-page-segmented.test.ts).
+
         let options = ChunklessOptions::default();
         assert_eq!(
             store.count_chunkless_pages_with_content(&options).unwrap(),

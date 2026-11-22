@@ -6,7 +6,10 @@
  *    the source and page counts `gbrain access` setup and serves read, the policy-store sources and the policy-store
  *    migration journal answer the same on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with
  *    GBRAIN_TEST_RUST_ARM=1). A brain with no access tokens has nothing unbound, no live key and no key reading a
- *    source, and a token write on it changes none of that.
+ *    source, and a token write on it changes none of that. With minted tokens and registered clients, the unbound
+ *    names and ids sort in byte order (names that differ only by '-', '.', '_' and a letter), the live key by name
+ *    carries its hash and grant, the setup read list lands in its permissions beside the other fields, and a revoke
+ *    by id takes the key out of every read.
  *  - Regression: a member that differs changes what `gbrain access setup` offers to bind, counts the wrong company or
  *    people pages, misses a source with access state on export, or resumes the wrong policy-store migration (or none),
  *    so a half-done store switch is left half done.
@@ -18,6 +21,7 @@ import { describe, expect } from 'bun:test';
 import { archiveSource, createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { hashToken } from '../../src/core/utils.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -37,6 +41,42 @@ describe('access setup members (engine-sql/access-setup.ts)', () => {
     const none = { tokens: [], clients: [], live: null, reading: [] };
     expect(before).toEqual(none);
     expect(after).toEqual(none);
+    return { before, after };
+  });
+
+  parityTest('minted keys and registered clients: unbound names in byte order, the live key by name, its setup reads and a revoke by id', { methods: ['insertAccessToken', 'insertOauthClient', 'listUnboundTokenNames', 'listUnboundClientIds', 'readLiveAccessToken', 'listKeysReadingSource', 'recordTokenSetupReads', 'revokeAccessTokenById', 'revokeAccessTokensNamed'] }, async (engine) => {
+    const grant = { source_grant: 'federated', source_id: 'default', federated_read: ['default', 'b-c'], allowed_operations: null, takes_holders: ['world'] };
+    const mint = (name: string, extra: Record<string, unknown> = {}) =>
+      engine.insertAccessToken({ name, token_hash: hashToken(`h-${name}`), scopes: ['read', 'write'], permissions: { keep: 1 }, ...grant, ...extra });
+    for (const name of ['ab', 'a_b', 'a-z']) await mint(name);
+    const dotted = await mint('a.b');
+    await mint('gone');
+    await engine.revokeAccessTokensNamed('gone');
+    await mint('elsewhere', { source_id: 'b-c', federated_read: ['default'] });
+    for (const id of ['ab', 'a_b', 'a.b', 'a-z']) await engine.insertOauthClient({ client_id: id, client_name: `Client ${id}` });
+    await engine.insertOauthClient({ client_id: 'a-deleted', client_name: 'Deleted', deleted_at: new Date('2026-01-01T00:00:00.000Z') });
+    await engine.insertOauthClient({ client_id: 'a-bound', client_name: 'Bound', member_id: 'alice-example' });
+    const live = async (name: string) => {
+      const row = await engine.readLiveAccessToken(name);
+      return row && { ...row, federated_read: Array.isArray(row.federated_read) ? row.federated_read : String(row.federated_read) };
+    };
+    const before = {
+      tokens: await engine.listUnboundTokenNames(), clients: await engine.listUnboundClientIds(),
+      key: await live('a-z'), gone: await live('gone'), reading: await engine.listKeysReadingSource('b-c'),
+    };
+    expect(before.tokens).toEqual(['a-z', 'a.b', 'a_b', 'ab', 'elsewhere']);
+    expect(before.clients).toEqual(['a-z', 'a.b', 'a_b', 'ab']);
+    expect(before.key).toEqual({ member_id: null, token_hash: hashToken('h-a-z'), source_grant: 'federated', source_id: 'default', federated_read: ['default', 'b-c'], permissions: { keep: 1 } });
+    expect(before.gone).toBeNull();
+    expect(before.reading).toEqual([]);
+    await engine.recordTokenSetupReads('a-z', ['default', 'b-c']);
+    await engine.recordTokenSetupReads('gone', ['default']);
+    await engine.revokeAccessTokenById(dotted.id);
+    const after = { tokens: await engine.listUnboundTokenNames(), key: await live('a-z'), dotted: await live('a.b'), gone: await live('gone') };
+    expect(after.tokens).toEqual(['a-z', 'a_b', 'ab', 'elsewhere']);
+    expect(after.key?.permissions).toEqual({ keep: 1, setup_reads: ['default', 'b-c'] });
+    expect(after.dotted).toBeNull();
+    expect(after.gone).toBeNull();
     return { before, after };
   });
 
@@ -71,8 +111,15 @@ describe('access setup members (engine-sql/access-setup.ts)', () => {
     await page(engine, 'people/work/gone', 'team');
     await engine.softDeletePage('people/work/gone', { sourceId: 'team' });
     await page(engine, 'notes/people/x/y', 'team');
+    // Mixed ids sort by byte ('-' before letters), as PGLite and the store do; an en_US collation puts 'ab' first.
+    await createSource(engine, backend, 'a-z');
+    await createSource(engine, backend, 'ab');
+    for (const [slug, sourceId] of [['people/ab/x', 'a-z'], ['people/a-z/x', 'a-z'], ['people/ab/y', 'ab']]) await page(engine, slug, sourceId);
     const folders = await engine.countPeopleFolderPages();
     expect(folders).toEqual([
+      { source_id: 'a-z', folder: 'a-z', pages: 1 },
+      { source_id: 'a-z', folder: 'ab', pages: 1 },
+      { source_id: 'ab', folder: 'ab', pages: 1 },
       { source_id: 'default', folder: 'family', pages: 2 },
       { source_id: 'default', folder: 'work', pages: 1 },
       { source_id: 'team', folder: 'work', pages: 1 },
@@ -82,12 +129,12 @@ describe('access setup members (engine-sql/access-setup.ts)', () => {
 
   parityTest('the policy-store sources are the sources with access state, by id', { methods: ['listAccessPolicySources'] }, async (engine, backend) => {
     const before = await engine.listAccessPolicySources();
-    for (const id of ['work', 'home', 'open']) await createSource(engine, backend, id);
-    await engine.ensureAccessPolicyState('work');
-    await engine.ensureAccessPolicyState('home');
+    for (const id of ['work', 'home', 'open', 'ab', 'a-z']) await createSource(engine, backend, id);
+    for (const id of ['work', 'ab', 'home', 'a-z']) await engine.ensureAccessPolicyState(id);
     const after = await engine.listAccessPolicySources();
     expect(before).toEqual([]);
-    expect(after).toEqual(['home', 'work']);
+    // By byte: 'a-z' before 'ab' on every arm, whatever the Postgres collation.
+    expect(after).toEqual(['a-z', 'ab', 'home', 'work']);
     return { before, after };
   });
 

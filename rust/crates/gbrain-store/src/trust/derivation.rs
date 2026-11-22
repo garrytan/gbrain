@@ -1,7 +1,7 @@
 //! Derivation trust: the derived-row trust writes of src/core/engine-sql/derivation-trust.ts.
 //!
-//! `lowerTrustTier` (pages), `countDerivedRowTaint`, `countDerivedFactTaint` and
-//! `stampPageFrontmatter` read and write the page, take, timeline and fact records; this module
+//! `lowerTrustTier` (pages), `countDerivedRowTaint` and `stampPageFrontmatter`
+//! (`countDerivedFactTaint` is `facts/trust_owner.rs`) read and write the page, take, timeline and fact records; this module
 //! keeps no key of its own. The `derivation_inputs` edges are not kept here.
 
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};

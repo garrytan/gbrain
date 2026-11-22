@@ -145,8 +145,7 @@ export function splitStoredFingerprint(stored: string | null | undefined): { has
 
 async function sourcesInScope(engine: BrainEngine, sourceId?: string): Promise<string[]> {
   if (sourceId) return [sourceId];
-  const rows = await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id');
-  return rows.map(r => r.id);
+  return engine.listSourceIds();
 }
 
 function policyFingerprint(types: string[], crossSource: boolean, policy: MentionPolicy): string {

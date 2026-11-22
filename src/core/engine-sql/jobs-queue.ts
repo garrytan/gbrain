@@ -524,6 +524,7 @@ export async function renewPrivateQueueLease(tx: Raw, queue: string, ownerToken:
  * Legacy queues without metadata never take a slot.
  */
 export async function listOwnedPrivateQueues(tx: Raw, maxQueues: number): Promise<string[]> {
+  // The queue order never reaches output: it only sets the order recovery judges queues in, and queue breaks a tie only on an equal min(created_at).
   const rows = await tx.executeRaw<{ queue: string }>(
     `SELECT queue
          FROM minion_jobs
@@ -761,17 +762,22 @@ export async function countOpenJobsByOwner(tx: Raw, clientId: string): Promise<n
   return Number(counts[0]?.n ?? 0);
 }
 
-/** The source an agent job was accepted against: whether it is archived and when it was created, or null. */
-export interface JobSourceState { archived: boolean; created_at: Date }
+/**
+ * The source a remote job was accepted against: whether it is archived, when it was created, its registered root and
+ * its stored config, or null. `config` is the column as the driver returns it (an object, or JSON text), so the
+ * caller can refuse a malformed one.
+ */
+export interface JobSourceState { archived: boolean; created_at: Date; local_path: string | null; config: unknown }
 
 /**
- * An agent job's source, for the job authority check (`assertCurrentAgent` in minions/submission-authority.ts):
- * the check denies the job when the source is gone, archived, or was created again after the job was accepted.
+ * A remote job's source, for the job authority checks in minions/submission-authority.ts: `assertCurrentAgent` denies
+ * an agent job when the source is gone, archived, or was created again after the job was accepted, and `sourceBoundary`
+ * reads the registered root and config a generic job (sync, import, lint) runs under.
  */
 export async function readJobSourceState(tx: Raw, sourceId: string): Promise<JobSourceState | null> {
-  const [row] = await tx.executeRaw<{ archived: boolean; created_at: Date | string }>(
-    'SELECT archived, created_at FROM sources WHERE id = $1', [sourceId]);
-  return row ? { archived: row.archived, created_at: new Date(row.created_at) } : null;
+  const [row] = await tx.executeRaw<{ archived: boolean; created_at: Date | string; local_path: string | null; config: unknown }>(
+    'SELECT archived, created_at, local_path, config FROM sources WHERE id = $1', [sourceId]);
+  return row ? { archived: row.archived, created_at: new Date(row.created_at), local_path: row.local_path ?? null, config: row.config ?? null } : null;
 }
 
 /**

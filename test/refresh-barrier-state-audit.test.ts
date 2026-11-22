@@ -19,12 +19,15 @@ const OPEN_WITHOUT_DEFERRED = /'queued', ?'running', ?'recovering'/g;
 /** Files whose open-state lists leave `deferred` out on purpose, with how many such lists each holds. */
 const DECIDED: Record<string, { count: number; why: string }> = {
   'src/commands/book-mirror.ts': { count: 1, why: 'receipt state (a deferred row reads as queued)' },
+  'src/core/engine-sql/doctor-sync.ts': { count: 3, why: 'the managed-sync failure and orphan reads, written out from managed-sync-orphans.ts and sync-failures.ts (test/doctor-sync-sql.test.ts pins the copy): managed sync' },
+  'src/core/engine-sql/doctor-terminal.ts': { count: 6, why: 'the terminal-failure aggregate and batch, written out from terminal-failures.ts and terminal-classify.ts (test/doctor-terminal-sql.test.ts pins the copy): the classifier lists sync knock-ons and managed sync' },
   'src/core/engine-sql/persistence-claims.ts': { count: 7, why: 'copies of journal.ts lists, pinned by test/persistence-journal-statements.test.ts. The claimable-row test (claimableWriteSql): its two EARLIER_HEAD lists, with the written-out EARLIER_DEFERRED probe and RELEASED_DEFERRED beside them. The FIFO head read (claimHeadText): its waiting list pairs RELEASED_DEFERRED, its two named-sync lists match managed sync rows, which are never deferred, and its two EARLIER_HEAD lists sit beside the EARLIER_DEFERRED probe (worktree rows) or match rows with no worktree, which are never deferred; test/claim-head-deferred-decisions.test.ts proves each' },
   'src/core/engine-sql/managed-sync-orphans.ts': { count: 4, why: 'managed sync' },
   'src/core/engine-sql/sync-status-reads.ts': { count: 1, why: 'managed sync: the drain stall probe head-request read moved here from sync-drain.ts' },
   'src/core/engine-sql/persistence-housekeeping.ts': { count: 2, why: 'the compaction listing writes out terminal-classify.ts supersessionSql (test/persistence-journal-statements.test.ts pins the copy): the same two lists and the same decision' },
   'src/core/engine-sql/dream-cycle.ts': { count: 1, why: 'cycle producer, never deferred (listLaterPersistenceRequests, moved from cycle/synthesize-postprocess.ts)' },
   'src/core/engine-sql/facts-trust.ts': { count: 1, why: 'facts producer, never deferred (readPendingWriteReceipt, moved from facts/absorb-log.ts)' },
+  'src/core/rust-engine/store-members/facts-write-path.ts': { count: 1, why: 'the store copy of readPendingWriteReceipt (engine-sql/facts-trust.ts): the same facts-producer list, never deferred' },
   'src/core/generations/managed-retire.ts': { count: 1, why: 'maintenance producer, never deferred' },
   'src/core/minions/handlers/subagent-oneshot.ts': { count: 1, why: 'receipt state' },
   'src/core/minions/tool-write-identity.ts': { count: 1, why: 'receipt state' },
@@ -48,7 +51,6 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/persistence/sync-waivers.ts': { count: 2, why: 'managed sync' },
   'src/core/persistence/sync-window.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/terminal-classify.ts': { count: 2, why: 'classifies sync knock-ons' },
-  'src/core/persistence/terminal-failures.ts': { count: 2, why: 'managed sync' },
   'src/core/persistence/types.ts': { count: 1, why: 'the public receipt states, where deferred reads as queued' },
   'src/core/persistence/worktree-refresh.ts': { count: 1, why: 'the drain counts released deferred rows through RELEASED_DEFERRED' },
   'src/core/rust-engine/store-members/managed-sync-orphans.ts': { count: 1, why: 'managed sync (the Rust members mirror engine-sql/managed-sync-orphans.ts)' },

@@ -1098,15 +1098,7 @@ export async function scanStaleMentions(
 ): Promise<StaleMentionsScan> {
   const limit = opts.limit ?? STALE_MENTIONS_DEFAULT_LIMIT;
 
-  const totalRow = await engine.executeRaw<{ count: number }>(
-    `SELECT COUNT(DISTINCT l.from_page_id)::int AS count
-       FROM links l
-       JOIN pages p ON p.id = l.from_page_id
-      WHERE l.link_source = 'mentions'
-        AND p.deleted_at IS NULL`,
-    [],
-  );
-  const totalPagesWithMentions = totalRow[0]?.count ?? 0;
+  const totalPagesWithMentions = await engine.countPagesWithMentionLinks();
 
   const empty: StaleMentionsScan = {
     totalPagesWithMentions,
@@ -1133,7 +1125,7 @@ export async function scanStaleMentions(
             SELECT 1 FROM links l
              WHERE l.from_page_id = p.id AND l.link_source = 'mentions'
           )
-        ORDER BY p.slug
+        ORDER BY p.slug COLLATE "C", p.id
         LIMIT $1
      )`;
 
@@ -1145,7 +1137,7 @@ export async function scanStaleMentions(
             COALESCE(p.title, '') || E'\n\n' || COALESCE(p.compiled_truth, '') || E'\n\n' || COALESCE(p.timeline, '') AS body
        FROM pages p
        JOIN scanned s ON s.id = p.id
-      ORDER BY p.slug`,
+      ORDER BY p.slug COLLATE "C", p.id`,
     [limit],
   );
 
@@ -1161,7 +1153,7 @@ export async function scanStaleMentions(
        JOIN pages f ON f.id = l.from_page_id
        JOIN pages t ON t.id = l.to_page_id
       WHERE l.link_source = 'mentions'
-      ORDER BY f.slug, t.slug`,
+      ORDER BY f.slug COLLATE "C", t.slug COLLATE "C"`,
     [limit],
   );
 

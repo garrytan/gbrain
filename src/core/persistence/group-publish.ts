@@ -232,6 +232,10 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
     // The source's unlocked state and the shared skill packs (engine-sql/write-misc.ts), once for the group.
     if (key === 'readSourceState') return (sourceId: string, opts?: SourceStateOptions) =>
       opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
+    // The source's purge epoch (cachedSyncReasonScan) is the typed form of SOURCE_PURGE_EPOCH_SQL: a caller that names
+    // that statement stable (sync-convergence.ts's screen) has it answered once per source too.
+    if (key === 'readSourcePurgeEpoch' && stable.has(flat(SOURCE_PURGE_EPOCH_SQL))) return (sourceId: string) =>
+      once(JSON.stringify([key, sourceId]), () => target.readSourcePurgeEpoch(sourceId));
     if (key === 'sharedSkillPackTablePresent') return () => once(key, () => target.sharedSkillPackTablePresent());
     if (key === 'listSharedSkillPackRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
     // The worktree binding, once per source and host for the group, taking no member's deadline or signal (an absence is read again).

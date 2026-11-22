@@ -74,9 +74,9 @@ Where this engine differs from PGLite:
   slug. The store keeps `alias_text` and `case_sensitive` on that value, and the alias fan-out
   reads `resolveCaseSensitiveAliases` and `readPageAliasRows` return them
   ([alias_fanout_reads.md](alias_fanout_reads.md)).
-- PGLite outside a transaction keeps the DELETE of `replaceDerivedAliases` when its INSERT fails;
-  the store writes nothing on a refusal. The mention pass runs it inside a transaction, where both
-  roll back.
+- `replaceDerivedAliases` refused writes nothing on every engine: PGLite and Postgres open a
+  transaction for a caller outside one, so a failed INSERT also undoes the DELETE. A `frontmatter`
+  row it is sent is stored as `setPageAliases` stores one, not case-sensitive and with no text.
 - A rename calls core's `cascade::rename_slug_rows` for the records other families key by slug
   (PGLite `moveSlugBindings` steps 1-6: fact withdrawals, `facts.entity_slug`,
   `facts.source_markdown_slug`). The facts entry is `facts::rename_slug_rows`: it moves the fact

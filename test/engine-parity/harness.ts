@@ -34,10 +34,12 @@ import type { EngineConfig } from '../../src/core/types.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { resetPgliteState, truncateCascade } from '../helpers/reset-pglite.ts';
+import { WRITE_GATE_SCAN_BASELINE_KEY } from '../../src/core/write-gate-schema.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
+import { itemSetHash } from '../../src/core/generations/publish.ts';
 import {
   archiveRustSource, createRustSource, newRustBrain, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
 } from './rust-arm.ts';
@@ -128,7 +130,7 @@ async function openArm(backend: ParityBackend): Promise<ParityArm> {
         unconnected: () => ({ engine: new PGLiteEngine(), config: { engine: 'pglite' } }) };
     }
     case 'postgres': {
-      const { engine, databaseUrl, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
+      const { engine, databaseUrl, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 4, { collation: 'en_US' });
       return { backend, engine, close,
         unconnected: () => ({ engine: new PostgresEngine(), // An instance pool, never the module-level singleton other code shares.
         config: { engine: 'postgres', database_url: databaseUrl, poolSize: 2 } as EngineConfig }) };
@@ -171,10 +173,11 @@ async function seedTrustPolicyState(engine: BrainEngine): Promise<void> {
 }
 
 /**
- * Config rows a fresh brain is created with (src/schema.sql seeds them; the Rust store writes them on create).
+ * Config rows a fresh brain is created with (src/schema.sql seeds them, migration v227 records the write gate's scan
+ * baseline; the Rust store writes them on create).
  * The SQL arms' reset empties config, so it puts back what the arm's own fresh brain recorded.
  */
-const SEED_CONFIG_KEYS = ['version', 'embedding_model', 'embedding_dimensions', 'chunk_strategy'] as const;
+const SEED_CONFIG_KEYS = ['version', 'embedding_model', 'embedding_dimensions', 'chunk_strategy', WRITE_GATE_SCAN_BASELINE_KEY] as const;
 const seededConfig = new WeakMap<ParityArm, Array<[string, string]>>();
 
 async function withSeededConfig(arm: ParityArm, reset: () => Promise<void>): Promise<void> {
@@ -237,6 +240,46 @@ export async function createSource(engine: BrainEngine, backend: ParityBackend, 
       await engine.executeRaw(
         `INSERT INTO sources (id, name, config, local_path) VALUES ($1, $1, $2::text::jsonb, $3) ON CONFLICT (id) DO NOTHING`,
         [id, JSON.stringify(config), localPath ?? null],
+      );
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
+ * Fixture: set a page's `updated_at` to an exact microsecond time (`iso`), for cases that need two pages written in the
+ * same millisecond. BrainEngine has no write that takes a page time, so the SQL arms set it with harness-only SQL. The
+ * Rust store has no such write either: its arm keeps the microsecond time of each write, so a case writes the pages in
+ * the order its stamps put them, and the Rust order matches.
+ */
+export async function stampUpdatedAt(engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, iso: string): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw('UPDATE pages SET updated_at = $3::text::timestamptz WHERE source_id = $1 AND slug = $2', [sourceId, slug, iso]);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
+ * Fixture: create a source whose last sync finished at `syncedAt` (ISO, ending in Z). BrainEngine has no typed write
+ * of a sync time, so the SQL arms insert it with harness-only SQL and the Rust arm passes it to the store's upsert.
+ */
+export async function createSyncedSource(engine: BrainEngine, backend: ParityBackend, id: string, config: Record<string, unknown>, syncedAt: string): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      await createRustSource(engine, id, config, undefined, syncedAt);
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, config, last_sync_at) VALUES ($1, $1, $2::text::jsonb, $3::text::timestamptz) ON CONFLICT (id) DO NOTHING`,
+        [id, JSON.stringify(config), syncedAt],
       );
       return;
     default:
@@ -339,39 +382,107 @@ export async function seedAccessPolicy(
 }
 
 /**
- * Fixture: a `page_purges` tombstone of one content hash, written through the typed `upsertPagePurges` the page purge
- * sweep (`persistence/page-purge.ts`) uses, so every arm stores it at its own clock.
+ * Fixture: store one calibration profile for a holder of the default source, so the calibration admin routes have a
+ * profile to read. It writes through the typed `insertCalibrationProfile` (rust-engine/main c1c524c7be), which every
+ * engine serves, the Rust store included; the backend argument is kept for the callers.
  */
-export async function recordPagePurge(engine: BrainEngine, _backend: ParityBackend, sourceId: string, slug: string, contentHash: string): Promise<void> {
-  await engine.upsertPagePurges({ sourceId, contentHashes: [contentHash], slug, requestId: null });
+export async function seedCalibrationProfile(engine: BrainEngine, _backend: ParityBackend, holder: string, patterns: readonly [string, string]): Promise<void> {
+  await engine.insertCalibrationProfile({
+    sourceId: 'default', holder, generatedAt: new Date('2026-10-01T12:00:00Z'), totalResolved: 6, brier: 0.125, accuracy: 0.75,
+    partialRate: 0.25, gradeCompletion: 1, domainScorecards: {}, patternStatements: [patterns[0], patterns[1]], voiceGatePassed: true,
+    voiceGateAttempts: 1, activeBiasTags: ['overconfidence'], modelId: 'parity-model',
+  });
 }
 
 /**
- * Fixture: a facts-fence generation of page `slug` that retired the fact `factId`, as `publishFenceGeneration`
- * (generations/fence.ts) writes it. The fence writer has no typed member, so this is harness-only SQL behind the
- * backend switch; the Rust store reads the ledger but no member writes it, and the same SQL stops on the engine's typed
- * raw_sql refusal. `preimage` overrides the item's preimage fields (the retired row as it stood); the preimage binds as
- * text and the cast parses it. The state defaults to `superseded`, since a page holds one live and one held generation
- * at most. Returns the generation id.
+ * Fixture: a `page_purges` tombstone, as the page purge sweep (`persistence/page-purge.ts`) and the restore replay
+ * (`belief/purge-mirror.ts`) write it inside the write journal's transaction. Neither has a typed writer, so this is
+ * harness-only SQL behind the backend switch; `purgedAt` (ISO) replaces the default `now()`, and `requestId` stamps the
+ * purge request the row belongs to. `contentHash` may name several hashes (one row each).
+ *
+ * Without a `purgedAt` the row goes through the typed `upsertPagePurges`, which every arm serves and stamps `now()`: with a
+ * `purgedAt` the Rust arm runs the same SQL and stops on the engine's typed raw_sql refusal.
  */
-export async function recordFenceRetirement(
-  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, factId: number,
-  opts: { fact: string; visibility: string; state?: 'live' | 'held' | 'superseded'; generation?: number; preimage?: Record<string, unknown> },
-): Promise<number> {
+export async function recordPagePurge(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, contentHash: string | string[], purgedAt?: string, requestId: string | null = null,
+): Promise<void> {
+  const hashes = Array.isArray(contentHash) ? contentHash : [contentHash];
+  // Without a stamped time every arm stores the tombstone through the typed `upsertPagePurges` the page purge sweep uses.
+  if (purgedAt === undefined) {
+    await engine.upsertPagePurges({ sourceId, contentHashes: hashes, slug, requestId });
+    return;
+  }
   switch (backend) {
     case 'rust':
+    // falls through: a stamped time has no Rust writer; the SQL below ends in the typed refusal.
     case 'pglite':
-    case 'postgres': {
-      const preimage = { id: factId, fact: opts.fact, visibility: opts.visibility, row_num: 1, expired_at: null, ...opts.preimage };
-      const [g] = await engine.executeRaw<{ id: number | string }>(`INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, operation_id, item_set_hash)
-        VALUES ($1, 'fact_fence', 'page:' || $2, $3, $4, 'parity', 'h') RETURNING id`, [sourceId, slug, opts.generation ?? 1, opts.state ?? 'superseded']);
-      await engine.executeRaw(`INSERT INTO derived_generation_items (generation_id, item_key, identity_hash, action, preimage)
-        VALUES ($1, $2, 'i', 'retired', $3::text::jsonb)`, [g!.id, `fact:${factId}`, JSON.stringify(preimage)]);
-      return Number(g!.id);
-    }
+    case 'postgres':
+      for (const hash of hashes) {
+        await engine.executeRaw(
+          'INSERT INTO page_purges (source_id, content_hash, slug, request_id, purged_at) VALUES ($1, $2, $3, $4::uuid, COALESCE($5::timestamptz, now())) ON CONFLICT (source_id, content_hash) DO UPDATE SET slug = EXCLUDED.slug, request_id = EXCLUDED.request_id, purged_at = EXCLUDED.purged_at',
+          [sourceId, hash, slug, requestId, purgedAt ?? null]);
+      }
+      return;
     default:
       return assertNever(backend);
   }
+}
+
+/**
+ * Fixture: a `page_facts_reconcile` watermark row in any state, including ones the typed `settleFactsReconcile` cannot
+ * reach (a reconciled revision older than the page, an attempt older than the reconcile). Harness-only SQL behind the
+ * backend switch. `reconciled` and `attempted` name the revision each column holds: the page's `current`
+ * `knowledge_revision`, an `older` one, or null.
+ */
+export async function recordFactsReconcile(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string,
+  outcome: 'complete' | 'deferred' | 'invalid' | 'cancelled', reconciled: 'current' | 'older' | null, attempted: 'current' | 'older' | null,
+): Promise<void> {
+  switch (backend) {
+    // The Rust store writes the watermark only through settle and drain: the same SQL stops on the engine's typed raw_sql refusal.
+    case 'rust':
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw(`INSERT INTO page_facts_reconcile (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
+        SELECT p.id, CASE $3 WHEN 'current' THEN p.knowledge_revision WHEN 'older' THEN $6::uuid END, now(), $5,
+               CASE $4 WHEN 'current' THEN p.knowledge_revision WHEN 'older' THEN $6::uuid END, now()
+          FROM pages p WHERE p.source_id = $1 AND p.slug = $2`,
+        [sourceId, slug, reconciled, attempted, outcome, '00000000-0000-4000-8000-000000000000']);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
+ * Fixture: a facts-fence generation of page `slug` that retired the fact `factId`, written through the typed ledger
+ * writer the fence publish uses (`activateGenerationRows`, generations/publish.ts `activateGeneration`): it
+ * supersedes the page's live generation and records one `retired` item whose preimage is the row as it stood, with the
+ * completeness and item set hash `publishFenceGeneration` (generations/fence.ts) writes for a fence that parsed empty.
+ * `preimage` overrides the preimage fields. `state: 'held'` records the page's held row instead
+ * (`recordHeldGenerationRow`, publish.ts `recordHeld`), which, as in production, records no item.
+ */
+export async function recordFenceRetirement(
+  engine: BrainEngine, sourceId: string, slug: string, factId: number,
+  opts: { fact: string; visibility: string; state?: 'live' | 'held'; generation?: number; preimage?: Record<string, unknown> },
+): Promise<void> {
+  const key = { sourceId, kind: 'fact_fence', ownerKey: `page:${slug}` };
+  const setHash = itemSetHash([]);
+  if (opts.state === 'held') {
+    const context = { slug, fence: 'facts', writer: 'parity', read: 'absent', rows: 1, partial: false };
+    await engine.transaction(tx => tx.recordHeldGenerationRow(key, { holdId: `parity-hold-${factId}`, runId: null, inputPin: null, inputSize: null,
+      setHash, reason: 'fence_absent', context: JSON.stringify(context), proposal: '[]', proposalBytes: 2 }));
+    return;
+  }
+  const preimage = { id: factId, fact: opts.fact, visibility: opts.visibility, row_num: 1, expired_at: null, ...opts.preimage };
+  const completeness = { complete: true, writer: 'parity', proof: 'fenceParsedEmpty', fence: null, fence_bytes: null };
+  await engine.transaction(async tx => {
+    const live = await tx.readLiveGenerationRow(key);
+    await tx.activateGenerationRows(key, live?.id ?? null, { generation: opts.generation ?? 1, runId: null, operationId: `parity-fence-${factId}`,
+      inputPin: null, inputSize: null, completeness: JSON.stringify(completeness), setHash, restoreOf: null, activationId: null, locator: null },
+    [{ item_key: `fact:${factId}`, identity_hash: `fact-identity-${factId}`, action: 'retired', preimage,
+      preimage_bytes: Buffer.byteLength(JSON.stringify(preimage), 'utf8'), pending: false }]);
+  });
 }
 
 /** Wrap an engine so every direct method call on the handle is recorded. */

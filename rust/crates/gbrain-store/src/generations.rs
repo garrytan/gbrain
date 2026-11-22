@@ -1295,6 +1295,55 @@ fn source_records(read: &dyn KvRead, source_id: &str) -> Result<Vec<GenerationRe
     }
 }
 
+/// One `derived_generations` row with its `derived_generation_items`, as other families read the
+/// ledger (`facts::generations`, `listUnwithdrawnFacts`).
+pub(crate) struct GenerationView {
+    pub id: u64,
+    pub owner_key: String,
+    pub generation: i32,
+    pub state: String,
+    pub created_at_us: i64,
+    pub items: Vec<GenerationItemView>,
+}
+
+/// One `derived_generation_items` row of a [`GenerationView`].
+pub(crate) struct GenerationItemView {
+    pub action: String,
+    pub preimage: Option<Value>,
+}
+
+/// The generation rows of `source_id` of `kind` with their items, in id order and item key
+/// order: the one read of this ledger outside this module.
+pub(crate) fn source_generation_views(
+    read: &dyn KvRead,
+    source_id: &str,
+    kind: &str,
+) -> Result<Vec<GenerationView>> {
+    let mut out = Vec::new();
+    for record in source_records(read, source_id)? {
+        if record.kind != kind {
+            continue;
+        }
+        let mut items = Vec::new();
+        for (_, v) in collect_prefix(read, &item_prefix(record.id), false, usize::MAX)? {
+            let item: ItemRecord = serde_json::from_slice(&v)?;
+            items.push(GenerationItemView {
+                action: item.action,
+                preimage: item.preimage,
+            });
+        }
+        out.push(GenerationView {
+            id: record.id,
+            owner_key: record.owner_key,
+            generation: record.generation,
+            state: record.state,
+            created_at_us: record.created_at_us,
+            items,
+        });
+    }
+    Ok(out)
+}
+
 /// `proposal @> jsonb_build_array(jsonb_build_object('key', slug))`: the proposal is an array
 /// with an object element whose `key` is the string `slug`.
 fn proposes_key(proposal: &Value, slug: &str) -> bool {

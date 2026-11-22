@@ -66,7 +66,7 @@ function committed(root: string, path: string): boolean {
 /** Outstanding notices of the scoped sources (all when unscoped); a notice whose path is now committed is dropped on read. */
 export async function readUncommittedFenceRepairs(engine: Exec, sourceIds?: readonly string[]): Promise<UncommittedFenceRepair[]> {
   const rows = await engine.executeRaw<{ fingerprint: string; record: UncommittedFenceRepair }>(`SELECT fingerprint, completed_keys->0 AS record FROM op_checkpoints
-    WHERE op=$1 AND ($2::text[] IS NULL OR completed_keys->0->>'source_id'=ANY($2::text[])) ORDER BY fingerprint`, [FENCE_UNCOMMITTED_OP, sourceIds ? [...sourceIds] : null]);
+    WHERE op=$1 AND ($2::text[] IS NULL OR completed_keys->0->>'source_id'=ANY($2::text[])) ORDER BY fingerprint COLLATE "C"`, [FENCE_UNCOMMITTED_OP, sourceIds ? [...sourceIds] : null]);
   const out: UncommittedFenceRepair[] = [];
   for (const row of rows) {
     if (committed(row.record.root, row.record.path)) {

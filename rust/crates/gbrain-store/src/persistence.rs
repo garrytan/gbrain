@@ -27,6 +27,7 @@
 //!
 //! `d 0x05` and `d 0x06` are the `persistence_effects` rows and their claim-order index (`effects.rs`); no other
 //! family here uses them.
+
 //!
 //! A resumable op's checkpoint parent (`op_checkpoint.rs`) is an `op_checkpoints` row, so it is
 //! stored under `d 0x02` with the housekeeping turns, as Postgres keeps both in one table.
@@ -88,7 +89,7 @@ mod receipt_list;
 mod sync_orphan_reads;
 mod sync_pass_pages;
 mod sync_run_reads;
-mod topology;
+pub(crate) mod topology;
 pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod worktree_admission;
 #[cfg(test)]
@@ -102,12 +103,15 @@ pub use effect_worker::{EffectClaim, EffectSettle, LinksRearm, Settle};
 pub(crate) use effects::all_effects;
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
+pub(crate) use housekeeping::{HousekeepingRow, turn_key};
 pub use idle_probe::IdleProbeSpec;
 pub use noop_settle::NoopSettleCandidateSpec;
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
     NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
 };
+mod trust_scan_cursor;
+
 pub(crate) use op_checkpoint::{
     delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
 };
@@ -115,7 +119,7 @@ pub use projection_queue::{
     ProjectionJobRef, ProjectionWindowCursor, ProjectionWindowKey, SegmentedProjectionFilter,
 };
 pub(crate) use projection_queue::{
-    activation_started_us, parse_timestamptz, queue_page_projection,
+    activation_started_us, parse_timestamptz, queue_page_projection, queued_jobs,
 };
 pub use projection_rebuild::{
     ProjectionJobKey, ProjectionWindowCandidate, QueuedProjectionFilter, QueuedProjectionKey,
@@ -165,7 +169,7 @@ const REQUEST_STATES: &[&str] = &[
 const FOREGROUND_PRIORITY_KEY: &str = "sync.foreground_priority";
 
 /// The config row the completion counts clamped true-ups in (`TRUE_UP_CLAMP_SQL`).
-const TRUE_UP_CLAMPED_KEY: &str = "persistence.true_up.clamped";
+pub(crate) const TRUE_UP_CLAMPED_KEY: &str = "persistence.true_up.clamped";
 
 /// The `persistence_requests` columns `RequestRecord` keeps in `extra`, each with its column
 /// default. `to_row` fills every one, so a row read here has the column set Postgres returns.
@@ -219,7 +223,7 @@ pub(crate) fn fill_request_columns(row: &mut Map<String, Value>, extra: &Map<Str
 
 /// `->>`: a JSON value as text. A JSON null (or a missing key) is SQL NULL; a string is its text
 /// unquoted; anything else is its JSON text.
-fn json_text(v: Option<&Value>) -> Option<String> {
+pub(crate) fn json_text(v: Option<&Value>) -> Option<String> {
     match v? {
         Value::Null => None,
         Value::String(s) => Some(s.clone()),
@@ -228,7 +232,7 @@ fn json_text(v: Option<&Value>) -> Option<String> {
 }
 
 /// SQL `LIKE` with `%` and `_` and no escape character.
-fn sql_like(text: &str, pattern: &str) -> bool {
+pub(crate) fn sql_like(text: &str, pattern: &str) -> bool {
     fn go(t: &[char], p: &[char]) -> bool {
         match p.split_first() {
             None => t.is_empty(),
@@ -251,7 +255,7 @@ fn sync_kind(intent: &Value) -> bool {
 }
 
 /// Three-valued AND / OR / NOT (`None` is SQL NULL).
-fn and3(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+pub(crate) fn and3(a: Option<bool>, b: Option<bool>) -> Option<bool> {
     match (a, b) {
         (Some(false), _) | (_, Some(false)) => Some(false),
         (Some(true), Some(true)) => Some(true),
@@ -272,7 +276,7 @@ fn not3(a: Option<bool>) -> Option<bool> {
 }
 
 /// A timestamp stored in `extra`, in microseconds.
-fn extra_time(record: &RequestRecord, column: &str) -> Option<i64> {
+pub(crate) fn extra_time(record: &RequestRecord, column: &str) -> Option<i64> {
     record
         .extra
         .get(column)
@@ -280,7 +284,7 @@ fn extra_time(record: &RequestRecord, column: &str) -> Option<i64> {
         .and_then(parse_iso)
 }
 
-fn extra_i64(record: &RequestRecord, column: &str) -> i64 {
+pub(crate) fn extra_i64(record: &RequestRecord, column: &str) -> i64 {
     record
         .extra
         .get(column)
@@ -288,7 +292,7 @@ fn extra_i64(record: &RequestRecord, column: &str) -> i64 {
         .unwrap_or(0)
 }
 
-fn extra_is_null(record: &RequestRecord, column: &str) -> bool {
+pub(crate) fn extra_is_null(record: &RequestRecord, column: &str) -> bool {
     record.extra.get(column).is_none_or(Value::is_null)
 }
 
@@ -351,7 +355,7 @@ pub(crate) fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
 }
 
 /// The states that hold an outstanding slot (`persistence/journal.ts` `outstandingRefusal`).
-const OUTSTANDING_STATES: [&str; 4] = ["queued", "deferred", "running", "recovering"];
+pub(crate) const OUTSTANDING_STATES: [&str; 4] = ["queued", "deferred", "running", "recovering"];
 
 pub(crate) fn count_outstanding_by_source_in(
     read: &dyn KvRead,
@@ -493,7 +497,104 @@ pub(crate) fn read_counter_rows_in(read: &dyn KvRead, names: &[String]) -> Resul
     Ok(rows)
 }
 
-fn request_by_id(read: &dyn KvRead, id: &str) -> Result<Option<RequestRecord>> {
+/// `state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL`: a request that
+/// keeps a brain from quiescing.
+fn blocks_quiescence(r: &RequestRecord) -> bool {
+    matches!(
+        r.state.as_str(),
+        "queued" | "deferred" | "running" | "recovering"
+    ) || !extra_is_null(r, "recovery")
+}
+
+/// What keeps shared-skill activation from passing, in the order the SQL engines check it
+/// (activation.ts, then skill-activation.ts): the first blocking request by sequence, then the
+/// first effect holding a recovery record (both `managed`), then the first queued or running
+/// effect (`skill`). Effects come in id order; `source_id` is the effect's, else its request's.
+pub(crate) fn activation_blocker(read: &dyn KvRead) -> Result<Option<Value>> {
+    let mut requests: Vec<RequestRecord> = all_requests(read)?
+        .into_iter()
+        .filter(blocks_quiescence)
+        .collect();
+    requests.sort_by_key(|r| r.sequence);
+    if let Some(r) = requests.first() {
+        return Ok(Some(json!({
+            "phase": "managed",
+            "kind": "request",
+            "request_id": r.request_id,
+            "source_id": r.source_id,
+            "slug": r.slug,
+            "operation": r.operation,
+            "state": r.state,
+        })));
+    }
+    let effects = effects::all_effects(read)?;
+    let blocking = |recovering_only: bool| -> Result<Option<Value>> {
+        for e in &effects {
+            let recovering = e.recovery.is_some();
+            if !(recovering || !recovering_only && matches!(e.state.as_str(), "queued" | "running"))
+            {
+                continue;
+            }
+            let Some(r) = request_by_id(read, &e.request_id)? else {
+                continue;
+            };
+            return Ok(Some(json!({
+                "kind": "effect",
+                "effect_id": e.id.to_string(),
+                "effect_kind": e.kind,
+                "state": e.state,
+                "recovering": recovering,
+                "source_id": e.source_id.clone().unwrap_or(r.source_id),
+                "slug": r.slug,
+                "request_id": r.request_id,
+                "attempts": e.attempts,
+                "next_attempt_at": iso(e.next_attempt_at_us),
+            })));
+        }
+        Ok(None)
+    };
+    if let Some(mut v) = blocking(true)? {
+        v["phase"] = json!("managed");
+        return Ok(Some(v));
+    }
+    Ok(blocking(false)?.map(|mut v| {
+        v["phase"] = json!("skill");
+        v
+    }))
+}
+
+/// The revisions a pending shared-skill publication of the source incarnation names
+/// (retention.ts `publication_revisions`): each skill_bundle request that is queued, running or
+/// recovering, or holds a recovery record, gives its `intent.expected_revision` and every
+/// `intent.affected[].revision`.
+pub(crate) fn pending_skill_revisions(
+    read: &dyn KvRead,
+    source_id: &str,
+    incarnation: &str,
+) -> Result<std::collections::BTreeSet<String>> {
+    let mut out = std::collections::BTreeSet::new();
+    for r in all_requests(read)? {
+        let target = r.extra.get("target_kind").and_then(Value::as_str);
+        if r.source_id != source_id
+            || r.source_incarnation != incarnation
+            || target != Some("skill_bundle")
+            || !(matches!(r.state.as_str(), "queued" | "running" | "recovering")
+                || !extra_is_null(&r, "recovery"))
+        {
+            continue;
+        }
+        let text = |v: Option<&Value>| v.and_then(Value::as_str).map(str::to_string);
+        if let Some(rev) = text(r.intent.get("expected_revision")) {
+            out.insert(rev);
+        }
+        if let Some(Value::Array(affected)) = r.intent.get("affected") {
+            out.extend(affected.iter().filter_map(|a| text(a.get("revision"))));
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn request_by_id(read: &dyn KvRead, id: &str) -> Result<Option<RequestRecord>> {
     get_json(read, &keys::request(&uuid_param(id, "id")?))
 }
 
@@ -1537,6 +1638,19 @@ impl Store {
         let request_id = uuid_param(request_id, "requestId")?;
         let read = self.read()?;
         Ok(read_request(&*read, principal, &request_id)?.map(|r| r.to_row()))
+    }
+
+    /// `readWriteRequestsByRequestId(requestId)`: at most two request rows with this request id,
+    /// from any principal, in key order. The trusted local CLI answers a receipt by request id
+    /// alone only when exactly one row has it, so two rows is enough to know it is ambiguous.
+    pub fn list_write_requests_by_request_id(&self, request_id: &str) -> Result<Vec<Value>> {
+        let request_id = uuid_param(request_id, "requestId")?;
+        Ok(all_requests(&*self.read()?)?
+            .into_iter()
+            .filter(|r| r.request_id == request_id)
+            .take(2)
+            .map(|r| r.to_row())
+            .collect())
     }
 
     /// `readWriteRequestById(id)` and `lockWriteRequest(id)`: the request row or `None`.

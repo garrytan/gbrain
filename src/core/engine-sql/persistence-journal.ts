@@ -13,14 +13,16 @@ import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor, QueryOpts } from './executor.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { JOURNAL_LIMITS_SQL } from '../persistence/limits.ts';
+import { MANAGED_SYNC_PASS_OP } from '../persistence/sync-pass-row.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/receipt-bytes.ts';
 import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
+import { GIT_HOLD_SUMMARY_OP } from './sync-hold-op.ts';
 
 /** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
 export const GIT_HOLD_OP = 'sync-hold';
 /** The op of a source's held-file summary row (sync-holds.ts re-exports it). */
-export const GIT_HOLD_SUMMARY_OP = 'sync-hold-summary';
+export { GIT_HOLD_SUMMARY_OP };
 
 /** Creates missing counter rows; takes no lock on existing ones. Keys sorted. */
 export const ENSURE_COUNTERS_SQL = 'INSERT INTO persistence_counters(key) SELECT k FROM unnest($1::text[]) WITH ORDINALITY AS u(k,n) ORDER BY n ON CONFLICT DO NOTHING';
@@ -147,7 +149,7 @@ export const HELD_PAGES_SQL = `SELECT h.completed_keys->0 AS record, p.knowledge
       JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
       LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
       WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[])
-      ORDER BY h.fingerprint`;
+      ORDER BY h.fingerprint COLLATE "C"`;
 
 /** The current-incarnation hold rows naming these page ids, each with its page's revision, in fingerprint order. */
 export function readHeldPageRows<R>(exec: LegacyUnscopedRead, pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>> {
@@ -167,7 +169,7 @@ export function readHeldCoverageRows(exec: LegacyUnscopedRead, sourceIds: string
       FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
       WHERE h.op=$1 AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))
         AND COALESCE((h.completed_keys->0->>'count')::int,0)>0
-      ORDER BY s.id`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
+      ORDER BY s.id COLLATE "C"`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
 }
 
 /** The request a principal admitted under `requestId`, or null. */
@@ -188,6 +190,14 @@ export async function readOwnerHostBinding(exec: LegacyUnscopedRead, worktreeId:
   const [binding] = await exec.executeRaw<{ local_path: string | null }>(`SELECT h.local_path FROM persistence_host_bindings h
       JOIN persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id WHERE w.id=$1::uuid`, [worktreeId]);
   return binding?.local_path ?? null;
+}
+
+/**
+ * At most two request rows with this request_id, whoever submitted them (ops/persistence.ts hostOperatorReceipt): the
+ * trusted local CLI reads a receipt by request_id alone only when exactly one row has it.
+ */
+export async function readWriteRequestsByRequestId(exec: LegacyUnscopedRead, requestId: string): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid LIMIT 2', [requestId]);
 }
 
 /**
@@ -449,6 +459,25 @@ export async function completeWriteRow(exec: SqlExecutor, c: WriteCompletion): P
   return done ?? null;
 }
 
+/** Whether a locked request may still be cancelled under the caller's expectation (the same test the Rust store runs). */
+function cancellable(row: WriteRequest, c: WriteCancellation): boolean {
+  return !['committed', 'conflict', 'failed', 'cancelled'].includes(row.state) && row.state === c.expectState
+    && (row.execution_token ?? null) === c.expectExecutionToken && !row.publication_started && row.recovery == null;
+}
+
+/**
+ * Cancels request `c.id`: durable commit on, the row locked FOR UPDATE, the check, then the completion statement.
+ * Null when the row does not exist.
+ */
+export async function cancelWriteRow(exec: SqlExecutor, c: WriteCancellation): Promise<WriteCancelResult | null> {
+  const current = await lockWriteRequest(exec, c.id);
+  if (!current) return null;
+  if (!cancellable(current, c)) return { status: 'kept', row: current };
+  await exec.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+  const done = await completeWriteRow(exec, c);
+  return done ? { status: 'cancelled', row: done } : { status: 'too_large', row: current };
+}
+
 /** The config key that turns a remote write's mention links off (effect-model.ts `REMOTE_AUTO_LINKS_KEY`; the statement test pins the two). */
 export const REMOTE_AUTO_LINKS_CONFIG_KEY = 'mcp.remote_auto_links';
 
@@ -521,21 +550,22 @@ export async function insertWithdrawalEffects(exec: SqlExecutor, spec: Withdrawa
   await exec.executeRaw(WITHDRAWAL_EFFECTS_SQL, withdrawalEffectsParams(spec));
 }
 
-/** Whether a locked request may still be cancelled under the caller's expectation (the same test the Rust store runs). */
-function cancellable(row: WriteRequest, c: WriteCancellation): boolean {
-  return !['committed', 'conflict', 'failed', 'cancelled'].includes(row.state) && row.state === c.expectState
-    && (row.execution_token ?? null) === c.expectExecutionToken && !row.publication_started && row.recovery == null;
-}
+/** The raw progress row of a drain lease's holder (`readDrainHolderProgress`). */
+export interface DrainHolderProgressRow { committed: number | string; last_committed_at: Date | string | null; last_saved_at: Date | string | null }
 
 /**
- * Cancels request `c.id`: durable commit on, the row locked FOR UPDATE, the check, then the completion statement.
- * Null when the row does not exist.
+ * The source's managed-sync commits since `since` (ISO), its last managed-sync commit, and its last cursor save, pass
+ * row write or hold summary write, through the source's writer binding; null when no binding exists.
  */
-export async function cancelWriteRow(exec: SqlExecutor, c: WriteCancellation): Promise<WriteCancelResult | null> {
-  const current = await lockWriteRequest(exec, c.id);
-  if (!current) return null;
-  if (!cancellable(current, c)) return { status: 'kept', row: current };
-  await exec.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-  const done = await completeWriteRow(exec, c);
-  return done ? { status: 'cancelled', row: done } : { status: 'too_large', row: current };
+export async function readDrainHolderProgress(exec: LegacyUnscopedRead, sourceId: string, since: string): Promise<DrainHolderProgressRow | null> {
+  const [row] = await exec.executeRaw<DrainHolderProgressRow>(`
+    SELECT (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.state='committed'
+        AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' AND r.completed_at >= $2::timestamptz) AS committed,
+      (SELECT max(r.completed_at) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
+        AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS last_committed_at,
+      GREATEST((SELECT max(c.updated_at) FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op=$3 AND c.fingerprint=b.source_id||':'||b.source_incarnation::text),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op='sync-hold-summary' AND c.fingerprint=b.source_id||':'||b.source_incarnation::text)) AS last_saved_at
+    FROM persistence_source_bindings b WHERE b.source_id=$1`, [sourceId, since, MANAGED_SYNC_PASS_OP]);
+  return row ?? null;
 }

@@ -13,6 +13,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { CLI_ONLY } from '../src/cli/main.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 describe('CLI_ONLY command reachability (#2900)', () => {
   test('`reconcile-links` is in CLI_ONLY so dispatch reaches its handler', () => {
@@ -33,7 +34,7 @@ describe('CLI_ONLY command reachability (#3224)', () => {
     const result = spawnSync('bun', ['run', 'src/cli.ts', 'backfill', '--help'], {
       cwd: process.cwd(),
       encoding: 'utf8',
-      env: { ...process.env, GBRAIN_HOME: '/tmp/gbrain-test-backfill-nonexistent' },
+      env: { ...envWithoutDatabaseUrl(), GBRAIN_HOME: '/tmp/gbrain-test-backfill-nonexistent' },
     });
     expect(result.stderr ?? '').not.toContain('Unknown command');
     expect(result.status).toBe(0);

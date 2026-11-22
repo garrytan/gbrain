@@ -16,13 +16,11 @@ import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { jsonRowBatches } from '../batch-rows.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
-import { belowSafeChunkFence, chunkGenerationFilter } from '../search/safe-chunks.ts';
+import { belowSafeChunkFence } from '../search/safe-chunks.ts';
 import { applyMoveWaves, CHUNK_VECTOR_WRITE_BUDGET, planMoveWaves, type ChunkMove } from './chunk-moves.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
-import { pageReadFilter } from '../search/read-policy-sql.ts';
 import type { PageReadScope } from '../types.ts';
-import { projectionClassSql } from './projection-class.ts';
 import { advanceProjectionCursor, ineligibleKey, rememberIneligible, type ProjectionScanCursor } from './projection-window.ts';
 import { acceptedEmbeddingInputHashes, embeddingInputHash, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
@@ -659,30 +657,9 @@ export interface ProjectionBacklog {
   as_of?: string;
 }
 
-/** Every class of the queue in one aggregate; `scope` narrows to the pages a caller may read. */
-export async function projectionBacklog(engine: Pick<BrainEngine, 'executeRaw'>, scope: PageReadScope = {}): Promise<Required<ProjectionBacklog>> {
-  const params: unknown[] = [];
-  const read = pageReadFilter('p', scope, params);
-  const [row] = await engine.executeRaw<Record<'pending' | 'failed' | 'sealable' | 'sealable_with_visual' | 'reimport' | 'ocr_required' | 'protected' | 'archived', number>
-    & { oldest: number | null; as_of: string }>(`SELECT COUNT(*) FILTER (WHERE k.cls='text')::int AS pending,
-      COUNT(*) FILTER (WHERE k.cls='text' AND j.reason='rebuild_failed')::int AS failed,
-      COUNT(*) FILTER (WHERE k.cls='sealable')::int AS sealable,
-      COUNT(*) FILTER (WHERE k.cls='sealable' AND EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND c.embedding_image IS NOT NULL
-        AND ${chunkGenerationFilter('p', 'c')}))::int AS sealable_with_visual,
-      COUNT(*) FILTER (WHERE k.cls='reimport')::int AS reimport,
-      COUNT(*) FILTER (WHERE k.cls='reimport' AND p.chunker_version < 0)::int AS ocr_required,
-      COUNT(*) FILTER (WHERE k.cls='protected')::int AS protected,
-      COUNT(*) FILTER (WHERE k.cls='archived')::int AS archived,
-      EXTRACT(EPOCH FROM now()-MIN(j.updated_at) FILTER (WHERE k.cls IN ('text','sealable','reimport')))::float8 AS oldest,
-      now()::text AS as_of
-    FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
-    JOIN pages p ON p.source_id=s.id AND p.slug=j.slug AND p.deleted_at IS NULL
-    CROSS JOIN LATERAL (SELECT ${projectionClassSql('p', 's')} AS cls) k
-    WHERE ${read}`, params);
-  const oldest = row?.oldest === null || row?.oldest === undefined ? null : Math.max(0, Math.floor(Number(row.oldest)));
-  const n = (key: 'pending' | 'failed' | 'sealable' | 'sealable_with_visual' | 'reimport' | 'ocr_required' | 'protected' | 'archived') => Number(row?.[key] ?? 0);
-  return { pending: n('pending'), failed: n('failed'), oldest_age_seconds: oldest, sealable: n('sealable'), sealable_with_visual: n('sealable_with_visual'),
-    reimport: n('reimport'), ocr_required: n('ocr_required'), protected: n('protected'), archived: n('archived'), as_of: String(row?.as_of ?? '') };
+/** Every class of the queue in one aggregate; `scope` narrows to the pages a caller may read (the engine's `readProjectionBacklog`). */
+export function projectionBacklog(engine: Pick<BrainEngine, 'readProjectionBacklog'>, scope: PageReadScope = {}): Promise<Required<ProjectionBacklog>> {
+  return engine.readProjectionBacklog(scope);
 }
 
 /**
@@ -693,7 +670,7 @@ export async function projectionBacklog(engine: Pick<BrainEngine, 'executeRaw'>,
  * queue reason, so a row that last failed (`rebuild_failed`) is named before
  * anything is rebuilt.
  */
-export async function previewProjectionDrain(engine: Pick<BrainEngine, 'executeRaw'>, limit = 50):
+export async function previewProjectionDrain(engine: Pick<BrainEngine, 'executeRaw' | 'readProjectionBacklog'>, limit = 50):
   Promise<Required<ProjectionBacklog> & { rows: Array<{ source_id: string; slug: string; page_kind: string; reason: string; updated_at: string }> }> {
   const backlog = await projectionBacklog(engine);
   const rows = await engine.executeRaw<{ source_id: string; slug: string; page_kind: string; reason: string; updated_at: string }>(`SELECT s.id AS source_id,j.slug,p.page_kind,j.reason,j.updated_at::text AS updated_at

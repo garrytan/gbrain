@@ -109,14 +109,14 @@ impl Brain {
         self.run(env, |s| s.count_repo_bound_sources())
     }
 
-    /// `readSourcePurgeEpoch(id)`: the source's stored purge epoch, or `null` for an unknown source.
+    /// `readSourceLastCommit(id)`: the commit the source's last sync advanced to, or `null`.
     #[napi]
-    pub fn read_source_purge_epoch<'env>(
+    pub fn read_source_last_commit<'env>(
         &self,
         env: &'env Env,
         id: String,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_source_purge_epoch(&id))
+        self.run(env, move |s| s.read_source_last_commit(&id))
     }
 
     /// `listSourceLocalPaths()`: every non-empty source local path.

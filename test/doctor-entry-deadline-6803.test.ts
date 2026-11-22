@@ -24,6 +24,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import postgres from '#postgres';
 import type { BrainEngine } from '../src/core/engine.ts';
+import * as doctorPersistence from '../src/core/engine-sql/doctor-persistence.ts';
+import { DOCTOR_PERSISTENCE_MEMBERS } from '../src/core/engine-sql/doctor-persistence.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { buildChecks, type Check } from '../src/commands/doctor.ts';
 import { CHEAP_INCIDENT_CHECKS, DOCTOR_CHECK_REGISTRY, LOST_WRITE_CHECKS, runDoctorRegistry } from '../src/commands/doctor/registry.ts';
@@ -56,7 +58,7 @@ function ctxFor(engine: BrainEngine | null, args: string[]): DoctorContext {
  */
 function instrumented(engine: BrainEngine, opts: { slow?: { match: RegExp; ms: number }; count?: RegExp; countMember?: keyof BrainEngine } = {}): BrainEngine & { counted: number; settled: () => Promise<void> } {
   const state = { counted: 0, delayed: new Set<Promise<unknown>>() };
-  return new Proxy(engine, {
+  const proxy: BrainEngine = new Proxy(engine, {
     get(target, key) {
       if (key === 'counted') return state.counted;
       if (key === 'settled') return async () => { await Promise.allSettled([...state.delayed]); };
@@ -75,10 +77,16 @@ function instrumented(engine: BrainEngine, opts: { slow?: { match: RegExp; ms: n
           return run;
         };
       }
+      // A typed persistence read runs its statement through this wrapper's executeRaw, so the delay and the count see it.
+      if (typeof key === 'string' && (DOCTOR_PERSISTENCE_MEMBERS as readonly string[]).includes(key)) {
+        const impl = (doctorPersistence as unknown as Record<string, (raw: unknown, ...args: unknown[]) => unknown>)[key]!;
+        return (...args: unknown[]) => impl((sql: string, params?: unknown[], o?: unknown) => (proxy.executeRaw as (...a: unknown[]) => unknown)(sql, params, o), ...args);
+      }
       const value = Reflect.get(target, key, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
-  }) as BrainEngine & { counted: number; settled: () => Promise<void> };
+  });
+  return proxy as BrainEngine & { counted: number; settled: () => Promise<void> };
 }
 
 const byName = (checks: Check[], name: string) => checks.find((c) => c.name === name);
@@ -284,6 +292,28 @@ for (const kind of testBackends()) {
 
     const activeMarked = async (marker: string) => (await engine.executeRaw<{ n: number }>(
       "SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND state <> 'idle' AND query LIKE '%' || $1 || '%'", [marker]))[0]!.n;
+
+    test('Postgres: under a deadline the connection probe (pingStore) runs on the deadline-bounded read, not the plain pool', async () => {
+      // pingStore replaced the connection check's executeRaw('SELECT 1 AS ok'), which the bound wrapper ended at the deadline.
+      // Under a deadline the typed probe must take the engine's bounded read (statement_timeout = time left); without one it
+      // keeps master's executeRaw path.
+      const raw = engine as unknown as { executeRaw: (...a: unknown[]) => Promise<unknown[]> };
+      const plain = raw.executeRaw;
+      let plainCalls = 0;
+      raw.executeRaw = (...a: unknown[]) => { plainCalls++; return plain.apply(engine, a); };
+      try {
+        const bound = deadlineBoundEngine(engine);
+        const scope = { startedAt: Date.now(), deadlineAt: Date.now() + 5_000, expired: false };
+        await withStatementDeadline(scope, () => bound.pingStore());
+        expect(plainCalls).toBe(0);
+        await engine.pingStore();
+        expect(plainCalls).toBe(1);
+        expect(scope.expired).toBe(false);
+      } finally {
+        delete (raw as Partial<typeof raw>).executeRaw;
+        if (raw.executeRaw !== plain) raw.executeRaw = plain;
+      }
+    });
 
     test('Postgres: a two-statement entry over its 300 ms budget leaves no backend running and its second statement is refused', async () => {
       const seen: { caught?: unknown; second?: unknown; done?: boolean } = {};

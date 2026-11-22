@@ -47,8 +47,7 @@ export function sqlNotifierStore(engine: BrainEngine): NotifierStore {
     holdsLease: (hostId, ownerId, fence) => holdsLease(engine, hostId, ownerId, fence),
     releaseLease: (hostId, ownerId) => releaseLease(engine, hostId, ownerId),
     dueMarkers: async (ids) => { await pruneSatisfiedMarkers(engine, ids); return readDueMarkers(engine, ids); },
-    liveJobs: async (ids) => new Set((await engine.executeRaw<{ id: unknown }>(
-      "SELECT id FROM minion_jobs WHERE id = ANY($1::bigint[]) AND status IN ('waiting','active','delayed','waiting-children','paused')", [ids])).map(r => Number(r.id))),
+    liveJobs: async (ids) => new Set(await engine.readLiveJobIds(ids)),
     forward: async (sourceId, head) => { await upsertMarker(engine, { sourceId, intent: 'freshness', wantedHead: head, requestedBy: 'notifier' }); },
     settleMarkers: async (sourceId, read, run) => settleMarkers(engine, sourceId, read,
       { ...run, checkoutHead: await (await import('./nudge.ts')).checkoutHead(engine, sourceId).catch(() => null) }),
@@ -166,7 +165,7 @@ export function residentNotifierOptions(engine: BrainEngine, opts: ResidentNotif
     readFlag: async () => parseOnCommit(await engine.getConfig(SYNC_ON_COMMIT_KEY)),
     readExcluded: async () => parseExcludedSources(await engine.getConfig(SYNC_ON_COMMIT_SOURCES_KEY)),
     listSources: () => listHostSources(engine, hostId, env),
-    lastCommit: async (sourceId) => (await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [sourceId]))[0]?.last_commit ?? null,
+    lastCommit: (sourceId) => engine.readSourceLastCommit(sourceId),
     revParse: revParseHead,
     quiet: (s) => gitQuiet(s.gitDir),
     watch: (s, onChange) => s.gitDir ? watchGitDirs(watchTargets(s.gitDir, s.commonDir ?? null), onChange) : null,

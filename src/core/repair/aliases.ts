@@ -45,3 +45,17 @@ export const aliasesRepair: RepairHandler = {
     return removed > 0;
   },
 };
+
+const MISSING = (alias: string, column: string) => `NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=${alias}.source_id AND p.slug=${alias}.${column})`;
+
+const SOFT_DELETED = (alias: string, column: string) =>
+  `EXISTS (SELECT 1 FROM pages p WHERE p.source_id=${alias}.source_id AND p.slug=${alias}.${column} AND p.deleted_at IS NOT NULL)`;
+
+/** Alias rows (both tables) whose target page row is absent, per source; and those whose target is soft-deleted. */
+export const ORPHANED_ALIAS_COUNTS_SQL = `SELECT source_id,sum(slug_redirects)::int AS slug_redirects,sum(page_aliases)::int AS page_aliases FROM (
+    SELECT sa.source_id,1 AS slug_redirects,0 AS page_aliases FROM slug_aliases sa WHERE ${MISSING('sa', 'canonical_slug')}
+    UNION ALL SELECT pa.source_id,0,1 FROM page_aliases pa WHERE ${MISSING('pa', 'slug')}) o GROUP BY source_id ORDER BY source_id COLLATE "C"`;
+
+export const SOFT_DELETED_ALIAS_COUNT_SQL = `SELECT
+    (SELECT count(*)::int FROM slug_aliases sa WHERE ${SOFT_DELETED('sa', 'canonical_slug')}) AS slug_redirects,
+    (SELECT count(*)::int FROM page_aliases pa WHERE ${SOFT_DELETED('pa', 'slug')}) AS page_aliases`;

@@ -33,8 +33,9 @@ describe('migrations full-record golden', () => {
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    // 331 is master's next migration, 332 and 333 sit on lane branches: the trunk's v334 leaves them free.
-    expect(golden.gaps).toEqual([17, 18, 19, 100, 331, 332, 333]);
+    // 331 is master's next migration and 332 sits on a lane branch; 333 is this line's byte-order slug indexes and
+    // 334 the trunk's projection-jobs index (this line's former 326).
+    expect(golden.gaps).toEqual([17, 18, 19, 100, 331, 332]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);

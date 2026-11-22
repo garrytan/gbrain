@@ -42,6 +42,7 @@ import { FACTS_BACKSTOP_SOURCES } from '../src/core/facts/capture-sources.ts';
 import { WRITE_GATE_SCAN_BASELINE_KEY } from '../src/core/write-gate-schema.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
+import { readDoctorSources } from '../src/core/engine-sql/doctor-sources.ts';
 
 let engine: BrainEngine;
 /** A brain nothing seeds: fresh-install expectations. */
@@ -313,7 +314,8 @@ describe('the asks around claiming', () => {
     expect(await hasUnclaimedLegacySources(engine)).toBe(true);
     expect((await readUnclaimedLegacySources(engine)).unclaimed.map(u => u.id)).toContain(s.src);
     const seen: string[] = [];
-    const allClaimed = { executeRaw: async (sql: string) => { seen.push(sql); return /FROM sources/.test(sql) ? [{ id: 'a', claimed: true, lifted: true }] as never[] : []; } };
+    const allClaimedRaw = async (sql: string) => { seen.push(sql); return /FROM sources/.test(sql) ? [{ id: 'a', claimed: true, lifted: true }] as never[] : []; };
+    const allClaimed = { executeRaw: allClaimedRaw, readDoctorSources: (variant: never, scope: never) => readDoctorSources(allClaimedRaw as never, variant, scope) };
     expect(await hasUnclaimedLegacySources(allClaimed as never)).toBe(false);
     expect(await readUnclaimedLegacySources(allClaimed as never)).toEqual({ unclaimed: [], pending: [] });
     expect(seen.length).toBe(2);

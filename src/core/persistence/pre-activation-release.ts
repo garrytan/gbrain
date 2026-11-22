@@ -32,7 +32,7 @@ export interface PreActivationClaim { source_id: string; worktree_id: string; ro
 /** Every source binding of the brain with its worktree's roots. Read-only. */
 export async function preActivationClaims(engine: SqlEngine): Promise<PreActivationClaim[]> {
   const rows = await engine.executeRaw<{ source_id: string; worktree_id: string; root: string | null }>(`SELECT b.source_id, b.worktree_id::text AS worktree_id, h.local_path AS root
-    FROM persistence_source_bindings b LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id ORDER BY b.source_id, h.local_path`);
+    FROM persistence_source_bindings b LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id ORDER BY b.source_id COLLATE "C", h.local_path COLLATE "C"`);
   const claims = new Map<string, PreActivationClaim>();
   for (const row of rows) {
     const claim = claims.get(row.source_id) ?? { source_id: row.source_id, worktree_id: row.worktree_id, roots: [] };
@@ -77,7 +77,7 @@ export async function releasePreActivationClaims(engine: BrainEngine, opts: { ex
         'Another process activated managed persistence while this release ran, so the claims now belong to the managed writer. Review the brain-wide deactivation preview before deciding anything else.',
         { fix: readFix('Previews the brain-wide deactivation and its blockers; changes nothing.', { argv: ['gbrain', 'sources', 'writer', 'deactivate', '--dry-run', '--json'] }) });
       await tx.executeRaw('SELECT id FROM persistence_worktrees ORDER BY id FOR UPDATE');
-      await tx.executeRaw('SELECT id FROM sources ORDER BY id FOR UPDATE');
+      await tx.lockAllSourceRows('update');
       const refused = await opts.blocked(tx);
       if (refused) throw refused;
       const claims = await preActivationClaims(tx);

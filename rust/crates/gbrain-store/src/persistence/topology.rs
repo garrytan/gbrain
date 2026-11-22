@@ -368,6 +368,28 @@ impl Store {
     }
 }
 
+/// Every stored topology change as (principal id, `terminal_bytes`), for `readCounterDrift`
+/// (cli_reads/doctor_persistence.rs).
+pub(crate) fn topology_terminal_bytes(read: &dyn KvRead) -> Result<Vec<(String, i64)>> {
+    let mut rows = Vec::new();
+    scan_prefix(
+        read,
+        &[keys::PERSISTENCE, super::TOPOLOGY],
+        false,
+        &mut |_, v| {
+            rows.push(serde_json::from_slice::<TopologyChangeRecord>(v));
+            true
+        },
+    )?;
+    rows.into_iter()
+        .map(|row| {
+            let r =
+                row.map_err(|e| StoreError::invalid(format!("a topology change record: {e}")))?;
+            Ok((r.principal_id, r.terminal_bytes))
+        })
+        .collect()
+}
+
 /// The `persistence_topology_changes` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
 pub(crate) fn purge_probe_rows(
     read: &dyn KvRead,

@@ -404,3 +404,136 @@ fn mark_source_synced_with_an_incarnation_stamps_only_that_incarnation_and_refus
         .unwrap_err();
     assert_eq!(err.code, INVALID_ARGUMENT);
 }
+
+#[test]
+fn a_fresh_brain_records_the_write_gate_scan_baseline_under_the_callers_detector() {
+    let dir = TempDir::new("cfg-baseline");
+    let path = dir.path().join("brain");
+    let options = OpenOptions {
+        write_gate_detector_version: Some(2),
+        ..OpenOptions::default()
+    };
+    let store = Store::open_dir(&path, options).unwrap();
+    // The text Postgres prints for the jsonb migration v227 stores on an empty brain.
+    let baseline = r#"{"until": {"facts": 0, "pages": 0, "takes": 0, "timeline_entries": 0}, "detector_version": 2}"#;
+    assert_eq!(
+        store
+            .get_config("write_gate.scan_baseline")
+            .unwrap()
+            .as_deref(),
+        Some(baseline)
+    );
+    store.close();
+    // A later open with another detector does not rewrite it, and a brain opened without one records it under
+    // the default detector.
+    let options = OpenOptions {
+        write_gate_detector_version: Some(3),
+        ..OpenOptions::default()
+    };
+    let store = Store::open_dir(&path, options).unwrap();
+    assert_eq!(
+        store
+            .get_config("write_gate.scan_baseline")
+            .unwrap()
+            .as_deref(),
+        Some(baseline)
+    );
+    let plain = TempDir::new("cfg-default-baseline");
+    let other = open(&plain);
+    assert_eq!(
+        other
+            .get_config("write_gate.scan_baseline")
+            .unwrap()
+            .as_deref(),
+        Some(baseline)
+    );
+}
+
+#[test]
+fn the_sync_anchor_advances_one_source_and_survives_a_reopen() {
+    let dir = TempDir::new("src-anchor");
+    let store = open(&dir);
+    store.upsert_source(&input("wiki", None)).unwrap();
+    store.upsert_source(&input("other", None)).unwrap();
+    assert_eq!(store.get_source("wiki").unwrap().unwrap().last_commit, None);
+    store
+        .advance_source_commit("wiki", "c1", Some(Some("2026-01-02T03:04:05.000Z")))
+        .unwrap();
+    store.advance_source_commit("wiki", "c2", None).unwrap();
+    store
+        .attach_source_path("wiki", "/srv/wiki", None, None)
+        .unwrap();
+    // An unknown source changes nothing, as the UPDATE matches no row.
+    store.advance_source_commit("missing", "c9", None).unwrap();
+    store
+        .attach_source_path("missing", "/srv/missing", None, None)
+        .unwrap();
+    assert!(
+        store
+            .advance_source_commit("wiki", "c3", Some(Some("not a time")))
+            .is_err()
+    );
+    store.close();
+    let store = open(&dir);
+    let wiki = store.get_source("wiki").unwrap().unwrap();
+    assert_eq!(wiki.last_commit.as_deref(), Some("c2"));
+    assert!(wiki.last_sync_at.is_some());
+    assert_eq!(wiki.local_path.as_deref(), Some("/srv/wiki"));
+    let records = store.list_source_records().unwrap();
+    let newest = |id: &str| {
+        records
+            .iter()
+            .find(|r| r.id == id)
+            .and_then(|r| r.newest_content_at.clone())
+    };
+    assert_eq!(
+        newest("wiki").as_deref(),
+        Some("2026-01-02T03:04:05.000000Z")
+    );
+    store
+        .advance_source_commit("wiki", "c4", Some(None))
+        .unwrap();
+    assert_eq!(
+        store
+            .list_source_records()
+            .unwrap()
+            .iter()
+            .find(|r| r.id == "wiki")
+            .unwrap()
+            .newest_content_at,
+        None
+    );
+    assert_eq!(
+        store.get_source("other").unwrap().unwrap().last_commit,
+        None
+    );
+    assert_eq!(store.get_source("missing").unwrap(), None);
+    assert_eq!(
+        store
+            .read_plain_sync_source("wiki")
+            .unwrap()
+            .unwrap()
+            .last_commit
+            .as_deref(),
+        Some("c4")
+    );
+}
+
+#[test]
+fn the_purge_epoch_advances_one_source_and_survives_a_reopen() {
+    let dir = TempDir::new("src-purge-epoch");
+    let store = open(&dir);
+    store.upsert_source(&input("wiki", None)).unwrap();
+    assert_eq!(store.read_source_purge_epoch("wiki").unwrap(), Some(0));
+    assert_eq!(store.advance_source_purge_epoch("wiki").unwrap(), Some(1));
+    assert_eq!(store.advance_source_purge_epoch("wiki").unwrap(), Some(2));
+    // An unknown source changes nothing and returns no row, as the UPDATE ... RETURNING does.
+    assert_eq!(store.advance_source_purge_epoch("missing").unwrap(), None);
+    assert_eq!(store.read_source_purge_epoch("missing").unwrap(), None);
+    assert_eq!(store.read_source_purge_epoch("default").unwrap(), Some(0));
+    let before = store.get_source("wiki").unwrap();
+    drop(store);
+    let store = open(&dir);
+    assert_eq!(store.read_source_purge_epoch("wiki").unwrap(), Some(2));
+    assert_eq!(store.get_source("wiki").unwrap(), before);
+}

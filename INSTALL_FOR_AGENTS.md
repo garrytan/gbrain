@@ -690,7 +690,7 @@ unit, cron entry, connector or dream schedule, and self-upgrade stays `notify`
 a brain without one. Turn each on only when the user asks:
 
 - **Keys and embeddings:** the key (Step 2), then
-  `gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024`.
+  `gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024`.
 - **Autopilot** (Postgres): `gbrain autopilot --install --repo <path>`; PGLite uses `gbrain serve`.
 - **Dream schedule:** cron `0 2 * * * <wrapper> dream` ([wrapper](docs/guides/cron-schedule.md#calling-gbrain-unattended)).
 - **Connectors:** `gbrain connectors auth <provider>` ([guide](docs/guides/chat-connectors.md)).

@@ -4,7 +4,8 @@
 //! answer the same questions from the store's records.
 //!
 //! What the store does not keep, and what each read answers for it (rust/docs/store/cli-reads-import.md):
-//! - a source's `last_commit` and `newest_content_at` are the ones `advance_source_commit` stored;
+//! - a source reads the `last_commit` and `newest_content_at` its sync anchor last advanced, or
+//!   null before the first advance;
 //! - there are no source ingestion receipts: `hasCompanyBrainReceipt` is false;
 //! - there is no `guest_sources` table and no row-level security: a guest source is one whose
 //!   config says `guest: true`, `readGuestSourceRow` is never hidden and finds no row;
@@ -14,11 +15,13 @@
 //! (`trust::activation_suppressed`). A timeline, fact or take row (`readRowTrustRows`) reads the
 //! tier and origin its last write stamped (`timeline::tier`, `facts::write_fact`,
 //! `trust::stamp_row` through the takes writers) the same way. A fact or take is `contested` by a
-//! pending supersede proposal (`trust::proposals::contested_ref`); a timeline row never is.
+//! pending supersede proposal (`trust::proposals::contested_ref`); a timeline row never is. A
+//! row's `write_origin` reads in jsonb key order (`pg_text::jsonb_value`), as the column returns it.
 //!
 //! Keys: none of its own. It reads the source, page, timeline, fact, take, trust proposal and
 //! write-gate receipt records.
 
+use crate::cli_reads::pg_text::jsonb_value;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::facts::read_fact;
@@ -354,7 +357,7 @@ impl Store {
                 Ok(RowTrustRow {
                     id,
                     trust_tier: tier.as_str().to_owned(),
-                    write_origin: trust.write_origin,
+                    write_origin: trust.write_origin.as_ref().map(jsonb_value),
                     flagged: crate::trust::activation_suppressed(&*read, table, id, tier)?,
                     contested,
                 })

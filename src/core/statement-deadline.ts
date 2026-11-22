@@ -31,6 +31,19 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadDeadlineError, withReadDeadline } from './read-deadline.ts';
+import { DOCTOR_READ_MEMBERS } from './engine-sql/doctor-reads.ts';
+import { DOCTOR_DERIVED_MEMBERS } from './engine-sql/doctor-derived.ts';
+import { DOCTOR_PERSISTENCE_MEMBERS } from './engine-sql/doctor-persistence.ts';
+import { DOCTOR_PAGES_MEMBERS } from './engine-sql/doctor-pages.ts';
+import { DOCTOR_SEARCH_MEMBERS } from './engine-sql/doctor-search.ts';
+import { DOCTOR_ACC_MEMBERS } from './engine-sql/doctor-acc-members.ts';
+import { DOCTOR_CHECKPOINT_MEMBERS } from './engine-sql/doctor-checkpoints.ts';
+import { DOCTOR_TERMINAL_MEMBERS } from './engine-sql/doctor-terminal.ts';
+import { DOCTOR_BRAIN_MEMBERS } from './engine-sql/doctor-brain.ts';
+import { DOCTOR_SYNC_MEMBERS } from './engine-sql/doctor-sync.ts';
+import { DOCTOR_FACTS_TRUST_MEMBERS } from './engine-sql/doctor-facts-trust.ts';
+import { FENCE_CENSUS_MEMBERS } from './engine-sql/fence-census.ts';
+import { DOCTOR_SRC_MEMBERS } from './engine-sql/doctor-sources.ts';
 
 export interface StatementDeadline {
   startedAt: number;
@@ -92,10 +105,27 @@ function refuse(scope: StatementDeadline): never {
 /** The write-journal reads (engine-sql/persistence-journal.ts, persistence-claims.ts, persistence-housekeeping.ts, persistence-admission.ts, config.ts) that replaced statements this wrapper bounded through executeRaw. */
 const JOURNAL_TYPED_READS: ReadonlySet<string> = new Set(['readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress', 'countOutstandingBySource', 'hasDeferralRoom', 'readRefreshTiming', 'countHeldBehindImport', 'ownsSchemaTables', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readCounterRows', 'readAdmissionRate', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceMembership', 'getConfigValues', 'readReceiptBudget', 'readCapacityForecastInputs', 'listHostConsumerRows', 'probeLiveConsumerRows']);
+/**
+ * Typed reads that replaced a statement a doctor entry sent through this wrapper's executeRaw, outside the doctor-*.ts
+ * member lists: the embedding column check, the entity duplicate finder, the source lists, onboard coverage, derived
+ * taint, managed generations, backup maturity, the trust backfill, and the sync hold and pass-row reads.
+ */
+const DOCTOR_PATH_TYPED_READS: readonly string[] = [
+  'readChunkColumnTypes', 'countChunkColumnCoverage', 'listUnretiredPagesBySlugPattern', 'countDistinctInboundLinkers',
+  'listNameVariantCandidates', 'readSoleSourceId', 'readFirstSourceId', 'listSourceIds', 'countDatedMeetingPages',
+  'entityFeatureCoverage', 'countDerivedRowTaint', 'listPendingGenerationMembers', 'listGenerationOrphanCandidates',
+  'readBrainMaturity', 'readOpCheckpointKeys', 'readGitHoldRecords', 'readLiveSyncPassRows',
+];
 /** The typed reads (engine-sql/decide-store.ts) that replaced statements this wrapper bounded through executeRaw: decide_health. */
 export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations']);
-/** Those reads, the decide reads above and the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`): every typed read that replaced a bounded statement and runs under the doctor's read deadline. */
-const DEADLINE_BOUND_READS: ReadonlySet<string> = new Set([...JOURNAL_TYPED_READS, ...BOUNDED_TYPED_READS, 'getWorktreeBinding']);
+/** The write-journal reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`), the liveness round trip (engine-sql/health.ts `pingStore`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
+const DOCTOR_BOUNDED_READS: ReadonlySet<string> = new Set([
+  ...JOURNAL_TYPED_READS, 'getWorktreeBinding', 'pingStore', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS,
+  ...DOCTOR_CHECKPOINT_MEMBERS, ...DOCTOR_TERMINAL_MEMBERS, ...DOCTOR_BRAIN_MEMBERS, ...DOCTOR_SYNC_MEMBERS, ...DOCTOR_SRC_MEMBERS, ...DOCTOR_FACTS_TRUST_MEMBERS, ...FENCE_CENSUS_MEMBERS,
+  ...DOCTOR_PATH_TYPED_READS,
+]);
+/** Every typed read that replaced a bounded statement and runs under the doctor's read deadline: the journal and doctor reads, the decide reads and the writer-binding read. */
+const DEADLINE_BOUND_READS: ReadonlySet<string> = new Set([...DOCTOR_BOUNDED_READS, ...BOUNDED_TYPED_READS]);
 
 type RawCall = (sql: string, params?: unknown[], opts?: Record<string, unknown> & { signal?: AbortSignal; timeoutMs?: number }) => Promise<unknown[]>;
 
@@ -131,12 +161,15 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
       if (!scope || scope.deadlineAt === null || typeof key !== 'string' || !DEADLINE_BOUND_READS.has(key) || !boundsStatements) {
         return Reflect.apply(fn, target, args);
       }
-      // A typed read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline,
-      // and, for a decide read, the signal discards its connection when the deadline passes with the read unanswered (as
-      // executeRaw's did); a journal read keeps the bound alone.
+      // A typed read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline.
       const deadlineAt = scope.deadlineAt;
-      return withReadDeadline(deadlineAt, () => Reflect.apply(fn, target, args) as Promise<unknown>,
-        BOUNDED_TYPED_READS.has(key) ? AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())) : undefined)
+      // A decide read runs on the raw engine, and the signal discards its connection when the deadline passes with the read
+      // unanswered (as executeRaw's did). Any other typed read runs with this wrapper as `this`, so a member built on
+      // `this.executeRaw` sends its statement through the bounded executeRaw above; the raw engine's executeRaw does not
+      // read the ambient read deadline.
+      return (BOUNDED_TYPED_READS.has(key)
+        ? withReadDeadline(deadlineAt, () => Reflect.apply(fn, target, args) as Promise<unknown>, AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())))
+        : withReadDeadline(deadlineAt, () => Reflect.apply(fn, wrapper, args) as Promise<unknown>))
         .catch((error: unknown) => {
           if (error instanceof ReadDeadlineError) refuse(scope);
           if (cancelled(error) && Date.now() >= deadlineAt - 100) scope.expired = true;

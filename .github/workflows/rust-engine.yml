@@ -58,6 +58,8 @@ on:
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
       - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/token-member-cli-parity.serial.test.ts'
+      - 'test/rust-mcp-receipts.serial.test.ts'
       - 'test/fixtures/rust-cli-parity-brain/**'
       - '.github/workflows/rust-engine.yml'
   push:
@@ -81,6 +83,8 @@ on:
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
       - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/token-member-cli-parity.serial.test.ts'
+      - 'test/rust-mcp-receipts.serial.test.ts'
       - 'test/fixtures/rust-cli-parity-brain/**'
       - '.github/workflows/rust-engine.yml'
   workflow_dispatch:
@@ -322,6 +326,18 @@ jobs:
       - name: Fail the withdrawn-lead lane when no test ran
         shell: bash
         run: bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" rust-store
+      # The token and member commands print the same bytes on a Rust brain as on PGLite.
+      - name: Token and member command output on a Rust brain against PGLite
+        timeout-minutes: 10
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test --timeout=60000 test/token-member-cli-parity.serial.test.ts
+      # The write-request receipt tools through a stdio serve on a new Rust brain answer as on PGLite.
+      - name: MCP receipt tools on a Rust brain against PGLite
+        timeout-minutes: 5
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test --timeout=150000 test/rust-mcp-receipts.serial.test.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: gbrain-engine-addon-${{ matrix.target }}

@@ -100,6 +100,40 @@ describe('engine parity: versions', () => {
   );
 
   parityTest(
+    'createVersion stamps a sync\'s Git reason; getVersions shows it, withheld from a remote reader when the successor is private',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      const put = (body: string, frontmatter: Record<string, unknown>) =>
+        engine.putPage('notes/why', { type: 'note', title: 'Why', compiled_truth: body, timeline: '', frontmatter });
+      await put('Body v1.', {});
+      const created = await engine.createVersion('notes/why', { reason: 'Fix the typo', reasonSource: { commit: 'c1', path: 'notes/why.md' } });
+      await put('Body v2.', { visibility: 'private' });
+      await engine.createVersion('notes/why', { reason: 'Hide the draft', historyGap: true });
+      await put('Body v3.', {});
+      await engine.createVersion('notes/why', { reason: 'Open it again', historyGap: false });
+      await put('Body v4.', {});
+      await engine.createVersion('notes/why', { reason: 'Last word' });
+      await put('Body v5.', {});
+      await engine.createVersion('notes/why', { reason: null });
+      const view = (rows: Awaited<ReturnType<typeof engine.getVersions>>) => rows.map((v) => ['compiled_truth' in v ? v.compiled_truth : '-', v.replaced_because ?? null]);
+      const seen = {
+        // createVersion returns the inserted row, so its stored change_reason too.
+        created: (created as { change_reason?: string | null }).change_reason ?? null,
+        trusted: view(await engine.getVersions('notes/why')),
+        remote: view(await engine.getVersions('notes/why', { excludePrivate: true })),
+        remoteMeta: (await engine.getVersions('notes/why', { excludePrivate: true, includeBody: false })).map((v) => v.replaced_because ?? null),
+      };
+      expect(seen).toEqual({
+        created: 'Fix the typo',
+        trusted: [['Body v5.', null], ['Body v4.', 'Last word'], ['Body v3.', 'Open it again'], ['Body v2.', 'Hide the draft'], ['Body v1.', 'Fix the typo']],
+        remote: [['Body v5.', null], ['Body v4.', 'Last word'], ['Body v3.', 'Open it again'], ['Body v1.', null]],
+        remoteMeta: [null, 'Last word', 'Open it again', null],
+      });
+      return seen;
+    },
+  );
+
+  parityTest(
     'readLatestVersionIdAtTier answers the page\'s newest version stamped with the tier, or null',
     { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'getPage', 'createVersion', 'readLatestVersionIdAtTier'] },
     async (engine) => {

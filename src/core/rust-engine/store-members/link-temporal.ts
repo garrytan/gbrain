@@ -20,10 +20,11 @@ import type * as LinkTemporalSql from '../../engine-sql/link-temporal.ts';
 import { DERIVED_TRANSITION_PRODUCERS } from '../../engine-sql/link-temporal.ts';
 import type { RelationshipEvidence, RelationshipKey, RelationshipStateWrite } from '../../link-relationships.ts';
 import { temporalLinkTypes } from '../../link-validity.ts';
-import { privacyAliasSql, privatePagesFilterFragment, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
+import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import type { VectorBackfillOpts } from '../../search-vector-backfill.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { coverageScope } from './coverage-scope.ts';
 import { pagePolicyFlags, storePagePolicy } from './private-provenance.ts';
 
 type PageRef = { slug: string; source_id: string };
@@ -101,6 +102,77 @@ export const listRecordMetadataRows: StoreMember<[pageIds: readonly number[],
       includeQuarantined: scope.includeQuarantined === true, scope: scope.excludePrivate ? 'world' : 'all' }));
   };
 
+export const readReferrerGroupRows: StoreMember<[target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: LinkTemporalSql.ReferrerGroupScope], LinkTemporalSql.ReferrerGroupRow[]> = async (brain, target, scope) => {
+    const excludePrivate = storePagePolicy('readReferrerGroupRows', scope?.excludePrivate, { callerReaders: true }) ?? null;
+    return storeCall({ member: 'readReferrerGroupRows' }, () => brain.readReferrerGroupRows({
+      targetSources: [...target.sources], targetSlugs: [...target.slugs], referrerSources: [...scope.referrerSources],
+      storedTypes: [...scope.storedTypes], canonicalTypes: [...scope.canonicalTypes], excludePrivate,
+      minTrust: scope.eligibility?.floor ?? null, suppressFlagged: scope.eligibility?.suppressFlagged === true,
+      includeQuarantined: scope.includeQuarantined === true, perGroup: Math.max(0, Math.trunc(scope.perGroup)) }));
+  };
+
+export const readReferrerPageDetails: StoreMember<[ids: readonly number[]], LinkTemporalSql.ReferrerPageDetailRow[]> = async (brain, pageIds) =>
+  pageIds.length === 0 ? [] : storeCall({ member: 'readReferrerPageDetails' }, () => brain.readReferrerPageDetails({ ids: ids(pageIds) }));
+
+export const readReferrerTargetCounts: StoreMember<[target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
+  scope: LinkTemporalSql.ReferrerTargetCountScope], LinkTemporalSql.ReferrerTargetCountRow[]> = async (brain, target, scope) => {
+    const excludePrivate = storePagePolicy('readReferrerTargetCounts', scope?.excludePrivate, { callerReaders: true }) ?? null;
+    return storeCall({ member: 'readReferrerTargetCounts' }, () => brain.readReferrerTargetCounts({
+      targetSources: [...target.sources], targetSlugs: [...target.slugs], targetIndexes: [...target.indexes],
+      referrerSources: [...scope.referrerSources], storedTypes: [...scope.storedTypes], canonicalTypes: [...scope.canonicalTypes],
+      recordTypes: [...scope.recordTypes], excludePrivate, minTrust: scope.eligibility?.floor ?? null,
+      suppressFlagged: scope.eligibility?.suppressFlagged === true, includeQuarantined: scope.includeQuarantined === true }));
+  };
+
+export const listReferrerTargetSources: StoreMember<[slug: string, sources: readonly string[]], string[]> = async (brain, slug, sources) =>
+  sources.length === 0 ? [] : storeCall({ member: 'listReferrerTargetSources' }, () => brain.listReferrerTargetSources({ slug, sources: [...sources] }));
+
+/** The referrer page's read scope, in the store's input shape. */
+function referrerRowInput(member: string, target: { sources: readonly string[]; slugs: readonly string[] }, scope: LinkTemporalSql.ReferrerTypeScope & { type?: string | null }) {
+  const excludePrivate = storePagePolicy(member, scope?.excludePrivate, { callerReaders: true }) ?? null;
+  return {
+    targetSources: [...target.sources], targetSlugs: [...target.slugs], referrerSources: [...scope.referrerSources],
+    storedTypes: [...scope.storedTypes], canonicalTypes: [...scope.canonicalTypes], excludePrivate, type: scope.type ?? null,
+    minTrust: scope.eligibility?.floor ?? null, suppressFlagged: scope.eligibility?.suppressFlagged === true,
+    includeQuarantined: scope.includeQuarantined === true,
+  };
+}
+
+export const countReferrerRows: StoreMember<[target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: LinkTemporalSql.ReferrerRowScope], number> = async (brain, target, scope) => {
+    const input = referrerRowInput('countReferrerRows', target, scope);
+    return storeCall({ member: 'countReferrerRows' }, () => brain.countReferrerRows(input));
+  };
+
+/** The store returns each pair once, by canonical then stored type; an untyped referrer's stored type is `""`, as in SQL. */
+export const readReferrerTypes: StoreMember<[target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: LinkTemporalSql.ReferrerTypeScope], LinkTemporalSql.ReferrerTypeRow[]> = async (brain, target, scope) => {
+    const input = referrerRowInput('readReferrerTypes', target, scope);
+    return storeCall({ member: 'readReferrerTypes' }, () => brain.readReferrerTypes(input));
+  };
+
+export const readReferrerRows: StoreMember<[target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: LinkTemporalSql.ReferrerRowScope & { cursor: readonly [string | null, string, string] | null; limit: number }], LinkTemporalSql.ReferrerRow[]> = async (brain, target, scope) => {
+    const input = referrerRowInput('readReferrerRows', target, scope);
+    return storeCall({ member: 'readReferrerRows' }, () => brain.readReferrerRows({ ...input,
+      cursor: scope.cursor ? [...scope.cursor] : null, limit: Math.max(0, Math.trunc(scope.limit)) }));
+  };
+
+export const readReferrerRecordCandidates: StoreMember<[target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
+  scope: LinkTemporalSql.ReferrerRecordCandidateScope], LinkTemporalSql.ReferrerRecordCandidateRow[]> = async (brain, target, scope) => {
+    const excludePrivate = storePagePolicy('readReferrerRecordCandidates', scope?.excludePrivate, { callerReaders: true }) ?? null;
+    return storeCall({ member: 'readReferrerRecordCandidates' }, () => brain.readReferrerRecordCandidates({
+      targetSources: [...target.sources], targetSlugs: [...target.slugs], targetIndexes: [...target.indexes],
+      referrerSources: [...scope.referrerSources], storedTypes: [...scope.storedTypes], canonicalTypes: [...scope.canonicalTypes],
+      recordTypes: [...scope.recordTypes], excludePrivate, minTrust: scope.eligibility?.floor ?? null,
+      suppressFlagged: scope.eligibility?.suppressFlagged === true, includeQuarantined: scope.includeQuarantined === true,
+      perTarget: Math.max(0, Math.trunc(scope.perTarget)) }));
+  };
+
+export const readReferrerRecordPages: StoreMember<[ids: readonly number[]], LinkTemporalSql.ReferrerRecordPageRow[]> = async (brain, pageIds) =>
+  pageIds.length === 0 ? [] : storeCall({ member: 'readReferrerRecordPages' }, () => brain.readReferrerRecordPages({ ids: ids(pageIds) }));
+
 // ---------------------------------------------------------------------------------------------------------------------
 // reindex-search-vector: the store keeps one keyword index, built for the language PGLite's default `english` names.
 // Rebuilding it for `english` changes nothing; any other language refuses rather than claiming a rebuild.
@@ -136,20 +208,6 @@ export const ensureFactsKeywordIndex: StoreMember<[lang: string, notice?: (line:
 // flagged-page filter (the store reads each page's stamped tier and
 // write-gate receipts), and `requireSafeChunks` changes nothing because these reads count pages, not chunks.
 // ---------------------------------------------------------------------------------------------------------------------
-
-/** `ProjectionReadinessScope` as the store reads it. */
-function coverageScope(member: string, scope: ProjectionReadinessScope = {}) {
-  return {
-    sourceId: scope.sourceId ?? null,
-    sourceIds: scope.sourceIds ? [...scope.sourceIds] : null,
-    excludePrivate: storePagePolicy(member, scope.excludePrivate, { callerReaders: true }) ?? null,
-    pageKind: scope.pageKind ?? null,
-    types: scope.types ? [...scope.types] : null,
-    excludeSlugPrefixes: [...(scope.excludeSlugPrefixes ?? [])],
-    minTrust: scope.minTrust || null,
-    suppressFlagged: scope.suppressFlagged === true,
-  };
-}
 
 const WORD_PATTERN_HEAD = '(^|[^[:alnum:]])';
 const WORD_PATTERN_TAIL = '([^[:alnum:]]|$)';
@@ -199,3 +257,7 @@ export const countEmbeddingHeldPages: StoreMember<[scope: ProjectionReadinessSco
   async (_brain: StoreBrain, _scope, relevance) => ({
     total: 0, could_affect: 0, capped: false, ...(relevance.exactTopPageId != null ? { top_counted: false } : {}),
   });
+
+/** `readPageReferenceDate`: the live page's reference date as the store prints it, or null. */
+export const readPageReferenceDate: StoreMember<[sourceId: string, slug: string], string | null> = async (brain, sourceId, slug) =>
+  (await storeCall({ member: 'readPageReferenceDate', slug, sourceId }, () => brain.readPageReferenceDate(sourceId, slug))) ?? null;

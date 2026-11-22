@@ -25,6 +25,7 @@ import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { withWriteAttribution } from '../../src/core/persistence/context.ts';
 import type { WriteAttribution } from '../../src/core/persistence/attribution.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withEnv } from '../helpers/with-env.ts';
 import { CALLER_ENTITIES, CALLER_PROVENANCE, OPEN_PAGE, putCallerPages, readAsCallers } from './fact-callers.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
@@ -700,6 +701,53 @@ describe('engine parity: chronicle reads and event projection', () => {
       expect(commitments.map((r) => r.event_slug)).toEqual(['life/events/2026-06-18-002']);
       expect(future).toEqual([]);
       return { since19, since18, commitments, meetings, future };
+    },
+  );
+
+  parityTest(
+    'a brain opened in a non-UTC zone prints event instants in UTC, orders a plain row at UTC midnight and defaults to the UTC day',
+    { methods: ['connect', 'initSchema', 'putPage', 'addTimelineEntry', 'upsertEventProjection', 'getTimelineForDate', 'getSince',
+      'getOnThisDay', 'getLastSeen', 'disconnect'] },
+    async (_engine, _backend, ctx) => {
+      // PGLite takes the process zone at open; Postgres and the Rust store do not
+      // read it. The zone is the one whose local day differs from the UTC day at
+      // this hour (Pago_Pago is UTC-11, Kiritimati UTC+14), and the event sits
+      // between UTC midnight and local midnight, so the effective_date text, the
+      // intra-day order and the default day each differ from UTC on a zone read.
+      const behind = new Date().getUTCHours() < 11;
+      const zone = behind ? 'Pacific/Pago_Pago' : 'Pacific/Kiritimati';
+      const eventAt = behind ? '2026-06-18T03:00:00Z' : '2026-06-17T20:00:00Z';
+      const { engine, config } = ctx.unconnectedEngine();
+      await withEnv({ TZ: zone }, () => engine.connect(config));
+      try {
+        await engine.initSchema();
+        const today = new Date().toISOString().slice(0, 10);
+        const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+        const earlier = `${Number(today.slice(0, 4)) - 4}${today.slice(4)}`; // 4 years back keeps a Feb 29 valid
+        await putPlain(engine, 'life/diary/2026-06-18');
+        await putEvent(engine, 'life/events/2026-06-18-early', eventAt, { kind: 'call' });
+        await engine.upsertEventProjection({ depthSlug: 'life/diary/2026-06-18', eventSlug: 'life/events/2026-06-18-early', date: '2026-06-18', summary: 'Early call', detail: '' });
+        await engine.addTimelineEntry('life/diary/2026-06-18', { date: '2026-06-18', summary: 'Plain note' });
+        await putPlain(engine, 'people/alice-example');
+        for (const [date, summary] of [[earlier, 'Four years ago'], [today, 'Today'], [tomorrow, 'Tomorrow']] as const) {
+          await engine.addTimelineEntry('people/alice-example', { date, summary });
+        }
+        const day = chronicle(await engine.getTimelineForDate('2026-06-18'));
+        const since = chronicle(await engine.getSince('2026-06-18')).filter((r) => r.date === '2026-06-18');
+        const lastSeen = await engine.getLastSeen('people/alice-example');
+        const onThisDay = (await engine.getOnThisDay()).filter((r) => r.page_slug === 'people/alice-example').map((r) => r.summary);
+        // UTC: the plain row sorts at 00:00Z of its day; the event prints its UTC instant.
+        const plain = ['Plain note', null];
+        expect(day.map((r) => [r.summary, r.effective_date])).toEqual(behind
+          ? [plain, ['Early call', '2026-06-18 03:00:00+00']]
+          : [['Early call', '2026-06-17 20:00:00+00'], plain]);
+        expect(since).toEqual(day);
+        expect(lastSeen).toEqual({ entity_slug: 'people/alice-example', last_date: today, last_event_slug: null, days_ago: 0 });
+        expect(onThisDay).toEqual(['Four years ago']);
+        return { zone, day, since, lastSeen: { ...lastSeen, last_date: 'today' }, onThisDay };
+      } finally {
+        await engine.disconnect();
+      }
     },
   );
 
