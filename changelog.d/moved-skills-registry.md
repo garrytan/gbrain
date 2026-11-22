@@ -1,0 +1,6 @@
+**`gbrain check-resolvable` and `gbrain doctor` no longer report a skill as missing when another skill catalog on the machine provides it, for the bundled skills that are moving out of gbrain.**
+
+### Changed
+- 26 of gbrain's bundled skills are listed as moving to another skill catalog (`skills/moved-skills.json`). Where they go is not announced yet, so gbrain still ships them and every command that names them behaves exactly as before: nothing prints a notice and nothing is removed.
+- The one change you can see today: a `RESOLVER.md` row or `manifest.json` entry for one of those skills that your skills folder lacks counts as present in `gbrain check-resolvable` and `gbrain doctor` when a skill catalog built with `gbrain skills index build`, or a folder of that name in a directory set in `skills.resolver.per_harness.<harness>.dirs`, provides it. Before, it was a broken row.
+- For maintainers: once the destination is filled in, `bun scripts/announce-moved-skills.ts` writes the deprecation records, the upgrade notice and the announcement, and `check:moved-skills` refuses new skill folders that neither list names. Deprecation records can now name a bundled skill (`surface: bundled-skill`).
