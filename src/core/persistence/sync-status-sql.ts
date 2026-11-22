@@ -11,7 +11,6 @@ import { MANAGED_SYNC_PASS_OP } from '../engine-sql/sync-hold-store.ts';
 import { SYNC_DELETES_WITHHELD_OP } from './sync-pass-row.ts';
 import { SYNC_ADMISSION_SETTING_PARAMS, syncAdmissionEffectParams, syncAdmissionEffectSql, syncAdmissionSettingSql } from './sync-admission.ts';
 import { ACTIVE_REFRESH_STATES_SQL } from './worktree-refresh-schema.ts';
-import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../apple-contacts/review-status.ts';
 
 /** The error codes of a Git effect whose commit is local but whose push did not land (git-push-holds.ts re-exports it). */
 export const GIT_PUSH_CODES = ['git_push_unavailable', 'push_unconfirmed', 'integrate_conflict', 'publish_secret_found', 'publish_scan_unreadable', 'push_credential_refused'] as const;

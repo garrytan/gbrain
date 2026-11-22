@@ -28,7 +28,6 @@ import type { CycleLockRow, SourceDetailRow, SourceRow } from '../../engine.ts';
 import { SYNC_ADMISSION_KEY, SYNC_ADMISSION_SETTING_PARAMS } from '../../persistence/sync-admission.ts';
 import { SYNC_DELETES_WITHHELD_OP } from '../../persistence/sync-pass-row.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../persistence/sync-status-sql.ts';
-import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../../apple-contacts/review-status.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 

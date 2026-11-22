@@ -16,7 +16,7 @@ import {
 } from '../../engine-sql/generation-activations.ts';
 import {
   checkedRepairFilter, type GenerationRepairFilter, type GenerationRepairItemRow, type HeldGenerationListRow, type HeldGenerationProposalRow, type RestorableGenerationRow,
-  type UnmatchedGenerationRow,
+  type SourceIncarnationListRow, type UnmatchedGenerationRow,
 } from '../../engine-sql/generation-repair.ts';
 import type { FenceVersionBodyRow } from '../../engine-sql/generation-fence-evidence.ts';
 import { checkGenerationPageRowsQuery, type GenerationPageRow, type GenerationPageRowsQuery } from '../../engine-sql/generation-page-rows.ts';

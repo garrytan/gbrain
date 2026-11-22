@@ -1590,7 +1590,6 @@ export const RUST_ENGINE_MEMBERS = {
   deleteTakesByIds: 'takes',
   findTakeId: 'takes',
   listGuardedTakeRows: 'takes',
-  readTakePreimages: 'takes',
   countMcpResolvedTakes: 'takes',
   listTakeSupersessionCandidates: 'takes',
   listTakePointers: 'takes',
