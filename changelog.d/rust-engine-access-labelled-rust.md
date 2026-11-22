@@ -6,3 +6,4 @@
 - A labelled-only member whose rule was moved, but whose pages are not yet restamped, no longer reads a page the move has not labelled.
 - Three labelled-only reads are still refused on the Rust engine, before any read. They are a member whose brain turns on `access.members_read_lineage`, a member read for an audience of several, and a member's remote read floor.
 - One difference remains, and it fails closed. After a folder rule moves away from a folder and before that folder's pages are restamped, the Rust engine hides those pages from a labelled-only member, while PGLite still shows them from the old stamp.
+- On the Rust engine, page history (`get_versions`) no longer shows the reason for a change whose next version the reader may not see, as on PGLite.

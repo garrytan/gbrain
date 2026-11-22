@@ -1898,27 +1898,48 @@ impl Store {
                     Some(policy) => crate::facts::page_rule_labelled(&*read, &page, policy)?,
                     None => false,
                 };
+                // Every version of the page, oldest first, before any filter: a reason's successor is the next one.
+                let mut all: Vec<VersionRecord> = Vec::new();
                 scan_prefix(
                     &*read,
                     &keys::version_prefix(page.id),
                     false,
                     &mut |_, v| {
-                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v)
-                            && !policy.is_some_and(|policy| {
-                                crate::facts::caller_version_hidden(
-                                    &page,
-                                    &row.page_type,
-                                    &row.frontmatter,
-                                    policy,
-                                    rule_labelled,
-                                )
-                            })
-                        {
-                            rows.push(row);
+                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v) {
+                            all.push(row);
                         }
                         true
                     },
                 )?;
+                for i in 0..all.len() {
+                    let mut row = all[i].clone();
+                    if let Some(policy) = policy {
+                        if crate::facts::caller_version_hidden(
+                            &page,
+                            &row.page_type,
+                            &row.frontmatter,
+                            policy,
+                            rule_labelled,
+                        ) {
+                            continue;
+                        }
+                        // `replacedBecauseSql`: the reason names the write that made the next snapshot, so it is
+                        // withheld when a prune cut that snapshot or the caller may not read it; the newest
+                        // version's successor is the live page, which the page check above covers.
+                        let successor_hidden = all.get(i + 1).is_some_and(|next| {
+                            crate::facts::successor_snapshot_hidden(
+                                &next.page_type,
+                                &next.frontmatter,
+                                policy,
+                                rule_labelled,
+                            )
+                        });
+                        if row.successor_pruned || successor_hidden {
+                            row.change_reason = None;
+                        }
+                    }
+                    rows.push(row);
+                }
             }
         }
         rows.sort_by_key(|a| std::cmp::Reverse(a.id));

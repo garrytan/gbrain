@@ -543,6 +543,23 @@ pub(crate) fn caller_version_hidden(
                     || snapshot_fields_allow(page_type, fm, policy.honor_aliases))))
 }
 
+/// Whether the caller may not read a version's successor snapshot, for its reason (`replacedBecauseSql`:
+/// `privateSnapshotFilterFragment(rb_next) AND callerReadersAllowedSql(rb_next, 'snapshot')`). Unlike the version
+/// filter, the snapshot's own fields always count and no private-readable grant opens them.
+pub(crate) fn successor_snapshot_hidden(
+    page_type: &str,
+    fm: &Map<String, Value>,
+    policy: &PrivacyPolicy,
+    rule_labelled: bool,
+) -> bool {
+    let readers_allowed = !fm.contains_key("readable_by")
+        || access_readers(fm)
+            .is_some_and(|readers| readers.iter().any(|r| policy.identity.contains(r)));
+    !readers_allowed
+        || (policy.labelled_only && !snapshot_labelled(fm, policy, rule_labelled))
+        || !snapshot_fields_allow(page_type, fm, policy.honor_aliases)
+}
+
 /// `frontmatter ->> key`.
 fn text(frontmatter: &Map<String, Value>, key: &str) -> Option<String> {
     frontmatter.get(key).and_then(jsonb_field_text)

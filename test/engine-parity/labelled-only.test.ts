@@ -178,14 +178,18 @@ async function ownMemberPageInTheFactsSource(engine: BrainEngine, backend: Parit
 /**
  * C12: a held fact (on memory/unattributed) reads as its entity's page would under a folder rule: only for a caller
  * that satisfies every covering rule, and for nobody while a pending prefix covers the entity. bob satisfies deals;
- * dan satisfies no rule; a second rule over deals/acme names only alice.
+ * dan satisfies no rule; a second rule over deals/acme/ names only alice.
  */
 async function heldFactsUnderRealRules(engine: BrainEngine) {
   await seed(engine);
   await addMember(engine, 'dan-example');
-  await engine.putPage('deals/acme', core('Acme'), { sourceId: 'default' });
+  await engine.putPage('deals/acme/main', core('Acme'), { sourceId: 'default' });
   await engine.putPage('memory/unattributed', core('Unattributed'), { sourceId: 'default' });
-  await engine.insertFacts([factRow('Acme closed', 'deals/acme', 'memory/unattributed', 1, 'world')] as never, { source_id: 'default' });
+  // deals/acme/spinout has no page, so only the held-fact rule test (not the entity page's own policy) can hide it.
+  await engine.insertFacts([
+    factRow('Acme closed', 'deals/acme/main', 'memory/unattributed', 1, 'world'),
+    factRow('Acme spun out', 'deals/acme/spinout', 'memory/unattributed', 2, 'world'),
+  ] as never, { source_id: 'default' });
   const read = async () => ({
     bob: await as(engine, 'bob-example', () => factsIn(engine, 'default')),
     dan: await as(engine, 'dan-example', () => factsIn(engine, 'default')),
@@ -193,13 +197,13 @@ async function heldFactsUnderRealRules(engine: BrainEngine) {
   const allSatisfied = await read();
   await proposeRevision(engine, 'default', [
     { id: 'deals', prefix: 'deals/', readable_by: ['member:alice-example', 'member:bob-example'] },
-    { id: 'acme', prefix: 'deals/acme', readable_by: ['member:alice-example'] },
+    { id: 'acme', prefix: 'deals/acme/', readable_by: ['member:alice-example'] },
   ], { origin: 'cli', store: 'database' });
   const ruleMissing = await read();
   await engine.applyAccessRuleChanges('default', { remove: ['acme'], insert: [], pending: ['deals/'], revision: 3, actor: 'test' });
   const pending = await read();
   expect({ allSatisfied, ruleMissing, pending }).toEqual({
-    allSatisfied: { bob: ['Acme closed'], dan: [] },
+    allSatisfied: { bob: ['Acme closed', 'Acme spun out'], dan: [] },
     ruleMissing: { bob: [], dan: [] },
     pending: { bob: [], dan: [] },
   });
@@ -235,7 +239,7 @@ async function versionsByLiveRule(engine: BrainEngine) {
 async function datedUnlabelledEdition(engine: BrainEngine) {
   await seed(engine);
   await engine.putPage('core/was-open', core('Was open', { valid_from: '2026-01-01' }), { sourceId: 'default' });
-  await engine.createVersion('core/was-open', { sourceId: 'default' });
+  await engine.createVersion('core/was-open', { sourceId: 'default', reason: 'kept to alice from June' });
   await engine.putPage('core/was-open', core('Was open', { valid_from: '2026-06-01', readable_by: ['alice-example'] }), { sourceId: 'default' });
   const alice = await as(engine, 'alice-example', async () => {
     const pageId = (await engine.getPage('core/was-open', { sourceId: 'default' }))!.id;
@@ -248,7 +252,54 @@ async function datedUnlabelledEdition(engine: BrainEngine) {
   });
   // The snapshot named no reader and core/ carries no rule, so it stays hidden; the current page names alice.
   expect([alice.versions, alice.march?.visible, alice.march?.valid_from, alice.july?.visible, alice.july?.valid_from]).toEqual([0, false, '2026-01-01', true, '2026-06-01']);
+  // The hidden edition's own reason names the write that made the page alice reads, so it stays (its successor is the
+  // live page); the current page's introduced_because comes from an edition she cannot see, so it is withheld.
+  expect([alice.march?.reason, alice.july?.introduced_because]).toEqual(['kept to alice from June', null]);
   return alice;
+}
+
+/** The `replaced_because` of each version a caller reads from getVersions, oldest first, by its snapshot's title. */
+const versionReasons = async (engine: BrainEngine, slug: string) =>
+  (await engine.getVersions(slug, { sourceId: 'default', excludePrivate: true, includeBody: false }))
+    .map(v => ({ title: (v as { title?: string }).title, replaced_because: (v as { replaced_because?: string | null }).replaced_because ?? null }))
+    .reverse();
+
+/**
+ * A version's reason describes the write that replaced it, so it is withheld when the next snapshot (over every version,
+ * before any filter) is hidden from the caller (`replacedBecauseSql`). Labelled-only: V1 names alice, V2 names no one,
+ * the live page names alice again. alice reads V1 but not V2, so V1's reason (the write that introduced V2) is withheld.
+ */
+async function hiddenSuccessorReasonLabelled(engine: BrainEngine) {
+  await seed(engine);
+  await engine.putPage('core/history', core('V1', { readable_by: ['alice-example'], valid_from: '2026-01-01' }), { sourceId: 'default' });
+  await engine.createVersion('core/history', { sourceId: 'default', reason: 'opened to everyone: secret plan B' });
+  await engine.putPage('core/history', core('V2', { valid_from: '2026-04-01' }), { sourceId: 'default' });
+  await engine.createVersion('core/history', { sourceId: 'default', reason: 'kept to alice again' });
+  await engine.putPage('core/history', core('Live', { readable_by: ['alice-example'], valid_from: '2026-06-01' }), { sourceId: 'default' });
+  const alice = await as(engine, 'alice-example', async () => {
+    const pageId = (await engine.getPage('core/history', { sourceId: 'default' }))!.id;
+    const pick = async (asOf: string) => pickFields(await engine.pickValidTimeEdition({ pageId, asOf, excludePrivate: true, pinOrd: null, inlineMaxBytes: 1_000_000 }));
+    return { versions: await versionReasons(engine, 'core/history'), february: await pick('2026-02-01'), july: await pick('2026-07-01') };
+  });
+  expect(alice.versions).toEqual([{ title: 'V1', replaced_because: null }]);
+  expect([alice.february?.visible, alice.february?.reason, alice.july?.visible, alice.july?.introduced_because]).toEqual([true, null, true, null]);
+  return alice;
+}
+
+/** The same for an ordinary caller: V2 is private, so bob reads V1 without the reason for the write that made V2. */
+async function hiddenSuccessorReasonPrivate(engine: BrainEngine) {
+  await seed(engine);
+  await engine.putPage('notes/history', core('V1'), { sourceId: 'default' });
+  await engine.createVersion('notes/history', { sourceId: 'default', reason: 'made private: secret plan B' });
+  await engine.putPage('notes/history', core('V2', { visibility: 'private' }), { sourceId: 'default' });
+  await engine.createVersion('notes/history', { sourceId: 'default', reason: 'opened again' });
+  await engine.putPage('notes/history', core('Live'), { sourceId: 'default' });
+  await engine.createVersion('notes/history', { sourceId: 'default', reason: 'retitled' });
+  await engine.putPage('notes/history', core('Live 2'), { sourceId: 'default' });
+  const bob = await as(engine, 'bob-example', () => versionReasons(engine, 'notes/history'));
+  // V1's successor V2 is private: its reason is withheld. The third version's successor is the live page: kept.
+  expect(bob).toEqual([{ title: 'V1', replaced_because: null }, { title: 'Live', replaced_because: 'retitled' }]);
+  return bob;
 }
 
 describe('engine parity: the labelled-only page policy', () => {
@@ -303,6 +354,14 @@ describe('engine parity: the labelled-only page policy', () => {
 
   // Coverage of the store policy's other branches: entity access on own facts, the fact's own source, held facts under
   // real rules, and versions and as-of editions by live rule or by the snapshot's own readers.
+  parityTest('a version\'s reason is withheld from a labelled-only member when the next snapshot is hidden from it', {
+    methods: ['createVersion', 'getVersions', 'pickValidTimeEdition'],
+  }, hiddenSuccessorReasonLabelled);
+
+  parityTest('a version\'s reason is withheld from an ordinary caller when the next snapshot is private', {
+    methods: ['createVersion', 'getVersions'],
+  }, hiddenSuccessorReasonPrivate);
+
   parityTest('a labelled-only member\'s own member-page facts still need their entity page', {
     methods: ['insertFacts', 'listFactsSince'],
   }, ownFactsKeepEntityAccess);
@@ -340,6 +399,8 @@ describe('the Rust arm serves the labelled-only page policy', () => {
     ['a rule move that has not restamped a page does not label it for a caller captured before', pendingRuleMove],
     ['a world-only fact list reads the labelled-only member\'s own member-page facts', worldOnlyFactList],
     ['the valid-time pick reads a labelled-only member\'s page', pageInForceOnADate],
+    ['a version reason is withheld when the next snapshot is hidden (labelled-only)', hiddenSuccessorReasonLabelled],
+    ['a version reason is withheld when the next snapshot is private', hiddenSuccessorReasonPrivate],
     ['own member-page facts still need their entity page', ownFactsKeepEntityAccess],
     ['the own member page counts only in the fact\'s own source', ownMemberPageInTheFactsSource],
     ['a held fact reads only under every satisfied rule', heldFactsUnderRealRules],
