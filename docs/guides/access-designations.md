@@ -365,11 +365,13 @@ opt-in and never applies to the owner: with the owner in the roster the run is B
 
 ### Who read what (`gbrain access log`, `gbrain access who-read`)
 
-Every read a member or an audience makes is logged: a read through a credential or stdio server bound to a member that
+Reads a member or an audience makes are logged: a read through a credential or stdio server bound to a member that
 is not the owner, a read that asserts an audience (`on_behalf_of`), and every enforced member CLI read. A row holds the
 time, the member or audience, the operation, the transport (`http`, `stdio` or `cli`), the result code (`ok` or the
 refusal's code) and the ids of the pages the read returned (search, query, recall, `get_page` and `fetch` return
-pages; other reads log no ids). It never holds page text, query terms or any other argument.
+pages; other reads log no ids). It never holds page text, query terms or any other argument. A call refused before it
+reaches the operation and a read made at an attested scope write no row. Search and recall ids are noted before the
+response is trimmed to fit, so a row can list a page the caller did not end up receiving.
 
 ```bash
 gbrain access log --member alice-example --since 7d      # her reads, and the audiences that named her
