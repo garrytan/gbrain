@@ -19,6 +19,7 @@ src/cli/main.ts#connectCliOnlyEngine<anon@2>	catch_empty	1
 src/cli/main.ts#connectEngine	catch_empty	1
 src/cli/main.ts#dbMarkerBrainId	catch_empty	1
 src/cli/main.ts#main	promise_catch_empty	1
+src/cli/main.ts#makeContext	catch_empty	1	found by the fixed rule (a handler that rethrows conditionally, then answers empty); known debt, fix by a typed degraded marker
 src/cli/main.ts#maybeEmitUpdateMarker	catch_empty	2
 src/cli/main.ts#parseOpArgs	catch_empty	1
 src/cli/main.ts#printIdentityBannerBestEffort	catch_empty	1
@@ -614,6 +615,7 @@ src/commands/wakeshift.ts#watchCounts	catch_empty	1
 src/commands/whoknows.ts#findExperts	promise_catch_empty	1
 src/core/access/actor.ts#attestRightOf	capability_refusal_swallowed	1
 src/core/access/actor.ts#linkedMember	capability_refusal_swallowed	1
+src/core/access/actor.ts#linkedMember	catch_empty	1	found by the fixed rule (a handler that rethrows conditionally, then answers empty); known debt, fix by a typed degraded marker
 src/core/access/caller.ts#appliedAccessSummary	capability_refusal_swallowed	1
 src/core/access/caller.ts#appliedAccessSummary	catch_empty	1
 src/core/access/caller.ts#folderAccessForAll	capability_refusal_swallowed	1
@@ -628,6 +630,7 @@ src/core/access/labelled-only.ts#anyLabelledOnlyMember	capability_refusal_swallo
 src/core/access/labelled-only.ts#labelledOnlyFor	capability_refusal_swallowed	1
 src/core/access/lineage.ts#membersReadLineageOn	catch_empty	1
 src/core/access/member-sources.ts#hiddenPersonalSources	capability_refusal_swallowed	1
+src/core/access/member-sources.ts#hiddenPersonalSources	catch_empty	1	found by the fixed rule (a handler that rethrows conditionally, then answers empty); known debt, fix by a typed degraded marker
 src/core/access/members.ts#addMember	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/access/members.ts#audienceMemberIds	capability_refusal_swallowed	1
 src/core/access/members.ts#audienceMemberIds	catch_empty	1
@@ -812,6 +815,7 @@ src/core/claw-test/scenarios.ts#listScenarios<anon@1>	catch_empty	1
 src/core/claw-test/seed-pglite.ts#readPgliteSchemaVersion	catch_empty	1
 src/core/cli-preflight.ts#bunfigDeclaresTopLevelPreload	catch_empty	1
 src/core/cli-preflight.ts#resolveRuntimePath	catch_empty	1
+src/core/cli-socket/execute.ts#cliRequestContext	catch_empty	1	found by the fixed rule (a handler that rethrows conditionally, then answers empty); known debt, fix by a typed degraded marker
 src/core/cli-socket/refusals.ts#readRefusals	catch_empty	1
 src/core/code-intel/recursive-walk.ts#disambiguateSymbol	capability_refusal_swallowed	1
 src/core/code-intel/recursive-walk.ts#runRecursiveWalk	catch_empty	1
@@ -1118,6 +1122,7 @@ src/core/facts/facts-home.ts#nearestPage	promise_catch_empty	1
 src/core/facts/fence-write.ts#writeFactsToFence<anon@2>	capability_refusal_swallowed	1
 src/core/facts/forget.ts#forgetFactInFence>mirrorWithdrawal<anon@1>	catch_empty	1
 src/core/facts/held-fact-move.ts#holdingPageFor	capability_refusal_swallowed	1
+src/core/facts/held-fact-move.ts#holdingPageFor	promise_catch_empty	1	found by the fixed rule (a handler that rethrows conditionally, then answers empty); known debt, fix by a typed degraded marker
 src/core/facts/held-fact-move.ts#moveHeldFacts	capability_refusal_swallowed	1
 src/core/facts/held-fact-move.ts#planningView>get<anon@1>	capability_refusal_swallowed	1
 src/core/facts/meta-hook.ts#getBrainHotMemoryMeta	promise_catch_empty	1
@@ -1202,7 +1207,9 @@ src/core/google/loops-reciprocity.ts#ownerWroteToFor	catch_empty	1
 src/core/google/loops-spend.ts#loopsSpendGate	catch_empty	1
 src/core/google/loops-spend.ts#readLoopsExtractDailyCap	catch_empty	1
 src/core/google/people-calendar-sweep.ts#calendarPageRelPathByEventId	capability_refusal_swallowed	1
+src/core/google/people-calendar-sweep.ts#calendarPageRelPathByEventId	catch_empty	1	found by the fixed rule (a handler that rethrows conditionally, then answers empty); known debt, fix by a typed degraded marker
 src/core/google/people-calendar-sweep.ts#contactPageRelPathByContactId	capability_refusal_swallowed	1
+src/core/google/people-calendar-sweep.ts#contactPageRelPathByContactId	catch_empty	1	found by the fixed rule (a handler that rethrows conditionally, then answers empty); known debt, fix by a typed degraded marker
 src/core/grants/service.ts#readClientCatalogProvenance	catch_empty	1
 src/core/guests/admission.ts#lookupGuestSource	capability_refusal_swallowed	1
 src/core/guests/admission.ts#refuseRemoteGuestDelete	capability_refusal_swallowed	1
@@ -1269,6 +1276,7 @@ src/core/mentions/coverage.ts#readMentionCoverage	promise_catch_empty	1
 src/core/mentions/newer-mentions.ts#readNewerMentions	capability_refusal_swallowed	1
 src/core/mentions/newer-mentions.ts#readNewerMentions	catch_empty	1
 src/core/mentions/pass.ts#writeDerivedAliases	promise_catch_empty	1
+src/core/mentions/policy.ts#loadSourcePack	catch_empty	1	found by the fixed rule (a handler that rethrows conditionally, then answers empty); known debt, fix by a typed degraded marker
 src/core/mentions/policy.ts#readPolicyKeys	catch_empty	1
 src/core/mentions/referrers.ts#readRecordMetadata	capability_refusal_swallowed	1
 src/core/mentions/referrers.ts#readRecordMetadata	promise_catch_empty	1
@@ -1486,6 +1494,7 @@ src/core/persistence/effect-git.ts#restoreIndex	catch_empty	1
 src/core/persistence/effect-retry.ts#retryIndexLockParks	capability_refusal_swallowed	1
 src/core/persistence/effect-retry.ts#retryIndexLockParks	catch_empty	1
 src/core/persistence/effects.ts#claimAndRecoverEffect	capability_refusal_swallowed	1
+src/core/persistence/effects.ts#embedPage	promise_catch_empty	1	found by the fixed rule (a handler that rethrows conditionally, then answers empty); known debt, fix by a typed degraded marker
 src/core/persistence/effects.ts#runEffectPass>commitGroup	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/effects.ts#runEffectPass>recordGroup	capability_refusal_swallowed	3	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/effects.ts#runEffectPass>run	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
@@ -1548,6 +1557,7 @@ src/core/persistence/page-visibility.ts#assertLabelledOnlyCreate	capability_refu
 src/core/persistence/page-visibility.ts#assertLabelledOnlyCreate	promise_catch_empty	1
 src/core/persistence/page-visibility.ts#authorizePageVisibility	capability_refusal_swallowed	1
 src/core/persistence/page-visibility.ts#authorizePageVisibility	catch_empty	1
+src/core/persistence/physical-root-record.ts#describeMovedPhysicalRoot	catch_empty	1	found by the fixed rule (a handler that rethrows conditionally, then answers empty); known debt, fix by a typed degraded marker
 src/core/persistence/physical-root-record.ts#excludeMarkersInLaterCheckout	catch_empty	1
 src/core/persistence/physical-root-record.ts#excludeOwnershipMarkers	catch_empty	1
 src/core/persistence/physical-root-record.ts#openOwnershipRecord	catch_empty	1
@@ -1575,6 +1585,7 @@ src/core/persistence/soak-counters.ts#recordSoakEvent	promise_catch_empty	1
 src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle<anon@3>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle<anon@3>>retireBatch	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
+src/core/persistence/source-storage.ts#isSourceDbOnlySlug	catch_empty	1	found by the fixed rule (a handler that rethrows conditionally, then answers empty); known debt, fix by a typed degraded marker
 src/core/persistence/sync-blobs.ts#pinnedWindow	catch_empty	1
 src/core/persistence/sync-blobs.ts#readPinnedBytes	catch_empty	1
 src/core/persistence/sync-discovery.ts#incomingId	catch_empty	1
