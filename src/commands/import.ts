@@ -272,7 +272,7 @@ export async function runImport(
     commit?: string; /** GBRA-217: a full sync's reason and history-gap note per file (absolute path) for the snapshot its import archives. */ history?: (filePath: string) => import('../core/page-state/versions.ts').VersionHistory | undefined;
     strategy?: SyncStrategy;
     sourceId?: string;
-    managedBookmark?: boolean;
+    managedBookmark?: boolean; /** #8079: managed plain-directory sync, whose imports never replace a database-only edit. */ plainDirectorySync?: boolean;
     /** GST-2462: the run the privacy_label_ignored notice names. */ noticeRun?: 'sync';
     /** Paths the caller keeps out of this run (#5988 holds, #8620 reserved skill paths); skipped without importing, not failures. */
     heldPaths?: Pick<ReadonlySet<string>, 'has'>;
@@ -744,7 +744,7 @@ export async function runImport(
       // unreachable when the gate is off; defense-in-depth check anyway.
       if (settled?.status === 'rejected') throw settled.reason;
       const result = settled ? settled.value : company ? await importCompanyBrainFile(eng, filePath, sourceId!) : managedImport
-        ? await importManagedFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot })
+        ? await importManagedFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot, plainDirectorySync: opts.plainDirectorySync })
         : isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, importRelPath, { noEmbed, sourceId })
         : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, bodyPolicy, firstCommitAt: firstCommits?.get(filePath), history: opts.history?.(filePath) });
@@ -856,7 +856,7 @@ export async function runImport(
 
   async function processBatch(eng: BrainEngine, batch: string[]) {
     const settled = batch.length > 1 && !signal?.aborted ? await settleManagedImportBatch(eng, batch, file => opts.slugRoot ? relative(opts.slugRoot, file)
-      : relative(importRoot, file), rel => !!opts.heldPaths?.has(rel), { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot }) : undefined;
+      : relative(importRoot, file), rel => !!opts.heldPaths?.has(rel), { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot, plainDirectorySync: opts.plainDirectorySync }) : undefined;
     for (const [i, file] of batch.entries()) await processFile(eng, file, settled?.[i]);
   }
   let workerError: unknown;

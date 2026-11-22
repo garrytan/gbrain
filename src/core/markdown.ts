@@ -1,4 +1,4 @@
-import { dataFrontmatter as matter, FrontmatterLanguageError, loadBoundedYaml as yamlLoad, YamlAliasBoundError } from './data-frontmatter.ts';
+import { dataFrontmatter as matter, FRONTMATTER_CLOSE_RE, FrontmatterLanguageError, loadBoundedYaml as yamlLoad, YamlAliasBoundError } from './data-frontmatter.ts';
 import type { Page, PageType } from './types.ts';
 import { resolveSlugForPath, slugifyPath } from './sync.ts';
 import {
@@ -125,15 +125,21 @@ export function coerceFrontmatterString(v: unknown): string {
  * i.e. where the body starts and where a body-only editor may safely operate
  * without ever touching frontmatter bytes.
  *
- * Fence semantics mirror collectValidationErrors exactly (the canonical
- * definition): leading blank lines are allowed before the opener, fences are
- * matched with trim() so CRLF line endings (`---\r`) count. Returns 0 when the
- * file has no frontmatter at all (first non-empty line is not `---`) — there
+ * The opener is the first non-empty line, matched with trim() against
+ * FRONTMATTER_OPEN_RE (`---`, or `---yaml`/`---yml`/`---json`, which
+ * parseDataFrontmatter also reads as frontmatter); leading blank lines are
+ * allowed before it. The closing fence is found exactly as
+ * parseDataFrontmatter finds it (FRONTMATTER_CLOSE_RE): `---` at column 0 with
+ * only blanks after it, so an indented `---` inside a YAML block scalar never
+ * closes the block and CRLF endings (`---\r`) still do. Returns 0 when the
+ * file has no frontmatter at all (first non-empty line is not an opener) — there
  * is no fence to protect, the whole file is body. Returns 0 for an UNCLOSED
  * fence too; callers that must not edit such files should pre-validate with
  * parseMarkdown({validate:true}) and treat MISSING_CLOSE as a blocker (the
  * backlinks fixer does).
  */
+const FRONTMATTER_OPEN_RE = /^---(?:\s*(?:yaml|yml|json))?\s*$/i;
+
 export function frontmatterBodyOffset(content: string): number {
   const lines = content.split('\n');
 
@@ -145,18 +151,11 @@ export function frontmatterBodyOffset(content: string): number {
     offset += lines[i].length + 1;
   }
   if (i >= lines.length) return 0; // empty / whitespace-only file
-  if (lines[i].trim() !== '---') return 0; // no frontmatter
+  if (!FRONTMATTER_OPEN_RE.test(lines[i].trim())) return 0; // no frontmatter
 
   offset += lines[i].length + 1; // consume the opening fence line
-  for (i = i + 1; i < lines.length; i++) {
-    const isLast = i === lines.length - 1;
-    const lineLen = lines[i].length + (isLast ? 0 : 1);
-    offset += lineLen;
-    if (lines[i].trim() === '---') {
-      return Math.min(offset, content.length);
-    }
-  }
-  return 0; // unclosed fence — no safe body offset
+  const closing = FRONTMATTER_CLOSE_RE.exec(content.slice(offset));
+  return closing ? offset + closing.index + closing[0].length : 0; // 0: unclosed fence, no safe body offset
 }
 
 /**
@@ -604,7 +603,7 @@ export function validatorFrontmatterFence(lines: readonly string[]): { firstNonE
   let firstNonEmpty = 0;
   while (firstNonEmpty < lines.length && lines[firstNonEmpty]!.trim().length === 0) firstNonEmpty++;
   if (firstNonEmpty === lines.length) return { firstNonEmpty: -1, opens: false, closeLine: -1 };
-  const opens = /^---(?:\s*(?:yaml|yml|json))?\s*$/i.test(lines[firstNonEmpty]!.trim());
+  const opens = FRONTMATTER_OPEN_RE.test(lines[firstNonEmpty]!.trim());
   let closeLine = firstNonEmpty + 1;
   while (opens && closeLine < lines.length && lines[closeLine]!.trim() !== '---') closeLine++;
   return { firstNonEmpty, opens, closeLine: opens && closeLine < lines.length ? closeLine : -1 };
