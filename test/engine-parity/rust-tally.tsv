@@ -172,6 +172,7 @@ test/engine-parity/search-reads.test.ts	18	0
 test/engine-parity/search.test.ts	23	0
 test/engine-parity/segment-regions.test.ts	1	0
 test/engine-parity/segmented-body.test.ts	21	0
+test/engine-parity/segmented-ledger-reads.test.ts	5	0
 test/engine-parity/segmented-purge-writes.test.ts	7	0
 test/engine-parity/source-admin-writes.test.ts	1	0
 test/engine-parity/source-archive.test.ts	6	0

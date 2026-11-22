@@ -104,9 +104,9 @@ transaction	lifecycle	yes	212	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	170	yes	yes	yes	serves
-readPageSnapshot	pages	yes	50	no	yes	yes	serves
-readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
+getPage	pages	yes	172	yes	yes	yes	serves
+readPageSnapshot	pages	yes	51	no	yes	yes	serves
+readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	13	no	yes	yes	serves
 putPage	pages	yes	775	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
@@ -241,7 +241,7 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	5	no	yes	yes	serves
 upsertChunks	chunks	yes	52	yes	yes	yes	serves
-sealChunks	chunks	yes	72	no	yes	yes	serves
+sealChunks	chunks	yes	73	no	yes	yes	serves
 getChunks	chunks	yes	56	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	12	no	yes	yes	serves
@@ -501,7 +501,7 @@ readSegmentedEmbedPage	segmented_body	yes	1	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	11	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	40	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	40	no	yes	yes	serves
-sealSegmentedPage	segmented_body	yes	9	no	yes	yes	serves
+sealSegmentedPage	segmented_body	yes	10	no	yes	yes	serves
 openBodyStaging	segmented_body	yes	26	no	yes	yes	serves
 setBodyStagingState	segmented_body	yes	24	no	yes	yes	serves
 sweepSegments	segmented_body	yes	3	no	yes	yes	serves
@@ -1032,7 +1032,7 @@ listUnfencedFactRows	facts_purge	yes	2	no	yes	yes	serves
 listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	5	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	6	no	yes	yes	serves
-insertFactPurge	facts_purge	yes	14	no	yes	yes	serves
+insertFactPurge	facts_purge	yes	19	no	yes	yes	serves
 insertTakePurge	facts_purge	yes	12	no	yes	yes	serves
 upsertPagePurges	facts_purge	yes	2	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	refuses:facts
@@ -1350,7 +1350,7 @@ getRecentSalience	salience_enrich	yes	8	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	7	yes	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	4	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	29	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	34	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	5	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves
