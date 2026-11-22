@@ -35,7 +35,7 @@ export const PICKER_PICKS = 3;
 export const PICKER_DESCRIPTION_CHARS = 400;
 export const PICKER_MAX_OUTPUT_TOKENS = 200;
 /** Tried in this order when router_model is unset; the first whose provider has a key answers (anthropic, openai and google are the providers the picker can call). */
-export const ROUTER_DEFAULT_MODELS = ['anthropic:claude-haiku-5-5', 'openai:gpt-5.6-luna', 'google:gemini-3.5-flash-lite'] as const;
+export const ROUTER_DEFAULT_MODELS = ['anthropic:claude-haiku-5-5', 'openai:gpt-6-luna', 'google:gemini-3.5-flash-lite'] as const;
 const LEDGER_FILE = 'router-spend.json';
 const LEDGER_LEASE_MS = 2_000;
 /** A conservative token estimate: about 3 characters per token. */
@@ -69,7 +69,12 @@ export function parsePickerReply(text: string, known: ReadonlySet<string>): { ne
   const o = j as { needed?: unknown; skills?: unknown };
   if (!o || typeof o !== 'object' || typeof o.needed !== 'boolean' || !Array.isArray(o.skills)) return { code: 'parse_failed' };
   if (!o.needed) return { needed: false, ids: [] };
-  const ids = [...new Set(o.skills.filter((x): x is string => typeof x === 'string').map(x => x.trim()).filter(x => known.has(x)))].slice(0, PICKER_PICKS);
+  const bare = new Map<string, string | null>();
+  for (const id of known) {
+    const name = id.slice(id.lastIndexOf(':') + 1);
+    if (name !== id && !known.has(name)) bare.set(name, bare.has(name) ? null : id);
+  }
+  const ids = [...new Set(o.skills.filter((x): x is string => typeof x === 'string').map(x => x.trim()).map(x => known.has(x) ? x : bare.get(x)).filter((x): x is string => !!x))].slice(0, PICKER_PICKS);
   return ids.length ? { needed: true, ids } : { code: 'no_known_ids' };
 }
 

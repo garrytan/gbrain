@@ -416,7 +416,7 @@ What it does on each turn:
 | Setting | Default | |
 |---|---|---|
 | `skills.resolver.router` | `false` | turns the picker on |
-| `skills.resolver.router_model` | Claude Haiku 5.5 with an Anthropic key, else `openai:gpt-5.6-luna`, else `google:gemini-3.5-flash-lite` | an `anthropic:`, `openai:` or `google:` model id |
+| `skills.resolver.router_model` | Claude Haiku 5.5 with an Anthropic key, else `openai:gpt-6-luna`, else `google:gemini-3.5-flash-lite` | an `anthropic:`, `openai:` or `google:` model id |
 | `skills.resolver.router_timeout_ms` | 1500 in Claude Code, 2000 elsewhere | the longest a turn waits (200-2500); Claude Code's hook limit is 3 seconds |
 | `skills.resolver.router_max_usd_per_day` | 0.50 | the daily spend cap in USD (0-100; 0 stops every call) |
 

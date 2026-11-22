@@ -54,6 +54,11 @@ const turn = (h: string, message: string, extra: Record<string, unknown> = {}, r
 const strip = (o: object) => JSON.stringify({ ...o, meta: undefined, router: undefined });
 
 describe('parsePickerReply', () => {
+  test('a plugin id named without its namespace maps to the one id it can mean', () => {
+    const known = new Set(['acme:notes', 'acme:review', 'other:review', 'plain']);
+    expect(parsePickerReply('{"needed": true, "skills": ["notes", "review", "plain"]}', known)).toEqual({ needed: true, ids: ['acme:notes', 'plain'] });
+    expect(parsePickerReply('{"needed": true, "skills": ["review"]}', known)).toEqual({ code: 'no_known_ids' });
+  });
   const known = new Set(['a', 'b', 'c', 'd']);
   test('keeps known ids in order, at most three, once each', () => {
     expect(parsePickerReply('noise {"needed": true, "skills": ["b", "x", "b", "a", "c", "d"]} tail', known)).toEqual({ needed: true, ids: ['b', 'a', 'c'] });
