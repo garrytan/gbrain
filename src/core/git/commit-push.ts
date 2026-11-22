@@ -27,7 +27,7 @@
  */
 import { appendFileSync, copyFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { rangeSecretRefusal, scanRange } from './range-secret-scan.ts';
+import { DEFAULT_SCAN_TIMEOUT_MS, rangeSecretRefusal, scanRange } from './range-secret-scan.ts';
 import { loadWorkspaceAllowlist } from '../secret-scan-allowlist.ts';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { literalPathspecs } from '../git-env.ts';
@@ -164,6 +164,8 @@ interface Ctx {
   trackingRef: string;
   keepCheckout?: boolean;
   scanTimeoutMs?: number;
+  /** One wall-clock bound for a publish: its scans, the redaction and the scans after it share scanTimeoutMs. */
+  deadline?: number;
   scanProgress?: (line: string) => void;
 }
 
@@ -1305,7 +1307,8 @@ function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]
  */
 function assertNoSecretsInRange(ctx: Ctx, target: string, clean?: Set<string>): void {
   const listed = new Set<string>();
-  const refusal = rangeSecretRefusal(ctx.root, ctx.trackingRef, target, scanRange(ctx.root, ctx.trackingRef, target, ctx.scanTimeoutMs, ctx.scanProgress, { skip: clean, listed }), {
+  const timeoutMs = ctx.deadline ? Math.max(ctx.deadline - Date.now(), 1) : ctx.scanTimeoutMs;
+  const refusal = rangeSecretRefusal(ctx.root, ctx.trackingRef, target, scanRange(ctx.root, ctx.trackingRef, target, timeoutMs, ctx.scanProgress, { skip: clean, listed }), {
     timeoutMs: ctx.scanTimeoutMs, retryArgv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), '--branch', ctx.mergeRef.replace(/^refs\/heads\//, ''), '--path', ctx.root] });
   if (refusal) throw refusal;
   for (const commit of listed) clean?.add(commit);
@@ -1483,7 +1486,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     throw opError('commit_paths_invalid', 'A commit message is required.', 'Pass -m "<message>".');
   }
   const upstream = resolveCtx(root);
-  const ctx = { ...withBranch(upstream, opts.branch), ...(opts.keepCheckout ? { keepCheckout: true } : {}),
+  const ctx: Ctx = { ...withBranch(upstream, opts.branch), ...(opts.keepCheckout ? { keepCheckout: true } : {}),
     ...(opts.scanTimeoutMs ? { scanTimeoutMs: opts.scanTimeoutMs } : {}), ...(opts.scanProgress ? { scanProgress: opts.scanProgress } : {}) };
   const elsewhere = ctx.mergeRef !== upstream.mergeRef;
   assertNoOperationInProgress(root);
@@ -1537,6 +1540,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
   const cycle = (onlyWhenClean: boolean, start: string | null, resolutions?: Map<string, Resolution>, expectRemote?: string) => {
     const requested = existsSync(requestPath);
     rmSync(requestPath, { force: true });
+    ctx.deadline = Date.now() + (opts.scanTimeoutMs ?? DEFAULT_SCAN_TIMEOUT_MS);
     try {
       let head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
       const fromHead = !(start && !isAncestor(root, start, head));
@@ -1549,7 +1553,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
         // GST-2988: with secrets.on_push redact (the default), the checked-out branch's unpushed commits are rebuilt with store markers and published.
         if ((e as { code?: string }).code !== 'publish_secret_found' || !fromHead || elsewhere || onPushMode() !== 'redact') throw e;
         const base = git(root, ['rev-parse', '--verify', '--quiet', ctx.trackingRef]).stdout.trim();
-        const outcome = redactUnpushed(root, { base, sealer: spoolSealer(root, null), publishLockHeld: true, lockWaitMs: opts.lockWaitMs, ...(opts.scanTimeoutMs ? { budgetMs: opts.scanTimeoutMs } : {}) });
+        const outcome = redactUnpushed(root, { base, sealer: spoolSealer(root, null), publishLockHeld: true, lockWaitMs: opts.lockWaitMs, deadline: ctx.deadline, ...(opts.scanTimeoutMs ? { budgetMs: opts.scanTimeoutMs } : {}) });
         if (!outcome || !('redacted' in outcome)) throw e;
         redaction = outcome;
         head = outcome.new_head;
