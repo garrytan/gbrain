@@ -16,6 +16,7 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'facts.absorb_warn_threshold', // doctor facts_extraction_health absorb-refusal warn threshold, default 10 per 24 h
   'think.trajectory_enabled', // think/index.ts: trajectory substrate on temporal intents, default on
   'think.remote_models', // ops/takes.ts (GBRA-437): comma-separated models a remote think may pick; default empty, so remote callers get the host think model
+  'cycle.propose_takes.budget_usd', 'cycle.grade_takes.budget_usd', 'cycle.calibration_profile.budget_usd', // cycle/base-phase.ts: per-run USD caps of the calibration phases, 0 spends nothing (GST-3490)
   'cycle.grade_takes.auto_resolve.enabled', // cycle/grade-takes.ts: apply verdicts at or above the 0.95 confidence threshold, default off (#7542)
   'embedding_image_ocr_max_images', 'embedding_image_ocr_max_usd', // import-file.ts image-OCR per-run caps, default 200 images / $1
   'agent.search_snippet_chars', // ops/search.ts subagent snippet cap, default 300 (0 = full text)
