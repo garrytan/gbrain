@@ -29,7 +29,8 @@
  * getTrustProposal, listFenceFactRows, listGitEffectsCarryingReason, listGuardedTakeRows, listHeldRows,
  * listPageGitEffectsForStrip, readAccessTokenWriteGrant, readFactWithdrawalClaim, readForgetTarget, readLiveStoredBody,
  * readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget, readSourceMembership,
- * readSourceState, selectClaimableEffect, selectClaimableWrite.
+ * readSourceState, selectClaimableEffect, selectClaimableWrite, and the port's lockHeldConcept, lockLiveConceptMembers,
+ * lockLivePagesByKey, lockSourceForUpdate, lockWriteRequests and readWriterAdminState.
  *
  * Limits (no_claim): a write behind a call this scan cannot resolve (a function passed as an argument, three or more
  * same-named functions in other files) is not seen; names decide nothing, but resolution does.
@@ -49,6 +50,8 @@ const LOCK_ONLY_READS: readonly string[] = [
   'listPageGitEffectsForStrip', 'readAccessTokenWriteGrant', 'readFactWithdrawalClaim', 'readForgetTarget', 'readLiveStoredBody',
   'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget', 'readSourceMembership',
   'readSourceState', 'selectClaimableEffect', 'selectClaimableWrite',
+  // The purge, git hold, notifier, access policy, belief and sync status members the port typed.
+  'lockHeldConcept', 'lockLiveConceptMembers', 'lockLivePagesByKey', 'lockSourceForUpdate', 'lockWriteRequests', 'readWriterAdminState',
 ];
 
 /**
