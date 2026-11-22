@@ -111,8 +111,8 @@ async function withLedger<T>(home: string, now: number, fn: (charged: number) =>
 const round6 = (x: number) => Math.round(x * 1e6) / 1e6;
 
 /** The model the picker uses: router_model when set, else the first ROUTER_DEFAULT_MODELS entry whose provider has a key; available is false when that model's provider has none. */
-export function routerModel(s: Pick<RouterSettings, 'model'>, home: string, env: NodeJS.ProcessEnv): { model: string | null; key: string | null } {
-  const keyFor = (m: string) => { const p = providerOf(m); return p ? pickerKey(p, home, env) : null; };
+export function routerModel(s: Pick<RouterSettings, 'model' | 'keyEnv'>, home: string, env: NodeJS.ProcessEnv): { model: string | null; key: string | null } {
+  const keyFor = (m: string) => { const p = providerOf(m); return p ? pickerKey(p, home, env, s.keyEnv) : null; };
   const model = s.model ?? ROUTER_DEFAULT_MODELS.find(m => keyFor(m) !== null) ?? null;
   return { model, key: model ? keyFor(model) : null };
 }
@@ -133,9 +133,9 @@ export async function pickSkills(home: string, message: string, skills: readonly
 
 async function callPicker(home: string, message: string, skills: readonly PickerSkill[], s: RouterSettings, signal: AbortSignal, env: NodeJS.ProcessEnv, now: () => number): Promise<PickOutcome> {
   const { model, key } = routerModel(s, home, env);
-  if (!model || !key) return { ok: false, code: 'missing_key', model, usd: 0 };
-  const { canonicalLookup } = await import('../../model-pricing.ts');
-  const price = canonicalLookup(model);
+  if (!model || key === null) return { ok: false, code: 'missing_key', model, usd: 0 };
+  const compat = model.startsWith('compat:');
+  const price = compat ? (s.usdPerMtok ? { input: s.usdPerMtok[0], output: s.usdPerMtok[1] } : null) : (await import('../../model-pricing.ts')).canonicalLookup(model);
   if (!price) return { ok: false, code: 'no_pricing', model, usd: 0 };
   const system = pickerPrompt(skills);
   const estimate = round6((estTokens(system.length + message.length) * price.input + PICKER_MAX_OUTPUT_TOKENS * price.output) / 1e6);
@@ -152,7 +152,7 @@ async function callPicker(home: string, message: string, skills: readonly Picker
   }
   let res: PickerReply;
   try {
-    res = await pickerChat({ model, system, message, maxTokens: PICKER_MAX_OUTPUT_TOKENS, signal }, key, env);
+    res = await pickerChat({ model, system, message, maxTokens: PICKER_MAX_OUTPUT_TOKENS, signal, ...(compat && s.baseUrl ? { baseUrl: s.baseUrl } : {}) }, key, env);
   } catch {
     return { ok: false, code: signal.aborted ? 'timeout' : 'provider_error', model, usd: estimate };
   }

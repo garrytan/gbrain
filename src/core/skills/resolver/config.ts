@@ -21,6 +21,14 @@
  *     (ROUTER_TIMEOUT_MS_MIN..MAX; default 1500 in Claude Code, 2000 elsewhere)
  *   skills.resolver.router_max_usd_per_day  the daily spend cap in USD
  *     (0..ROUTER_MAX_USD_PER_DAY_MAX, default 0.50; 0 stops every call)
+ *   A model on any OpenAI-compatible endpoint (a self-hosted or fine-tuned
+ *   one) is router_model compat:<model id> with:
+ *   skills.resolver.router_base_url  the endpoint's base URL, up to /v1
+ *     (https, or http to localhost only); required for compat:
+ *   skills.resolver.router_api_key_env  the environment variable holding its
+ *     key, read by name (unset: no key is sent)
+ *   skills.resolver.router_usd_per_mtok  [input, output] USD per million
+ *     tokens, so the daily cap holds; required for compat: ([0, 0] when free)
  *   A bad router value does not refuse the turn: the picker stays off for it
  *     and the turn reports router.fallback.code config_invalid.
  *
@@ -70,14 +78,35 @@ export const ROUTER_TIMEOUT_MS_MIN = 200;
 export const ROUTER_TIMEOUT_MS_MAX = 2500;
 export const ROUTER_MAX_USD_PER_DAY_DEFAULT = 0.5;
 export const ROUTER_MAX_USD_PER_DAY_MAX = 100;
-const ROUTER_MODEL_RE = /^(anthropic|openai|google):[A-Za-z0-9][\w.\-]{0,127}$/;
+const ROUTER_MODEL_RE = /^(?:(?:anthropic|openai|google):[A-Za-z0-9][\w.\-]{0,127}|compat:[A-Za-z0-9][\w.\-/:]{0,127})$/;
+const ROUTER_KEY_ENV_RE = /^[A-Z_][A-Z0-9_]{0,63}$/;
+export const ROUTER_USD_PER_MTOK_MAX = 1000;
 
 /** The picker's settings; `invalid` names the first bad key (the picker then stays off and reports config_invalid). */
-export interface RouterSettings { on: boolean; model: string | null; timeoutMs: number | null; maxUsdPerDay: number; invalid: string | null }
+export interface RouterSettings { on: boolean; model: string | null; timeoutMs: number | null; maxUsdPerDay: number; baseUrl: string | null; keyEnv: string | null; usdPerMtok: [number, number] | null; invalid: string | null }
 
 export function validateRouterModel(v: unknown, key: string): string {
   if (typeof v === 'string' && ROUTER_MODEL_RE.test(v)) return v;
-  throw configInvalid(key, 'must be an anthropic:, openai: or google: model id, like anthropic:claude-haiku-5-5');
+  throw configInvalid(key, 'must be an anthropic:, openai:, google: or compat: model id, like anthropic:claude-haiku-5-5');
+}
+
+export function validateRouterBaseUrl(v: unknown, key: string): string {
+  let u: URL | null = null;
+  try { if (typeof v === 'string' && v.length <= 512) u = new URL(v); } catch { u = null; }
+  const local = u && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
+  if (u && !u.username && !u.password && !u.search && !u.hash && (u.protocol === 'https:' || (u.protocol === 'http:' && local))) return (v as string).replace(/\/+$/, '');
+  throw configInvalid(key, 'must be the https base URL of the endpoint up to /v1, like https://models.example.com/v1 (http only for localhost; no credentials in the URL)');
+}
+
+export function validateRouterKeyEnv(v: unknown, key: string): string {
+  if (typeof v === 'string' && ROUTER_KEY_ENV_RE.test(v)) return v;
+  throw configInvalid(key, 'must be the name of an environment variable, like MY_MODEL_API_KEY');
+}
+
+export function validateRouterUsdPerMtok(v: unknown, key: string): [number, number] {
+  const ok = (x: unknown) => typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= ROUTER_USD_PER_MTOK_MAX;
+  if (Array.isArray(v) && v.length === 2 && ok(v[0]) && ok(v[1])) return [v[0], v[1]];
+  throw configInvalid(key, `must be [input, output] in US dollars per million tokens, each 0 to ${ROUTER_USD_PER_MTOK_MAX}, like [0.1, 0.5]`);
 }
 
 export function validateRouterTimeout(v: unknown, key: string): number {
@@ -93,12 +122,16 @@ export function validateRouterMaxUsd(v: unknown, key: string): number {
 /** The picker settings in a skills.resolver section. Never throws. */
 export function routerSettings(section: Record<string, unknown>): RouterSettings {
   const p = 'skills.resolver.';
-  const out: RouterSettings = { on: section.router === true, model: null, timeoutMs: null, maxUsdPerDay: ROUTER_MAX_USD_PER_DAY_DEFAULT, invalid: null };
+  const out: RouterSettings = { on: section.router === true, model: null, timeoutMs: null, maxUsdPerDay: ROUTER_MAX_USD_PER_DAY_DEFAULT, baseUrl: null, keyEnv: null, usdPerMtok: null, invalid: null };
   try {
     if (section.router !== undefined && typeof section.router !== 'boolean') throw configInvalid(`${p}router`, 'must be true or false');
     if (section.router_model !== undefined) out.model = validateRouterModel(section.router_model, `${p}router_model`);
     if (section.router_timeout_ms !== undefined) out.timeoutMs = validateRouterTimeout(section.router_timeout_ms, `${p}router_timeout_ms`);
     if (section.router_max_usd_per_day !== undefined) out.maxUsdPerDay = validateRouterMaxUsd(section.router_max_usd_per_day, `${p}router_max_usd_per_day`);
+    if (section.router_base_url !== undefined) out.baseUrl = validateRouterBaseUrl(section.router_base_url, `${p}router_base_url`);
+    if (section.router_api_key_env !== undefined) out.keyEnv = validateRouterKeyEnv(section.router_api_key_env, `${p}router_api_key_env`);
+    if (section.router_usd_per_mtok !== undefined) out.usdPerMtok = validateRouterUsdPerMtok(section.router_usd_per_mtok, `${p}router_usd_per_mtok`);
+    if (out.model?.startsWith('compat:') && !out.baseUrl) throw configInvalid(`${p}router_base_url`, 'must be set when router_model is a compat: model');
   } catch (e) { out.invalid = (e as Error).message; }
   return out;
 }

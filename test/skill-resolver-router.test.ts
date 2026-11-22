@@ -176,6 +176,54 @@ describe('the picker in a turn', () => {
   });
 });
 
+describe('a compat: model on an OpenAI-compatible endpoint', () => {
+  const seen: { path: string; auth: string | null; body: any }[] = [];
+  const server = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) {
+    seen.push({ path: new URL(req.url).pathname, auth: req.headers.get('authorization'), body: await req.json() });
+    return Response.json({ choices: [{ message: { content: '{"needed": true, "skills": ["gbrain:people"]}' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1000, completion_tokens: 10 } });
+  } });
+  afterAll(() => server.stop(true));
+  const compat = (extra: Record<string, unknown>) => ({ router: true, router_model: 'compat:acme/picker-1', router_base_url: `http://127.0.0.1:${server.port}/v1`, ...extra });
+  const env = { ...process.env, ACME_PICKER_KEY: 'k-test' };
+
+  test('plugs in by base URL, model id and key name, priced from config', async () => {
+    seen.length = 0;
+    const h = await home(compat({ router_api_key_env: 'ACME_PICKER_KEY', router_usd_per_mtok: [1, 2] }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+    expect(r.output.router).toMatchObject({ answered_by: 'picker', model: 'compat:acme/picker-1', fallback: null, est_usd: 0.00102 });
+    expect(r.output.suggestions.map(x => x.id)).toEqual(['gbrain:people']);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.path).toBe('/v1/chat/completions');
+    expect(seen[0]!.auth).toBe('Bearer k-test');
+    expect(seen[0]!.body.model).toBe('acme/picker-1');
+    expect(seen[0]!.body.messages.map((m: any) => m.role)).toEqual(['system', 'user']);
+    expect((await readRouterSpend(h)).charged_usd).toBe(0.00102);
+  });
+
+  test('with no key name it sends no key; a named key that is unset is missing_key', async () => {
+    seen.length = 0;
+    const open = await home(compat({ router_usd_per_mtok: [0, 0] }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: open, catalogs: ['c'], router: true, env });
+    expect(r.output.router?.answered_by).toBe('picker');
+    expect(seen[0]!.auth).toBeNull();
+    const h = await home(compat({ router_api_key_env: 'ACME_UNSET_KEY', router_usd_per_mtok: [0, 0] }));
+    const m = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+    expect(m.output.router?.fallback).toEqual({ code: 'missing_key' });
+    expect(seen).toHaveLength(1);
+  });
+
+  test('no price is no_pricing and no base URL is config_invalid, with no call', async () => {
+    seen.length = 0;
+    const unpriced = await home(compat({}));
+    expect((await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: unpriced, catalogs: ['c'], router: true, env })).output.router?.fallback).toEqual({ code: 'no_pricing' });
+    const nourl = await home({ router: true, router_model: 'compat:acme/picker-1', router_usd_per_mtok: [0, 0] });
+    expect((await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: nourl, catalogs: ['c'], router: true, env })).output.router?.fallback).toEqual({ code: 'config_invalid' });
+    const remote = await home(compat({ router_base_url: 'http://models.example.com/v1', router_usd_per_mtok: [0, 0] }));
+    expect((await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: remote, catalogs: ['c'], router: true, env })).output.router?.fallback).toEqual({ code: 'config_invalid' });
+    expect(seen).toHaveLength(0);
+  });
+});
+
 describe('the daily spend cap', () => {
   test('each call is charged to the day\'s ledger, settled to its real cost', async () => {
     const h = await home({ router: true });

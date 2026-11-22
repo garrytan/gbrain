@@ -7,14 +7,16 @@
  * reads (anthropic_api_key, openai_api_key, google_api_key; the canonical
  * fold is src/core/ai/provider-env.ts, including the GEMINI_API_KEY alias).
  * ANTHROPIC_BASE_URL, OPENAI_BASE_URL and GOOGLE_GENERATIVE_AI_BASE_URL point
- * a provider at a proxy.
+ * a provider at a proxy. A compat: model is any OpenAI-compatible endpoint
+ * (Chat Completions at router_base_url), with its key read from the
+ * environment variable router_api_key_env names, or no key.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const PICKER_PROVIDERS = ['anthropic', 'openai', 'google'] as const;
+export const PICKER_PROVIDERS = ['anthropic', 'openai', 'google', 'compat'] as const;
 export type PickerProvider = (typeof PICKER_PROVIDERS)[number];
-export interface PickerRequest { model: string; system: string; message: string; maxTokens: number; signal: AbortSignal }
+export interface PickerRequest { model: string; system: string; message: string; maxTokens: number; signal: AbortSignal; baseUrl?: string }
 /** A reply; usage.input counts only uncached input tokens. */
 export interface PickerReply { text: string; refused: boolean; usage: { input: number; cacheRead: number; cacheWrite: number; output: number } }
 
@@ -22,7 +24,7 @@ let testTransport: ((req: PickerRequest) => Promise<PickerReply>) | null = null;
 /** Tests only: answer every picker call with `fn` (null restores the network). */
 export function __setPickerTransportForTests(fn: ((req: PickerRequest) => Promise<PickerReply>) | null): void { testTransport = fn; }
 
-const CONFIG_KEY: Record<PickerProvider, [string, string]> = {
+const CONFIG_KEY: Record<Exclude<PickerProvider, 'compat'>, [string, string]> = {
   anthropic: ['anthropic_api_key', 'ANTHROPIC_API_KEY'],
   openai: ['openai_api_key', 'OPENAI_API_KEY'],
   google: ['google_api_key', 'GOOGLE_GENERATIVE_AI_API_KEY'],
@@ -33,9 +35,10 @@ export const providerOf = (model: string): PickerProvider | null => {
   return (PICKER_PROVIDERS as readonly string[]).includes(p) ? p as PickerProvider : null;
 };
 
-/** The key for `provider`, or null when none is configured. */
-export function pickerKey(provider: PickerProvider, home: string, env: NodeJS.ProcessEnv): string | null {
+/** The key for `provider`, or null when none is configured; '' for a compat: endpoint that takes none (no keyEnv). */
+export function pickerKey(provider: PickerProvider, home: string, env: NodeJS.ProcessEnv, keyEnv: string | null = null): string | null {
   if (testTransport) return 'test';
+  if (provider === 'compat') return keyEnv ? env[keyEnv] || null : '';
   const [configKey, name] = CONFIG_KEY[provider];
   const fromEnv = env[name] || (provider === 'google' ? env.GEMINI_API_KEY : undefined);
   if (fromEnv) return fromEnv;
@@ -66,6 +69,16 @@ export async function pickerChat(req: PickerRequest, key: string, env: NodeJS.Pr
     const u = j.usage ?? {};
     return { text: (j.content ?? []).filter((b: any) => b?.type === 'text').map((b: any) => b.text).join(''), refused: j.stop_reason === 'refusal',
       usage: { input: u.input_tokens ?? 0, cacheRead: u.cache_read_input_tokens ?? 0, cacheWrite: u.cache_creation_input_tokens ?? 0, output: u.output_tokens ?? 0 } };
+  }
+  if (provider === 'compat') {
+    const j = await post(`${(req.baseUrl ?? '').replace(/\/+$/, '')}/chat/completions`, key ? { authorization: `Bearer ${key}` } : {}, {
+      model, max_tokens: req.maxTokens, temperature: 0, messages: [{ role: 'system', content: req.system }, { role: 'user', content: req.message }],
+    }, req.signal);
+    const u = j.usage ?? {};
+    const cached = u.prompt_tokens_details?.cached_tokens ?? 0;
+    const choice = j.choices?.[0];
+    return { text: typeof choice?.message?.content === 'string' ? choice.message.content : '', refused: choice?.finish_reason === 'content_filter' || Boolean(choice?.message?.refusal),
+      usage: { input: Math.max(0, (u.prompt_tokens ?? 0) - cached), cacheRead: cached, cacheWrite: 0, output: u.completion_tokens ?? 0 } };
   }
   if (provider === 'openai') {
     const j = await post(`${base(env, 'OPENAI_BASE_URL', 'https://api.openai.com')}/v1/responses`, { authorization: `Bearer ${key}` }, {

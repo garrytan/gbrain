@@ -420,6 +420,23 @@ What it does on each turn:
 | `skills.resolver.router_timeout_ms` | 1500 in Claude Code, 2000 elsewhere | the longest a turn waits (200-2500); Claude Code's hook limit is 3 seconds |
 | `skills.resolver.router_max_usd_per_day` | 0.50 | the daily spend cap in USD (0-100; 0 stops every call) |
 
+**Your own model.** Any model behind an OpenAI-compatible Chat Completions
+endpoint can be the picker, a self-hosted or fine-tuned one included: set
+`router_model` to `compat:<model id>` and three more settings.
+
+| Setting | |
+|---|---|
+| `skills.resolver.router_base_url` | the endpoint's base URL up to `/v1`, like `https://models.example.com/v1` (https, or http to localhost only); required |
+| `skills.resolver.router_api_key_env` | the name of the environment variable holding its key, like `MY_MODEL_API_KEY`; unset sends no key |
+| `skills.resolver.router_usd_per_mtok` | `[input, output]` in USD per million tokens, so the daily cap holds; required (`0,0` for a free one) |
+
+```bash
+gbrain config set skills.resolver.router_model compat:acme/skill-picker-1
+gbrain config set skills.resolver.router_base_url https://models.example.com/v1
+gbrain config set skills.resolver.router_api_key_env MY_MODEL_API_KEY
+gbrain config set skills.resolver.router_usd_per_mtok 0.1,0.5
+```
+
 **Cost and wait.** A turn sends the skill list and the message, about 9,000
 tokens for 75 skills, and gets back under 40 tokens. With Haiku 5.5 that is
 about $0.0001 a turn once the list is cached and $0.001 the first time; a
@@ -430,7 +447,7 @@ counts. The cap resets at 00:00 UTC.
 
 **Privacy.** With the picker on, each message and your skills' ids and
 descriptions go to the model's provider (Anthropic, OpenAI or Google), over
-HTTPS, with your key. Keys come from the environment (`ANTHROPIC_API_KEY`,
+HTTPS, with your key (with a `compat:` model, to the endpoint you set). Keys come from the environment (`ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY`) or from
 `anthropic_api_key`, `openai_api_key` or `google_api_key` in
 `~/.gbrain/config.json`; `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` and
@@ -452,7 +469,8 @@ the key and the provider's status; the turn used the word matcher.
 ### router_fallback: missing_key
 
 No key for the picker's model. Set the provider's key (see Privacy above), or
-set `skills.resolver.router_model` to a model whose key you have.
+set `skills.resolver.router_model` to a model whose key you have. For a
+`compat:` model, the variable `router_api_key_env` names is unset.
 
 ### router_fallback: daily_cap
 
@@ -480,7 +498,8 @@ the picker stays off until the value is fixed or unset
 ### router_fallback: no_pricing
 
 gbrain has no price for `router_model`, so the daily cap could not be
-enforced and no call was made. Use a model gbrain prices (the defaults are).
+enforced and no call was made. Use a model gbrain prices (the defaults are),
+or for a `compat:` model set `skills.resolver.router_usd_per_mtok`.
 
 ### router_fallback: ledger_unavailable
 
