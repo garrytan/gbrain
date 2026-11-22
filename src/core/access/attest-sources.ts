@@ -124,7 +124,7 @@ async function credentialSources(db: Db): Promise<CredentialSources[]> {
  */
 export async function assertScopeSourceGrant(db: Db, self: CredentialRef | null, reads: readonly string[], opts: { privatePages?: boolean; privateFacts?: boolean; writeSource?: string | null } = {}): Promise<void> {
   const sql = sqlOf(db);
-  const attest = self && (opts.privatePages || opts.privateFacts || opts.writeSource) ? (await credentialSources(sql)).find(c => same(c.ref, self))?.attest ?? [] : [];
+  const attest = self && (opts.privatePages || opts.privateFacts || opts.writeSource) ? (await credentialSources(db)).find(c => same(c.ref, self))?.attest ?? [] : [];
   if (opts.privatePages && attest.length) {
     throw new GrantError('invalid_grant', 'This credential lists scope sources (--attest-sources), so it cannot hold the private-pages grant; nothing changed. '
       + 'A scope credential reads only shared memory: use a separate credential for private pages.');
@@ -141,7 +141,7 @@ export async function assertScopeSourceGrant(db: Db, self: CredentialRef | null,
   if (!candidates.length) return;
   const marked = await markedScopeSources(typeof db !== 'function' && db.kind === 'rust' ? db : sql, candidates, 'share');
   if (!marked.size) return;
-  const own = self ? (await credentialSources(sql)).find(c => same(c.ref, self))?.attest ?? [] : [];
+  const own = self ? (await credentialSources(db)).find(c => same(c.ref, self))?.attest ?? [] : [];
   const reserved = [...marked].filter(s => !own.includes(s)).sort();
   if (!reserved.length) return;
   throw new GrantError('invalid_grant', `Source ${reserved.join(', ')} is a QM scope source, so only the scope credential may read it; nothing changed. `
