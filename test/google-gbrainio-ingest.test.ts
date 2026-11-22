@@ -256,6 +256,11 @@ test('gbrain.io limits are rate limits; record pages opt out of atoms; existing 
   expect(connectorIdentity('google', vault, '/tmp/x').digest).toBe(withDefaults.digest);
   expect(parseGoogleSourceConfig(vault, '/tmp/x').ingestTiers).toBeUndefined();
   expect(parseGoogleSourceConfig(gbrainioConfig(), '/tmp/x').gbrainioCommand).toBe('gbrainio');
+  // Value: protects=a gbrainio source sweeps Gmail only and honours an explicit ingest-tiers opt-out; fails_when=the gmail-only override or the g_ingest_tiers boolean read is dropped;
+  // why_new=only the default command and vault tiers were asserted; seam=none; no_claim=sweep behaviour (config parse only)
+  const forced = parseGoogleSourceConfig(gbrainioConfig({ g_services: 'gmail,calendar,contacts', g_ingest_tiers: false }), '/tmp/x');
+  expect(forced.services).toEqual(['gmail']);
+  expect(forced.ingestTiers).toBeUndefined();
 });
 
 test('gbrain.io source on an unmanaged brain: the same window walk, tiers and skip of unchanged threads', async () => withEnv(env, async () => {
