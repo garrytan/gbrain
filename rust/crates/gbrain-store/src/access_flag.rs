@@ -556,7 +556,7 @@ mod tests {
         // - `lib.rs`: the brain-create write, the two arms of `Store::write`'s unbound loop, and
         //   the format upgrade (no page records);
         // - `transactions.rs`: a transaction's exclusive base handle (its statements run through
-        //   the bound arm of `Store::write`) and its counter flush;
+        //   the bound arm of `Store::write`; its counters are written through that same handle);
         // - this module's open-time scan, job admission (no page records), the keyword index
         //   repair (`keyword/index_build.rs`, postings only) and the open-time repair of the
         //   derivation sweep records' source index (`page_body/purge_record.rs`, index keys only);
