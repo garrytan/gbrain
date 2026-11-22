@@ -48,8 +48,12 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 | gbrain's own skills | `gbrain skills index build --catalog gbrain --bundled` | Rebuilt when the gbrain version changes. |
 
 - `--dir` is repeatable; earlier directories win duplicate ids (the loser is
-  listed in the receipt as `duplicate_id`). Symlinks that leave the root,
-  skills with `disable-model-invocation: true` and JSON entries with
+  listed in the receipt as `duplicate_id`). A symlink that leaves the root
+  is followed only when it points at a skill folder (a directory with a
+  `SKILL.md`) or at a `SKILL.md` file, the way gstack and other installers
+  link skills in from a checkout; the skill is indexed under the link's path.
+  Any other symlink that leaves the root (`symlink_outside_root`), skills
+  with `disable-model-invocation: true` and JSON entries with
   `eligible: false` are never indexed. Dot-entries (harness-owned state such
   as Codex's `.system/` or Hermes's `.usage.json`) and `node_modules` are
   never read, so a harness writing them does not make the index stale.
@@ -133,8 +137,13 @@ so it works with serve down and with no brain. Each block names the skill ids
 and gives the harness's own load line; Codex lines also carry the SKILL.md path.
 The lane always exits 0 and prints nothing when it cannot deliver:
 
-- **Deadline:** 50 ms from lane start. Ranking runs in a worker thread; at the
-  deadline the process prints nothing, exits and commits no session state.
+- **Deadline:** 50 ms for the turn, counted from the moment the ranking
+  worker thread has loaded, plus at most 250 ms for that worker to load. A
+  cold machine can take most of 50 ms just to load it (measured: up to about
+  50 ms on an idle 4-core machine with an empty file cache, and up to about
+  105 ms with the CPU oversubscribed), so the turn's own clock starts once it
+  is ready. At either limit the process prints nothing, exits and commits no
+  session state.
 - **Turn settings:** `skills.resolver.top_k` (1-8, default 5),
   `skills.resolver.min_match` (the weakest `match_strength` to suggest;
   default every match), `skills.resolver.top_gate` (0.6 unless set, 0 turns it off; see
@@ -177,8 +186,8 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   install from before gets the SessionStart group on its next setup run.
   Hermes sends no compaction event; the lane resets a session when its history shrinks or on a first turn.
 
-Each turn appends one line (outcome, error code, duration, catalogs; never
-turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
+Each turn appends one line (outcome, error code, duration, the worker's load
+time as `worker_ms`, catalogs; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
 kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
 the recent error codes; it says nothing while the resolver is off. A hook from

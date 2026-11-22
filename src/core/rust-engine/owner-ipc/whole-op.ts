@@ -1,8 +1,10 @@
 /**
  * Whole operations a client of a Rust brain's owner sends as one request. A write path that opens its own
  * transaction (the file and content imports) cannot run in a client, because transactions do not cross the owner
- * socket (routes.ts). Its entry point calls `forwardWholeOperation` first; on a client engine the whole operation runs
- * inside the owner, transaction included, and its result or error comes back as the in-process call would give it.
+ * socket (routes.ts). An entry point that calls `forwardWholeOperation` first has the whole operation run inside the
+ * owner, transaction included, and gets its result or error back as the in-process call would give it. No entry point
+ * calls it yet, so a client's page and memory writes still stop at write admission (persistence/admission-retry.ts),
+ * which opens a transaction, on `engine_capability_missing` reason `transactions`.
  *
  * Only data crosses: an option that is a function (a coordinator `prepare` seam) refuses with
  * `engine_capability_missing`, and so does a caller that is not the trusted local CLI (a remote MCP caller of a second

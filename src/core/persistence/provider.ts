@@ -3,18 +3,19 @@ import type { GBrainConfig } from '../config.ts';
 import { operations } from '../operations.ts';
 import { opError, OperationError, type AuthInfo } from '../ops/contract.ts';
 import { hasScope, operationScopesAllowed } from '../scope.ts';
-import { resolveSourceId } from '../source-resolver.ts';
+import { localFederatedSourceIds, resolveSourceId } from '../source-resolver.ts';
 import { dispatchToolCall } from '../../mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import { startPersistenceConsumer, assertPersistenceAccepting } from './service.ts';
 import { isWriteErrorCode, isWriteReceipt } from './types.ts';
-import { LOCAL_CLI_OWNER_OPERATIONS, PERSISTENCE_ROOM_MARKED_KEY, restoreRecoveryContract, type PersistenceIpcProvider } from './ipc.ts';
+import { LOCAL_CLI_OWNER_OPERATIONS, PERSISTENCE_META_KEY, PERSISTENCE_ROOM_MARKED_KEY, restoreRecoveryContract, type PersistenceIpcProvider } from './ipc.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { runPersistenceAdministration } from './administration.ts';
 import { boundedWriteWaitMs } from './write-wait.ts';
 import { sourceNamedByCheckout } from './unsourced-put-fork.ts';
 export { residentPersistenceConfig } from './local-client.ts';
 import { startProjectionStatusCache } from '../page-state/projection-status.ts';
+import { NoticeLedger } from '../notice-ledger.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 
@@ -84,12 +85,17 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     const localCliLocalOnly = !verified.remote && verified.principal.kind === 'local_cli' && LOCAL_CLI_LOCAL_ONLY_OPS.has(request.operation);
     const writeWaitMs = boundedWriteWaitMs(request.write_wait_ms);
     const unsourcedLocal = request.routing.source === null && !verified.remote;
+    // G8: an unpinned read from the trusted local CLI spans the source's federated set, as the same read does with no serve.
+    const federated = unrestricted && unsourcedLocal && verified.principal.kind === 'local_cli' ? await localFederatedSourceIds(engine, sourceId, 'local_path') : undefined;
+    // G8: the trusted local CLI's read comes back as a cold CLI run prints it: a fresh notice ledger per call, as per process.
+    const withMeta = request.with_meta === true && !verified.remote && verified.principal.kind === 'local_cli';
     const result = await dispatchToolCall(engine, request.operation, params, {
       // #6696 (A5): a verified local registration is the user's CLI or agent, as on the in-process entry points.
       admissionOrigin: 'interactive', pendingAsError: true,
       config, remote: verified.remote, transport: verified.remote || localSkillAdministration || localCliLocalOnly ? 'stdio' : undefined, sourceId, auth,
       ...(writeWaitMs !== undefined ? { writeWaitMs } : {}),
-      ...(unrestricted ? {} : { localFederatedSourceIds: verified.grant.sourceIds }),
+      ...(withMeta ? { noticeLedger: new NoticeLedger() } : {}),
+      ...(unrestricted ? (federated ? { localFederatedSourceIds: federated } : {}) : { localFederatedSourceIds: verified.grant.sourceIds }),
       ...(unsourcedLocal ? { localSourceImplicit: true } : {}),
       ...(unsourcedLocal && await sourceNamedByCheckout(engine, request.operation, request.routing.cwd, sourceId) ? { localSourceFromCheckout: true } : {}),
     });
@@ -97,6 +103,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     // GBRA-498: the trusted local CLI's --room is marked here, where the brain is; any other lane's answer goes back
     // unmarked and the CLI marks every item unknown.
     const answer = async (): Promise<unknown> => {
+      if (withMeta) return { [PERSISTENCE_META_KEY]: { result: body, meta: { degraded: result._meta?.degraded, gbrain_notices: result._meta?.gbrain_notices, retrieval: result._meta?.retrieval } } };
       if (request.room === undefined || verified.remote || verified.principal.kind !== 'local_cli') return body;
       const { assessRoom, readRoomDeclaration } = await import('../access/room.ts');
       const room = await assessRoom(engine, { op: request.operation, result: body, sourceId,
