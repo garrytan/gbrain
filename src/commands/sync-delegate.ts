@@ -256,7 +256,7 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[], 
     // Race: the serve may have died between probe and connect — or it started
     // the job and the ack was lost. Re-probe; alive → ONE retry with the SAME
     // token (busy/attach semantics make it safe), dead → normal path.
-    if (!(await hookServeStillHolds(engine, dataDir, holder.pid))) return false;
+    if (!(await hookServeStillHolds(engine, dataDir))) return false;
     start = await requestSyncStart(sock, { secret, clientToken, options });
     if (start === IPC_UNAVAILABLE) {
       serr(
@@ -309,7 +309,7 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[], 
 
   const polled = await pollDelegatedJob({
     sock, secret, jobId, pid: holder.pid,
-    alive: () => hookServeStillHolds(engine, dataDir, holder.pid),
+    alive: () => hookServeStillHolds(engine, dataDir),
   });
   if (polled.kind === 'lost') { await setVerdict(1); return true; }
   if (polled.kind === 'failed') {

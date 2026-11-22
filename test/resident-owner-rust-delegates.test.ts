@@ -212,14 +212,14 @@ describe('sync trigger and sweep through a Rust serve wait for its hook socket',
     expect(out).toContain(`"pid":${process.pid}`);
   }), 30_000);
 
-  // Value: protects=after a lost start acknowledgment or between polls, a busy Rust owner that accepts connections but does not answer its hello in time still counts as holding the brain, so the CLI never runs an accepted sync or sweep a second time itself; fails_when=the re-check uses the one-second hello probe, which reads a busy owner as gone; why_new=an outside review reproduced a delegated sync falling back while the owner still ran it; seam=a real Unix socket that accepts and never answers, at the owner socket path; no_claim=the owner's own work
-  test('a busy Rust owner that does not answer its hello still holds the brain; a refused owner socket does not', () => inHome(async () => {
+  // Value: protects=after a lost start acknowledgment or between polls, a busy Rust owner that accepts connections but does not answer its hello in time still counts as holding the brain, so the CLI never runs an accepted sync or sweep a second time itself; fails_when=the re-check uses the one-second hello probe, which reads a busy owner as gone, or trusts the owner's advertised pid (not visible from another PID namespace); why_new=an outside review reproduced a delegated sync falling back while the owner still ran it; seam=a real Unix socket that accepts and never answers, at the owner socket path; no_claim=the owner's own work
+  test('a busy Rust owner that does not answer its hello still holds the brain, whatever its pid; a refused owner socket does not', () => inHome(async () => {
     const stalled: Server = createServer(() => { /* accepts, never answers */ });
     const ownerPath = prepareLocalIpcPath(ownerSocketPath(dbDir), true);
     await new Promise<void>(resolve => stalled.listen(ownerPath, resolve));
     try {
-      expect(await hookServeStillHolds('rust', dbDir, process.pid)).toBe(true);
+      expect(await hookServeStillHolds('rust', dbDir)).toBe(true);
     } finally { await new Promise<void>(resolve => stalled.close(() => resolve())); }
-    expect(await hookServeStillHolds('rust', dbDir, process.pid)).toBe(false);
+    expect(await hookServeStillHolds('rust', dbDir)).toBe(false);
   }), 30_000);
 });

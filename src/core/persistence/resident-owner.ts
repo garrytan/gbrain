@@ -10,7 +10,7 @@
  * the call to the engine path, which reaches the owner as its client and refuses typed where a capability is missing.
  */
 import { join } from 'node:path';
-import { inspectLockHolder, isProcessAlive, type LockHolderInfo } from '../pglite-lock.ts';
+import { inspectLockHolder, type LockHolderInfo } from '../pglite-lock.ts';
 import { probeLivePgliteHolder } from '../bootstrap/uninstall.ts';
 import { localIpcSocketPath } from '../context/ipc-path.ts';
 import { ownerSocketPath } from '../rust-engine/owner-ipc/protocol.ts';
@@ -104,15 +104,16 @@ async function rustHookServe(dataDir: string): Promise<{ pid: number; serve: tru
 }
 
 /**
- * True while the serve that took a delegated sync or sweep (process `pid`) still holds the brain, for the re-checks
- * after a lost acknowledgment and between status polls. A false answer lets the caller run the work itself, so a Rust
- * owner counts as gone only when that is confirmed: its process exited or its owner socket refuses connections. A
- * busy owner that does not answer its hello in time still holds the brain (it may be running the accepted work).
+ * True while the serve that took a delegated sync or sweep still holds the brain, for the re-checks after a lost
+ * acknowledgment and between status polls. A false answer lets the caller run the work itself, so a Rust owner counts
+ * as gone only when its owner socket refuses connections (the kernel drops the owner lock and the listener together
+ * when the owner exits). A busy owner that does not answer its hello in time still holds the brain, and so does one
+ * whose pid this process cannot see (another PID namespace): the pid it advertised is not proof of death here.
  */
-export async function hookServeStillHolds(engine: LocalBrainEngine, dataDir: string, pid: number): Promise<boolean> {
+export async function hookServeStillHolds(engine: LocalBrainEngine, dataDir: string): Promise<boolean> {
   switch (engine) {
     case 'pglite': return probeLivePgliteHolder(dataDir)?.serve === true;
-    case 'rust': return isProcessAlive(pid) && await socketHasLiveListener(ownerSocketPath(dataDir));
+    case 'rust': return socketHasLiveListener(ownerSocketPath(dataDir));
     default: { const unreachable: never = engine; return unreachable; }
   }
 }

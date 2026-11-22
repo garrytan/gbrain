@@ -142,7 +142,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[],
 
   let start = await requestSweepStart(sock, { secret, clientToken, options });
   if (start === IPC_UNAVAILABLE) {
-    if (!(await hookServeStillHolds(engine, dataDir, holder.pid))) return false;
+    if (!(await hookServeStillHolds(engine, dataDir))) return false;
     start = await requestSweepStart(sock, { secret, clientToken, options });
     if (start === IPC_UNAVAILABLE) {
       serr(
@@ -190,7 +190,7 @@ export async function maybeDelegateSweepToServe(dataDir: string, args: string[],
     if (s === IPC_UNAVAILABLE || 'degraded' in (s as object)) {
       failures++;
       if (failures % PID_PROBE_EVERY === 0) {
-        if (!(await hookServeStillHolds(engine, dataDir, holder.pid))) {
+        if (!(await hookServeStillHolds(engine, dataDir))) {
           serr(`[sweep] the serve (PID ${holder.pid}) died mid-sweep — re-run \`gbrain sweep --once\`.`);
           await setVerdict(1);
           return true;
