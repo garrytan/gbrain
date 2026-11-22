@@ -17,7 +17,10 @@
  * and answers {"context"}, starts a session fresh on its first turn or when
  * its history shrinks (in-place compaction), and honours
  * per_harness.hermes.owner_sender_ids; with the lane off it prints and writes
- * nothing.
+ * nothing. Claude Code and Codex SessionStart (startup, resume, clear,
+ * compact) prints <harness>-user's pins and per_harness.<harness>.session_start,
+ * nothing when neither is set, the lane is off or the value is bad, and a
+ * pinned skill is never also suggested on a turn.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
@@ -768,3 +771,114 @@ describe('readHookFields: counts and flags in the same streaming pass', () => {
     expect(await readHookFields(chunks('{"extra":{"conversation_history":"many","is_first_turn":1}}', 3), SPEC, 100)).toEqual({ strings: {}, counts: {}, flags: {} });
   });
 });
+
+describe('skill-resolver lane: pins and session_start at SessionStart', () => {
+  const cli = (b: Box, args: string[]) => runCli(args, { env: b.env, cwd: b.project });
+  const RULE = 'Team rule: run the tests before you push.';
+  const configFile = (b: Box) => join(b.home, '.gbrain', 'config.json');
+  const editConfig = (b: Box, edit: (resolver: any) => void) => { const doc = readJson(configFile(b)); edit(doc.skills.resolver); writeFileSync(configFile(b), JSON.stringify(doc)); };
+  const startContext = (r: Run) => { const out = JSON.parse(r.stdout).hookSpecificOutput; expect(out.hookEventName).toBe('SessionStart'); return out.additionalContext as string; };
+
+  for (const harness of ['claude-code', 'codex'] as const) {
+    test(`${harness}: startup, resume, clear and compact each carry the user catalog's pins and the session_start text; compact still resets the session`, async () => {
+      const b = box();
+      const dir = harness === 'codex' ? codexSkills(b) : claudeSkills(b);
+      seedSkills(dir);
+      await setup(b, harness);
+      const pin = await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', `${harness}-user`, '--line', 'Before any deploy']);
+      expect(pin.exitCode, pin.stderr).toBe(0);
+      expect(pin.stdout).toContain(`${harness === 'codex' ? 'Codex' : 'Claude Code'} gets these pins at its next session start`);
+      editConfig(b, (r) => { r.pins[`${harness}-user`].push({ name: 'gone-skill' }); });
+      const set = await cli(b, ['config', 'set', `skills.resolver.per_harness.${harness}.session_start`, RULE]);
+      expect(set.exitCode, set.stderr).toBe(0);
+      const cmd = wired(b, harness);
+      const start = wired(b, harness, 'SessionStart');
+      const turn = { prompt: 'triage this bug report', session_id: 'sess-p', hook_event_name: 'UserPromptSubmit' };
+      expect(contextOf(await hook(b, cmd, turn, WIDE))).toContain('triage-bug');
+      for (const source of ['startup', 'resume', 'clear', 'compact']) {
+        const r = await hook(b, start, { source, session_id: 'sess-p', hook_event_name: 'SessionStart' }, WIDE);
+        expect(r.exitCode).toBe(0);
+        const context = startContext(r);
+        expect(context).toContain('<pinned_skills>');
+        expect(context).toContain('id: "deploy-widget" when: "Before any deploy"');
+        expect(context).toContain(harness === 'codex' ? CODEX_LOAD : CLAUDE_LOAD);
+        if (harness === 'codex') expect(context).toContain(`path: ${JSON.stringify(join(dir, 'deploy-widget', 'SKILL.md'))}`);
+        else expect(context).not.toContain('path: ');
+        expect(context).not.toContain('gone-skill');
+        expect(context.endsWith(RULE)).toBe(true);
+      }
+      expect(contextOf(await hook(b, cmd, turn, WIDE))).toContain('triage-bug');
+      expect(laneLog(b).filter((l) => l.event === 'session-start').map((l) => l.outcome)).toEqual(['delivered', 'delivered', 'delivered', 'delivered']);
+    });
+  }
+
+  test('a skill pinned for the harness is shown at SessionStart, so a turn never also suggests it', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const turn = (id: string) => ({ prompt: 'please deploy the widget to staging', session_id: id });
+    expect(contextOf(await hook(b, wired(b, 'claude-code'), turn('before'), WIDE))).toContain('id: "deploy-widget"');
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    const after = await hook(b, wired(b, 'claude-code'), turn('after'), WIDE);
+    expect(after.exitCode).toBe(0);
+    expect(after.stdout === '' ? '' : contextOf(after)).not.toContain('id: "deploy-widget"');
+  });
+
+  test('session_start alone (no pins) is printed by itself', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['config', 'set', 'skills.resolver.per_harness.claude-code.session_start', RULE])).exitCode).toBe(0);
+    expect(startContext(await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE))).toBe(RULE);
+  });
+
+  test('nothing set for this harness prints nothing: pins and session_start of another harness stay there', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    seedSkills(codexSkills(b));
+    await setup(b, 'claude-code');
+    await setup(b, 'codex');
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'codex-user'])).exitCode).toBe(0);
+    expect((await cli(b, ['config', 'set', 'skills.resolver.per_harness.codex.session_start', RULE])).exitCode).toBe(0);
+    for (const source of ['startup', 'compact']) {
+      const r = await hook(b, wired(b, 'claude-code', 'SessionStart'), { source, session_id: 's' }, WIDE);
+      expect(r).toMatchObject({ exitCode: 0, stdout: '' });
+    }
+  });
+
+  test('a bad session_start (not text, or over the cap) prints nothing and logs skill_resolver_config_invalid', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    for (const bad of [42, 'x'.repeat(4000)]) {
+      editConfig(b, (r) => { r.per_harness = { 'claude-code': { session_start: bad } }; });
+      const r = await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE);
+      expect(r).toMatchObject({ exitCode: 0, stdout: '' });
+      expect(laneLog(b).at(-1)).toMatchObject({ event: 'session-start', outcome: 'error', code: 'skill_resolver_config_invalid' });
+    }
+  });
+
+  test('a lane that is off prints nothing at SessionStart, pins and session_start notwithstanding', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['skills', 'pin', 'add', 'deploy-widget', '--catalog', 'claude-code-user'])).exitCode).toBe(0);
+    expect((await cli(b, ['config', 'set', 'skills.resolver.per_harness.claude-code.session_start', RULE])).exitCode).toBe(0);
+    const start = wired(b, 'claude-code', 'SessionStart');
+    editConfig(b, (r) => { r.enabled = false; });
+    expect(await hook(b, start, { source: 'startup', session_id: 's' }, WIDE)).toMatchObject({ exitCode: 0, stdout: '' });
+  });
+
+  test('a block over the payload budget is dropped whole and counted', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect((await cli(b, ['config', 'set', 'skills.resolver.lane_payload_chars', '500'])).exitCode).toBe(0);
+    expect((await cli(b, ['config', 'set', 'skills.resolver.per_harness.claude-code.session_start', 'Read the team notes. '.repeat(30).trim()])).exitCode).toBe(0);
+    const r = await hook(b, wired(b, 'claude-code', 'SessionStart'), { source: 'startup', session_id: 's' }, WIDE);
+    expect(r).toMatchObject({ exitCode: 0, stdout: '' });
+    expect(laneLog(b).at(-1)).toMatchObject({ event: 'session-start', outcome: 'payload_dropped' });
+  });
+});
+
