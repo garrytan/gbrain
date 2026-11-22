@@ -38,6 +38,11 @@ import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
  * MessagePort listener, which Bun runs at the root of the async context. A private probe store checks that on every
  * take: when the listener sees the probe (a runtime that carries the context into it), the take refuses rather than
  * hand back the caller's context.
+ *
+ * Runtime assumption: this relies on Bun (checked on 1.4.4) running MessagePort listeners with no caller context. A
+ * runtime or Bun release that carries the context into the listener makes every take refuse, so every connect() of a
+ * Rust brain fails closed with this refusal until the runtime changes; nothing runs in a caller's context.
+ * test/rust-engine-owner-context.test.ts pins both the assumption and the refusal.
  */
 const contextProbe = new AsyncLocalStorage<true>();
 let emptyContextTaken: Promise<<R>(fn: () => R) => R> | undefined;
