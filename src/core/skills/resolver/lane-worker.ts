@@ -3,6 +3,9 @@
  * path (src/cli.ts) calls it before it loads the lane itself, so the worker's
  * start-up and module loading run beside the CLI's; the lane then takes that
  * worker instead of starting its own. It imports nothing but worker_threads.
+ * The worker posts {ready: true} once its modules are loaded; laneWorkerReady
+ * settles then (true) or when the worker fails first (false), so the lane can
+ * start its turn deadline at that moment.
  *
  * A compiled binary bundles src/ under a virtual root (/$bunfs/root/, ~BUN on
  * Windows) and carries hook-worker.ts as a second entrypoint at its
@@ -16,18 +19,27 @@ const workerEntry = (): string | URL => (/[\\/](\$bunfs|~BUN)[\\/]/.test(import.
 
 let started: Worker | null = null;
 let failed = false;
+let ready: Promise<boolean> = Promise.resolve(false);
 
 /** Start the worker (once per process). Null when it cannot start; the lane then reports skill_resolver_internal. */
 export function startLaneWorker(env: NodeJS.ProcessEnv = process.env): Worker | null {
   if (started) return started;
   try {
-    started = new Worker(workerEntry(), { workerData: { stall: env.GBRAIN_TEST_SKILL_LANE_STALL } });
-    started.unref();
-    started.on('error', () => { failed = true; });
-    started.on('exit', () => { failed = true; });
+    const worker = new Worker(workerEntry(), { workerData: { stall: env.GBRAIN_TEST_SKILL_LANE_STALL } });
+    worker.unref();
+    ready = new Promise<boolean>((resolve) => {
+      const onMessage = (m: unknown) => { if ((m as { ready?: unknown } | null)?.ready === true) { worker.off('message', onMessage); resolve(true); } };
+      worker.on('message', onMessage);
+      worker.on('error', () => { failed = true; resolve(false); });
+      worker.on('exit', () => { failed = true; resolve(false); });
+    });
+    started = worker;
   } catch { started = null; }
   return started;
 }
 
 /** True once the started worker has failed or exited, which can happen before the lane is ready to listen. */
 export const laneWorkerFailed = (): boolean => failed;
+
+/** Settles true once the started worker has loaded, false if it fails first or none was started. */
+export const laneWorkerReady = (): Promise<boolean> => ready;

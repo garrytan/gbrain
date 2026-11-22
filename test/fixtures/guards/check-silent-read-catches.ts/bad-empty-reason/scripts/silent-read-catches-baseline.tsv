@@ -1,0 +1,2 @@
+# Silent read-catch ratchet baseline (fixture). Rows: path#function<TAB>metric<TAB>count[<TAB>note].
+src/core/marker.ts#listAll	catch_empty	1

@@ -4,18 +4,24 @@
  * so the lane's main thread keeps an event loop whose deadline timer can
  * always fire. lane-worker.ts starts it before the lane's own I/O, so its
  * start-up and module loading overlap the main thread's config, stdin and
- * carrier reads; the turn arrives as one message. It posts the prepared
- * turn and its pending commit; it never commits: the main thread does,
+ * carrier reads. It posts {ready: true} once its modules have loaded, which
+ * starts the lane's turn deadline; the turn arrives as one message. It posts
+ * the prepared turn and its pending commit; it never commits: the main thread does,
  * after delivery and before the deadline.
  *
  * GBRAIN_TEST_SKILL_LANE_STALL (tests only) forces a slow stage: block
  * (synchronous 10 s busy loop), hang (never answers), late (answers after
- * 300 ms), load-error (throws while loading), exit (waits on nothing, so
+ * 300 ms), slow-start (posts ready after 1.5 s), start-hang (never posts
+ * ready), load-error (throws while loading), exit (waits on nothing, so
  * the thread ends without answering); commit-held and commit-written
  * (hook-lane.ts) stop the main thread's commit once it holds the lease, or
  * once its temp file is written; gc (hook-lane.ts) makes the session GC pass
- * after the logged turn never settle. GBRAIN_TEST_SKILL_LANE_DEADLINE_MS (tests only, hook-lane.ts)
- * widens the lane's deadline so a loaded test machine can assert delivery.
+ * after the logged turn never settle; start-race (hook-lane.ts) holds the
+ * main thread past the start bound so the ready message and the start timer
+ * are both pending. GBRAIN_TEST_SKILL_LANE_DEADLINE_MS (tests only, hook-lane.ts)
+ * widens the lane's deadline so a loaded test machine can assert delivery;
+ * GBRAIN_TEST_SKILL_LANE_START_MS (tests only, hook-lane.ts) widens the
+ * bound on the worker's load.
  */
 import { parentPort, workerData } from 'node:worker_threads';
 import { resolveSkills } from './resolve.ts';
@@ -25,6 +31,9 @@ export interface LaneWorkerTurn { input: unknown; home: string; catalogs: string
 
 const { stall } = (workerData ?? {}) as LaneWorkerData;
 if (stall === 'load-error') throw new Error('forced worker load failure');
+if (stall === 'slow-start') await new Promise(r => setTimeout(r, 1500));
+if (stall === 'start-hang') await new Promise(() => setInterval(() => {}, 60_000));
+parentPort!.postMessage({ ready: true });
 const { input, home, catalogs, deadlineMs, router } = await new Promise<LaneWorkerTurn>(resolve => parentPort!.once('message', resolve));
 
 if (stall === 'block') { const end = Date.now() + 10_000; while (Date.now() < end) { /* forced synchronous stall */ } }

@@ -168,6 +168,7 @@
     "check:core-guard-coverage": "node scripts/check-core-guard-coverage.mjs",
     "check:function-size": "bun scripts/check-function-size.ts",
     "check:item-allowlist-catches": "bun scripts/check-item-allowlist-catches.ts",
+    "check:silent-read-catches": "bun scripts/check-silent-read-catches.ts",
     "check:layering": "bun scripts/check-layering.ts",
     "check:ai-sdk-importers": "bun scripts/check-ai-sdk-importers.ts",
     "check:durable-flush": "bun scripts/check-durable-flush.ts",
@@ -266,7 +267,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.763.0",
+  "version": "0.60.764.0",
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",

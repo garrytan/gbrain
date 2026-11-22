@@ -829,7 +829,7 @@ export function deadlinePassed(deadlineAtMs: number | undefined, now = Date.now(
 export function passRoundLine(event: Parameters<NonNullable<SyncOpts['onProgress']>>[0]): string | null {
   const r = event.round;
   if (!r) return null;
-  if (event.phase === 'managed_sync.round_level') return `[sync] pass round ${r.round}: read ${r.paths} path(s) at ${r.target.slice(0, 8)} in ${formatDuration(Math.round((r.read_ms ?? 0) / 1000))}; settling them next.`;
+  if (event.phase === 'managed_sync.round_level') return `[sync] pass round ${r.round}: read ${r.paths} path(s) at ${r.target.slice(0, 8)} in ${formatDuration(Math.round((r.read_ms ?? 0) / 1000))}${r.patched ? ' (patched the previous read)' : ''}; settling them next.`;
   if (event.phase === 'managed_sync.round_admit') return `[sync] pass round ${r.round}: importing ${r.imports ?? 0} file(s) and deleting ${r.deletes ?? 0} page(s)${r.in_flight ? ` (${r.in_flight} write(s) already in flight)` : ''}; progress lines follow as pages commit.`;
   return null;
 }
