@@ -3,7 +3,7 @@ import type { GBrainConfig } from '../config.ts';
 import { operations } from '../operations.ts';
 import { opError, OperationError, type AuthInfo } from '../ops/contract.ts';
 import { hasScope, operationScopesAllowed } from '../scope.ts';
-import { resolveSourceId } from '../source-resolver.ts';
+import { localFederatedSourceIds, resolveSourceId } from '../source-resolver.ts';
 import { dispatchToolCall } from '../../mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import { startPersistenceConsumer, assertPersistenceAccepting } from './service.ts';
@@ -85,6 +85,8 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     const localCliLocalOnly = !verified.remote && verified.principal.kind === 'local_cli' && LOCAL_CLI_LOCAL_ONLY_OPS.has(request.operation);
     const writeWaitMs = boundedWriteWaitMs(request.write_wait_ms);
     const unsourcedLocal = request.routing.source === null && !verified.remote;
+    // G8: an unpinned read from the trusted local CLI spans the source's federated set, as the same read does with no serve.
+    const federated = unrestricted && unsourcedLocal && verified.principal.kind === 'local_cli' ? await localFederatedSourceIds(engine, sourceId, 'local_path') : undefined;
     // G8: the trusted local CLI's read comes back as a cold CLI run prints it: a fresh notice ledger per call, as per process.
     const withMeta = request.with_meta === true && !verified.remote && verified.principal.kind === 'local_cli';
     const result = await dispatchToolCall(engine, request.operation, params, {
@@ -93,7 +95,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
       config, remote: verified.remote, transport: verified.remote || localSkillAdministration || localCliLocalOnly ? 'stdio' : undefined, sourceId, auth,
       ...(writeWaitMs !== undefined ? { writeWaitMs } : {}),
       ...(withMeta ? { noticeLedger: new NoticeLedger() } : {}),
-      ...(unrestricted ? {} : { localFederatedSourceIds: verified.grant.sourceIds }),
+      ...(unrestricted ? (federated ? { localFederatedSourceIds: federated } : {}) : { localFederatedSourceIds: verified.grant.sourceIds }),
       ...(unsourcedLocal ? { localSourceImplicit: true } : {}),
       ...(unsourcedLocal && await sourceNamedByCheckout(engine, request.operation, request.routing.cwd, sourceId) ? { localSourceFromCheckout: true } : {}),
     });

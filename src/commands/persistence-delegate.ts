@@ -72,6 +72,7 @@ export async function runDelegatedCliOperation(
     if (output) await writeStdoutFinal(output);
     if (stderr) process.stderr.write(stderr);
     if ((delegated.result as { status?: unknown } | null)?.status === 'error') setCliExitVerdict(1);
+    if (operation === 'entity') (await import('../cli/entity-format.ts')).markEntityMiss(operation, delegated.result);
     return true;
   } catch (error) {
     if (await reportPersistenceCliError(error, params.json === true)) return true;

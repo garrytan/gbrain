@@ -17,7 +17,7 @@ import {
   isPersistenceIpcMutation, isPersistenceIpcOperation, isPersistenceIpcRegistration,
   persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation,
   PersistenceIpcTransportError, type PersistenceIpcCapabilities, type PersistenceIpcRegistration,
-  requestPersistenceAdministration, ownerAdministers, PERSISTENCE_META_KEY, PERSISTENCE_ROOM_MARKED_KEY, PERSISTENCE_ROOM_MAX_CHARS,
+  requestPersistenceAdministration, ownerAdministers, PERSISTENCE_IPC_READ_EXTENSIONS, PERSISTENCE_META_KEY, PERSISTENCE_ROOM_MARKED_KEY, PERSISTENCE_ROOM_MAX_CHARS,
 } from './ipc.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { currentCliWriteWait, replayWhilePending, writeExchangeBudget } from './write-wait.ts';
@@ -192,9 +192,14 @@ export async function maybeDelegateLocalOperation(
     if (error instanceof PersistenceIpcTransportError && holder.serve === false) return { handled: false };
     throw error;
   }
-  if (!capability.operations.includes(operation)) {
+  if (!capability.operations.includes(operation) && !capability.read_extensions?.includes(operation)) {
     throw new OperationError('owner_unavailable', `The running persistence owner does not support '${operation}'.`,
       'Upgrade and restart the owner, then retry with the same request ID.');
+  }
+  // G8: a read whose answer depends on settings the serve does not share stays with the engine path, as the warm CLI socket refuses it.
+  if (capability.read_env && PERSISTENCE_IPC_READ_EXTENSIONS.includes(operation)) {
+    const { behaviorEnv, behaviorEnvMismatch } = await import('../cli-socket/identity.ts');
+    if (behaviorEnvMismatch(capability.read_env, behaviorEnv(process.env)) !== null) return { handled: false };
   }
   const registration = readPersistenceCliRegistration(capability.brain_id);
   const roomSent = options.room !== undefined && options.room.length <= PERSISTENCE_ROOM_MAX_CHARS && capability.room === true;

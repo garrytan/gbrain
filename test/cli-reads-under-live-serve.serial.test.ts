@@ -14,14 +14,14 @@
  * Lane: serial (spawns a real serve and cold PGLite inits).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const home = mkdtempSync(join(tmpdir(), 'gbrain-g8-reads-'));
-const cli = (args: string[]) => runCli(args, { home, cwd: home, timeoutMs: 90_000 });
+const cli = (args: string[], extra: Record<string, string> = {}) => runCli(args, { home, cwd: home, timeoutMs: 90_000, env: extra });
 const env = (): Record<string, string> => {
   const e: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== 'DATABASE_URL' && k !== 'GBRAIN_DATABASE_URL') e[k] = v;
@@ -49,6 +49,7 @@ const TEXT_READS: Array<[string, string[]]> = [
 ];
 const cold = new Map<string, string>();
 const coldText = new Map<string, string>();
+let coldEntityMiss: number | null = null;
 /** Fields that differ between any two runs (timing, and the read-touch stamp the previous read wrote). */
 const VOLATILE = new Set(['latency_ms', 'last_retrieved_at']);
 /**
@@ -66,6 +67,13 @@ beforeAll(async () => {
   const page = '---\ntitle: Alice Example\ntype: person\n---\nAlice works at Acme. See [[companies/acme-example]].\n';
   const put = Bun.spawn({ cmd: [process.execPath, '--no-env-file', CLI, 'put', 'people/alice-example'], cwd: home, env: env(), stdin: new Blob([page]), stdout: 'ignore', stderr: 'pipe' });
   expect(await put.exited).toBe(0);
+  // A second federated source: an unpinned read spans both, with or without a serve.
+  mkdirSync(join(home, 'notes'));
+  expect((await cli(['sources', 'add', 'notes', '--path', join(home, 'notes')])).exitCode).toBe(0);
+  const note = Bun.spawn({ cmd: [process.execPath, '--no-env-file', CLI, 'put', 'notes/alice-notes', '--source', 'notes'], cwd: home, env: env(),
+    stdin: new Blob(['---\ntitle: Alice Notes\ntype: concept\n---\nNotes about Alice.\n']), stdout: 'ignore', stderr: 'pipe' });
+  expect(await note.exited).toBe(0);
+  coldEntityMiss = (await cli(['entity', 'nobody-zzz', '--json'], { GBRAIN_FAIL_ON_EMPTY: '1' })).exitCode;
   for (const [name, args] of READS) {
     const r = await cli(args);
     expect(r.exitCode).toBe(0);
@@ -110,4 +118,21 @@ describe('read-only CLI commands while a live serve owns the PGLite brain', () =
       expect(r.stdout).toBe(coldText.get(name)!);
     }, 90_000);
   }
+
+  test('the federated set reaches both sources, as with no serve', async () => {
+    const slugs = (JSON.parse((await cli(['list', '--json'])).stdout) as Array<{ slug: string }>).map(p => p.slug);
+    expect(slugs).toContain('people/alice-example');
+    expect(slugs).toContain('notes/alice-notes');
+  }, 90_000);
+
+  test('an entity miss exits 12 under GBRAIN_FAIL_ON_EMPTY=1, as with no serve', async () => {
+    expect(coldEntityMiss).toBe(12);
+    expect((await cli(['entity', 'nobody-zzz', '--json'], { GBRAIN_FAIL_ON_EMPTY: '1' })).exitCode).toBe(12);
+  }, 90_000);
+
+  test('a read whose settings the serve does not share never answers from the serve', async () => {
+    const r = await cli(['search', 'alice', '--json'], { GBRAIN_SEARCH_EXCLUDE: 'people/' });
+    expect(r.stdout).not.toContain('people/alice-example');
+    expect(r.exitCode).not.toBe(0);
+  }, 90_000);
 });
