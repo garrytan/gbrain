@@ -574,7 +574,7 @@ mod tests {
             ("occ_kv.rs", 4),
             ("page_body/purge_record.rs", 1),
             ("redb_kv.rs", 4),
-            ("transactions.rs", 2),
+            ("transactions.rs", 1),
         ];
         let opens = |c: &str| {
             [
