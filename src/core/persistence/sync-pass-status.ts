@@ -156,10 +156,10 @@ export function passStatusState(row: PassRow, withheld: DeletesWithheld | null, 
   if (t.outcome === 'open' || (t.outcome === 'resumable' && t.stop_reason !== 'not_converged' && t.stop_reason !== 'admission_paused')) return ['resumable', 'pass_unfinished'];
   if (t.stop_reason === 'admission_paused') return ['resumable', 'admission_paused'];
   if (t.stop_reason === 'not_converged' || (row.value.obligations.not_converged_streak ?? 0) > 0) return ['resumable', 'not_converged'];
-  if (row.value.obligations.stamped_behind) return ['resumable', 'pass_unfinished'];
   if (passHealth(row, { now, stalledMs: Number.POSITIVE_INFINITY }).reason === 'settle_mismatch') return ['resumable', 'settle_mismatch'];
   if (writebackFailed) return ['blocked', 'writeback_failed'];
   if (withheld) return ['blocked', 'deletes_withheld'];
+  if (row.value.obligations.stamped_behind) return ['resumable', 'pass_unfinished'];
   if (t.outcome === 'synced' && t.stop_reason === 'selection_scoped') return ['synced', 'selection_scoped'];
   return null;
 }

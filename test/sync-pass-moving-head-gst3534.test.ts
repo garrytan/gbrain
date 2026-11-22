@@ -15,8 +15,9 @@
  *   HEAD detached mid-pass).
  * - The marker lives only in the checkpoint: a stop before the stamp's empty batch leaves `last_commit` and the marker unchanged.
  *   While it is set the next tick reads in full, never idle (a HEAD rewound to the stamped commit is read again, then idle), and
- *   under `sync.admission=classify_only` it is `admission_paused`, never up to date. Status reads it as `pass_unfinished` and the
- *   backlog as owing a pass.
+ *   under `sync.admission=classify_only` it is `admission_paused`, never up to date. Status reads it as `pass_unfinished` (a failed
+ *   writeback or withheld deletes still read blocked) and the backlog as owing a pass.
+ * - A selection-scoped pass (an exclude flag) never reads a confirm level or stamps behind HEAD.
  * - A pass that stops resumable (a slice's writer_yield) keeps its `I⋈P` for the next pass, whose first round patches it.
  * Real PGLite (and Postgres when DATABASE_URL is set), real managed syncs and real Git.
  */
@@ -28,7 +29,9 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { installFaultHook, type FaultDetail, type FaultPoint } from '../src/core/persistence/fault-points.ts';
 import { getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { SYNC_ADMISSION_KEY } from '../src/core/persistence/sync-admission.ts';
+import type { DeletesWithheld } from '../src/core/persistence/sync-markers.ts';
 import { passHealth, readPassRow } from '../src/core/persistence/sync-pass-row.ts';
+import { passStatusState } from '../src/core/persistence/sync-pass-status.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { __resetTreeReuseForTests } from '../src/core/persistence/sync-tree-reuse.ts';
@@ -73,7 +76,7 @@ for (const backend of testBackends()) describe(`[${backend}] GST-3534: a pass wh
    * pass, the rounds' level reads, the confirm reads and the HEAD after the writes.
    */
   const movingPass = async (engine: BrainEngine, root: string, writer: (r: number) => void, also: Record<number, () => unknown> = {},
-    hook?: (point: FaultPoint, detail: FaultDetail, round: number) => void | Promise<void>) => {
+    hook?: (point: FaultPoint, detail: FaultDetail, round: number) => void | Promise<void>, opts: typeof OPTS & { exclude?: string[] } = OPTS) => {
     const seen: Round[] = [], confirms: boolean[] = [];
     let round = 0;
     installFaultHook(async (point, detail) => {
@@ -82,7 +85,7 @@ for (const backend of testBackends()) describe(`[${backend}] GST-3534: a pass wh
       if (point === 'sync:confirm_behind') confirms.push(detail.settled === true);
       await hook?.(point, detail, round);
     });
-    try { return { pass: await performManagedSync(engine, OPTS), seen, confirms, head: git(root, 'rev-parse', 'HEAD') }; } finally { installFaultHook(undefined); }
+    try { return { pass: await performManagedSync(engine, opts), seen, confirms, head: git(root, 'rev-parse', 'HEAD') }; } finally { installFaultHook(undefined); }
   };
   const writes = (root: string) => { let n = 0; return () => write(root, `w${++n}`); };
 
@@ -100,13 +103,28 @@ for (const backend of testBackends()) describe(`[${backend}] GST-3534: a pass wh
     const status = await readSyncStatus(engine, 'default');
     expect({ state: status.state, reason: status.reason, outcome: (status.convergence as Convergence).outcome, stamped_behind: (status.convergence as Convergence).stamped_behind })
       .toEqual({ state: 'resumable', reason: 'pass_unfinished', outcome: 'synced', stamped_behind: { commit: seen[2]!.head, head_seen: head } });
-    // The backlog owes a pass while the marker stands.
-    expect(passHealth((await readPassRow(engine, 'default', (await getWorktreeBinding(engine, 'default'))!.source_incarnation))!, { stalledMs: Number.POSITIVE_INFINITY }).nothing_pending).toBe(false);
+    // Rounds 1-3 count as level reads; the confirm read of round 3's commit does not.
+    expect((status.convergence as { levels: unknown }).levels).toEqual({ heads: 3, whole: seen[0]!.patched ? 0 : 1, patched: seen[0]!.patched ? 3 : 2 });
+    // The backlog owes a pass while the marker stands; a failed writeback or withheld deletes still read blocked.
+    const row = (await readPassRow(engine, 'default', (await getWorktreeBinding(engine, 'default'))!.source_incarnation))!;
+    expect(passHealth(row, { stalledMs: Number.POSITIVE_INFINITY }).nothing_pending).toBe(false);
+    expect(passStatusState(row, null, 'request-a')).toEqual(['blocked', 'writeback_failed']);
+    const withheld: DeletesWithheld = { source_id: 'default', incarnation: row.value.incarnation ?? '', target: head, count: 1, reconcilable: 2, ratio: 0.5, set_hash: 'h', samples: ['notes/n1.md'], at: row.updated_at };
+    expect(passStatusState(row, withheld)).toEqual(['blocked', 'deletes_withheld']);
     const next = await performManagedSync(engine, OPTS);
     expect({ status: next.status, toCommit: next.toCommit }).toEqual({ status: 'synced', toCommit: head });
     expect(await slugs(engine)).toEqual(['notes/w0', 'notes/w1', 'notes/w2', 'notes/w3']);
     expect((await convergence(engine)).stamped_behind).toBeNull();
     expect((await performManagedSync(engine, OPTS)).status).toBe('up_to_date');
+  }), 300_000);
+
+  test('a selection-scoped pass (an exclude flag) with HEAD moving never stamps behind HEAD', () => brain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    write(root, 'w0');
+    const before = await lastCommit(engine);
+    const { confirms } = await movingPass(engine, root, writes(root), {}, undefined, { ...OPTS, exclude: ['notes/n1.md'] });
+    expect(confirms).toEqual([]);
+    expect({ lastCommit: await lastCommit(engine), stamped_behind: (await convergence(engine)).stamped_behind }).toEqual({ lastCommit: before, stamped_behind: null });
   }), 300_000);
 
   test('a writer editing the same note and deleting another every round: the pass still stamps the newest drained commit', () => brain(async ({ engine, root }) => {
