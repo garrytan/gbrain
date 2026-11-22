@@ -151,6 +151,7 @@ test/engine-parity/access-tokens.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/alias-trust.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
+test/engine-parity/budget-ledger-writes.test.ts
 test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
 test/engine-parity/chunk-reads.test.ts

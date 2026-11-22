@@ -4805,6 +4805,16 @@ export interface BrainEngine {
   replaceOpCheckpointAtVersion(op: string, fingerprint: string, completedKeys: readonly unknown[], expected: number): Promise<boolean>;
   /** The earliest `held_at` of the sources' Git sync holds with hold code `code`, or null (the fences and slug-conflicts verification). */
   readOldestSyncHoldAt(code: string, sourceIds: readonly string[]): Promise<string | null>;
+  /** The daily budget ledger (budget/daily-ledger.ts): releases expired held reservations and settles expired dispatched ones at their estimate (engine-sql/budget-ledger-writes.ts). */
+  reclaimBudgetReservations(key: import('./engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, nowIso: string): Promise<{ released: number; uncertain: number }>;
+  /** Holds a reservation when the day stays within its cap; true when held. */
+  reserveBudgetReservation(key: import('./engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, spec: import('./engine-sql/budget-ledger-writes.ts').BudgetReservationSpec): Promise<boolean>;
+  /** Marks a held, unexpired reservation dispatched; true when it was. */
+  dispatchBudgetReservation(key: import('./engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string, nowIso: string): Promise<boolean>;
+  /** Settles a reservation at `actual` and moves the day's totals; the row the protocol reads, or null. */
+  settleBudgetReservation(key: import('./engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string, actual: string): Promise<import('./engine-sql/budget-ledger-writes.ts').BudgetSettleRow | null>;
+  /** Releases a held reservation and frees its estimate; true when released. */
+  releaseBudgetReservation(key: import('./engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string): Promise<boolean>;
   /** The latest `finished_at` of the completed jobs named `name`, as UTC ISO seconds, or null. */
   readLastFinishedJobAt(name: string): Promise<string | null>;
   /** `gbrain repair segmented-mirror`: the effects of request row `requestId` the apply waits on, in kind order. */

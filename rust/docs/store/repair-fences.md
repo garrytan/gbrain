@@ -13,9 +13,10 @@ run through, so they work on a Rust brain. Each has one SQL copy in `src/core/en
 | `listSourceCheckpointRecords` | `fences` (uncommitted repairs, `fence-repair/uncommitted.ts`) | `fence-repair-records.ts` | `listOpCheckpointRecords` (TS store member) | The first record of each parent of an op whose record names an asked source (every one when none is asked), in fingerprint byte order. |
 | `readOldestSyncHoldAt` | `fences`, `slug-conflicts` (their verification) | `fence-repair-records.ts` | `listOpCheckpointRecords` (TS store member) | The earliest `held_at` of the asked sources' `sync-hold` records with the asked code, or null. |
 | `readLastFinishedJobAt` | the fence hold fixes (`fence-repair/hold-fix.ts`) | `fence-repair-records.ts` | `src/jobs/status.rs` | The latest `finished_at` of the completed jobs of a name, as UTC ISO seconds, or null. |
+| `reclaimBudgetReservations`, `reserveBudgetReservation`, `dispatchBudgetReservation`, `settleBudgetReservation`, `releaseBudgetReservation` | the model tier of `fences` and `slug-conflicts` (the paid-call protocol, `budget/daily-ledger.ts`) | `budget-ledger-writes.ts` | `rust-engine/store-members/budget-ledger.ts` | The store keeps no budget ledger yet, so each refuses by name and writes nothing; the protocol reads a refusal as `ledger_unavailable` and makes no paid call. |
 
-The parity cases are in `test/engine-parity/segmented-mirror-effects.test.ts`, `repair-fence-records.test.ts` and
-`jobs-status.test.ts`. Until lane 14's fence census and daily budget ledger members (`engine-sql/fence-census.ts`) are on
+The parity cases are in `test/engine-parity/segmented-mirror-effects.test.ts`, `repair-fence-records.test.ts`,
+`budget-ledger-writes.test.ts` and `jobs-status.test.ts`. Until lane 14's fence census and daily budget ledger members (`engine-sql/fence-census.ts`) are on
 this branch, `fences` and `slug-conflicts` stop at plan entry on an engine without raw SQL ("repair fences census";
 `test/engine-parity/repair-fence-kinds.test.ts`).
 

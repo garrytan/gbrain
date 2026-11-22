@@ -264,7 +264,7 @@ src/core/bootstrap/harness-skills.ts	execute_raw	1
 src/core/bootstrap/verify.ts	execute_raw	6
 src/core/brain-writer.ts	execute_raw	3
 src/core/brainstorm/domain-bank.ts	execute_raw	1
-src/core/budget/daily-ledger.ts	execute_raw	6
+src/core/budget/daily-ledger.ts	execute_raw	1
 src/core/by-mention.ts	execute_raw	6
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2

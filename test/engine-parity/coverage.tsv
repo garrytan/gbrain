@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1499/1506
+# covered: 1504/1511
 # lifecycle: 9/9
 # pages: 69/69
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 6/6
 # import_guards: 13/13
-# persistence_journal: 193/193
+# persistence_journal: 198/198
 # entity_reads: 17/17
 # cycle_locks: 10/10
 # minion_jobs: 8/8
@@ -679,6 +679,11 @@ listSourceCheckpointRecords	persistence_journal	yes	2	no	yes	yes	serves
 insertOpCheckpointIfAbsent	persistence_journal	yes	2	no	yes	yes	serves
 replaceOpCheckpointAtVersion	persistence_journal	yes	1	no	yes	yes	serves
 readOldestSyncHoldAt	persistence_journal	yes	1	no	yes	yes	serves
+reclaimBudgetReservations	persistence_journal	yes	1	no	yes	yes	serves
+reserveBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
+dispatchBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
+settleBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
+releaseBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
 readRemirrorEffects	persistence_journal	yes	1	no	yes	yes	serves
 cancelWriteRow	persistence_journal	yes	2	no	yes	yes	serves
 readSourceMembership	persistence_journal	yes	69	no	yes	yes	serves
