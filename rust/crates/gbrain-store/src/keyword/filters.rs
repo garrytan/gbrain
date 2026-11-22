@@ -369,9 +369,10 @@ pub(super) fn readable_chunk_vector(chunk: &ChunkRecord) -> Option<Arc<TsVector>
     chunk_vector(chunk).ok()
 }
 
-/// `[[:space:]]` in a Postgres regular expression.
+/// `[[:space:]]` in a Postgres regular expression, as PGLite reads it (non-ASCII spaces such as
+/// U+3000 included).
 fn is_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\x0B' | '\x0C' | '\r')
+    crate::cli_reads::pg_text::is_pg_space(c)
 }
 
 /// The `SearchResult` row the keyword statements select, before `rowToSearchResult`.

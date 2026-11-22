@@ -130,9 +130,9 @@ pub(super) struct ClientRecord {
     pub(super) private_facts: String,
 }
 
-/// The characters of the POSIX class `[[:space:]]`.
+/// The POSIX class `[[:space:]]` as PGLite reads it (non-ASCII spaces such as U+3000 included).
 fn is_posix_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\x0B' | '\x0C' | '\r')
+    crate::cli_reads::pg_text::is_pg_space(c)
 }
 
 impl ClientRecord {
