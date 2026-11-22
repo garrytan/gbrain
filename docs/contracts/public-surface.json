@@ -2627,7 +2627,6 @@
     "engine_scope_missing": 1,
     "engine_scope_required": 1,
     "engine_settings_invalid": 1,
-    "engine_swap_refused": 1,
     "entity_types_unavailable": 1,
     "eval_suite_unwired": 1,
     "explicit_tasks_conflict": 1,
