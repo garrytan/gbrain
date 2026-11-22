@@ -207,9 +207,9 @@ export function hookLauncherProblem(harness: 'claude-code' | 'codex', opts: { pr
 }
 
 type Run = (argv: string[], stdin?: string) => { ok: boolean; output: string };
-/** Only what a hook needs to find the brain and the rule; never provider keys. */
+/** Only what a hook, or a harness's own check, needs to find the brain, the rule and the harness's config (Hermes, OpenClaw); never provider keys. */
 function hookEnv(): Record<string, string> {
-  return Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined && /^(HOME|PATH|USER|LANG|TMPDIR|XDG_CONFIG_HOME|CLAUDE_CONFIG_DIR|CODEX_HOME|GBRAIN_HOME|GBRAIN_AGENT_INSTRUCTIONS|GBRAIN_HOOKS)$/.test(e[0])));
+  return Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined && /^(HOME|PATH|USER|LANG|TMPDIR|XDG_CONFIG_HOME|CLAUDE_CONFIG_DIR|CODEX_HOME|HERMES_HOME|OPENCLAW_STATE_DIR|OPENCLAW_CONFIG_PATH|OPENCLAW_PROFILE|GBRAIN_HOME|GBRAIN_AGENT_INSTRUCTIONS|GBRAIN_HOOKS)$/.test(e[0])));
 }
 const defaultRun: Run = (argv, stdin) => {
   try {

@@ -183,20 +183,23 @@ export function openclawConfigPath(): string {
   return process.env.OPENCLAW_CONFIG_PATH?.trim() ? expandHome(process.env.OPENCLAW_CONFIG_PATH.trim()) : join(openclawStateDir(), 'openclaw.json');
 }
 
+/** One JSON5 token: a double- or single-quoted string, a line or block comment, or a bare key before its colon. */
+const JSON5_TOKEN = /"(?:[^"\\\n]|\\.)*"|'((?:[^'\\\n]|\\.)*)'|\/\/[^\n]*|\/\*[\s\S]*?\*\/|([A-Za-z_$][\w$-]*)(?=\s*:)/g;
+
 /**
- * openclaw.json is JSON5. Comments and trailing commas parse as JSONC; bare
- * object keys are quoted first. Anything else reads as unparseable, and the
- * caller asks for --workspace rather than guess.
+ * openclaw.json is JSON5. One left-to-right scan skips strings and comments
+ * whole, rewrites single-quoted strings as double-quoted and quotes bare keys;
+ * comments and trailing commas then parse as JSONC. Anything else reads as
+ * unparseable, and the caller asks for --workspace rather than guess.
  */
 export function parseJson5ish(text: string): unknown {
-  const quotedKeys = text.replace(/([{,]\s*)([A-Za-z_$][\w$-]*)\s*:/g, '$1"$2":');
-  const doubleQuoted = quotedKeys.replace(/'((?:[^'\\\n]|\\.)*)'/g, (_m, s: string) => JSON.stringify(s.replace(/\\'/g, "'")));
-  for (const candidate of [text, quotedKeys, doubleQuoted]) {
-    const errors: ParseError[] = [];
-    const value = parseJsonc(candidate, errors, { allowTrailingComma: true });
-    if (errors.length === 0) return value;
-  }
-  return undefined;
+  const json = text.replace(JSON5_TOKEN, (m, single: string | undefined, key: string | undefined) => {
+    if (single !== undefined) return `"${single.replace(/\\.|"/g, (s) => (s === '"' ? '\\"' : s === "\\'" ? "'" : s))}"`;
+    return key !== undefined ? `"${key}"` : m;
+  });
+  const errors: ParseError[] = [];
+  const value = parseJsonc(json, errors, { allowTrailingComma: true });
+  return errors.length === 0 ? value : undefined;
 }
 
 /**
