@@ -17,7 +17,7 @@ import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
 import { dirname, basename, join } from 'path';
 import { createRequire } from 'module';
 import { frontmatterBodyOffset, validatorFrontmatterFence } from '../core/markdown.ts';
-import { FrontmatterLanguageError, scanDataFrontmatter } from '../core/data-frontmatter.ts';
+import { FRONTMATTER_SCHEMA, FrontmatterLanguageError, loadBoundedYaml, scanDataFrontmatter } from '../core/data-frontmatter.ts';
 import { GUEST_WARNING_LINE_RE } from '../core/guests/marker.ts';
 import { opError } from '../core/ops/contract.ts';
 
@@ -33,12 +33,31 @@ const MANAGED_BLOCK_END = /<!--+\s*gbrain:([a-z0-9_-]+):end\b[^>]*>/gi;
 const MANAGED_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
 
 const WRAPPED_FRONTMATTER_WINDOW = 5;
-const FRONTMATTER_KEY_LINE = /^(?:['"][^'"\n]+['"]|[A-Za-z_][\w.-]*)[ \t]*:(?:[ \t]|$)/m;
+const LEADING_BLANK_OR_COMMENT_LINES = /^(?:[ \t]*(?:#[^\n]*)?\n)*/;
+const KEY_SEPARATOR = /:(?:[ \t]|$)/m;
+
+/**
+ * Whether a wrapped block holds frontmatter, decided by the YAML parser sync uses rather than by key shape: it parses as
+ * a mapping, or as a sequence holding one (`- key: value` items carry the same data). A block the parser rejects fails
+ * closed when it holds a `key:` separator (a colon then a space or the line end), so malformed private YAML never
+ * publishes; prose it rejects without one still does.
+ */
+function holdsFrontmatter(block: string): boolean {
+  let value: unknown;
+  try {
+    value = loadBoundedYaml(block, { schema: FRONTMATTER_SCHEMA });
+  } catch {
+    return KEY_SEPARATOR.test(block);
+  }
+  const isMapping = (node: unknown) => Object.prototype.toString.call(node) === '[object Object]';
+  return isMapping(value) || (Array.isArray(value) && value.some(isMapping));
+}
 
 /**
  * Whether a column-0 frontmatter fence pair, as parseDataFrontmatter reads one, starts on one of the first
- * WRAPPED_FRONTMATTER_WINDOW non-blank lines: an opener naming its language (`---yaml`, `---yml`, `---json`), a fence
- * whose first line is a YAML key or a flow mapping, or a closed plain `---` pair with a YAML key line between the fences.
+ * WRAPPED_FRONTMATTER_WINDOW non-blank lines: an opener naming its language (`---yaml`, `---yml`, `---json`), a block
+ * starting with a `{` flow mapping, or a block that holdsFrontmatter. The block is the text between a closed pair, or
+ * for a fence that never closes the text after it, past any leading blank and # comment lines, up to the next blank line.
  * Two horizontal rules with only prose between them are not, and neither is one rule followed by prose.
  */
 function startsFrontmatterPair(text: string): boolean {
@@ -54,9 +73,9 @@ function startsFrontmatterPair(text: string): boolean {
       throw e;
     }
     if (!fenced) continue;
-    const first = /^.*\S.*$/m.exec(fenced.block)?.[0] ?? '';
-    if (fenced.language !== '' || FRONTMATTER_KEY_LINE.test(first) || first.trimStart().startsWith('{')) return true;
-    if (fenced.content != null && FRONTMATTER_KEY_LINE.test(fenced.block)) return true;
+    if (fenced.language !== '') return true;
+    const block = fenced.content != null ? fenced.block : fenced.block.replace(LEADING_BLANK_OR_COMMENT_LINES, '').split(/\n[ \t]*\n/, 1)[0]!;
+    if (/^\s*\{/.test(block) || holdsFrontmatter(block)) return true;
   }
   return false;
 }
