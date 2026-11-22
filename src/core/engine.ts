@@ -1,6 +1,8 @@
 import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from './engine-sql/export-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as DecideStoreSql from './engine-sql/decide-store.ts';
+import type * as OpenLoopsSql from './engine-sql/open-loops.ts';
+import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from './loops/loops-store.ts';
 import type { EngineCapabilities } from './engine-capabilities.ts';
 import type { OwnerOnlyTriggerState } from './access/owner-only-marks.ts';
 import type { GetVersionsOpts, PageVersionRows } from './page-state/version-types.ts';
@@ -25,6 +27,10 @@ import type { TimelineDetailRefresh, TimelineRowRemoval } from './engine-sql/tim
 import type { TakeFenceRow } from './engine-sql/takes.ts';
 import type { CodeTraversalCacheClear, CodeTraversalCacheKey, CodeTraversalCacheRow } from './engine-sql/code-traversal-cache.ts';
 import type { LedgerSource } from './engine-sql/belief.ts';
+import type {
+  AccessTokenRow, AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+} from './engine-sql/write-misc.ts';
+import type { EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage, TimelineRowDeletion } from './engine-sql/timeline-reads.ts';
 import type * as DecideProposalsSql from './engine-sql/decide-proposals.ts';
 import type { PageTypeRef } from './engine-sql/trust-tier-reads.ts';
 import type {
@@ -1267,6 +1273,47 @@ export interface BrainEngine {
   listSourceLocalPaths(): Promise<string[]>;
 
   /**
+   * Page-write reads and upkeep that belong to no other domain (SQL and contracts in engine-sql/write-misc.ts). A Rust
+   * brain has no native method for these yet, so each refuses with engine_capability_missing.
+   */
+  readSourceState(sourceId: string, opts?: SourceStateOptions): Promise<SourceStateRow | null>;
+  readAdmissionSource(sourceId: string): Promise<AdmissionSourceRow | null>;
+  sharedSkillPackTablePresent(): Promise<boolean>;
+  listSharedSkillPackRoots(hostId: string): Promise<SharedSkillPackRoot[]>;
+  /** The source's writer binding with host `hostId`'s paths (null host columns for a null or unbound host); null when unbound. */
+  getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
+  hasExtractedEvents(sourceId: string, pageId: number): Promise<boolean>;
+  listActiveAccessMembers(): Promise<string[]>;
+  /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
+  hasLabelledOnlyMember(): Promise<boolean>;
+  /** Every legacy access token (`auth list`), revoked ones too, newest first. */
+  listAccessTokens(): Promise<AccessTokenRow[]>;
+  /**
+   * Whether a resident notifier recorded coverage for some source (freshnessReported). A schema from before the
+   * notifier tables rejects with the missing-table error its caller catches; a Rust brain refuses with
+   * engine_capability_missing until a native method lands.
+   */
+  notifierCoverageRecorded(): Promise<boolean>;
+  /** One resumable op's completed checkpoint keys, deduplicated; `corruptParent` when a legacy array was not an array (op-checkpoint.ts). */
+  readOpCheckpointKeys(op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }>;
+  /** The get_health memo's page clock: a string that changes whenever a page is written (health-memo.ts). */
+  readHealthMemoClock(): Promise<string>;
+  /** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
+  listSynopsisSourceIds(): Promise<string[]>;
+  expireMemoryProposals(reason: string): Promise<number>;
+  listAwaitingMemoryProposals(limit: number): Promise<Array<Record<string, unknown>>>;
+  /** The memory proposal a principal holds under `requestId` (a uuid), as its stored row, or null. */
+  readMemoryProposal(principalKind: string, principalId: string, requestId: string): Promise<Record<string, unknown> | null>;
+  purgeMemoryProposals(retentionDays: number): Promise<number>;
+  /** How many memory proposals await their owner unexpired, and the oldest one's age in hours; null for no row. */
+  readPendingProposalSummary(): Promise<PendingProposalRow | null>;
+  /** One page of the owner's memory-proposal list, oldest first, as stored rows. */
+  listMemoryProposalRows(query: ProposalListQuery): Promise<Array<Record<string, unknown>>>;
+  /** The stored proposals of any credential with this request id, at most two. */
+  listOwnerProposalRows(requestId: string): Promise<Array<Record<string, unknown>>>;
+  /** Attach a working tree to an existing path-less source (`sources add --path`); an unknown id changes nothing. */
+  attachSourcePath(sourceId: string, localPath: string, opts?: AttachSourcePathOptions): Promise<void>;
+  /**
    * v0.37.0 — prefix-stratified page sampling for `gbrain brainstorm` / `gbrain lsd`
    * domain-bank module. Takes a caller-supplied prefix list (cached at the domain-bank
    * layer per D3), returns one page per prefix tiebroken by `connection_count`
@@ -1359,6 +1406,16 @@ export interface BrainEngine {
   pagesLinkingTo(fromIds: number[], toIds: number[]): Promise<number[]>;
   /** One brain-wide MCP onboarding count (SQL in engine-sql/health.ts). */
   countOnboardSignal(signal: OnboardSignal, entityTypes: EntityTypeFilter, opts?: { signal?: AbortSignal }): Promise<number>;
+  /** Doctor's effective-date sample and timeline clock, the projection's stored-timeline read and delete, repair timeline's reads, the orphan prune's walk (SQL and contracts in engine-sql/timeline-reads.ts). */
+  sampleEffectiveDates(): Promise<EffectiveDateSampleCounts>;
+  sampleEffectiveDateSources(): Promise<EffectiveDateFallbackRow[]>;
+  readMaxTimelineEntryId(): Promise<number>;
+  listStoredTimelineRowsOrdered(pageId: number): Promise<OwnTimelineRow[]>;
+  deleteTimelineRows(pageId: number, deletions: readonly TimelineRowDeletion[]): Promise<Array<{ date: string; removed: boolean }>>;
+  storedTimelineRowsByPageIds(pageIds: readonly number[]): Promise<PageTimelineRow[]>;
+  countSegmentedTimelinePages(sourceIds: readonly string[], limit: number): Promise<SegmentedTimelinePages>;
+  countTimelineCommentMarkupRows(sourceIds: readonly string[]): Promise<number>;
+  listTimelineOrphanPages(opts: { afterId: number; limit: number; sourceId?: string }): Promise<TimelineOrphanPage[]>;
   /** `schema detect --fields`: live page type counts and per-type page samples (SQL and contract in engine-sql/field-usage.ts). */
   readFieldUsageSamples(query: FieldUsageQuery): Promise<FieldUsageTypeSample[]>;
   resolveCaseSensitiveAliases(aliasNorms: readonly string[], sourceIds: readonly string[]): Promise<CaseSensitiveAliasRow[]>;
@@ -3274,6 +3331,16 @@ export interface BrainEngine {
    * not a misleading mean of 1.
    */
   findAnomalies(opts: AnomaliesOpts): Promise<AnomalyResult[]>;
+  // Open loops (engine-sql/open-loops.ts). Each runs the statement loops-store.ts ran through executeRaw and returns
+  // the raw rows; loops-store.ts normalizes them.
+  /** Inserts a loop, or updates the row with its source and dedup key when that row is open, the new activity is newer, or an unmute queued it, and a mute does not hold it for the same counterparty email. `applied` is false when the guard kept the existing row. */
+  upsertOpenLoop(loop: OpenLoopUpsertInput): Promise<OpenLoopsSql.OpenLoopUpsertResult>;
+  /** Closes the open loop `id` (in `sourceId` when not null) as `status`, by `closedBy`, now; the closed row, or null when no open loop matches. */
+  closeOpenLoop(sourceId: string | null, id: number, status: Exclude<OpenLoopStatus, 'open'>, closedBy: string): Promise<OpenLoopsSql.OpenLoopDbRow | null>;
+  /** The loops that pass every filter, newest activity first, then id descending, at most `limit` (1 to 1000, 200 by default). */
+  listOpenLoops(opts?: OpenLoopListOpts): Promise<OpenLoopsSql.OpenLoopDbRow[]>;
+  /** The open loops whose counterparty page is (sourceId, slug), newest activity first, at most `limit` (entity-card.ts). */
+  readEntityOpenLoops(slug: string, sourceId: string, limit: number): Promise<OpenLoopsSql.EntityOpenLoopRow[]>;
   // ============================================================
   // Decide proposals (group C; engine-sql/decide-proposals.ts, rust/docs/store/decide-proposals.md)
   // ============================================================

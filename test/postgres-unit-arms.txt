@@ -158,6 +158,7 @@ test/engine-parity/jobs-health.test.ts
 test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/links.test.ts
+test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
@@ -179,6 +180,7 @@ test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
 test/engine-parity/takes.test.ts
+test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
@@ -471,6 +473,7 @@ test/n3-sql-move-parity.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
+test/ns-read-move-parity.test.ts
 test/on-commit-embedding.serial.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts

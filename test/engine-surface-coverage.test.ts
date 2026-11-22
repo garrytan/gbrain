@@ -166,6 +166,18 @@ const INTERFACE_METHODS: readonly string[] = [
   'listDecideCalibrations', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideReplayReceipts',
   'listDecideResolvedModels', 'listDecideSpendBySlot', 'pruneDecideReceipts', 'readDecideState',
   'setDecideCalibrationRetired', 'storeDecideQualification', 'upsertDecideState',
+  // Open loops (src/core/engine-sql/open-loops.ts; covered by test/engine-parity/open-loops.test.ts)
+  'closeOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'upsertOpenLoop',
+  // Timeline reads (src/core/engine-sql/timeline-reads.ts; covered by test/engine-parity/timeline-reads.test.ts)
+  'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'deleteTimelineRows', 'listStoredTimelineRowsOrdered',
+  'listTimelineOrphanPages', 'readMaxTimelineEntryId', 'sampleEffectiveDateSources', 'sampleEffectiveDates',
+  'storedTimelineRowsByPageIds',
+  // Small write-side reads (src/core/engine-sql/write-misc.ts; pinned by test/write-misc-sql-pin.test.ts)
+  'attachSourcePath', 'expireMemoryProposals', 'getWorktreeBinding', 'hasExtractedEvents', 'hasLabelledOnlyMember',
+  'listAccessTokens', 'listActiveAccessMembers', 'listAwaitingMemoryProposals', 'listMemoryProposalRows',
+  'listOwnerProposalRows', 'listSharedSkillPackRoots', 'listSynopsisSourceIds', 'notifierCoverageRecorded',
+  'purgeMemoryProposals', 'readAdmissionSource', 'readHealthMemoClock', 'readMemoryProposal', 'readOpCheckpointKeys',
+  'readPendingProposalSummary', 'readSourceState', 'sharedSkillPackTablePresent',
 ];
 
 /**
@@ -196,6 +208,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'connectWithHeldLock',
   // #9227: whether this engine holds the datastore lock; the PGLite abandoned-claim release rests on it.
   'holdsDatastoreLock',
+  // The unscoped engine-sql executors the timeline reads and the write-side reads run through.
+  'timelineRead', 'writeMiscReads',
 ];
 
 /**

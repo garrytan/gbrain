@@ -394,7 +394,8 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 
 ## Open loops (`facts/loops.rs`)
 
-The `open_loops` table, for the three members loops-store.ts calls through the engine and the
+The `open_loops` table, for the four engine members (`upsertOpenLoop`, `closeOpenLoop`, `listOpenLoops` and the
+entity card read `readEntityOpenLoops`, a TypeScript shim over the list read) and the
 `loops_close` retry read `closedLoopWithActiveFact` and the retirement scan `loopFactDrift` (doctor
 `loop_facts_drift`, `gbrain repair loop-facts`). The other loop statements (thread auto-close, the
 staleness pass and mutes) still run through `executeRaw`, so they refuse on this engine.
@@ -418,7 +419,9 @@ staleness pass and mutes) still run through `executeRaw`, so they refuse on this
 - Times: the store reads `YYYY-MM-DDTHH:MM:SS[.ffffff]Z`. The member rewrites an ISO time with an
   offset and at most 3 fractional digits through `Date#toISOString`. It sends any other spelling (a
   bare date, a time with no zone) as written, and the store refuses it with `invalid_argument`, where
-  Postgres would read it in the session time zone.
+  Postgres would read it in the session time zone. A day the calendar lacks (such as `02-30`) is refused the
+  same way, as PGLite refuses it. Postgres reads it as the next valid day (`02-30` becomes `03-02`), because
+  postgres.js rolls the date over before the statement is sent, so the Rust engine is stricter than Postgres here.
 - Deleting a source removes its loops (`ON DELETE CASCADE`).
 
 ## The fence guard's reads (`facts/fence.rs`)

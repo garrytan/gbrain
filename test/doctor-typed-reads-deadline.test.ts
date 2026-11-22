@@ -1,9 +1,10 @@
 /**
  * Typed engine reads that replaced a doctor-bounded `executeRaw` statement keep the doctor's statement deadline.
  *
- * Before S2 the decide-health check read its tables through `executeRaw` on the deadline-bound engine
- * (src/core/statement-deadline.ts), so a lock-blocked statement ended at the doctor budget. S2a moved them to typed
- * decide members. On Postgres each of those members, run inside `withStatementDeadline` through
+ * Before S2 the decide-health check read its tables, the slug-path-mismatch check its writer binding, the
+ * timeline-history check its timeline counts and the commit-notifier check its coverage flag through `executeRaw` on
+ * the deadline-bound engine (src/core/statement-deadline.ts), so a lock-blocked statement ended at the doctor budget.
+ * S2 moved them to typed members. On Postgres each of those members, run inside `withStatementDeadline` through
  * `deadlineBoundEngine`, must end at the deadline too: it rejects near the deadline, the scope reports `expired`,
  * and no backend is left waiting on the lock. PGLite has one connection and no cancellation: it only refuses a
  * member called after the deadline.
@@ -50,6 +51,11 @@ const CASES: Case[] = [
   // The export withdrawal-ledger reads the sync_rows_behind_checkpoint check reaches.
   { member: 'listExportWithdrawals', table: 'fact_withdrawals', call: (e) => e.listExportWithdrawals('default') },
   { member: 'readExportWithdrawalLedgerBytes', table: 'fact_withdrawals', call: (e) => e.readExportWithdrawalLedgerBytes('default') },
+  { member: 'getWorktreeBinding', table: 'persistence_source_bindings', call: (e) => e.getWorktreeBinding('default', null) },
+  { member: 'notifierCoverageRecorded', table: 'sync_notifier_sources', call: (e) => e.notifierCoverageRecorded() },
+  { member: 'readMaxTimelineEntryId', table: 'timeline_entries', call: (e) => e.readMaxTimelineEntryId() },
+  { member: 'storedTimelineRowsByPageIds', table: 'timeline_entries', call: (e) => e.storedTimelineRowsByPageIds([1]) },
+  { member: 'countSegmentedTimelinePages', table: 'timeline_entries', call: (e) => e.countSegmentedTimelinePages(['default'], 10) },
 ];
 
 test('the bounded typed reads are exactly the members a doctor check reaches', () => {
@@ -99,10 +105,10 @@ for (const kind of testBackends()) {
       test('PGLite refuses a member called after the deadline and otherwise runs it unchanged', async () => {
         const bound = deadlineBoundEngine(engine);
         const live = scopeFor(5_000);
-        expect(await withStatementDeadline(live, () => bound.readDecideState('doctor_deadline_probe'))).toBeNull();
+        expect(await withStatementDeadline(live, () => bound.readMaxTimelineEntryId())).toBe(0);
         expect(live.expired).toBe(false);
         const past = scopeFor(-1);
-        await expect(withStatementDeadline(past, async () => bound.readDecideState('doctor_deadline_probe'))).rejects.toBeInstanceOf(StatementDeadlineError);
+        await expect(withStatementDeadline(past, async () => bound.readMaxTimelineEntryId())).rejects.toBeInstanceOf(StatementDeadlineError);
         expect(past.expired).toBe(true);
       });
     } else {
