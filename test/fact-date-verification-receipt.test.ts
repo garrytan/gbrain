@@ -6,6 +6,7 @@ import { factBulkDatesCheck } from '../src/commands/doctor/checks/fact-bulk-date
 import { runRepairCommand } from '../src/commands/repair.ts';
 import { readDateVerificationIncarnation, readFactDatePin, readOriginalDateExcerpt } from '../src/core/engine-sql/fact-date-verification.ts';
 import { findBulkFactDays } from '../src/core/facts/bulk-days.ts';
+import { matchesDatedExcerpt } from '../src/core/facts/fact-date-proof.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
@@ -19,7 +20,7 @@ const source = 'default';
 const day = '2025-04-10';
 const factSlug = 'fixtures/fact';
 const originalSlug = 'fixtures/original';
-const quote = '记者于 2025-04-10 登记交接完成。';
+const quote = '记者于 2025-04-10 登记交接完成。\n收件人于 2025-04-10 签收。';
 const reference = 'See [the earlier handover](records/2025-04-10) for context.';
 const otherReferences = ['See <https://example.invalid/log/2025-04-10> for the record.',
   '[retained log]: archives/2025-04-10'];
@@ -28,6 +29,21 @@ const content = (type: string, title: string, body: string) => `---\ntype: ${typ
 const factPage = (claim: string) => content('note', 'Fact fixture', 'Original claim.\n\n## Facts\n\n' +
   renderFactsTable([{ rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'private',
     notability: 'medium', validFrom: day, source: 'synthetic journal', active: true }]));
+
+test('repeated event days in one excerpt still form one date', () => {
+  const repeated = `${day} 13:05: the first file was delivered.\n${day} 13:06: the second file was delivered.`;
+  const matches = (text: string, before = '', after = '') => matchesDatedExcerpt({
+    source_incarnation: randomUUID(), fact_id: 1, fact_digest: '0'.repeat(64), utc_day: day,
+    original_page_id: 2, original_revision: randomUUID(), excerpt_start: Array.from(before).length + 1,
+    excerpt_length: Array.from(text).length, excerpt_sha256: sha256(text),
+  }, { text, before, after });
+  expect(matches(repeated)).toBe(true);
+  expect(matches(repeated.replace(`${day} 13:06`, '2025-04-09 13:06'))).toBe(false);
+  expect(matches(repeated.replace(`${day} 13:06`, '2025-04-11 13:06'))).toBe(false);
+  expect(matches(`${repeated}\nEarlier entry: [source](logs/${day}).`)).toBe(false);
+  expect(matches(`${day} 13:05: the first file was delivered.\nThe second file was delivered on ${day}`, '', '0')).toBe(false);
+  expect(matches(`${repeated}\nThe ${day} “Message Archive” contains both files.`)).toBe(false);
+});
 
 async function verifyNativeReceipt(databaseUrl?: string) {
   await managedBrain(async ({ engine, ctx, root }) => {
@@ -120,7 +136,7 @@ async function verifyNativeReceipt(databaseUrl?: string) {
     const preview = await run();
     expect(preview).toMatchObject({ mode: 'preview', action: 'verify', rows: [{ request_id: request, proof }] });
     expect(await receipts()).toEqual(justBeforePreview);
-    expect(JSON.stringify(preview)).not.toContain(quote);
+    for (const line of quote.split('\n')) expect(JSON.stringify(preview)).not.toContain(line);
     await expect(run(['--apply', '--expect', '0'.repeat(64)])).rejects.toMatchObject({ code: 'preview_changed' });
     writeManifest({ ...commandInput, rows: [{ request_id: request, evidence: { ...checked, claim_sha256: '0'.repeat(64) } }] });
     await expect(run(['--apply', '--expect', preview.preview_hash])).rejects.toMatchObject({ code: 'revision_conflict' });
@@ -139,7 +155,7 @@ async function verifyNativeReceipt(databaseUrl?: string) {
     expect(committed).toHaveLength(1);
     expect(committed[0]!.outcome).toMatchObject({ verified_event_date: day, proof, write_through: { written: false } });
     expect(await engine.readPageSnapshot(committed[0]!.slug, { sourceId: source })).toBeNull();
-    expect(JSON.stringify(committed[0])).not.toContain(quote);
+    for (const line of quote.split('\n')) expect(JSON.stringify(committed[0])).not.toContain(line);
     expect(await state()).toEqual(before);
     expect(readFileSync(join(root, factSlug + '.md'), 'utf8')).toBe(file);
     expect(readFileSync(join(root, originalSlug + '.md'), 'utf8')).toBe(evidenceFile);
@@ -173,6 +189,7 @@ async function verifyDoctor(databaseUrl?: string) {
     const data = Array.from({ length: 200 }, (_, i) => ({
       claim: `Handover number ${i + 1} completed.`, quote: `Handover number ${i + 1} completed on ${day}.`,
     }));
+    data.at(-1)!.quote += `\nThe closing receipt also dates that handover to ${day}.`;
     const entitySlug = (i: number) => `fixtures/entity-${i}`;
     const entityPage = (claims: string[]) => content('note', 'Entity fixture', 'Managed facts.\n\n## Facts\n\n' +
       renderFactsTable(claims.map((claim, i) => ({ rowNum: i + 1, claim, kind: 'fact', confidence: 1,

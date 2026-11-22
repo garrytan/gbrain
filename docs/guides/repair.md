@@ -3304,8 +3304,9 @@ stable `request_id` UUID and an `evidence` object with these fields.
 | `excerpt_start`, `excerpt_length` | One-based starting character and length in the archived `compiled_truth`, measured in Unicode code points. The length may be up to 4,000 characters. |
 | `excerpt_sha256` | Lowercase SHA-256 of the exact archived substring as UTF-8, including any whitespace in the selection |
 
-The read-only preview checks all rows, including that each excerpt has a single
-unambiguous date for the proposed day. Select words that describe the event
+The read-only preview checks all rows. Each excerpt must name the proposed day,
+and every ISO date in it must be that same day. For example, a log may date
+several entries on that day individually. Select words that describe the event
 along with its date. A date alone or in a citation target does not qualify.
 The preview hash binds the source incarnation,
 registered writer, active facts and evidence to the reviewed request IDs.
