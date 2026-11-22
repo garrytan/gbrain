@@ -34,7 +34,7 @@ writes the rows the builder returns.
 | `brain.readReferrerRecordCandidates(target, scope)` | per target index (as in `readReferrerTargetCounts`), its newest `perTarget` referring pages whose canonical type is in `recordTypes`, by index, then `(date DESC, source, slug)` | `readReferrerRecordCandidates` |
 | `brain.readReferrerRecordPages(ids)` | the title and date source (`updated_at` without an effective date) of each page id that exists, soft-deleted pages too | `readReferrerRecordPages` |
 | `brain.countSearchVectorRows()` | `{ pages, chunks }`: every page (deleted ones too) and every chunk | `countSearchVectorRows` |
-| `brain.countPendingProjectionPages({ scope, relevance })` | `{ total, could_affect, capped, top_counted?, could_affect_images }`: the live pages in scope whose text projection waits and needs work, at most 1000, read in page-id order (the SQL `ORDER BY p.id`) | `countPendingProjectionPages` |
+| `brain.countPendingProjectionPages({ scope, relevance })` | `{ total, could_affect, capped, top_counted?, could_affect_images }`: the live pages in scope whose text projection waits and needs work; each count is min(every match in scope, 1000), and a walk past `timeoutMs` gives null | `countPendingProjectionPages` |
 | `brain.projectionRebuildProgress(scope)` | `{ done, total, pages_per_second }` while a `protocol_activation` job waits on a live `text` page in scope, else null | `projectionRebuildProgress` |
 | `brain.readProjectionReadinessGeneration()` | `<brain id>/<commit sequence>`: every commit advances it, so a cached probe answer lasts until the next write; null inside a transaction | `readProjectionReadinessGeneration` |
 | `brain.readProjectionReadiness(scope)` | `{ pending, by_design }`: whether a waiting page in scope needs work, and when none does, whether protected images wait | `readProjectionReadiness` |
@@ -71,7 +71,7 @@ writes the rows the builder returns.
 | `mentions/referrers.ts` | listPageStatusByRef, listRecordMetadataRows, readReferrerGroupRows, readReferrerPageDetails, readReferrerTargetCounts, countReferrerRows, readReferrerRows, readReferrerTypes, readReferrerRecordCandidates, readReferrerRecordPages | equal |
 | `ops/backlinks-paged.ts` | listReferrerTargetSources, listSourceIds | equal |
 | `search/retrieval-coverage.ts` | countEmbeddingHeldPages | equal (always 0: the store keeps no embedding budget rows) |
-| `search/retrieval-coverage.ts` | countPendingProjectionPages, projectionRebuildProgress | equal |
+| `search/retrieval-coverage.ts` | countPendingProjectionPages, projectionRebuildProgress | equal (each count is min(every match in scope, 1000), so a capped count is equal too) |
 | `search/projection-readiness.ts` | readProjectionReadinessGeneration, readProjectionReadiness | equal statuses, cached until the next write |
 | `commands/reindex-search-vector.ts` | countSearchVectorRows, replaceSearchVectorTriggerFunction, backfillSearchVectors, ensureFactsKeywordIndex | equal JSON (a no-op under `english`) |
 

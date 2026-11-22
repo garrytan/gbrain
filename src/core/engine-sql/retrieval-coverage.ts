@@ -12,13 +12,15 @@
  *
  * The readiness probe's two statements (search/projection-readiness.ts) run on
  * the engine's own `executeRaw` (an `EngineRawRead`), so the probe keeps its
- * JIT-off option; the probe keeps its cache and its hints.
+ * JIT-off option; the probe keeps its cache and its hints. The pending and
+ * held counts run there too, under `COVERAGE_COUNT_TIMEOUT_MS`, and count every
+ * match in scope up to the cap (`countInScope`).
  */
 import { budgetRowAppliesFilter } from '../page-size-policy.ts';
 import { projectionClassSql, textClassSql } from '../page-state/projection-class.ts';
-import { servedTextProjectionFilter, waitingTextProjectionFilter } from '../search/safe-chunks.ts';
+import { waitingTextProjectionFilter } from '../search/safe-chunks.ts';
 import {
-  COVERAGE_COUNT_CAP, type CoverageRelevance, type ProjectionRebuildProgress, type ScopedCount,
+  COVERAGE_COUNT_CAP, COVERAGE_COUNT_TIMEOUT_MS, type CoverageRelevance, type ProjectionRebuildProgress, type ScopedCount,
 } from '../search/retrieval-coverage.ts';
 import type { ProjectionReadinessRow, ProjectionReadinessScope } from '../search/projection-readiness.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
@@ -27,6 +29,14 @@ import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragmen
 import { readFilter } from './search-reads.ts';
 
 type Exec = Pick<SqlExecutor, 'executeRaw'>;
+
+/**
+ * The engine's own `executeRaw` for the coverage counts. Postgres takes `timeoutMs` (a transaction-local
+ * statement_timeout) and `prepare: false` (an unnamed statement, planned for its bound words each call: a cached generic
+ * plan cannot know a word is rare, so it tested every waiting page in scope, about 18 ms at 10,000 pages against 3 ms);
+ * PGLite ignores both.
+ */
+export type CountRead = <R = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { timeoutMs?: number; prepare?: boolean }) => Promise<R[]>;
 
 /** The read scope over `pages p`: sources, visibility, live pages, kind, types and excluded slug prefixes. */
 function scopeFilter(scope: ProjectionReadinessScope): SqlFragment {
@@ -45,27 +55,54 @@ async function rows<R>(exec: Exec, fragment: SqlFragment): Promise<R[]> {
 }
 
 /**
- * Pages in scope matching `where` (over `pages p` joined to `sources s` and `join`), up to the cap, and how many could affect the query.
- * A capped count reads the lowest page ids, so every engine counts the same pages (a scan order differs by engine).
- * `classed` also counts the could-affect images in the `sealable` or `reimport` class. Null when the count fails: unknown, never zero.
+ * The could-affect test over `pages p` (search/retrieval-coverage.ts `CoverageRelevance`), composed from the parts the
+ * query has: one bound `~` per word pattern over the text idx_pages_projection_waiting_words indexes (v335), the result
+ * types (idx_pages_type) and the returned pages (the primary key). Each part alone can use its index, so the planner can
+ * read only the pages a part matches instead of testing every page in scope.
  */
-async function countInScope(exec: Exec, scope: ProjectionReadinessScope, relevance: CoverageRelevance,
+function couldAffectFilter(relevance: CoverageRelevance): SqlFragment {
+  const parts: SqlFragment[] = [];
+  if (relevance.all) {
+    parts.push(sqlFragment`TRUE`);
+  } else {
+    if (relevance.types.length) parts.push(sqlFragment`p.type = ANY(${relevance.types}::text[])`);
+    for (const pattern of relevance.patterns) parts.push(sqlFragment`lower(COALESCE(p.title, '') || ' ' || p.slug) ~ ${pattern}::text`);
+    if (relevance.pageIds.length) parts.push(sqlFragment`p.id = ANY(${relevance.pageIds}::int[])`);
+  }
+  const matches = parts.length ? joinFragments(parts, ' OR ') : sqlFragment`FALSE`;
+  const shown = relevance.imageArm ? sqlFragment`TRUE`
+    : relevance.pageIds.length ? sqlFragment`(p.page_kind IS DISTINCT FROM 'image' OR p.id = ANY(${relevance.pageIds}::int[]))`
+      : sqlFragment`p.page_kind IS DISTINCT FROM 'image'`;
+  return sqlFragment`(${matches}) AND ${shown}`;
+}
+
+/**
+ * Pages in scope matching `where` (over `pages p` joined to `sources s` and `join`), up to the cap, and how many could affect the query.
+ * `classed` also counts the could-affect images in the `sealable` or `reimport` class. Null when the count fails or
+ * runs past `COVERAGE_COUNT_TIMEOUT_MS` (Postgres ends it on the server; PGLite runs in process and has no statement
+ * timeout): unknown, never zero.
+ *
+ * Each count has its own cap: `total` is min(pages in scope, cap), `could_affect` is min(every could-affect page in
+ * scope, cap) and `could_affect_images` is min(every could-affect image, cap). A count of every match is the same
+ * whatever order an engine reads the pages in, so PGLite, Postgres and the Rust store agree at the cap, and
+ * images <= could_affect <= total always holds (callers print `could - images`). Each count is its own bounded read
+ * that stops at its cap, so `total` never tests a word and `could_affect` reads only matching pages through its indexes.
+ */
+async function countInScope(raw: CountRead, scope: ProjectionReadinessScope, relevance: CoverageRelevance,
   join: SqlFragment, where: SqlFragment, classed = false): Promise<ScopedCount | null> {
-  const could = sqlFragment`((${relevance.all}::boolean OR x.type = ANY(${relevance.types}::text[]) OR x.haystack ~ ANY(${relevance.patterns}::text[]) OR x.id = ANY(${relevance.pageIds}::int[]))
-    AND (${relevance.imageArm}::boolean OR x.page_kind IS DISTINCT FROM 'image' OR x.id = ANY(${relevance.pageIds}::int[])))`;
+  const could = couldAffectFilter(relevance);
   const top = relevance.exactTopPageId;
+  const capped = (filter: SqlFragment) => sqlFragment`(SELECT count(*) FROM (SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id ${join}
+        WHERE p.deleted_at IS NULL AND ${where} AND ${scopeFilter(scope)} AND ${filter} LIMIT ${COVERAGE_COUNT_CAP}) c)::int`;
+  // The two image classes are image pages only, so this count reads image pages, not the whole scope.
   const images = classed ? sqlFragment`,
-        count(*) FILTER (WHERE ${could} AND x.class IN ('sealable','reimport'))::int AS could_affect_images` : sqlFragment``;
+        ${capped(sqlFragment`p.page_kind = 'image' AND ${could} AND ${trustedSql(projectionClassSql('p', 's'))} IN ('sealable','reimport')`)} AS could_affect_images` : sqlFragment``;
   const topCounted = top === null ? sqlFragment`` : sqlFragment`,
         EXISTS (SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id ${join} WHERE p.id = ${top}::int AND p.deleted_at IS NULL AND ${where}) AS top_counted`;
-  const classColumn = classed ? sqlFragment`, ${trustedSql(projectionClassSql('p', 's'))} AS class` : sqlFragment``;
   try {
-    const [row] = await rows<{ total: number | string; could_affect: number | string; could_affect_images?: number | string; top_counted?: boolean | null }>(exec, sqlFragment`SELECT count(*)::int AS total,
-        count(*) FILTER (WHERE ${could})::int AS could_affect${images}${topCounted}
-      FROM (SELECT p.id, p.type, p.page_kind, lower(COALESCE(p.title, '') || ' ' || p.slug) AS haystack${classColumn}
-        FROM pages p JOIN sources s ON s.id = p.source_id ${join}
-        WHERE p.deleted_at IS NULL AND ${where} AND ${scopeFilter(scope)}
-        ORDER BY p.id LIMIT ${COVERAGE_COUNT_CAP}) x`);
+    const { text, params } = renderFragment(sqlFragment`SELECT ${capped(sqlFragment`TRUE`)} AS total,
+        ${capped(could)} AS could_affect${images}${topCounted}`);
+    const [row] = await raw<{ total: number | string; could_affect: number | string; could_affect_images?: number | string; top_counted?: boolean | null }>(text, params, { timeoutMs: COVERAGE_COUNT_TIMEOUT_MS, prepare: false });
     const total = Number(row?.total), couldAffect = Number(row?.could_affect);
     if (!Number.isFinite(total) || !Number.isFinite(couldAffect)) return null;
     return { total, could_affect: couldAffect, capped: total >= COVERAGE_COUNT_CAP, ...(top === null ? {} : { top_counted: row?.top_counted === true }),
@@ -76,14 +113,15 @@ async function countInScope(exec: Exec, scope: ProjectionReadinessScope, relevan
 }
 
 /** The pending pages the readiness probe found (unsealed, needing work) in the same scope. */
-export function countPendingProjectionPages(exec: Exec, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
-  return countInScope(exec, scope, relevance, sqlFragment``,
-    sqlFragment`NOT ${trustedSql(servedTextProjectionFilter('p'))} AND ${trustedSql(projectionClassSql('p', 's'))} NOT IN ('protected','archived')`, true);
+export function countPendingProjectionPages(raw: CountRead, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
+  // The waiting filter is the text of the v317 and v335 partial indexes' predicate, so the counts can read them.
+  return countInScope(raw, scope, relevance, sqlFragment``,
+    sqlFragment`${trustedSql(waitingTextProjectionFilter('p'))} AND ${trustedSql(projectionClassSql('p', 's'))} NOT IN ('protected','archived')`, true);
 }
 
 /** Pages in scope held from embedding: a held or capped budget row that still applies, on a page no `embed_skip` marker keeps out of embedding for good. */
-export function countEmbeddingHeldPages(exec: Exec, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
-  return countInScope(exec, scope, relevance, sqlFragment`JOIN page_embedding_budget b ON b.page_id = p.id`,
+export function countEmbeddingHeldPages(raw: CountRead, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
+  return countInScope(raw, scope, relevance, sqlFragment`JOIN page_embedding_budget b ON b.page_id = p.id`,
     sqlFragment`${trustedSql(budgetRowAppliesFilter('b', 'p'))} AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`);
 }
 

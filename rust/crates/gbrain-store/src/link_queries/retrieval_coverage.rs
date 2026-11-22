@@ -33,7 +33,7 @@ use crate::trust::{TrustPolicy, TrustTier};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// `COVERAGE_COUNT_CAP`: the pending count reads at most this many pages.
+/// `COVERAGE_COUNT_CAP`: each count is min(every match in scope, this).
 const COVERAGE_COUNT_CAP: u64 = 1000;
 /// `ACTIVATION_SERVED_REVISION`: a page left serving its pre-upgrade index (#9192).
 const ACTIVATION_SERVED_REVISION: &str = "00000000-0000-0000-0000-000000000153";
@@ -87,6 +87,9 @@ pub struct CoverageRelevance {
 pub struct PendingCountInput {
     pub scope: CoverageScope,
     pub relevance: CoverageRelevance,
+    /// `COVERAGE_COUNT_TIMEOUT_MS`: a walk still running after this long gives no count (null). None: no limit.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 /// `ScopedCount` of a pending count.
@@ -271,20 +274,33 @@ fn walk_scope(
 
 impl Store {
     /// `countPendingProjectionPages`: unsealed pages in scope that need work (class neither
-    /// `protected` nor `archived`), up to the cap, and how many could affect the query.
+    /// `protected` nor `archived`), up to the cap, and how many could affect the query. Each
+    /// count has its own cap (`total`, `could_affect` and `could_affect_images` are each
+    /// min(every match in scope, cap)), as the SQL engines count, so the answer does not depend
+    /// on the walk order. The walk stops once every count reaches the cap. None when the walk
+    /// runs past `timeout_ms` (store clock): unknown, as a SQL count that times out is null.
     pub fn count_pending_projection_pages(
         &self,
         input: &PendingCountInput,
-    ) -> Result<PendingCount> {
+    ) -> Result<Option<PendingCount>> {
         let read = self.read()?;
         let read = &*read;
         let relevance = &input.relevance;
+        let deadline_us = input.timeout_ms.map(|ms| {
+            let us = i64::try_from(ms.saturating_mul(1000)).unwrap_or(i64::MAX);
+            self.env.now_micros().saturating_add(us)
+        });
         let (mut total, mut could, mut images) = (0u64, 0u64, 0u64);
+        let mut timed_out = false;
         walk_scope(read, &input.scope, |page, cls| {
+            if deadline_us.is_some_and(|d| self.env.now_micros() >= d) {
+                timed_out = true;
+                return false;
+            }
             if served(page) || cls == ProjectionClass::Protected {
                 return true;
             }
-            total += 1;
+            total = (total + 1).min(COVERAGE_COUNT_CAP);
             let returned = relevance.page_ids.contains(&page.id);
             let haystack = pg_lower(&format!("{} {}", page.title, page.slug));
             let matches = relevance.all
@@ -293,24 +309,28 @@ impl Store {
                 || returned;
             let shown = relevance.image_arm || page.page_kind != "image" || returned;
             if matches && shown {
-                could += 1;
+                could = (could + 1).min(COVERAGE_COUNT_CAP);
                 if cls == ProjectionClass::Image {
-                    images += 1;
+                    images = (images + 1).min(COVERAGE_COUNT_CAP);
                 }
             }
-            total < COVERAGE_COUNT_CAP
+            // images <= could <= total, so every count is at the cap once images is.
+            images < COVERAGE_COUNT_CAP
         })?;
+        if timed_out {
+            return Ok(None);
+        }
         let top_counted = match relevance.exact_top_page_id {
             None => None,
             Some(id) => Some(top_counted(read, id)?),
         };
-        Ok(PendingCount {
+        Ok(Some(PendingCount {
             total,
             could_affect: could,
             capped: total >= COVERAGE_COUNT_CAP,
             top_counted,
             could_affect_images: images,
-        })
+        }))
     }
 
     /// `projectionRebuildProgress`: null unless an upgrade's activation row waits on a `text` page in
