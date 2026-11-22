@@ -44,8 +44,8 @@ export function makeShareable(content: string): string {
   // Remove "See also" brain-internal lines
   clean = clean.replace(/^-?\s*See also:.*$/gm, '');
 
-  // Remove Timeline section (below the --- separator near end)
-  clean = clean.replace(/\n---\n\n## Timeline[\s\S]*$/, '');
+  // Remove Timeline section (with or without a preceding --- rule)
+  clean = clean.replace(/(?:^|\n)(?:---[ \t]*\n+)?##[ \t]+Timeline\b[\s\S]*$/, '');
 
   // Clean up excessive blank lines
   clean = clean.replace(/\n{3,}/g, '\n\n');
