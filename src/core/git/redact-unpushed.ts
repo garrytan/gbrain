@@ -199,17 +199,22 @@ function claims(source: string, allowlist: string[], rel: string | null): Span[]
 /** Every claim plus, between them, each known value (longest first) wherever it appears bare. */
 function spansIn(source: string, own: Span[], values: ReadonlyMap<string, string>): Span[] {
   const known = [...values].sort((a, b) => b[0].length - a[0].length);
+  const head = known.length ? Math.min(16, ...known.map(([value]) => value.length)) : 0;
+  const byHead = new Map<string, Array<[string, string]>>();
+  for (const entry of known) {
+    const list = byHead.get(entry[0].slice(0, head));
+    if (list) list.push(entry); else byHead.set(entry[0].slice(0, head), [entry]);
+  }
+  const firsts = new Set(known.map(([value]) => value.charCodeAt(0)));
   const out: Span[] = [];
   const gap = (from: number, to: number) => {
-    for (let at = from; at < to;) {
-      let best: Span | null = null;
-      for (const [value, rule] of known) {
-        const pos = source.indexOf(value, at);
-        if (pos !== -1 && pos + value.length <= to && (!best || pos < best.start)) best = { start: pos, end: pos + value.length, value, rule };
-      }
-      if (!best) return;
-      out.push(best);
-      at = best.end;
+    if (!head) return;
+    for (let at = from; at + head <= to;) {
+      const hit = firsts.has(source.charCodeAt(at))
+        ? byHead.get(source.slice(at, at + head))?.find(([value]) => at + value.length <= to && source.startsWith(value, at)) : undefined;
+      if (!hit) { at++; continue; }
+      out.push({ start: at, end: at + hit[0].length, value: hit[0], rule: hit[1] });
+      at += hit[0].length;
     }
   };
   let cur = 0;

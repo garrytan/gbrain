@@ -269,6 +269,16 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     } finally { holder.kill(); }
   }, 60_000);
 
+  test('planning a range with a thousand distinct values in one file stays linear: the preview finishes in seconds, every value once', async () => {
+    const r = repo();
+    const rows = Array.from({ length: 1000 }, (_, i) => `row ${i} token ghp_${createHash('sha256').update(String(i)).digest('hex').slice(0, 36)} ${'lorem ipsum '.repeat(160)}`);
+    commit(r.root, 'export.md', rows.join('\n') + '\n');
+    const started = Date.now();
+    const preview = await inHome(r, () => redactUnpushed(r.root, { base: r.base })) as RedactPreview;
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(preview.rules.github_token).toMatchObject({ values: 1000, hits: 1000 });
+  }, 120_000);
+
   test('secrets.on_push refuse keeps the refusal and writes nothing', async () => {
     const r = repo();
     const head = commit(r.root, 'notes.md', `token ${token}\n`);
