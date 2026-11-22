@@ -356,7 +356,7 @@ describe('sessions', () => {
     for (const t of [10, 25, 50]) expect({ turn: t, n: perTurn[t - 1]!.n > 0 }).toEqual({ turn: t, n: true });
     const total = perTurn.reduce((a, x) => a + x.tokens, 0);
     expect(total).toBeLessThanOrEqual(2000);
-    expect(sessionStatus('fifty', { home, sessionTokenBudget: 2000 }).spent).toBe(total);
+    expect(sessionStatus('fifty', { home }).spent).toBe(total);
     const late = perTurn.filter(x => x.turn > 12 && !strong.includes(x.turn));
     expect(late.every(x => x.n === 0)).toBe(true);
   });
