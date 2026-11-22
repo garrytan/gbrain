@@ -246,9 +246,6 @@
         "./core/trust/label-lowerings.ts",
         "./core/trust/backfill.ts"
       ],
-      "waiting": [
-        "./commands/loops.ts"
-      ],
       "wakeshift": [
         "./commands/wakeshift.ts"
       ],
