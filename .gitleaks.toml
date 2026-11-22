@@ -71,6 +71,14 @@ regexTarget = "secret"
 regexes = ['''^sb_publishable_[A-Za-z0-9_-]+$''']
 
 [[allowlists]]
+description = "gbrain telemetry's copy of the same public Supabase publishable key (calls two edge functions; reads and writes no table)"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^src/core/telemetry/endpoint\.ts$''']
+regexTarget = "secret"
+regexes = ['''^sb_publishable_[A-Za-z0-9_-]+$''']
+
+[[allowlists]]
 description = "The skill resolver's tokenizer id, a version label named TOKENIZER_ID"
 targetRules = ["generic-api-key"]
 condition = "AND"
