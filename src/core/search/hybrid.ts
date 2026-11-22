@@ -707,9 +707,8 @@ export async function runPostFusionStages(
     rethrowCapabilityRefusal(err);
     const reason = isTimeoutError(err) ? 'timeout' : 'provider_error';
     if (degraded) pushDegraded(degraded, 'supersede_check_failed', reason);
-    // The class and driver code only: a driver message can carry a connection string or password.
-    const code = (err as { code?: unknown } | null)?.code;
-    warnOncePerProcess('search-supersede-check-failed', `[gbrain] supersession check failed (${reason}${typeof code === 'string' && /^[A-Za-z0-9_]{1,16}$/.test(code) ? ` ${code}` : ''}; fail-open, results may include outdated pages)`);
+    // The failure class only: an error's message or code can carry a connection string or password.
+    warnOncePerProcess('search-supersede-check-failed', `[gbrain] supersession check failed (${reason}; fail-open, results may include outdated pages)`);
   }
 }
 
