@@ -22,7 +22,10 @@ use crate::kv::{KvWrite, scan_prefix};
 use crate::timeline::{TimelineRecord, put_entry, recompute_latest, remove_entry};
 
 /// The entries of page `page_id`, event projections included, by key (date, id).
-fn page_entries(tx: &dyn crate::kv::KvRead, page_id: u64) -> Result<Vec<TimelineRecord>> {
+pub(super) fn page_entries(
+    tx: &dyn crate::kv::KvRead,
+    page_id: u64,
+) -> Result<Vec<TimelineRecord>> {
     let mut raw = Vec::new();
     scan_prefix(tx, &keys::timeline_prefix(page_id), false, &mut |_, v| {
         raw.push(v.to_vec());
@@ -34,7 +37,10 @@ fn page_entries(tx: &dyn crate::kv::KvRead, page_id: u64) -> Result<Vec<Timeline
 }
 
 /// The projections of `event_page_id` the event index names, with the date each is indexed under, by date.
-fn projections(tx: &dyn crate::kv::KvRead, event_page_id: u64) -> Result<Vec<TimelineRecord>> {
+pub(super) fn projections(
+    tx: &dyn crate::kv::KvRead,
+    event_page_id: u64,
+) -> Result<Vec<TimelineRecord>> {
     let prefix = event_index_prefix(event_page_id);
     let mut rows = Vec::new();
     scan_prefix(tx, &prefix, false, &mut |k, v| {

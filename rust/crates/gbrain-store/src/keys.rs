@@ -116,6 +116,11 @@ pub const REASON_TOMBSTONE: u8 = b'1';
 pub const EMBEDDING_HOLD: u8 = b'2';
 /// Family `persistence_journal`, the `derived_generations` ledger (`generations.rs`).
 pub const DERIVED_GENERATION: u8 = b'h';
+/// Family `secret_store` (`secret_store.rs`): the `secret_store` entries and the `secret_store_occurrence` rows. The byte
+/// after the tag names the record (`ENTRY`, `BY_MAC`, `BY_ENTRY`, `OCCURRENCE`, `BY_SLUG`, `BY_PAGE` in that module).
+/// The digit `3`: every letter is taken or reserved across the lanes (`x` by `ACCESS_MEMBERS`, `y` by
+/// `SESSION_STATE`), and `0`, `1` and `2` are `GUEST_SOURCE`, `REASON_TOMBSTONE` and `EMBEDDING_HOLD`.
+pub const SECRET_STORE: u8 = b'3';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

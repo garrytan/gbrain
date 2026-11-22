@@ -264,6 +264,34 @@ pub(crate) fn queue_page_projection(
     Ok(())
 }
 
+/// `queuePageProjectionJob(sourceId, slug, reason)` (`INSERT .. SELECT FROM pages JOIN sources .. ON CONFLICT DO UPDATE`):
+/// queues the live page's current revision with `reason`, replacing a job already queued for the page. A missing page, a
+/// soft-deleted one and a page of a source that does not exist queue nothing.
+pub(crate) fn queue_page_projection_job(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slug: &str,
+    reason: &str,
+    now_us: i64,
+) -> Result<()> {
+    let Some(page) = crate::pages::read_page(&*tx, source_id, slug)? else {
+        return Ok(());
+    };
+    if page.deleted_at_us.is_some() {
+        return Ok(());
+    }
+    let Some(source) = crate::sources::read_source(&*tx, source_id)? else {
+        return Ok(());
+    };
+    let key = job_key(&source.incarnation, slug);
+    let job = JobRecord {
+        revision: page.knowledge_revision.clone(),
+        reason: reason.to_owned(),
+        updated_at_us: now_us,
+    };
+    put_job(tx, &key, &job)
+}
+
 /// Every job, in key order.
 fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
     let mut out = Vec::new();
@@ -783,6 +811,72 @@ mod tests {
                 crate::pages::write_page(tx, &page)
             })
             .unwrap();
+    }
+
+    /// `queuePageProjectionJob`: the live page's current revision is queued with the caller's reason, a job already there is
+    /// replaced, and a missing page, a tombstone and an unknown source queue nothing.
+    #[test]
+    fn queue_page_projection_job_queues_the_live_pages_current_revision_with_a_reason() {
+        let store = crate::test_support::store();
+        put(&store, "notes/queued");
+        put(&store, "notes/gone");
+        let revision = |slug: &str| {
+            read_page(&*store.read().unwrap(), "default", slug)
+                .unwrap()
+                .unwrap()
+                .knowledge_revision
+        };
+        let jobs = |store: &Store| {
+            all_jobs(&*store.read().unwrap())
+                .unwrap()
+                .into_iter()
+                .map(|j| (j.slug, j.record.reason, j.record.revision))
+                .collect::<Vec<_>>()
+        };
+        store
+            .queue_page_projection_job("default", "notes/queued", "secret_spans")
+            .unwrap();
+        let now = jobs(&store);
+        assert!(
+            now.contains(&(
+                "notes/queued".into(),
+                "secret_spans".into(),
+                revision("notes/queued")
+            )),
+            "{now:?}"
+        );
+        store
+            .queue_page_projection_job("default", "notes/queued", "again")
+            .unwrap();
+        let again = jobs(&store);
+        assert_eq!(again.iter().filter(|j| j.0 == "notes/queued").count(), 1);
+        assert!(
+            again
+                .iter()
+                .any(|j| j.0 == "notes/queued" && j.1 == "again")
+        );
+        store
+            .soft_delete_pages(
+                &["notes/gone".to_owned()],
+                &crate::page_ops::SourceOption {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap();
+        let before = jobs(&store);
+        for (source, slug) in [
+            ("default", "notes/gone"),
+            ("default", "notes/none"),
+            ("nowhere", "notes/queued"),
+        ] {
+            store.queue_page_projection_job(source, slug, "x").unwrap();
+        }
+        assert_eq!(jobs(&store), before);
+        assert!(
+            store
+                .queue_page_projection_job("default", "a\0b", "x")
+                .is_err()
+        );
     }
 
     #[test]

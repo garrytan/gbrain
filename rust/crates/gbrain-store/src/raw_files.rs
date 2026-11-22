@@ -256,6 +256,44 @@ pub(crate) fn page_raw_rows(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRe
     )
 }
 
+/// The `ordinal`th raw_data row of page `page_id` (from 1, in source order) with its key: the store keeps no serial id
+/// on a row, so `gbrain repair secret-spans` names a row by its position among the page's rows
+/// (`readRawDataValue`, `setRawDataValue`).
+fn raw_row_at(
+    read: &dyn KvRead,
+    page_id: u64,
+    ordinal: u64,
+) -> Result<Option<(Vec<u8>, RawRecord)>> {
+    let Some(index) = ordinal.checked_sub(1) else {
+        return Ok(None);
+    };
+    Ok(
+        collect_values::<RawRecord>(read, &raw_page_prefix(page_id))?
+            .into_iter()
+            .nth(usize::try_from(index).unwrap_or(usize::MAX)),
+    )
+}
+
+/// The data of the `ordinal`th raw_data row of page `page_id`, or `None` when the page has fewer rows.
+pub(crate) fn raw_row_data(read: &dyn KvRead, page_id: u64, ordinal: u64) -> Result<Option<Value>> {
+    Ok(raw_row_at(read, page_id, ordinal)?.map(|(_, row)| row.data))
+}
+
+/// `UPDATE raw_data SET data = $data WHERE id = ordinal` for page `page_id`: replaces the row's data and keeps its
+/// source and fetch time. A page with fewer rows changes nothing.
+pub(crate) fn set_raw_row_data(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    ordinal: u64,
+    data: Value,
+) -> Result<()> {
+    let Some((key, mut row)) = raw_row_at(&*tx, page_id, ordinal)? else {
+        return Ok(());
+    };
+    row.data = data;
+    put_json(tx, &key, &row)
+}
+
 fn collect_values<T: serde::de::DeserializeOwned>(
     read: &dyn KvRead,
     prefix: &[u8],

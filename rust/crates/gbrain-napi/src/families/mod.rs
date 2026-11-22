@@ -82,6 +82,7 @@ mod page_ops;
 mod raw_files;
 mod relations;
 mod salience;
+mod secret_store;
 mod stats;
 mod sync_orphan_reads;
 mod takes;

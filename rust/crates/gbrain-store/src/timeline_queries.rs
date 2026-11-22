@@ -50,9 +50,14 @@ use crate::timeline::{
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+mod redaction;
 mod repair_reads;
 mod site_reads;
 mod twin_move;
+pub(crate) use redaction::{
+    dedup_rows as redaction_dedup_rows, page_and_event_entries,
+    rewrite_column as rewrite_timeline_column,
+};
 pub use repair_reads::{
     ConnectorFenceInput, TimelineHistoryInput, TimelineMarkupInput, TimelinePageScanInput,
     TimelineRowRewrite,

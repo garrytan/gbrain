@@ -39,6 +39,7 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     crate::page_ops::remove_page_rows(tx, page)?;
     crate::entity_identities::remove_page_rows(tx, page)?;
     crate::embedding_holds::remove_page_rows(tx, page)?;
+    crate::secret_store::remove_page_rows(tx, page)?;
     Ok(())
 }
 
@@ -71,6 +72,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     crate::reason_tombstones::remove_source_rows(tx, source_id)?;
     crate::eval_capture::calibration_profiles::remove_source_rows(tx, source_id)?;
     crate::generations::remove_source_rows(tx, source_id)?;
+    crate::secret_store::remove_source_rows(tx, source_id)?;
     Ok(())
 }
 
@@ -83,6 +85,7 @@ pub(crate) fn rename_slug_rows(
     new_slug: &str,
 ) -> Result<()> {
     crate::facts::rename_slug_rows(tx, trust, source_id, old_slug, new_slug)?;
+    crate::secret_store::rename_slug_rows(tx, source_id, old_slug, new_slug)?;
     Ok(())
 }
 
